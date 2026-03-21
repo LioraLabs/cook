@@ -1,0 +1,7 @@
+[package]
+name = "cook-contracts"
+version = "0.1.0"
+edition = "2021"
+description = "Shared kernel types for the Cook build system"
+
+[dependencies]
