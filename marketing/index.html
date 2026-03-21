@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cook — A build system you can actually read</title>
+  <meta name="description" content="Readable recipes, blazing caching, and a cloud that scales with your team. Something is in the oven." />
+  <link rel="icon" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<!-- ━━━ NAV ━━━ -->
+<nav>
+  <div class="logo">
+    <img src="/favicon.svg" alt="Cook logo" class="logo-icon" />
+    cook
+  </div>
+  <div class="nav-links">
+    <a href="#">Docs</a>
+    <a href="#">Cloud</a>
+    <a href="#">Examples</a>
+  </div>
+  <div class="nav-right">
+    <a class="gh-star" href="https://github.com/Alex-Gilbert/cook" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      Star
+    </a>
+    <button class="nav-cta">Join Waitlist</button>
+  </div>
+</nav>
+
+<!-- ━━━ HERO ━━━ -->
+<section class="hero">
+  <canvas id="fire-canvas" aria-hidden="true"></canvas>
+  <div class="hero-content">
+    <div class="hero-badge">
+      <div class="badge-dot"></div>
+      Coming Soon
+    </div>
+    <h1>Something is<br/>in the Oven.</h1>
+    <p class="hero-sub">
+      A build system you can actually <strong>read</strong>.
+      Readable recipes, blazing caching, and a cloud
+      that scales with your team.
+    </p>
+    <div class="waitlist">
+      <input type="email" placeholder="you@company.com" />
+      <button>Join the Waitlist</button>
+    </div>
+    <div class="hero-or">or try it now</div>
+    <div class="hero-install">
+      <span class="hero-install-prompt">$</span>
+      <code>curl -sSf https://getcook.sh | bash</code>
+    </div>
+  </div>
+</section>
+
+<!-- ━━━ DIVIDER ━━━ -->
+<div class="divider"></div>
+
+<!-- ━━━ SYNTAX ━━━ -->
+<section class="syntax">
+  <div class="syntax-header">
+    <h2>Read It and Weep.</h2>
+    <p>No <code class="inline-code tok-var">$@</code> <code class="inline-code tok-var">$&lt;</code> <code class="inline-code tok-var">$^</code> cryptography. Just say what you mean.</p>
+  </div>
+  <div class="code-compare">
+
+    <!-- Makefile (before) -->
+    <div class="code-block">
+      <div class="code-header">
+        <div class="code-dot code-dot-r"></div>
+        <div class="code-dot code-dot-y"></div>
+        <div class="code-dot code-dot-g"></div>
+        <span class="code-filename">Makefile</span>
+        <span class="code-label">before</span>
+      </div>
+      <div class="code-body">
+        <span class="tok-dim">CC = gcc</span><br>
+        <span class="tok-dim">CFLAGS = -Wall -Wextra</span><br>
+        <span class="tok-dim">SRCS = $(wildcard src/*.c)</span><br>
+        <span class="tok-dim">OBJS = $(SRCS:.c=.o)</span><br>
+        <br>
+        <span class="tok-dim">build: $(OBJS)</span><br>
+        <span class="tok-dim">&nbsp;&nbsp;$(CC) $(LDFLAGS) -o <span class="tok-var">$@</span> <span class="tok-var">$^</span></span><br>
+        <br>
+        <span class="tok-dim">%.o: %.c</span><br>
+        <span class="tok-dim">&nbsp;&nbsp;$(CC) $(CFLAGS) -c <span class="tok-var">$&lt;</span> -o <span class="tok-var">$@</span></span><br>
+        <br>
+        <span class="tok-dim">clean:</span><br>
+        <span class="tok-dim">&nbsp;&nbsp;rm -f $(OBJS) build</span>
+      </div>
+    </div>
+
+    <!-- Cookfile (after) -->
+    <div class="code-block highlight">
+      <div class="code-header">
+        <div class="code-dot code-dot-r"></div>
+        <div class="code-dot code-dot-y"></div>
+        <div class="code-dot code-dot-g"></div>
+        <span class="code-filename">Cookfile</span>
+        <span class="code-label code-label-after">after</span>
+      </div>
+      <div class="code-body">
+        <span class="tok-cmt"># Same build. A fraction of the ceremony.</span><br>
+        <br>
+        <span class="tok-kw">CC</span> <span class="tok-str">"gcc"</span><br>
+        <span class="tok-kw">CFLAGS</span> <span class="tok-str">"-Wall -Wextra"</span><br>
+        <br>
+        <span class="tok-kw">recipe</span> <span class="tok-str">"lib"</span><br>
+        <span>&nbsp;&nbsp;</span><span class="tok-kw">ingredients</span> <span class="tok-str">"lib/*.c"</span> <span class="tok-str">"include/*.h"</span><br>
+        <span>&nbsp;&nbsp;</span><span class="tok-kw">cook</span> <span class="tok-str">"build/obj/{stem}.o"</span> <span class="tok-kw">using</span> <span class="tok-str">"{CC} {CFLAGS} -Iinclude -c {in} -o {out}"</span><br>
+        <span>&nbsp;&nbsp;</span><span class="tok-kw">cook</span> <span class="tok-str">"build/libmath.a"</span> <span class="tok-kw">using</span> <span class="tok-str">"{AR} rcs {out} {all}"</span><br>
+        <span class="tok-kw">end</span><br>
+        <br>
+        <span class="tok-kw">recipe</span> <span class="tok-str">"build"</span>: <span class="tok-str">"lib"</span><br>
+        <span>&nbsp;&nbsp;</span><span class="tok-kw">ingredients</span> <span class="tok-str">"src/*.c"</span><br>
+        <span>&nbsp;&nbsp;</span><span class="tok-kw">cook</span> <span class="tok-str">"bin/app"</span> <span class="tok-kw">using</span> <span class="tok-str">"{CC} {CFLAGS} {all} -Iinclude -Lbuild -lmath -lm -o {out}"</span><br>
+        <span class="tok-kw">end</span>
+      </div>
+    </div>
+
+  </div>
+  <p class="syntax-note">Same build. A fraction of the ceremony.</p>
+</section>
+
+<!-- ━━━ DIVIDER ━━━ -->
+<div class="divider"></div>
+
+<!-- ━━━ FEATURES ━━━ -->
+<section class="features">
+  <div class="features-header">
+    <h2>Your Code. Our Kitchen.</h2>
+    <p>Everything you need to build fast and ship faster.</p>
+  </div>
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="feature-icon">⚡</div>
+      <h3>Parallel Recipes</h3>
+      <p>DAG-based scheduling runs independent recipes simultaneously. Zero config.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📦</div>
+      <h3>Smart Caching</h3>
+      <p>Hash-based caching with mtime fast-path. Never rebuild what hasn't changed. Free, forever.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">👀</div>
+      <h3>File Watching</h3>
+      <p><code class="inline-code">cook serve</code> — watches your ingredients and re-runs on change. Built in.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">☁️</div>
+      <h3>Cloud Cache</h3>
+      <p>Share cached artifacts across your entire team. One person builds, everyone benefits.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🧑‍💻</div>
+      <h3>Lua Scripting</h3>
+      <p>Embedded Lua for when shell isn't enough. Filesystem API, path helpers, full exec control.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📊</div>
+      <h3>Cloud Dashboard</h3>
+      <p>Build status, timing analytics, cache hit rates. Everything your team ships, visible.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ━━━ DIVIDER ━━━ -->
+<div class="divider"></div>
+
+<!-- ━━━ ROADMAP ━━━ -->
+<section class="roadmap">
+  <div class="roadmap-header">
+    <h2>The Full Menu.</h2>
+    <p>What's cooking and what's coming.</p>
+  </div>
+
+  <div class="roadmap-item">
+    <span class="roadmap-status status-live">Live</span>
+    <div class="roadmap-info">
+      <h3>Cook CLI</h3>
+      <p>Readable Cookfile syntax, parallel execution, smart caching, file watching, Lua scripting. Free and open-source.</p>
+    </div>
+  </div>
+
+  <div class="roadmap-item">
+    <span class="roadmap-status status-live">Live</span>
+    <div class="roadmap-info">
+      <h3>Local Cache</h3>
+      <p>Hash-based incremental caching with mtime fast-path. Deterministic, automatic, zero-config.</p>
+    </div>
+  </div>
+
+  <div class="roadmap-item">
+    <span class="roadmap-status status-oven">In the Oven</span>
+    <div class="roadmap-info">
+      <h3>Cloud Cache</h3>
+      <p>Shared artifact cache across your team. Build once, everyone benefits. Plugs into existing Cook caching.</p>
+    </div>
+  </div>
+
+  <div class="roadmap-item">
+    <span class="roadmap-status status-oven">In the Oven</span>
+    <div class="roadmap-info">
+      <h3>Web Dashboard</h3>
+      <p>Build status, logs, timing analytics, cache hit rates. The command center for your team's builds.</p>
+    </div>
+  </div>
+
+  <div class="roadmap-item">
+    <span class="roadmap-status status-menu">On the Menu</span>
+    <div class="roadmap-info">
+      <h3>SSH Terminal UI</h3>
+      <p><code class="inline-code">ssh getcook.sh</code> — a keyboard-driven TUI for your builds. No browser needed.</p>
+    </div>
+  </div>
+
+  <div class="roadmap-item">
+    <span class="roadmap-status status-menu">On the Menu</span>
+    <div class="roadmap-info">
+      <h3>Remote Builds</h3>
+      <p><code class="inline-code">cook build --cloud</code> — offload builds to managed workers. Scale-to-zero.</p>
+    </div>
+  </div>
+
+  <div class="roadmap-item">
+    <span class="roadmap-status status-menu">On the Menu</span>
+    <div class="roadmap-info">
+      <h3>CI/CD Integration</h3>
+      <p>GitHub Actions, GitLab CI, and more. Managed build execution inside your existing pipelines.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ━━━ SSH TEASER ━━━ -->
+<section class="ssh-section">
+  <div class="ssh-block">
+    <div class="prompt">$ <span>ssh getcook.sh</span></div>
+    <div class="response">
+      connecting...<br>
+      Welcome to Cook Cloud. <span class="cursor">█</span>
+    </div>
+  </div>
+  <p class="ssh-caption">Your builds. A keyboard away.</p>
+</section>
+
+<!-- ━━━ FINAL CTA ━━━ -->
+<section class="final-cta">
+  <h2>Ready to start cooking?</h2>
+  <p>Free and open-source. Cloud when your team is ready.</p>
+  <div class="waitlist">
+    <input type="email" placeholder="you@company.com" />
+    <button>Join the Waitlist</button>
+  </div>
+</section>
+
+<!-- ━━━ FOOTER ━━━ -->
+<footer>
+  <div class="logo footer-logo">
+    <img src="/favicon.svg" alt="Cook logo" class="logo-icon footer-logo-icon" />
+    cook
+  </div>
+  <div class="footer-links">
+    <a href="https://github.com/Alex-Gilbert/cook" target="_blank" rel="noopener">GitHub</a>
+    <a href="#">Docs</a>
+    <a href="#">Twitter</a>
+  </div>
+  <div class="footer-domain">getcook.sh</div>
+</footer>
+
+<script type="module" src="/main.js"></script>
+</body>
+</html>

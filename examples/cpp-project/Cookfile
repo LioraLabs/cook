@@ -1,0 +1,57 @@
+use "cpp"
+
+recipe "mathlib"
+    >{
+        cpp.static_library("mathlib", {
+            dir = "src/math/",
+            includes = { "include/" },
+            export_includes = { "include/" },
+            standard = "c++17",
+        })
+    }
+end
+
+recipe "app": "mathlib"
+    >{
+        cpp.executable("app", {
+            sources = { "src/app/main.cpp" },
+            links = { "mathlib" },
+            standard = "c++17",
+        })
+    }
+end
+
+recipe "test-vec": "mathlib"
+    >{
+        cpp.executable("test_vec", {
+            sources = { "tests/test_vec.cpp" },
+            links = { "mathlib" },
+            standard = "c++17",
+        })
+    }
+end
+
+recipe "test-util": "mathlib"
+    >{
+        cpp.executable("test_util", {
+            sources = { "tests/test_util.cpp" },
+            links = { "mathlib" },
+            standard = "c++17",
+        })
+    }
+end
+
+recipe "run-tests": "test-vec" "test-util"
+    ingredients "build/bin/test_*"
+    test "./{out}" timeout 30
+end
+
+recipe "compile-commands": "mathlib" "app" "test-vec" "test-util"
+    >{
+        cpp.compile_commands()
+    }
+end
+
+recipe "clean"
+    rm -rf build .cook
+end

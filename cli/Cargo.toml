@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/cook-contracts",
+    "crates/cook-lang",
+    "crates/cook-progress",
+]
+resolver = "2"

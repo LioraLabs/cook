@@ -1,0 +1,9 @@
+recipe "generate"
+    echo "Generating types from api.proto..."
+    mkdir -p gen
+    echo "// Generated types" > gen/types.txt
+end
+
+recipe "clean"
+    rm -rf gen
+end

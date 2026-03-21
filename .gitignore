@@ -1,0 +1,18 @@
+# Rust
+target/
+
+# Node
+node_modules/
+dist/
+
+# Cook artifacts
+.cook/
+build/
+bin/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store

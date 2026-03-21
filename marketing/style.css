@@ -1,0 +1,718 @@
+/* ─────────────────────────────────────────────
+   1. RESET & BASE
+   ───────────────────────────────────────────── */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #0a0a0a;
+  color: #fafafa;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+section {
+  position: relative;
+}
+
+/* ─────────────────────────────────────────────
+   2. NAV
+   ───────────────────────────────────────────── */
+nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 48px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: rgba(10, 10, 10, 0.85);
+}
+
+.logo {
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: -0.5px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.logo-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-links {
+  display: flex;
+  gap: 28px;
+  font-size: 13px;
+  color: #666;
+  font-weight: 500;
+}
+
+.nav-links a {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.nav-links a:hover {
+  color: #fff;
+}
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.gh-star {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  font-size: 13px;
+  color: #999;
+  text-decoration: none;
+  font-weight: 500;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.gh-star:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.gh-star svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  flex-shrink: 0;
+}
+
+.nav-cta {
+  background: #fff;
+  color: #000;
+  padding: 7px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.nav-cta:hover {
+  opacity: 0.85;
+}
+
+/* ─────────────────────────────────────────────
+   3. HERO
+   ───────────────────────────────────────────── */
+.hero {
+  position: relative;
+  text-align: center;
+  padding: 160px 24px 100px;
+  overflow: hidden;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#fire-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 18px;
+  border: 1px solid rgba(249, 115, 22, 0.25);
+  border-radius: 100px;
+  font-size: 13px;
+  color: #f97316;
+  margin-bottom: 36px;
+  background: rgba(249, 115, 22, 0.04);
+  font-weight: 500;
+}
+
+.badge-dot {
+  width: 6px;
+  height: 6px;
+  background: #f97316;
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.hero h1 {
+  font-size: 76px;
+  font-weight: 900;
+  letter-spacing: -3.5px;
+  line-height: 0.95;
+  margin-bottom: 28px;
+  background: linear-gradient(180deg, #ffffff 20%, rgba(255, 255, 255, 0.45) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero-sub {
+  font-size: 18px;
+  color: #777;
+  max-width: 480px;
+  margin: 0 auto 44px;
+  line-height: 1.65;
+}
+
+.hero-sub strong {
+  color: #ccc;
+  font-weight: 600;
+}
+
+/* Waitlist form */
+.waitlist {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.waitlist input {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 12px 20px;
+  border-radius: 10px;
+  font-size: 14px;
+  color: #fff;
+  width: 280px;
+  font-family: 'Inter', sans-serif;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.waitlist input::placeholder {
+  color: #555;
+}
+
+.waitlist input:focus {
+  border-color: rgba(249, 115, 22, 0.4);
+}
+
+.waitlist button {
+  background: linear-gradient(135deg, #f97316, #ef4444);
+  color: #fff;
+  padding: 12px 24px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  white-space: nowrap;
+}
+
+.waitlist button:hover {
+  opacity: 0.9;
+}
+
+.hero-or {
+  font-size: 12px;
+  color: #444;
+  margin-bottom: 16px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.hero-install {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #555;
+}
+
+.hero-install-prompt {
+  color: #444;
+}
+
+.hero-install code {
+  color: #f97316;
+}
+
+/* ─────────────────────────────────────────────
+   4. DIVIDER
+   ───────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(249, 115, 22, 0.15), transparent);
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* ─────────────────────────────────────────────
+   5. SYNTAX SECTION
+   ───────────────────────────────────────────── */
+.syntax {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 120px 24px;
+}
+
+.syntax-header {
+  text-align: center;
+  margin-bottom: 56px;
+}
+
+.syntax-header h2 {
+  font-size: 44px;
+  font-weight: 900;
+  letter-spacing: -2px;
+  margin-bottom: 12px;
+}
+
+.syntax-header p {
+  color: #666;
+  font-size: 16px;
+  line-height: 1.6;
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+.inline-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: #ef4444;
+}
+
+.code-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.code-block {
+  background: #111;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.code-block.highlight {
+  border-color: rgba(249, 115, 22, 0.2);
+  box-shadow: 0 0 40px rgba(249, 115, 22, 0.04);
+}
+
+.code-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  color: #555;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.code-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.code-dot-r { background: #ef4444; opacity: 0.7; }
+.code-dot-y { background: #eab308; opacity: 0.7; }
+.code-dot-g { background: #22c55e; opacity: 0.7; }
+
+.code-filename {
+  margin-left: 8px;
+}
+
+.code-label {
+  margin-left: auto;
+  color: #444;
+}
+
+.code-label-after {
+  color: #f97316;
+}
+
+.code-body {
+  padding: 20px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  line-height: 1.9;
+  color: #777;
+  min-height: 200px;
+}
+
+/* Syntax token colors */
+.tok-kw  { color: #f97316; }
+.tok-str { color: #fbbf24; }
+.tok-cmt { color: #3a3a3a; }
+.tok-cmd { color: #d4d4d4; }
+.tok-dim { color: #444; }
+.tok-var { color: #ef4444; }
+
+.syntax-note {
+  text-align: center;
+  margin-top: 24px;
+  font-size: 14px;
+  color: #555;
+}
+
+/* ─────────────────────────────────────────────
+   6. FEATURES
+   ───────────────────────────────────────────── */
+.features {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 40px 24px 120px;
+}
+
+.features-header {
+  text-align: center;
+  margin-bottom: 64px;
+}
+
+.features-header h2 {
+  font-size: 44px;
+  font-weight: 900;
+  letter-spacing: -2px;
+  margin-bottom: 12px;
+}
+
+.features-header p {
+  color: #666;
+  font-size: 16px;
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.feature-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 28px;
+  transition: border-color 0.2s;
+}
+
+.feature-card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.feature-icon {
+  width: 38px;
+  height: 38px;
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.15), rgba(239, 68, 68, 0.08));
+  border: 1px solid rgba(249, 115, 22, 0.15);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  margin-bottom: 16px;
+}
+
+.feature-card h3 {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  letter-spacing: -0.3px;
+}
+
+.feature-card p {
+  font-size: 13px;
+  color: #666;
+  line-height: 1.65;
+}
+
+.feature-card .inline-code {
+  font-size: 12px;
+  color: #f97316;
+}
+
+/* ─────────────────────────────────────────────
+   7. ROADMAP
+   ───────────────────────────────────────────── */
+.roadmap {
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 40px 24px 120px;
+}
+
+.roadmap-header {
+  text-align: center;
+  margin-bottom: 56px;
+}
+
+.roadmap-header h2 {
+  font-size: 44px;
+  font-weight: 900;
+  letter-spacing: -2px;
+  margin-bottom: 12px;
+}
+
+.roadmap-header p {
+  color: #666;
+  font-size: 16px;
+}
+
+.roadmap-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 24px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.roadmap-item:last-child {
+  border-bottom: none;
+}
+
+.roadmap-status {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+.status-live {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.status-oven {
+  background: rgba(249, 115, 22, 0.1);
+  color: #f97316;
+  border: 1px solid rgba(249, 115, 22, 0.2);
+}
+
+.status-menu {
+  background: rgba(255, 255, 255, 0.04);
+  color: #555;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.roadmap-info h3 {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  margin-bottom: 4px;
+}
+
+.roadmap-info p {
+  font-size: 14px;
+  color: #555;
+  line-height: 1.6;
+}
+
+.roadmap-info .inline-code {
+  font-size: 13px;
+  color: #f97316;
+}
+
+/* ─────────────────────────────────────────────
+   8. SSH TEASER
+   ───────────────────────────────────────────── */
+.ssh-section {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 0 24px 120px;
+  text-align: center;
+}
+
+.ssh-block {
+  background: #0d0d0d;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 40px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.ssh-block .prompt {
+  font-size: 18px;
+  color: #888;
+  margin-bottom: 4px;
+}
+
+.ssh-block .prompt span {
+  color: #f97316;
+}
+
+.ssh-block .response {
+  font-size: 13px;
+  color: #444;
+  margin-top: 12px;
+  line-height: 1.8;
+}
+
+.cursor {
+  display: inline-block;
+  color: #f97316;
+  animation: blink 1s step-start infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.ssh-caption {
+  margin-top: 16px;
+  font-size: 13px;
+  color: #555;
+}
+
+/* ─────────────────────────────────────────────
+   9. FINAL CTA
+   ───────────────────────────────────────────── */
+.final-cta {
+  text-align: center;
+  padding: 80px 24px 140px;
+  position: relative;
+}
+
+.final-cta h2 {
+  font-size: 40px;
+  font-weight: 900;
+  letter-spacing: -2px;
+  margin-bottom: 14px;
+}
+
+.final-cta p {
+  color: #555;
+  font-size: 15px;
+  margin-bottom: 36px;
+}
+
+/* ─────────────────────────────────────────────
+   10. FOOTER
+   ───────────────────────────────────────────── */
+footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 32px 48px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #444;
+}
+
+footer a {
+  color: #666;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+footer a:hover {
+  color: #fff;
+}
+
+.footer-logo {
+  font-size: 14px;
+}
+
+.footer-logo-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+}
+
+.footer-links {
+  display: flex;
+  gap: 24px;
+}
+
+.footer-domain {
+  color: #444;
+}
+
+/* ─── Tablet ─── */
+@media (max-width: 768px) {
+  .nav { padding: 12px 24px; }
+  .nav-links { display: none; }
+  .hero h1 { font-size: 48px; letter-spacing: -2px; }
+  .hero-sub { font-size: 16px; }
+  .waitlist { flex-direction: column; align-items: center; }
+  .waitlist input { width: 100%; max-width: 320px; }
+  .waitlist button { width: 100%; max-width: 320px; }
+  .code-compare { grid-template-columns: 1fr; }
+  .feature-grid { grid-template-columns: 1fr 1fr; }
+  .syntax-header h2,
+  .features-header h2,
+  .roadmap-header h2 { font-size: 32px; }
+}
+
+/* ─── Mobile ─── */
+@media (max-width: 480px) {
+  .nav { padding: 12px 16px; }
+  .gh-star { display: none; }
+  .hero { padding: 120px 16px 80px; }
+  .hero h1 { font-size: 36px; letter-spacing: -1.5px; }
+  .hero-install { font-size: 11px; padding: 8px 12px; }
+  .feature-grid { grid-template-columns: 1fr; }
+  .code-body { font-size: 11px; padding: 12px; }
+  .roadmap-item { flex-direction: column; gap: 8px; }
+  .roadmap-status { align-self: flex-start; }
+  .final-cta h2 { font-size: 28px; }
+}
