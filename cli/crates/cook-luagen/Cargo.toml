@@ -1,0 +1,8 @@
+[package]
+name = "cook-luagen"
+version = "0.1.0"
+edition = "2021"
+description = "Lua code generation from Cookfile AST"
+
+[dependencies]
+cook-lang = { path = "../cook-lang" }
