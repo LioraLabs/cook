@@ -933,10 +933,11 @@ fn topological_sort_recipe_infos(
 
         if let Some(recipe) = recipes.iter().find(|r| r.name == name) {
             for dep in &recipe.deps {
-                // Only follow deps that exist as local recipes (skip namespaced)
-                if !dep.contains('.') {
-                    visit(dep, recipes, visited, visiting, order)?;
-                }
+                // Follow all deps — including namespaced ones (e.g. backend.build)
+                // For workspace builds, namespaced deps exist in all_recipes.
+                // For single-Cookfile builds, namespaced deps won't be found
+                // and will correctly error as RecipeNotFound.
+                visit(dep, recipes, visited, visiting, order)?;
             }
         } else {
             return Err(CookError::RecipeNotFound(name.to_string()));
@@ -956,11 +957,16 @@ fn topological_sort_recipe_infos(
 fn build_workspace_recipe_info(workspace: &Workspace) -> Result<Vec<RecipeInfo>, CookError> {
     let mut all_recipes = Vec::new();
 
-    // Root recipes
+    // Root recipes (no prefix)
     for recipe in &workspace.root.cookfile.recipes {
+        let resolved_deps: Vec<String> = recipe
+            .deps
+            .iter()
+            .map(|dep| resolve_dep_namespace(workspace, &workspace.root.dir, dep, ""))
+            .collect();
         all_recipes.push(RecipeInfo {
             name: recipe.name.clone(),
-            deps: recipe.deps.clone(),
+            deps: resolved_deps,
         });
     }
 
@@ -968,25 +974,40 @@ fn build_workspace_recipe_info(workspace: &Workspace) -> Result<Vec<RecipeInfo>,
     for (canonical_path, loaded) in &workspace.imports {
         let prefix = find_full_prefix(workspace, canonical_path);
         for recipe in &loaded.cookfile.recipes {
-            let namespaced_deps: Vec<String> = recipe
+            let resolved_deps: Vec<String> = recipe
                 .deps
                 .iter()
-                .map(|d| {
-                    if d.contains('.') {
-                        d.clone()
-                    } else {
-                        format!("{prefix}.{d}")
-                    }
-                })
+                .map(|dep| resolve_dep_namespace(workspace, &loaded.dir, dep, &prefix))
                 .collect();
             all_recipes.push(RecipeInfo {
                 name: format!("{prefix}.{}", recipe.name),
-                deps: namespaced_deps,
+                deps: resolved_deps,
             });
         }
     }
 
     Ok(all_recipes)
+}
+
+/// Resolve a dependency name to its fully namespaced form.
+/// Checks if the dep references an import visible from `from_dir`.
+fn resolve_dep_namespace(
+    workspace: &Workspace,
+    from_dir: &std::path::Path,
+    dep: &str,
+    current_prefix: &str,
+) -> String {
+    if let Some((target_dir, recipe_name)) = workspace.resolve_namespaced_dep(from_dir, dep) {
+        let prefix = find_full_prefix(workspace, &target_dir);
+        format!("{prefix}.{recipe_name}")
+    } else {
+        // Local dep — needs current Cookfile's prefix
+        if current_prefix.is_empty() {
+            dep.to_string()
+        } else {
+            format!("{current_prefix}.{dep}")
+        }
+    }
 }
 
 /// Topological sort over workspace recipe infos.
