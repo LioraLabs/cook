@@ -6,5 +6,6 @@ members = [
     "crates/cook-cache",
     "crates/cook-dag",
     "crates/cook-luagen",
+    "crates/cook-luaotp",
 ]
 resolver = "2"

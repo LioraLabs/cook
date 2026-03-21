@@ -33,6 +33,24 @@ pub enum WorkPayload {
     },
 }
 
+impl WorkPayload {
+    /// Human-readable name for progress UI and result reporting.
+    pub fn display_name(&self) -> String {
+        match self {
+            Self::Shell { cmd, .. } => {
+                if cmd.len() <= 60 {
+                    cmd.clone()
+                } else {
+                    format!("{}...", &cmd[..57])
+                }
+            }
+            Self::LuaChunk { .. } => "lua".to_string(),
+            Self::Interactive { cmd, .. } => format!("interactive: {cmd}"),
+            Self::Test { test_name, .. } => test_name.clone(),
+        }
+    }
+}
+
 /// Metadata used by the caching subsystem to determine whether a unit can be
 /// skipped.
 #[derive(Debug, Clone)]

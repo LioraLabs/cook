@@ -1,0 +1,13 @@
+[package]
+name = "cook-luaotp"
+version = "0.1.0"
+edition = "2021"
+description = "Worker pool with per-thread Lua VMs for the Cook build system"
+
+[dependencies]
+cook-contracts = { path = "../cook-contracts" }
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+glob = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
