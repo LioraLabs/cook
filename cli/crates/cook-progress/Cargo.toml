@@ -1,0 +1,8 @@
+[package]
+name = "cook-progress"
+version = "0.1.0"
+edition = "2024"
+description = "Terminal progress rendering with composable primitives"
+
+[dependencies]
+crossterm = "0.28"
