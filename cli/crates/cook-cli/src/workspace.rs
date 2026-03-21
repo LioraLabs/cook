@@ -1,0 +1,304 @@
+//! Workspace loading: multi-Cookfile resolution via imports.
+
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use cook_lang::ast::Cookfile;
+
+use crate::error::CookError;
+
+/// A loaded Cookfile with its parsed AST, generated Lua source, and directory.
+#[derive(Debug)]
+pub struct LoadedCookfile {
+    pub cookfile: Cookfile,
+    pub lua_source: String,
+    pub dir: PathBuf,
+}
+
+/// A resolved workspace: all Cookfiles loaded, imports resolved.
+#[derive(Debug)]
+pub struct Workspace {
+    pub root: LoadedCookfile,
+    pub imports: BTreeMap<PathBuf, LoadedCookfile>,
+    /// (parent_canonical_path, import_name, imported_canonical_path)
+    pub namespace_map: Vec<(PathBuf, String, PathBuf)>,
+}
+
+impl Workspace {
+    pub fn load(cookfile_path: &Path, _cli_sets: &[String]) -> Result<Self, CookError> {
+        let cookfile_path = std::fs::canonicalize(cookfile_path).map_err(|e| {
+            CookError::Other(format!(
+                "cannot resolve {}: {e}",
+                cookfile_path.display()
+            ))
+        })?;
+        let root_dir = cookfile_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+
+        let source = std::fs::read_to_string(&cookfile_path).map_err(|e| {
+            CookError::Other(format!(
+                "cannot read {}: {e}",
+                cookfile_path.display()
+            ))
+        })?;
+        let cookfile =
+            cook_lang::parse(&source).map_err(|e| CookError::ParseError(e.to_string()))?;
+        let lua_source = cook_luagen::generate(&cookfile);
+
+        let mut imports = BTreeMap::new();
+        let mut namespace_map = Vec::new();
+        let mut visited = HashSet::new();
+        visited.insert(
+            std::fs::canonicalize(&root_dir).unwrap_or_else(|_| root_dir.clone()),
+        );
+
+        Self::load_imports(
+            &cookfile,
+            &root_dir,
+            &mut imports,
+            &mut namespace_map,
+            &mut visited,
+        )?;
+
+        Ok(Workspace {
+            root: LoadedCookfile {
+                cookfile,
+                lua_source,
+                dir: root_dir,
+            },
+            imports,
+            namespace_map,
+        })
+    }
+
+    fn load_imports(
+        cookfile: &Cookfile,
+        cookfile_dir: &Path,
+        imports: &mut BTreeMap<PathBuf, LoadedCookfile>,
+        namespace_map: &mut Vec<(PathBuf, String, PathBuf)>,
+        visited: &mut HashSet<PathBuf>,
+    ) -> Result<(), CookError> {
+        let parent_canonical = std::fs::canonicalize(cookfile_dir)
+            .unwrap_or_else(|_| cookfile_dir.to_path_buf());
+
+        for import_decl in &cookfile.imports {
+            let import_dir = cookfile_dir.join(&import_decl.path);
+            if !import_dir.exists() {
+                return Err(CookError::Other(format!(
+                    "Import '{}': directory '{}' not found",
+                    import_decl.name, import_decl.path
+                )));
+            }
+
+            let canonical = std::fs::canonicalize(&import_dir).map_err(|e| {
+                CookError::Other(format!(
+                    "Import '{}': cannot resolve '{}': {e}",
+                    import_decl.name, import_decl.path
+                ))
+            })?;
+
+            namespace_map.push((
+                parent_canonical.clone(),
+                import_decl.name.clone(),
+                canonical.clone(),
+            ));
+
+            if !visited.insert(canonical.clone()) {
+                if imports.contains_key(&canonical) {
+                    continue; // Dedup: already loaded
+                }
+                return Err(CookError::Other(format!(
+                    "Circular import detected involving '{}'",
+                    import_decl.path
+                )));
+            }
+
+            let import_cookfile_path = import_dir.join("Cookfile");
+            if !import_cookfile_path.exists() {
+                return Err(CookError::Other(format!(
+                    "Import '{}': no Cookfile found in '{}'",
+                    import_decl.name, import_decl.path
+                )));
+            }
+
+            let source = std::fs::read_to_string(&import_cookfile_path).map_err(|e| {
+                CookError::Other(format!(
+                    "Import '{}': cannot read Cookfile: {e}",
+                    import_decl.name
+                ))
+            })?;
+            let sub_cookfile = cook_lang::parse(&source)
+                .map_err(|e| CookError::ParseError(format!("Import '{}': {e}", import_decl.name)))?;
+            let sub_lua = cook_luagen::generate(&sub_cookfile);
+
+            Self::load_imports(
+                &sub_cookfile,
+                &canonical,
+                imports,
+                namespace_map,
+                visited,
+            )?;
+
+            imports.insert(
+                canonical,
+                LoadedCookfile {
+                    cookfile: sub_cookfile,
+                    lua_source: sub_lua,
+                    dir: import_dir,
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Resolve "backend.build" from a parent dir to (canonical_import_dir, recipe_name).
+    #[allow(dead_code)]
+    pub fn resolve_namespaced_dep(
+        &self,
+        parent_dir: &Path,
+        dep: &str,
+    ) -> Option<(PathBuf, String)> {
+        let dot_pos = dep.find('.')?;
+        let import_name = &dep[..dot_pos];
+        let recipe_name = &dep[dot_pos + 1..];
+
+        let parent_canonical =
+            std::fs::canonicalize(parent_dir).unwrap_or_else(|_| parent_dir.to_path_buf());
+
+        for (parent, name, target) in &self.namespace_map {
+            if parent == &parent_canonical && name == import_name {
+                return Some((target.clone(), recipe_name.to_string()));
+            }
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_no_imports_loads_root_only() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("Cookfile"), "recipe \"build\"\nend\n").unwrap();
+        let ws = Workspace::load(&dir.path().join("Cookfile"), &[]).unwrap();
+        assert!(ws.imports.is_empty());
+        assert!(ws.namespace_map.is_empty());
+    }
+
+    #[test]
+    fn test_basic_import_loads_child() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("lib")).unwrap();
+        fs::write(
+            dir.path().join("lib/Cookfile"),
+            "recipe \"build\"\nend\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import lib ./lib\nrecipe \"all\": \"lib.build\"\nend\n",
+        )
+        .unwrap();
+        let ws = Workspace::load(&dir.path().join("Cookfile"), &[]).unwrap();
+        assert_eq!(ws.imports.len(), 1);
+        assert_eq!(ws.namespace_map.len(), 1);
+    }
+
+    #[test]
+    fn test_cycle_detection() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("a")).unwrap();
+        fs::create_dir_all(dir.path().join("b")).unwrap();
+        fs::write(
+            dir.path().join("a/Cookfile"),
+            "import b ../b\nrecipe \"x\"\nend\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b/Cookfile"),
+            "import a ../a\nrecipe \"y\"\nend\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import a ./a\nrecipe \"z\"\nend\n",
+        )
+        .unwrap();
+        let result = Workspace::load(&dir.path().join("Cookfile"), &[]);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("ircular") || err.contains("already"),
+            "expected cycle error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_dedup_same_path() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("shared")).unwrap();
+        fs::create_dir_all(dir.path().join("a")).unwrap();
+        fs::create_dir_all(dir.path().join("b")).unwrap();
+        fs::write(
+            dir.path().join("shared/Cookfile"),
+            "recipe \"s\"\nend\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("a/Cookfile"),
+            "import shared ../shared\nrecipe \"a\"\nend\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b/Cookfile"),
+            "import shared ../shared\nrecipe \"b\"\nend\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import a ./a\nimport b ./b\nrecipe \"all\"\nend\n",
+        )
+        .unwrap();
+        let ws = Workspace::load(&dir.path().join("Cookfile"), &[]).unwrap();
+        let shared_count = ws
+            .imports
+            .keys()
+            .filter(|p| p.to_string_lossy().contains("shared"))
+            .count();
+        assert_eq!(shared_count, 1, "shared should be deduped");
+    }
+
+    #[test]
+    fn test_missing_import_dir_errors() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import missing ./nonexistent\nrecipe \"x\"\nend\n",
+        )
+        .unwrap();
+        let result = Workspace::load(&dir.path().join("Cookfile"), &[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_missing_cookfile_in_import_dir_errors() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("empty")).unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import empty ./empty\nrecipe \"x\"\nend\n",
+        )
+        .unwrap();
+        let result = Workspace::load(&dir.path().join("Cookfile"), &[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no Cookfile"));
+    }
+}

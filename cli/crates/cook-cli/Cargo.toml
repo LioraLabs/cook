@@ -1,0 +1,30 @@
+[package]
+name = "cook-cli"
+version = "0.1.0"
+edition = "2021"
+description = "User-facing binary for the Cook build system"
+
+[[bin]]
+name = "cook"
+path = "src/main.rs"
+
+[dependencies]
+cook-contracts = { path = "../cook-contracts" }
+cook-lang = { path = "../cook-lang" }
+cook-luagen = { path = "../cook-luagen" }
+cook-progress = { path = "../cook-progress" }
+cook-cache = { path = "../cook-cache" }
+cook-dag = { path = "../cook-dag" }
+cook-register = { path = "../cook-register" }
+cook-luaotp = { path = "../cook-luaotp" }
+cook-engine = { path = "../cook-engine" }
+
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+notify = "7"
+dotenvy = "0.15"
+thiserror = "2"
+glob = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

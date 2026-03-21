@@ -9,5 +9,6 @@ members = [
     "crates/cook-luaotp",
     "crates/cook-register",
     "crates/cook-engine",
+    "crates/cook-cli",
 ]
 resolver = "2"
