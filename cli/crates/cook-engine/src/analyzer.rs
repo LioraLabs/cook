@@ -5,6 +5,7 @@
 //! dependency resolution) operate on `BTreeMap<String, RecipeInfo>`.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
@@ -107,6 +108,31 @@ pub fn dependency_edges(
     Ok(result)
 }
 
+/// Compute `recipe_name -> [dependency_names]` for all recipes reachable from
+/// any of the given `targets`. Merges the dependency graphs of each target.
+pub fn dependency_edges_multi(
+    recipes: &BTreeMap<String, RecipeInfo>,
+    targets: &[String],
+) -> Result<BTreeMap<String, Vec<String>>, GraphError> {
+    let mut merged = BTreeMap::new();
+    for target in targets {
+        let edges = dependency_edges(recipes, target)?;
+        for (name, deps) in edges {
+            let entry = merged.entry(name).or_insert_with(Vec::new);
+            for dep in deps {
+                if !entry.contains(&dep) {
+                    entry.push(dep);
+                }
+            }
+        }
+    }
+    // Sort deps for deterministic output
+    for deps in merged.values_mut() {
+        deps.sort();
+    }
+    Ok(merged)
+}
+
 /// Topological sort starting from `target`. Returns recipes in execution order.
 /// Only includes recipes reachable from target.
 pub fn topological_sort(
@@ -157,6 +183,153 @@ pub fn topological_sort(
 
     visit(target, &deps, &mut states, &mut order)?;
     Ok(order)
+}
+
+// ---------------------------------------------------------------------------
+// Workspace namespace resolution
+// ---------------------------------------------------------------------------
+
+/// An entry in the workspace namespace map: (parent_dir, import_name, imported_dir).
+/// All paths are canonical.
+pub type NamespaceEntry = (PathBuf, String, PathBuf);
+
+/// Workspace descriptor — the minimal data cook-engine needs from the workspace
+/// to perform namespace resolution. cook-cli builds this from the Workspace struct.
+pub struct WorkspaceLayout {
+    /// Canonical path to the root Cookfile's directory.
+    pub root_dir: PathBuf,
+    /// Recipes from the root Cookfile (name → deps, no prefix).
+    pub root_recipes: Vec<(String, Vec<String>)>,
+    /// Imported Cookfiles: (canonical_dir, recipes as name→deps).
+    pub imported_recipes: Vec<(PathBuf, Vec<(String, Vec<String>)>)>,
+    /// Namespace map: (parent_canonical, import_name, imported_canonical).
+    pub namespace_map: Vec<NamespaceEntry>,
+}
+
+/// Build fully-namespaced recipe info from a workspace layout.
+/// Root recipes keep their names; imported recipes get dotted prefixes.
+/// Dependencies are resolved relative to each Cookfile's namespace.
+pub fn build_workspace_recipe_info(
+    layout: &WorkspaceLayout,
+) -> BTreeMap<String, RecipeInfo> {
+    let mut all = BTreeMap::new();
+
+    // Root recipes
+    for (name, deps) in &layout.root_recipes {
+        let resolved_deps: Vec<String> = deps
+            .iter()
+            .map(|dep| resolve_dep_namespace(&layout.namespace_map, &layout.root_dir, dep, ""))
+            .collect();
+        all.insert(
+            name.clone(),
+            RecipeInfo {
+                ingredients: vec![],
+                serves: vec![],
+                requires: resolved_deps,
+            },
+        );
+    }
+
+    // Imported recipes
+    for (canonical_dir, recipes) in &layout.imported_recipes {
+        let prefix = find_full_prefix(&layout.namespace_map, &layout.root_dir, canonical_dir);
+        for (name, deps) in recipes {
+            let resolved_deps: Vec<String> = deps
+                .iter()
+                .map(|dep| {
+                    resolve_dep_namespace(&layout.namespace_map, canonical_dir, dep, &prefix)
+                })
+                .collect();
+            all.insert(
+                format!("{prefix}.{name}"),
+                RecipeInfo {
+                    ingredients: vec![],
+                    serves: vec![],
+                    requires: resolved_deps,
+                },
+            );
+        }
+    }
+
+    all
+}
+
+/// Resolve a dependency name to its fully namespaced form.
+/// Checks if the dep references an import visible from `from_dir`.
+fn resolve_dep_namespace(
+    namespace_map: &[NamespaceEntry],
+    from_dir: &Path,
+    dep: &str,
+    current_prefix: &str,
+) -> String {
+    if let Some((target_dir, recipe_name)) =
+        resolve_namespaced_dep(namespace_map, from_dir, dep)
+    {
+        let prefix = find_full_prefix(namespace_map, from_dir, &target_dir);
+        format!("{prefix}.{recipe_name}")
+    } else {
+        if current_prefix.is_empty() {
+            dep.to_string()
+        } else {
+            format!("{current_prefix}.{dep}")
+        }
+    }
+}
+
+/// Resolve "proto.generate" from a parent dir to (canonical_import_dir, recipe_name).
+fn resolve_namespaced_dep(
+    namespace_map: &[NamespaceEntry],
+    parent_dir: &Path,
+    dep: &str,
+) -> Option<(PathBuf, String)> {
+    let dot_pos = dep.find('.')?;
+    let import_name = &dep[..dot_pos];
+    let recipe_name = &dep[dot_pos + 1..];
+
+    let parent_canonical =
+        std::fs::canonicalize(parent_dir).unwrap_or_else(|_| parent_dir.to_path_buf());
+
+    for (parent, name, target) in namespace_map {
+        if parent == &parent_canonical && name == import_name {
+            return Some((target.clone(), recipe_name.to_string()));
+        }
+    }
+    None
+}
+
+/// Find the full dotted prefix for a canonical import path by walking
+/// the namespace chain back to root. E.g., root→backend→proto = "backend.proto".
+pub fn find_full_prefix(
+    namespace_map: &[NamespaceEntry],
+    root_dir: &Path,
+    canonical_path: &Path,
+) -> String {
+    let root_canonical =
+        std::fs::canonicalize(root_dir).unwrap_or_else(|_| root_dir.to_path_buf());
+
+    // Build reverse map: child_canonical → (parent_canonical, name)
+    let mut parent_map: BTreeMap<&Path, (&Path, &str)> = BTreeMap::new();
+    for (parent, name, target) in namespace_map {
+        parent_map.insert(target.as_path(), (parent.as_path(), name.as_str()));
+    }
+
+    let mut segments = Vec::new();
+    let mut current = canonical_path;
+    loop {
+        if current == root_canonical {
+            break;
+        }
+        match parent_map.get(current) {
+            Some(&(parent, name)) => {
+                segments.push(name.to_string());
+                current = parent;
+            }
+            None => break,
+        }
+    }
+
+    segments.reverse();
+    segments.join(".")
 }
 
 #[cfg(test)]

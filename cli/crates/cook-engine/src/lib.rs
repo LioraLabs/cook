@@ -7,6 +7,7 @@ pub mod analyzer;
 pub mod dag_builder;
 pub mod executor;
 pub mod recipe_dag;
+pub mod run;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

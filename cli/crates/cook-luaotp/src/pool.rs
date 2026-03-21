@@ -18,7 +18,7 @@ pub struct WorkItem {
     pub env_vars: HashMap<String, String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TestOutput {
     pub suite_name: String,
     pub test_name: String,
