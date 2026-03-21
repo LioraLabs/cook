@@ -1,0 +1,17 @@
+[package]
+name = "cook-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Build pipeline orchestrator for the Cook build system"
+
+[dependencies]
+cook-contracts = { path = "../cook-contracts" }
+cook-register = { path = "../cook-register" }
+cook-dag = { path = "../cook-dag" }
+cook-luaotp = { path = "../cook-luaotp" }
+cook-cache = { path = "../cook-cache" }
+thiserror = "2"
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

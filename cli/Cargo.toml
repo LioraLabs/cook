@@ -8,5 +8,6 @@ members = [
     "crates/cook-luagen",
     "crates/cook-luaotp",
     "crates/cook-register",
+    "crates/cook-engine",
 ]
 resolver = "2"

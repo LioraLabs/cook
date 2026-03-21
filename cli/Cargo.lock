@@ -76,6 +76,20 @@ name = "cook-dag"
 version = "0.1.0"
 
 [[package]]
+name = "cook-engine"
+version = "0.1.0"
+dependencies = [
+ "cook-cache",
+ "cook-contracts",
+ "cook-dag",
+ "cook-luaotp",
+ "cook-register",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "cook-lang"
 version = "0.1.0"
 dependencies = [
