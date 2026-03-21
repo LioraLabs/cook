@@ -1,0 +1,9 @@
+[package]
+name = "cook-lang"
+version = "0.1.0"
+edition = "2021"
+description = "Cookfile parser: text in, AST out"
+
+[dependencies]
+thiserror = "2"
+glob = "0.3"
