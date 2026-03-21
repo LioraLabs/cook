@@ -191,7 +191,9 @@ fn test_cook_step_declaration() {
         }],
     )]);
     let output = generate(&cookfile);
-    assert!(output.contains("local _cook_outputs_1 = {\"bin/app\"}"));
+    // Output variable is hoisted to recipe scope (empty), then populated
+    assert!(output.contains("local _cook_outputs_1 = {}"));
+    assert!(output.contains("_cook_outputs_1[1] = \"bin/app\""));
     // DeclarationOnly should NOT have cook.add_unit
     assert!(!output.contains("cook.add_unit"), "DeclarationOnly should not emit cook.add_unit");
 }

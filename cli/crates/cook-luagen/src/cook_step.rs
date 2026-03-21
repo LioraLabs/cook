@@ -43,14 +43,16 @@ pub(crate) fn generate_cook_step(
 
     match mode {
         CookMode::DeclarationOnly => {
+            // _cook_outputs_N is hoisted to recipe scope by recipe.rs
+            // Just populate it with the declared output
             out.push_str(&format!(
-                "    local _cook_outputs_{} = {{\"{}\"}}\n",
+                "    _cook_outputs_{}[1] = \"{}\"\n",
                 index,
                 crate::lua_string::escape_lua_string(&cook_step.output_pattern)
             ));
         }
         CookMode::OneToOne => {
-            out.push_str(&format!("    local _cook_outputs_{} = {{}}\n", index));
+            // _cook_outputs_N is hoisted to recipe scope by recipe.rs
             out.push_str(&format!(
                 "    for _, _cook_in in ipairs({}) do\n",
                 input_source
@@ -101,7 +103,7 @@ pub(crate) fn generate_cook_step(
             out.push_str("    end\n");
         }
         CookMode::ManyToOne => {
-            out.push_str(&format!("    local _cook_outputs_{} = {{}}\n", index));
+            // _cook_outputs_N is hoisted to recipe scope by recipe.rs
             out.push_str(&format!(
                 "    local _cook_all = table.concat({}, \" \")\n",
                 input_source

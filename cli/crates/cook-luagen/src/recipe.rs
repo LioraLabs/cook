@@ -60,6 +60,9 @@ pub fn generate(cookfile: &Cookfile) -> String {
                     line,
                 } => {
                     cook_index += 1;
+                    // Hoist output collection variable to recipe scope
+                    // so subsequent step_groups can reference it
+                    out.push_str(&format!("    local _cook_outputs_{} = {{}}\n", cook_index));
                     out.push_str("    cook.step_group(function()\n");
                     generate_cook_step(
                         &mut out,
