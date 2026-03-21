@@ -3,5 +3,8 @@ members = [
     "crates/cook-contracts",
     "crates/cook-lang",
     "crates/cook-progress",
+    "crates/cook-cache",
+    "crates/cook-dag",
+    "crates/cook-luagen",
 ]
 resolver = "2"
