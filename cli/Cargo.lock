@@ -108,6 +108,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cook-register"
+version = "0.1.0"
+dependencies = [
+ "cook-contracts",
+ "glob",
+ "mlua",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "crossterm"
 version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
