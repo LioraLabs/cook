@@ -1,15 +1,14 @@
 //! Pipeline: glue layer that wires cook-lang -> cook-luagen -> cook-register
 //! -> cook-engine together.
 //!
-//! This is the main orchestration module. It parses Cookfiles, registers
-//! recipes via cook-register, builds DAGs via cook-engine::dag_builder, and
-//! executes them via cook-engine::executor. Progress events from cook-engine
-//! (EngineEvent) are bridged to cook-cli's ProgressEvent for rendering.
+//! This is the main orchestration module. It parses Cookfiles, builds recipe
+//! metadata and registries, then delegates execution to `cook_engine::run::run()`
+//! which handles wave-parallel DAG execution for both single-Cookfile and
+//! workspace builds.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::mpsc;
-use std::sync::Arc;
 
 use crate::cli::Cli;
 use crate::env::{load_env, resolve_env};
@@ -35,17 +34,6 @@ pub fn read_and_parse(cli: &Cli) -> Result<(cook_lang::ast::Cookfile, String), C
 
     let lua_source = cook_luagen::generate(&cookfile);
     Ok((cookfile, lua_source))
-}
-
-/// Split "backend.build" -> ("backend", "build"),
-/// "backend.proto.generate" -> ("backend.proto", "generate"),
-/// "build" -> ("", "build")
-fn split_recipe_name(name: &str) -> (String, String) {
-    if let Some(dot_pos) = name.rfind('.') {
-        (name[..dot_pos].to_string(), name[dot_pos + 1..].to_string())
-    } else {
-        (String::new(), name.to_string())
-    }
 }
 
 /// Bridge EngineEvent to ProgressEvent and send to the progress renderer.
@@ -193,25 +181,120 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
     }
 }
 
-/// Map cook-register errors to CookError.
-fn register_error_to_cook_error(e: cook_register::RegisterError) -> CookError {
-    match e {
-        cook_register::RegisterError::RecipeNotFound(name) => CookError::RecipeNotFound(name),
-        cook_register::RegisterError::Lua(e) => CookError::Other(format!("lua error: {e}")),
-        cook_register::RegisterError::CommandFailed {
-            command,
-            line,
-            code,
-        } => {
-            if line == 0 {
-                CookError::CommandFailed(format!("command failed (exit {code}): {command}"))
-            } else {
-                CookError::CommandFailed(format!(
-                    "Cookfile:{line}: command failed (exit {code}): {command}"
-                ))
-            }
-        }
+// ---------------------------------------------------------------------------
+// Build recipe_infos + registries (shared by cmd_run and cmd_test)
+// ---------------------------------------------------------------------------
+
+/// Build recipe_infos from a single Cookfile's recipes.
+fn build_single_recipe_infos(
+    cookfile: &cook_lang::ast::Cookfile,
+) -> BTreeMap<String, cook_engine::analyzer::RecipeInfo> {
+    let mut recipe_infos = BTreeMap::new();
+    for recipe in &cookfile.recipes {
+        recipe_infos.insert(
+            recipe.name.clone(),
+            cook_engine::analyzer::RecipeInfo {
+                ingredients: recipe.ingredients.clone(),
+                serves: recipe
+                    .steps
+                    .iter()
+                    .filter_map(|s| {
+                        if let cook_lang::ast::Step::Cook { step, .. } = s {
+                            Some(step.output_pattern.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                requires: recipe.deps.clone(),
+            },
+        );
     }
+    recipe_infos
+}
+
+/// Build a single-Cookfile registry map (empty-string prefix).
+fn build_single_registries(
+    cookfile_dir: &Path,
+    env_vars: std::collections::HashMap<String, String>,
+    lua_source: String,
+) -> BTreeMap<String, (cook_register::Registry, String)> {
+    let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars);
+    let mut registries = BTreeMap::new();
+    registries.insert(String::new(), (registry, lua_source));
+    registries
+}
+
+/// Build workspace registries: one for root (empty prefix), one per import.
+fn build_workspace_registries(
+    workspace: &Workspace,
+    config: Option<&str>,
+    cli_sets: &[String],
+) -> Result<BTreeMap<String, (cook_register::Registry, String)>, CookError> {
+    let dotenv_vars = load_env(&workspace.root.dir);
+    let root_env = resolve_env(&workspace.root.cookfile, config, dotenv_vars, cli_sets)?;
+
+    let mut registries: BTreeMap<String, (cook_register::Registry, String)> = BTreeMap::new();
+
+    let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env);
+    registries.insert(
+        String::new(),
+        (root_registry, workspace.root.lua_source.clone()),
+    );
+
+    for (canonical_path, loaded) in &workspace.imports {
+        let prefix = find_full_prefix(workspace, canonical_path);
+        let import_env = resolve_env(
+            &loaded.cookfile,
+            config,
+            std::collections::HashMap::new(),
+            cli_sets,
+        )?;
+        let registry = cook_register::Registry::new(loaded.dir.clone(), import_env);
+        registries.insert(prefix, (registry, loaded.lua_source.clone()));
+    }
+
+    Ok(registries)
+}
+
+/// Run the engine with progress rendering wired up.
+fn run_with_progress(
+    cli: &Cli,
+    recipe_infos: &BTreeMap<String, cook_engine::analyzer::RecipeInfo>,
+    targets: &[String],
+    registries: &BTreeMap<String, (cook_register::Registry, String)>,
+    num_jobs: usize,
+) -> Result<cook_engine::run::RunResult, CookError> {
+    let color = resolve_color(cli);
+    let (progress_tx, progress_rx) = mpsc::channel::<ProgressEvent>();
+    let render_thread = spawn_renderer_thread(progress_rx, color);
+
+    let bridge_tx = progress_tx.clone();
+    let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
+    let bridge_thread = bridge_engine_events(engine_rx, bridge_tx);
+
+    let result = cook_engine::run::run(recipe_infos, targets, registries, num_jobs, move |event| {
+        let _ = engine_tx.send(event);
+    });
+
+    // Wait for the bridge thread to drain all events
+    let _ = bridge_thread.join();
+
+    // Signal renderer to finish and wait for it
+    let _ = progress_tx.send(ProgressEvent::Finished);
+    drop(progress_tx);
+    let _ = render_thread.join();
+
+    result.map_err(engine_error_to_cook_error)
+}
+
+/// Resolve num_jobs from CLI or system parallelism.
+fn resolve_num_jobs(cli: &Cli) -> usize {
+    cli.jobs.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -226,207 +309,34 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         return Ok(());
     }
 
+    let num_jobs = resolve_num_jobs(cli);
+    let targets = vec![recipe_name.to_string()];
+
     if !cookfile.imports.is_empty() {
-        return cmd_run_workspace(cli, recipe_name, config);
-    }
+        // Workspace build
+        let workspace = Workspace::load(&cli.file, &cli.set)?;
+        let recipe_infos = build_workspace_recipe_info(&workspace)?;
+        let registries = build_workspace_registries(&workspace, config, &cli.set)?;
 
-    let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
-    let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
-        Path::new(".")
+        run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs)?;
     } else {
-        cookfile_dir
-    };
-    let dotenv_vars = load_env(cookfile_dir);
-    let env_vars = resolve_env(&cookfile, config, dotenv_vars, &cli.set)?;
+        // Single Cookfile build
+        let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
+        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            cookfile_dir
+        };
+        let dotenv_vars = load_env(cookfile_dir);
+        let env_vars = resolve_env(&cookfile, config, dotenv_vars, &cli.set)?;
 
-    // Resolve execution order via topological sort on recipe deps
-    let order = resolve_execution_order(&cookfile, recipe_name)?;
+        let recipe_infos = build_single_recipe_infos(&cookfile);
+        let registries = build_single_registries(cookfile_dir, env_vars, lua_source);
 
-    let num_jobs = cli.jobs.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    });
-
-    let cache_dir = cookfile_dir.join(".cook").join("cache");
-    let cache_manager = Arc::new(cook_cache::ThreadSafeCacheManager::new(cache_dir));
-
-    // Set up progress renderer
-    let color = resolve_color(cli);
-    let (progress_tx, progress_rx) = mpsc::channel::<ProgressEvent>();
-    let render_thread = spawn_renderer_thread(progress_rx, color);
-
-    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
-
-    // Emit RecipeQueued for all recipes so the renderer shows "waiting" state
-    for name in &order {
-        let _ = progress_tx.send(ProgressEvent::RecipeQueued {
-            name: name.clone(),
-            total_nodes: 0,
-        });
+        run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs)?;
     }
 
-    let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars);
-
-    let mut run_result: Result<(), CookError> = Ok(());
-    for name in &order {
-        if !cli.quiet && !is_tty {
-            eprintln!("cook: registering recipe '{name}'");
-        }
-
-        let units = registry
-            .register_recipe(&lua_source, name)
-            .map_err(register_error_to_cook_error)?;
-
-        let dag = cook_engine::dag_builder::build_dag(vec![units]);
-
-        if dag.is_empty() {
-            continue;
-        }
-
-        // Set up engine event channel and bridge to progress events
-        let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
-        let bridge_tx = progress_tx.clone();
-        let bridge_thread = bridge_engine_events(engine_rx, bridge_tx);
-
-        let mut cache_managers = BTreeMap::new();
-        cache_managers.insert(name.to_string(), cache_manager.clone());
-
-        let result = cook_engine::executor::execute_dag(
-            dag,
-            num_jobs,
-            cache_managers,
-            Some(engine_tx),
-        );
-
-        // Wait for bridge thread to finish
-        let _ = bridge_thread.join();
-
-        if let Err(e) = result {
-            run_result = Err(engine_error_to_cook_error(e));
-            break;
-        }
-    }
-
-    // Signal renderer to finish and wait for it
-    let _ = progress_tx.send(ProgressEvent::Finished);
-    drop(progress_tx);
-    let _ = render_thread.join();
-
-    run_result
-}
-
-// ---------------------------------------------------------------------------
-// cmd_run_workspace
-// ---------------------------------------------------------------------------
-
-fn cmd_run_workspace(
-    cli: &Cli,
-    recipe_name: &str,
-    config: Option<&str>,
-) -> Result<(), CookError> {
-    let workspace = Workspace::load(&cli.file, &cli.set)?;
-
-    let dotenv_vars = load_env(&workspace.root.dir);
-    let root_env = resolve_env(&workspace.root.cookfile, config, dotenv_vars, &cli.set)?;
-
-    // Build registries: one for root, one per import
-    let mut registries: BTreeMap<String, (cook_register::Registry, String)> = BTreeMap::new();
-
-    let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env);
-    registries.insert(
-        String::new(),
-        (root_registry, workspace.root.lua_source.clone()),
-    );
-
-    for (canonical_path, loaded) in &workspace.imports {
-        let prefix = find_full_prefix(&workspace, canonical_path);
-        let import_env = resolve_env(
-            &loaded.cookfile,
-            config,
-            std::collections::HashMap::new(),
-            &cli.set,
-        )?;
-        let registry = cook_register::Registry::new(loaded.dir.clone(), import_env);
-        registries.insert(prefix, (registry, loaded.lua_source.clone()));
-    }
-
-    let num_jobs = cli.jobs.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    });
-
-    // Collect all recipe info for dependency resolution
-    let all_recipes = build_workspace_recipe_info(&workspace)?;
-    let order = topological_sort_recipes(&all_recipes, recipe_name)?;
-
-    let color = resolve_color(cli);
-    let (progress_tx, progress_rx) = mpsc::channel::<ProgressEvent>();
-    let render_thread = spawn_renderer_thread(progress_rx, color);
-    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
-
-    for name in &order {
-        let _ = progress_tx.send(ProgressEvent::RecipeQueued {
-            name: name.clone(),
-            total_nodes: 0,
-        });
-    }
-
-    let mut run_result: Result<(), CookError> = Ok(());
-
-    for name in &order {
-        if !cli.quiet && !is_tty {
-            eprintln!("cook: registering recipe '{name}'");
-        }
-
-        let (prefix, local_name) = split_recipe_name(name);
-        let (registry, lua_source) = registries
-            .get(&prefix)
-            .ok_or_else(|| CookError::Other(format!("no registry for recipe '{name}'")))?;
-
-        let cache_dir = registry.working_dir().join(".cook").join("cache");
-        let cache_manager = Arc::new(cook_cache::ThreadSafeCacheManager::new(cache_dir));
-
-        let mut units = registry
-            .register_recipe(lua_source, &local_name)
-            .map_err(register_error_to_cook_error)?;
-
-        // Rewrite recipe_name to namespaced form
-        units.recipe_name = name.clone();
-
-        let dag = cook_engine::dag_builder::build_dag(vec![units]);
-        if dag.is_empty() {
-            continue;
-        }
-
-        let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
-        let bridge_tx = progress_tx.clone();
-        let bridge_thread = bridge_engine_events(engine_rx, bridge_tx);
-
-        let mut cache_managers = BTreeMap::new();
-        cache_managers.insert(name.clone(), cache_manager);
-
-        let result = cook_engine::executor::execute_dag(
-            dag,
-            num_jobs,
-            cache_managers,
-            Some(engine_tx),
-        );
-
-        let _ = bridge_thread.join();
-
-        if let Err(e) = result {
-            run_result = Err(engine_error_to_cook_error(e));
-            break;
-        }
-    }
-
-    let _ = progress_tx.send(ProgressEvent::Finished);
-    drop(progress_tx);
-    let _ = render_thread.join();
-
-    run_result
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -460,284 +370,88 @@ pub fn cmd_test(
 
     let (cookfile, lua_source) = read_and_parse(cli)?;
 
+    let num_jobs = resolve_num_jobs(cli);
+
     if !cookfile.imports.is_empty() {
-        return cmd_test_workspace(cli, filter, verbose, timeout_multiplier, wrapper, list);
-    }
+        // Workspace test
+        let workspace = Workspace::load(&cli.file, &cli.set)?;
 
-    let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
-    let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        cookfile_dir
-    };
-    let dotenv_vars = load_env(cookfile_dir);
-    let env_vars = resolve_env(&cookfile, None, dotenv_vars, &cli.set)?;
+        // Discover test recipes across ALL Cookfiles (root + imports)
+        let mut test_recipe_names: Vec<String> = Vec::new();
 
-    // Find all recipes that contain test steps
-    let test_recipes: Vec<String> = cookfile
-        .recipes
-        .iter()
-        .filter(|r| {
-            r.steps
-                .iter()
-                .any(|s| matches!(s, cook_lang::ast::Step::Test { .. }))
-        })
-        .map(|r| r.name.clone())
-        .collect();
-
-    if test_recipes.is_empty() {
-        eprintln!("cook: no test recipes found");
-        return Ok(());
-    }
-
-    let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars);
-
-    let num_jobs = cli.jobs.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    });
-
-    let cache_dir = cookfile_dir.join(".cook").join("cache");
-    let cache_manager = Arc::new(cook_cache::ThreadSafeCacheManager::new(cache_dir));
-
-    let color = resolve_color(cli);
-    let (progress_tx, progress_rx) = mpsc::channel::<ProgressEvent>();
-    let render_thread = spawn_renderer_thread(progress_rx, color);
-
-    let is_tty_test = std::io::IsTerminal::is_terminal(&std::io::stderr());
-
-    // Emit RecipeQueued for all recipes
-    {
-        let mut queued = std::collections::HashSet::new();
-        for recipe_name in &test_recipes {
-            if let Ok(order) = try_resolve_execution_order(&cookfile, recipe_name) {
-                for name in &order {
-                    if queued.insert(name.clone()) {
-                        let _ = progress_tx.send(ProgressEvent::RecipeQueued {
-                            name: name.clone(),
-                            total_nodes: 0,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    let mut executed = std::collections::HashSet::new();
-    // TODO: collect test outputs from engine when cook-engine supports
-    // test result collection. For now, we rely on the engine executing
-    // test work nodes normally.
-
-    for recipe_name in &test_recipes {
-        let order = resolve_execution_order(&cookfile, recipe_name)?;
-
-        for name in &order {
-            if executed.contains(name) {
-                continue;
-            }
-            executed.insert(name.clone());
-
-            if !cli.quiet && !is_tty_test {
-                eprintln!("cook: registering recipe '{name}'");
-            }
-
-            let units = registry
-                .register_recipe(&lua_source, name)
-                .map_err(register_error_to_cook_error)?;
-
-            let dag = cook_engine::dag_builder::build_dag(vec![units]);
-            if dag.is_empty() {
-                continue;
-            }
-
-            let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
-            let bridge_tx = progress_tx.clone();
-            let bridge_thread = bridge_engine_events(engine_rx, bridge_tx);
-
-            let mut cache_managers = BTreeMap::new();
-            cache_managers.insert(name.to_string(), cache_manager.clone());
-
-            // Ignore errors for test recipes -- we collect results separately
-            let _ = cook_engine::executor::execute_dag(
-                dag,
-                num_jobs,
-                cache_managers,
-                Some(engine_tx),
-            );
-
-            let _ = bridge_thread.join();
-        }
-    }
-
-    // Signal renderer to finish and wait for it
-    let _ = progress_tx.send(ProgressEvent::Finished);
-    drop(progress_tx);
-    let _ = render_thread.join();
-
-    // TODO: Once cook-engine supports test output collection, convert
-    // TestOutput -> TestCaseResult here and display results.
-    // For now, tests execute but detailed results are not yet collected.
-    eprintln!("cook: test execution complete (detailed results pending cook-engine integration)");
-
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// cmd_test_workspace
-// ---------------------------------------------------------------------------
-
-fn cmd_test_workspace(
-    cli: &Cli,
-    _filter: Option<String>,
-    _verbose: bool,
-    _timeout_multiplier: u64,
-    _wrapper: Option<String>,
-    _list: bool,
-) -> Result<(), CookError> {
-    let workspace = Workspace::load(&cli.file, &cli.set)?;
-
-    // Discover test recipes across ALL Cookfiles (root + imports)
-    let mut test_recipe_names: Vec<String> = Vec::new();
-
-    // Root test recipes
-    for recipe in &workspace.root.cookfile.recipes {
-        if recipe
-            .steps
-            .iter()
-            .any(|s| matches!(s, cook_lang::ast::Step::Test { .. }))
-        {
-            test_recipe_names.push(recipe.name.clone());
-        }
-    }
-
-    // Imported test recipes (namespaced)
-    for (canonical_path, loaded) in &workspace.imports {
-        let prefix = find_full_prefix(&workspace, canonical_path);
-        for recipe in &loaded.cookfile.recipes {
+        // Root test recipes
+        for recipe in &workspace.root.cookfile.recipes {
             if recipe
                 .steps
                 .iter()
                 .any(|s| matches!(s, cook_lang::ast::Step::Test { .. }))
             {
-                test_recipe_names.push(format!("{prefix}.{}", recipe.name));
+                test_recipe_names.push(recipe.name.clone());
             }
         }
-    }
 
-    if test_recipe_names.is_empty() {
-        eprintln!("cook: no test recipes found");
-        return Ok(());
-    }
-
-    // Build registries
-    let dotenv_vars = load_env(&workspace.root.dir);
-    let root_env = resolve_env(&workspace.root.cookfile, None, dotenv_vars, &cli.set)?;
-
-    let mut registries: BTreeMap<String, (cook_register::Registry, String)> = BTreeMap::new();
-
-    let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env);
-    registries.insert(
-        String::new(),
-        (root_registry, workspace.root.lua_source.clone()),
-    );
-
-    for (canonical_path, loaded) in &workspace.imports {
-        let prefix = find_full_prefix(&workspace, canonical_path);
-        let import_env = resolve_env(
-            &loaded.cookfile,
-            None,
-            std::collections::HashMap::new(),
-            &cli.set,
-        )?;
-        let registry = cook_register::Registry::new(loaded.dir.clone(), import_env);
-        registries.insert(prefix, (registry, loaded.lua_source.clone()));
-    }
-
-    let num_jobs = cli.jobs.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    });
-
-    let all_recipes = build_workspace_recipe_info(&workspace)?;
-
-    let color = resolve_color(cli);
-    let (progress_tx, progress_rx) = mpsc::channel::<ProgressEvent>();
-    let render_thread = spawn_renderer_thread(progress_rx, color);
-    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
-
-    // Queue all recipes
-    {
-        let mut queued = std::collections::HashSet::new();
-        for test_name in &test_recipe_names {
-            if let Ok(order) = topological_sort_recipes(&all_recipes, test_name) {
-                for name in &order {
-                    if queued.insert(name.clone()) {
-                        let _ = progress_tx.send(ProgressEvent::RecipeQueued {
-                            name: name.clone(),
-                            total_nodes: 0,
-                        });
-                    }
+        // Imported test recipes (namespaced)
+        for (canonical_path, loaded) in &workspace.imports {
+            let prefix = find_full_prefix(&workspace, canonical_path);
+            for recipe in &loaded.cookfile.recipes {
+                if recipe
+                    .steps
+                    .iter()
+                    .any(|s| matches!(s, cook_lang::ast::Step::Test { .. }))
+                {
+                    test_recipe_names.push(format!("{prefix}.{}", recipe.name));
                 }
             }
         }
-    }
 
-    let mut executed = std::collections::HashSet::new();
-
-    for test_name in &test_recipe_names {
-        let order = topological_sort_recipes(&all_recipes, test_name)?;
-
-        for name in &order {
-            if executed.contains(name) {
-                continue;
-            }
-            executed.insert(name.clone());
-
-            if !cli.quiet && !is_tty {
-                eprintln!("cook: registering recipe '{name}'");
-            }
-
-            let (prefix, local_name) = split_recipe_name(name);
-            let (registry, lua_source) = registries
-                .get(&prefix)
-                .ok_or_else(|| CookError::Other(format!("no registry for recipe '{name}'")))?;
-
-            let cache_dir = registry.working_dir().join(".cook").join("cache");
-            let cache_manager = Arc::new(cook_cache::ThreadSafeCacheManager::new(cache_dir));
-
-            let units = registry
-                .register_recipe(lua_source, &local_name)
-                .map_err(register_error_to_cook_error)?;
-
-            let dag = cook_engine::dag_builder::build_dag(vec![units]);
-            if dag.is_empty() {
-                continue;
-            }
-
-            let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
-            let bridge_tx = progress_tx.clone();
-            let bridge_thread = bridge_engine_events(engine_rx, bridge_tx);
-
-            let mut cache_managers = BTreeMap::new();
-            cache_managers.insert(name.clone(), cache_manager);
-
-            let _ = cook_engine::executor::execute_dag(
-                dag,
-                num_jobs,
-                cache_managers,
-                Some(engine_tx),
-            );
-
-            let _ = bridge_thread.join();
+        if test_recipe_names.is_empty() {
+            eprintln!("cook: no test recipes found");
+            return Ok(());
         }
+
+        let recipe_infos = build_workspace_recipe_info(&workspace)?;
+        let registries = build_workspace_registries(&workspace, None, &cli.set)?;
+
+        let _result =
+            run_with_progress(cli, &recipe_infos, &test_recipe_names, &registries, num_jobs);
+    } else {
+        // Single Cookfile test
+        let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
+        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            cookfile_dir
+        };
+        let dotenv_vars = load_env(cookfile_dir);
+        let env_vars = resolve_env(&cookfile, None, dotenv_vars, &cli.set)?;
+
+        // Find all recipes that contain test steps
+        let test_recipes: Vec<String> = cookfile
+            .recipes
+            .iter()
+            .filter(|r| {
+                r.steps
+                    .iter()
+                    .any(|s| matches!(s, cook_lang::ast::Step::Test { .. }))
+            })
+            .map(|r| r.name.clone())
+            .collect();
+
+        if test_recipes.is_empty() {
+            eprintln!("cook: no test recipes found");
+            return Ok(());
+        }
+
+        let recipe_infos = build_single_recipe_infos(&cookfile);
+        let registries = build_single_registries(cookfile_dir, env_vars, lua_source);
+
+        let _result =
+            run_with_progress(cli, &recipe_infos, &test_recipes, &registries, num_jobs);
     }
 
-    let _ = progress_tx.send(ProgressEvent::Finished);
-    drop(progress_tx);
-    let _ = render_thread.join();
-
+    // TODO: Once cook-engine supports test output collection, convert
+    // TestOutput -> TestCaseResult here and display results.
+    // For now, tests execute but detailed results are not yet collected.
     eprintln!("cook: test execution complete (detailed results pending cook-engine integration)");
 
     Ok(())
@@ -827,7 +541,17 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
         }
     }
 
-    let order = resolve_execution_order(&cookfile, recipe_name)?;
+    // Resolve execution order via engine analyzer for glob collection
+    let recipe_infos = build_single_recipe_infos(&cookfile);
+    let order = cook_engine::analyzer::topological_sort(&recipe_infos, recipe_name)
+        .map_err(|e| match e {
+            cook_engine::analyzer::GraphError::CycleDetected(name) => {
+                CookError::Other(format!("dependency cycle involving: {name}"))
+            }
+            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
+                CookError::RecipeNotFound(name)
+            }
+        })?;
 
     let globs = CookWatcher::collect_globs_for_recipes(&cookfile, &order);
     if globs.is_empty() {
@@ -872,177 +596,64 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
 }
 
 // ---------------------------------------------------------------------------
-// Recipe dependency resolution (local to cook-cli)
+// Workspace helpers (kept — used by cmd_run, cmd_test, cmd_menu, cmd_serve)
 // ---------------------------------------------------------------------------
 
-/// Simplified recipe info for dependency resolution.
-struct RecipeInfo {
-    name: String,
-    deps: Vec<String>,
-}
+/// Build a WorkspaceLayout from a Workspace for cook-engine's analyzer.
+/// This is the anti-corruption layer: cook-cli owns Workspace (discovery/loading),
+/// cook-engine owns namespace resolution and dependency analysis.
+fn workspace_to_layout(
+    workspace: &Workspace,
+) -> cook_engine::analyzer::WorkspaceLayout {
+    let root_dir = std::fs::canonicalize(&workspace.root.dir)
+        .unwrap_or_else(|_| workspace.root.dir.clone());
 
-/// Resolve execution order for a single Cookfile via topological sort on recipe deps.
-fn resolve_execution_order(
-    cookfile: &cook_lang::ast::Cookfile,
-    recipe_name: &str,
-) -> Result<Vec<String>, CookError> {
-    let recipes: Vec<RecipeInfo> = cookfile
+    let root_recipes: Vec<(String, Vec<String>)> = workspace
+        .root
+        .cookfile
         .recipes
         .iter()
-        .map(|r| RecipeInfo {
-            name: r.name.clone(),
-            deps: r.deps.clone(),
+        .map(|r| (r.name.clone(), r.deps.clone()))
+        .collect();
+
+    let imported_recipes: Vec<(std::path::PathBuf, Vec<(String, Vec<String>)>)> = workspace
+        .imports
+        .iter()
+        .map(|(canonical_path, loaded)| {
+            let recipes: Vec<(String, Vec<String>)> = loaded
+                .cookfile
+                .recipes
+                .iter()
+                .map(|r| (r.name.clone(), r.deps.clone()))
+                .collect();
+            (canonical_path.clone(), recipes)
         })
         .collect();
 
-    topological_sort_recipe_infos(&recipes, recipe_name)
-}
-
-/// Try to resolve execution order, returning Ok(order) or Err.
-fn try_resolve_execution_order(
-    cookfile: &cook_lang::ast::Cookfile,
-    recipe_name: &str,
-) -> Result<Vec<String>, CookError> {
-    resolve_execution_order(cookfile, recipe_name)
-}
-
-fn topological_sort_recipe_infos(
-    recipes: &[RecipeInfo],
-    target: &str,
-) -> Result<Vec<String>, CookError> {
-    let mut visited = std::collections::HashSet::new();
-    let mut visiting = std::collections::HashSet::new();
-    let mut order = Vec::new();
-
-    fn visit(
-        name: &str,
-        recipes: &[RecipeInfo],
-        visited: &mut std::collections::HashSet<String>,
-        visiting: &mut std::collections::HashSet<String>,
-        order: &mut Vec<String>,
-    ) -> Result<(), CookError> {
-        if visited.contains(name) {
-            return Ok(());
-        }
-        if visiting.contains(name) {
-            return Err(CookError::Other(format!(
-                "dependency cycle involving: {name}"
-            )));
-        }
-        visiting.insert(name.to_string());
-
-        if let Some(recipe) = recipes.iter().find(|r| r.name == name) {
-            for dep in &recipe.deps {
-                // Follow all deps — including namespaced ones (e.g. backend.build)
-                // For workspace builds, namespaced deps exist in all_recipes.
-                // For single-Cookfile builds, namespaced deps won't be found
-                // and will correctly error as RecipeNotFound.
-                visit(dep, recipes, visited, visiting, order)?;
-            }
-        } else {
-            return Err(CookError::RecipeNotFound(name.to_string()));
-        }
-
-        visiting.remove(name);
-        visited.insert(name.to_string());
-        order.push(name.to_string());
-        Ok(())
+    cook_engine::analyzer::WorkspaceLayout {
+        root_dir,
+        root_recipes,
+        imported_recipes,
+        namespace_map: workspace.namespace_map.clone(),
     }
-
-    visit(target, recipes, &mut visited, &mut visiting, &mut order)?;
-    Ok(order)
 }
 
-/// Build workspace recipe info for dependency resolution.
-fn build_workspace_recipe_info(workspace: &Workspace) -> Result<Vec<RecipeInfo>, CookError> {
-    let mut all_recipes = Vec::new();
-
-    // Root recipes (no prefix)
-    for recipe in &workspace.root.cookfile.recipes {
-        let resolved_deps: Vec<String> = recipe
-            .deps
-            .iter()
-            .map(|dep| resolve_dep_namespace(workspace, &workspace.root.dir, dep, ""))
-            .collect();
-        all_recipes.push(RecipeInfo {
-            name: recipe.name.clone(),
-            deps: resolved_deps,
-        });
-    }
-
-    // Imported recipes (namespaced)
-    for (canonical_path, loaded) in &workspace.imports {
-        let prefix = find_full_prefix(workspace, canonical_path);
-        for recipe in &loaded.cookfile.recipes {
-            let resolved_deps: Vec<String> = recipe
-                .deps
-                .iter()
-                .map(|dep| resolve_dep_namespace(workspace, &loaded.dir, dep, &prefix))
-                .collect();
-            all_recipes.push(RecipeInfo {
-                name: format!("{prefix}.{}", recipe.name),
-                deps: resolved_deps,
-            });
-        }
-    }
-
-    Ok(all_recipes)
-}
-
-/// Resolve a dependency name to its fully namespaced form.
-/// Checks if the dep references an import visible from `from_dir`.
-fn resolve_dep_namespace(
+/// Build workspace recipe info and resolve via cook-engine's analyzer.
+fn build_workspace_recipe_info(
     workspace: &Workspace,
-    from_dir: &std::path::Path,
-    dep: &str,
-    current_prefix: &str,
-) -> String {
-    if let Some((target_dir, recipe_name)) = workspace.resolve_namespaced_dep(from_dir, dep) {
-        let prefix = find_full_prefix(workspace, &target_dir);
-        format!("{prefix}.{recipe_name}")
-    } else {
-        // Local dep — needs current Cookfile's prefix
-        if current_prefix.is_empty() {
-            dep.to_string()
-        } else {
-            format!("{current_prefix}.{dep}")
-        }
-    }
-}
-
-/// Topological sort over workspace recipe infos.
-fn topological_sort_recipes(
-    all_recipes: &[RecipeInfo],
-    target: &str,
-) -> Result<Vec<String>, CookError> {
-    topological_sort_recipe_infos(all_recipes, target)
+) -> Result<std::collections::BTreeMap<String, cook_engine::analyzer::RecipeInfo>, CookError> {
+    let layout = workspace_to_layout(workspace);
+    Ok(cook_engine::analyzer::build_workspace_recipe_info(&layout))
 }
 
 /// Find the full dotted prefix for a canonical import path.
+/// Delegates to cook-engine's analyzer.
 pub fn find_full_prefix(workspace: &Workspace, canonical_path: &std::path::Path) -> String {
-    // Walk namespace_map to find the import name mapping to this canonical path
-    for (parent, name, target) in &workspace.namespace_map {
-        if target == canonical_path {
-            // Check if parent is also an import (nested)
-            let parent_prefix = if *parent
-                == std::fs::canonicalize(&workspace.root.dir)
-                    .unwrap_or_else(|_| workspace.root.dir.clone())
-            {
-                String::new()
-            } else {
-                find_full_prefix(workspace, parent)
-            };
-            return if parent_prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{parent_prefix}.{name}")
-            };
-        }
-    }
-    // Fallback: use directory name
-    canonical_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string()
+    let root_dir = std::fs::canonicalize(&workspace.root.dir)
+        .unwrap_or_else(|_| workspace.root.dir.clone());
+    cook_engine::analyzer::find_full_prefix(
+        &workspace.namespace_map,
+        &root_dir,
+        canonical_path,
+    )
 }

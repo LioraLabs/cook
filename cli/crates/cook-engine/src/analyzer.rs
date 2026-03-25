@@ -218,7 +218,7 @@ pub fn build_workspace_recipe_info(
     for (name, deps) in &layout.root_recipes {
         let resolved_deps: Vec<String> = deps
             .iter()
-            .map(|dep| resolve_dep_namespace(&layout.namespace_map, &layout.root_dir, dep, ""))
+            .map(|dep| resolve_dep_namespace(&layout.namespace_map, &layout.root_dir, &layout.root_dir, dep, ""))
             .collect();
         all.insert(
             name.clone(),
@@ -237,7 +237,7 @@ pub fn build_workspace_recipe_info(
             let resolved_deps: Vec<String> = deps
                 .iter()
                 .map(|dep| {
-                    resolve_dep_namespace(&layout.namespace_map, canonical_dir, dep, &prefix)
+                    resolve_dep_namespace(&layout.namespace_map, &layout.root_dir, canonical_dir, dep, &prefix)
                 })
                 .collect();
             all.insert(
@@ -256,8 +256,12 @@ pub fn build_workspace_recipe_info(
 
 /// Resolve a dependency name to its fully namespaced form.
 /// Checks if the dep references an import visible from `from_dir`.
+/// Uses `root_dir` (the workspace root) for computing the absolute prefix,
+/// ensuring consistent naming even when the same import is reached from
+/// multiple parents (diamond dependencies).
 fn resolve_dep_namespace(
     namespace_map: &[NamespaceEntry],
+    root_dir: &Path,
     from_dir: &Path,
     dep: &str,
     current_prefix: &str,
@@ -265,7 +269,7 @@ fn resolve_dep_namespace(
     if let Some((target_dir, recipe_name)) =
         resolve_namespaced_dep(namespace_map, from_dir, dep)
     {
-        let prefix = find_full_prefix(namespace_map, from_dir, &target_dir);
+        let prefix = find_full_prefix(namespace_map, root_dir, &target_dir);
         format!("{prefix}.{recipe_name}")
     } else {
         if current_prefix.is_empty() {
