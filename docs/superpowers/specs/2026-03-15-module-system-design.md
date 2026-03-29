@@ -2,7 +2,7 @@
 
 ## Summary
 
-A plugin system that allows language-specific Lua modules (e.g., `cook.cpp`, `cook.rust`) to be loaded into Cook via `use "name"` statements. Modules are project-local Lua files that can manipulate Cook's DAG directly, providing toolchain abstraction and high-level build primitives while preserving Cook's core `cook ... using` identity.
+A plugin system that allows language-specific Lua modules (e.g., `cook.cpp`, `cook.rust`) to be loaded into Cook via `use name` statements. Modules are project-local Lua files that can manipulate Cook's DAG directly, providing toolchain abstraction and high-level build primitives while preserving Cook's core `cook ... using` identity.
 
 ## Goals
 
@@ -23,7 +23,7 @@ A plugin system that allows language-specific Lua modules (e.g., `cook.cpp`, `co
 ## Architecture
 
 ```
-Cookfile (use "cpp")
+Cookfile (use cpp)
     ↓
 Parser → UseStatement AST node
     ↓
@@ -80,7 +80,7 @@ return cpp
 
 | Context | When | Available APIs |
 |---|---|---|
-| Module load + init | `use "cpp"` processed | `cook.env`, `cook.cache`, `cook.sh`, `cook.platform`, `fs.*`, `path.*` |
+| Module load + init | `use cpp` processed | `cook.env`, `cook.cache`, `cook.sh`, `cook.platform`, `fs.*`, `path.*` |
 | Recipe body | Inside recipe function (capture mode) | All of the above + `cook.add_unit`, `cook.step_group`, `cook.export`, `cook.import` |
 
 ## Module Cache
@@ -194,9 +194,9 @@ pub struct Cookfile {
 }
 ```
 
-**Syntax:** `use "name"` at top level, before recipes. Parsed as keyword + string literal.
+**Syntax:** `use name` at top level, before recipes. Parsed as keyword + bare identifier (quoted form `use "name"` also accepted).
 
-**Lexer change:** Add `"use"` to the blocked keywords list in `try_parse_var_decl` (lexer.rs line 53) to prevent `use "cpp"` from being parsed as a `VarDecl { name: "use", value: "cpp" }`. Then add a new `Token::UseDecl { name: String }` variant, parsed similarly to `ConfigHeader` — keyword followed by a quoted string.
+**Lexer change:** Add `"use"` to the blocked keywords list in `try_parse_var_decl` (lexer.rs line 53) to prevent `use cpp` from being parsed as a `VarDecl`. Then add a new `Token::UseDecl { name: String }` variant, parsed similarly to `ConfigHeader` — keyword followed by a bare identifier or quoted string.
 
 **Error handling:** If `cook.load_module` cannot find the module file, it raises a Lua error that propagates as `mlua::Error`, terminating recipe registration with a clear message: `"module 'cpp' not found: expected cook_modules/cpp.lua or cook_modules/cpp/init.lua"`.
 
@@ -222,17 +222,17 @@ local proto = cook.load_module("proto")
 ## Cookfile Example
 
 ```
-use "cpp"
+use cpp
 
-config "debug"
+config debug
     CFLAGS "-g -O0"
 end
 
-config "release"
+config release
     CFLAGS "-O2 -DNDEBUG"
 end
 
-recipe "mylib"
+recipe mylib
     >{
         cpp.toolchain { standard = "c++17", warnings = "strict" }
         cpp.static_library("mylib", {
@@ -243,17 +243,15 @@ recipe "mylib"
     }
 end
 
-recipe "app": "mylib"
-    >{
-        cpp.executable("app", {
-            sources = { "src/main.cpp" },
-            links = { "mylib" },
-            system_libs = { "m", "pthread" },
-        })
-    }
+recipe app: mylib
+    cpp.executable("app", {
+        sources = { "src/main.cpp" },
+        links = { "mylib" },
+        system_libs = { "m", "pthread" },
+    })
 end
 
-recipe "test": "mylib"
+recipe test: mylib
     >{
         cpp.find("gtest")
         cpp.test("test_math", {
@@ -263,12 +261,12 @@ recipe "test": "mylib"
     }
 end
 
-recipe "clean"
+recipe clean
     rm -rf build bin
 end
 ```
 
-Module functions and plain Cook steps coexist freely. `recipe "clean"` is pure shell; `recipe "app"` uses the module. Both are valid.
+Module functions and plain Cook steps coexist freely. `recipe clean` is pure shell; `recipe app` uses the module. Both are valid.
 
 ## What Core Implements vs What Modules Implement
 

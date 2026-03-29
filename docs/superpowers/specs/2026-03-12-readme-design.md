@@ -26,11 +26,11 @@ Build excitement by layering capabilities:
 **Tier 1: Simple task runner** — shell commands only
 
 ```cookfile
-recipe "setup"
+recipe setup
     mkdir -p build bin
 end
 
-recipe "clean"
+recipe clean
     rm -rf build bin
 end
 ```
@@ -38,7 +38,7 @@ end
 **Tier 2: Build system** — ingredients, serves, dependencies
 
 ```cookfile
-recipe "build"
+recipe build
     ingredients = {"src/*.c"}
     serves = "bin/app"
     requires = {"setup"}
@@ -49,7 +49,7 @@ end
 **Tier 3: Embedded Lua** — loop over sources, compile, archive, use filesystem API and `cook.sh()`
 
 ```cookfile
-recipe "lib"
+recipe lib
     ingredients = {"lib/*.c", "include/*.h"}
     serves = "build/libmath.a"
     requires = {"setup"}
@@ -151,11 +151,11 @@ clean:
 **The Cookfile (same project):**
 
 ```cookfile
-recipe "setup"
+recipe setup
     mkdir -p build/obj bin
 end
 
-recipe "lib"
+recipe lib
     ingredients = {"lib/*.c", "include/*.h"}
     serves = "build/libmath.a"
     requires = {"setup"}
@@ -172,14 +172,14 @@ recipe "lib"
     }
 end
 
-recipe "build"
+recipe build
     ingredients = {"src/*.c"}
     serves = "bin/app"
     requires = {"lib"}
     gcc src/main.c -Iinclude -Lbuild -lmath -lm -Wall -Wextra -O2 -o bin/app
 end
 
-recipe "test"
+recipe test
     ingredients = {"tests/test_*.c"}
     requires = {"lib"}
 
@@ -193,7 +193,7 @@ recipe "test"
     }
 end
 
-recipe "clean"
+recipe clean
     rm -rf build bin
 end
 ```

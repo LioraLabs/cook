@@ -1,5 +1,128 @@
 use super::*;
 
+// ── SHI-71: Unquoted recipe names ──────────────────────────────────
+
+#[test]
+fn test_bare_recipe_name_parses() {
+    let source = "recipe build\n    echo hello\nend\n";
+    let result = parse(source).unwrap();
+    assert_eq!(result.recipes[0].name, "build");
+}
+
+#[test]
+fn test_bare_recipe_name_with_deps() {
+    let source = "recipe build: lib setup\n    echo hello\nend\n";
+    let result = parse(source).unwrap();
+    assert_eq!(result.recipes[0].name, "build");
+    assert_eq!(result.recipes[0].deps, vec!["lib", "setup"]);
+}
+
+#[test]
+fn test_bare_dotted_dep() {
+    let source = "recipe all: backend.build\nend\n";
+    let result = parse(source).unwrap();
+    assert_eq!(result.recipes[0].deps, vec!["backend.build"]);
+}
+
+#[test]
+fn test_bare_use_statement() {
+    let source = "use cpp\n\nrecipe build\n    echo hello\nend\n";
+    let cookfile = parse(source).unwrap();
+    assert_eq!(cookfile.uses[0].module_name, "cpp");
+}
+
+#[test]
+fn test_bare_config_name() {
+    let source = "config debug\n    CFLAGS \"-g\"\nend\n\nrecipe build\n    echo hello\nend\n";
+    let result = parse(source).unwrap();
+    assert_eq!(result.configs["debug"], vec![("CFLAGS".to_string(), "-g".to_string())]);
+}
+
+// ── SHI-72: Implicit recipes ───────────────────────────────────────
+
+#[test]
+fn test_implicit_recipe_parses() {
+    let source = "build:\n    echo hello\nend\n";
+    let result = parse(source).unwrap();
+    assert_eq!(result.recipes.len(), 1);
+    assert_eq!(result.recipes[0].name, "build");
+    assert!(result.recipes[0].deps.is_empty());
+}
+
+#[test]
+fn test_implicit_recipe_with_deps() {
+    let source = "build: lib setup\n    echo hello\nend\n";
+    let result = parse(source).unwrap();
+    assert_eq!(result.recipes[0].name, "build");
+    assert_eq!(result.recipes[0].deps, vec!["lib", "setup"]);
+}
+
+#[test]
+fn test_implicit_recipe_with_body() {
+    let source = "clean:\n    rm -rf build\nend\n";
+    let result = parse(source).unwrap();
+    assert_eq!(result.recipes[0].steps.len(), 1);
+    assert!(matches!(&result.recipes[0].steps[0], Step::Shell { command, .. } if command == "rm -rf build"));
+}
+
+// ── SHI-73: Module calls without Lua delimiters ────────────────────
+
+#[test]
+fn test_module_call_single_line() {
+    let source = "recipe build\n    cpp.compile(\"src/*.cpp\")\nend\n";
+    let result = parse(source).unwrap();
+    assert_eq!(result.recipes[0].steps.len(), 1);
+    match &result.recipes[0].steps[0] {
+        Step::Lua { code, .. } => {
+            assert_eq!(code, "cpp.compile(\"src/*.cpp\")");
+        }
+        other => panic!("expected Lua step, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_module_call_multiline() {
+    let source = r#"recipe build
+    cpp.compile {
+        sources = "src/*.cpp",
+        output_dir = "build/obj/",
+    }
+end
+"#;
+    let result = parse(source).unwrap();
+    assert_eq!(result.recipes[0].steps.len(), 1);
+    match &result.recipes[0].steps[0] {
+        Step::LuaBlock { code, .. } => {
+            assert!(code.contains("cpp.compile {"), "code was: {}", code);
+            assert!(code.contains("sources"), "code was: {}", code);
+            assert!(code.contains("}"), "code was: {}", code);
+        }
+        other => panic!("expected LuaBlock step, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_non_module_dot_is_shell() {
+    // A line starting with `.` is not a module call
+    let source = "recipe build\n    ./run.sh\nend\n";
+    let result = parse(source).unwrap();
+    assert!(matches!(&result.recipes[0].steps[0], Step::Shell { .. }));
+}
+
+#[test]
+fn test_module_call_no_args() {
+    let source = "recipe build\n    cpp.detect_compiler()\nend\n";
+    let result = parse(source).unwrap();
+    match &result.recipes[0].steps[0] {
+        Step::Lua { code, .. } => {
+            assert_eq!(code, "cpp.detect_compiler()");
+        }
+        other => panic!("expected Lua step, got {:?}", other),
+    }
+}
+
+// ── Original tests ─────────────────────────────────────────────────
+
 #[test]
 fn test_empty_cookfile() {
     let result = parse("").unwrap();

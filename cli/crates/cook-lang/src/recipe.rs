@@ -1,8 +1,78 @@
 use crate::ast::*;
 use crate::cook_line::*;
 use crate::lexer::*;
-use crate::lua_block::collect_lua_block;
+use crate::lua_block::{collect_lua_block, count_brace_delta};
 use crate::ParseError;
+
+/// Returns true if `text` looks like a module function call: `ident.ident...`
+fn is_module_call(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    // Must start with an ASCII letter or underscore
+    if bytes.is_empty() || !(bytes[0].is_ascii_alphabetic() || bytes[0] == b'_') {
+        return false;
+    }
+    // Find the dot
+    let mut i = 1;
+    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'.' {
+        return false;
+    }
+    // After the dot, must have at least one ident char
+    i += 1;
+    i < bytes.len() && (bytes[i].is_ascii_alphabetic() || bytes[i] == b'_')
+}
+
+/// Collects a module call that may span multiple lines (when braces are unbalanced).
+fn collect_module_call(
+    first_line_text: &str,
+    line: usize,
+    tokens: &[Located<Token>],
+    current_pos: usize,
+    source_lines: &[&str],
+) -> Result<(String, usize), ParseError> {
+    let mut depth = count_brace_delta(first_line_text);
+
+    if depth <= 0 {
+        // Single-line call (balanced or no braces)
+        return Ok((first_line_text.to_string(), current_pos + 1));
+    }
+
+    // Multi-line: collect subsequent source lines until braces balance
+    let mut code_lines = vec![first_line_text.to_string()];
+    // line is 1-indexed; source_lines is 0-indexed
+    let mut line_idx = line; // next source line (0-indexed)
+
+    while line_idx < source_lines.len() {
+        let raw_line = source_lines[line_idx];
+        depth += count_brace_delta(raw_line);
+        code_lines.push(raw_line.to_string());
+
+        if depth <= 0 {
+            break;
+        }
+        line_idx += 1;
+    }
+
+    if depth > 0 {
+        return Err(ParseError::Parse {
+            line,
+            message: "unclosed brace in module call".to_string(),
+        });
+    }
+
+    let code = code_lines.join("\n");
+    let close_line_1indexed = line_idx + 1;
+
+    // Skip all tokens whose line is <= the closing line
+    let mut new_pos = current_pos + 1;
+    while new_pos < tokens.len() && tokens[new_pos].line <= close_line_1indexed {
+        new_pos += 1;
+    }
+
+    Ok((code, new_pos))
+}
 
 pub(crate) fn parse_config_block(
     tokens: &[Located<Token>],
@@ -108,6 +178,22 @@ pub(crate) fn parse_recipe(
                         },
                         line: tok.line,
                     });
+                } else if is_module_call(text) {
+                    let (code, new_pos) =
+                        collect_module_call(text, tok.line, tokens, pos, source_lines)?;
+                    if code.contains('\n') {
+                        steps.push(Step::LuaBlock {
+                            code,
+                            line: tok.line,
+                        });
+                    } else {
+                        steps.push(Step::Lua {
+                            code,
+                            line: tok.line,
+                        });
+                    }
+                    pos = new_pos;
+                    continue;
                 } else if let Some(cmd) = text.strip_prefix('@') {
                     let cmd = cmd.to_string();
                     if cmd.is_empty() {

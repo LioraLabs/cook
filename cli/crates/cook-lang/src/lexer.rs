@@ -29,19 +29,43 @@ pub enum LexError {
     MissingRecipeName { line: usize },
 }
 
-fn parse_quoted_strings(text: &str, line: usize) -> Result<Vec<String>, LexError> {
-    let mut result = Vec::new();
-    let mut remaining = text.trim();
-    while !remaining.is_empty() {
-        if !remaining.starts_with('"') {
-            return Err(LexError::UnterminatedString { line });
-        }
-        let rest = &remaining[1..];
+fn is_ident_start(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '_'
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
+}
+
+/// Parse either a quoted name (`"foo"`) or a bare identifier (`foo`, `backend.build`).
+/// Returns `(name, remaining_text)`.
+fn parse_name(text: &str, line: usize) -> Result<(String, &str), LexError> {
+    let text = text.trim_start();
+    if text.starts_with('"') {
+        let rest = &text[1..];
         let end = rest
             .find('"')
             .ok_or(LexError::UnterminatedString { line })?;
-        result.push(rest[..end].to_string());
-        remaining = rest[end + 1..].trim();
+        Ok((rest[..end].to_string(), rest[end + 1..].trim_start()))
+    } else {
+        let end = text
+            .find(|c: char| !is_ident_char(c))
+            .unwrap_or(text.len());
+        if end == 0 || !is_ident_start(text.as_bytes()[0] as char) {
+            return Err(LexError::MissingRecipeName { line });
+        }
+        Ok((text[..end].to_string(), text[end..].trim_start()))
+    }
+}
+
+/// Parse a space-separated list of names (quoted or bare).
+fn parse_names(text: &str, line: usize) -> Result<Vec<String>, LexError> {
+    let mut result = Vec::new();
+    let mut remaining = text.trim();
+    while !remaining.is_empty() {
+        let (name, rest) = parse_name(remaining, line)?;
+        result.push(name);
+        remaining = rest;
     }
     Ok(result)
 }
@@ -95,18 +119,10 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                 || trimmed.as_bytes()[6] == b'"')
         {
             let rest = trimmed["recipe".len()..].trim();
-            if !rest.starts_with('"') {
-                return Err(LexError::MissingRecipeName { line: line_num });
-            }
-            let rest = &rest[1..];
-            let end = rest
-                .find('"')
-                .ok_or(LexError::UnterminatedString { line: line_num })?;
-            let name = rest[..end].to_string();
-            let after_name = rest[end + 1..].trim();
+            let (name, after_name) = parse_name(rest, line_num)?;
 
             let deps = if let Some(after_colon) = after_name.strip_prefix(':') {
-                parse_quoted_strings(after_colon.trim(), line_num)?
+                parse_names(after_colon.trim(), line_num)?
             } else {
                 vec![]
             };
@@ -119,14 +135,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                 || trimmed.as_bytes()[6] == b'"')
         {
             let rest = trimmed["config".len()..].trim();
-            if !rest.starts_with('"') {
-                return Err(LexError::MissingRecipeName { line: line_num });
-            }
-            let rest = &rest[1..];
-            let end = rest
-                .find('"')
-                .ok_or(LexError::UnterminatedString { line: line_num })?;
-            let name = rest[..end].to_string();
+            let (name, _) = parse_name(rest, line_num)?;
             Token::ConfigHeader { name }
         } else if trimmed.starts_with("use")
             && trimmed.len() > 3
@@ -135,14 +144,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                 || trimmed.as_bytes()[3] == b'"')
         {
             let rest = trimmed["use".len()..].trim();
-            if !rest.starts_with('"') {
-                return Err(LexError::MissingRecipeName { line: line_num });
-            }
-            let rest = &rest[1..];
-            let end = rest
-                .find('"')
-                .ok_or(LexError::UnterminatedString { line: line_num })?;
-            let name = rest[..end].to_string();
+            let (name, _) = parse_name(rest, line_num)?;
             Token::UseDecl { name }
         } else if trimmed.starts_with("import")
             && trimmed.len() > 6
@@ -162,6 +164,30 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                 None => {
                     return Err(LexError::MissingRecipeName { line: line_num });
                 }
+            }
+        } else if !line.starts_with(|c: char| c.is_whitespace()) {
+            // Check for implicit recipe: bare identifier followed by `:` at column 0
+            if let Some(colon_pos) = trimmed.find(':') {
+                let potential_name = &trimmed[..colon_pos];
+                if !potential_name.is_empty()
+                    && is_ident_start(potential_name.as_bytes()[0] as char)
+                    && potential_name.chars().all(is_ident_char)
+                {
+                    let after_colon = trimmed[colon_pos + 1..].trim();
+                    let deps = parse_names(after_colon, line_num)?;
+                    Token::RecipeHeader {
+                        name: potential_name.to_string(),
+                        deps,
+                    }
+                } else if let Some(var) = try_parse_var_decl(trimmed) {
+                    Token::VarDecl { name: var.0, value: var.1 }
+                } else {
+                    Token::Content(trimmed.to_string())
+                }
+            } else if let Some(var) = try_parse_var_decl(trimmed) {
+                Token::VarDecl { name: var.0, value: var.1 }
+            } else {
+                Token::Content(trimmed.to_string())
             }
         } else if !trimmed.starts_with('@') {
             if let Some(var) = try_parse_var_decl(trimmed) {
@@ -337,11 +363,58 @@ end
     }
 
     #[test]
+    fn test_recipe_bare_name() {
+        let tokens = tokenize("recipe build").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(
+            tokens[0].value,
+            Token::RecipeHeader { name: "build".to_string(), deps: vec![] }
+        );
+    }
+
+    #[test]
+    fn test_recipe_bare_name_with_deps() {
+        let tokens = tokenize("recipe build: lib setup").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(
+            tokens[0].value,
+            Token::RecipeHeader {
+                name: "build".to_string(),
+                deps: vec!["lib".to_string(), "setup".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn test_recipe_bare_dotted_dep() {
+        let tokens = tokenize("recipe all: backend.build frontend.build").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(
+            tokens[0].value,
+            Token::RecipeHeader {
+                name: "all".to_string(),
+                deps: vec!["backend.build".to_string(), "frontend.build".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn test_recipe_mixed_quoted_bare_deps() {
+        let tokens = tokenize(r#"recipe build: lib "my setup""#).unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(
+            tokens[0].value,
+            Token::RecipeHeader {
+                name: "build".to_string(),
+                deps: vec!["lib".to_string(), "my setup".to_string()],
+            }
+        );
+    }
+
+    #[test]
     fn test_missing_recipe_name() {
-        let result = tokenize("recipe build");
+        let result = tokenize("recipe :");
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, LexError::MissingRecipeName { line: 1 }));
     }
 
     #[test]
@@ -456,9 +529,44 @@ end
     }
 
     #[test]
-    fn test_use_missing_name() {
-        let result = tokenize("use foo");
-        assert!(result.is_err());
+    fn test_use_bare_name() {
+        let tokens = tokenize("use cpp").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].value, Token::UseDecl { name: "cpp".to_string() });
+    }
+
+    #[test]
+    fn test_config_bare_name() {
+        let tokens = tokenize("config debug").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(
+            tokens[0].value,
+            Token::ConfigHeader { name: "debug".to_string() }
+        );
+    }
+
+    #[test]
+    fn test_implicit_recipe() {
+        let tokens = tokenize("build:\n  echo hi\nend").unwrap();
+        assert_eq!(tokens[0].value, Token::RecipeHeader {
+            name: "build".to_string(),
+            deps: vec![],
+        });
+    }
+
+    #[test]
+    fn test_implicit_recipe_with_deps() {
+        let tokens = tokenize("build: lib setup\n  echo hi\nend").unwrap();
+        assert_eq!(tokens[0].value, Token::RecipeHeader {
+            name: "build".to_string(),
+            deps: vec!["lib".to_string(), "setup".to_string()],
+        });
+    }
+
+    #[test]
+    fn test_implicit_recipe_indented_not_detected() {
+        let tokens = tokenize("  build: lib").unwrap();
+        assert_eq!(tokens[0].value, Token::Content("build: lib".to_string()));
     }
 
     #[test]

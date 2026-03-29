@@ -129,7 +129,7 @@ for (k, v) in &cookfile.vars {
     env.insert(k.clone(), v.clone());
 }
 ```
-Variables declared at the top of the Cookfile (e.g., `CC = "clang"`) are inserted, overriding system env.
+Variables declared at the top of the Cookfile (e.g., `CC "clang"`) are inserted, overriding system env.
 
 **Layer 3 — Selected config block** (line 146)
 ```rust

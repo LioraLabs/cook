@@ -19,11 +19,11 @@ CFLAGS "-Wall -Wextra"
 **Config blocks** — named presets that override bare vars:
 
 ```
-config "debug"
+config debug
     CFLAGS "-g -O0 -Wall -Wextra"
 end
 
-config "release"
+config release
     CFLAGS "-O2 -DNDEBUG -Wall -Wextra"
     LDFLAGS "-s"
 end
@@ -115,7 +115,7 @@ pub struct Cookfile {
 
 New tokens:
 - `Token::Var { name: String, value: String }` — bare var declaration
-- `Token::ConfigHeader { name: String }` — opens a config block
+- `Token::ConfigHeader { name: String }` — opens a config block (e.g. `config debug`)
 - Config blocks reuse `Token::RecipeEnd` for closing `end`
 
 Ordering: vars and config blocks before recipes.
@@ -162,31 +162,31 @@ CC "gcc"
 AR "ar"
 CFLAGS "-Wall -Wextra"
 
-config "debug"
+config debug
     CFLAGS "-g -O0 -Wall -Wextra"
 end
 
-config "release"
+config release
     CFLAGS "-O2 -DNDEBUG -Wall -Wextra"
     LDFLAGS "-s"
 end
 
-recipe "setup"
+recipe setup
     mkdir -p build/obj bin
 end
 
-recipe "lib": "setup"
+recipe lib: setup
     ingredients "lib/*.c" "include/*.h"
     cook "build/obj/{stem}.o" using "{CC} {CFLAGS} -Iinclude -c {in} -o {out}"
     cook "build/libmath.a" using "{AR} rcs {out} {all}"
 end
 
-recipe "build": "lib"
+recipe build: lib
     ingredients "src/*.c"
     cook "bin/app" using "{CC} {CFLAGS} {all} -Iinclude -Lbuild -lmath -lm -o {out}"
 end
 
-recipe "clean"
+recipe clean
     rm -rf build bin
 end
 ```

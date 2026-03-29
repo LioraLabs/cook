@@ -1,18 +1,18 @@
 import backend ./services/backend
 import frontend ./apps/frontend
 
-recipe "build": "backend.build" "frontend.build"
+recipe build: backend.build frontend.build
     echo "Monorepo build complete"
 end
 
-recipe "dev": "backend.dev" "frontend.dev"
+recipe dev: backend.dev frontend.dev
     echo "Dev servers running"
 end
 
-recipe "test": "backend.test" "frontend.test"
+recipe test: backend.test frontend.test
     echo "All tests passed"
 end
 
-recipe "clean": "backend.clean" "frontend.clean"
+recipe clean: backend.clean frontend.clean
     echo "Cleaned"
 end

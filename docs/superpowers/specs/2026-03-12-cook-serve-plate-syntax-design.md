@@ -14,7 +14,7 @@ The current syntax requires users to write repetitive Lua loops for common file 
 
 | Keyword | Purpose |
 |---|---|
-| `recipe "name": "dep1" "dep2"` | Recipe declaration + dependencies |
+| `recipe name: dep1 dep2` | Recipe declaration + dependencies |
 | `ingredients "glob1" "glob2"` | Input file globs (watched for changes) |
 | `cook "output-pattern" using "cmd"` | File transform (1-to-1 or many-to-one) |
 | `cook "output-path"` | Output declaration only (no transform) |
@@ -25,7 +25,7 @@ Shell commands and Lua blocks (`>`, `>{…}`) remain valid as recipe steps and e
 ### Removed
 
 - `serves` keyword (replaced by `cook`)
-- `requires` keyword (replaced by `: "dep"` on recipe header)
+- `requires` keyword (replaced by `: dep` on recipe header)
 - `= {…}` assignment syntax for metadata
 - `--plate` CLI flag (renamed to `--emit-lua`)
 
@@ -101,7 +101,7 @@ Currently the lexer recognizes `>{` only at the start of a trimmed line. With `c
 Shell and Lua steps are **not deferred** — they run at their textual position. This means:
 
 ```cookfile
-recipe "lib": "setup"
+recipe lib: setup
     ingredients "lib/*.c"
     cook "build/obj/{stem}.o" using "gcc -c {in} -o {out}"
     > print("compiled " .. #recipe.ingredients[1] .. " files")
@@ -116,11 +116,11 @@ The `print` runs between the two `cook` steps.
 ### Task runner (no metadata)
 
 ```cookfile
-recipe "setup"
+recipe setup
     mkdir -p build/obj bin
 end
 
-recipe "clean"
+recipe clean
     rm -rf build bin
 end
 ```
@@ -128,7 +128,7 @@ end
 ### 1-to-1 transform + many-to-one aggregation
 
 ```cookfile
-recipe "lib": "setup"
+recipe lib: setup
     ingredients "lib/*.c" "include/*.h"
     cook "build/obj/{stem}.o" using "gcc -c {in} -Iinclude -O2 -o {out}"
     cook "build/libmath.a" using "ar rcs {out} {all}"
@@ -138,7 +138,7 @@ end
 ### 1-to-1 transform + plate for post-processing
 
 ```cookfile
-recipe "test": "lib"
+recipe test: lib
     ingredients "tests/test_*.c"
     cook "build/{stem}" using "cc {in} -Iinclude -Lbuild -lmath -lm -o {out}"
     plate "./{out}"
@@ -148,7 +148,7 @@ end
 ### Simple build with output declaration
 
 ```cookfile
-recipe "build": "lib"
+recipe build: lib
     ingredients "src/*.c"
     cook "bin/app"
     gcc src/main.c -Iinclude -Lbuild -lmath -lm -O2 -o bin/app
@@ -158,7 +158,7 @@ end
 ### Lua block in using
 
 ```cookfile
-recipe "lib": "setup"
+recipe lib: setup
     ingredients "lib/*.c" "include/*.h"
     cook "build/obj/{stem}.o" using >{
         local cc = cook.env.CC
@@ -171,7 +171,7 @@ end
 ### Asset pipeline (chained cook steps)
 
 ```cookfile
-recipe "assets": "setup"
+recipe assets: setup
     ingredients "raw/*.png"
     cook "tmp/{stem}.resized.png" using "magick {in} -resize 512x512 {out}"
     cook "tmp/{stem}.optimized.png" using "optipng {in} -out {out}"
@@ -184,7 +184,7 @@ Note: In chained `cook` steps, `{stem}` reflects the actual input filename. So t
 ### .env integration
 
 ```cookfile
-recipe "lib": "setup"
+recipe lib: setup
     ingredients "lib/*.c" "include/*.h"
     cook "build/obj/{stem}.o" using >{
         local cc = cook.env.CC

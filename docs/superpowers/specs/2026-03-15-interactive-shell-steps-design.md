@@ -13,7 +13,7 @@ Cook currently captures stdout/stderr from all shell commands to support paralle
 ### Syntax
 
 ```
-recipe "run": "build"
+recipe run: build
     @./bin/app
 end
 ```

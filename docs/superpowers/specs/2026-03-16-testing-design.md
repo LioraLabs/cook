@@ -58,7 +58,7 @@ Cook core collects all reported results during recipe execution and writes aggre
 A sibling to `plate`. Iterates over previous `cook` step outputs, runs each as a test binary:
 
 ```
-recipe "cpp-tests": "build"
+recipe cpp-tests: build
     ingredients "tests/test_*.c"
     cook "build/{stem}" using "{CC} {in} -o {out}"
     test "./{out}"
@@ -245,11 +245,11 @@ What it does:
 ### The "test-all" Pattern
 
 ```
-use "cpp"
-use "rust"
-use "python"
+use cpp
+use rust
+use python
 
-recipe "test-all": "build"
+recipe test-all: build
     >{
         cpp.test("cpp-tests", { dir = "tests/cpp/", links = {"mathlib"} })
         rust.test("rust-tests", { package = "mylib" })

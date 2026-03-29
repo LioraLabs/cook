@@ -7,23 +7,23 @@ CC "gcc"
 AR "ar"
 CFLAGS "-Wall -Wextra"
 
-config "debug"
+config debug
     CFLAGS "-g -O0 -Wall -Wextra"
 end
 
-config "release"
+config release
     CFLAGS "-O2 -DNDEBUG -Wall -Wextra"
     LDFLAGS "-s"
 end
 
 # ── setup ─────────────────────────────────────────────────────
-recipe "setup"
+recipe setup
     mkdir -p build/obj bin
 end
 
 # ── lib ───────────────────────────────────────────────────────
 # 1-to-1 compile, then many-to-one archive
-recipe "lib": "setup"
+recipe lib: setup
     ingredients "lib/*.c" "include/*.h"
     cook "build/obj/{stem}.o" using "{CC} {CFLAGS} -Iinclude -c {in} -o {out}"
     cook "build/libmath.a" using "{AR} rcs {out} {all}"
@@ -31,29 +31,29 @@ end
 
 # ── build ─────────────────────────────────────────────────────
 # Link sources against the library
-recipe "build": "lib"
+recipe build: lib
     ingredients "src/*.c"
     cook "bin/app" using "{CC} {CFLAGS} {all} -Iinclude -Lbuild -lmath -lm -o {out}"
 end
 
 # ── test ──────────────────────────────────────────────────────
 # Compile each test, then run each binary with plate
-recipe "test": "lib"
+recipe test: lib
     ingredients "tests/test_*.c"
     cook "build/{stem}" using "{CC} {in} -Iinclude -Lbuild -lmath -lm {CFLAGS} -o {out}"
     test "./{out}"
 end
 
 # ── run ───────────────────────────────────────────────────────
-recipe "run": "build"
+recipe run: build
     @./bin/app
 end
 
 # ── clean ─────────────────────────────────────────────────────
-recipe "clean"
+recipe clean
     rm -rf build bin
 end
 
 # ── all ───────────────────────────────────────────────────────
-recipe "all": "test" "build"
+recipe all: test build
 end

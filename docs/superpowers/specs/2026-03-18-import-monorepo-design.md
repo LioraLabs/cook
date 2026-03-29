@@ -26,13 +26,11 @@ import <name> <relative-path>
 import backend ./services/backend
 import frontend ./apps/frontend
 
-recipe "all": "backend.build" "frontend.build"
+recipe all: backend.build frontend.build
 end
 ```
 
-Dot notation: `<import-name>.<recipe-name>`. Dependencies use the existing quoted-string syntax (`"backend.build"`). Only direct children visible — no reaching through (e.g., root cannot reference `backend.proto.generate`).
-
-> **Note:** There is a separate planned change to allow bare identifiers for recipe names and dependencies (unquoted syntax). When that lands, `backend.build` without quotes will also work. This spec does not depend on that change.
+Dot notation: `<import-name>.<recipe-name>`. Dependencies use bare identifiers — `backend.build` without quotes. Only direct children visible — no reaching through (e.g., root cannot reference `backend.proto.generate`).
 
 ### Transitive Dependencies
 
@@ -234,16 +232,16 @@ examples/monorepo/
 import backend ./services/backend
 import frontend ./apps/frontend
 
-recipe "build": "backend.build" "frontend.build"
+recipe build: backend.build frontend.build
 end
 
-recipe "dev": "backend.dev" "frontend.dev"
+recipe dev: backend.dev frontend.dev
 end
 
-recipe "test": "backend.test" "frontend.test"
+recipe test: backend.test frontend.test
 end
 
-recipe "clean": "backend.clean" "frontend.clean"
+recipe clean: backend.clean frontend.clean
 end
 ```
 
@@ -252,7 +250,7 @@ end
 ```
 import proto ../../libs/proto
 
-recipe "build": "proto.generate"
+recipe build: proto.generate
     cook "server" using "go build ./cmd/server"
 end
 ```
