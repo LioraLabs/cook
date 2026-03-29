@@ -1,0 +1,296 @@
+================
+Simple recipe
+================
+
+recipe setup
+    mkdir -p build
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (shell_command
+      (shell_content))))
+
+================
+Recipe with dependencies
+================
+
+recipe build: lib setup
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)
+        (identifier)))))
+
+================
+Recipe with dotted deps
+================
+
+recipe all: backend.build frontend.build
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)
+        (identifier)))))
+
+================
+Recipe with quoted name
+================
+
+recipe "my build": "dep one"
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (string)
+      (dependency_list
+        (string)))))
+
+================
+Implicit recipe
+================
+
+build:
+    echo hello
+end
+
+---
+
+(source_file
+  (recipe
+    (implicit_recipe_header
+      name: (identifier))
+    (shell_command
+      (shell_content))))
+
+================
+Implicit recipe with deps
+================
+
+build: lib setup
+    echo hello
+end
+
+---
+
+(source_file
+  (recipe
+    (implicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)
+        (identifier)))
+    (shell_command
+      (shell_content))))
+
+================
+Recipe with ingredients
+================
+
+recipe lib: setup
+    ingredients "lib/*.c" "include/*.h"
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (ingredients_step
+      (string)
+      (string))))
+
+================
+Recipe with cook step
+================
+
+recipe lib: setup
+    cook "build/obj/{stem}.o" using "{CC} -c {in} -o {out}"
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (cook_step
+      output: (string)
+      (using_clause
+        command: (string)))))
+
+================
+Recipe with plate step
+================
+
+recipe test: lib
+    ingredients "tests/*.c"
+    cook "build/{stem}" using "cc {in} -o {out}"
+    plate "./{out}"
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (ingredients_step
+      (string))
+    (cook_step
+      output: (string)
+      (using_clause
+        command: (string)))
+    (plate_step
+      command: (string))))
+
+================
+Recipe with test step
+================
+
+recipe run-tests: build
+    ingredients "build/bin/test_*"
+    test "./{out}" timeout 30
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (ingredients_step
+      (string))
+    (test_step
+      command: (string)
+      timeout: (number))))
+
+================
+Recipe with test should_fail
+================
+
+recipe check: build
+    test "./fail_test" should_fail
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (test_step
+      command: (string))))
+
+================
+Interactive command
+================
+
+recipe run: build
+    @./bin/app
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (interactive_command
+      (shell_content))))
+
+================
+Lua line
+================
+
+recipe build
+    > print("hello")
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (lua_line
+      (lua_code))))
+
+================
+Lua block
+================
+
+recipe lib
+    >{
+        local x = 1
+        print(x)
+    }
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (lua_block
+      (lua_code))))
+
+================
+Cook with inline lua block
+================
+
+recipe lib: setup
+    ingredients "lib/*.c"
+    cook "build/{stem}.o" using >{
+        cook.sh(cook.env.CC .. " -c " .. input .. " -o " .. output)
+    }
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (ingredients_step
+      (string))
+    (cook_step
+      output: (string)
+      (using_clause
+        lua: (inline_lua_block
+          (lua_code))))))

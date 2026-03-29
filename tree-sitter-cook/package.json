@@ -1,0 +1,23 @@
+{
+  "name": "tree-sitter-cook",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for the Cook build system DSL",
+  "license": "MIT",
+  "main": "bindings/node",
+  "tree-sitter": [
+    {
+      "scope": "source.cook",
+      "file-types": ["cook"],
+      "first-line-regex": "^#.*[Cc]ookfile",
+      "highlights": "queries/highlights.scm",
+      "injections": "queries/injections.scm"
+    }
+  ],
+  "dependencies": {
+    "node-addon-api": "^8.3.1",
+    "node-gyp-build": "^4.8.4"
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.25.10"
+  }
+}

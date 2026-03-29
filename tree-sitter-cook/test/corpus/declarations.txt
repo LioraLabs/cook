@@ -1,0 +1,128 @@
+================
+Variable declaration
+================
+
+CC "gcc"
+
+---
+
+(source_file
+  (variable_declaration
+    name: (variable_name)
+    value: (string)))
+
+================
+Use declaration (bare)
+================
+
+use cpp
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier)))
+
+================
+Use declaration (quoted)
+================
+
+use "cpp"
+
+---
+
+(source_file
+  (use_declaration
+    module: (string)))
+
+================
+Import declaration
+================
+
+import backend ./services/backend
+
+---
+
+(source_file
+  (import_declaration
+    name: (import_name)
+    path: (path)))
+
+================
+Config block
+================
+
+config debug
+    CFLAGS "-g -O0"
+end
+
+---
+
+(source_file
+  (config_block
+    name: (identifier)
+    (variable_declaration
+      name: (variable_name)
+      value: (string))))
+
+================
+Config block (quoted)
+================
+
+config "release"
+    CFLAGS "-O2"
+    LDFLAGS "-s"
+end
+
+---
+
+(source_file
+  (config_block
+    name: (string)
+    (variable_declaration
+      name: (variable_name)
+      value: (string))
+    (variable_declaration
+      name: (variable_name)
+      value: (string))))
+
+================
+Comment
+================
+
+# this is a comment
+
+---
+
+(source_file
+  (comment))
+
+================
+Multiple top-level declarations
+================
+
+CC "gcc"
+AR "ar"
+
+use cpp
+
+config debug
+    CFLAGS "-g"
+end
+
+---
+
+(source_file
+  (variable_declaration
+    name: (variable_name)
+    value: (string))
+  (variable_declaration
+    name: (variable_name)
+    value: (string))
+  (use_declaration
+    module: (identifier))
+  (config_block
+    name: (identifier)
+    (variable_declaration
+      name: (variable_name)
+      value: (string))))
