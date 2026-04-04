@@ -5,7 +5,7 @@ use crate::error::CookError;
 const HTML_TEMPLATE: &str = include_str!("dag_viewer.html");
 
 pub fn serve_dag(dag_json: &str) -> Result<(), CookError> {
-    let html = HTML_TEMPLATE.replace("/*DAG_DATA_PLACEHOLDER*/", dag_json);
+    let html = HTML_TEMPLATE.replace("/*DAG_DATA_PLACEHOLDER*/{}", dag_json);
 
     let server = tiny_http::Server::http("127.0.0.1:0")
         .map_err(|e| CookError::Other(format!("failed to start server: {e}")))?;
