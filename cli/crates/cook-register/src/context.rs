@@ -16,12 +16,22 @@ pub fn setup_recipe_context(
     let recipe_table = lua.create_table()?;
     recipe_table.set("name", recipe.name.as_str())?;
 
-    // Build ingredients table by resolving glob patterns
+    // Resolve exclude patterns into a set for fast lookup
+    let mut excluded: BTreeSet<String> = BTreeSet::new();
+    for pattern in &recipe.metadata.excludes {
+        excluded.extend(resolve_glob(working_dir, pattern));
+    }
+
+    // Build ingredients table by resolving glob patterns, minus excludes
     let ingredients_table = lua.create_table()?;
     for (i, pattern) in recipe.metadata.ingredients.iter().enumerate() {
         let files = resolve_glob(working_dir, pattern);
+        let filtered: BTreeSet<String> = files
+            .into_iter()
+            .filter(|f| !excluded.contains(f))
+            .collect();
         let files_table = lua.create_table()?;
-        for (idx, file) in files.iter().enumerate() {
+        for (idx, file) in filtered.iter().enumerate() {
             files_table.set(idx + 1, file.as_str())?;
         }
         ingredients_table.set(i + 1, files_table)?;

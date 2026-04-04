@@ -18,6 +18,7 @@ pub struct RegisteredRecipe {
 #[derive(Debug)]
 pub struct RegisteredMetadata {
     pub ingredients: Vec<String>,
+    pub excludes: Vec<String>,
     pub requires: Vec<String>,
 }
 
@@ -48,6 +49,15 @@ pub fn register_cook_api_capture(
                 }
             }
 
+            let mut excludes = Vec::new();
+            if let Ok(exc_table) = meta.get::<LuaTable>("excludes") {
+                for pair in exc_table.sequence_values::<String>() {
+                    if let Ok(s) = pair {
+                        excludes.push(s);
+                    }
+                }
+            }
+
             let mut requires = Vec::new();
             if let Ok(req_table) = meta.get::<LuaTable>("requires") {
                 for pair in req_table.sequence_values::<String>() {
@@ -62,6 +72,7 @@ pub fn register_cook_api_capture(
                 function: key,
                 metadata: RegisteredMetadata {
                     ingredients,
+                    excludes,
                     requires,
                 },
             });
