@@ -596,6 +596,15 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
 }
 
 // ---------------------------------------------------------------------------
+// cmd_dag
+// ---------------------------------------------------------------------------
+
+pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
+    eprintln!("cook: --dag is not yet implemented");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Workspace helpers (kept — used by cmd_run, cmd_test, cmd_menu, cmd_serve)
 // ---------------------------------------------------------------------------
 

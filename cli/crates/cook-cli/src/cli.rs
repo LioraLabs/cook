@@ -22,6 +22,10 @@ pub struct Cli {
     #[arg(long = "emit-lua", global = true)]
     pub emit_lua: bool,
 
+    /// Visualize the build DAG in a browser
+    #[arg(long = "dag", global = true)]
+    pub dag: bool,
+
     /// Suppress Cook output
     #[arg(short, long, global = true)]
     pub quiet: bool,
