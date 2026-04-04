@@ -133,6 +133,7 @@ pub(crate) fn parse_recipe(
                         name,
                         deps,
                         ingredients,
+                        excludes: vec![],
                         steps,
                         line: recipe_line,
                     },

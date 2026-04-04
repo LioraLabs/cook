@@ -24,6 +24,7 @@ fn make_recipe(
         name: name.to_string(),
         deps: deps.into_iter().map(String::from).collect(),
         ingredients: ingredients.into_iter().map(String::from).collect(),
+        excludes: vec![],
         steps,
         line: 1,
     }

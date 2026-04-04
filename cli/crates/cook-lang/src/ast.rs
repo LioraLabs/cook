@@ -25,6 +25,7 @@ pub struct Recipe {
     pub name: String,
     pub deps: Vec<String>,
     pub ingredients: Vec<String>,
+    pub excludes: Vec<String>,
     pub steps: Vec<Step>,
     pub line: usize,
 }
@@ -73,6 +74,7 @@ mod tests {
             name: "build".to_string(),
             deps: vec!["setup".to_string()],
             ingredients: vec!["src/*.c".to_string()],
+            excludes: vec![],
             steps: vec![
                 Step::Cook {
                     step: CookStep {
@@ -97,6 +99,7 @@ mod tests {
             name: "clean".to_string(),
             deps: vec![],
             ingredients: vec![],
+            excludes: vec![],
             steps: vec![Step::Shell {
                 command: "rm -rf build".to_string(),
                 line: 2,
