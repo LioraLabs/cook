@@ -1,8 +1,0 @@
-{
-  "name": "monorepo-frontend",
-  "version": "0.1.0",
-  "scripts": {
-    "build": "echo 'tsc build'",
-    "dev": "echo 'dev server'"
-  }
-}

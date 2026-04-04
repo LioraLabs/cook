@@ -1,4 +1,0 @@
-# Build outputs produced by Cook recipes
-libs/proto/gen/
-services/backend/server.out
-apps/frontend/dist.out

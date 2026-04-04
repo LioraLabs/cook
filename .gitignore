@@ -6,6 +6,7 @@ node_modules/
 dist/
 
 # Cook artifacts
+**/*.cook/
 .cook/
 build/
 bin/
@@ -16,3 +17,10 @@ bin/
 
 # OS
 .DS_Store
+
+# Superpowers
+.superpowers/
+docs/superpowers/
+
+# Canopy
+.canopy/
