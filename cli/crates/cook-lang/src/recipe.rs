@@ -121,6 +121,7 @@ pub(crate) fn parse_recipe(
 ) -> Result<(Recipe, usize), ParseError> {
     let mut pos = start;
     let mut ingredients = Vec::new();
+    let mut excludes: Vec<String> = Vec::new();
     let mut steps = Vec::new();
 
     while pos < tokens.len() {
@@ -133,7 +134,7 @@ pub(crate) fn parse_recipe(
                         name,
                         deps,
                         ingredients,
-                        excludes: vec![],
+                        excludes,
                         steps,
                         line: recipe_line,
                     },
@@ -145,13 +146,15 @@ pub(crate) fn parse_recipe(
             }
             Token::Content(text) => {
                 if let Some(rest) = strip_keyword(text, "ingredients") {
-                    if !ingredients.is_empty() {
+                    if !ingredients.is_empty() || !excludes.is_empty() {
                         return Err(ParseError::Parse {
                             line: tok.line,
                             message: "duplicate 'ingredients' line".to_string(),
                         });
                     }
-                    ingredients = parse_quoted_strings_parser(rest, tok.line)?;
+                    let (inc, exc) = parse_ingredients_line(rest, tok.line)?;
+                    ingredients = inc;
+                    excludes = exc;
                 } else if let Some(rest) = strip_keyword(text, "cook") {
                     let (cook_step, new_pos) =
                         parse_cook_line(rest, tok.line, tokens, pos, source_lines)?;

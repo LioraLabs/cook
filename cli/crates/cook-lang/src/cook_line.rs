@@ -37,6 +37,39 @@ pub(crate) fn parse_quoted_strings_parser(text: &str, line: usize) -> Result<Vec
     Ok(result)
 }
 
+/// Parse an ingredients line into (includes, excludes).
+/// Includes are bare `"pattern"`, excludes are `!"pattern"`.
+pub(crate) fn parse_ingredients_line(text: &str, line: usize) -> Result<(Vec<String>, Vec<String>), ParseError> {
+    let mut includes = Vec::new();
+    let mut excludes = Vec::new();
+    let mut remaining = text.trim();
+    while !remaining.is_empty() {
+        let is_exclude = remaining.starts_with('!');
+        if is_exclude {
+            remaining = &remaining[1..];
+        }
+        if !remaining.starts_with('"') {
+            return Err(ParseError::Parse {
+                line,
+                message: format!("expected '\"', found: {}", remaining),
+            });
+        }
+        let rest = &remaining[1..];
+        let end = rest.find('"').ok_or(ParseError::Parse {
+            line,
+            message: "unterminated string".to_string(),
+        })?;
+        let value = rest[..end].to_string();
+        if is_exclude {
+            excludes.push(value);
+        } else {
+            includes.push(value);
+        }
+        remaining = rest[end + 1..].trim();
+    }
+    Ok((includes, excludes))
+}
+
 pub(crate) fn parse_single_quoted_string(text: &str, line: usize) -> Result<String, ParseError> {
     let text = text.trim();
     if !text.starts_with('"') {

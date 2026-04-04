@@ -705,3 +705,44 @@ import backend ./services/b
     let result = crate::parse(source);
     assert!(result.is_err());
 }
+
+// ── Ingredient exclusion ──────────────────────────────────────────
+
+#[test]
+fn test_ingredients_with_excludes() {
+    let source = r#"recipe build
+    ingredients "src/*.c" !"src/lua.c" !"src/luac.c"
+    echo compiling
+end
+"#;
+    let result = parse(source).unwrap();
+    let recipe = &result.recipes[0];
+    assert_eq!(recipe.ingredients, vec!["src/*.c"]);
+    assert_eq!(recipe.excludes, vec!["src/lua.c", "src/luac.c"]);
+}
+
+#[test]
+fn test_ingredients_excludes_only() {
+    let source = r#"recipe build
+    ingredients !"src/test.c"
+    echo compiling
+end
+"#;
+    let result = parse(source).unwrap();
+    let recipe = &result.recipes[0];
+    assert!(recipe.ingredients.is_empty());
+    assert_eq!(recipe.excludes, vec!["src/test.c"]);
+}
+
+#[test]
+fn test_ingredients_no_excludes() {
+    let source = r#"recipe build
+    ingredients "src/*.c" "include/*.h"
+    echo compiling
+end
+"#;
+    let result = parse(source).unwrap();
+    let recipe = &result.recipes[0];
+    assert_eq!(recipe.ingredients, vec!["src/*.c", "include/*.h"]);
+    assert!(recipe.excludes.is_empty());
+}
