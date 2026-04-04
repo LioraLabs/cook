@@ -110,6 +110,14 @@ fn generate_metadata(recipe: &Recipe) -> String {
             .collect();
         fields.push(format!("ingredients = {{{}}}", items.join(", ")));
     }
+    if !recipe.excludes.is_empty() {
+        let items: Vec<String> = recipe
+            .excludes
+            .iter()
+            .map(|s| format!("\"{}\"", escape_lua_string(s)))
+            .collect();
+        fields.push(format!("excludes = {{{}}}", items.join(", ")));
+    }
     if !recipe.deps.is_empty() {
         let items: Vec<String> = recipe
             .deps

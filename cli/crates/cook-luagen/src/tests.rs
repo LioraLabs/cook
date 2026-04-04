@@ -695,3 +695,33 @@ fn test_test_step_wrapped_in_step_group() {
         "test step should be wrapped in step_group, got:\n{output}"
     );
 }
+
+#[test]
+fn test_recipe_with_excludes() {
+    let cookfile = make_cookfile(vec![Recipe {
+        name: "lib".to_string(),
+        deps: vec![],
+        ingredients: vec!["src/*.c".to_string()],
+        excludes: vec!["src/lua.c".to_string(), "src/luac.c".to_string()],
+        steps: vec![],
+        line: 1,
+    }]);
+    let output = generate(&cookfile);
+    assert!(
+        output.contains(r#"excludes = {"src/lua.c", "src/luac.c"}"#),
+        "expected excludes in metadata, got:\n{output}"
+    );
+    assert!(output.contains(r#"ingredients = {"src/*.c"}"#));
+}
+
+#[test]
+fn test_recipe_without_excludes() {
+    let cookfile = make_cookfile(vec![make_recipe(
+        "build",
+        vec![],
+        vec!["src/*.c"],
+        vec![],
+    )]);
+    let output = generate(&cookfile);
+    assert!(!output.contains("excludes"), "should not emit excludes when empty");
+}
