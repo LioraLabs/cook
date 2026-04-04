@@ -1,0 +1,34 @@
+CC "gcc"
+AR "ar"
+CFLAGS "-O2 -Wall -Wextra -DLUA_USE_LINUX"
+
+recipe setup
+    mkdir -p build/obj build/bin
+end
+
+recipe lib: setup
+    ingredients "lua-5.4.7/src/*.c" !"lua-5.4.7/src/lua.c" !"lua-5.4.7/src/luac.c"
+    cook "build/obj/{stem}.o" using "{CC} {CFLAGS} -c {in} -o {out}"
+    cook "build/liblua.a" using "{AR} rcs {out} {all}"
+end
+
+recipe lua: lib
+    ingredients "lua-5.4.7/src/lua.c"
+    cook "build/bin/lua" using "{CC} {CFLAGS} {in} -Lbuild -llua -lm -ldl -lreadline -o {out}"
+end
+
+recipe luac: lib
+    ingredients "lua-5.4.7/src/luac.c"
+    cook "build/bin/luac" using "{CC} {CFLAGS} {in} -Lbuild -llua -lm -ldl -o {out}"
+end
+
+recipe build: lua luac
+end
+
+recipe test: lua
+    test "build/bin/lua -e 'print(\"hello from lua built by cook\")'"
+end
+
+recipe clean
+    rm -rf build
+end
