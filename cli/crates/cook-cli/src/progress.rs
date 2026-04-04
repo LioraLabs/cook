@@ -113,7 +113,9 @@ impl ProgressRenderer for PlainRenderer {
                 self.write(&format!("[{recipe}] {error}\n"));
             }
 
-            ProgressEvent::NodeCacheHit { .. } => {}
+            ProgressEvent::NodeCacheHit { recipe, node_name } => {
+                self.write(&format!("[{recipe}] cached: {node_name}\n"));
+            }
             ProgressEvent::NodeSkipped { .. } => {}
             ProgressEvent::InteractiveStart { .. } => {}
             ProgressEvent::InteractiveEnd { .. } => {}
@@ -628,13 +630,13 @@ mod tests {
     }
 
     #[test]
-    fn test_plain_renderer_node_cache_hit_silent() {
+    fn test_plain_renderer_node_cache_hit() {
         let (buf, mut r) = make_renderer();
         r.handle(ProgressEvent::NodeCacheHit {
             recipe: "lib".into(),
             node_name: "compile".into(),
         });
-        assert_eq!(read_buf(&buf), "");
+        assert_eq!(read_buf(&buf), "[lib] cached: compile\n");
     }
 
     #[test]

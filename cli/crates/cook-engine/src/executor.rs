@@ -233,6 +233,45 @@ pub fn execute_dag(
         }
     }
 
+    // ----- helper: check cache for a work node -----
+    // Returns true if the node can be skipped (cache hit).
+    fn check_node_cache(
+        work_node: &WorkNode,
+        cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+    ) -> bool {
+        let meta = match &work_node.cache_meta {
+            Some(m) => m,
+            None => return false,
+        };
+        let output = match &meta.output_path {
+            Some(o) => o,
+            None => return false,
+        };
+        let cm = match cache_managers.get(&work_node.recipe_name) {
+            Some(cm) => cm,
+            None => return false,
+        };
+        let cache = cm.get_or_load(&meta.recipe_name);
+        let entry = cache.steps.get(&meta.cache_key);
+        let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
+        let (result, updated) = cook_cache::needs_rebuild_cook(
+            entry,
+            &input_refs,
+            output,
+            meta.command_hash,
+            &work_node.working_dir,
+        );
+        if matches!(result, cook_cache::RebuildResult::Skip) {
+            // Update mtime-only changes in cache
+            if let Some(updated_entry) = updated {
+                cm.update_step(&meta.recipe_name, &meta.cache_key, updated_entry);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     // ----- helper: process a newly-ready node -----
     // Returns how many work items were submitted to the pool.
     fn process_ready(
@@ -244,6 +283,7 @@ pub fn execute_dag(
         interactive_queue: &mut Vec<usize>,
         event_tx: &Option<mpsc::Sender<EngineEvent>>,
         trackers: &mut BTreeMap<String, RecipeTracker>,
+        cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     ) -> usize {
         if cancelled[id] {
             *finished += 1;
@@ -279,6 +319,7 @@ pub fn execute_dag(
                         interactive_queue,
                         event_tx,
                         trackers,
+                        cache_managers,
                     );
                 }
                 submitted
@@ -289,6 +330,37 @@ pub fn execute_dag(
                 0
             }
             Some(payload) => {
+                // Check cache before executing
+                if check_node_cache(work_node, cache_managers) {
+                    ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                    emit(
+                        event_tx,
+                        EngineEvent::NodeCacheHit {
+                            recipe: work_node.recipe_name.clone(),
+                            node_name: payload.display_name(),
+                        },
+                    );
+                    finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
+
+                    *finished += 1;
+                    let newly_ready = dag.complete(id);
+                    let mut submitted = 0;
+                    for nid in newly_ready {
+                        submitted += process_ready(
+                            dag,
+                            nid,
+                            pool,
+                            cancelled,
+                            finished,
+                            interactive_queue,
+                            event_tx,
+                            trackers,
+                            cache_managers,
+                        );
+                    }
+                    return submitted;
+                }
+
                 ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                 emit(
                     event_tx,
@@ -329,6 +401,7 @@ pub fn execute_dag(
             &mut interactive_queue,
             &event_tx,
             &mut recipe_trackers,
+            &cache_managers,
         );
     }
 
@@ -405,6 +478,7 @@ pub fn execute_dag(
                             &mut interactive_queue,
                             &event_tx,
                             &mut recipe_trackers,
+                            &cache_managers,
                         );
                     }
                 } else {
@@ -493,6 +567,7 @@ pub fn execute_dag(
                     &mut interactive_queue,
                     &event_tx,
                     &mut recipe_trackers,
+                    &cache_managers,
                 );
             }
         } else {
