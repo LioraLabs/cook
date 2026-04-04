@@ -4,30 +4,31 @@
 
 Refactor the lua-build example from imperative shell commands to use the existing `cpp.lua` cook_module, showcasing header dependency tracking via `.d` files, automatic compiler detection, transitive linking, platform-conditional defines, and compile_commands.json generation.
 
-## New Language Feature: Named Ingredients
+## Ingredients as Lua Variable
 
-A new form of the `ingredients` statement that binds resolved glob results to a Lua variable instead of feeding the `{in}/{out}/{stem}/{all}` template chain.
+The existing `ingredients` line already resolves globs and feeds the `{in}/{out}/{stem}/{all}` template chain. This feature makes the same resolved file list *also* available as a `local ingredients` Lua variable in the recipe body — no new syntax required.
 
-### Syntax
+### Example
 
 ```
-# Unnamed (existing behavior) — feeds template chain
-ingredients "*.c" !"foo.c"
-
-# Named (new) — resolves to Lua table of file paths
-ingredients sources "*.c" !"foo.c"
+recipe liblua
+    ingredients "lua-5.4.7/src/*.c" !"lua-5.4.7/src/lua.c" !"lua-5.4.7/src/luac.c"
+    cpp.static_library("liblua", {
+        sources = ingredients,   -- <-- resolved file list as a Lua table
+        ...
+    })
+end
 ```
 
 ### Implementation
 
-- **Parser:** Detect `ingredients <identifier> <patterns>` — when a bare identifier follows `ingredients` before the first quoted pattern, parse it as a named binding.
-- **AST:** New node `NamedIngredients { name: String, includes: Vec<Pattern>, excludes: Vec<Pattern> }` stored on the recipe.
-- **Codegen:** Emit `local <name> = cook.resolve_ingredients({...}, {...})` where includes and excludes are string literals.
-- **Runtime:** Register `cook.resolve_ingredients(includes, excludes)` on the `cook` Lua table. Performs the same glob+exclude resolution the engine already does for standalone ingredients, returns a plain Lua table of resolved file paths.
+- **Codegen:** When a recipe has `ingredients`, emit `local ingredients = cook.resolve_ingredients({...}, {...})` at the top of the recipe function body.
+- **Runtime:** Register `cook.resolve_ingredients(includes, excludes)` on the `cook` Lua table. Performs the same glob+exclude resolution the engine already does, returns a flat Lua table of relative file paths.
+- **No parser or AST changes needed.**
 
 ### Scope
 
-The bound variable is `local` to the recipe body. It holds a Lua table of strings (file paths). It does not participate in the `cook ... using` template system.
+The `ingredients` variable is `local` to the recipe body. It holds a flat Lua table of strings (file paths). The existing `{in}/{out}/{stem}/{all}` template system continues to work unchanged alongside this.
 
 ## Refactored Cookfile
 
@@ -35,9 +36,9 @@ The bound variable is `local` to the recipe body. It holds a Lua table of string
 use cpp
 
 recipe liblua
-    ingredients sources "lua-5.4.7/src/*.c" !"lua-5.4.7/src/lua.c" !"lua-5.4.7/src/luac.c"
+    ingredients "lua-5.4.7/src/*.c" !"lua-5.4.7/src/lua.c" !"lua-5.4.7/src/luac.c"
     cpp.static_library("liblua", {
-        sources = sources,
+        sources = ingredients,
         defines = cook.platform.os == "linux" and { "LUA_USE_LINUX" } or {},
         system_libs = { "m", "dl" },
     })
@@ -84,16 +85,14 @@ end
 - **Platform-conditional defines** — `LUA_USE_LINUX` only on Linux
 - **Transitive linking** — `lua` and `luac` get the library path automatically from `links = { "liblua" }`
 - **compile_commands.json** — IDE integration via `cook compile-commands`
-- **Named ingredients** — Cook DSL does glob+exclude, module consumes the result as a Lua table
+- **Ingredients as Lua variable** — Cook DSL does glob+exclude, module consumes the result as a Lua table
 
 ## Changes Required
 
-1. **Parser** — detect `ingredients <identifier> <patterns>` as a named ingredient binding
-2. **AST** — new node for named ingredients (name + includes + excludes)
-3. **Codegen** — emit `local <name> = cook.resolve_ingredients({...}, {...})`
-4. **Runtime** — register `cook.resolve_ingredients()` Lua function
-5. **cpp.lua** — copy into `examples/lua-build/cook_modules/`
-6. **Cookfile** — rewrite as shown above
+1. **Codegen** — emit `local ingredients = cook.resolve_ingredients({...}, {...})` in recipe body
+2. **Runtime** — register `cook.resolve_ingredients()` Lua function
+3. **cpp.lua** — copy into `examples/lua-build/cook_modules/`
+4. **Cookfile** — rewrite as shown above
 
 ## Decisions
 
@@ -102,4 +101,5 @@ end
 - Platform-conditional defines via `cook.platform.os` Lua expression
 - Keep both `lua` and `luac` executables as separate recipes
 - Include `compile-commands` recipe to showcase IDE integration
-- Named ingredients use the existing `ingredients` keyword with an identifier before patterns
+- Ingredients variable is always named `ingredients` — no custom naming syntax
+- The variable is a flat table (not nested); multiple ingredient groups can be supported later if needed
