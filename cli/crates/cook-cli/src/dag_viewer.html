@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cook dag</title>
+<script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; color: #e0e0e0; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+#cy { width: 100vw; height: 100vh; }
+#detail {
+  position: fixed; top: 0; right: 0; width: 360px; height: 100vh;
+  background: #16163a; border-left: 1px solid #2a2a4a;
+  padding: 20px; overflow-y: auto; display: none;
+  font-size: 13px; z-index: 10;
+}
+#detail.visible { display: block; }
+#detail h2 { font-size: 16px; color: #818cf8; margin-bottom: 12px; }
+#detail h3 { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 16px; margin-bottom: 4px; }
+#detail .value { color: #d1d5db; margin-bottom: 8px; word-break: break-all; }
+#detail code { font-size: 12px; color: #c4b5fd; background: #1e1e3a; padding: 2px 6px; border-radius: 3px; }
+#detail .cached-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 600;
+}
+#detail .cached-badge.yes { background: #064e3b; color: #6ee7b7; }
+#detail .cached-badge.no { background: #1f2937; color: #9ca3af; }
+#detail .close {
+  position: absolute; top: 12px; right: 12px;
+  background: none; border: none; color: #6b7280; font-size: 18px; cursor: pointer;
+}
+#detail .close:hover { color: #e0e0e0; }
+#header {
+  position: fixed; top: 0; left: 0; right: 0; height: 40px;
+  background: #16163a; border-bottom: 1px solid #2a2a4a;
+  display: flex; align-items: center; padding: 0 16px;
+  font-size: 13px; color: #8888cc; z-index: 10;
+}
+#header .title { font-weight: 600; color: #818cf8; margin-right: 16px; }
+#legend {
+  position: fixed; bottom: 16px; left: 16px;
+  background: #16163a; border: 1px solid #2a2a4a; border-radius: 8px;
+  padding: 12px 16px; font-size: 11px; color: #8888aa; z-index: 10;
+}
+#legend .item { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+#legend .item:last-child { margin-bottom: 0; }
+#legend .swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <span class="title">cook dag</span>
+  <span id="info"></span>
+</div>
+
+<div id="cy"></div>
+
+<div id="detail">
+  <button class="close" onclick="closeDetail()">&times;</button>
+  <div id="detail-content"></div>
+</div>
+
+<div id="legend">
+  <div class="item"><div class="swatch" style="background:#6366f1"></div> Recipe (click to expand)</div>
+  <div class="item"><div class="swatch" style="border:2px solid #22c55e;background:#1e293b"></div> Cached step</div>
+  <div class="item"><div class="swatch" style="border:2px solid #f59e0b;background:#1e293b"></div> Many-to-one step</div>
+  <div class="item"><div class="swatch" style="border:2px solid #6b7280;background:#1e293b"></div> Uncached step</div>
+</div>
+
+<script>
+const DAG = /*DAG_DATA_PLACEHOLDER*/{};
+
+const expanded = new Set();
+
+function buildElements() {
+  const elements = [];
+
+  for (const recipe of DAG.recipes) {
+    const isExpanded = expanded.has(recipe.name);
+    const cachedCount = recipe.units.filter(function(u) { return u.cached; }).length;
+
+    elements.push({
+      data: {
+        id: 'recipe:' + recipe.name,
+        label: recipe.name,
+        type: 'recipe',
+        expanded: isExpanded,
+        unitCount: recipe.units.length,
+        cachedCount: cachedCount,
+      }
+    });
+
+    if (isExpanded) {
+      for (var i = 0; i < recipe.units.length; i++) {
+        var unit = recipe.units[i];
+        var isManyToOne = unit.dep_kind === 'sequential' && unit.output && recipe.units.length > 1 && i > 0;
+        elements.push({
+          data: {
+            id: unit.id,
+            parent: 'recipe:' + recipe.name,
+            label: unit.label,
+            type: 'unit',
+            cached: unit.cached,
+            manyToOne: isManyToOne,
+            command: unit.command,
+            inputs: unit.inputs,
+            output: unit.output,
+            depKind: unit.dep_kind,
+            groupIndex: unit.group_index,
+          }
+        });
+      }
+
+      for (var j = 0; j < recipe.internal_edges.length; j++) {
+        var edge = recipe.internal_edges[j];
+        var fromId = recipe.name + ':' + edge.from;
+        var toId = recipe.name + ':' + edge.to;
+        elements.push({
+          data: {
+            id: 'ie:' + fromId + '->' + toId,
+            source: fromId,
+            target: toId,
+            type: 'internal',
+          }
+        });
+      }
+    }
+
+    for (var k = 0; k < recipe.deps.length; k++) {
+      var dep = recipe.deps[k];
+      elements.push({
+        data: {
+          id: 'edge:' + dep + '->' + recipe.name,
+          source: 'recipe:' + dep,
+          target: 'recipe:' + recipe.name,
+          type: 'recipe',
+        }
+      });
+    }
+  }
+
+  return elements;
+}
+
+function initCy() {
+  var cy = window.cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements: buildElements(),
+    layout: {
+      name: 'dagre',
+      rankDir: 'TB',
+      nodeSep: 30,
+      rankSep: 60,
+      padding: 60,
+    },
+    style: [
+      {
+        selector: 'node[type="recipe"]',
+        style: {
+          'background-color': '#6366f1',
+          'color': '#ffffff',
+          'label': function(ele) {
+            var d = ele.data();
+            if (d.unitCount > 0) {
+              return d.label + ' (' + d.cachedCount + '/' + d.unitCount + ' cached)';
+            }
+            return d.label;
+          },
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'font-size': '14px',
+          'font-weight': 'bold',
+          'width': 'label',
+          'height': 40,
+          'padding': '16px',
+          'shape': 'round-rectangle',
+          'border-width': 2,
+          'border-color': '#818cf8',
+        }
+      },
+      {
+        selector: ':parent',
+        style: {
+          'background-color': '#1e1e3a',
+          'border-color': '#6366f1',
+          'border-width': 2,
+          'border-style': 'dashed',
+          'label': 'data(label)',
+          'text-valign': 'top',
+          'text-halign': 'center',
+          'color': '#818cf8',
+          'font-size': '12px',
+          'padding': '20px',
+          'text-margin-y': -8,
+        }
+      },
+      {
+        selector: 'node[type="unit"][?cached]',
+        style: {
+          'background-color': '#1e293b',
+          'border-color': '#22c55e',
+          'border-width': 2,
+          'color': '#a0f0a0',
+          'label': 'data(label)',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'font-size': '10px',
+          'width': 'label',
+          'height': 30,
+          'padding': '10px',
+          'shape': 'round-rectangle',
+        }
+      },
+      {
+        selector: 'node[type="unit"][?manyToOne]',
+        style: {
+          'border-color': '#f59e0b',
+          'color': '#fbbf24',
+        }
+      },
+      {
+        selector: 'node[type="unit"][!cached]',
+        style: {
+          'background-color': '#1e293b',
+          'border-color': '#6b7280',
+          'border-width': 2,
+          'color': '#d1d5db',
+          'label': 'data(label)',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'font-size': '10px',
+          'width': 'label',
+          'height': 30,
+          'padding': '10px',
+          'shape': 'round-rectangle',
+        }
+      },
+      {
+        selector: 'edge[type="recipe"]',
+        style: {
+          'width': 2,
+          'line-color': '#4a4a6a',
+          'target-arrow-color': '#4a4a6a',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+        }
+      },
+      {
+        selector: 'edge[type="internal"]',
+        style: {
+          'width': 1.5,
+          'line-color': '#3a3a5a',
+          'target-arrow-color': '#3a3a5a',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+        }
+      },
+    ],
+  });
+
+  cy.on('tap', 'node[type="recipe"]', function(evt) {
+    var name = evt.target.data('label');
+    if (expanded.has(name)) {
+      expanded.delete(name);
+    } else {
+      expanded.add(name);
+    }
+    rebuildGraph();
+  });
+
+  cy.on('tap', 'node[type="unit"]', function(evt) {
+    showDetail(evt.target.data());
+  });
+
+  cy.on('tap', function(evt) {
+    if (evt.target === cy) {
+      closeDetail();
+    }
+  });
+
+  var totalUnits = DAG.recipes.reduce(function(s, r) { return s + r.units.length; }, 0);
+  var totalCached = DAG.recipes.reduce(function(s, r) {
+    return s + r.units.filter(function(u) { return u.cached; }).length;
+  }, 0);
+  document.getElementById('info').textContent =
+    DAG.recipes.length + ' recipes, ' + totalUnits + ' units, ' + totalCached + ' cached \u2014 target: ' + DAG.target;
+}
+
+function rebuildGraph() {
+  var cy = window.cy;
+  cy.elements().remove();
+  cy.add(buildElements());
+  cy.layout({
+    name: 'dagre',
+    rankDir: 'TB',
+    nodeSep: 30,
+    rankSep: 60,
+    padding: 60,
+    animate: false,
+  }).run();
+}
+
+function showDetail(data) {
+  var el = document.getElementById('detail-content');
+  var cachedClass = data.cached ? 'yes' : 'no';
+  var cachedText = data.cached ? 'Cached' : 'Needs rebuild';
+
+  var html = '<h2>' + escapeHtml(data.label) + '</h2>';
+  html += '<span class="cached-badge ' + cachedClass + '">' + cachedText + '</span>';
+
+  html += '<h3>Command</h3>';
+  html += '<div class="value"><code>' + escapeHtml(data.command || 'N/A') + '</code></div>';
+
+  if (data.output) {
+    html += '<h3>Output</h3>';
+    html += '<div class="value">' + escapeHtml(data.output) + '</div>';
+  }
+
+  if (data.inputs && data.inputs.length > 0) {
+    html += '<h3>Inputs (' + data.inputs.length + ')</h3>';
+    html += '<div class="value">' + data.inputs.map(escapeHtml).join('<br>') + '</div>';
+  }
+
+  html += '<h3>Dep Kind</h3>';
+  html += '<div class="value">' + escapeHtml(data.depKind || 'N/A');
+  if (data.groupIndex !== null && data.groupIndex !== undefined) {
+    html += ' (group ' + data.groupIndex + ')';
+  }
+  html += '</div>';
+
+  el.innerHTML = html;
+  document.getElementById('detail').classList.add('visible');
+}
+
+function closeDetail() {
+  document.getElementById('detail').classList.remove('visible');
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+initCy();
+</script>
+</body>
+</html>

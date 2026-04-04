@@ -3,6 +3,7 @@
 mod cli;
 mod color;
 mod dag_data;
+mod dag_server;
 mod env;
 mod error;
 mod pipeline;

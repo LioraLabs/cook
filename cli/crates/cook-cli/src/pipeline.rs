@@ -600,8 +600,72 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
 // ---------------------------------------------------------------------------
 
 pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
-    eprintln!("cook: --dag is not yet implemented");
-    Ok(())
+    let (cookfile, lua_source) = read_and_parse(cli)?;
+
+    let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
+    let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        cookfile_dir
+    };
+    let dotenv_vars = load_env(cookfile_dir);
+    let env_vars = resolve_env(&cookfile, config, dotenv_vars, &cli.set)?;
+
+    let recipe_infos = build_single_recipe_infos(&cookfile);
+    let targets = vec![recipe_name.to_string()];
+
+    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets)
+        .map_err(|e| match e {
+            cook_engine::analyzer::GraphError::CycleDetected(s) => {
+                CookError::Other(format!("dependency cycle involving: {s}"))
+            }
+            cook_engine::analyzer::GraphError::UnknownRecipe(s) => CookError::RecipeNotFound(s),
+        })?;
+
+    let mut recipe_dag = cook_engine::recipe_dag::RecipeDag::new(&edges);
+    let mut all_units: Vec<(String, cook_contracts::RecipeUnits)> = Vec::new();
+    let mut cache_managers: std::collections::BTreeMap<
+        String,
+        std::sync::Arc<cook_cache::ThreadSafeCacheManager>,
+    > = std::collections::BTreeMap::new();
+
+    let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars);
+
+    loop {
+        let ready = recipe_dag.pop_ready();
+        if ready.is_empty() {
+            break;
+        }
+
+        for name in &ready {
+            let units = registry.register_recipe(&lua_source, name).map_err(|e| {
+                CookError::Other(format!("registration failed for '{name}': {e}"))
+            })?;
+
+            let cache_dir = cookfile_dir.join(".cook").join("cache");
+            cache_managers
+                .entry(name.clone())
+                .or_insert_with(|| {
+                    std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(cache_dir))
+                });
+
+            all_units.push((name.clone(), units));
+        }
+
+        recipe_dag.mark_done(&ready);
+    }
+
+    let dag_data = crate::dag_data::build_dag_data(
+        recipe_name,
+        &all_units,
+        &edges,
+        &cache_managers,
+    );
+
+    let json = serde_json::to_string(&dag_data)
+        .map_err(|e| CookError::Other(format!("failed to serialize DAG: {e}")))?;
+
+    crate::dag_server::serve_dag(&json)
 }
 
 // ---------------------------------------------------------------------------

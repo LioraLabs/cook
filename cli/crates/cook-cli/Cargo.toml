@@ -27,6 +27,8 @@ notify = "7"
 dotenvy = "0.15"
 thiserror = "2"
 glob = "0.3"
+tiny_http = "0.12"
+open = "5"
 
 [dev-dependencies]
 tempfile = "3"
