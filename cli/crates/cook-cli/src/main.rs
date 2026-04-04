@@ -2,6 +2,7 @@
 
 mod cli;
 mod color;
+mod dag_data;
 mod env;
 mod error;
 mod pipeline;
