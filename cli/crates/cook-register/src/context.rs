@@ -42,6 +42,42 @@ pub fn setup_recipe_context(
     Ok(())
 }
 
+/// Register `cook.resolve_ingredients(includes, excludes)` on the cook global table.
+/// Returns a flat Lua table of relative file paths after glob+exclude resolution.
+pub fn register_resolve_ingredients(lua: &Lua, working_dir: &Path) -> Result<(), RegisterError> {
+    let cook: LuaTable = lua.globals().get("cook")?;
+    let wd = working_dir.to_path_buf();
+    let resolve_fn = lua.create_function(move |lua, (includes, excludes): (LuaTable, LuaTable)| {
+        // Collect exclude patterns and resolve them
+        let mut excluded: BTreeSet<String> = BTreeSet::new();
+        for exc in excludes.sequence_values::<String>() {
+            let pattern = exc.map_err(|e| mlua::Error::runtime(format!("bad exclude: {e}")))?;
+            excluded.extend(resolve_glob(&wd, &pattern));
+        }
+
+        // Resolve include patterns, filtering out excludes
+        let mut result: Vec<String> = Vec::new();
+        for inc in includes.sequence_values::<String>() {
+            let pattern = inc.map_err(|e| mlua::Error::runtime(format!("bad include: {e}")))?;
+            let files = resolve_glob(&wd, &pattern);
+            for f in files {
+                if !excluded.contains(&f) {
+                    result.push(f);
+                }
+            }
+        }
+
+        // Build Lua table
+        let table = lua.create_table()?;
+        for (i, file) in result.iter().enumerate() {
+            table.set(i + 1, file.as_str())?;
+        }
+        Ok(table)
+    })?;
+    cook.set("resolve_ingredients", resolve_fn)?;
+    Ok(())
+}
+
 /// Resolve a glob pattern into a sorted set of relative file paths.
 fn resolve_glob(root: &Path, pattern: &str) -> BTreeSet<String> {
     let full_pattern = root.join(pattern);

@@ -63,6 +63,7 @@ impl Registry {
         crate::unit_api::register_unit_api(&lua, capture_state.clone(), recipe_name)?;
         crate::export_api::register_export_api(&lua, self.export_store.clone())?;
         crate::test_api::register_test_api(&lua, capture_state.clone())?;
+        crate::context::register_resolve_ingredients(&lua, &self.working_dir)?;
 
         lua.load(lua_source).exec()?;
 

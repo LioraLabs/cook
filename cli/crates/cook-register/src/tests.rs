@@ -258,3 +258,34 @@ end)
         _ => panic!("expected Test payload"),
     }
 }
+
+#[test]
+fn test_resolve_ingredients_api() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.c"), "").unwrap();
+    fs::write(dir.path().join("b.c"), "").unwrap();
+    fs::write(dir.path().join("skip.c"), "").unwrap();
+
+    let lua = mlua::Lua::new();
+    // Must create the cook table first — register_resolve_ingredients adds to it
+    let cook = lua.create_table().unwrap();
+    lua.globals().set("cook", cook).unwrap();
+
+    crate::context::register_resolve_ingredients(&lua, dir.path()).unwrap();
+
+    let result: Vec<String> = lua
+        .load(r#"return cook.resolve_ingredients({"*.c"}, {"skip.c"})"#)
+        .eval::<mlua::Table>()
+        .unwrap()
+        .sequence_values::<String>()
+        .filter_map(|v| v.ok())
+        .collect();
+
+    assert!(result.contains(&"a.c".to_string()));
+    assert!(result.contains(&"b.c".to_string()));
+    assert!(!result.contains(&"skip.c".to_string()));
+    assert_eq!(result.len(), 2);
+}
