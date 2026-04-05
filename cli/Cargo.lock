@@ -266,6 +266,8 @@ name = "cook-register"
 version = "0.1.0"
 dependencies = [
  "cook-contracts",
+ "cook-lang",
+ "cook-luagen",
  "glob",
  "mlua",
  "serde",
