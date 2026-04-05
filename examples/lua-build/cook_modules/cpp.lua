@@ -822,11 +822,23 @@ end
 
 function cpp.interface_library(name, opts)
     opts = opts or {}
+    -- Env-var list defaults (scalars don't apply — no compile step for interface libraries).
+    local env_defines     = env_list("CPP_DEFINES")
+    local env_includes    = env_list("CPP_INCLUDES")
+    local env_system_libs = env_list("CPP_SYSTEM_LIBS")
+
+    local includes = {}
+    for _, inc in ipairs(env_includes)        do includes[#includes + 1] = inc end
+    for _, inc in ipairs(opts.includes or {}) do includes[#includes + 1] = inc end
+    local defines = {}
+    for _, def in ipairs(env_defines)        do defines[#defines + 1] = def end
+    for _, def in ipairs(opts.defines or {}) do defines[#defines + 1] = def end
+
     register_target(name)
 
     cook.export(name, {
-        includes = opts.includes or {},
-        defines = opts.defines or {},
+        includes = includes,
+        defines = defines,
     })
 end
 
