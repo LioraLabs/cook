@@ -28,7 +28,7 @@ recipe lua: liblua
     cpp.executable("lua", {
         sources = { "lua-5.4.7/src/lua.c" },
         links = { "liblua" },
-        system_libs = { "m", "dl", "readline" },
+        system_libs = { "readline" },
     })
 end
 
@@ -36,7 +36,6 @@ recipe luac: liblua
     cpp.executable("luac", {
         sources = { "lua-5.4.7/src/luac.c" },
         links = { "liblua" },
-        system_libs = { "m", "dl" },
     })
 end
 

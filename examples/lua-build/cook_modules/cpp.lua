@@ -441,6 +441,19 @@ local function ldflags_list(v)
     return { v }
 end
 
+--- Deduplicate a list by first occurrence. Preserves order.
+local function dedup(list)
+    local seen = {}
+    local out = {}
+    for _, v in ipairs(list) do
+        if not seen[v] then
+            seen[v] = true
+            out[#out + 1] = v
+        end
+    end
+    return out
+end
+
 local function resolve_links(link_names)
     local visited = {}
     local includes = {}
@@ -685,14 +698,30 @@ function cpp.shared_library(name, opts)
         end
     end)
 
-    -- Resolve link dependencies
-    local link_incs, link_defs, link_libs, rpath_dirs = resolve_links(opts.links or {})
+    -- Resolve link dependencies (includes/defines already resolved earlier — reuse walk for libs + system_libs)
+    local _, _, link_libs, rpath_dirs, link_system_libs, link_extra_ldflags = resolve_links(opts.links or {})
+
+    -- Combine system_libs: env-var defaults + target's own + transitive, dedup (first occurrence wins)
+    local merged_system_libs = {}
+    for _, sl in ipairs(env_system_libs)         do merged_system_libs[#merged_system_libs + 1] = sl end
+    for _, sl in ipairs(opts.system_libs or {})  do merged_system_libs[#merged_system_libs + 1] = sl end
+    for _, sl in ipairs(link_system_libs)        do merged_system_libs[#merged_system_libs + 1] = sl end
+    merged_system_libs = dedup(merged_system_libs)
+
+    -- Combine extra_ldflags: own first (as string), then transitive (list of strings, space-joined)
+    local merged_ldflags = opts.extra_ldflags or ""
+    for _, lf in ipairs(link_extra_ldflags) do
+        if lf ~= "" then
+            merged_ldflags = (merged_ldflags == "" and lf) or (merged_ldflags .. " " .. lf)
+        end
+    end
+
     cpp.link(objects, output, {
         shared = true,
         libs = link_libs,
-        system_libs = opts.system_libs,
+        system_libs = merged_system_libs,
         rpath_dirs = rpath_dirs,
-        extra_ldflags = opts.extra_ldflags,
+        extra_ldflags = merged_ldflags,
     })
 
     register_target(name)
@@ -746,8 +775,8 @@ function cpp.executable(name, opts)
     local standard = opts.standard or env_standard or cpp.state.default_standard or "c++17"
     local warnings = opts.warnings or env_warnings
 
-    -- Resolve linked targets
-    local link_incs, link_defs, link_libs, rpath_dirs = resolve_links(opts.links or {})
+    -- Resolve linked targets (one walk yields includes/defines/libs/rpath/system_libs/ldflags)
+    local link_incs, link_defs, link_libs, rpath_dirs, link_system_libs, link_extra_ldflags = resolve_links(opts.links or {})
     for _, inc in ipairs(link_incs) do includes[#includes + 1] = inc end
     for _, def in ipairs(link_defs) do defines[#defines + 1] = def end
 
@@ -826,12 +855,27 @@ function cpp.executable(name, opts)
         end)
     end
 
+    -- Combine system_libs: env-var defaults + target's own + transitive, dedup (first occurrence wins)
+    local merged_system_libs = {}
+    for _, sl in ipairs(env_system_libs)         do merged_system_libs[#merged_system_libs + 1] = sl end
+    for _, sl in ipairs(opts.system_libs or {})  do merged_system_libs[#merged_system_libs + 1] = sl end
+    for _, sl in ipairs(link_system_libs)        do merged_system_libs[#merged_system_libs + 1] = sl end
+    merged_system_libs = dedup(merged_system_libs)
+
+    -- Combine extra_ldflags: own first (as string), then transitive (list of strings, space-joined)
+    local merged_ldflags = opts.extra_ldflags or ""
+    for _, lf in ipairs(link_extra_ldflags) do
+        if lf ~= "" then
+            merged_ldflags = (merged_ldflags == "" and lf) or (merged_ldflags .. " " .. lf)
+        end
+    end
+
     -- Link
     cpp.link(objects, output, {
         libs = link_libs,
-        system_libs = opts.system_libs,
+        system_libs = merged_system_libs,
         rpath_dirs = rpath_dirs,
-        extra_ldflags = opts.extra_ldflags,
+        extra_ldflags = merged_ldflags,
     })
 
     register_target(name)
