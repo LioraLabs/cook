@@ -36,6 +36,39 @@ pub fn read_and_parse(cli: &Cli) -> Result<(cook_lang::ast::Cookfile, String), C
     Ok((cookfile, lua_source))
 }
 
+/// Validate that `config` (if supplied) matches a named `config NAME ... end`
+/// block in the Cookfile. Errors with the list of available names on mismatch.
+pub fn validate_selected_config(
+    cookfile: &cook_lang::ast::Cookfile,
+    config: Option<&str>,
+) -> Result<(), CookError> {
+    let Some(name) = config else { return Ok(()); };
+    let has_match = cookfile
+        .config_blocks
+        .iter()
+        .any(|b| b.name.as_deref() == Some(name));
+    if has_match {
+        return Ok(());
+    }
+    let available: Vec<&str> = cookfile
+        .config_blocks
+        .iter()
+        .filter_map(|b| b.name.as_deref())
+        .collect();
+    if available.is_empty() {
+        Err(CookError::Other(format!(
+            "unknown config '{}': no named configs defined",
+            name
+        )))
+    } else {
+        Err(CookError::Other(format!(
+            "unknown config '{}'. available: {}",
+            name,
+            available.join(", ")
+        )))
+    }
+}
+
 /// Bridge EngineEvent to ProgressEvent and send to the progress renderer.
 fn bridge_engine_events(
     engine_rx: mpsc::Receiver<cook_engine::EngineEvent>,
@@ -303,6 +336,7 @@ fn resolve_num_jobs(cli: &Cli) -> usize {
 
 pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
     let (cookfile, lua_source) = read_and_parse(cli)?;
+    validate_selected_config(&cookfile, config)?;
 
     if cli.emit_lua {
         println!("{lua_source}");
@@ -523,6 +557,7 @@ end
 
 pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
     let (cookfile, _lua_source) = read_and_parse(cli)?;
+    validate_selected_config(&cookfile, config)?;
 
     // Check for interactive steps -- not supported under cook serve
     for recipe in &cookfile.recipes {
@@ -601,6 +636,7 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
 
 pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
     let (cookfile, lua_source) = read_and_parse(cli)?;
+    validate_selected_config(&cookfile, config)?;
 
     let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
     let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
