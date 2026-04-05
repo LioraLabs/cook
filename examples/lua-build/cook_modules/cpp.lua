@@ -439,6 +439,8 @@ local function resolve_links(link_names)
     local defines = {}
     local lib_paths = {}
     local rpath_dirs = {}
+    local system_libs = {}
+    local extra_ldflags = {}
 
     local function walk(name)
         if visited[name] then return end
@@ -460,6 +462,12 @@ local function resolve_links(link_names)
                 rpath_dirs[#rpath_dirs + 1] = path.dir(info.lib_path)
             end
         end
+        for _, sl in ipairs(info.system_libs or {}) do
+            system_libs[#system_libs + 1] = sl
+        end
+        for _, lf in ipairs(info.extra_ldflags or {}) do
+            extra_ldflags[#extra_ldflags + 1] = lf
+        end
         -- Then recurse into transitive deps
         for _, dep in ipairs(info.links or {}) do
             walk(dep)
@@ -469,7 +477,7 @@ local function resolve_links(link_names)
     for _, name in ipairs(link_names) do
         walk(name)
     end
-    return includes, defines, lib_paths, rpath_dirs
+    return includes, defines, lib_paths, rpath_dirs, system_libs, extra_ldflags
 end
 
 -- ---------------------------------------------------------------------------
