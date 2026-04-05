@@ -12,9 +12,16 @@ pub struct ImportDecl {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ConfigBlock {
+    pub name: Option<String>,
+    pub body: String,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Cookfile {
     pub vars: Vec<(String, String)>,
-    pub configs: std::collections::BTreeMap<String, Vec<(String, String)>>,
+    pub config_blocks: Vec<ConfigBlock>,
     pub recipes: Vec<Recipe>,
     pub uses: Vec<UseStatement>,
     pub imports: Vec<ImportDecl>,
@@ -153,38 +160,54 @@ mod tests {
     }
 
     #[test]
-    fn test_cookfile_with_vars_and_configs() {
-        let cookfile = Cookfile {
-            vars: vec![
-                ("CC".to_string(), "gcc".to_string()),
-                ("CFLAGS".to_string(), "-Wall".to_string()),
-            ],
-            configs: {
-                let mut m = std::collections::BTreeMap::new();
-                m.insert("debug".to_string(), vec![
-                    ("CFLAGS".to_string(), "-g -O0 -Wall".to_string()),
-                ]);
-                m
-            },
-            recipes: vec![],
-            uses: vec![],
-            imports: vec![],
-        };
-        assert_eq!(cookfile.vars.len(), 2);
-        assert_eq!(cookfile.configs.len(), 1);
-        assert_eq!(cookfile.configs["debug"].len(), 1);
-    }
-
-    #[test]
     fn test_cookfile_with_uses() {
         let cookfile = Cookfile {
             vars: vec![],
-            configs: std::collections::BTreeMap::new(),
+            config_blocks: vec![],
             recipes: vec![],
             uses: vec![UseStatement { module_name: "cpp".to_string(), line: 1 }],
             imports: vec![],
         };
         assert_eq!(cookfile.uses.len(), 1);
         assert_eq!(cookfile.uses[0].module_name, "cpp");
+    }
+
+    #[test]
+    fn test_config_block_construction() {
+        let block = ConfigBlock {
+            name: Some("release".to_string()),
+            body: "env.CXXFLAGS = \"-O3\"".to_string(),
+            line: 3,
+        };
+        assert_eq!(block.name.as_deref(), Some("release"));
+        assert!(block.body.contains("CXXFLAGS"));
+        assert_eq!(block.line, 3);
+    }
+
+    #[test]
+    fn test_unnamed_config_block_construction() {
+        let block = ConfigBlock {
+            name: None,
+            body: "cpp.defaults({})".to_string(),
+            line: 1,
+        };
+        assert!(block.name.is_none());
+    }
+
+    #[test]
+    fn test_cookfile_with_config_blocks() {
+        let cookfile = Cookfile {
+            vars: vec![],
+            config_blocks: vec![
+                ConfigBlock { name: None,                    body: "base".into(), line: 1 },
+                ConfigBlock { name: Some("release".into()),  body: "rel".into(),  line: 4 },
+            ],
+            recipes: vec![],
+            uses: vec![],
+            imports: vec![],
+        };
+        assert_eq!(cookfile.config_blocks.len(), 2);
+        assert!(cookfile.config_blocks[0].name.is_none());
+        assert_eq!(cookfile.config_blocks[1].name.as_deref(), Some("release"));
     }
 }
