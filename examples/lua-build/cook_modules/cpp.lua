@@ -968,4 +968,12 @@ function cpp.compile_commands()
     fs.write("compile_commands.json", json_encode_pretty(entries) .. "\n")
 end
 
+-- ---------------------------------------------------------------------------
+-- Canonical short names (long names kept as aliases for back-compat)
+-- ---------------------------------------------------------------------------
+cpp.bin     = cpp.executable
+cpp.lib     = cpp.static_library
+cpp.shared  = cpp.shared_library
+cpp.headers = cpp.interface_library
+
 return cpp

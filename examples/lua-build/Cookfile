@@ -18,14 +18,14 @@ end
 
 recipe liblua
     ingredients "lua-5.4.7/src/*.c" !"lua-5.4.7/src/lua.c" !"lua-5.4.7/src/luac.c"
-    cpp.static_library("liblua", {
+    cpp.lib("liblua", {
         sources = ingredients,
         system_libs = { "m", "dl" },
     })
 end
 
 recipe lua: liblua
-    cpp.executable("lua", {
+    cpp.bin("lua", {
         sources = { "lua-5.4.7/src/lua.c" },
         links = { "liblua" },
         system_libs = { "readline" },
@@ -33,7 +33,7 @@ recipe lua: liblua
 end
 
 recipe luac: liblua
-    cpp.executable("luac", {
+    cpp.bin("luac", {
         sources = { "lua-5.4.7/src/luac.c" },
         links = { "liblua" },
     })
