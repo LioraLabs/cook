@@ -49,11 +49,26 @@ import backend ./services/backend
     path: (path)))
 
 ================
-Config block
+Unnamed config block
 ================
 
-config debug
-    CFLAGS "-g -O0"
+config
+    env.CC = "gcc"
+end
+
+---
+
+(source_file
+  (config_block
+    (lua_code)))
+
+================
+Named config block with Lua body
+================
+
+config release
+    env.CXXFLAGS = "-O3"
+    cpp.defaults({defines = {"NDEBUG"}})
 end
 
 ---
@@ -61,17 +76,15 @@ end
 (source_file
   (config_block
     name: (identifier)
-    (variable_declaration
-      name: (variable_name)
-      value: (string))))
+    (lua_code)))
 
 ================
-Config block (quoted)
+Config block (quoted name)
 ================
 
 config "release"
-    CFLAGS "-O2"
-    LDFLAGS "-s"
+    env.CXXFLAGS = "-O2"
+    env.LDFLAGS = "-s"
 end
 
 ---
@@ -79,12 +92,7 @@ end
 (source_file
   (config_block
     name: (string)
-    (variable_declaration
-      name: (variable_name)
-      value: (string))
-    (variable_declaration
-      name: (variable_name)
-      value: (string))))
+    (lua_code)))
 
 ================
 Comment
@@ -107,7 +115,7 @@ AR "ar"
 use cpp
 
 config debug
-    CFLAGS "-g"
+    env.CFLAGS = "-g"
 end
 
 ---
@@ -123,6 +131,4 @@ end
     module: (identifier))
   (config_block
     name: (identifier)
-    (variable_declaration
-      name: (variable_name)
-      value: (string))))
+    (lua_code)))
