@@ -20,6 +20,7 @@ bin/
 
 # Superpowers
 .superpowers/
+.worktrees/
 docs/superpowers/
 
 # Canopy
