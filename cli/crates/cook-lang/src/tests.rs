@@ -32,10 +32,56 @@ fn test_bare_use_statement() {
 }
 
 #[test]
-fn test_bare_config_name() {
-    let source = "config debug\n    CFLAGS \"-g\"\nend\n\nrecipe build\n    echo hello\nend\n";
+fn test_config_block_with_lua_body_parses() {
+    let source = "\
+config release
+    env.CXXFLAGS = \"-O3\"
+    cpp.defaults({defines = {\"NDEBUG\"}})
+end
+";
     let result = parse(source).unwrap();
-    assert_eq!(result.configs["debug"], vec![("CFLAGS".to_string(), "-g".to_string())]);
+    assert_eq!(result.config_blocks.len(), 1);
+    let block = &result.config_blocks[0];
+    assert_eq!(block.name.as_deref(), Some("release"));
+    assert!(block.body.contains("env.CXXFLAGS"));
+    assert!(block.body.contains("cpp.defaults"));
+}
+
+#[test]
+fn test_unnamed_config_block_parses() {
+    let source = "\
+config
+    env.CC = \"gcc\"
+end
+";
+    let result = parse(source).unwrap();
+    assert_eq!(result.config_blocks.len(), 1);
+    assert!(result.config_blocks[0].name.is_none());
+    assert!(result.config_blocks[0].body.contains("env.CC"));
+}
+
+#[test]
+fn test_config_block_preserves_multiline_body() {
+    let source = "\
+config dev
+    env.CC = \"clang\"
+    -- debug flags
+    env.CXXFLAGS = \"-O0 -g\"
+end
+";
+    let result = parse(source).unwrap();
+    let body = &result.config_blocks[0].body;
+    assert!(body.contains("clang"));
+    assert!(body.contains("-- debug flags"));
+    assert!(body.contains("-O0 -g"));
+    assert_eq!(body.lines().count(), 3);
+}
+
+#[test]
+fn test_config_block_unclosed_errors() {
+    let source = "config release\n    env.CC = \"gcc\"\n";
+    let err = parse(source).unwrap_err();
+    assert!(format!("{}", err).contains("not closed"));
 }
 
 // ── SHI-72: Implicit recipes ───────────────────────────────────────
@@ -388,25 +434,23 @@ end
 }
 
 #[test]
-fn test_config_blocks_parsed() {
-    let source = r#"config "debug"
-    CFLAGS "-g -O0"
+fn test_mixed_named_and_unnamed_config_blocks() {
+    let source = "\
+config
+    cpp.defaults({})
 end
-
-config "release"
-    CFLAGS "-O2"
-    LDFLAGS "-s"
+config release
+    env.CXXFLAGS = \"-O3\"
 end
-
-recipe "build"
-    echo hello
+config dev
+    env.CXXFLAGS = \"-O0 -g\"
 end
-"#;
+";
     let result = parse(source).unwrap();
-    assert_eq!(result.configs.len(), 2);
-    assert_eq!(result.configs["debug"], vec![("CFLAGS".to_string(), "-g -O0".to_string())]);
-    assert_eq!(result.configs["release"].len(), 2);
-    assert_eq!(result.recipes.len(), 1);
+    assert_eq!(result.config_blocks.len(), 3);
+    assert!(result.config_blocks[0].name.is_none());
+    assert_eq!(result.config_blocks[1].name.as_deref(), Some("release"));
+    assert_eq!(result.config_blocks[2].name.as_deref(), Some("dev"));
 }
 
 #[test]
@@ -414,7 +458,7 @@ fn test_vars_and_configs_together() {
     let source = r#"CC "gcc"
 
 config "debug"
-    CFLAGS "-g"
+    env.CFLAGS = "-g"
 end
 
 recipe "build"
@@ -423,7 +467,7 @@ end
 "#;
     let result = parse(source).unwrap();
     assert_eq!(result.vars.len(), 1);
-    assert_eq!(result.configs.len(), 1);
+    assert_eq!(result.config_blocks.len(), 1);
     assert_eq!(result.recipes.len(), 1);
 }
 
@@ -437,7 +481,8 @@ recipe "build"
 end
 "#;
     let result = parse(source).unwrap();
-    assert_eq!(result.configs["empty"], vec![]);
+    assert_eq!(result.config_blocks.len(), 1);
+    assert_eq!(result.config_blocks[0].body, "");
 }
 
 #[test]
@@ -472,21 +517,31 @@ end
 }
 
 #[test]
-fn test_duplicate_config_name_last_wins() {
-    let source = r#"config "debug"
-    CFLAGS "-g"
+fn test_duplicate_named_config_errors() {
+    let source = "\
+config release
+    env.CC = \"gcc\"
 end
+config release
+    env.CC = \"clang\"
+end
+";
+    let err = parse(source).unwrap_err();
+    assert!(format!("{}", err).contains("duplicate config"));
+}
 
-config "debug"
-    CFLAGS "-g3 -O0"
+#[test]
+fn test_duplicate_unnamed_config_errors() {
+    let source = "\
+config
+    env.CC = \"gcc\"
 end
-
-recipe "build"
-    echo hello
+config
+    env.CC = \"clang\"
 end
-"#;
-    let result = parse(source).unwrap();
-    assert_eq!(result.configs["debug"], vec![("CFLAGS".to_string(), "-g3 -O0".to_string())]);
+";
+    let err = parse(source).unwrap_err();
+    assert!(format!("{}", err).contains("multiple unnamed config"));
 }
 
 #[test]
@@ -577,11 +632,11 @@ fn test_parse_multiple_use_statements() {
 
 #[test]
 fn test_parse_use_with_vars_and_configs() {
-    let source = "use \"cpp\"\nCC \"gcc\"\n\nconfig \"debug\"\n    CFLAGS \"-g\"\nend\n\nrecipe \"build\"\n    echo hello\nend\n";
+    let source = "use \"cpp\"\nCC \"gcc\"\n\nconfig \"debug\"\n    env.CFLAGS = \"-g\"\nend\n\nrecipe \"build\"\n    echo hello\nend\n";
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.uses.len(), 1);
     assert_eq!(cookfile.vars.len(), 1);
-    assert_eq!(cookfile.configs.len(), 1);
+    assert_eq!(cookfile.config_blocks.len(), 1);
 }
 
 #[test]

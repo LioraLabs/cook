@@ -26,7 +26,7 @@ pub struct RegisteredMetadata {
 /// but cook.exec/cook.sh capture instead of executing.
 pub fn register_cook_api_capture(
     lua: &Lua,
-    env_vars: &HashMap<String, String>,
+    env_vars: Rc<RefCell<HashMap<String, String>>>,
     working_dir: &PathBuf,
     capture_state: SharedCaptureState,
     recipe_name: &str,
@@ -134,15 +134,19 @@ pub fn register_cook_api_capture(
             drop(state);
             // Execute immediately — cook.sh is a user-facing utility
             // and callers depend on its return value for control flow.
-            run_shell_command(&cmd, &wd_sh, &env_sh, 0, &sh_recipe_name)
+            let env_snapshot = env_sh.borrow();
+            run_shell_command(&cmd, &wd_sh, &env_snapshot, 0, &sh_recipe_name)
         }
     })?;
     cook.set("sh", sh_fn)?;
 
-    // cook.env table
+    // cook.env table (initial population; may be mutated by config dispatch)
     let env_table = lua.create_table()?;
-    for (key, value) in env_vars {
-        env_table.set(key.as_str(), value.as_str())?;
+    {
+        let snap = env_vars.borrow();
+        for (key, value) in snap.iter() {
+            env_table.set(key.as_str(), value.as_str())?;
+        }
     }
     cook.set("env", env_table)?;
 

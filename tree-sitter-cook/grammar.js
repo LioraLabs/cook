@@ -6,7 +6,7 @@ module.exports = grammar({
 
   extras: ($) => [/[ \t\r]/],
 
-  externals: ($) => [$._lua_block_content, $._shell_content],
+  externals: ($) => [$._lua_block_content, $._shell_content, $._config_block_content],
 
   word: ($) => $._bare_identifier,
 
@@ -49,9 +49,9 @@ module.exports = grammar({
     config_block: ($) =>
       seq(
         "config",
-        field("name", $._name),
+        optional(field("name", $._name)),
         $._newline,
-        repeat(choice($.variable_declaration, $.comment, $._newline)),
+        alias($._config_block_content, $.lua_code),
         "end",
         $._newline,
       ),

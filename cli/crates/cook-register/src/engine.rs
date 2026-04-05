@@ -14,17 +14,24 @@ use crate::{CaptureState, RegisterError, SharedCaptureState};
 
 pub struct Registry {
     working_dir: PathBuf,
-    env_vars: HashMap<String, String>,
+    env_vars: Rc<RefCell<HashMap<String, String>>>,
     export_store: SharedExportStore,
+    selected_config: Option<String>,
 }
 
 impl Registry {
     pub fn new(working_dir: PathBuf, env_vars: HashMap<String, String>) -> Self {
         Self {
             working_dir,
-            env_vars,
+            env_vars: Rc::new(RefCell::new(env_vars)),
             export_store: Rc::new(RefCell::new(BTreeMap::new())),
+            selected_config: None,
         }
+    }
+
+    pub fn with_selected_config(mut self, selected_config: Option<String>) -> Self {
+        self.selected_config = selected_config;
+        self
     }
 
     pub fn working_dir(&self) -> &PathBuf {
@@ -44,7 +51,7 @@ impl Registry {
 
         let recipes = register_cook_api_capture(
             &lua,
-            &self.env_vars,
+            self.env_vars.clone(),
             &self.working_dir,
             capture_state.clone(),
             recipe_name,
@@ -66,6 +73,31 @@ impl Registry {
         crate::context::register_resolve_ingredients(&lua, &self.working_dir)?;
 
         lua.load(lua_source).exec()?;
+
+        // Config block dispatch: if codegen emitted __cook_run_config_blocks,
+        // expose writable `env` alias, call it, then snapshot mutations back
+        // into the shared env_vars map.
+        if let Ok(dispatch) = lua.globals().get::<LuaFunction>("__cook_run_config_blocks") {
+            // Expose `env` as an alias of cook.env for the block body to write.
+            let cook_tbl: LuaTable = lua.globals().get("cook")?;
+            let env_tbl: LuaTable = cook_tbl.get("env")?;
+            lua.globals().set("env", env_tbl.clone())?;
+
+            let name_arg: Option<String> = self.selected_config.clone();
+            dispatch.call::<()>(name_arg)?;
+
+            // Snapshot mutations from cook.env back into shared env_vars.
+            {
+                let mut env_map = self.env_vars.borrow_mut();
+                for pair in env_tbl.pairs::<String, String>() {
+                    let (k, v) = pair?;
+                    env_map.insert(k, v);
+                }
+            }
+
+            // Freeze: remove the `env` global from the recipe's view.
+            lua.globals().set("env", mlua::Value::Nil)?;
+        }
 
         let registry = recipes.borrow();
         let recipe = registry
@@ -89,7 +121,7 @@ impl Registry {
         let cap = capture_state.borrow();
 
         // Convert HashMap env_vars to BTreeMap for RecipeUnits
-        let env_btree: BTreeMap<String, String> = self.env_vars.iter()
+        let env_btree: BTreeMap<String, String> = self.env_vars.borrow().iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 

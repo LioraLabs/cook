@@ -11,6 +11,11 @@
   (lua_code) @injection.content
   (#set! injection.language "lua"))
 
+; Inject Lua into config block bodies
+(config_block
+  (lua_code) @injection.content
+  (#set! injection.language "lua"))
+
 ; Inject bash into shell commands
 (shell_command
   (shell_content) @injection.content

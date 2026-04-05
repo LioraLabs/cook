@@ -3,9 +3,10 @@
 //! Layer order (later wins):
 //!   1. System env
 //!   2. Cookfile bare vars
-//!   3. Selected config block
-//!   4. .env file (dotenvy)
-//!   5. CLI --set flags
+//!   3. .env file (dotenvy)
+//!   4. CLI --set flags
+//!
+//! Per-config env mutation is handled later by `config ... end` Lua blocks at runtime.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -28,6 +29,11 @@ pub fn resolve_env(
     dotenv_vars: HashMap<String, String>,
     cli_sets: &[String],
 ) -> Result<HashMap<String, String>, CookError> {
+    // selected_config no longer overlays env vars; it flows to the runtime
+    // for `config NAME ... end` Lua-block dispatch. Kept here to avoid churn
+    // in call sites.
+    let _ = selected_config;
+
     // Layer 1: system env
     let mut env: HashMap<String, String> = std::env::vars().collect();
 
@@ -36,32 +42,12 @@ pub fn resolve_env(
         env.insert(k.clone(), v.clone());
     }
 
-    // Layer 3: selected config block
-    if let Some(config_name) = selected_config {
-        let config_vars = cookfile.configs.get(config_name).ok_or_else(|| {
-            let mut available: Vec<&String> = cookfile.configs.keys().collect();
-            available.sort();
-            if available.is_empty() {
-                CookError::Other(format!("unknown config '{}': no configs defined", config_name))
-            } else {
-                CookError::Other(format!(
-                    "unknown config '{}'. available: {}",
-                    config_name,
-                    available.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
-                ))
-            }
-        })?;
-        for (k, v) in config_vars {
-            env.insert(k.clone(), v.clone());
-        }
-    }
-
-    // Layer 4: .env file
+    // Layer 3: .env file
     for (k, v) in dotenv_vars {
         env.insert(k, v);
     }
 
-    // Layer 5: CLI --set (split on first '=')
+    // Layer 4: CLI --set (split on first '=')
     for set_arg in cli_sets {
         if let Some(eq_pos) = set_arg.find('=') {
             let key = set_arg[..eq_pos].to_string();

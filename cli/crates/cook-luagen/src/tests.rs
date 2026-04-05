@@ -7,7 +7,7 @@ use crate::template::expand_template_to_lua;
 fn make_cookfile(recipes: Vec<Recipe>) -> Cookfile {
     Cookfile {
         vars: vec![],
-        configs: std::collections::BTreeMap::new(),
+        config_blocks: vec![],
         recipes,
         uses: vec![],
         imports: vec![],
@@ -512,7 +512,7 @@ fn test_cook_step_lua_block_no_raw_string() {
 fn test_use_generates_load_module() {
     let cookfile = Cookfile {
         vars: vec![],
-        configs: std::collections::BTreeMap::new(),
+        config_blocks: vec![],
         recipes: vec![make_recipe("build", vec![], vec![], vec![
             Step::Shell { command: "echo hi".to_string(), line: 2, interactive: false },
         ])],
@@ -605,7 +605,7 @@ fn test_test_step_codegen_with_options() {
 fn test_multiple_uses_generate_in_order() {
     let cookfile = Cookfile {
         vars: vec![],
-        configs: std::collections::BTreeMap::new(),
+        config_blocks: vec![],
         recipes: vec![],
         uses: vec![
             UseStatement { module_name: "cpp".to_string(), line: 1 },
@@ -783,4 +783,81 @@ fn test_no_ingredients_no_variable() {
         !output.contains("cook.resolve_ingredients"),
         "should NOT emit ingredients variable for recipe without ingredients"
     );
+}
+
+// ── Config block dispatcher emission ─────────────────────────────
+
+#[test]
+fn test_codegen_emits_unnamed_config_block() {
+    let cookfile = Cookfile {
+        vars: vec![],
+        config_blocks: vec![ConfigBlock {
+            name: None,
+            body: "env.CC = \"gcc\"".to_string(),
+            line: 1,
+        }],
+        recipes: vec![],
+        uses: vec![],
+        imports: vec![],
+    };
+    let out = generate(&cookfile);
+    assert!(out.contains("function __cook_run_config_blocks"));
+    assert!(out.contains("env.CC = \"gcc\""));
+}
+
+#[test]
+fn test_codegen_emits_named_config_block() {
+    let cookfile = Cookfile {
+        vars: vec![],
+        config_blocks: vec![ConfigBlock {
+            name: Some("release".to_string()),
+            body: "env.CXXFLAGS = \"-O3\"".to_string(),
+            line: 1,
+        }],
+        recipes: vec![],
+        uses: vec![],
+        imports: vec![],
+    };
+    let out = generate(&cookfile);
+    assert!(out.contains("function __cook_run_config_blocks"));
+    assert!(out.contains("selected_name == \"release\""));
+    assert!(out.contains("env.CXXFLAGS = \"-O3\""));
+}
+
+#[test]
+fn test_codegen_skips_dispatcher_when_no_config_blocks() {
+    let cookfile = Cookfile {
+        vars: vec![],
+        config_blocks: vec![],
+        recipes: vec![],
+        uses: vec![],
+        imports: vec![],
+    };
+    let out = generate(&cookfile);
+    assert!(!out.contains("__cook_run_config_blocks"));
+}
+
+#[test]
+fn test_codegen_emits_unnamed_and_named_in_order() {
+    let cookfile = Cookfile {
+        vars: vec![],
+        config_blocks: vec![
+            ConfigBlock { name: None,                           body: "base()".into(), line: 1 },
+            ConfigBlock { name: Some("dev".to_string()),        body: "dev()".into(),  line: 4 },
+            ConfigBlock { name: Some("release".to_string()),    body: "rel()".into(),  line: 7 },
+        ],
+        recipes: vec![],
+        uses: vec![],
+        imports: vec![],
+    };
+    let out = generate(&cookfile);
+    let base_idx = out.find("base()").unwrap();
+    let dev_idx = out.find("dev()").unwrap();
+    let rel_idx = out.find("rel()").unwrap();
+    // Unnamed body appears before the `if selected_name` block containing named ones.
+    assert!(base_idx < dev_idx);
+    assert!(base_idx < rel_idx);
+    // Both named-block bodies appear in the generated dispatcher.
+    assert!(out.contains("selected_name == \"dev\""));
+    assert!(out.contains("selected_name == \"release\""));
 }

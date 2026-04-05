@@ -21,6 +21,45 @@ pub fn generate(cookfile: &Cookfile) -> String {
         out.push('\n');
     }
 
+    // Config-block dispatcher
+    if !cookfile.config_blocks.is_empty() {
+        out.push_str("function __cook_run_config_blocks(selected_name)\n");
+
+        // Unnamed (base) block — always runs
+        for block in &cookfile.config_blocks {
+            if block.name.is_none() {
+                for line in block.body.lines() {
+                    out.push_str("    ");
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+
+        // Named blocks — run if selected_name matches
+        let has_named = cookfile.config_blocks.iter().any(|b| b.name.is_some());
+        if has_named {
+            out.push_str("    if selected_name ~= nil then\n");
+            for block in &cookfile.config_blocks {
+                if let Some(name) = &block.name {
+                    out.push_str(&format!(
+                        "        if selected_name == \"{}\" then\n",
+                        escape_lua_string(name)
+                    ));
+                    for line in block.body.lines() {
+                        out.push_str("            ");
+                        out.push_str(line);
+                        out.push('\n');
+                    }
+                    out.push_str("        end\n");
+                }
+            }
+            out.push_str("    end\n");
+        }
+
+        out.push_str("end\n\n");
+    }
+
     for recipe in &cookfile.recipes {
         out.push_str(&format!(
             "cook.recipe(\"{}\", {}, function()\n",

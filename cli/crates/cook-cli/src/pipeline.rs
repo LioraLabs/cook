@@ -36,6 +36,39 @@ pub fn read_and_parse(cli: &Cli) -> Result<(cook_lang::ast::Cookfile, String), C
     Ok((cookfile, lua_source))
 }
 
+/// Validate that `config` (if supplied) matches a named `config NAME ... end`
+/// block in the Cookfile. Errors with the list of available names on mismatch.
+pub fn validate_selected_config(
+    cookfile: &cook_lang::ast::Cookfile,
+    config: Option<&str>,
+) -> Result<(), CookError> {
+    let Some(name) = config else { return Ok(()); };
+    let has_match = cookfile
+        .config_blocks
+        .iter()
+        .any(|b| b.name.as_deref() == Some(name));
+    if has_match {
+        return Ok(());
+    }
+    let available: Vec<&str> = cookfile
+        .config_blocks
+        .iter()
+        .filter_map(|b| b.name.as_deref())
+        .collect();
+    if available.is_empty() {
+        Err(CookError::Other(format!(
+            "unknown config '{}': no named configs defined",
+            name
+        )))
+    } else {
+        Err(CookError::Other(format!(
+            "unknown config '{}'. available: {}",
+            name,
+            available.join(", ")
+        )))
+    }
+}
+
 /// Bridge EngineEvent to ProgressEvent and send to the progress renderer.
 fn bridge_engine_events(
     engine_rx: mpsc::Receiver<cook_engine::EngineEvent>,
@@ -218,8 +251,10 @@ fn build_single_registries(
     cookfile_dir: &Path,
     env_vars: std::collections::HashMap<String, String>,
     lua_source: String,
+    selected_config: Option<&str>,
 ) -> BTreeMap<String, (cook_register::Registry, String)> {
-    let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars);
+    let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars)
+        .with_selected_config(selected_config.map(|s| s.to_string()));
     let mut registries = BTreeMap::new();
     registries.insert(String::new(), (registry, lua_source));
     registries
@@ -236,7 +271,8 @@ fn build_workspace_registries(
 
     let mut registries: BTreeMap<String, (cook_register::Registry, String)> = BTreeMap::new();
 
-    let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env);
+    let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env)
+        .with_selected_config(config.map(|s| s.to_string()));
     registries.insert(
         String::new(),
         (root_registry, workspace.root.lua_source.clone()),
@@ -250,7 +286,8 @@ fn build_workspace_registries(
             std::collections::HashMap::new(),
             cli_sets,
         )?;
-        let registry = cook_register::Registry::new(loaded.dir.clone(), import_env);
+        let registry = cook_register::Registry::new(loaded.dir.clone(), import_env)
+            .with_selected_config(config.map(|s| s.to_string()));
         registries.insert(prefix, (registry, loaded.lua_source.clone()));
     }
 
@@ -303,6 +340,7 @@ fn resolve_num_jobs(cli: &Cli) -> usize {
 
 pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
     let (cookfile, lua_source) = read_and_parse(cli)?;
+    validate_selected_config(&cookfile, config)?;
 
     if cli.emit_lua {
         println!("{lua_source}");
@@ -331,7 +369,7 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         let env_vars = resolve_env(&cookfile, config, dotenv_vars, &cli.set)?;
 
         let recipe_infos = build_single_recipe_infos(&cookfile);
-        let registries = build_single_registries(cookfile_dir, env_vars, lua_source);
+        let registries = build_single_registries(cookfile_dir, env_vars, lua_source, config);
 
         run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs)?;
     }
@@ -443,7 +481,7 @@ pub fn cmd_test(
         }
 
         let recipe_infos = build_single_recipe_infos(&cookfile);
-        let registries = build_single_registries(cookfile_dir, env_vars, lua_source);
+        let registries = build_single_registries(cookfile_dir, env_vars, lua_source, None);
 
         let _result =
             run_with_progress(cli, &recipe_infos, &test_recipes, &registries, num_jobs);
@@ -523,6 +561,7 @@ end
 
 pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
     let (cookfile, _lua_source) = read_and_parse(cli)?;
+    validate_selected_config(&cookfile, config)?;
 
     // Check for interactive steps -- not supported under cook serve
     for recipe in &cookfile.recipes {
@@ -601,6 +640,7 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
 
 pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
     let (cookfile, lua_source) = read_and_parse(cli)?;
+    validate_selected_config(&cookfile, config)?;
 
     let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
     let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
@@ -629,7 +669,8 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         std::sync::Arc<cook_cache::ThreadSafeCacheManager>,
     > = std::collections::BTreeMap::new();
 
-    let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars);
+    let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars)
+        .with_selected_config(config.map(|s| s.to_string()));
 
     loop {
         let ready = recipe_dag.pop_ready();

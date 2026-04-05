@@ -1,5 +1,20 @@
 use cpp
 
+config
+    env.CFLAGS = "-O2"
+    env.CXXFLAGS = "-O2"
+end
+
+config debug
+    env.CFLAGS = "-O0 -g"
+    env.CXXFLAGS = "-O0 -g"
+end
+
+config release
+    env.CFLAGS = "-O3 -DNDEBUG"
+    env.CXXFLAGS = "-O3 -DNDEBUG"
+end
+
 recipe liblua
     ingredients "lua-5.4.7/src/*.c" !"lua-5.4.7/src/lua.c" !"lua-5.4.7/src/luac.c"
     cpp.static_library("liblua", {

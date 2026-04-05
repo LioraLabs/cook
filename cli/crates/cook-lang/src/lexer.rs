@@ -4,7 +4,7 @@ use thiserror::Error;
 pub enum Token {
     Comment(String),
     RecipeHeader { name: String, deps: Vec<String> },
-    ConfigHeader { name: String },
+    ConfigHeader { name: Option<String> },
     VarDecl { name: String, value: String },
     UseDecl { name: String },
     ImportDecl { name: String, path: String },
@@ -128,6 +128,8 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
             };
 
             Token::RecipeHeader { name, deps }
+        } else if trimmed == "config" {
+            Token::ConfigHeader { name: None }
         } else if trimmed.starts_with("config")
             && trimmed.len() > 6
             && (trimmed.as_bytes()[6] == b' '
@@ -136,7 +138,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
         {
             let rest = trimmed["config".len()..].trim();
             let (name, _) = parse_name(rest, line_num)?;
-            Token::ConfigHeader { name }
+            Token::ConfigHeader { name: Some(name) }
         } else if trimmed.starts_with("use")
             && trimmed.len() > 3
             && (trimmed.as_bytes()[3] == b' '
@@ -497,7 +499,7 @@ end
         assert_eq!(
             tokens[0].value,
             Token::ConfigHeader {
-                name: "debug".to_string(),
+                name: Some("debug".to_string()),
             }
         );
     }
@@ -541,7 +543,7 @@ end
         assert_eq!(tokens.len(), 1);
         assert_eq!(
             tokens[0].value,
-            Token::ConfigHeader { name: "debug".to_string() }
+            Token::ConfigHeader { name: Some("debug".to_string()) }
         );
     }
 
@@ -611,5 +613,29 @@ end
     fn test_import_missing_name_and_path() {
         let tokens = tokenize("import").unwrap();
         assert_eq!(tokens[0].value, Token::Content("import".to_string()));
+    }
+
+    #[test]
+    fn test_bare_config_keyword_tokenizes() {
+        let tokens = tokenize("config").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].value, Token::ConfigHeader { name: None });
+    }
+
+    #[test]
+    fn test_named_config_keyword_tokenizes() {
+        let tokens = tokenize("config release").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(
+            tokens[0].value,
+            Token::ConfigHeader { name: Some("release".to_string()) }
+        );
+    }
+
+    #[test]
+    fn test_config_prefix_not_a_token() {
+        // "configure" starts with "config" but is a bareword command
+        let tokens = tokenize("configure --prefix=/usr").unwrap();
+        assert!(!matches!(tokens[0].value, Token::ConfigHeader { .. }));
     }
 }

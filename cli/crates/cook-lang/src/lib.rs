@@ -6,7 +6,7 @@ pub(crate) mod recipe;
 
 use ast::*;
 use lexer::*;
-use recipe::{parse_config_block, parse_recipe};
+use recipe::{parse_config_block_lua, parse_recipe};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -23,7 +23,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
     let mut pos = 0;
     let mut recipes = Vec::new();
     let mut vars = Vec::new();
-    let mut configs = std::collections::BTreeMap::new();
+    let mut config_blocks: Vec<ConfigBlock> = Vec::new();
     let mut uses = Vec::new();
     let mut imports = Vec::new();
     let mut seen_recipe = false;
@@ -51,10 +51,34 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                         message: "config blocks must appear before recipes".to_string(),
                     });
                 }
-                let config_name = name.clone();
+                let header_line = tok.line;
+                let block_name = name.clone();
+                // Validation: duplicates
+                match &block_name {
+                    None => {
+                        if config_blocks.iter().any(|b| b.name.is_none()) {
+                            return Err(ParseError::Parse {
+                                line: header_line,
+                                message: "multiple unnamed config blocks (only one allowed)".to_string(),
+                            });
+                        }
+                    }
+                    Some(n) => {
+                        if config_blocks.iter().any(|b| b.name.as_deref() == Some(n)) {
+                            return Err(ParseError::Parse {
+                                line: header_line,
+                                message: format!("duplicate config block '{}'", n),
+                            });
+                        }
+                    }
+                }
                 pos += 1;
-                let (config_vars, new_pos) = parse_config_block(&tokens, pos, tok.line)?;
-                configs.insert(config_name, config_vars);
+                let (body, new_pos) = parse_config_block_lua(&tokens, pos, header_line, &source_lines)?;
+                config_blocks.push(ConfigBlock {
+                    name: block_name,
+                    body,
+                    line: header_line,
+                });
                 pos = new_pos;
             }
             Token::RecipeHeader { name, deps } => {
@@ -122,7 +146,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
         }
     }
 
-    Ok(Cookfile { vars, configs, recipes, uses, imports })
+    Ok(Cookfile { vars, config_blocks, recipes, uses, imports })
 }
 
 #[cfg(test)]
