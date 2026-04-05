@@ -28,6 +28,25 @@ pub fn generate(cookfile: &Cookfile) -> String {
             generate_metadata(recipe)
         ));
 
+        // Emit local ingredients variable when recipe has ingredients
+        if !recipe.ingredients.is_empty() {
+            let includes: Vec<String> = recipe
+                .ingredients
+                .iter()
+                .map(|s| format!("\"{}\"", escape_lua_string(s)))
+                .collect();
+            let excludes: Vec<String> = recipe
+                .excludes
+                .iter()
+                .map(|s| format!("\"{}\"", escape_lua_string(s)))
+                .collect();
+            out.push_str(&format!(
+                "    local ingredients = cook.resolve_ingredients({{{}}}, {{{}}})\n",
+                includes.join(", "),
+                excludes.join(", "),
+            ));
+        }
+
         let mut prev_cook_index: Option<usize> = None;
         let mut cook_index: usize = 0;
 

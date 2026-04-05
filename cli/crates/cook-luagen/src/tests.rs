@@ -725,3 +725,62 @@ fn test_recipe_without_excludes() {
     let output = generate(&cookfile);
     assert!(!output.contains("excludes"), "should not emit excludes when empty");
 }
+
+#[test]
+fn test_ingredients_lua_variable_emitted() {
+    let recipe = make_recipe(
+        "build",
+        vec![],
+        vec!["src/*.c"],
+        vec![Step::Lua {
+            code: "print(ingredients)".to_string(),
+            line: 3,
+        }],
+    );
+    let cookfile = make_cookfile(vec![recipe]);
+    let output = generate(&cookfile);
+    assert!(
+        output.contains("local ingredients = cook.resolve_ingredients("),
+        "should emit ingredients variable, got:\n{}",
+        output
+    );
+    assert!(output.contains("\"src/*.c\""));
+}
+
+#[test]
+fn test_ingredients_lua_variable_with_excludes() {
+    let mut recipe = make_recipe(
+        "build",
+        vec![],
+        vec!["src/*.c"],
+        vec![Step::Lua {
+            code: "print(ingredients)".to_string(),
+            line: 3,
+        }],
+    );
+    recipe.excludes = vec!["src/skip.c".to_string()];
+    let cookfile = make_cookfile(vec![recipe]);
+    let output = generate(&cookfile);
+    assert!(output.contains("\"src/*.c\""));
+    assert!(output.contains("\"src/skip.c\""));
+}
+
+#[test]
+fn test_no_ingredients_no_variable() {
+    let recipe = make_recipe(
+        "clean",
+        vec![],
+        vec![],
+        vec![Step::Shell {
+            command: "rm -rf build".to_string(),
+            line: 2,
+            interactive: false,
+        }],
+    );
+    let cookfile = make_cookfile(vec![recipe]);
+    let output = generate(&cookfile);
+    assert!(
+        !output.contains("cook.resolve_ingredients"),
+        "should NOT emit ingredients variable for recipe without ingredients"
+    );
+}
