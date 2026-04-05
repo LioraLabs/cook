@@ -15,3 +15,5 @@ thiserror = "2"
 
 [dev-dependencies]
 tempfile = "3"
+cook-lang = { path = "../cook-lang" }
+cook-luagen = { path = "../cook-luagen" }
