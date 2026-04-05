@@ -675,10 +675,15 @@ function cpp.shared_library(name, opts)
     local standard = opts.standard or env_standard or cpp.state.default_standard or "c++17"
     local warnings = opts.warnings or env_warnings
 
+    -- Resolve linked targets once — feed includes/defines now; use link_libs/system_libs/ldflags at link time.
+    local link_libs, rpath_dirs, link_system_libs, link_extra_ldflags
     if opts.links then
-        local link_incs, link_defs = resolve_links(opts.links)
+        local link_incs, link_defs
+        link_incs, link_defs, link_libs, rpath_dirs, link_system_libs, link_extra_ldflags = resolve_links(opts.links)
         for _, inc in ipairs(link_incs) do includes[#includes + 1] = inc end
         for _, def in ipairs(link_defs) do defines[#defines + 1] = def end
+    else
+        link_libs, rpath_dirs, link_system_libs, link_extra_ldflags = {}, {}, {}, {}
     end
 
     local ext = cook.platform.os == "macos" and ".dylib" or ".so"
@@ -698,8 +703,7 @@ function cpp.shared_library(name, opts)
         end
     end)
 
-    -- Resolve link dependencies (includes/defines already resolved earlier — reuse walk for libs + system_libs)
-    local _, _, link_libs, rpath_dirs, link_system_libs, link_extra_ldflags = resolve_links(opts.links or {})
+    -- Linker arguments (link_* locals were resolved once at top of function)
 
     -- Combine system_libs: env-var defaults + target's own + transitive, dedup (first occurrence wins)
     local merged_system_libs = {}
@@ -708,8 +712,11 @@ function cpp.shared_library(name, opts)
     for _, sl in ipairs(link_system_libs)        do merged_system_libs[#merged_system_libs + 1] = sl end
     merged_system_libs = dedup(merged_system_libs)
 
-    -- Combine extra_ldflags: own first (as string), then transitive (list of strings, space-joined)
-    local merged_ldflags = opts.extra_ldflags or ""
+    -- Combine extra_ldflags: own first (as string), then transitive (list of strings, space-joined).
+    -- Normalize opts.extra_ldflags table → string for consistency with ldflags_list export normalization.
+    local own_ldflags = opts.extra_ldflags or ""
+    if type(own_ldflags) == "table" then own_ldflags = table.concat(own_ldflags, " ") end
+    local merged_ldflags = own_ldflags
     for _, lf in ipairs(link_extra_ldflags) do
         if lf ~= "" then
             merged_ldflags = (merged_ldflags == "" and lf) or (merged_ldflags .. " " .. lf)
@@ -862,8 +869,11 @@ function cpp.executable(name, opts)
     for _, sl in ipairs(link_system_libs)        do merged_system_libs[#merged_system_libs + 1] = sl end
     merged_system_libs = dedup(merged_system_libs)
 
-    -- Combine extra_ldflags: own first (as string), then transitive (list of strings, space-joined)
-    local merged_ldflags = opts.extra_ldflags or ""
+    -- Combine extra_ldflags: own first (as string), then transitive (list of strings, space-joined).
+    -- Normalize opts.extra_ldflags table → string for consistency with ldflags_list export normalization.
+    local own_ldflags = opts.extra_ldflags or ""
+    if type(own_ldflags) == "table" then own_ldflags = table.concat(own_ldflags, " ") end
+    local merged_ldflags = own_ldflags
     for _, lf in ipairs(link_extra_ldflags) do
         if lf ~= "" then
             merged_ldflags = (merged_ldflags == "" and lf) or (merged_ldflags .. " " .. lf)
