@@ -272,7 +272,7 @@ function cpp.compile(source, opts)
     flags[#flags + 1] = dep_file
 
     local std = opts.standard or cpp.state.default_standard
-    if std then flags[#flags + 1] = "-std=" .. std end
+    if std and not is_c_source(source) then flags[#flags + 1] = "-std=" .. std end
 
     for _, inc in ipairs(opts.includes or {}) do
         flags[#flags + 1] = "-I" .. inc
