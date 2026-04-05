@@ -433,6 +433,14 @@ end
 -- Transitive link resolution
 -- ---------------------------------------------------------------------------
 
+--- Normalize extra_ldflags (string | nil | list) into a list for export.
+local function ldflags_list(v)
+    if v == nil then return {} end
+    if type(v) == "table" then return v end
+    if v == "" then return {} end
+    return { v }
+end
+
 local function resolve_links(link_names)
     local visited = {}
     local includes = {}
@@ -605,12 +613,19 @@ function cpp.static_library(name, opts)
     -- Track target
     register_target(name)
 
+    -- Effective system_libs for this target: env-var defaults + per-target.
+    local eff_system_libs = {}
+    for _, sl in ipairs(env_system_libs)         do eff_system_libs[#eff_system_libs + 1] = sl end
+    for _, sl in ipairs(opts.system_libs or {})  do eff_system_libs[#eff_system_libs + 1] = sl end
+
     -- Export
     cook.export(name, {
         includes = opts.export_includes or {},
         defines = opts.export_defines or {},
         lib_path = output,
         links = opts.links or {},
+        system_libs = eff_system_libs,
+        extra_ldflags = ldflags_list(opts.extra_ldflags),
         compile_info = {
             sources = sources,
             includes = includes,
@@ -682,12 +697,19 @@ function cpp.shared_library(name, opts)
 
     register_target(name)
 
+    -- Effective system_libs for this target: env-var defaults + per-target.
+    local eff_system_libs = {}
+    for _, sl in ipairs(env_system_libs)         do eff_system_libs[#eff_system_libs + 1] = sl end
+    for _, sl in ipairs(opts.system_libs or {})  do eff_system_libs[#eff_system_libs + 1] = sl end
+
     cook.export(name, {
         includes = opts.export_includes or {},
         defines = opts.export_defines or {},
         lib_path = output,
         shared = true,
         links = opts.links or {},
+        system_libs = eff_system_libs,
+        extra_ldflags = ldflags_list(opts.extra_ldflags),
         compile_info = {
             sources = sources,
             includes = includes,
@@ -814,10 +836,17 @@ function cpp.executable(name, opts)
 
     register_target(name)
 
+    -- Effective system_libs for this target: env-var defaults + per-target.
+    local eff_system_libs = {}
+    for _, sl in ipairs(env_system_libs)         do eff_system_libs[#eff_system_libs + 1] = sl end
+    for _, sl in ipairs(opts.system_libs or {})  do eff_system_libs[#eff_system_libs + 1] = sl end
+
     cook.export(name, {
         includes = opts.export_includes or {},
         defines = opts.export_defines or {},
         links = opts.links or {},
+        system_libs = eff_system_libs,
+        extra_ldflags = ldflags_list(opts.extra_ldflags),
         compile_info = {
             sources = sources,
             includes = includes,
@@ -841,12 +870,17 @@ function cpp.interface_library(name, opts)
     local defines = {}
     for _, def in ipairs(env_defines)        do defines[#defines + 1] = def end
     for _, def in ipairs(opts.defines or {}) do defines[#defines + 1] = def end
+    local system_libs = {}
+    for _, sl in ipairs(env_system_libs)         do system_libs[#system_libs + 1] = sl end
+    for _, sl in ipairs(opts.system_libs or {})  do system_libs[#system_libs + 1] = sl end
 
     register_target(name)
 
     cook.export(name, {
         includes = includes,
         defines = defines,
+        system_libs = system_libs,
+        extra_ldflags = ldflags_list(opts.extra_ldflags),
     })
 end
 
