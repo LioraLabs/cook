@@ -1,2 +1,4 @@
 build/
 .cook/
+.cache/
+compile_commands.json
