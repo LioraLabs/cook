@@ -14,17 +14,24 @@ use crate::{CaptureState, RegisterError, SharedCaptureState};
 
 pub struct Registry {
     working_dir: PathBuf,
-    env_vars: HashMap<String, String>,
+    env_vars: Rc<RefCell<HashMap<String, String>>>,
     export_store: SharedExportStore,
+    selected_config: Option<String>,
 }
 
 impl Registry {
     pub fn new(working_dir: PathBuf, env_vars: HashMap<String, String>) -> Self {
         Self {
             working_dir,
-            env_vars,
+            env_vars: Rc::new(RefCell::new(env_vars)),
             export_store: Rc::new(RefCell::new(BTreeMap::new())),
+            selected_config: None,
         }
+    }
+
+    pub fn with_selected_config(mut self, selected_config: Option<String>) -> Self {
+        self.selected_config = selected_config;
+        self
     }
 
     pub fn working_dir(&self) -> &PathBuf {
@@ -44,7 +51,7 @@ impl Registry {
 
         let recipes = register_cook_api_capture(
             &lua,
-            &self.env_vars,
+            self.env_vars.clone(),
             &self.working_dir,
             capture_state.clone(),
             recipe_name,
@@ -89,7 +96,7 @@ impl Registry {
         let cap = capture_state.borrow();
 
         // Convert HashMap env_vars to BTreeMap for RecipeUnits
-        let env_btree: BTreeMap<String, String> = self.env_vars.iter()
+        let env_btree: BTreeMap<String, String> = self.env_vars.borrow().iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
