@@ -3,6 +3,7 @@ use cpp
 config
     env.CFLAGS = "-O2"
     env.CXXFLAGS = "-O2"
+    env.CPP_DEFINES = cook.platform.os == "linux" and "LUA_USE_LINUX" or ""
 end
 
 config debug
@@ -19,7 +20,6 @@ recipe liblua
     ingredients "lua-5.4.7/src/*.c" !"lua-5.4.7/src/lua.c" !"lua-5.4.7/src/luac.c"
     cpp.static_library("liblua", {
         sources = ingredients,
-        defines = cook.platform.os == "linux" and { "LUA_USE_LINUX" } or {},
         system_libs = { "m", "dl" },
     })
 end
