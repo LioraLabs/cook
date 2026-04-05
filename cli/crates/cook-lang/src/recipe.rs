@@ -74,35 +74,31 @@ fn collect_module_call(
     Ok((code, new_pos))
 }
 
-pub(crate) fn parse_config_block(
+pub(crate) fn parse_config_block_lua(
     tokens: &[Located<Token>],
     start: usize,
     open_line: usize,
-) -> Result<(Vec<(String, String)>, usize), ParseError> {
+    source_lines: &[&str],
+) -> Result<(String, usize), ParseError> {
+    // Find the closing `end` token; collect source lines between the header and `end`.
     let mut pos = start;
-    let mut config_vars = Vec::new();
-
     while pos < tokens.len() {
-        let tok = &tokens[pos];
-        match &tok.value {
-            Token::RecipeEnd => {
-                pos += 1;
-                return Ok((config_vars, pos));
-            }
-            Token::VarDecl { name, value } => {
-                config_vars.push((name.clone(), value.clone()));
-                pos += 1;
-            }
-            Token::Comment(_) | Token::Blank => {
-                pos += 1;
-            }
-            _ => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: "config blocks may only contain variable declarations".to_string(),
-                });
-            }
+        if matches!(&tokens[pos].value, Token::RecipeEnd) {
+            let end_line = tokens[pos].line; // 1-indexed
+            // Source lines between open_line (exclusive) and end_line (exclusive).
+            // open_line is 1-indexed; source_lines is 0-indexed.
+            let start_idx = open_line; // line after the header
+            let end_idx = end_line.saturating_sub(1); // line of `end`, exclusive
+
+            let body = if start_idx < end_idx && end_idx <= source_lines.len() {
+                source_lines[start_idx..end_idx].join("\n")
+            } else {
+                String::new()
+            };
+
+            return Ok((body, pos + 1));
         }
+        pos += 1;
     }
 
     Err(ParseError::Parse {
