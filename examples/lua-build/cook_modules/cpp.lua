@@ -52,9 +52,9 @@ local function to_relative(abs_path)
     return abs_path
 end
 
---- Get warning flags for the current preset
-local function warning_flags()
-    local w = cpp.state.warnings
+--- Get warning flags for the given preset (or cpp.state.warnings if nil)
+local function warning_flags(w)
+    w = w or cpp.state.warnings
     if w == "default" then return "-Wall"
     elseif w == "strict" then return "-Wall -Wextra -Wpedantic"
     elseif w == "none" then return ""
@@ -306,8 +306,8 @@ function cpp.compile(source, opts)
         flags[#flags + 1] = "-D" .. def
     end
 
-    -- Warning flags
-    local wflags = warning_flags()
+    -- Warning flags (opts.warnings wins over cpp.state.warnings)
+    local wflags = warning_flags(opts.warnings)
     if wflags ~= "" then flags[#flags + 1] = wflags end
 
     -- PIC flag
@@ -526,7 +526,7 @@ function cpp.static_library(name, opts)
                 mflags[#mflags + 1] = "-std=" .. standard
                 for _, inc in ipairs(includes) do mflags[#mflags + 1] = "-I" .. inc end
                 for _, def in ipairs(defines) do mflags[#mflags + 1] = "-D" .. def end
-                local wf = warning_flags()
+                local wf = warning_flags(opts.warnings)
                 if wf ~= "" then mflags[#mflags + 1] = wf end
                 mflags[#mflags + 1] = "-MMD"
                 mflags[#mflags + 1] = "-MF"
@@ -713,7 +713,7 @@ function cpp.executable(name, opts)
                 mflags[#mflags + 1] = "-std=" .. standard
                 for _, inc in ipairs(includes) do mflags[#mflags + 1] = "-I" .. inc end
                 for _, def in ipairs(defines) do mflags[#mflags + 1] = "-D" .. def end
-                local wf = warning_flags()
+                local wf = warning_flags(opts.warnings)
                 if wf ~= "" then mflags[#mflags + 1] = wf end
                 mflags[#mflags + 1] = "-MMD"
                 mflags[#mflags + 1] = "-MF"
