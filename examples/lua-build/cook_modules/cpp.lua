@@ -2,6 +2,13 @@
 -- Provides compiler detection, compilation with header dep tracking,
 -- static/shared/interface libraries, executables, C++20 modules,
 -- transitive link resolution, and compile_commands.json generation.
+--
+-- Module-level defaults via env vars (set in config blocks or via --set):
+--   CPP_DEFINES      — whitespace-separated macro names, prepended to each target's defines
+--   CPP_INCLUDES     — whitespace-separated include paths, prepended to each target's includes
+--   CPP_SYSTEM_LIBS  — whitespace-separated lib names, prepended to each target's system_libs
+--   CPP_STANDARD     — scalar (e.g., "c++17"); used when per-target standard is absent
+--   CPP_WARNINGS     — scalar ("strict"|"default"|"none" or raw flags); used when per-target warnings is absent
 
 local cpp = {}
 
@@ -17,6 +24,24 @@ cpp.state = {
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
+
+--- Split a whitespace-separated env var into a list. Nil/empty → empty list.
+local function env_list(name)
+    local v = cook.env[name]
+    if v == nil or v == "" then return {} end
+    local out = {}
+    for word in v:gmatch("%S+") do
+        out[#out + 1] = word
+    end
+    return out
+end
+
+--- Read a scalar env var. Nil/empty → nil.
+local function env_scalar(name)
+    local v = cook.env[name]
+    if v == nil or v == "" then return nil end
+    return v
+end
 
 --- Convert absolute path to relative (strips working directory prefix)
 local function to_relative(abs_path)
