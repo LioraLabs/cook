@@ -623,11 +623,21 @@ function cpp.shared_library(name, opts)
         error("cpp.shared_library: no sources found for target '" .. name .. "'")
     end
 
+    -- Read env-var defaults (see cpp.static_library for semantics).
+    local env_defines     = env_list("CPP_DEFINES")
+    local env_includes    = env_list("CPP_INCLUDES")
+    local env_system_libs = env_list("CPP_SYSTEM_LIBS")
+    local env_standard    = env_scalar("CPP_STANDARD")
+    local env_warnings    = env_scalar("CPP_WARNINGS")
+
     local includes = {}
+    for _, inc in ipairs(env_includes)        do includes[#includes + 1] = inc end
     for _, inc in ipairs(opts.includes or {}) do includes[#includes + 1] = inc end
     local defines = {}
+    for _, def in ipairs(env_defines)        do defines[#defines + 1] = def end
     for _, def in ipairs(opts.defines or {}) do defines[#defines + 1] = def end
-    local standard = opts.standard or cpp.state.default_standard or "c++17"
+    local standard = opts.standard or env_standard or cpp.state.default_standard or "c++17"
+    local warnings = opts.warnings or env_warnings
 
     if opts.links then
         local link_incs, link_defs = resolve_links(opts.links)
@@ -645,6 +655,7 @@ function cpp.shared_library(name, opts)
                 includes = includes,
                 defines = defines,
                 standard = standard,
+                warnings = warnings,
                 target_name = name,
                 fpic = true,
             })
@@ -689,11 +700,21 @@ function cpp.executable(name, opts)
         error("cpp.executable: no sources found for target '" .. name .. "'")
     end
 
+    -- Read env-var defaults (see cpp.static_library for semantics).
+    local env_defines     = env_list("CPP_DEFINES")
+    local env_includes    = env_list("CPP_INCLUDES")
+    local env_system_libs = env_list("CPP_SYSTEM_LIBS")
+    local env_standard    = env_scalar("CPP_STANDARD")
+    local env_warnings    = env_scalar("CPP_WARNINGS")
+
     local includes = {}
+    for _, inc in ipairs(env_includes)        do includes[#includes + 1] = inc end
     for _, inc in ipairs(opts.includes or {}) do includes[#includes + 1] = inc end
     local defines = {}
+    for _, def in ipairs(env_defines)        do defines[#defines + 1] = def end
     for _, def in ipairs(opts.defines or {}) do defines[#defines + 1] = def end
-    local standard = opts.standard or cpp.state.default_standard or "c++17"
+    local standard = opts.standard or env_standard or cpp.state.default_standard or "c++17"
+    local warnings = opts.warnings or env_warnings
 
     -- Resolve linked targets
     local link_incs, link_defs, link_libs, rpath_dirs = resolve_links(opts.links or {})
@@ -725,7 +746,7 @@ function cpp.executable(name, opts)
                 mflags[#mflags + 1] = "-std=" .. standard
                 for _, inc in ipairs(includes) do mflags[#mflags + 1] = "-I" .. inc end
                 for _, def in ipairs(defines) do mflags[#mflags + 1] = "-D" .. def end
-                local wf = warning_flags(opts.warnings)
+                local wf = warning_flags(warnings)
                 if wf ~= "" then mflags[#mflags + 1] = wf end
                 mflags[#mflags + 1] = "-MMD"
                 mflags[#mflags + 1] = "-MF"
@@ -751,6 +772,7 @@ function cpp.executable(name, opts)
                     includes = includes,
                     defines = defines,
                     standard = standard,
+                    warnings = warnings,
                     target_name = name,
                     extra_cflags = "-fprebuilt-module-path=" .. bmi_dir
                         .. (opts.extra_cflags and (" " .. opts.extra_cflags) or ""),
@@ -766,6 +788,7 @@ function cpp.executable(name, opts)
                     includes = includes,
                     defines = defines,
                     standard = standard,
+                    warnings = warnings,
                     target_name = name,
                     extra_cflags = opts.extra_cflags,
                 })
