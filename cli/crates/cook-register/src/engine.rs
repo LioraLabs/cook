@@ -74,6 +74,31 @@ impl Registry {
 
         lua.load(lua_source).exec()?;
 
+        // Config block dispatch: if codegen emitted __cook_run_config_blocks,
+        // expose writable `env` alias, call it, then snapshot mutations back
+        // into the shared env_vars map.
+        if let Ok(dispatch) = lua.globals().get::<LuaFunction>("__cook_run_config_blocks") {
+            // Expose `env` as an alias of cook.env for the block body to write.
+            let cook_tbl: LuaTable = lua.globals().get("cook")?;
+            let env_tbl: LuaTable = cook_tbl.get("env")?;
+            lua.globals().set("env", env_tbl.clone())?;
+
+            let name_arg: Option<String> = self.selected_config.clone();
+            dispatch.call::<()>(name_arg)?;
+
+            // Snapshot mutations from cook.env back into shared env_vars.
+            {
+                let mut env_map = self.env_vars.borrow_mut();
+                for pair in env_tbl.pairs::<String, String>() {
+                    let (k, v) = pair?;
+                    env_map.insert(k, v);
+                }
+            }
+
+            // Freeze: remove the `env` global from the recipe's view.
+            lua.globals().set("env", mlua::Value::Nil)?;
+        }
+
         let registry = recipes.borrow();
         let recipe = registry
             .iter()

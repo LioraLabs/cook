@@ -289,3 +289,68 @@ fn test_resolve_ingredients_api() {
     assert!(!result.contains(&"skip.c".to_string()));
     assert_eq!(result.len(), 2);
 }
+
+// -----------------------------------------------------------------------
+// Config block dispatch tests
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_registry_runs_config_block_and_applies_env() {
+    let mut initial_env = HashMap::new();
+    initial_env.insert("CC".to_string(), "initial".to_string());
+
+    let lua_source = r#"
+function __cook_run_config_blocks(selected_name)
+    env.CC = "from_base"
+    if selected_name ~= nil then
+        if selected_name == "release" then
+            env.CXXFLAGS = "-O3"
+        end
+    end
+end
+
+cook.recipe("build", {}, function() end)
+"#;
+
+    let tmp = TempDir::new().unwrap();
+    let registry = Registry::new(tmp.path().to_path_buf(), initial_env)
+        .with_selected_config(Some("release".to_string()));
+
+    let units = registry.register_recipe(lua_source, "build").unwrap();
+
+    assert_eq!(units.env_vars.get("CC").map(|s| s.as_str()), Some("from_base"));
+    assert_eq!(units.env_vars.get("CXXFLAGS").map(|s| s.as_str()), Some("-O3"));
+}
+
+#[test]
+fn test_registry_config_block_unnamed_runs_when_no_selection() {
+    let initial_env = HashMap::new();
+    let lua_source = r#"
+function __cook_run_config_blocks(selected_name)
+    env.BASE = "applied"
+    if selected_name ~= nil then
+        if selected_name == "never_selected" then
+            env.SHOULD_NOT_APPEAR = "1"
+        end
+    end
+end
+
+cook.recipe("build", {}, function() end)
+"#;
+
+    let tmp = TempDir::new().unwrap();
+    let registry = Registry::new(tmp.path().to_path_buf(), initial_env);
+    let units = registry.register_recipe(lua_source, "build").unwrap();
+
+    assert_eq!(units.env_vars.get("BASE").map(|s| s.as_str()), Some("applied"));
+    assert!(units.env_vars.get("SHOULD_NOT_APPEAR").is_none());
+}
+
+#[test]
+fn test_registry_no_dispatcher_no_op() {
+    let lua_source = r#"cook.recipe("build", {}, function() end)"#;
+    let tmp = TempDir::new().unwrap();
+    let registry = Registry::new(tmp.path().to_path_buf(), HashMap::new());
+    let units = registry.register_recipe(lua_source, "build").unwrap();
+    assert_eq!(units.recipe_name, "build");
+}
