@@ -1,25 +1,30 @@
-CC "gcc"
-AR "ar"
-CFLAGS "-O2 -Wall -Wextra -DLUA_USE_LINUX"
+use cpp
 
-recipe setup
-    mkdir -p build/obj build/bin
-end
-
-recipe lib: setup
+recipe liblua
     ingredients "lua-5.4.7/src/*.c" !"lua-5.4.7/src/lua.c" !"lua-5.4.7/src/luac.c"
-    cook "build/obj/{stem}.o" using "{CC} {CFLAGS} -c {in} -o {out}"
-    cook "build/liblua.a" using "{AR} rcs {out} {all}"
+    cpp.static_library("liblua", {
+        sources = ingredients,
+        defines = cook.platform.os == "linux" and { "LUA_USE_LINUX" } or {},
+        system_libs = { "m", "dl" },
+    })
 end
 
-recipe lua: lib
-    ingredients "lua-5.4.7/src/lua.c"
-    cook "build/bin/lua" using "{CC} {CFLAGS} {in} -Lbuild -llua -lm -ldl -lreadline -o {out}"
+recipe lua: liblua
+    cpp.executable("lua", {
+        sources = { "lua-5.4.7/src/lua.c" },
+        links = { "liblua" },
+        defines = cook.platform.os == "linux" and { "LUA_USE_LINUX" } or {},
+        system_libs = { "m", "dl", "readline" },
+    })
 end
 
-recipe luac: lib
-    ingredients "lua-5.4.7/src/luac.c"
-    cook "build/bin/luac" using "{CC} {CFLAGS} {in} -Lbuild -llua -lm -ldl -o {out}"
+recipe luac: liblua
+    cpp.executable("luac", {
+        sources = { "lua-5.4.7/src/luac.c" },
+        links = { "liblua" },
+        defines = cook.platform.os == "linux" and { "LUA_USE_LINUX" } or {},
+        system_libs = { "m", "dl" },
+    })
 end
 
 recipe build: lua luac
@@ -29,6 +34,10 @@ recipe test: lua
     test "build/bin/lua -e 'print(\"hello from lua built by cook\")'"
 end
 
+recipe compile-commands: liblua lua luac
+    cpp.compile_commands()
+end
+
 recipe clean
-    rm -rf build
+    rm -rf build .cook
 end
