@@ -30,7 +30,13 @@ local function is_workspace_specifier(dep_name, spec, workspace)
     if cat_name then
         local cat = workspace.catalogs and workspace.catalogs[cat_name]
         if not cat then
-            error("pnpm: unknown catalog '" .. cat_name .. "' referenced by dependency '" .. dep_name .. "'")
+            local available = {}
+            if workspace.catalogs then
+                for k, _ in pairs(workspace.catalogs) do available[#available + 1] = k end
+                table.sort(available)
+            end
+            error("pnpm: unknown catalog '" .. cat_name .. "' referenced by dependency '"
+                .. dep_name .. "' (available: " .. table.concat(available, ", ") .. ")")
         end
         local resolved = cat[dep_name]
         if resolved and type(resolved) == "string" and resolved:match("^workspace:") then
@@ -89,7 +95,10 @@ local function topo_sort(packages, task)
         end
     end
 
-    for name, _ in pairs(packages) do
+    local names = {}
+    for name, _ in pairs(packages) do names[#names + 1] = name end
+    table.sort(names)
+    for _, name in ipairs(names) do
         visit(name)
     end
     return order
@@ -168,7 +177,10 @@ function pnpm.init()
     local raw_packages = {}
     for _, dir in ipairs(pkg_dirs) do
         local json_str = fs.read(dir .. "/package.json")
-        local pkg_json = cook.json_decode(json_str)
+        local ok, pkg_json = pcall(cook.json_decode, json_str)
+        if not ok then
+            error("pnpm: invalid JSON in " .. dir .. "/package.json: " .. tostring(pkg_json))
+        end
         if pkg_json.name then
             all_pkg_names[pkg_json.name] = true
             raw_packages[#raw_packages + 1] = { name = pkg_json.name, dir = dir, json = pkg_json }
@@ -184,6 +196,7 @@ function pnpm.init()
 end
 
 function pnpm.install()
+    pnpm.init()
     cook.add_unit({
         inputs = { "pnpm-workspace.yaml", "pnpm-lock.yaml", "package.json" },
         output = ".cook/install.done",
@@ -206,7 +219,7 @@ function pnpm.run(task)
         cook.add_unit({
             inputs = inputs,
             output = marker,
-            command = "pnpm --filter " .. pkg.name .. " run " .. task
+            command = "pnpm --filter '" .. pkg.name .. "' run " .. task
                 .. " && mkdir -p " .. marker_dir
                 .. " && touch " .. marker,
         })
