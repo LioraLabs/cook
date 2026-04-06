@@ -181,6 +181,8 @@ mod tests {
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
         };
         let dag = build_dag(vec![units]);
         assert_eq!(dag.len(), 2);
@@ -215,6 +217,8 @@ mod tests {
             step_groups: vec![vec![0, 1]],
             working_dir: default_wd(),
             env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
         };
         let dag = build_dag(vec![units]);
         assert_eq!(dag.len(), 3);
@@ -238,6 +242,8 @@ mod tests {
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
         };
         let build = RecipeUnits {
             recipe_name: "build".into(),
@@ -250,6 +256,8 @@ mod tests {
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
         };
         let dag = build_dag(vec![setup, build]);
         assert_eq!(dag.len(), 2);
@@ -286,6 +294,8 @@ mod tests {
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
         };
         let dag = build_dag(vec![units]);
         assert_eq!(dag.len(), 2);

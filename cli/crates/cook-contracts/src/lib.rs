@@ -89,6 +89,11 @@ pub struct RecipeUnits {
     pub step_groups: Vec<Vec<usize>>,
     pub working_dir: PathBuf,
     pub env_vars: BTreeMap<String, String>,
+    /// Terminal outputs: the output paths from the recipe's final cook step.
+    pub terminal_outputs: Vec<String>,
+    /// Fine-grained cross-recipe dependency edges.
+    /// Each entry is (unit_index_in_this_recipe, dep_recipe_name).
+    pub dep_edges: Vec<(usize, String)>,
 }
 
 #[cfg(test)]
@@ -218,6 +223,8 @@ mod tests {
             step_groups: vec![vec![0, 1]],
             working_dir: PathBuf::from("/home/user/project"),
             env_vars: env,
+            terminal_outputs: vec![],
+            dep_edges: vec![],
         };
 
         assert_eq!(recipe.recipe_name, "build");
@@ -228,6 +235,22 @@ mod tests {
         // BTreeMap iteration is deterministic / sorted
         let keys: Vec<&String> = recipe.env_vars.keys().collect();
         assert_eq!(keys, vec!["AR", "CC"]);
+    }
+
+    #[test]
+    fn recipe_units_with_terminal_outputs() {
+        let recipe = RecipeUnits {
+            recipe_name: "libmath".into(),
+            deps: vec![],
+            units: vec![],
+            step_groups: vec![],
+            working_dir: PathBuf::from("."),
+            env_vars: BTreeMap::new(),
+            terminal_outputs: vec!["build/lib/libmath.a".into()],
+            dep_edges: vec![],
+        };
+        assert_eq!(recipe.terminal_outputs, vec!["build/lib/libmath.a"]);
+        assert!(recipe.dep_edges.is_empty());
     }
 
     #[test]

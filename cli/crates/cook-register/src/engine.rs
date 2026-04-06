@@ -133,6 +133,8 @@ impl Registry {
             step_groups: cap.step_groups.clone(),
             working_dir: self.working_dir.clone(),
             env_vars: env_btree,
+            terminal_outputs: vec![],
+            dep_edges: vec![],
         })
     }
 }

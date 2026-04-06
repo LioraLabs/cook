@@ -50,6 +50,13 @@ pub struct CaptureState {
     pub units: Vec<CapturedUnit>,
     pub current_group: Option<usize>,
     pub step_groups: Vec<Vec<usize>>,
+    /// Outputs collected during the current step_group call.
+    pub current_step_outputs: Vec<String>,
+    /// Terminal outputs: outputs from the last completed step_group.
+    /// Updated each time a step_group finishes (last one wins).
+    pub last_cook_step_outputs: Vec<String>,
+    /// Fine-grained dep edges: (unit_idx, dep_recipe_name).
+    pub dep_edges: Vec<(usize, String)>,
 }
 
 impl CaptureState {
@@ -60,6 +67,9 @@ impl CaptureState {
             units: Vec::new(),
             current_group: None,
             step_groups: Vec::new(),
+            current_step_outputs: Vec::new(),
+            last_cook_step_outputs: Vec::new(),
+            dep_edges: Vec::new(),
         }
     }
 }
