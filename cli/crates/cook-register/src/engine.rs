@@ -121,6 +121,8 @@ impl Registry {
         // Extract results from capture state
         let cap = capture_state.borrow();
 
+        let terminal_outputs_list = cap.last_cook_step_outputs.clone();
+
         // Convert HashMap env_vars to BTreeMap for RecipeUnits
         let env_btree: BTreeMap<String, String> = self.env_vars.borrow().iter()
             .map(|(k, v)| (k.clone(), v.clone()))
@@ -133,8 +135,8 @@ impl Registry {
             step_groups: cap.step_groups.clone(),
             working_dir: self.working_dir.clone(),
             env_vars: env_btree,
-            terminal_outputs: vec![],
-            dep_edges: vec![],
+            terminal_outputs: terminal_outputs_list,
+            dep_edges: cap.dep_edges.clone(),
         })
     }
 }

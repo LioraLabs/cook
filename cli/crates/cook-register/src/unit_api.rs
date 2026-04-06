@@ -18,6 +18,7 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
             Err(_) => vec![],
         };
         let output: Option<String> = tbl.get::<String>("output").ok();
+        let output_for_tracking = output.clone();
 
         let cache_meta = if cache_enabled {
             let cache_key = if let Some(ref out) = output {
@@ -51,6 +52,9 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
         if let DepKind::StepGroup(gi) = &dep_kind {
             state.step_groups[*gi].push(unit_idx);
         }
+        if let Some(out) = output_for_tracking {
+            state.current_step_outputs.push(out);
+        }
         Ok(())
     })?;
     cook.set("add_unit", add_unit_fn)?;
@@ -68,6 +72,10 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
         {
             let mut state = cs2.borrow_mut();
             state.current_group = None;
+            let outputs: Vec<String> = state.current_step_outputs.drain(..).collect();
+            if !outputs.is_empty() {
+                state.last_cook_step_outputs = outputs;
+            }
         }
         result
     })?;
@@ -185,5 +193,56 @@ mod tests {
         assert_eq!(state.units.len(), 2);
         assert!(matches!(state.units[0].dep_kind, DepKind::StepGroup(0)));
         assert!(matches!(state.units[1].dep_kind, DepKind::Sequential));
+    }
+
+    #[test]
+    fn test_last_cook_step_outputs_tracked() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.load(r#"
+            -- First cook step (OneToOne, 2 outputs)
+            cook.step_group(function()
+                cook.add_unit({ command = "gcc -c a.c -o a.o", inputs = {"a.c"}, output = "a.o" })
+                cook.add_unit({ command = "gcc -c b.c -o b.o", inputs = {"b.c"}, output = "b.o" })
+            end)
+            -- Second cook step (ManyToOne, 1 output)
+            cook.step_group(function()
+                cook.add_unit({ command = "ar rcs lib.a a.o b.o", inputs = {"a.o", "b.o"}, output = "lib.a" })
+            end)
+        "#).exec().unwrap();
+
+        let state = capture_state.borrow();
+        // Terminal outputs = from the LAST step group that produced outputs: ["lib.a"]
+        assert_eq!(state.last_cook_step_outputs, vec!["lib.a"]);
+    }
+
+    #[test]
+    fn test_plate_step_group_does_not_overwrite_terminal() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.load(r#"
+            -- Cook step produces output
+            cook.step_group(function()
+                cook.add_unit({ command = "gcc -o app main.c", inputs = {"main.c"}, output = "app" })
+            end)
+            -- Plate-like step (no output field) -- should NOT overwrite terminal
+            cook.step_group(function()
+                cook.add_unit({ command = "./app", cache = false })
+            end)
+        "#).exec().unwrap();
+
+        let state = capture_state.borrow();
+        assert_eq!(state.last_cook_step_outputs, vec!["app"]);
+    }
+
+    #[test]
+    fn test_single_step_terminal_outputs() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.load(r#"
+            cook.step_group(function()
+                cook.add_unit({ command = "gcc -o app main.c", inputs = {"main.c"}, output = "app" })
+            end)
+        "#).exec().unwrap();
+
+        let state = capture_state.borrow();
+        assert_eq!(state.last_cook_step_outputs, vec!["app"]);
     }
 }
