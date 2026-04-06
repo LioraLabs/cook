@@ -13,19 +13,26 @@ pnpm.state = {
 -- Specifier resolution
 -- ---------------------------------------------------------------------------
 
+--- Check if a dependency specifier routes through the workspace.
+--- The caller already verified dep_name is a known workspace package,
+--- so we just need to confirm the specifier is workspace:* or a catalog
+--- entry that references this dep (pnpm links workspace packages when
+--- the catalog version range matches the local package version).
 local function is_workspace_specifier(dep_name, spec, workspace)
+    -- workspace:* or workspace:^ -> always internal
     if spec:match("^workspace:") then
         return true
     end
 
+    -- catalog: (default catalog) -> internal if catalog has an entry for this dep
     if spec == "catalog:" then
-        local resolved = workspace.catalog and workspace.catalog[dep_name]
-        if resolved and type(resolved) == "string" and resolved:match("^workspace:") then
+        if workspace.catalog and workspace.catalog[dep_name] then
             return true
         end
         return false
     end
 
+    -- catalog:name (named catalog) -> internal if the named catalog has this dep
     local cat_name = spec:match("^catalog:(.+)$")
     if cat_name then
         local cat = workspace.catalogs and workspace.catalogs[cat_name]
@@ -38,11 +45,7 @@ local function is_workspace_specifier(dep_name, spec, workspace)
             error("pnpm: unknown catalog '" .. cat_name .. "' referenced by dependency '"
                 .. dep_name .. "' (available: " .. table.concat(available, ", ") .. ")")
         end
-        local resolved = cat[dep_name]
-        if resolved and type(resolved) == "string" and resolved:match("^workspace:") then
-            return true
-        end
-        return false
+        return cat[dep_name] ~= nil
     end
 
     return false
@@ -108,25 +111,33 @@ end
 -- Input list construction
 -- ---------------------------------------------------------------------------
 
-local EXCLUDE_PATTERNS = {
-    "/node_modules/", "/.cook/", "/dist/", "/build/",
-    "/.next/", "/out/", "/coverage/", "/.turbo/",
-    "/.parcel-cache/",
+local EXCLUDE_DIRS = {
+    "node_modules", ".cook", "dist", "build",
+    ".next", "out", "coverage", ".turbo", ".parcel-cache",
 }
+
+--- Check if a file path traverses or ends at an excluded directory.
+--- Handles both "foo/dist/bar" (inside) and "foo/dist" (the dir itself).
+local function is_excluded(path)
+    for _, dir in ipairs(EXCLUDE_DIRS) do
+        local search = "/" .. dir
+        local pos = path:find(search, 1, true)
+        if pos then
+            local after = pos + #search
+            if after > #path or path:sub(after, after) == "/" then
+                return true
+            end
+        end
+    end
+    return false
+end
 
 local function build_input_list(pkg, task, packages)
     local inputs = {}
 
-    local all_files = fs.glob(pkg.dir .. "/**")
+    local all_files = fs.glob(pkg.dir .. "/**/*")
     for _, f in ipairs(all_files) do
-        local excluded = false
-        for _, pattern in ipairs(EXCLUDE_PATTERNS) do
-            if f:find(pattern, 1, true) then
-                excluded = true
-                break
-            end
-        end
-        if not excluded then
+        if not is_excluded(f) then
             inputs[#inputs + 1] = f
         end
     end
@@ -200,7 +211,7 @@ function pnpm.install()
     cook.add_unit({
         inputs = { "pnpm-workspace.yaml", "pnpm-lock.yaml", "package.json" },
         output = ".cook/install.done",
-        command = "pnpm install && mkdir -p .cook && touch .cook/install.done",
+        command = "pnpm install && mkdir -p .cook && date +%s%N > .cook/install.done",
     })
 end
 
@@ -221,7 +232,7 @@ function pnpm.run(task)
             output = marker,
             command = "pnpm --filter '" .. pkg.name .. "' run " .. task
                 .. " && mkdir -p " .. marker_dir
-                .. " && touch " .. marker,
+                .. " && date +%s%N > " .. marker,
         })
     end
 end

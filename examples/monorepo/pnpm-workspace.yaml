@@ -6,5 +6,5 @@ catalog:
 
 catalogs:
   internal:
-    shared-utils: workspace:*
-    ui: workspace:*
+    shared-utils: ^1.0.0
+    ui: ^1.0.0

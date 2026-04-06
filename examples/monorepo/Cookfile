@@ -8,7 +8,7 @@ recipe build: install
     > pnpm.run("build")
 end
 
-recipe test: build
+recipe check: build
     > pnpm.run("test")
 end
 
