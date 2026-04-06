@@ -7,9 +7,13 @@
 //!   active when the group started). When the last member of a group is
 //!   processed, all group members become the new barrier.
 //!
-//! Cross-recipe wiring:
+//! Cross-recipe wiring (coarse):
 //! - A recipe's root units (those with no within-recipe deps) additionally
 //!   depend on the leaf barrier of every recipe listed in `deps`.
+//!
+//! Cross-recipe wiring (fine-grained):
+//! - For each `(unit_idx, dep_recipe_name)` in `ru.dep_edges`, that specific
+//!   unit additionally depends on the terminal nodes of the named recipe.
 
 use std::collections::BTreeMap;
 
@@ -61,13 +65,23 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Dag<WorkNode> {
             };
 
             // Combine within-recipe and cross-recipe deps.
-            // Cross-recipe deps only apply to root units (units with no
+            // Coarse cross-recipe deps only apply to root units (units with no
             // within-recipe deps).
-            let all_deps = if within_deps.is_empty() {
+            let mut all_deps = if within_deps.is_empty() {
                 cross_deps.clone()
             } else {
                 within_deps
             };
+
+            // Fine-grained dep edges: add terminal nodes of specific recipes
+            // for this exact unit, regardless of whether it has within-recipe deps.
+            for (dep_unit_idx, dep_recipe_name) in &ru.dep_edges {
+                if *dep_unit_idx == unit_idx {
+                    if let Some(terminal_nodes) = recipe_leaves.get(dep_recipe_name) {
+                        all_deps.extend(terminal_nodes);
+                    }
+                }
+            }
 
             // Build the WorkNode.
             let work_node = if is_presatisfied(unit) {
@@ -269,6 +283,119 @@ mod tests {
     fn test_build_empty() {
         let dag = build_dag(vec![]);
         assert!(dag.is_empty());
+    }
+
+    #[test]
+    fn test_fine_grained_cross_recipe_deps() {
+        // libmath: compile group (2 units) -> archive (sequential)
+        let libmath = RecipeUnits {
+            recipe_name: "libmath".into(),
+            deps: vec![],
+            units: vec![
+                CapturedUnit {
+                    payload: shell("gcc -c add.c"),
+                    cache_meta: None,
+                    dep_kind: DepKind::StepGroup(0),
+                },
+                CapturedUnit {
+                    payload: shell("gcc -c mul.c"),
+                    cache_meta: None,
+                    dep_kind: DepKind::StepGroup(0),
+                },
+                CapturedUnit {
+                    payload: shell("ar rcs libmath.a"),
+                    cache_meta: None,
+                    dep_kind: DepKind::Sequential,
+                },
+            ],
+            step_groups: vec![vec![0, 1]],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["libmath.a".into()],
+            dep_edges: vec![],
+        };
+
+        // app: compile (1 unit, step group) -> link (sequential, depends on libmath)
+        let app = RecipeUnits {
+            recipe_name: "app".into(),
+            deps: vec![],
+            units: vec![
+                CapturedUnit {
+                    payload: shell("gcc -c main.c"),
+                    cache_meta: None,
+                    dep_kind: DepKind::StepGroup(0),
+                },
+                CapturedUnit {
+                    payload: shell("gcc -o app main.o libmath.a"),
+                    cache_meta: None,
+                    dep_kind: DepKind::Sequential,
+                },
+            ],
+            step_groups: vec![vec![0]],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["app".into()],
+            dep_edges: vec![(1, "libmath".into())], // unit 1 (link) depends on libmath
+        };
+
+        let dag = build_dag(vec![libmath, app]);
+        assert_eq!(dag.len(), 5);
+
+        // Nodes: 0=add.c, 1=mul.c, 2=archive, 3=main.c, 4=link
+
+        // app's compile (node 3) should have 0 deps — can run in parallel with libmath
+        assert_eq!(
+            dag.node(3).remaining_deps.load(Ordering::Relaxed),
+            0,
+            "app compile should start immediately (no cross-recipe dep)"
+        );
+
+        // app's link (node 4) should depend on:
+        // - node 3 (within-recipe: sequential after step group [3])
+        // - node 2 (fine-grained: libmath's terminal node = archive)
+        // Total: 2 deps
+        assert_eq!(
+            dag.node(4).remaining_deps.load(Ordering::Relaxed),
+            2,
+            "app link should depend on app compile + libmath archive"
+        );
+    }
+
+    #[test]
+    fn test_fine_grained_no_dep_edges_unchanged() {
+        // Verify backward compat: recipes with dep_edges: vec![] behave as before
+        let setup = RecipeUnits {
+            recipe_name: "setup".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("mkdir build"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+        };
+        let build = RecipeUnits {
+            recipe_name: "build".into(),
+            deps: vec!["setup".into()],
+            units: vec![CapturedUnit {
+                payload: shell("gcc main.c"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+        };
+        let dag = build_dag(vec![setup, build]);
+        assert_eq!(dag.len(), 2);
+        // build's unit depends on setup's unit via coarse deps
+        assert_eq!(dag.node(1).remaining_deps.load(Ordering::Relaxed), 1);
     }
 
     #[test]
