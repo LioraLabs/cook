@@ -203,7 +203,7 @@ mod tests {
         .unwrap();
         fs::write(
             dir.path().join("Cookfile"),
-            "import lib ./lib\nrecipe \"all\": \"lib.build\"\nend\n",
+            "import lib ./lib\nrecipe \"bundle\": \"lib.build\"\nend\n",
         )
         .unwrap();
         let ws = Workspace::load(&dir.path().join("Cookfile"), &[]).unwrap();
@@ -263,7 +263,7 @@ mod tests {
         .unwrap();
         fs::write(
             dir.path().join("Cookfile"),
-            "import a ./a\nimport b ./b\nrecipe \"all\"\nend\n",
+            "import a ./a\nimport b ./b\nrecipe \"bundle\"\nend\n",
         )
         .unwrap();
         let ws = Workspace::load(&dir.path().join("Cookfile"), &[]).unwrap();
