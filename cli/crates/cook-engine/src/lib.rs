@@ -8,6 +8,7 @@ pub mod dag_builder;
 pub mod executor;
 pub mod recipe_dag;
 pub mod run;
+pub mod wave_grouper;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
