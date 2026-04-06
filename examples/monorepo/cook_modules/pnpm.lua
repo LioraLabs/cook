@@ -211,7 +211,7 @@ function pnpm.install()
     cook.add_unit({
         inputs = { "pnpm-workspace.yaml", "pnpm-lock.yaml", "package.json" },
         output = ".cook/install.done",
-        command = "pnpm install && mkdir -p .cook && date +%s%N > .cook/install.done",
+        command = "pnpm install && mkdir -p .cook && touch .cook/install.done",
     })
 end
 
@@ -232,7 +232,7 @@ function pnpm.run(task)
             output = marker,
             command = "pnpm --filter '" .. pkg.name .. "' run " .. task
                 .. " && mkdir -p " .. marker_dir
-                .. " && date +%s%N > " .. marker,
+                .. " && touch " .. marker,
         })
     end
 end

@@ -6,6 +6,12 @@ use crate::{
     store::{FileRecord, StepEntry},
 };
 
+/// Hash of an empty file. Empty files are treated as signals (marker files)
+/// where mtime changes always trigger rebuilds, even if content is unchanged.
+fn empty_hash() -> u64 {
+    xxhash_rust::xxh3::xxh3_64(b"")
+}
+
 /// Get mtime as epoch milliseconds. Returns None if file doesn't exist.
 /// Uses millisecond resolution to catch rapid modifications.
 pub fn stat_mtime(path: &Path) -> Option<u64> {
@@ -105,6 +111,10 @@ fn check_inputs(
                 None => return Err(RebuildReason::InputChanged(cached.path.clone())),
             };
             if disk_hash != cached.hash {
+                return Err(RebuildReason::InputChanged(cached.path.clone()));
+            }
+            // Empty files are signals (marker files) — mtime is authoritative.
+            if disk_hash == empty_hash() {
                 return Err(RebuildReason::InputChanged(cached.path.clone()));
             }
             updated[i].mtime = disk_mtime;
