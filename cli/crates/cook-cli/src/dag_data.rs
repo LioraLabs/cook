@@ -8,6 +8,55 @@ use std::sync::Arc;
 use cook_cache::{needs_rebuild_cook, RebuildResult, ThreadSafeCacheManager};
 use cook_contracts::{CapturedUnit, DepKind, RecipeUnits, WorkPayload};
 
+// ---------------------------------------------------------------------------
+// Wave-grouped DAG data model
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct WaveDagData {
+    pub target: String,
+    pub waves: Vec<WaveData>,
+    pub inter_wave_edges: Vec<EdgeData>,
+}
+
+#[derive(Serialize)]
+pub struct WaveData {
+    pub recipes: Vec<String>,
+    pub nodes: Vec<NodeData>,
+    pub edges: Vec<EdgeData>,
+}
+
+#[derive(Serialize)]
+pub struct NodeData {
+    pub id: String,
+    pub kind: String,       // "file" or "unit"
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dep_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<bool>,
+}
+
+#[derive(Serialize)]
+pub struct EdgeData {
+    pub from: String,
+    pub to: String,
+}
+
+// ---------------------------------------------------------------------------
+// Per-recipe flat data model (legacy)
+// ---------------------------------------------------------------------------
+
 #[derive(Serialize)]
 pub struct DagData {
     pub target: String,
