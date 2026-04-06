@@ -5,6 +5,8 @@ mod recipe;
 mod template;
 mod test_step;
 
+pub mod dep_ref;
+
 #[cfg(test)]
 mod tests;
 
