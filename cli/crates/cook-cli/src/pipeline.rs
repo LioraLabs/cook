@@ -32,7 +32,9 @@ pub fn read_and_parse(cli: &Cli) -> Result<(cook_lang::ast::Cookfile, String), C
     let cookfile =
         cook_lang::parse(&source).map_err(|e| CookError::ParseError(e.to_string()))?;
 
-    let lua_source = cook_luagen::generate(&cookfile);
+    // Pre-scan: extract recipe names for codegen disambiguation
+    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
+    let lua_source = cook_luagen::generate_with_names(&cookfile, &recipe_names);
     Ok((cookfile, lua_source))
 }
 
@@ -301,6 +303,7 @@ fn run_with_progress(
     targets: &[String],
     registries: &BTreeMap<String, (cook_register::Registry, String)>,
     num_jobs: usize,
+    inferred_deps: &BTreeMap<String, Vec<String>>,
 ) -> Result<cook_engine::run::RunResult, CookError> {
     let color = resolve_color(cli);
     let (progress_tx, progress_rx) = mpsc::channel::<ProgressEvent>();
@@ -310,8 +313,7 @@ fn run_with_progress(
     let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
     let bridge_thread = bridge_engine_events(engine_rx, bridge_tx);
 
-    let inferred_deps = BTreeMap::new();
-    let result = cook_engine::run::run(recipe_infos, targets, registries, num_jobs, &inferred_deps, move |event| {
+    let result = cook_engine::run::run(recipe_infos, targets, registries, num_jobs, inferred_deps, move |event| {
         let _ = engine_tx.send(event);
     });
 
@@ -352,12 +354,12 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
     let targets = vec![recipe_name.to_string()];
 
     if !cookfile.imports.is_empty() {
-        // Workspace build
+        // Workspace build — workspace {dep} support is future work
         let workspace = Workspace::load(&cli.file, &cli.set)?;
         let recipe_infos = build_workspace_recipe_info(&workspace)?;
         let registries = build_workspace_registries(&workspace, config, &cli.set)?;
 
-        run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs)?;
+        run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs, &BTreeMap::new())?;
     } else {
         // Single Cookfile build
         let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
@@ -370,9 +372,39 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         let env_vars = resolve_env(&cookfile, config, dotenv_vars, &cli.set)?;
 
         let recipe_infos = build_single_recipe_infos(&cookfile);
+
+        // Extract inferred deps from {dep} references in recipe steps
+        let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
+        let mut inferred_deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for recipe in &cookfile.recipes {
+            let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
+            let dep_names: Vec<String> = refs
+                .iter()
+                .map(|r| r.recipe_name.clone())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            if !dep_names.is_empty() {
+                inferred_deps.insert(recipe.name.clone(), dep_names);
+            }
+        }
+
+        // Emit warning for conflicting dep types
+        for recipe in &cookfile.recipes {
+            let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
+            for dep_ref in &refs {
+                if recipe.deps.contains(&dep_ref.recipe_name) {
+                    eprintln!(
+                        "cook: warning: recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
+                        recipe.name, dep_ref.recipe_name, dep_ref.recipe_name
+                    );
+                }
+            }
+        }
+
         let registries = build_single_registries(cookfile_dir, env_vars, lua_source, config);
 
-        run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs)?;
+        run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
     }
 
     Ok(())
@@ -452,7 +484,7 @@ pub fn cmd_test(
         let registries = build_workspace_registries(&workspace, None, &cli.set)?;
 
         let _result =
-            run_with_progress(cli, &recipe_infos, &test_recipe_names, &registries, num_jobs);
+            run_with_progress(cli, &recipe_infos, &test_recipe_names, &registries, num_jobs, &BTreeMap::new());
     } else {
         // Single Cookfile test
         let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
@@ -485,7 +517,7 @@ pub fn cmd_test(
         let registries = build_single_registries(cookfile_dir, env_vars, lua_source, None);
 
         let _result =
-            run_with_progress(cli, &recipe_infos, &test_recipes, &registries, num_jobs);
+            run_with_progress(cli, &recipe_infos, &test_recipes, &registries, num_jobs, &BTreeMap::new());
     }
 
     // TODO: Once cook-engine supports test output collection, convert
