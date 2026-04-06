@@ -19,7 +19,7 @@ fn test_bare_recipe_name_with_deps() {
 
 #[test]
 fn test_bare_dotted_dep() {
-    let source = "recipe all: backend.build\nend\n";
+    let source = "recipe bundle: backend.build\nend\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].deps, vec!["backend.build"]);
 }
@@ -728,7 +728,7 @@ fn test_parse_import_decl() {
 import backend ./services/backend
 import frontend ./apps/frontend
 
-recipe "all": "backend.build" "frontend.build"
+recipe "bundle": "backend.build" "frontend.build"
 end
 "#;
     let cookfile = crate::parse(source).unwrap();

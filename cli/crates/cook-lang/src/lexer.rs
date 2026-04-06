@@ -27,6 +27,21 @@ pub enum LexError {
     UnterminatedString { line: usize },
     #[error("line {line}: expected quoted name after keyword")]
     MissingRecipeName { line: usize },
+    #[error("line {line}: '{segment}' is a reserved word and cannot be used as a recipe name (or final segment of a dotted recipe name)")]
+    ReservedRecipeName { line: usize, segment: String },
+}
+
+const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "all"];
+
+fn check_reserved_recipe_name(name: &str, line: usize) -> Result<(), LexError> {
+    let segment = name.rsplit('.').next().unwrap_or(name);
+    if RESERVED_RECIPE_SEGMENTS.contains(&segment) {
+        return Err(LexError::ReservedRecipeName {
+            line,
+            segment: segment.to_string(),
+        });
+    }
+    Ok(())
 }
 
 fn is_ident_start(c: char) -> bool {
@@ -120,6 +135,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
         {
             let rest = trimmed["recipe".len()..].trim();
             let (name, after_name) = parse_name(rest, line_num)?;
+            check_reserved_recipe_name(&name, line_num)?;
 
             let deps = if let Some(after_colon) = after_name.strip_prefix(':') {
                 parse_names(after_colon.trim(), line_num)?
@@ -175,6 +191,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                     && is_ident_start(potential_name.as_bytes()[0] as char)
                     && potential_name.chars().all(is_ident_char)
                 {
+                    check_reserved_recipe_name(potential_name, line_num)?;
                     let after_colon = trimmed[colon_pos + 1..].trim();
                     let deps = parse_names(after_colon, line_num)?;
                     Token::RecipeHeader {
@@ -389,12 +406,12 @@ end
 
     #[test]
     fn test_recipe_bare_dotted_dep() {
-        let tokens = tokenize("recipe all: backend.build frontend.build").unwrap();
+        let tokens = tokenize("recipe bundle: backend.build frontend.build").unwrap();
         assert_eq!(tokens.len(), 1);
         assert_eq!(
             tokens[0].value,
             Token::RecipeHeader {
-                name: "all".to_string(),
+                name: "bundle".to_string(),
                 deps: vec!["backend.build".to_string(), "frontend.build".to_string()],
             }
         );
@@ -637,5 +654,32 @@ end
         // "configure" starts with "config" but is a bareword command
         let tokens = tokenize("configure --prefix=/usr").unwrap();
         assert!(!matches!(tokens[0].value, Token::ConfigHeader { .. }));
+    }
+
+    #[test]
+    fn test_reserved_recipe_name_rejected() {
+        for reserved in &["stem", "name", "ext", "dir", "in", "out", "all"] {
+            let input = format!("recipe {}\n    echo hi\nend\n", reserved);
+            let result = crate::parse(&input);
+            assert!(
+                result.is_err(),
+                "expected error for reserved recipe name '{}', got ok",
+                reserved
+            );
+        }
+    }
+
+    #[test]
+    fn test_reserved_name_in_dotted_recipe_rejected() {
+        let input = "recipe backend.stem\n    echo hi\nend\n";
+        let result = crate::parse(input);
+        assert!(result.is_err(), "expected error for recipe named 'backend.stem'");
+    }
+
+    #[test]
+    fn test_non_reserved_dotted_name_accepted() {
+        let input = "recipe backend.build\n    echo hi\nend\n";
+        let result = crate::parse(input);
+        assert!(result.is_ok(), "expected ok for recipe named 'backend.build', got: {:?}", result.err());
     }
 }
