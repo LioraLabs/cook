@@ -310,7 +310,8 @@ fn run_with_progress(
     let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
     let bridge_thread = bridge_engine_events(engine_rx, bridge_tx);
 
-    let result = cook_engine::run::run(recipe_infos, targets, registries, num_jobs, move |event| {
+    let inferred_deps = BTreeMap::new();
+    let result = cook_engine::run::run(recipe_infos, targets, registries, num_jobs, &inferred_deps, move |event| {
         let _ = engine_tx.send(event);
     });
 

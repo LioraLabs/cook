@@ -3,7 +3,7 @@
 //! `run()` takes the full recipe graph, resolves dependencies, and executes
 //! recipes in wave-parallel order using the recipe DAG + work-unit DAG pipeline.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -11,8 +11,7 @@ use cook_cache::hash_env;
 use cook_cache::ThreadSafeCacheManager;
 
 use crate::analyzer::{self, GraphError};
-use crate::recipe_dag::RecipeDag;
-use crate::{dag_builder, executor, EngineError, EngineEvent};
+use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent};
 
 /// The result of a successful engine run.
 #[derive(Debug)]
@@ -45,12 +44,15 @@ fn split_recipe_name(name: &str) -> (String, String) {
 /// * `registries` - One `(Registry, lua_source)` per namespace prefix.
 ///   Root recipes use `""` as the key.
 /// * `num_jobs` - Maximum number of parallel worker threads.
+/// * `inferred_deps` - `{dep}` references: recipe -> recipes it references.
+///   These cause same-wave merging rather than wave boundaries.
 /// * `on_event` - Callback invoked for each engine event (progress, errors, etc.).
 pub fn run(
     recipe_infos: &BTreeMap<String, analyzer::RecipeInfo>,
     targets: &[String],
     registries: &BTreeMap<String, (cook_register::Registry, String)>,
     num_jobs: usize,
+    inferred_deps: &BTreeMap<String, Vec<String>>,
     on_event: impl Fn(EngineEvent) + Send + Sync,
 ) -> Result<RunResult, EngineError> {
     // 1. Compute the full dependency graph for all targets.
@@ -59,8 +61,14 @@ pub fn run(
         GraphError::UnknownRecipe(s) => EngineError::UnknownRecipe(s),
     })?;
 
-    // 2. Build the recipe-level DAG.
-    let mut recipe_dag = RecipeDag::new(&edges);
+    // 2. Compute waves using the two-tier grouping algorithm.
+    //    `edges` (from the analyzer) contains all non-inferred dependency edges
+    //    (`: dep` declarations + ingredient/serves matching) and serves as
+    //    `explicit_deps` — these create wave boundaries.
+    //    `inferred_deps` (`{dep}` references) cause same-wave merging.
+    let all_recipe_names: BTreeSet<String> = edges.keys().cloned().collect();
+    let waves = wave_grouper::compute_waves(&edges, inferred_deps, &all_recipe_names)
+        .map_err(|e| EngineError::CycleDetected(e))?;
 
     // Emit RecipeQueued for every recipe in the graph.
     for name in edges.keys() {
@@ -71,18 +79,13 @@ pub fn run(
 
     let all_test_outputs: Vec<cook_luaotp::TestOutput> = Vec::new();
 
-    // 3. Wave loop: pop ready recipes, register, build DAG, execute.
-    loop {
-        let ready = recipe_dag.pop_ready();
-        if ready.is_empty() {
-            break;
-        }
-
+    // 3. Wave loop: iterate over pre-computed waves, register, build DAG, execute.
+    for wave in &waves {
         // Register all recipes in this wave and collect their RecipeUnits.
         let mut wave_units = Vec::new();
         let mut wave_cache_managers: BTreeMap<String, Arc<ThreadSafeCacheManager>> = BTreeMap::new();
 
-        for name in &ready {
+        for name in &wave.recipes {
             let (prefix, local_name) = split_recipe_name(name);
             let (registry, lua_source) = registries.get(&prefix).ok_or_else(|| {
                 EngineError::RegistrationFailed {
@@ -156,8 +159,6 @@ pub fn run(
 
             bridge_handle?;
         }
-
-        recipe_dag.mark_done(&ready);
     }
 
     Ok(RunResult {
@@ -195,11 +196,13 @@ mod tests {
     fn test_run_unknown_target() {
         let recipes = BTreeMap::new();
         let registries = BTreeMap::new();
+        let inferred = BTreeMap::new();
         let result = run(
             &recipes,
             &["missing".to_string()],
             &registries,
             1,
+            &inferred,
             |_| {},
         );
         assert!(result.is_err());
@@ -221,8 +224,9 @@ mod tests {
             },
         );
         let registries = BTreeMap::new();
+        let inferred = BTreeMap::new();
         // Empty targets means no edges, so the wave loop exits immediately.
-        let result = run(&recipes, &[], &registries, 1, |_| {});
+        let result = run(&recipes, &[], &registries, 1, &inferred, |_| {});
         assert!(result.is_ok());
         assert!(result.unwrap().test_outputs.is_empty());
     }
@@ -247,11 +251,34 @@ mod tests {
             },
         );
         let registries = BTreeMap::new();
-        let result = run(&recipes, &["a".to_string()], &registries, 1, |_| {});
+        let inferred = BTreeMap::new();
+        let result = run(&recipes, &["a".to_string()], &registries, 1, &inferred, |_| {});
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
             EngineError::CycleDetected(_)
         ));
+    }
+
+    #[test]
+    fn test_run_accepts_inferred_deps() {
+        let mut recipes = BTreeMap::new();
+        recipes.insert(
+            "build".to_string(),
+            RecipeInfo {
+                ingredients: vec![],
+                serves: vec![],
+                requires: vec![],
+            },
+        );
+        let registries = BTreeMap::new();
+        let inferred = BTreeMap::new();
+        // This will fail because no registry for "" prefix, but it shouldn't panic
+        let result = run(&recipes, &["build".to_string()], &registries, 1, &inferred, |_| {});
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::RegistrationFailed { recipe, .. } => assert_eq!(recipe, "build"),
+            other => panic!("expected RegistrationFailed, got: {other:?}"),
+        }
     }
 }
