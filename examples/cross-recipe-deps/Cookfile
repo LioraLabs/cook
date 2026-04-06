@@ -1,0 +1,31 @@
+# Cross-recipe dependency example — demonstrates {dep} references.
+#
+# Recipes reference other recipes' outputs via {recipe_name} syntax.
+# The engine infers dependency edges and wires fine-grained unit-level
+# dependencies automatically — no explicit : dep syntax needed.
+
+recipe libmath
+    ingredients "src/math/*.c"
+    cook "build/obj/math/{stem}.o" using "mkdir -p build/obj/math && gcc -c {in} -Isrc -o {out}"
+    cook "build/lib/libmath.a" using "mkdir -p build/lib && ar rcs {out} {all}"
+end
+
+recipe libstr
+    ingredients "src/str/*.c"
+    cook "build/obj/str/{stem}.o" using "mkdir -p build/obj/str && gcc -c {in} -Isrc -o {out}"
+    cook "build/lib/libstr.a" using "mkdir -p build/lib && ar rcs {out} {all}"
+end
+
+recipe app
+    ingredients "src/main.c"
+    cook "build/obj/main.o" using "mkdir -p build/obj && gcc -c {in} -Isrc -o {out}"
+    cook "build/bin/app" using "mkdir -p build/bin && gcc -o {out} {in} {libmath} {libstr}"
+end
+
+recipe run: app
+    test "build/bin/app"
+end
+
+recipe clean
+    rm -rf build .cook
+end
