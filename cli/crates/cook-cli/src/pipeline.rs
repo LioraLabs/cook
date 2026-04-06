@@ -687,13 +687,34 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
     let recipe_infos = build_single_recipe_infos(&cookfile);
     let targets = vec![recipe_name.to_string()];
 
-    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets)
+    let mut edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets)
         .map_err(|e| match e {
             cook_engine::analyzer::GraphError::CycleDetected(s) => {
                 CookError::Other(format!("dependency cycle involving: {s}"))
             }
             cook_engine::analyzer::GraphError::UnknownRecipe(s) => CookError::RecipeNotFound(s),
         })?;
+
+    // Merge inferred deps ({dep} references) into the edge map so the
+    // RecipeDag registers recipes in the correct order.
+    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
+    for recipe in &cookfile.recipes {
+        let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
+        for dep_ref in &refs {
+            let dep_name = &dep_ref.recipe_name;
+            // Ensure the dependency recipe has an entry in the edge map
+            edges.entry(dep_name.clone()).or_insert_with(Vec::new);
+            // Add the inferred edge
+            let entry = edges.entry(recipe.name.clone()).or_insert_with(Vec::new);
+            if !entry.contains(dep_name) {
+                entry.push(dep_name.clone());
+            }
+        }
+    }
+    // Re-sort deps for deterministic output
+    for deps in edges.values_mut() {
+        deps.sort();
+    }
 
     let mut recipe_dag = cook_engine::recipe_dag::RecipeDag::new(&edges);
     let mut all_units: Vec<(String, cook_contracts::RecipeUnits)> = Vec::new();

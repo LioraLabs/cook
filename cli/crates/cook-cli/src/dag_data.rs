@@ -304,6 +304,9 @@ fn build_wave(
         };
         let cm = cache_managers.get(recipe_name);
 
+        // Issue 4: Load cache once per recipe, outside the unit loop.
+        let recipe_cache = cm.as_ref().map(|mgr| mgr.get_or_load(recipe_name));
+
         let mut barrier: Vec<String> = Vec::new();
         let mut recipe_root_recorded = false;
 
@@ -338,9 +341,8 @@ fn build_wave(
             };
 
             // --- Cache status ---
-            let cached = if let (Some(meta), Some(cm)) = (&unit.cache_meta, cm) {
+            let cached = if let (Some(meta), Some(cache)) = (&unit.cache_meta, recipe_cache.as_ref()) {
                 if let Some(ref out) = meta.output_path {
-                    let cache = cm.get_or_load(&meta.recipe_name);
                     let entry = cache.steps.get(&meta.cache_key);
                     let input_refs: Vec<&str> =
                         meta.input_paths.iter().map(|s| s.as_str()).collect();
@@ -375,22 +377,25 @@ fn build_wave(
 
             // --- File nodes + file→unit edges ---
             if let Some(meta) = &unit.cache_meta {
-                // Load cache entry once for staleness checks.
-                let cache_entry = cm.as_ref().map(|mgr| {
-                    let cache = mgr.get_or_load(&meta.recipe_name);
+                // Issue 4: Use pre-loaded recipe cache for staleness checks.
+                let cache_entry = recipe_cache.as_ref().map(|cache| {
                     cache.steps.get(&meta.cache_key).cloned()
                 });
 
-                for (file_idx, path) in meta.input_paths.iter().enumerate() {
+                // Issue 3: Deduplicate input_paths before iterating to avoid duplicate edges.
+                let unique_paths: BTreeSet<&String> = meta.input_paths.iter().collect();
+
+                for path in unique_paths {
                     let file_id = format!("file:{}", path);
 
                     if !file_node_ids.contains_key(path) {
                         // Determine staleness: mtime first, then hash.
+                        // Issue 2: Look up by path instead of positional index.
                         let modified = compute_file_modified(
                             path,
                             &ru.working_dir,
                             cache_entry.as_ref().and_then(|e| e.as_ref()).and_then(|e| {
-                                e.inputs.get(file_idx).map(|r| (r.mtime, r.hash))
+                                e.inputs.iter().find(|r| r.path == *path).map(|r| (r.mtime, r.hash))
                             }),
                         );
 
@@ -430,9 +435,6 @@ fn build_wave(
                             to: unit_id.clone(),
                         });
                     }
-                    if !recipe_root_recorded && !barrier.is_empty() {
-                        // roots are the first barrier set — already recorded below
-                    }
                     barrier = vec![unit_id.clone()];
                 }
                 DepKind::StepGroup(gi) | DepKind::TestSibling(gi) => {
@@ -460,12 +462,12 @@ fn build_wave(
                 }
             }
 
-            // Record recipe root: first non-empty barrier transition captures
-            // the first set of nodes that became the barrier.
-            if !recipe_root_recorded {
+            // Issue 1: Record recipe root AFTER the dep_kind match updates the
+            // barrier, so StepGroup-first recipes capture all group members.
+            if !recipe_root_recorded && !barrier.is_empty() {
                 recipe_roots
                     .entry(recipe_name.clone())
-                    .or_insert_with(|| vec![unit_id]);
+                    .or_insert(barrier.clone());
                 recipe_root_recorded = true;
             }
         }
