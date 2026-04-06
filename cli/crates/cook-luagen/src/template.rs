@@ -2,6 +2,53 @@ use std::collections::BTreeSet;
 
 use crate::lua_string::escape_lua_string;
 
+/// Known accessor suffixes for dep-driven iteration patterns.
+const DEP_ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
+
+/// Result of analyzing an output pattern for dep-driven iteration.
+pub(crate) enum OutputPatternKind {
+    /// Normal pattern — iteration driven by recipe's own inputs.
+    OwnInputs(String),
+    /// Dep-driven — iteration driven by a dependency's terminal outputs.
+    DepDriven { dep_name: String, lua_expr: String },
+}
+
+/// Analyze an output pattern and determine whether iteration should be driven
+/// by a dependency's terminal outputs or by the recipe's own inputs.
+///
+/// If the pattern contains `{recipe.accessor}` where `recipe` is a known recipe
+/// name and `accessor` is one of stem/name/ext/dir, returns `DepDriven` with
+/// the dep name and the normalized Lua expression (with `{dep.accessor}` replaced
+/// by `{accessor}` so `expand_output_pattern` can expand it normally).
+pub(crate) fn analyze_output_pattern(
+    pattern: &str,
+    recipe_names: &BTreeSet<String>,
+) -> OutputPatternKind {
+    let tokens = crate::dep_ref::extract_brace_tokens(pattern);
+
+    for token in &tokens {
+        if let Some(dot_pos) = token.rfind('.') {
+            let prefix = &token[..dot_pos];
+            let suffix = &token[dot_pos + 1..];
+            if DEP_ACCESSORS.contains(&suffix) && recipe_names.contains(prefix) {
+                // Found a dep-driven accessor. Normalize: replace {prefix.suffix} with {suffix}.
+                let normalized = pattern.replace(
+                    &format!("{{{}.{}}}", prefix, suffix),
+                    &format!("{{{}}}", suffix),
+                );
+                let lua_expr = expand_output_pattern(&normalized);
+                return OutputPatternKind::DepDriven {
+                    dep_name: prefix.to_string(),
+                    lua_expr,
+                };
+            }
+        }
+    }
+
+    // No dep-driven accessor found — normal own-inputs expansion.
+    OutputPatternKind::OwnInputs(expand_output_pattern(pattern))
+}
+
 /// Expand an output pattern like "build/{stem}.o" into a Lua expression.
 /// Placeholders: {stem}, {name}, {ext}, {dir}, {in}
 pub(crate) fn expand_output_pattern(pattern: &str) -> String {

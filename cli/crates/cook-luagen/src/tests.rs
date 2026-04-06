@@ -881,6 +881,97 @@ fn test_dep_ref_in_plate_command() {
     );
 }
 
+// ── Dep-driven iteration codegen ─────────────────────────────────
+
+#[test]
+fn test_dep_driven_iteration_codegen() {
+    let names: std::collections::BTreeSet<String> =
+        ["protos"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![make_recipe(
+        "compile_protos",
+        vec![],
+        vec![],
+        vec![Step::Cook {
+            step: CookStep {
+                output_pattern: "build/obj/{protos.stem}.o".to_string(),
+                using_clause: Some(UsingClause::Shell("gcc -c {in} -o {out}".into())),
+            },
+            line: 2,
+        }],
+    )]);
+    let output = crate::generate_with_names(&cookfile, &names);
+    assert!(
+        output.contains(r#"cook.dep_output_list("protos")"#),
+        "should use dep_output_list for iteration, got:\n{output}"
+    );
+    assert!(
+        output.contains("path.stem(_cook_in)"),
+        "should extract stem from dep items, got:\n{output}"
+    );
+    assert!(
+        !output.contains("recipe.ingredients"),
+        "should NOT iterate over own ingredients, got:\n{output}"
+    );
+}
+
+#[test]
+fn test_dep_driven_followed_by_many_to_one() {
+    let names: std::collections::BTreeSet<String> =
+        ["protos"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![make_recipe(
+        "compile_protos",
+        vec![],
+        vec![],
+        vec![
+            Step::Cook {
+                step: CookStep {
+                    output_pattern: "build/obj/{protos.stem}.o".to_string(),
+                    using_clause: Some(UsingClause::Shell("gcc -c {in} -o {out}".into())),
+                },
+                line: 2,
+            },
+            Step::Cook {
+                step: CookStep {
+                    output_pattern: "build/lib/libprotos.a".to_string(),
+                    using_clause: Some(UsingClause::Shell("ar rcs {out} {all}".into())),
+                },
+                line: 3,
+            },
+        ],
+    )]);
+    let output = crate::generate_with_names(&cookfile, &names);
+    // Second step uses _cook_outputs_1 (from first step), not dep outputs
+    assert!(
+        output.contains("table.concat(_cook_outputs_1"),
+        "second step should chain from first step, got:\n{output}"
+    );
+}
+
+#[test]
+fn test_mixed_dep_iteration_and_substitution() {
+    let names: std::collections::BTreeSet<String> =
+        ["protos", "core"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![make_recipe(
+        "server",
+        vec![],
+        vec![],
+        vec![Step::Cook {
+            step: CookStep {
+                output_pattern: "build/obj/{protos.stem}.o".to_string(),
+                using_clause: Some(UsingClause::Shell(
+                    "gcc -c {in} -I{core}/include -o {out}".into(),
+                )),
+            },
+            line: 2,
+        }],
+    )]);
+    let output = crate::generate_with_names(&cookfile, &names);
+    // Iteration driven by protos
+    assert!(output.contains(r#"cook.dep_output_list("protos")"#));
+    // String substitution of core in command
+    assert!(output.contains(r#"cook.dep_output("core")"#));
+}
+
 // ── Config block dispatcher emission ─────────────────────────────
 
 #[test]

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use cook_lang::ast::*;
 
-use crate::template::{expand_output_pattern, expand_template_to_lua_with_deps};
+use crate::template::{analyze_output_pattern, expand_template_to_lua_with_deps, OutputPatternKind};
 
 /// Modes for cook step code generation.
 pub(crate) enum CookMode {
@@ -44,6 +44,8 @@ pub(crate) fn generate_cook_step(
         "recipe.ingredients[1]".to_string()
     };
 
+    let pattern_kind = analyze_output_pattern(&cook_step.output_pattern, recipe_names);
+
     match mode {
         CookMode::DeclarationOnly => {
             // _cook_outputs_N is hoisted to recipe scope by recipe.rs
@@ -56,17 +58,27 @@ pub(crate) fn generate_cook_step(
         }
         CookMode::OneToOne => {
             // _cook_outputs_N is hoisted to recipe scope by recipe.rs
+            // Choose iteration source: dep-driven or own inputs.
+            let iter_source = match &pattern_kind {
+                OutputPatternKind::DepDriven { dep_name, .. } => {
+                    format!("cook.dep_output_list(\"{}\")", crate::lua_string::escape_lua_string(dep_name))
+                }
+                OutputPatternKind::OwnInputs(_) => input_source.clone(),
+            };
             out.push_str(&format!(
                 "    for _, _cook_in in ipairs({}) do\n",
-                input_source
+                iter_source
             ));
             out.push_str("        local _cook_stem = path.stem(_cook_in)\n");
             out.push_str("        local _cook_name = path.name(_cook_in)\n");
             out.push_str("        local _cook_ext = path.ext(_cook_in)\n");
             out.push_str("        local _cook_dir = path.dir(_cook_in)\n");
 
-            // Generate output expression
-            let out_expr = expand_output_pattern(&cook_step.output_pattern);
+            // Generate output expression (already expanded by analyze_output_pattern)
+            let out_expr = match &pattern_kind {
+                OutputPatternKind::DepDriven { lua_expr, .. } => lua_expr.clone(),
+                OutputPatternKind::OwnInputs(lua_expr) => lua_expr.clone(),
+            };
             out.push_str(&format!("        local _cook_out = {}\n", out_expr));
 
             match &cook_step.using_clause {
@@ -112,7 +124,10 @@ pub(crate) fn generate_cook_step(
                 input_source
             ));
 
-            let out_expr = expand_output_pattern(&cook_step.output_pattern);
+            let out_expr = match &pattern_kind {
+                OutputPatternKind::DepDriven { lua_expr, .. } => lua_expr.clone(),
+                OutputPatternKind::OwnInputs(lua_expr) => lua_expr.clone(),
+            };
             out.push_str(&format!("    local _cook_out = {}\n", out_expr));
 
             if let Some(UsingClause::Shell(cmd)) = &cook_step.using_clause {
