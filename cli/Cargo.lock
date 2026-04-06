@@ -241,6 +241,7 @@ dependencies = [
 name = "cook-luagen"
 version = "0.1.0"
 dependencies = [
+ "cook-engine",
  "cook-lang",
 ]
 

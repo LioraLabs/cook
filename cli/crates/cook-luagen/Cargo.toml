@@ -6,3 +6,6 @@ description = "Lua code generation from Cookfile AST"
 
 [dependencies]
 cook-lang = { path = "../cook-lang" }
+
+[dev-dependencies]
+cook-engine = { path = "../cook-engine" }

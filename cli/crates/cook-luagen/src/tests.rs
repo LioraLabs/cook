@@ -1048,3 +1048,117 @@ fn test_codegen_emits_unnamed_and_named_in_order() {
     assert!(out.contains("selected_name == \"dev\""));
     assert!(out.contains("selected_name == \"release\""));
 }
+
+// ── Cross-recipe dep integration tests ──────────────────────────
+
+#[test]
+fn test_cross_recipe_deps_codegen_integration() {
+    // Simulate the cross-recipe-deps example
+    let names: std::collections::BTreeSet<String> =
+        ["libmath", "libstr", "app"].iter().map(|s| s.to_string()).collect();
+
+    let cookfile = make_cookfile(vec![
+        make_recipe("libmath", vec![], vec!["src/math/*.c"], vec![
+            Step::Cook {
+                step: CookStep {
+                    output_pattern: "build/obj/math/{stem}.o".into(),
+                    using_clause: Some(UsingClause::Shell("gcc -c {in} -o {out}".into())),
+                },
+                line: 3,
+            },
+            Step::Cook {
+                step: CookStep {
+                    output_pattern: "build/lib/libmath.a".into(),
+                    using_clause: Some(UsingClause::Shell("ar rcs {out} {all}".into())),
+                },
+                line: 4,
+            },
+        ]),
+        make_recipe("libstr", vec![], vec!["src/str/*.c"], vec![
+            Step::Cook {
+                step: CookStep {
+                    output_pattern: "build/obj/str/{stem}.o".into(),
+                    using_clause: Some(UsingClause::Shell("gcc -c {in} -o {out}".into())),
+                },
+                line: 8,
+            },
+            Step::Cook {
+                step: CookStep {
+                    output_pattern: "build/lib/libstr.a".into(),
+                    using_clause: Some(UsingClause::Shell("ar rcs {out} {all}".into())),
+                },
+                line: 9,
+            },
+        ]),
+        make_recipe("app", vec![], vec!["src/main.c"], vec![
+            Step::Cook {
+                step: CookStep {
+                    output_pattern: "build/obj/main.o".into(),
+                    using_clause: Some(UsingClause::Shell("gcc -c {in} -o {out}".into())),
+                },
+                line: 13,
+            },
+            Step::Cook {
+                step: CookStep {
+                    output_pattern: "build/bin/app".into(),
+                    using_clause: Some(UsingClause::Shell(
+                        "gcc -o {out} {in} {libmath} {libstr}".into(),
+                    )),
+                },
+                line: 14,
+            },
+        ]),
+    ]);
+
+    // Pre-scan extracts recipe names
+    let extracted = crate::dep_ref::extract_recipe_names(&cookfile);
+    assert_eq!(extracted, names);
+
+    // Dep ref extraction
+    let app_recipe = cookfile.recipes.iter().find(|r| r.name == "app").unwrap();
+    let app_refs = crate::dep_ref::extract_dep_refs(app_recipe, &names);
+    let dep_recipe_names: std::collections::BTreeSet<String> =
+        app_refs.iter().map(|r| r.recipe_name.clone()).collect();
+    assert!(dep_recipe_names.contains("libmath"));
+    assert!(dep_recipe_names.contains("libstr"));
+
+    // Codegen produces correct Lua
+    let lua = crate::generate_with_names(&cookfile, &names);
+    assert!(lua.contains(r#"cook.dep_output("libmath")"#), "missing dep_output for libmath");
+    assert!(lua.contains(r#"cook.dep_output("libstr")"#), "missing dep_output for libstr");
+
+    // libmath recipe should NOT have dep_output calls (it has no deps)
+    let libmath_section = lua.split("cook.recipe(\"libmath\"").nth(1).unwrap();
+    let libmath_end = libmath_section.find("cook.recipe(").unwrap_or(libmath_section.len());
+    let libmath_lua = &libmath_section[..libmath_end];
+    assert!(!libmath_lua.contains("cook.dep_output"),
+        "libmath should have no dep_output calls");
+}
+
+#[test]
+fn test_dep_ref_wave_grouping_integration() {
+    let names: std::collections::BTreeSet<String> =
+        ["libmath", "libstr", "app", "run"].iter().map(|s| s.to_string()).collect();
+
+    // app uses {libmath} and {libstr} -> inferred deps
+    // run: app -> explicit dep
+    let mut inferred_deps = std::collections::BTreeMap::new();
+    inferred_deps.insert("app".to_string(), vec!["libmath".to_string(), "libstr".to_string()]);
+
+    let mut explicit_deps = std::collections::BTreeMap::new();
+    explicit_deps.insert("run".to_string(), vec!["app".to_string()]);
+    explicit_deps.insert("app".to_string(), vec![]);
+    explicit_deps.insert("libmath".to_string(), vec![]);
+    explicit_deps.insert("libstr".to_string(), vec![]);
+
+    let waves = cook_engine::wave_grouper::compute_waves(&explicit_deps, &inferred_deps, &names).unwrap();
+
+    assert_eq!(waves.len(), 2, "should have 2 waves");
+    // Wave 1: libmath, libstr, app (same wave via inferred deps)
+    assert_eq!(waves[0].recipes.len(), 3);
+    assert!(waves[0].recipes.contains(&"libmath".to_string()));
+    assert!(waves[0].recipes.contains(&"libstr".to_string()));
+    assert!(waves[0].recipes.contains(&"app".to_string()));
+    // Wave 2: run (after explicit dep on app)
+    assert_eq!(waves[1].recipes, vec!["run".to_string()]);
+}
