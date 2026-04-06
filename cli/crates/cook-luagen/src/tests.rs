@@ -785,6 +785,102 @@ fn test_no_ingredients_no_variable() {
     );
 }
 
+// ── Recipe-name-aware template expansion ─────────────────────────
+
+#[test]
+fn test_dep_ref_in_command_emits_dep_output() {
+    let names: std::collections::BTreeSet<String> =
+        ["libmath", "libstr"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![make_recipe(
+        "app",
+        vec![],
+        vec!["src/main.c"],
+        vec![
+            Step::Cook {
+                step: CookStep {
+                    output_pattern: "build/obj/main.o".to_string(),
+                    using_clause: Some(UsingClause::Shell("gcc -c {in} -o {out}".into())),
+                },
+                line: 3,
+            },
+            Step::Cook {
+                step: CookStep {
+                    output_pattern: "build/bin/app".to_string(),
+                    using_clause: Some(UsingClause::Shell(
+                        "gcc -o {out} {in} {libmath} {libstr}".into(),
+                    )),
+                },
+                line: 4,
+            },
+        ],
+    )]);
+    let output = crate::generate_with_names(&cookfile, &names);
+    assert!(
+        output.contains(r#"cook.dep_output("libmath")"#),
+        "expected cook.dep_output for libmath, got:\n{output}"
+    );
+    assert!(
+        output.contains(r#"cook.dep_output("libstr")"#),
+        "expected cook.dep_output for libstr, got:\n{output}"
+    );
+    assert!(output.contains("_cook_in"), "built-in {{in}} should still work");
+    assert!(output.contains("_cook_out"), "built-in {{out}} should still work");
+}
+
+#[test]
+fn test_env_var_still_works_when_not_recipe() {
+    let names: std::collections::BTreeSet<String> =
+        ["libmath"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![make_recipe(
+        "build",
+        vec![],
+        vec!["src/*.c"],
+        vec![Step::Cook {
+            step: CookStep {
+                output_pattern: "build/{stem}.o".to_string(),
+                using_clause: Some(UsingClause::Shell("{CC} -c {in} -o {out}".into())),
+            },
+            line: 3,
+        }],
+    )]);
+    let output = crate::generate_with_names(&cookfile, &names);
+    assert!(
+        output.contains(r#"cook.env["CC"]"#),
+        "CC is not a recipe name, should be env var, got:\n{output}"
+    );
+}
+
+#[test]
+fn test_dep_ref_in_plate_command() {
+    let names: std::collections::BTreeSet<String> =
+        ["app"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![make_recipe(
+        "run",
+        vec![],
+        vec![],
+        vec![
+            Step::Cook {
+                step: CookStep {
+                    output_pattern: "bin/runner".to_string(),
+                    using_clause: None,
+                },
+                line: 2,
+            },
+            Step::Plate {
+                step: PlateStep {
+                    command: "./{out} {app}".to_string(),
+                },
+                line: 3,
+            },
+        ],
+    )]);
+    let output = crate::generate_with_names(&cookfile, &names);
+    assert!(
+        output.contains(r#"cook.dep_output("app")"#),
+        "expected cook.dep_output for app in plate step, got:\n{output}"
+    );
+}
+
 // ── Config block dispatcher emission ─────────────────────────────
 
 #[test]

@@ -10,4 +10,4 @@ pub mod dep_ref;
 #[cfg(test)]
 mod tests;
 
-pub use recipe::generate;
+pub use recipe::{generate, generate_with_names};

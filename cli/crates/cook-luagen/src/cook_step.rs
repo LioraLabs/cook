@@ -1,6 +1,8 @@
+use std::collections::BTreeSet;
+
 use cook_lang::ast::*;
 
-use crate::template::{expand_output_pattern, expand_template_to_lua};
+use crate::template::{expand_output_pattern, expand_template_to_lua_with_deps};
 
 /// Modes for cook step code generation.
 pub(crate) enum CookMode {
@@ -33,6 +35,7 @@ pub(crate) fn generate_cook_step(
     index: usize,
     prev_cook_index: Option<usize>,
     ingredients: &[String],
+    recipe_names: &BTreeSet<String>,
 ) {
     let mode = cook_step_mode(cook_step);
     let input_source = if let Some(prev) = prev_cook_index {
@@ -68,7 +71,7 @@ pub(crate) fn generate_cook_step(
 
             match &cook_step.using_clause {
                 Some(UsingClause::Shell(cmd)) => {
-                    let lua_expr = expand_template_to_lua(cmd);
+                    let lua_expr = expand_template_to_lua_with_deps(cmd, recipe_names);
                     out.push_str(&format!(
                         "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}}})\n",
                         lua_expr
@@ -113,7 +116,7 @@ pub(crate) fn generate_cook_step(
             out.push_str(&format!("    local _cook_out = {}\n", out_expr));
 
             if let Some(UsingClause::Shell(cmd)) = &cook_step.using_clause {
-                let lua_expr = expand_template_to_lua(cmd);
+                let lua_expr = expand_template_to_lua_with_deps(cmd, recipe_names);
                 out.push_str(&format!(
                     "    cook.add_unit({{inputs = {}, output = _cook_out, command = {}}})\n",
                     input_source, lua_expr
