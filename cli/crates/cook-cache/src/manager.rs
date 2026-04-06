@@ -149,12 +149,7 @@ impl ThreadSafeCacheManager {
             .or_insert_with(|| RecipeCache::load(&self.cache_dir, recipe_name).unwrap_or_default());
 
         if cache.env_hash != env_hash {
-            // Only clear steps when the env was previously recorded (non-zero)
-            // and has changed. A zero env_hash means no previous env was stored,
-            // so we just record the current one without invalidating.
-            if cache.env_hash != 0 {
-                cache.steps.clear();
-            }
+            cache.steps.clear();
             cache.env_hash = env_hash;
             drop(caches);
             let mut dirty = self.dirty.lock().unwrap();
@@ -299,12 +294,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
 
+        // Establish env_hash before populating steps
+        cm.invalidate_if_env_changed("build", 100);
+
         // Populate cache with a step
-        cm.update_step(
-            "build",
-            "main.o",
-            make_step_entry(0x1234),
-        );
+        cm.update_step("build", "main.o", make_step_entry(0x1234));
 
         // Same env hash — steps should survive
         cm.invalidate_if_env_changed("build", 100);
@@ -323,14 +317,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
 
+        // Establish env_hash before populating steps
+        cm.invalidate_if_env_changed("build", 42);
+
         cm.update_step("build", "main.o", make_step_entry(0x1234));
 
-        // First call sets env_hash to 42
+        // Same env hash — steps should survive
         cm.invalidate_if_env_changed("build", 42);
         let cache = cm.get_or_load("build");
         assert_eq!(cache.steps.len(), 1, "steps should survive when env hash matches");
 
-        // Same hash again — no-op
+        // Same hash again — still a no-op
         cm.invalidate_if_env_changed("build", 42);
         let cache = cm.get_or_load("build");
         assert_eq!(cache.steps.len(), 1);
