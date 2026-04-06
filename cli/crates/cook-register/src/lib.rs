@@ -4,6 +4,7 @@
 //! (commands, inputs, outputs) without executing them.
 
 pub mod capture;
+pub mod codec_api;
 pub mod context;
 pub mod engine;
 pub mod export_api;
@@ -14,7 +15,6 @@ pub mod path_api;
 pub mod platform_api;
 pub mod test_api;
 pub mod unit_api;
-pub mod codec_api;
 
 #[cfg(test)]
 mod tests;
