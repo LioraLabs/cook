@@ -5,8 +5,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use cook_cache::{needs_rebuild_cook, RebuildResult, ThreadSafeCacheManager};
+use cook_cache::{hash_file, needs_rebuild_cook, stat_mtime, RebuildResult, ThreadSafeCacheManager};
 use cook_contracts::{CapturedUnit, DepKind, RecipeUnits, WorkPayload};
+use cook_engine::wave_grouper;
+use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------------
 // Wave-grouped DAG data model
@@ -190,6 +192,350 @@ fn derive_internal_edges(units: &[CapturedUnit], step_groups: &[Vec<usize>]) -> 
 
     edges
 }
+
+// ---------------------------------------------------------------------------
+// Wave-grouped DAG builder
+// ---------------------------------------------------------------------------
+
+/// Build the unified wave-grouped DAG data from registered RecipeUnits.
+///
+/// Calls `wave_grouper::compute_waves` to determine execution order, then for
+/// each wave builds a flat node+edge graph that includes file nodes, unit
+/// nodes, and all intra-wave edges.  Inter-wave edges connect the terminal
+/// barrier nodes of wave N to the root barrier nodes of wave N+1 for recipes
+/// that are joined by explicit deps.
+pub fn build_wave_dag_data(
+    target: &str,
+    all_units: &BTreeMap<String, RecipeUnits>,
+    explicit_deps: &BTreeMap<String, Vec<String>>,
+    inferred_deps: &BTreeMap<String, Vec<String>>,
+    cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+) -> WaveDagData {
+    let all_recipe_names: BTreeSet<String> = all_units.keys().cloned().collect();
+
+    let waves = wave_grouper::compute_waves(explicit_deps, inferred_deps, &all_recipe_names)
+        .unwrap_or_else(|_| {
+            // Fall back to a single wave containing all recipes on cycle error.
+            vec![wave_grouper::Wave {
+                recipes: all_recipe_names.iter().cloned().collect(),
+            }]
+        });
+
+    // Per-recipe terminal node IDs, populated while building each wave and
+    // used to wire inter-wave edges.
+    let mut recipe_terminals: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Per-recipe root node IDs (first barrier set after processing the first
+    // unit of a recipe).
+    let mut recipe_roots: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    let mut wave_data_list: Vec<WaveData> = Vec::new();
+
+    for wave in &waves {
+        let (wave_data, terminals, roots) = build_wave(
+            &wave.recipes,
+            all_units,
+            cache_managers,
+            &recipe_terminals,
+        );
+        wave_data_list.push(wave_data);
+        recipe_terminals.extend(terminals);
+        // Only record roots for recipes not yet seen (first occurrence).
+        for (recipe, root_ids) in roots {
+            recipe_roots.entry(recipe).or_insert(root_ids);
+        }
+    }
+
+    // Build inter-wave edges: for each explicit dep A -> B where A and B
+    // live in different waves, connect the terminals of A to the roots of B.
+    let mut inter_wave_edges: Vec<EdgeData> = Vec::new();
+    for (recipe, deps) in explicit_deps {
+        let Some(roots) = recipe_roots.get(recipe) else {
+            continue;
+        };
+        for dep in deps {
+            let Some(terminals) = recipe_terminals.get(dep) else {
+                continue;
+            };
+            for terminal in terminals {
+                for root in roots {
+                    inter_wave_edges.push(EdgeData {
+                        from: terminal.clone(),
+                        to: root.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    WaveDagData {
+        target: target.to_string(),
+        waves: wave_data_list,
+        inter_wave_edges,
+    }
+}
+
+/// Build the `WaveData` for a single wave.
+///
+/// Returns:
+/// - The `WaveData` (nodes + edges for all recipes in the wave).
+/// - A map of recipe_name → terminal unit node IDs for this wave.
+/// - A map of recipe_name → root unit node IDs for this wave.
+fn build_wave(
+    recipe_names: &[String],
+    all_units: &BTreeMap<String, RecipeUnits>,
+    cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+    // Terminals from prior waves, used to wire intra-wave cross-recipe edges.
+    prior_recipe_terminals: &BTreeMap<String, Vec<String>>,
+) -> (WaveData, BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<String>>) {
+    let mut nodes: Vec<NodeData> = Vec::new();
+    let mut edges: Vec<EdgeData> = Vec::new();
+
+    // Deduplicated file nodes: path → node id.
+    let mut file_node_ids: BTreeMap<String, String> = BTreeMap::new();
+
+    // Per-recipe terminal unit node IDs (last barrier after processing units).
+    let mut recipe_terminals: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Per-recipe root unit node IDs (first barrier encountered).
+    let mut recipe_roots: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    for recipe_name in recipe_names {
+        let Some(ru) = all_units.get(recipe_name) else {
+            continue;
+        };
+        let cm = cache_managers.get(recipe_name);
+
+        let mut barrier: Vec<String> = Vec::new();
+        let mut recipe_root_recorded = false;
+
+        for (unit_idx, unit) in ru.units.iter().enumerate() {
+            let unit_id = format!("unit:{}:{}", recipe_name, unit_idx);
+
+            // --- Command label ---
+            let command = match &unit.payload {
+                WorkPayload::Shell { cmd, .. } => cmd.clone(),
+                WorkPayload::Interactive { cmd, .. } => format!("@{cmd}"),
+                WorkPayload::LuaChunk { code, .. } => {
+                    format!("lua: {}", &code[..code.len().min(60)])
+                }
+                WorkPayload::Test { cmd, .. } => format!("test: {cmd}"),
+            };
+
+            let output = unit.cache_meta.as_ref().and_then(|m| m.output_path.clone());
+
+            let label = if let Some(ref out) = output {
+                Path::new(out)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| out.clone())
+            } else {
+                command.chars().take(40).collect()
+            };
+
+            let (dep_kind_str, group_index) = match &unit.dep_kind {
+                DepKind::StepGroup(idx) => ("step_group".to_string(), Some(*idx)),
+                DepKind::Sequential => ("sequential".to_string(), None),
+                DepKind::TestSibling(idx) => ("test_sibling".to_string(), Some(*idx)),
+            };
+
+            // --- Cache status ---
+            let cached = if let (Some(meta), Some(cm)) = (&unit.cache_meta, cm) {
+                if let Some(ref out) = meta.output_path {
+                    let cache = cm.get_or_load(&meta.recipe_name);
+                    let entry = cache.steps.get(&meta.cache_key);
+                    let input_refs: Vec<&str> =
+                        meta.input_paths.iter().map(|s| s.as_str()).collect();
+                    let (result, _) = needs_rebuild_cook(
+                        entry,
+                        &input_refs,
+                        out,
+                        meta.command_hash,
+                        &ru.working_dir,
+                    );
+                    Some(matches!(result, RebuildResult::Skip))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // --- Unit node ---
+            nodes.push(NodeData {
+                id: unit_id.clone(),
+                kind: "unit".to_string(),
+                label,
+                recipe: Some(recipe_name.clone()),
+                command: Some(command),
+                output: output.clone(),
+                cached,
+                dep_kind: Some(dep_kind_str),
+                group_index,
+                modified: None,
+            });
+
+            // --- File nodes + file→unit edges ---
+            if let Some(meta) = &unit.cache_meta {
+                // Load cache entry once for staleness checks.
+                let cache_entry = cm.as_ref().map(|mgr| {
+                    let cache = mgr.get_or_load(&meta.recipe_name);
+                    cache.steps.get(&meta.cache_key).cloned()
+                });
+
+                for (file_idx, path) in meta.input_paths.iter().enumerate() {
+                    let file_id = format!("file:{}", path);
+
+                    if !file_node_ids.contains_key(path) {
+                        // Determine staleness: mtime first, then hash.
+                        let modified = compute_file_modified(
+                            path,
+                            &ru.working_dir,
+                            cache_entry.as_ref().and_then(|e| e.as_ref()).and_then(|e| {
+                                e.inputs.get(file_idx).map(|r| (r.mtime, r.hash))
+                            }),
+                        );
+
+                        let file_label = Path::new(path)
+                            .file_name()
+                            .map(|f| f.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.clone());
+
+                        nodes.push(NodeData {
+                            id: file_id.clone(),
+                            kind: "file".to_string(),
+                            label: file_label,
+                            recipe: None,
+                            command: None,
+                            output: None,
+                            cached: None,
+                            dep_kind: None,
+                            group_index: None,
+                            modified: Some(modified),
+                        });
+                        file_node_ids.insert(path.clone(), file_id.clone());
+                    }
+
+                    edges.push(EdgeData {
+                        from: file_id,
+                        to: unit_id.clone(),
+                    });
+                }
+            }
+
+            // --- Barrier / intra-recipe unit→unit edges ---
+            match &unit.dep_kind {
+                DepKind::Sequential => {
+                    for b in &barrier {
+                        edges.push(EdgeData {
+                            from: b.clone(),
+                            to: unit_id.clone(),
+                        });
+                    }
+                    if !recipe_root_recorded && !barrier.is_empty() {
+                        // roots are the first barrier set — already recorded below
+                    }
+                    barrier = vec![unit_id.clone()];
+                }
+                DepKind::StepGroup(gi) | DepKind::TestSibling(gi) => {
+                    let group = &ru.step_groups[*gi];
+                    let is_first = group.first() == Some(&unit_idx);
+                    if is_first {
+                        for b in &barrier {
+                            for &member_idx in group {
+                                let member_id =
+                                    format!("unit:{}:{}", recipe_name, member_idx);
+                                edges.push(EdgeData {
+                                    from: b.clone(),
+                                    to: member_id,
+                                });
+                            }
+                        }
+                    }
+                    let is_last = group.last() == Some(&unit_idx);
+                    if is_last {
+                        barrier = group
+                            .iter()
+                            .map(|&idx| format!("unit:{}:{}", recipe_name, idx))
+                            .collect();
+                    }
+                }
+            }
+
+            // Record recipe root: first non-empty barrier transition captures
+            // the first set of nodes that became the barrier.
+            if !recipe_root_recorded {
+                recipe_roots
+                    .entry(recipe_name.clone())
+                    .or_insert_with(|| vec![unit_id]);
+                recipe_root_recorded = true;
+            }
+        }
+
+        // Terminal nodes for this recipe = final barrier.
+        if !barrier.is_empty() {
+            recipe_terminals.insert(recipe_name.clone(), barrier);
+        }
+
+        // --- Cross-recipe dep edges within this wave ---
+        // For each (unit_idx, dep_recipe_name) in dep_edges, wire unit to the
+        // terminal nodes of dep_recipe within this wave (or prior waves).
+        for (unit_idx, dep_recipe) in &ru.dep_edges {
+            let unit_id = format!("unit:{}:{}", recipe_name, unit_idx);
+
+            let dep_terminals = recipe_terminals
+                .get(dep_recipe)
+                .or_else(|| prior_recipe_terminals.get(dep_recipe));
+
+            if let Some(terminals) = dep_terminals {
+                for terminal in terminals {
+                    edges.push(EdgeData {
+                        from: terminal.clone(),
+                        to: unit_id.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    let wave_data = WaveData {
+        recipes: recipe_names.to_vec(),
+        nodes,
+        edges,
+    };
+
+    (wave_data, recipe_terminals, recipe_roots)
+}
+
+/// Check whether a file is modified relative to its cached record.
+///
+/// Checks mtime first (cheap). If mtime differs, falls back to hash comparison.
+/// Returns `true` if the file appears modified or cannot be read.
+fn compute_file_modified(
+    rel_path: &str,
+    working_dir: &Path,
+    cached: Option<(u64, u64)>,
+) -> bool {
+    let abs = working_dir.join(rel_path);
+    let Some((cached_mtime, cached_hash)) = cached else {
+        // No cache entry → treat as modified (needs build).
+        return true;
+    };
+    let Some(disk_mtime) = stat_mtime(&abs) else {
+        return true;
+    };
+    if disk_mtime == cached_mtime {
+        return false;
+    }
+    // mtime differs — check hash to distinguish genuine content change from
+    // a metadata-only touch.
+    match hash_file(&abs) {
+        Some(h) => h != cached_hash,
+        None => true,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-recipe flat DAG builder (legacy)
+// ---------------------------------------------------------------------------
 
 /// Build the full DagData from registered RecipeUnits.
 pub fn build_dag_data(
