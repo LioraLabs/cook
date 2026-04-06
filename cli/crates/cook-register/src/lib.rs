@@ -14,6 +14,7 @@ pub mod path_api;
 pub mod platform_api;
 pub mod test_api;
 pub mod unit_api;
+pub mod codec_api;
 
 #[cfg(test)]
 mod tests;
