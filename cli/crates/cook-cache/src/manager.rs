@@ -140,6 +140,28 @@ impl ThreadSafeCacheManager {
         cache
     }
 
+    /// Check if the environment has changed since the last build. If so,
+    /// clear all cached steps for this recipe (forcing a full rebuild).
+    pub fn invalidate_if_env_changed(&self, recipe_name: &str, env_hash: u64) {
+        let mut caches = self.caches.lock().unwrap();
+        let cache = caches
+            .entry(recipe_name.to_string())
+            .or_insert_with(|| RecipeCache::load(&self.cache_dir, recipe_name).unwrap_or_default());
+
+        if cache.env_hash != env_hash {
+            // Only clear steps when the env was previously recorded (non-zero)
+            // and has changed. A zero env_hash means no previous env was stored,
+            // so we just record the current one without invalidating.
+            if cache.env_hash != 0 {
+                cache.steps.clear();
+            }
+            cache.env_hash = env_hash;
+            drop(caches);
+            let mut dirty = self.dirty.lock().unwrap();
+            dirty.insert(recipe_name.to_string());
+        }
+    }
+
     pub fn record_completion(
         &self,
         recipe_name: &str,
@@ -270,5 +292,47 @@ mod tests {
         let cache = manager.get_or_load("nonexistent_recipe");
         assert!(cache.steps.is_empty());
         assert_eq!(cache.version, store::CACHE_VERSION);
+    }
+
+    #[test]
+    fn test_invalidate_if_env_changed_clears_steps() {
+        let dir = tempfile::tempdir().unwrap();
+        let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+
+        // Populate cache with a step
+        cm.update_step(
+            "build",
+            "main.o",
+            make_step_entry(0x1234),
+        );
+
+        // Same env hash — steps should survive
+        cm.invalidate_if_env_changed("build", 100);
+        let cache = cm.get_or_load("build");
+        assert!(cache.steps.contains_key("main.o"), "step should survive same env hash");
+
+        // Different env hash — steps should be cleared
+        cm.invalidate_if_env_changed("build", 999);
+        let cache = cm.get_or_load("build");
+        assert!(cache.steps.is_empty(), "steps should be cleared on env hash change");
+        assert_eq!(cache.env_hash, 999);
+    }
+
+    #[test]
+    fn test_invalidate_if_env_changed_no_op_on_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+
+        cm.update_step("build", "main.o", make_step_entry(0x1234));
+
+        // First call sets env_hash to 42
+        cm.invalidate_if_env_changed("build", 42);
+        let cache = cm.get_or_load("build");
+        assert_eq!(cache.steps.len(), 1, "steps should survive when env hash matches");
+
+        // Same hash again — no-op
+        cm.invalidate_if_env_changed("build", 42);
+        let cache = cm.get_or_load("build");
+        assert_eq!(cache.steps.len(), 1);
     }
 }

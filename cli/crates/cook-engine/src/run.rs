@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::mpsc;
 use std::sync::Arc;
 
+use cook_cache::hash_env;
 use cook_cache::ThreadSafeCacheManager;
 
 use crate::analyzer::{self, GraphError};
@@ -110,6 +111,13 @@ pub fn run(
             wave_cache_managers
                 .entry(name.clone())
                 .or_insert_with(|| Arc::new(ThreadSafeCacheManager::new(cache_dir)));
+
+            // Invalidate cache if environment changed since last build.
+            let env_hash = hash_env(&units.env_vars);
+            wave_cache_managers
+                .get(name)
+                .unwrap()
+                .invalidate_if_env_changed(name, env_hash);
 
             wave_units.push(units);
         }
