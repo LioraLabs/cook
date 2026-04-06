@@ -8,6 +8,7 @@ use cook_contracts::RecipeUnits;
 
 use crate::capture::register_cook_api_capture;
 use crate::context::setup_recipe_context;
+use crate::dep_output_api::SharedTerminalOutputs;
 use crate::export_api::SharedExportStore;
 use crate::module_loader::{ModuleLoaderState, SharedModuleLoaderState};
 use crate::{CaptureState, RegisterError, SharedCaptureState};
@@ -16,6 +17,7 @@ pub struct Registry {
     working_dir: PathBuf,
     env_vars: Rc<RefCell<HashMap<String, String>>>,
     export_store: SharedExportStore,
+    terminal_outputs: SharedTerminalOutputs,
     selected_config: Option<String>,
 }
 
@@ -25,6 +27,7 @@ impl Registry {
             working_dir,
             env_vars: Rc::new(RefCell::new(env_vars)),
             export_store: Rc::new(RefCell::new(BTreeMap::new())),
+            terminal_outputs: Rc::new(RefCell::new(BTreeMap::new())),
             selected_config: None,
         }
     }
@@ -70,6 +73,11 @@ impl Registry {
         crate::unit_api::register_unit_api(&lua, capture_state.clone(), recipe_name)?;
         crate::export_api::register_export_api(&lua, self.export_store.clone())?;
         crate::test_api::register_test_api(&lua, capture_state.clone())?;
+        crate::dep_output_api::register_dep_output_api(
+            &lua,
+            self.terminal_outputs.clone(),
+            capture_state.clone(),
+        )?;
         crate::context::register_resolve_ingredients(&lua, &self.working_dir)?;
         crate::codec_api::register_codec_api(&lua)?;
 
@@ -122,6 +130,11 @@ impl Registry {
         let cap = capture_state.borrow();
 
         let terminal_outputs_list = cap.last_cook_step_outputs.clone();
+
+        // Store terminal outputs so downstream recipes can call cook.dep_output()
+        self.terminal_outputs
+            .borrow_mut()
+            .insert(recipe_name.to_string(), terminal_outputs_list.clone());
 
         // Convert HashMap env_vars to BTreeMap for RecipeUnits
         let env_btree: BTreeMap<String, String> = self.env_vars.borrow().iter()

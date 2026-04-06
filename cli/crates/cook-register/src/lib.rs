@@ -6,6 +6,7 @@
 pub mod capture;
 pub mod codec_api;
 pub mod context;
+pub mod dep_output_api;
 pub mod engine;
 pub mod export_api;
 pub mod fs_api;
