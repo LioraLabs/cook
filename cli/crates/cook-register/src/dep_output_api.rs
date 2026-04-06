@@ -23,6 +23,8 @@ pub fn register_dep_output_api(
     let cook: LuaTable = lua.globals().get("cook")?;
 
     // cook.dep_output(name) → space-joined string
+    // Accumulates dep ref in step_group_dep_refs; actual edge recording
+    // happens in cook.add_unit() which attaches the ref to the correct unit.
     let to = terminal_outputs.clone();
     let cs = capture_state.clone();
     let dep_output_fn = lua.create_function(move |_, name: String| {
@@ -33,17 +35,19 @@ pub fn register_dep_output_api(
                 name
             ))
         })?;
-        // Record dep edge
+        // Accumulate dep ref for the step_group — add_unit will pick it up
         {
             let mut state = cs.borrow_mut();
-            let unit_idx = state.units.len().saturating_sub(1);
-            state.dep_edges.push((unit_idx, name.clone()));
+            if !state.step_group_dep_refs.contains(&name) {
+                state.step_group_dep_refs.push(name.clone());
+            }
         }
         Ok(outputs.join(" "))
     })?;
     cook.set("dep_output", dep_output_fn)?;
 
     // cook.dep_output_list(name) → Lua table
+    // Same accumulation pattern as dep_output.
     let to2 = terminal_outputs.clone();
     let cs2 = capture_state.clone();
     let dep_output_list_fn = lua.create_function(move |lua, name: String| {
@@ -54,11 +58,12 @@ pub fn register_dep_output_api(
                 name
             ))
         })?;
-        // Record dep edge
+        // Accumulate dep ref
         {
             let mut state = cs2.borrow_mut();
-            let unit_idx = state.units.len().saturating_sub(1);
-            state.dep_edges.push((unit_idx, name.clone()));
+            if !state.step_group_dep_refs.contains(&name) {
+                state.step_group_dep_refs.push(name.clone());
+            }
         }
         let table = lua.create_table()?;
         for (i, path) in outputs.iter().enumerate() {
@@ -124,27 +129,34 @@ mod tests {
     }
 
     #[test]
-    fn test_dep_output_records_edge() {
+    fn test_dep_output_accumulates_dep_ref() {
         let (lua, outputs, cs) = setup_lua();
         outputs
             .borrow_mut()
             .insert("libmath".into(), vec!["libmath.a".into()]);
-        // Pre-add a unit so unit_idx makes sense
-        {
-            let mut state = cs.borrow_mut();
-            state.units.push(cook_contracts::CapturedUnit {
-                payload: cook_contracts::WorkPayload::Shell {
-                    cmd: "test".into(),
-                    line: 0,
-                },
-                cache_meta: None,
-                dep_kind: cook_contracts::DepKind::Sequential,
-            });
-        }
         register_dep_output_api(&lua, outputs, cs.clone()).unwrap();
         lua.load(r#"cook.dep_output("libmath")"#).exec().unwrap();
+        // dep_output accumulates in step_group_dep_refs, not dep_edges directly.
+        // Actual edge recording happens in cook.add_unit().
         let state = cs.borrow();
-        assert_eq!(state.dep_edges.len(), 1);
-        assert_eq!(state.dep_edges[0], (0, "libmath".to_string()));
+        assert_eq!(state.step_group_dep_refs, vec!["libmath".to_string()]);
+        // No direct dep_edges yet — add_unit would create them.
+        assert!(state.dep_edges.is_empty());
+    }
+
+    #[test]
+    fn test_dep_output_deduplicates_refs() {
+        let (lua, outputs, cs) = setup_lua();
+        outputs
+            .borrow_mut()
+            .insert("libmath".into(), vec!["libmath.a".into()]);
+        register_dep_output_api(&lua, outputs, cs.clone()).unwrap();
+        lua.load(r#"
+            cook.dep_output("libmath")
+            cook.dep_output("libmath")
+        "#).exec().unwrap();
+        let state = cs.borrow();
+        // Should not duplicate
+        assert_eq!(state.step_group_dep_refs, vec!["libmath".to_string()]);
     }
 }

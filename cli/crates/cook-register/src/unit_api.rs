@@ -55,6 +55,12 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
         if let Some(out) = output_for_tracking {
             state.current_step_outputs.push(out);
         }
+        // Record dep edges: every dep ref accumulated in this step_group
+        // applies to this unit.
+        let dep_refs: Vec<String> = state.step_group_dep_refs.clone();
+        for dep_name in dep_refs {
+            state.dep_edges.push((unit_idx, dep_name));
+        }
         Ok(())
     })?;
     cook.set("add_unit", add_unit_fn)?;
@@ -76,6 +82,7 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
             if !outputs.is_empty() {
                 state.last_cook_step_outputs = outputs;
             }
+            state.step_group_dep_refs.clear();
         }
         result
     })?;
