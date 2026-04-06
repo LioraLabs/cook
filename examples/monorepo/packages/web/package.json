@@ -1,0 +1,14 @@
+{
+  "name": "web",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tsc",
+    "test": "node -e \"require('./dist/index.js'); console.log('web: ok')\""
+  },
+  "dependencies": {
+    "ui": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

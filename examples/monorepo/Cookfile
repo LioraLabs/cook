@@ -1,0 +1,17 @@
+use pnpm
+
+recipe install
+    > pnpm.install()
+end
+
+recipe build: install
+    > pnpm.run("build")
+end
+
+recipe test: build
+    > pnpm.run("test")
+end
+
+recipe clean
+    rm -rf packages/*/dist packages/*/.cook .cook
+end
