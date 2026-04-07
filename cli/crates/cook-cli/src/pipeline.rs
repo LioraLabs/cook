@@ -695,17 +695,31 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
             cook_engine::analyzer::GraphError::UnknownRecipe(s) => CookError::RecipeNotFound(s),
         })?;
 
-    // Merge inferred deps ({dep} references) into the edge map so the
-    // RecipeDag registers recipes in the correct order.
+    // Save explicit edges before merging inferred deps (needed for wave grouping).
+    let explicit_edges = edges.clone();
+
+    // Extract inferred deps from {dep} references in recipe steps.
     let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
+    let mut inferred_deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for recipe in &cookfile.recipes {
         let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
-        for dep_ref in &refs {
-            let dep_name = &dep_ref.recipe_name;
-            // Ensure the dependency recipe has an entry in the edge map
+        let dep_names: Vec<String> = refs
+            .iter()
+            .map(|r| r.recipe_name.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if !dep_names.is_empty() {
+            inferred_deps.insert(recipe.name.clone(), dep_names);
+        }
+    }
+
+    // Merge inferred deps into the edge map so the RecipeDag registers
+    // recipes in the correct order.
+    for (recipe_name, deps) in &inferred_deps {
+        for dep_name in deps {
             edges.entry(dep_name.clone()).or_insert_with(Vec::new);
-            // Add the inferred edge
-            let entry = edges.entry(recipe.name.clone()).or_insert_with(Vec::new);
+            let entry = edges.entry(recipe_name.clone()).or_insert_with(Vec::new);
             if !entry.contains(dep_name) {
                 entry.push(dep_name.clone());
             }
@@ -750,10 +764,11 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         recipe_dag.mark_done(&ready);
     }
 
-    let dag_data = crate::dag_data::build_dag_data(
+    let dag_data = crate::dag_data::build_wave_dag_data(
         recipe_name,
         &all_units,
-        &edges,
+        &explicit_edges,
+        &inferred_deps,
         &cache_managers,
     );
 

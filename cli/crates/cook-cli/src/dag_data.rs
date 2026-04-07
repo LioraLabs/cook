@@ -206,12 +206,17 @@ fn derive_internal_edges(units: &[CapturedUnit], step_groups: &[Vec<usize>]) -> 
 /// that are joined by explicit deps.
 pub fn build_wave_dag_data(
     target: &str,
-    all_units: &BTreeMap<String, RecipeUnits>,
+    all_units: &[(String, RecipeUnits)],
     explicit_deps: &BTreeMap<String, Vec<String>>,
     inferred_deps: &BTreeMap<String, Vec<String>>,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
 ) -> WaveDagData {
-    let all_recipe_names: BTreeSet<String> = all_units.keys().cloned().collect();
+    // Index by name for fast lookup.
+    let units_by_name: BTreeMap<&str, &RecipeUnits> = all_units
+        .iter()
+        .map(|(name, ru)| (name.as_str(), ru))
+        .collect();
+    let all_recipe_names: BTreeSet<String> = all_units.iter().map(|(n, _)| n.clone()).collect();
 
     let waves = wave_grouper::compute_waves(explicit_deps, inferred_deps, &all_recipe_names)
         .unwrap_or_else(|_| {
@@ -233,7 +238,7 @@ pub fn build_wave_dag_data(
     for wave in &waves {
         let (wave_data, terminals, roots) = build_wave(
             &wave.recipes,
-            all_units,
+            &units_by_name,
             cache_managers,
             &recipe_terminals,
         );
@@ -282,7 +287,7 @@ pub fn build_wave_dag_data(
 /// - A map of recipe_name → root unit node IDs for this wave.
 fn build_wave(
     recipe_names: &[String],
-    all_units: &BTreeMap<String, RecipeUnits>,
+    units_by_name: &BTreeMap<&str, &RecipeUnits>,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     // Terminals from prior waves, used to wire intra-wave cross-recipe edges.
     prior_recipe_terminals: &BTreeMap<String, Vec<String>>,
@@ -299,7 +304,7 @@ fn build_wave(
     let mut recipe_roots: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for recipe_name in recipe_names {
-        let Some(ru) = all_units.get(recipe_name) else {
+        let Some(ru) = units_by_name.get(recipe_name.as_str()) else {
             continue;
         };
         let cm = cache_managers.get(recipe_name);
