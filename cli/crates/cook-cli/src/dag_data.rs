@@ -161,6 +161,22 @@ fn build_wave(
     // Deduplicated file nodes: path → node id.
     let mut file_node_ids: BTreeMap<String, String> = BTreeMap::new();
 
+    // Collect all unit output paths in this wave so we can skip creating
+    // file nodes for intermediate build artifacts (e.g. .o files that are
+    // both a unit's output and another unit's input).
+    let mut unit_output_paths: BTreeSet<String> = BTreeSet::new();
+    for recipe_name in recipe_names {
+        if let Some(ru) = units_by_name.get(recipe_name.as_str()) {
+            for unit in &ru.units {
+                if let Some(meta) = &unit.cache_meta {
+                    if let Some(ref out) = meta.output_path {
+                        unit_output_paths.insert(out.clone());
+                    }
+                }
+            }
+        }
+    }
+
     // Per-recipe terminal unit node IDs (last barrier after processing units).
     let mut recipe_terminals: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // Per-recipe root unit node IDs (first barrier encountered).
@@ -254,6 +270,13 @@ fn build_wave(
                 let unique_paths: BTreeSet<&String> = meta.input_paths.iter().collect();
 
                 for path in unique_paths {
+                    // Skip inputs that are outputs of other units in this wave
+                    // (e.g. .o files produced by compile steps and consumed by
+                    // archive steps). The unit→unit edge already captures this.
+                    if unit_output_paths.contains(path.as_str()) {
+                        continue;
+                    }
+
                     let file_id = format!("file:{}", path);
 
                     if !file_node_ids.contains_key(path) {
