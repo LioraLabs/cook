@@ -1,6 +1,6 @@
-# Supporting Modules: Analyzer, Watcher, Env
+# Supporting Modules: Analyzer, Watcher, Env, Progress
 
-Three focused modules that underpin Cook's build pipeline. The analyzer runs before any recipe executes; the watcher powers `cook serve`; and the env loader feeds the five-layer variable resolution system.
+Four focused modules that underpin Cook's build pipeline. The analyzer runs before any recipe executes; the watcher powers `cook serve`; the env loader feeds the five-layer variable resolution system; and the progress crate renders build output to the terminal and persists build logs for post-hoc inspection.
 
 ---
 
@@ -166,3 +166,124 @@ The `dotenvy` crate handles standard `.env` syntax: comments (`# …`), blank li
 | 5 (highest) | `--set KEY=VALUE` CLI flags | `cli.set`; split on the first `=` |
 
 The merged `HashMap<String, String>` is passed directly to the scheduler and runtime. There is no further variable resolution at execution time.
+
+---
+
+## 4. Progress (`cook-progress` crate)
+
+### Purpose
+
+Renders build progress to the terminal and persists every build to `.cook/logs/<build-id>/` for post-hoc inspection. Owns no mutable build state beyond what is derived from `ProgressEvent` inputs.
+
+---
+
+### Architecture
+
+cook-engine emits `EngineEvent`s over an `mpsc::Sender`. `cook-cli` bridges those to `cook_progress::ProgressEvent` (interning recipe/node names into typed `RecipeId`/`NodeId`). The `Driver` consumes events, applies them to a pure `BuildState`, records them to an optional `LogStore`, then hands them to a `Renderer`.
+
+```
+cook-engine ──EngineEvent──▶ bridge ──ProgressEvent──▶ Driver
+                                                         │
+                                                         ├──▶ BuildState (pure state machine)
+                                                         ├──▶ LogStore  (optional; writes .cook/logs/)
+                                                         └──▶ Renderer
+                                                                   ├── InlineRenderer (indicatif, TTY default)
+                                                                   ├── PlainRenderer (non-TTY / CI)
+                                                                   └── JsonWriter    (--output=json)
+```
+
+---
+
+### State model
+
+`BuildState` is the single mutation point. `apply(&mut self, event: &ProgressEvent)` is the only way it changes. Everything else (rendering, logging) is a pure read.
+
+- `order: Vec<RecipeId>` — topological order frozen at `BuildStarted`.
+- `recipes: BTreeMap<RecipeId, RecipeState>` — per-recipe status, progress, nodes, cached count, error summary.
+- `RecipeState.nodes: BTreeMap<NodeId, NodeState>` — live node tracking (artifact path, status, timestamps).
+- Cached nodes are NOT stored individually; they collapse into `RecipeState.cached_count` to keep memory bounded for recipes with hundreds of cache hits.
+
+Guards in `apply` prevent duplicate events from corrupting counters (important for log replay / recap).
+
+---
+
+### Renderers
+
+Selected by the driver based on flags + environment:
+
+| Context | Renderer |
+|---|---|
+| stderr is a TTY | InlineRenderer (indicatif MultiProgress) |
+| stderr not a TTY, or `--no-ui`, or `--output=plain`, or `CI=true`, or `TERM=dumb` | PlainRenderer |
+| `--output=json` | JsonWriter |
+
+**InlineRenderer** uses one `indicatif::ProgressBar` per recipe with per-state templates:
+
+- Waiting: one-line `◇ <name> waiting ← deps`.
+- Running: two-line — bar header with progress + elapsed, plus an artifact status strip showing `N cached · ✓ recent · ◆ running · ◇ waiting +N` (priority-ordered, truncated to fit width).
+- Completed: one-line `✓ <name> N/N · Xs (· K cached)`.
+- Cached: one-line `≋ <name> N/N cached`.
+- Failed: one-line header plus a fenced error block printed via `MultiProgress::println`.
+
+The artifact status strip is computed by `crate::strip::artifact_strip(recipe, cols)` — pure, unicode-width aware. It drops pills by priority (waiting first, then completed, running/failed last) when width is exceeded, emitting a `+N` marker.
+
+**PlainRenderer** writes chronological append-only text with `[recipe/node]` prefixes. Safe to pipe, grep, tee, or consume from CI.
+
+**JsonWriter** emits one JSON object per line, transforming `RecipeId`/`NodeId` into human-readable names and `Duration` fields into integer `elapsed_ms` — same shape as what LogStore writes to `events.jsonl`.
+
+---
+
+### Interactive command takeover
+
+When a node is interactive (gdb, REPL), the inline renderer does not clear its live frame. Sequence:
+
+1. On `InteractiveStart`: write a divider via `MultiProgress::println`, then `set_draw_target(ProgressDrawTarget::hidden())`. The previously-drawn bars remain in scrollback as a frozen snapshot. The child process inherits stdio and runs on fresh lines below.
+2. On `InteractiveEnd`: set `pending_resume = true`. Do NOT draw yet.
+3. On the next event:
+   - If `Finished`: do nothing. Interactive was the final step; the build ends with bars frozen above and interactive output below.
+   - Otherwise: rebuild a fresh `MultiProgress`, repopulate bars from `BuildState`, and handle the new event normally. The old frozen bars remain in scrollback above the interactive output; a new live bar region appears below.
+
+---
+
+### Log store (`.cook/logs/<build-id>/`)
+
+Written on every build (unless `LogConfig.events_jsonl = false`). Independent of which renderer is active.
+
+```
+.cook/logs/<build-id>/
+├── events.jsonl       # append-only ProgressEvent stream, same shape as --output=json
+├── manifest.toml      # start/end time, build id, exit code, schema version
+└── nodes/
+    └── <recipe>/
+        └── <node>.log # per-node stdout+stderr, [out]/[err] prefixed
+```
+
+Rotation is enforced at `LogStore::open` time, before any event is recorded:
+
+- `keep_builds` (default 20) — count-based trim of oldest directories.
+- `max_total_bytes` (default 500 MiB) — size-based trim.
+- `max_bytes_per_node` (default 2 MiB) — per-file truncation with a `--- truncated ---` marker.
+
+Recipe and node names are sanitized to `[a-zA-Z0-9._-]` when used as path components.
+
+---
+
+### `cook logs` subcommand
+
+Text-only reader of `.cook/logs/`. No TUI.
+
+```
+cook logs                          # list recent builds (newest first)
+cook logs <recipe>                 # dump every node log for a recipe from most recent build
+cook logs <recipe>:<node>          # dump one node's log
+cook logs --build <id> <selector>  # pick a specific build
+cook logs --failed                 # grep events.jsonl for "node-failed" entries
+```
+
+---
+
+### Not in scope (follow-up)
+
+- Full TUI (`cook recap`, `u` hot-swap). Tracked separately.
+- Remote recap / web viewer of `events.jsonl`.
+- OTLP / metrics exporter.
