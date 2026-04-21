@@ -5,7 +5,6 @@ edition = "2024"
 description = "Terminal progress rendering with composable primitives"
 
 [dependencies]
-crossterm = "0.28"
 indicatif = "0.17"
 console = "0.15"
 serde = { version = "1", features = ["derive"] }

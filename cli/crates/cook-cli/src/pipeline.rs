@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use crate::cli::Cli;
 use crate::env::{load_env, resolve_env};
 use crate::error::CookError;
-use crate::progress::{spawn_new_renderer, ProgressEvent};
+use crate::progress::spawn_new_renderer;
 
 // Test output types are used by cmd_test once cook-engine supports test
 // result collection. Keep the import for future wiring.
@@ -72,113 +72,8 @@ pub fn validate_selected_config(
     }
 }
 
-/// Bridge EngineEvent to ProgressEvent and send to the progress renderer.
-fn bridge_engine_events(
-    engine_rx: mpsc::Receiver<cook_engine::EngineEvent>,
-    progress_tx: mpsc::Sender<ProgressEvent>,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        while let Ok(event) = engine_rx.recv() {
-            let pe = match event {
-                cook_engine::EngineEvent::BuildStarted { .. } => continue,
-                cook_engine::EngineEvent::RecipeQueued { name } => {
-                    ProgressEvent::RecipeQueued {
-                        name,
-                        total_nodes: 0,
-                    }
-                }
-                cook_engine::EngineEvent::RecipeStarted { name, total_nodes } => {
-                    ProgressEvent::RecipeStarted { name, total_nodes }
-                }
-                cook_engine::EngineEvent::RecipeCompleted {
-                    name,
-                    elapsed,
-                    cached_nodes,
-                    total_nodes,
-                } => ProgressEvent::RecipeCompleted {
-                    name,
-                    elapsed,
-                    cached_nodes,
-                    total_nodes,
-                },
-                cook_engine::EngineEvent::RecipeFailed {
-                    name,
-                    elapsed,
-                    completed_nodes,
-                    total_nodes,
-                } => ProgressEvent::RecipeFailed {
-                    name,
-                    elapsed,
-                    completed_nodes,
-                    total_nodes,
-                },
-                cook_engine::EngineEvent::NodeStarted { recipe, node_name, .. } => {
-                    ProgressEvent::NodeStarted { recipe, node_name }
-                }
-                cook_engine::EngineEvent::NodeCompleted {
-                    recipe,
-                    node_name,
-                    elapsed,
-                } => ProgressEvent::NodeCompleted {
-                    recipe,
-                    node_name,
-                    elapsed,
-                },
-                cook_engine::EngineEvent::NodeFailed {
-                    recipe,
-                    node_name,
-                    elapsed,
-                    error,
-                } => ProgressEvent::NodeFailed {
-                    recipe,
-                    node_name,
-                    elapsed,
-                    error,
-                },
-                cook_engine::EngineEvent::NodeCacheHit { recipe, node_name, .. } => {
-                    ProgressEvent::NodeCacheHit { recipe, node_name }
-                }
-                cook_engine::EngineEvent::NodeSkipped { recipe, node_name } => {
-                    ProgressEvent::NodeSkipped { recipe, node_name }
-                }
-                cook_engine::EngineEvent::InteractiveStart { recipe } => {
-                    ProgressEvent::InteractiveStart { recipe }
-                }
-                cook_engine::EngineEvent::InteractiveEnd {
-                    recipe,
-                    elapsed,
-                    success,
-                } => ProgressEvent::InteractiveEnd {
-                    recipe,
-                    elapsed,
-                    success,
-                },
-                cook_engine::EngineEvent::OutputLine {
-                    recipe,
-                    line,
-                    is_stderr,
-                } => ProgressEvent::OutputLine {
-                    recipe,
-                    line,
-                    is_stderr,
-                },
-                cook_engine::EngineEvent::Finished { .. } => {
-                    ProgressEvent::Finished
-                }
-            };
-
-            let is_finished = matches!(pe, ProgressEvent::Finished);
-            let _ = progress_tx.send(pe);
-            if is_finished {
-                break;
-            }
-        }
-    })
-}
-
 /// Bridge cook-engine events to the new cook-progress ProgressEvent stream.
 /// Interns recipe names and node names into stable `RecipeId` / `NodeId`.
-#[allow(dead_code)]
 fn bridge_engine_to_progress_events(
     engine_rx: mpsc::Receiver<cook_engine::EngineEvent>,
     progress_tx: mpsc::Sender<cook_progress::ProgressEvent>,
