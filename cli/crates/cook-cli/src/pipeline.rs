@@ -13,7 +13,8 @@ use std::sync::mpsc;
 use crate::cli::Cli;
 use crate::env::{load_env, resolve_env};
 use crate::error::CookError;
-use crate::progress::{resolve_color, spawn_renderer_thread, ProgressEvent};
+use crate::progress::{spawn_new_renderer, ProgressEvent};
+
 // Test output types are used by cmd_test once cook-engine supports test
 // result collection. Keep the import for future wiring.
 #[allow(unused_imports)]
@@ -535,25 +536,32 @@ fn run_with_progress(
     num_jobs: usize,
     inferred_deps: &BTreeMap<String, Vec<String>>,
 ) -> Result<cook_engine::run::RunResult, CookError> {
-    let color = resolve_color(cli);
-    let (progress_tx, progress_rx) = mpsc::channel::<ProgressEvent>();
-    let render_thread = spawn_renderer_thread(progress_rx, color);
+    let project_root = std::env::current_dir()
+        .map_err(|e| CookError::Other(e.to_string()))?;
+    let (progress_tx, progress_rx) = mpsc::channel::<cook_progress::ProgressEvent>();
+    let render_thread = spawn_new_renderer(cli, project_root, progress_rx);
 
     let bridge_tx = progress_tx.clone();
     let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
-    let bridge_thread = bridge_engine_events(engine_rx, bridge_tx);
+    let bridge_thread = bridge_engine_to_progress_events(engine_rx, bridge_tx);
 
-    let result = cook_engine::run::run(recipe_infos, targets, registries, num_jobs, inferred_deps, move |event| {
-        let _ = engine_tx.send(event);
-    });
+    let result = cook_engine::run::run(
+        recipe_infos,
+        targets,
+        registries,
+        num_jobs,
+        inferred_deps,
+        move |event| {
+            let _ = engine_tx.send(event);
+        },
+    );
 
-    // Wait for the bridge thread to drain all events
+    // Wait for bridge to drain and forward Finished, then renderer to exit.
     let _ = bridge_thread.join();
+    let _success = render_thread.join().unwrap_or(false);
 
-    // Signal renderer to finish and wait for it
-    let _ = progress_tx.send(ProgressEvent::Finished);
+    // Drop progress_tx last to close the channel.
     drop(progress_tx);
-    let _ = render_thread.join();
 
     result.map_err(engine_error_to_cook_error)
 }

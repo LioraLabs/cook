@@ -38,6 +38,14 @@ pub struct Cli {
     #[arg(long, global = true, default_value = "auto")]
     pub color: String,
 
+    /// Output mode: auto (default), plain, json
+    #[arg(long = "output", global = true, default_value = "auto")]
+    pub output: String,
+
+    /// Force plain output even on a TTY (synonym for --output=plain)
+    #[arg(long = "no-ui", global = true)]
+    pub no_ui: bool,
+
     /// Override a variable (KEY=VALUE), repeatable. Must appear before recipe name.
     #[arg(long = "set", global = true, num_args = 1)]
     pub set: Vec<String>,
