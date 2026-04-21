@@ -1,6 +1,7 @@
 //! cook — the user-facing binary for the Cook build system.
 
 mod cli;
+mod cmd_logs;
 mod color;
 mod dag_data;
 mod dag_server;
@@ -55,6 +56,9 @@ fn main() {
                 wrapper.clone(),
                 *list,
             ),
+            Some(Command::Logs { selector, build, failed }) => {
+                crate::cmd_logs::cmd_logs(selector.as_deref(), build.as_deref(), *failed)
+            }
             Some(Command::External(args)) => {
                 let recipe = args.first().map(|s| s.as_str()).unwrap_or("build");
                 let config = args.get(1).map(|s| s.as_str());

@@ -87,6 +87,17 @@ pub enum Command {
         #[arg(long)]
         list: bool,
     },
+    /// Show logs for past builds
+    Logs {
+        /// Selector: <recipe>, <recipe>:<node>, or omit to list builds
+        selector: Option<String>,
+        /// Specific build id
+        #[arg(long)]
+        build: Option<String>,
+        /// Dump failed nodes from the most recent build
+        #[arg(long)]
+        failed: bool,
+    },
     #[command(external_subcommand)]
     External(Vec<String>),
 }
