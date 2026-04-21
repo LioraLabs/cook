@@ -146,6 +146,30 @@ pub fn run(
 
         // Build work-unit DAG for this wave and execute it.
         let dag = dag_builder::build_dag(wave_units);
+
+        // Emit synthetic lifecycle events for zero-work recipes (meta-targets
+        // that have no cook steps of their own, only deps).  The executor never
+        // sees these recipes, so without this they stay stuck in Waiting.
+        {
+            let recipes_in_dag: BTreeSet<&str> = (0..dag.len())
+                .map(|i| dag.node(i).payload.recipe_name.as_str())
+                .collect();
+            for name in &wave.recipes {
+                if !recipes_in_dag.contains(name.as_str()) {
+                    on_event(EngineEvent::RecipeStarted {
+                        name: name.clone(),
+                        total_nodes: 0,
+                    });
+                    on_event(EngineEvent::RecipeCompleted {
+                        name: name.clone(),
+                        elapsed: std::time::Duration::ZERO,
+                        cached_nodes: 0,
+                        total_nodes: 0,
+                    });
+                }
+            }
+        }
+
         if !dag.is_empty() {
             // Bridge on_event through an mpsc channel so executor can use its
             // existing Option<Sender<EngineEvent>> interface.
