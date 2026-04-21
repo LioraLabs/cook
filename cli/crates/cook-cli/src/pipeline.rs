@@ -175,6 +175,235 @@ fn bridge_engine_events(
     })
 }
 
+/// Bridge cook-engine events to the new cook-progress ProgressEvent stream.
+/// Interns recipe names and node names into stable `RecipeId` / `NodeId`.
+#[allow(dead_code)]
+fn bridge_engine_to_progress_events(
+    engine_rx: mpsc::Receiver<cook_engine::EngineEvent>,
+    progress_tx: mpsc::Sender<cook_progress::ProgressEvent>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        use cook_progress::{NodeId, RecipeId, RecipeTopo, SkipReason, Stream};
+        use std::collections::BTreeMap;
+
+        let mut recipe_ids: BTreeMap<String, RecipeId> = BTreeMap::new();
+        let mut node_ids: BTreeMap<(String, String), NodeId> = BTreeMap::new();
+        let mut next_recipe: u32 = 0;
+        let mut next_node: u32 = 0;
+
+        fn intern_recipe(
+            name: &str,
+            recipe_ids: &mut BTreeMap<String, RecipeId>,
+            next_recipe: &mut u32,
+        ) -> RecipeId {
+            if let Some(id) = recipe_ids.get(name) {
+                return *id;
+            }
+            let id = RecipeId::new(*next_recipe);
+            *next_recipe += 1;
+            recipe_ids.insert(name.to_string(), id);
+            id
+        }
+
+        fn intern_node(
+            recipe: &str,
+            node: &str,
+            node_ids: &mut BTreeMap<(String, String), NodeId>,
+            next_node: &mut u32,
+        ) -> NodeId {
+            let key = (recipe.to_string(), node.to_string());
+            if let Some(id) = node_ids.get(&key) {
+                return *id;
+            }
+            let id = NodeId::new(*next_node);
+            *next_node += 1;
+            node_ids.insert(key, id);
+            id
+        }
+
+        while let Ok(event) = engine_rx.recv() {
+            let pe = match event {
+                cook_engine::EngineEvent::BuildStarted { recipes, total_nodes } => {
+                    let topos: Vec<RecipeTopo> = recipes
+                        .into_iter()
+                        .map(|r| {
+                            let id = intern_recipe(&r.name, &mut recipe_ids, &mut next_recipe);
+                            let deps: Vec<RecipeId> = r
+                                .deps
+                                .iter()
+                                .map(|d| intern_recipe(d, &mut recipe_ids, &mut next_recipe))
+                                .collect();
+                            RecipeTopo {
+                                id,
+                                name: r.name,
+                                deps,
+                                expected_nodes: r.expected_nodes,
+                            }
+                        })
+                        .collect();
+                    cook_progress::ProgressEvent::BuildStarted {
+                        recipes: topos,
+                        total_nodes,
+                    }
+                }
+                cook_engine::EngineEvent::RecipeQueued { .. } => continue,
+                cook_engine::EngineEvent::RecipeStarted { name, .. } => {
+                    let id = intern_recipe(&name, &mut recipe_ids, &mut next_recipe);
+                    cook_progress::ProgressEvent::RecipeStarted { recipe: id }
+                }
+                cook_engine::EngineEvent::RecipeCompleted {
+                    name,
+                    elapsed,
+                    cached_nodes,
+                    total_nodes,
+                } => {
+                    let id = intern_recipe(&name, &mut recipe_ids, &mut next_recipe);
+                    cook_progress::ProgressEvent::RecipeCompleted {
+                        recipe: id,
+                        elapsed,
+                        cached: cached_nodes,
+                        total: total_nodes,
+                    }
+                }
+                cook_engine::EngineEvent::RecipeFailed {
+                    name,
+                    elapsed,
+                    completed_nodes,
+                    total_nodes,
+                } => {
+                    let id = intern_recipe(&name, &mut recipe_ids, &mut next_recipe);
+                    cook_progress::ProgressEvent::RecipeFailed {
+                        recipe: id,
+                        elapsed,
+                        completed: completed_nodes,
+                        total: total_nodes,
+                    }
+                }
+                cook_engine::EngineEvent::NodeStarted {
+                    recipe,
+                    node_name,
+                    artifact,
+                    fallback_label,
+                } => {
+                    let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
+                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    cook_progress::ProgressEvent::NodeStarted {
+                        recipe: rid,
+                        node: nid,
+                        name: node_name,
+                        artifact,
+                        fallback_label,
+                    }
+                }
+                cook_engine::EngineEvent::NodeCompleted {
+                    recipe,
+                    node_name,
+                    elapsed,
+                } => {
+                    let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
+                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    cook_progress::ProgressEvent::NodeCompleted {
+                        recipe: rid,
+                        node: nid,
+                        elapsed,
+                    }
+                }
+                cook_engine::EngineEvent::NodeFailed {
+                    recipe,
+                    node_name,
+                    elapsed,
+                    error,
+                } => {
+                    let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
+                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    cook_progress::ProgressEvent::NodeFailed {
+                        recipe: rid,
+                        node: nid,
+                        elapsed,
+                        error,
+                    }
+                }
+                cook_engine::EngineEvent::NodeCacheHit {
+                    recipe,
+                    node_name,
+                    artifact,
+                } => {
+                    let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
+                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    cook_progress::ProgressEvent::NodeCacheHit {
+                        recipe: rid,
+                        node: nid,
+                        name: node_name,
+                        artifact,
+                    }
+                }
+                cook_engine::EngineEvent::NodeSkipped { recipe, node_name } => {
+                    let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
+                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
+                    cook_progress::ProgressEvent::NodeSkipped {
+                        recipe: rid,
+                        node: nid,
+                        name: node_name,
+                        reason: SkipReason::UpstreamFailed,
+                    }
+                }
+                cook_engine::EngineEvent::OutputLine {
+                    recipe,
+                    line,
+                    is_stderr,
+                } => {
+                    let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
+                    // OutputLine does not yet carry a node id at the engine level. Attribute to the
+                    // most recently interned node in the same recipe; if none, use sentinel MAX.
+                    let nid = node_ids
+                        .iter()
+                        .rev()
+                        .find(|((r, _), _)| r == &recipe)
+                        .map(|(_, id)| *id)
+                        .unwrap_or_else(|| NodeId::new(u32::MAX));
+                    let stream = if is_stderr { Stream::Stderr } else { Stream::Stdout };
+                    cook_progress::ProgressEvent::NodeOutput {
+                        recipe: rid,
+                        node: nid,
+                        line,
+                        stream,
+                    }
+                }
+                cook_engine::EngineEvent::InteractiveStart { recipe } => {
+                    let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
+                    let nid = NodeId::new(u32::MAX);
+                    cook_progress::ProgressEvent::InteractiveStart {
+                        recipe: rid,
+                        node: nid,
+                    }
+                }
+                cook_engine::EngineEvent::InteractiveEnd {
+                    recipe,
+                    elapsed,
+                    success,
+                } => {
+                    let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
+                    let nid = NodeId::new(u32::MAX);
+                    cook_progress::ProgressEvent::InteractiveEnd {
+                        recipe: rid,
+                        node: nid,
+                        elapsed,
+                        success,
+                    }
+                }
+                cook_engine::EngineEvent::Finished { success, .. } => {
+                    cook_progress::ProgressEvent::Finished { success }
+                }
+            };
+            let is_finished = matches!(pe, cook_progress::ProgressEvent::Finished { .. });
+            let _ = progress_tx.send(pe);
+            if is_finished {
+                break;
+            }
+        }
+    })
+}
+
 /// Map cook-engine errors to CookError.
 fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
     match e {
