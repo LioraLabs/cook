@@ -1,6 +1,7 @@
 //! Renderer trait and implementations.
 pub mod inline;
 pub mod plain;
+pub mod json;
 
 use std::io;
 
