@@ -79,6 +79,7 @@ fn bridge_engine_events(
     std::thread::spawn(move || {
         while let Ok(event) = engine_rx.recv() {
             let pe = match event {
+                cook_engine::EngineEvent::BuildStarted { .. } => continue,
                 cook_engine::EngineEvent::RecipeQueued { name } => {
                     ProgressEvent::RecipeQueued {
                         name,
@@ -110,7 +111,7 @@ fn bridge_engine_events(
                     completed_nodes,
                     total_nodes,
                 },
-                cook_engine::EngineEvent::NodeStarted { recipe, node_name } => {
+                cook_engine::EngineEvent::NodeStarted { recipe, node_name, .. } => {
                     ProgressEvent::NodeStarted { recipe, node_name }
                 }
                 cook_engine::EngineEvent::NodeCompleted {
@@ -133,7 +134,7 @@ fn bridge_engine_events(
                     elapsed,
                     error,
                 },
-                cook_engine::EngineEvent::NodeCacheHit { recipe, node_name } => {
+                cook_engine::EngineEvent::NodeCacheHit { recipe, node_name, .. } => {
                     ProgressEvent::NodeCacheHit { recipe, node_name }
                 }
                 cook_engine::EngineEvent::NodeSkipped { recipe, node_name } => {

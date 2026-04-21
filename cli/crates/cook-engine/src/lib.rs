@@ -19,6 +19,18 @@ use thiserror::Error;
 use cook_contracts::{CacheMeta, WorkPayload};
 
 // ---------------------------------------------------------------------------
+// RecipeTopology — per-recipe topology snapshot for BuildStarted
+// ---------------------------------------------------------------------------
+
+/// Per-recipe topology snapshot, part of `EngineEvent::BuildStarted`.
+#[derive(Debug, Clone)]
+pub struct RecipeTopology {
+    pub name: String,
+    pub deps: Vec<String>,
+    pub expected_nodes: usize,
+}
+
+// ---------------------------------------------------------------------------
 // ExportStore — cross-recipe data sharing state owned by engine
 // ---------------------------------------------------------------------------
 
@@ -58,6 +70,11 @@ pub struct WorkNode {
 /// and observability.
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
+    /// Complete DAG topology, emitted once before any recipe starts.
+    BuildStarted {
+        recipes: Vec<RecipeTopology>,
+        total_nodes: usize,
+    },
     /// A recipe has been queued for registration.
     RecipeQueued {
         name: String,
@@ -85,6 +102,8 @@ pub enum EngineEvent {
     NodeStarted {
         recipe: String,
         node_name: String,
+        artifact: Option<std::path::PathBuf>,
+        fallback_label: String,
     },
     /// A work node completed successfully.
     NodeCompleted {
@@ -103,6 +122,7 @@ pub enum EngineEvent {
     NodeCacheHit {
         recipe: String,
         node_name: String,
+        artifact: Option<std::path::PathBuf>,
     },
     /// A work node was skipped because an upstream dependency failed.
     NodeSkipped {

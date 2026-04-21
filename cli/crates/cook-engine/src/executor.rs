@@ -302,6 +302,8 @@ pub fn execute_dag(
                     EngineEvent::NodeCacheHit {
                         recipe: work_node.recipe_name.clone(),
                         node_name: work_node.recipe_name.clone(),
+                        artifact: work_node.cache_meta.as_ref()
+                            .and_then(|m| m.output_path.clone().map(std::path::PathBuf::from)),
                     },
                 );
                 finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
@@ -338,6 +340,8 @@ pub fn execute_dag(
                         EngineEvent::NodeCacheHit {
                             recipe: work_node.recipe_name.clone(),
                             node_name: payload.display_name(),
+                            artifact: work_node.cache_meta.as_ref()
+                                .and_then(|m| m.output_path.clone().map(std::path::PathBuf::from)),
                         },
                     );
                     finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
@@ -367,6 +371,9 @@ pub fn execute_dag(
                     EngineEvent::NodeStarted {
                         recipe: work_node.recipe_name.clone(),
                         node_name: payload.display_name(),
+                        artifact: work_node.cache_meta.as_ref()
+                            .and_then(|m| m.output_path.clone().map(std::path::PathBuf::from)),
+                        fallback_label: payload.display_name(),
                     },
                 );
 
