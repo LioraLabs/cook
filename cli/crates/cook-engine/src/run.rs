@@ -70,14 +70,19 @@ pub fn run(
     let waves = wave_grouper::compute_waves(&edges, inferred_deps, &all_recipe_names)
         .map_err(|e| EngineError::CycleDetected(e))?;
 
-    // Emit BuildStarted once with the full recipe topology.
-    let topos: Vec<crate::RecipeTopology> = recipe_infos.iter().map(|(name, info)| {
-        crate::RecipeTopology {
-            name: name.clone(),
-            deps: info.requires.clone(),
-            expected_nodes: 0, // unknown until RecipeStarted; downstream fills in
-        }
-    }).collect();
+    // Emit BuildStarted once. Include only recipes reachable from the target(s),
+    // in topological order derived from the computed waves.
+    let topos: Vec<crate::RecipeTopology> = waves
+        .iter()
+        .flat_map(|wave| wave.recipes.iter())
+        .filter_map(|name| {
+            recipe_infos.get(name).map(|info| crate::RecipeTopology {
+                name: name.clone(),
+                deps: info.requires.clone(),
+                expected_nodes: 0, // filled in by RecipeStarted's implied count
+            })
+        })
+        .collect();
     let total_nodes = topos.iter().map(|t| t.expected_nodes).sum();
     on_event(EngineEvent::BuildStarted {
         recipes: topos,
