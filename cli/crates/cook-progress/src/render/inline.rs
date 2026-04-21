@@ -94,7 +94,14 @@ impl InlineRenderer {
                 } else {
                     String::new()
                 };
-                bar.set_message(format!("{}/{} · {secs:.1}s{cached}", r.progress.1, r.progress.1));
+                let header = format!("{}/{} · {secs:.1}s{cached}", r.progress.1, r.progress.1);
+                let strip = crate::strip::artifact_strip(r, 100);
+                let msg = if strip.is_empty() {
+                    header
+                } else {
+                    format!("{header}\n    {strip}")
+                };
+                bar.set_message(msg);
             }
             Status::Cached => {
                 bar.set_style(Self::style_oneline());
@@ -105,7 +112,14 @@ impl InlineRenderer {
                 bar.set_style(Self::style_oneline());
                 bar.set_prefix(format!("✗ {}", r.name));
                 let secs = r.elapsed.unwrap_or_default().as_secs_f64();
-                bar.set_message(format!("{}/{} · {secs:.1}s{deps}", r.progress.0, r.progress.1));
+                let header = format!("{}/{} · {secs:.1}s{deps}", r.progress.0, r.progress.1);
+                let strip = crate::strip::artifact_strip(r, 100);
+                let msg = if strip.is_empty() {
+                    header
+                } else {
+                    format!("{header}\n    {strip}")
+                };
+                bar.set_message(msg);
             }
         }
     }
@@ -383,6 +397,54 @@ mod tests {
         state.apply(&fin);
         inline.handle(&state, &fin).unwrap();
         assert!(inline.pending_resume, "Finished after InteractiveEnd should not resume");
+    }
+
+    #[test]
+    fn completed_recipe_keeps_artifact_strip_visible() {
+        use crate::render::test_term::TestTerm;
+        let term = TestTerm::new(100);
+        let target = ProgressDrawTarget::term_like(Box::new(term.clone()));
+        let mut inline = InlineRenderer::new(target);
+        let mut state = BuildState::new();
+
+        for ev in [
+            ProgressEvent::BuildStarted {
+                recipes: vec![RecipeTopo { id: RecipeId::new(0), name: "lib".into(), deps: vec![], expected_nodes: 2 }],
+                total_nodes: 2,
+            },
+            ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) },
+            ProgressEvent::NodeStarted {
+                recipe: RecipeId::new(0), node: NodeId::new(0),
+                name: "a.c".into(), artifact: Some("build/a.o".into()),
+                fallback_label: "x".into(),
+            },
+            ProgressEvent::NodeCompleted {
+                recipe: RecipeId::new(0), node: NodeId::new(0),
+                elapsed: Duration::from_millis(100),
+            },
+            ProgressEvent::NodeStarted {
+                recipe: RecipeId::new(0), node: NodeId::new(1),
+                name: "b.c".into(), artifact: Some("build/b.o".into()),
+                fallback_label: "x".into(),
+            },
+            ProgressEvent::NodeCompleted {
+                recipe: RecipeId::new(0), node: NodeId::new(1),
+                elapsed: Duration::from_millis(100),
+            },
+            ProgressEvent::RecipeCompleted {
+                recipe: RecipeId::new(0),
+                elapsed: Duration::from_millis(200),
+                cached: 0, total: 2,
+            },
+        ].iter() {
+            state.apply(ev);
+            inline.handle(&state, ev).unwrap();
+        }
+        inline.finish(&state).unwrap();
+
+        let out = term.contents();
+        assert!(out.contains("a.o"), "completed recipe should still show artifact pills; got:\n{out}");
+        assert!(out.contains("b.o"), "completed recipe should still show artifact pills; got:\n{out}");
     }
 
     #[test]
