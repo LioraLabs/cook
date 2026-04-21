@@ -1,6 +1,6 @@
 //! Artifact status strip — compact one-line summary of recipe progress.
 
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::model::node::{NodeState, NodeStatus};
 use crate::model::recipe::RecipeState;
@@ -73,7 +73,7 @@ fn build_pills(recipe: &RecipeState) -> (Vec<Pill>, usize) {
         pills.push(Pill { symbol: "✓", text: truncate(&n.display()), priority: 1 });
     }
     for n in failed {
-        pills.push(Pill { symbol: "✗", text: truncate(&n.display()), priority: 3 });
+        pills.push(Pill { symbol: "✗", text: truncate(&n.display()), priority: 4 });
     }
     for n in running {
         pills.push(Pill { symbol: "◆", text: truncate(&n.display()), priority: 3 });
@@ -91,7 +91,7 @@ fn truncate(s: &str) -> String {
         let mut out = String::new();
         let mut w = 0;
         for c in s.chars() {
-            let cw = UnicodeWidthStr::width(c.to_string().as_str());
+            let cw = UnicodeWidthChar::width(c).unwrap_or(0);
             if w + cw + 1 > MAX_DISPLAY_LEN { break; }
             out.push(c);
             w += cw;
@@ -103,7 +103,7 @@ fn truncate(s: &str) -> String {
 
 fn fit(cached_prefix: &str, pills: &[Pill], pre_dropped: usize, budget: usize) -> String {
     let mut ordered_indices: Vec<usize> = (0..pills.len()).collect();
-    // Drop order: lowest priority first, within a priority drop from the right.
+    // Drop order: lowest priority first, within a priority drop by ascending index (oldest first).
     ordered_indices.sort_by(|&a, &b| pills[a].priority.cmp(&pills[b].priority).then(a.cmp(&b)));
 
     let mut included: Vec<bool> = vec![true; pills.len()];
@@ -120,7 +120,7 @@ fn fit(cached_prefix: &str, pills: &[Pill], pre_dropped: usize, budget: usize) -
         let mut s = String::new();
         if !cached_prefix.is_empty() {
             s.push_str(cached_prefix);
-            if !parts.is_empty() || total_dropped > 0 {
+            if !parts.is_empty() {
                 s.push_str(JOIN);
             }
         }
@@ -234,5 +234,38 @@ mod tests {
         let r = recipe_with(0, &[], &["a_very_long_artifact_name_exceeding_twenty.o"], &[]);
         let s = artifact_strip(&r, 120);
         assert!(s.contains("…"));
+    }
+
+    #[test]
+    fn cached_plus_all_dropped_emits_clean_marker() {
+        // cached_count=5, all waiting nodes dropped by collection cap, no pills survive fit.
+        let waiting: Vec<&str> = (0..5).map(|_| "wait").collect();
+        let r = recipe_with(5, &[], &[], &waiting);
+        let s = artifact_strip(&r, 15);
+        // no spurious " · " or double spaces
+        assert!(!s.contains(" ·  "), "unexpected double-separator: {s:?}");
+        assert!(!s.contains("·  "), "unexpected separator+space: {s:?}");
+        assert!(s.contains("+"), "expected +N marker: {s:?}");
+    }
+
+    #[test]
+    fn failed_pill_outranks_running_under_pressure() {
+        // priority: failed > running. At very narrow width only the highest-priority pills survive.
+        let mut r = RecipeState::new(RecipeId::new(0), "lib".into(), vec![], 1);
+        let now = Instant::now();
+        // one running
+        let mut n1 = NodeState::new(NodeId::new(0), "run".into(), Some(PathBuf::from("build/r")), String::new());
+        n1.status = NodeStatus::Running;
+        n1.started_at = Some(now);
+        r.nodes.insert(NodeId::new(0), n1);
+        // one failed
+        let mut n2 = NodeState::new(NodeId::new(1), "fail".into(), Some(PathBuf::from("build/f")), String::new());
+        n2.status = NodeStatus::Failed;
+        n2.completed_at = Some(now);
+        r.nodes.insert(NodeId::new(1), n2);
+
+        // Budget that only fits one pill.
+        let s = artifact_strip(&r, 15);
+        assert!(s.contains("✗"), "failed pill must survive before running at narrow width: {s:?}");
     }
 }
