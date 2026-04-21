@@ -3,6 +3,9 @@ pub mod inline;
 pub mod plain;
 pub mod json;
 
+#[cfg(test)]
+pub mod test_term;
+
 use std::io;
 
 use crate::event::ProgressEvent;
