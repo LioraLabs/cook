@@ -53,21 +53,27 @@ impl BuildState {
             }
             ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
+                    let was_running = r.status == Status::Running;
                     r.elapsed = Some(*elapsed);
                     r.progress = (*total, *total);
                     r.status = if *cached == *total && *total > 0 { Status::Cached } else { Status::Completed };
-                    if self.totals.running > 0 { self.totals.running -= 1; }
-                    self.totals.done += 1;
-                    if r.status == Status::Cached { self.totals.cached += 1; }
+                    if was_running {
+                        self.totals.running = self.totals.running.saturating_sub(1);
+                        self.totals.done += 1;
+                        if r.status == Status::Cached { self.totals.cached += 1; }
+                    }
                 }
             }
             ProgressEvent::RecipeFailed { recipe, elapsed, completed, total } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
+                    let was_running = r.status == Status::Running;
                     r.elapsed = Some(*elapsed);
                     r.progress = (*completed, *total);
                     r.status = Status::Failed;
-                    if self.totals.running > 0 { self.totals.running -= 1; }
-                    self.totals.done += 1;
+                    if was_running {
+                        self.totals.running = self.totals.running.saturating_sub(1);
+                        self.totals.done += 1;
+                    }
                 }
             }
             ProgressEvent::NodeStarted { recipe, node, name, artifact, fallback_label } => {
@@ -80,48 +86,76 @@ impl BuildState {
             }
             ProgressEvent::NodeCompleted { recipe, node, elapsed: _ } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
-                    if let Some(n) = r.nodes.get_mut(node) {
-                        n.status = NodeStatus::Completed;
-                        n.completed_at = Some(Instant::now());
+                    let bumped = if let Some(n) = r.nodes.get_mut(node) {
+                        if n.status == NodeStatus::Running {
+                            n.status = NodeStatus::Completed;
+                            n.completed_at = Some(Instant::now());
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if bumped {
+                        r.progress.0 += 1;
+                        self.totals.completed_nodes += 1;
                     }
-                    r.progress.0 += 1;
-                    self.totals.completed_nodes += 1;
                 }
             }
             ProgressEvent::NodeFailed { recipe, node, elapsed: _, error } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
-                    if let Some(n) = r.nodes.get_mut(node) {
-                        n.status = NodeStatus::Failed;
-                        n.completed_at = Some(Instant::now());
+                    let bumped = if let Some(n) = r.nodes.get_mut(node) {
+                        if n.status == NodeStatus::Running {
+                            n.status = NodeStatus::Failed;
+                            n.completed_at = Some(Instant::now());
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if bumped {
+                        r.progress.0 += 1;
+                        if r.error_summary.is_none() {
+                            r.error_summary = Some(error.clone());
+                        }
+                        self.totals.completed_nodes += 1;
                     }
-                    r.progress.0 += 1;
-                    if r.error_summary.is_none() {
-                        r.error_summary = Some(error.clone());
-                    }
-                    self.totals.completed_nodes += 1;
                 }
             }
-            ProgressEvent::NodeCacheHit { recipe, node: _, name: _, artifact: _ } => {
+            ProgressEvent::NodeCacheHit { recipe, node, name, artifact } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
-                    r.cached_count += 1;
-                    r.progress.0 += 1;
-                    self.totals.completed_nodes += 1;
+                    use std::collections::btree_map::Entry;
+                    if let Entry::Vacant(e) = r.nodes.entry(*node) {
+                        let mut ns = NodeState::new(*node, name.clone(), artifact.clone(), String::new());
+                        ns.status = NodeStatus::Completed;
+                        ns.completed_at = Some(Instant::now());
+                        e.insert(ns);
+                        r.cached_count += 1;
+                        r.progress.0 += 1;
+                        self.totals.completed_nodes += 1;
+                    }
                 }
             }
             ProgressEvent::NodeSkipped { recipe, node, name, reason } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
-                    r.skipped.push((*node, *reason));
-                    r.nodes.insert(*node, NodeState {
-                        id: *node,
-                        name: name.clone(),
-                        artifact: None,
-                        fallback_label: String::new(),
-                        status: NodeStatus::Skipped,
-                        started_at: None,
-                        completed_at: Some(Instant::now()),
-                    });
-                    r.progress.0 += 1;
-                    self.totals.completed_nodes += 1;
+                    use std::collections::btree_map::Entry;
+                    if let Entry::Vacant(e) = r.nodes.entry(*node) {
+                        r.skipped.push((*node, *reason));
+                        e.insert(NodeState {
+                            id: *node,
+                            name: name.clone(),
+                            artifact: None,
+                            fallback_label: name.clone(),
+                            status: NodeStatus::Skipped,
+                            started_at: None,
+                            completed_at: Some(Instant::now()),
+                        });
+                        r.progress.0 += 1;
+                        self.totals.completed_nodes += 1;
+                    }
                 }
             }
             ProgressEvent::NodeOutput { .. } => { /* log store handles this */ }
@@ -269,5 +303,53 @@ mod tests {
         let r = &s.recipes[&RecipeId::new(0)];
         assert_eq!(r.status, Status::Failed);
         assert_eq!(r.error_summary.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn duplicate_recipe_completed_does_not_double_count_counters() {
+        let mut s = BuildState::new();
+        s.apply(&ProgressEvent::BuildStarted {
+            recipes: topo(&[(0, "deps", &[], 1)]), total_nodes: 1,
+        });
+        s.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+        s.apply(&ProgressEvent::RecipeCompleted {
+            recipe: RecipeId::new(0),
+            elapsed: Duration::from_millis(10),
+            cached: 0, total: 1,
+        });
+        let totals_after_first = s.totals;
+        s.apply(&ProgressEvent::RecipeCompleted {
+            recipe: RecipeId::new(0),
+            elapsed: Duration::from_millis(10),
+            cached: 0, total: 1,
+        });
+        assert_eq!(s.totals, totals_after_first, "duplicate RecipeCompleted must not mutate counters");
+    }
+
+    #[test]
+    fn duplicate_node_completed_does_not_double_count_progress() {
+        let mut s = BuildState::new();
+        s.apply(&ProgressEvent::BuildStarted {
+            recipes: topo(&[(0, "lib", &[], 2)]), total_nodes: 2,
+        });
+        s.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+        s.apply(&ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "a".into(), artifact: None, fallback_label: "a".into(),
+        });
+        s.apply(&ProgressEvent::NodeCompleted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            elapsed: Duration::from_millis(1),
+        });
+        assert_eq!(s.recipes[&RecipeId::new(0)].progress, (1, 2));
+        assert_eq!(s.totals.completed_nodes, 1);
+
+        // Duplicate — must not advance progress.
+        s.apply(&ProgressEvent::NodeCompleted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            elapsed: Duration::from_millis(1),
+        });
+        assert_eq!(s.recipes[&RecipeId::new(0)].progress, (1, 2));
+        assert_eq!(s.totals.completed_nodes, 1);
     }
 }
