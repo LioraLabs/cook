@@ -99,7 +99,7 @@ impl LogStore {
                     .and_then(|x| x.nodes.get(node))
                     .map(|n| n.name.clone())
                     .unwrap_or_else(|| format!("node-{}", node.raw()));
-                let dir = self.root.join(&self.build_id).join("nodes").join(rname);
+                let dir = self.root.join(&self.build_id).join("nodes").join(sanitize(rname));
                 fs::create_dir_all(&dir)?;
                 let path = dir.join(format!("{}.log", sanitize(&nname)));
                 let f = OpenOptions::new().create(true).append(true).open(path)?;
@@ -291,5 +291,41 @@ mod tests {
         assert!(data.contains("schema_version = 1"));
         assert!(data.contains("exit_code = 0"));
         assert!(data.contains(&format!("build_id = \"{}\"", store.build_id())));
+    }
+
+    #[test]
+    fn recipe_and_node_names_are_sanitized_into_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = LogStore::open(tmp.path(), LogConfig::default()).unwrap();
+        let mut state = BuildState::new();
+        state.apply(&ProgressEvent::BuildStarted {
+            recipes: vec![RecipeTopo {
+                id: RecipeId::new(0),
+                name: "../../etc/passwd".into(),
+                deps: vec![],
+                expected_nodes: 1,
+            }],
+            total_nodes: 1,
+        });
+        state.apply(&ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "../../root".into(), artifact: None, fallback_label: "x".into(),
+        });
+        store.record(&state, &ProgressEvent::NodeOutput {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            line: "hi".into(), stream: Stream::Stdout,
+        }).unwrap();
+        store.close(true).unwrap();
+
+        // Nothing was written outside the build directory.
+        let build_dir = tmp.path().join(".cook").join("logs").join(store.build_id());
+        let nodes_dir = build_dir.join("nodes");
+        let sanitized_rname = nodes_dir.join(".._.._etc_passwd");
+        assert!(sanitized_rname.exists(), "sanitized recipe dir should exist: {sanitized_rname:?}");
+        let sanitized_file = sanitized_rname.join(".._.._root.log");
+        assert!(sanitized_file.exists(), "sanitized node file should exist: {sanitized_file:?}");
+
+        // No traversal happened: there is no 'etc' directory outside the build.
+        assert!(!tmp.path().join("etc").exists());
     }
 }
