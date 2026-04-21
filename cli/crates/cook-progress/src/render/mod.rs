@@ -1,3 +1,13 @@
-//! Renderer trait and implementations — see docs/superpowers/specs/2026-04-20-cook-indicatif-rewrite-design.md
+//! Renderer trait and implementations.
 pub mod inline;
 pub mod plain;
+
+use std::io;
+
+use crate::event::ProgressEvent;
+use crate::model::build::BuildState;
+
+pub trait Renderer: Send {
+    fn handle(&mut self, state: &BuildState, event: &ProgressEvent) -> io::Result<()>;
+    fn finish(&mut self, state: &BuildState) -> io::Result<()>;
+}
