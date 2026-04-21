@@ -558,10 +558,12 @@ fn run_with_progress(
 
     // Wait for bridge to drain and forward Finished, then renderer to exit.
     let _ = bridge_thread.join();
-    let _success = render_thread.join().unwrap_or(false);
-
-    // Drop progress_tx last to close the channel.
+    // Drop progress_tx before joining the render thread so the channel is
+    // closed even if the engine exited abnormally without emitting Finished.
+    // Without this, the renderer's rx.recv() would block forever when the
+    // engine panics and never sends Finished.
     drop(progress_tx);
+    let _success = render_thread.join().unwrap_or(false);
 
     result.map_err(engine_error_to_cook_error)
 }
