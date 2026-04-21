@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::io;
 
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use unicode_width::UnicodeWidthStr;
 
 use crate::event::{ProgressEvent, RecipeId};
 use crate::model::build::BuildState;
@@ -14,6 +15,8 @@ pub struct InlineRenderer {
     multi: MultiProgress,
     recipe_bars: BTreeMap<RecipeId, ProgressBar>,
     footer: Option<ProgressBar>,
+    pending_resume: bool,
+    original_target: Option<ProgressDrawTarget>,
 }
 
 impl InlineRenderer {
@@ -23,6 +26,8 @@ impl InlineRenderer {
             multi,
             recipe_bars: BTreeMap::new(),
             footer: None,
+            pending_resume: false,
+            original_target: None,
         }
     }
 
@@ -121,6 +126,53 @@ impl InlineRenderer {
 
 impl Renderer for InlineRenderer {
     fn handle(&mut self, state: &BuildState, event: &ProgressEvent) -> io::Result<()> {
+        // If we are waiting to resume after InteractiveEnd, decide now.
+        if self.pending_resume {
+            match event {
+                ProgressEvent::Finished { .. } => {
+                    // Stay frozen; no resume.
+                }
+                _ => {
+                    self.pending_resume = false;
+                    let target = self.original_target.take()
+                        .unwrap_or_else(ProgressDrawTarget::stderr);
+                    self.multi = MultiProgress::with_draw_target(target);
+                    self.recipe_bars.clear();
+                    for id in &state.order {
+                        let r = &state.recipes[id];
+                        let deps = self.deps_str(state, &r.deps);
+                        let bar = self.create_waiting_bar(&r.name, deps.trim_start_matches("  ← "));
+                        self.recipe_bars.insert(*id, bar);
+                    }
+                    let footer = self.multi.add(ProgressBar::new(0));
+                    footer.set_style(ProgressStyle::with_template("{msg}").unwrap());
+                    self.footer = Some(footer);
+                    for id in &state.order {
+                        self.refresh_bar(state, *id);
+                    }
+                }
+            }
+        }
+
+        // Handle interactive start: freeze bars by switching to hidden draw target.
+        if let ProgressEvent::InteractiveStart { recipe, node } = event {
+            let rname = state.recipes.get(recipe).map(|r| r.name.as_str()).unwrap_or("?");
+            let nname = state.recipes.get(recipe)
+                .and_then(|r| r.nodes.get(node))
+                .map(|n| n.name.as_str()).unwrap_or("?");
+            let _ = self.multi.println(format!("─── {rname}/{nname} (interactive) ───"));
+            let _ = self.multi.println("");
+            self.multi.set_draw_target(ProgressDrawTarget::hidden());
+            return Ok(());
+        }
+
+        // Handle interactive end: flag pending resume; do not draw yet.
+        if let ProgressEvent::InteractiveEnd { .. } = event {
+            self.pending_resume = true;
+            return Ok(());
+        }
+
+        // Build-started: create bars in waiting state, add footer.
         if let ProgressEvent::BuildStarted { .. } = event {
             for id in &state.order {
                 let r = &state.recipes[id];
@@ -136,6 +188,7 @@ impl Renderer for InlineRenderer {
             self.footer = Some(footer);
         }
 
+        // Per-recipe events: refresh the corresponding bar.
         match event {
             ProgressEvent::RecipeStarted { recipe }
             | ProgressEvent::RecipeCompleted { recipe, .. }
@@ -148,6 +201,23 @@ impl Renderer for InlineRenderer {
                 self.refresh_bar(state, *recipe);
             }
             _ => {}
+        }
+
+        // Failure block: print fenced error block above live bars.
+        if let ProgressEvent::RecipeFailed { recipe, .. } = event {
+            if let Some(r) = state.recipes.get(recipe) {
+                if let Some(err) = &r.error_summary {
+                    let width: usize = 80;
+                    let header = format!("─── {} · failed ─", r.name);
+                    let dashes_needed = width.saturating_sub(header.width());
+                    let dashes = "─".repeat(dashes_needed);
+                    let _ = self.multi.println(format!("\n{header}{dashes}"));
+                    for line in err.lines() {
+                        let _ = self.multi.println(format!("│  {line}"));
+                    }
+                    let _ = self.multi.println("─".repeat(width));
+                }
+            }
         }
 
         self.refresh_footer(state);
@@ -239,5 +309,117 @@ mod tests {
         let (state, _term) = drive(&events);
         assert_eq!(state.recipes[&RecipeId::new(0)].status, Status::Completed);
         assert_eq!(state.recipes[&RecipeId::new(0)].cached_count, 1);
+    }
+
+    #[test]
+    fn failure_emits_fenced_error_block() {
+        let term = TestTerm::new(100);
+        let target = ProgressDrawTarget::term_like(Box::new(term.clone()));
+        let mut inline = InlineRenderer::new(target);
+        let mut state = BuildState::new();
+
+        for ev in [
+            ProgressEvent::BuildStarted {
+                recipes: vec![RecipeTopo { id: RecipeId::new(0), name: "lib".into(), deps: vec![], expected_nodes: 1 }],
+                total_nodes: 1,
+            },
+            ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) },
+            ProgressEvent::NodeStarted {
+                recipe: RecipeId::new(0), node: NodeId::new(0),
+                name: "x.c".into(), artifact: None, fallback_label: "clang x.c".into(),
+            },
+            ProgressEvent::NodeFailed {
+                recipe: RecipeId::new(0), node: NodeId::new(0),
+                elapsed: Duration::from_millis(50),
+                error: "boom: syntax error".into(),
+            },
+            ProgressEvent::RecipeFailed {
+                recipe: RecipeId::new(0),
+                elapsed: Duration::from_millis(100),
+                completed: 1, total: 1,
+            },
+        ].iter() {
+            state.apply(ev);
+            inline.handle(&state, ev).unwrap();
+        }
+        inline.finish(&state).unwrap();
+
+        let out = term.contents();
+        assert!(out.contains("lib · failed"), "expected failure header; got:\n{out}");
+        assert!(out.contains("boom: syntax error"), "expected error message; got:\n{out}");
+    }
+
+    #[test]
+    fn interactive_start_freezes_and_end_flags_resume() {
+        let term = TestTerm::new(100);
+        let target = ProgressDrawTarget::term_like(Box::new(term.clone()));
+        let mut inline = InlineRenderer::new(target);
+        let mut state = BuildState::new();
+
+        let events = [
+            ProgressEvent::BuildStarted {
+                recipes: vec![RecipeTopo { id: RecipeId::new(0), name: "lib".into(), deps: vec![], expected_nodes: 1 }],
+                total_nodes: 1,
+            },
+            ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) },
+            ProgressEvent::NodeStarted {
+                recipe: RecipeId::new(0), node: NodeId::new(0),
+                name: "repl".into(), artifact: None, fallback_label: "gdb".into(),
+            },
+            ProgressEvent::InteractiveStart { recipe: RecipeId::new(0), node: NodeId::new(0) },
+            ProgressEvent::InteractiveEnd {
+                recipe: RecipeId::new(0), node: NodeId::new(0),
+                elapsed: Duration::from_millis(10), success: true,
+            },
+        ];
+        for ev in &events {
+            state.apply(ev);
+            inline.handle(&state, ev).unwrap();
+        }
+        assert!(inline.pending_resume, "InteractiveEnd should set pending_resume");
+
+        // Next event is Finished — should stay frozen (pending_resume remains true).
+        let fin = ProgressEvent::Finished { success: true };
+        state.apply(&fin);
+        inline.handle(&state, &fin).unwrap();
+        assert!(inline.pending_resume, "Finished after InteractiveEnd should not resume");
+    }
+
+    #[test]
+    fn next_non_finished_event_clears_pending_resume() {
+        let term = TestTerm::new(100);
+        let target = ProgressDrawTarget::term_like(Box::new(term.clone()));
+        let mut inline = InlineRenderer::new(target);
+        let mut state = BuildState::new();
+
+        let setup = [
+            ProgressEvent::BuildStarted {
+                recipes: vec![
+                    RecipeTopo { id: RecipeId::new(0), name: "a".into(), deps: vec![], expected_nodes: 1 },
+                    RecipeTopo { id: RecipeId::new(1), name: "b".into(), deps: vec![], expected_nodes: 1 },
+                ],
+                total_nodes: 2,
+            },
+            ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) },
+            ProgressEvent::NodeStarted {
+                recipe: RecipeId::new(0), node: NodeId::new(0),
+                name: "x".into(), artifact: None, fallback_label: "x".into(),
+            },
+            ProgressEvent::InteractiveStart { recipe: RecipeId::new(0), node: NodeId::new(0) },
+            ProgressEvent::InteractiveEnd {
+                recipe: RecipeId::new(0), node: NodeId::new(0),
+                elapsed: Duration::from_millis(1), success: true,
+            },
+        ];
+        for ev in &setup {
+            state.apply(ev);
+            inline.handle(&state, ev).unwrap();
+        }
+        assert!(inline.pending_resume);
+
+        let next = ProgressEvent::RecipeStarted { recipe: RecipeId::new(1) };
+        state.apply(&next);
+        inline.handle(&state, &next).unwrap();
+        assert!(!inline.pending_resume, "non-Finished event should resume");
     }
 }
