@@ -12,7 +12,15 @@ _To be filled in._
 
 ## B.2. On § 2 Lexical structure
 
-_To be filled in._
+_Expands as § 2 is filled in. The rationale below corresponds to the sections already completed._
+
+### B.2.7. Why `@` is not a lexical prefix
+
+A natural reading of Cookfiles suggests that `@` is a third line prefix alongside `>` and `>{`. The Standard deliberately does not define it that way.
+
+Making `@` a lexical prefix would require the lexer to know whether it is inside a recipe body, since `@cmd` at the top level is a parse error rather than an interactive step. A line-oriented, context-free lexer cannot make that determination. Pushing the decision into the syntactic dispatch layer (§ 3.8) keeps the lexer simple and places the diagnostic where it is most actionable — at the point the parser knows there is no enclosing recipe.
+
+The cost is small: `@`-prefixed lines become `Content` tokens whose string still begins with `@`, and the syntactic layer strips the marker when classifying the line as an `interactive_command`. The alternative — a context-aware lexer — would buy nothing observable to the Cookfile author.
 
 ## B.3. On § 3 Syntactic grammar
 

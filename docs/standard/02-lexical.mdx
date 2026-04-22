@@ -40,9 +40,35 @@ Defines comment syntax (`#` to end-of-line) and the rules for where comments can
 
 ## 2.7. Line prefixes
 
-Defines the `>`, `>{`, and `@` line prefixes and what they introduce.
+A **line prefix** is a character sequence that, when it appears as the first non-whitespace characters of a Cookfile line, selects a token classification other than `Content`. The Cookfile language recognises two lexical line prefixes:
 
-> **NORMATIVE-TODO (CS-stub-07).** See implementation: `cli/crates/cook-lang/src/lexer.rs` (for `>` and `>{`) and `cli/crates/cook-lang/src/recipe.rs` Content-dispatch (for `@`).
+| Prefix | Token produced | Defined in |
+|---|---|---|
+| `>{`   | `LuaBlockOpen` | § 2.9 |
+| `>`    | `LuaLine`      | § 4.9 |
+
+A conforming implementation MUST test for `>{` before `>`, so that a Lua-block prefix is never consumed as a Lua-line prefix followed by a literal `{`. A conforming implementation MUST apply these prefixes only after leading whitespace has been trimmed from the line; thus `    >{` opens a Lua block identically to `>{` at column zero.
+
+The `@` character is not a lexical prefix. A line whose first non-whitespace character is `@` produces a `Content` token whose string form includes the leading `@`. Its classification as `interactive_command` is made at step-dispatch time (§ 3.8, § 4.10) and only inside a recipe body. Outside a recipe body, such a line remains a `Content` token, which the syntactic layer rejects because `Content` tokens are not valid at the top level (§ 3.2).
+
+### Example 2.7.1
+
+```cook
+recipe build
+    > print("registering build")
+    >{
+        print("multi-line")
+    }
+    @vim .cook/notes.txt
+    gcc -o main main.c
+end
+```
+
+The `>` line produces a `LuaLine` token. The `>{` line produces a `LuaBlockOpen` token that begins a brace-balanced block (§ 2.9) closing at the matching `}`. The `@vim …` and `gcc …` lines both produce `Content` tokens; the former dispatches to `interactive_command` in § 4.10, the latter to `shell_command`.
+
+### Note 2.7.1
+
+A `LuaLine` body MAY be empty: the line `>` alone produces a `LuaLine` whose body is the empty string. See § 4.9.
 
 ## 2.8. Numbers
 
