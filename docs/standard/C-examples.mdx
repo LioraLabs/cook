@@ -1,0 +1,75 @@
+````mdx
+# Appendix C. Worked examples (informative)
+
+> **Informative.** This appendix presents worked Cookfile examples, each annotated with the sections of the Standard it exercises. Examples are non-binding; they illustrate the normative rules defined in chapters 2–7 and Appendix A.
+
+## C.1. Multi-output cook step (from `examples/multi-output/Cookfile`)
+
+```cook
+recipe generate
+    ingredients "src/*.rs"
+    cook "staging/out.js" "staging/out.wasm" using {
+        ./fake-generator.sh
+        mkdir -p staging
+        cp pkg/out.js staging/out.js
+        cp pkg/out.wasm staging/out.wasm
+    }
+end
+```
+
+Exercises: § 4.1 (explicit header), § 4.3 (ingredients), § 4.6 (multi-output cook with `using { ... }` shell block), App. A.3, App. A.4.
+
+## C.2. Recipe with cross-recipe dependency (from `examples/cross-recipe-deps/Cookfile`)
+
+```cook
+recipe tools: colorize wordcount reverse
+end
+
+recipe play: tools
+    @mkdir -p .cook/scratch
+    @printf 'colorize\nwordcount\nreverse\n' | fzf --prompt='tool> ' > .cook/scratch/tool
+    @find data -type f | fzf --prompt='file> ' --preview='cat {}' > .cook/scratch/file
+    @./build/bin/$(cat .cook/scratch/tool) < "$(cat .cook/scratch/file)"
+end
+```
+
+Exercises: § 4.1 (explicit header with deps), § 4.2 (dependency list), § 4.10 (interactive `@` shell commands), App. A.3, App. A.4.
+
+## C.3. Module use and call (from `examples/fzf-picker/Cookfile`)
+
+```cook
+use cpp
+
+config
+    env.CFLAGS = "-O2 -Wall"
+end
+
+recipe colorize
+    cpp.bin("colorize", {
+        sources = { "src/colorize.c" },
+    })
+end
+```
+
+Exercises: § 3.4 (`use` declaration), § 3.6 (config block with Lua body), § 3.8 (step dispatch), § 4.11 (module-call step), App. A.2, App. A.4.
+
+## C.4. Using-block Lua with multiple outputs (from `examples/multi-output/Cookfile`)
+
+```cook
+recipe build_lua
+    ingredients "src/*.rs"
+    cook "staging-lua/out.js" "staging-lua/out.wasm" using >{
+        os.execute("mkdir -p staging-lua")
+        local sources = table.concat(inputs, " ")
+        local js = io.open(outputs[1], "w")
+        js:write("// generated from " .. sources .. "\n")
+        js:close()
+        local wasm = io.open(outputs[2], "w")
+        wasm:write("BINARY\n")
+        wasm:close()
+    }
+end
+```
+
+Exercises: § 4.6 (multi-output cook with `using >{ ... }` Lua block), § 6.4 (using-block globals `inputs` / `outputs`), App. A.4.
+````
