@@ -1,0 +1,13 @@
+recipe generate
+    ingredients "src/*.rs"
+    cook "staging/out.js" "staging/out.wasm" using {
+        ./fake-generator.sh
+        mkdir -p staging
+        cp pkg/out.js staging/out.js
+        cp pkg/out.wasm staging/out.wasm
+    }
+end
+
+recipe clean
+    rm -rf pkg staging .cook
+end

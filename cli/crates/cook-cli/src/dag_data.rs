@@ -169,7 +169,7 @@ fn build_wave(
         if let Some(ru) = units_by_name.get(recipe_name.as_str()) {
             for unit in &ru.units {
                 if let Some(meta) = &unit.cache_meta {
-                    if let Some(ref out) = meta.output_path {
+                    for out in &meta.output_paths {
                         unit_output_paths.insert(out.clone());
                     }
                 }
@@ -207,7 +207,7 @@ fn build_wave(
                 WorkPayload::Test { cmd, .. } => format!("test: {cmd}"),
             };
 
-            let output = unit.cache_meta.as_ref().and_then(|m| m.output_path.clone());
+            let output = unit.cache_meta.as_ref().and_then(|m| m.output_paths.first().cloned());
 
             let label = if let Some(ref out) = output {
                 Path::new(out)
@@ -226,20 +226,22 @@ fn build_wave(
 
             // --- Cache status ---
             let cached = if let (Some(meta), Some(cache)) = (&unit.cache_meta, recipe_cache.as_ref()) {
-                if let Some(ref out) = meta.output_path {
+                if meta.output_paths.is_empty() {
+                    None
+                } else {
                     let entry = cache.steps.get(&meta.cache_key);
                     let input_refs: Vec<&str> =
                         meta.input_paths.iter().map(|s| s.as_str()).collect();
+                    let current_outputs: Vec<&str> =
+                        meta.output_paths.iter().map(|s| s.as_str()).collect();
                     let (result, _) = needs_rebuild_cook(
                         entry,
                         &input_refs,
-                        out,
+                        &current_outputs,
                         meta.command_hash,
                         &ru.working_dir,
                     );
                     Some(matches!(result, RebuildResult::Skip))
-                } else {
-                    None
                 }
             } else {
                 None

@@ -41,11 +41,12 @@ pub struct Recipe {
 pub enum UsingClause {
     Shell(String),
     LuaBlock(String),
+    ShellBlock(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CookStep {
-    pub output_pattern: String,
+    pub outputs: Vec<String>,
     pub using_clause: Option<UsingClause>,
 }
 
@@ -85,7 +86,7 @@ mod tests {
             steps: vec![
                 Step::Cook {
                     step: CookStep {
-                        output_pattern: "build/obj/{stem}.o".to_string(),
+                        outputs: vec!["build/obj/{stem}.o".to_string()],
                         using_clause: Some(UsingClause::Shell(
                             "gcc -c {in} -o {out}".to_string(),
                         )),
@@ -121,7 +122,7 @@ mod tests {
     #[test]
     fn test_cook_step_declaration_only() {
         let step = CookStep {
-            output_pattern: "bin/app".to_string(),
+            outputs: vec!["bin/app".to_string()],
             using_clause: None,
         };
         assert!(step.using_clause.is_none());
@@ -130,7 +131,7 @@ mod tests {
     #[test]
     fn test_cook_step_lua_block() {
         let step = CookStep {
-            output_pattern: "build/obj/{stem}.o".to_string(),
+            outputs: vec!["build/obj/{stem}.o".to_string()],
             using_clause: Some(UsingClause::LuaBlock(
                 "cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)".to_string(),
             )),

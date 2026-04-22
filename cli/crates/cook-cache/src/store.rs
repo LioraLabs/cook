@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const CACHE_VERSION: u32 = 1;
+pub const CACHE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecipeCache {
@@ -16,7 +16,7 @@ pub struct RecipeCache {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StepEntry {
     pub inputs: Vec<FileRecord>,
-    pub output: Option<FileRecord>,
+    pub outputs: Vec<FileRecord>,
     pub command_hash: u64,
 }
 
@@ -95,11 +95,11 @@ mod tests {
                     hash: 0xfedcba9876543210,
                 },
             ],
-            output: Some(FileRecord {
+            outputs: vec![FileRecord {
                 path: "build/main.o".to_string(),
                 mtime: 1700000100,
                 hash: 0xabcdef1234567890,
-            }),
+            }],
             command_hash: 0x0102030405060708,
         };
         cache.steps.insert("compile_main".to_string(), step);
@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(restored.steps.len(), 1);
         let step = restored.steps.get("compile_main").unwrap();
         assert_eq!(step.inputs.len(), 2);
-        assert!(step.output.is_some());
+        assert!(!step.outputs.is_empty());
         assert_eq!(step.command_hash, 0x0102030405060708);
     }
 
@@ -145,13 +145,13 @@ mod tests {
                 mtime: 1700000000,
                 hash: 0x1234567890abcdef,
             }],
-            output: None,
+            outputs: vec![],
             command_hash: 0xdeadbeefcafe,
         };
         let bytes = bincode::serialize(&step).expect("serialization failed");
         let restored: StepEntry = bincode::deserialize(&bytes).expect("deserialization failed");
         assert_eq!(step, restored);
-        assert!(restored.output.is_none());
+        assert!(restored.outputs.is_empty());
         assert_eq!(restored.inputs.len(), 1);
     }
 

@@ -26,7 +26,7 @@ pub struct RecipeInfo {
 }
 ```
 
-`build_recipe_info` (`src/analyzer/mod.rs:7`) populates one `RecipeInfo` per recipe by iterating over `cookfile.recipes`. The `serves` field is extracted by filtering each recipe's steps for `Step::Cook` variants and collecting `cook_step.output_pattern` (`src/analyzer/mod.rs:12-22`). For example, a recipe with a `cook "build/{stem}.o"` step will have `"build/{stem}.o"` in its `serves` list.
+`build_recipe_info` (`src/analyzer/mod.rs:7`) populates one `RecipeInfo` per recipe by iterating over `cookfile.recipes`. The `serves` field is extracted by filtering each recipe's steps for `Step::Cook` variants and collecting every entry in `cook_step.outputs` (`src/analyzer/mod.rs:12-22`). For example, a recipe with a `cook "build/{stem}.o"` step will have `"build/{stem}.o"` in its `serves` list. A multi-output step such as `cook "out/parser.rs" "out/parser.h" using { ... }` contributes both patterns to `serves`.
 
 ---
 

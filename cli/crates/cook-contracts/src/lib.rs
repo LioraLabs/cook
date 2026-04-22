@@ -58,7 +58,7 @@ pub struct CacheMeta {
     pub recipe_name: String,
     pub cache_key: String,
     pub input_paths: Vec<String>,
-    pub output_path: Option<String>,
+    pub output_paths: Vec<String>,
     pub command_hash: u64,
 }
 
@@ -155,13 +155,13 @@ mod tests {
             recipe_name: "build".into(),
             cache_key: "abc123".into(),
             input_paths: vec!["src/main.rs".into()],
-            output_path: Some("target/debug/app".into()),
+            output_paths: vec!["target/debug/app".into()],
             command_hash: 42,
         };
         assert_eq!(m.recipe_name, "build");
         assert_eq!(m.command_hash, 42);
         assert_eq!(m.input_paths.len(), 1);
-        assert!(m.output_path.is_some());
+        assert_eq!(m.output_paths.len(), 1);
     }
 
     #[test]
@@ -170,10 +170,10 @@ mod tests {
             recipe_name: "lint".into(),
             cache_key: "def456".into(),
             input_paths: vec![],
-            output_path: None,
+            output_paths: vec![],
             command_hash: 0,
         };
-        assert!(m.output_path.is_none());
+        assert!(m.output_paths.is_empty());
     }
 
     #[test]
@@ -268,7 +268,7 @@ mod tests {
                 recipe_name: "compile".into(),
                 cache_key: "key123".into(),
                 input_paths: vec!["main.c".into()],
-                output_path: Some("app".into()),
+                output_paths: vec!["app".into()],
                 command_hash: 9999,
             }),
             dep_kind: DepKind::StepGroup(0),

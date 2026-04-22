@@ -30,7 +30,10 @@ pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTr
     for step in &recipe.steps {
         let tokens = match step {
             Step::Cook { step: cook_step, .. } => {
-                let mut t = extract_brace_tokens(&cook_step.output_pattern);
+                let mut t: Vec<String> = Vec::new();
+                for pat in &cook_step.outputs {
+                    t.extend(extract_brace_tokens(pat));
+                }
                 if let Some(UsingClause::Shell(cmd)) = &cook_step.using_clause {
                     t.extend(extract_brace_tokens(cmd));
                 }
@@ -230,7 +233,7 @@ mod tests {
             "app",
             vec![Step::Cook {
                 step: CookStep {
-                    output_pattern: "build/app".to_string(),
+                    outputs: vec!["build/app".to_string()],
                     using_clause: Some(UsingClause::Shell(
                         "gcc -o {out} {in} {libmath} {libstr}".to_string(),
                     )),
@@ -254,7 +257,7 @@ mod tests {
             "app",
             vec![Step::Cook {
                 step: CookStep {
-                    output_pattern: "build/{protos.stem}.pb.cc".to_string(),
+                    outputs: vec!["build/{protos.stem}.pb.cc".to_string()],
                     using_clause: None,
                 },
                 line: 2,

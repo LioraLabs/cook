@@ -231,7 +231,7 @@ fn test_cook_step_shell() {
     match &recipe.steps[0] {
         Step::Cook { step, line } => {
             assert_eq!(*line, 3);
-            assert_eq!(step.output_pattern, "build/obj/{stem}.o");
+            assert_eq!(step.outputs[0], "build/obj/{stem}.o");
             assert_eq!(
                 step.using_clause,
                 Some(UsingClause::Shell("gcc -c {in} -o {out}".to_string()))
@@ -247,7 +247,7 @@ fn test_cook_step_many_to_one() {
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::Cook { step, .. } => {
-            assert_eq!(step.output_pattern, "build/lib.a");
+            assert_eq!(step.outputs[0], "build/lib.a");
             assert_eq!(
                 step.using_clause,
                 Some(UsingClause::Shell("ar rcs {out} {all}".to_string()))
@@ -265,7 +265,7 @@ fn test_cook_step_declaration_only() {
     assert_eq!(recipe.steps.len(), 2);
     match &recipe.steps[0] {
         Step::Cook { step, .. } => {
-            assert_eq!(step.output_pattern, "bin/app");
+            assert_eq!(step.outputs[0], "bin/app");
             assert!(step.using_clause.is_none());
         }
         other => panic!("expected Cook, got {:?}", other),
@@ -279,7 +279,7 @@ fn test_cook_step_lua_block() {
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::Cook { step, .. } => {
-            assert_eq!(step.output_pattern, "build/obj/{stem}.o");
+            assert_eq!(step.outputs[0], "build/obj/{stem}.o");
             match &step.using_clause {
                 Some(UsingClause::LuaBlock(code)) => {
                     assert!(code.contains("cook.sh"), "code was: {}", code);
@@ -800,4 +800,62 @@ end
     let recipe = &result.recipes[0];
     assert_eq!(recipe.ingredients, vec!["src/*.c", "include/*.h"]);
     assert!(recipe.excludes.is_empty());
+}
+
+#[test]
+fn test_multi_output_lua_block() {
+    let source = "recipe \"wasm\"\n    ingredients \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" using >{\n        sh(\"cmd\")\n    }\nend\n";
+    let result = crate::parse(source).expect("should parse");
+    match &result.recipes[0].steps[0] {
+        crate::ast::Step::Cook { step, .. } => {
+            assert_eq!(step.outputs, vec!["a.js".to_string(), "b.wasm".to_string()]);
+            assert!(matches!(step.using_clause, Some(crate::ast::UsingClause::LuaBlock(_))));
+        }
+        _ => panic!("expected Cook step"),
+    }
+}
+
+#[test]
+fn test_single_output_shell_block() {
+    let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"bin/out\" using {\n        cmd1\n        cmd2\n    }\nend\n";
+    let result = crate::parse(source).expect("should parse");
+    match &result.recipes[0].steps[0] {
+        crate::ast::Step::Cook { step, .. } => {
+            assert_eq!(step.outputs, vec!["bin/out".to_string()]);
+            match &step.using_clause {
+                Some(crate::ast::UsingClause::ShellBlock(cmds)) => {
+                    assert_eq!(cmds, &vec!["cmd1".to_string(), "cmd2".to_string()]);
+                }
+                _ => panic!("expected ShellBlock"),
+            }
+        }
+        _ => panic!("expected Cook step"),
+    }
+}
+
+#[test]
+fn test_multi_output_shell_block() {
+    let source = "recipe \"wasm\"\n    ingredients \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" using {\n        wasm-pack build\n        cp a.js out/a.js\n        cp b.wasm out/b.wasm\n    }\nend\n";
+    let result = crate::parse(source).expect("should parse");
+    match &result.recipes[0].steps[0] {
+        crate::ast::Step::Cook { step, .. } => {
+            assert_eq!(step.outputs, vec!["a.js".to_string(), "b.wasm".to_string()]);
+            match &step.using_clause {
+                Some(crate::ast::UsingClause::ShellBlock(cmds)) => {
+                    assert_eq!(cmds.len(), 3);
+                    assert_eq!(cmds[0], "wasm-pack build");
+                }
+                _ => panic!("expected ShellBlock"),
+            }
+        }
+        _ => panic!("expected Cook step"),
+    }
+}
+
+#[test]
+fn test_multi_output_string_form_rejected() {
+    let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"a.js\" \"b.wasm\" using \"cmd\"\nend\n";
+    let err = crate::parse(source).expect_err("should reject");
+    let msg = format!("{:?}", err);
+    assert!(msg.contains("block body"), "expected error about block body, got: {}", msg);
 }

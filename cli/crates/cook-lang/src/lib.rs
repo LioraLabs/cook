@@ -3,6 +3,7 @@ pub mod lexer;
 pub(crate) mod cook_line;
 pub(crate) mod lua_block;
 pub(crate) mod recipe;
+pub(crate) mod shell_block;
 
 use ast::*;
 use lexer::*;

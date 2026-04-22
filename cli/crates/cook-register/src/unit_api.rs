@@ -20,11 +20,31 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
             Err(_) => vec![],
         };
         let output: Option<String> = tbl.get::<String>("output").ok();
-        let output_for_tracking = output.clone();
+        let outputs: Option<Vec<String>> = match tbl.get::<LuaTable>("outputs") {
+            Ok(t) => Some(
+                t.sequence_values::<String>()
+                    .filter_map(Result::ok)
+                    .collect(),
+            ),
+            Err(_) => None,
+        };
+        if output.is_some() && outputs.is_some() {
+            return Err(LuaError::RuntimeError(
+                "cook.add_unit: only one of `output` or `outputs` may be provided".into(),
+            ));
+        }
+        let output_paths: Vec<String> = if let Some(list) = outputs {
+            list
+        } else if let Some(single) = output {
+            vec![single]
+        } else {
+            Vec::new()
+        };
+        let outputs_for_tracking = output_paths.clone();
 
         let cache_meta = if cache_enabled {
-            let cache_key = if let Some(ref out) = output {
-                out.clone()
+            let cache_key = if let Some(first) = output_paths.first() {
+                first.clone()
             } else {
                 format!("{}@{:x}", inputs.first().map(|s| s.as_str()).unwrap_or(""), hash_str(&command))
             };
@@ -32,7 +52,7 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
                 recipe_name: rname.clone(),
                 cache_key,
                 input_paths: inputs,
-                output_path: output,
+                output_paths: output_paths.clone(),
                 command_hash: hash_str(&command),
             })
         } else {
@@ -60,7 +80,7 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
         if let DepKind::StepGroup(gi) = &dep_kind {
             state.step_groups[*gi].push(unit_idx);
         }
-        if let Some(out) = output_for_tracking {
+        for out in outputs_for_tracking {
             state.current_step_outputs.push(out);
         }
         // Record dep edges: every dep ref accumulated in this step_group
@@ -141,7 +161,7 @@ mod tests {
         assert_eq!(meta.recipe_name, "my_recipe");
         assert_eq!(meta.cache_key, "main");
         assert_eq!(meta.input_paths, vec!["main.c"]);
-        assert_eq!(meta.output_path, Some("main".to_string()));
+        assert_eq!(meta.output_paths, vec!["main".to_string()]);
         assert_eq!(meta.command_hash, hash_str("gcc -o main main.c"));
 
         assert!(matches!(unit.dep_kind, DepKind::Sequential));
@@ -267,6 +287,46 @@ mod tests {
 
         let state = capture_state.borrow();
         assert_eq!(state.last_cook_step_outputs, vec!["app"]);
+    }
+
+    #[test]
+    fn test_add_unit_outputs_plural() {
+        let (lua, capture_state) = make_lua_with_unit_api("my_recipe");
+        lua.load(r#"
+            cook.add_unit({
+                command = "split a.c",
+                inputs = {"a.c"},
+                outputs = {"a.o", "a.d"},
+            })
+        "#).exec().unwrap();
+
+        let state = capture_state.borrow();
+        assert_eq!(state.units.len(), 1);
+        let unit = &state.units[0];
+        let meta = unit.cache_meta.as_ref().expect("expected cache_meta");
+        assert_eq!(
+            meta.output_paths,
+            vec!["a.o".to_string(), "a.d".to_string()]
+        );
+        // cache_key should be derived from the first output when outputs is used
+        assert_eq!(meta.cache_key, "a.o");
+    }
+
+    #[test]
+    fn test_add_unit_outputs_and_output_conflict_errors() {
+        let (lua, _capture_state) = make_lua_with_unit_api("my_recipe");
+        let result = lua.load(r#"
+            cook.add_unit({
+                command = "split a.c",
+                inputs = {"a.c"},
+                output = "a.o",
+                outputs = {"a.o", "a.d"},
+            })
+        "#).exec();
+        assert!(
+            result.is_err(),
+            "expected error when both `output` and `outputs` are provided"
+        );
     }
 
     #[test]

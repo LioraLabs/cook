@@ -65,7 +65,7 @@
 ; ── Recipe steps ────────────────────────────────────────────────
 
 (cook_step
-  output: (string) @string.special)
+  outputs: (string) @string.special)
 
 (using_clause
   command: (string) @string.special)

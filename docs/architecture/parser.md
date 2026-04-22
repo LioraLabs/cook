@@ -154,13 +154,15 @@ pub enum Step {
 
 ```rust
 pub struct CookStep {
-    pub output_pattern: String,
-    pub using_clause:   Option<UsingClause>,
+    pub outputs:      Vec<String>,
+    pub using_clause: Option<UsingClause>,
 }
 ```
 
-- `output_pattern` — the quoted output file pattern (e.g., `"build/obj/{stem}.o"`).
+- `outputs` — the list of quoted output file patterns (e.g., `["build/obj/{stem}.o"]`, or `["out/parser.rs", "out/parser.h"]` for a multi-output step). A `cook` line must declare at least one output.
 - `using_clause` — the optional build command. `None` means the `cook` line is a declaration only (used to announce the output without providing a build command inline).
+
+**Multi-output cook steps.** When two or more quoted patterns appear before `using`, the step represents a single invocation that produces all of those outputs in one shot (e.g., a parser generator that writes both a `.rs` and a `.h` file). All listed patterns share one cache entry and one work unit — they are materialized together or not at all. Multi-output form requires a block-style `using` clause (see `UsingClause::ShellBlock` / `LuaBlock` below); the single-line `using "cmd"` form is single-output only.
 
 ### `PlateStep` (line 30–32)
 
@@ -180,11 +182,23 @@ Note: `PlateStep` does not have a `using_clause` field. The `using` keyword is o
 pub enum UsingClause {
     Shell(String),
     LuaBlock(String),
+    ShellBlock(Vec<String>),
 }
 ```
 
-- `Shell(String)` — a quoted shell command string following `using`.
-- `LuaBlock(String)` — a `>{` ... `}` Lua block following `using`. The payload is the collected Lua source.
+- `Shell(String)` — a quoted shell command string following `using` (the `using "cmd"` form). Single-output only.
+- `LuaBlock(String)` — a `>{` ... `}` Lua block following `using` (the `using >{ ... }` form). The payload is the collected Lua source. Parseable in multi-output position, but runtime execution of the Lua-block form as a multi-output work unit is a known pre-existing gap (tracked as a follow-up; also applies to single-output `using >{ ... }`).
+- `ShellBlock(Vec<String>)` — a plain-brace block following `using` (the `using { ... }` form). Each element is one shell command line; lines run sequentially in a single shell work unit that claims all declared outputs. This is the working form for multi-output cook steps.
+
+**Cook-line syntax summary:**
+
+```
+cook "out"                          # declaration only
+cook "out" using "cmd ..."          # single-output shell (supports {in}/{out}/{all})
+cook "out" using >{ lua ... }       # single-output Lua block
+cook "a" "b" using { shell ... }    # multi-output shell block (a and b produced together)
+cook "a" "b" using >{ lua ... }     # multi-output Lua block (parseable; runtime gap)
+```
 
 ---
 
@@ -292,9 +306,12 @@ This design keeps the lexer simple and makes the interactive flag a parser-level
 
 Handles the text after the `cook` keyword. Parses:
 
-1. A quoted `output_pattern`.
-2. An optional `using` clause, which is either:
-   - A quoted shell string → `UsingClause::Shell`.
+1. One or more quoted output patterns (at least one required).
+2. An optional `using` clause, which is one of:
+   - A quoted shell string → `UsingClause::Shell` (single-output only).
    - `>{` followed by a Lua block → `UsingClause::LuaBlock`, collected via `collect_lua_block()`.
+   - `{` followed by a plain-shell block → `UsingClause::ShellBlock`, collected as a list of non-empty lines until the matching `}`. This is the form to use when multiple outputs are declared.
+
+If more than one output is declared, the `using` clause must be a block form (`{ ... }` or `>{ ... }`); `using "cmd"` is rejected at parse time.
 
 If the `using` keyword is absent, `using_clause` is `None` and the step is a declaration-only cook.
