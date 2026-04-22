@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  vars: []
+  config_blocks: []
+  recipes:
+    Recipe name="clean" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Shell interactive=false command="rm -rf build"

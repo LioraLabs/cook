@@ -1,0 +1,51 @@
+# 3. Syntactic grammar
+
+> **Normative.** This chapter walks through the productions of the Cookfile grammar in prose. The full formal grammar is in Appendix A, which is authoritative where it disagrees with the prose here (§ 1.5).
+
+## 3.1. Grammar overview
+
+Describes how a Cookfile is parsed top-down: a sequence of top-level items, each of which is a recipe, a config block, a use/import declaration, a variable declaration, a comment, or a blank line.
+
+> **NORMATIVE-TODO (CS-stub-11).** See App. A for the authoritative productions and `cli/crates/cook-lang/src/lib.rs` function `parse` for the top-level loop.
+
+## 3.2. Top-level ordering
+
+Defines the rule that variable declarations, use declarations, import declarations, and config blocks MUST appear before any recipe.
+
+> **NORMATIVE-TODO (CS-stub-12).** See implementation: `cli/crates/cook-lang/src/lib.rs`, the `seen_recipe` flag and the errors it triggers.
+
+## 3.3. Variable declarations
+
+Describes the `NAME "value"` top-level form.
+
+> **NORMATIVE-TODO (CS-stub-13).** See implementation: `cli/crates/cook-lang/src/lexer.rs`, function `try_parse_var_decl`.
+
+## 3.4. `use` declarations
+
+Describes `use <name>` for loading a built-in or user-authored module.
+
+> **NORMATIVE-TODO (CS-stub-14).** See implementation: `cli/crates/cook-lang/src/lexer.rs` (tokenization of `use`) and `cli/crates/cook-lang/src/lib.rs` (top-level dispatch).
+
+## 3.5. `import` declarations
+
+Describes `import <name> <path>` for aliasing another Cookfile as a module.
+
+> **NORMATIVE-TODO (CS-stub-15).** See implementation: `cli/crates/cook-lang/src/lexer.rs` (tokenization of `import`) and `cli/crates/cook-lang/src/lib.rs` (top-level dispatch and duplicate detection).
+
+## 3.6. Config blocks
+
+Describes the `config [name] ... end` block whose body is free Lua code.
+
+> **NORMATIVE-TODO (CS-stub-16).** See implementation: `cli/crates/cook-lang/src/recipe.rs`, function `parse_config_block_lua`.
+
+## 3.7. Recipes
+
+Describes recipe headers (explicit `recipe "name"` and implicit `name:`), dependency lists, and the body-until-`end` structure.
+
+> **NORMATIVE-TODO (CS-stub-17).** See implementation: `cli/crates/cook-lang/src/recipe.rs`, function `parse_recipe`.
+
+## 3.8. Step dispatch inside a recipe
+
+Describes the priority cascade used to classify a `Content` token inside a recipe into one of: ingredients, cook, plate, test, module-call, interactive shell (`@`), or plain shell.
+
+> **NORMATIVE-TODO (CS-stub-18).** See implementation: `cli/crates/cook-lang/src/recipe.rs`, function `parse_recipe`, the `Token::Content` arm.

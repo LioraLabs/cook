@@ -1,0 +1,69 @@
+# 4. Recipes and step kinds
+
+> **Normative.** This chapter defines the structure of a recipe body and the meaning of each step kind.
+
+## 4.1. Recipe header forms
+
+Defines the explicit form (`recipe <name>[: deps...]`) and the implicit form (`<identifier>: [deps...]`).
+
+> **NORMATIVE-TODO (CS-stub-19).** See implementation: `cli/crates/cook-lang/src/recipe.rs`, recipe-header parsing.
+
+## 4.2. Dependency list
+
+Defines the semantics of the `:` dependency-list suffix: a recipe listed as a dependency MUST exist; cycles are errors detected downstream.
+
+> **NORMATIVE-TODO (CS-stub-20).** See implementation: `cli/crates/cook-lang/src/recipe.rs` (syntactic) and `cli/crates/cook-dag/` (cycle detection).
+
+## 4.3. Ingredients
+
+Defines the single `ingredients` line per recipe: one or more glob patterns, with `!"pattern"` denoting exclusion.
+
+> **NORMATIVE-TODO (CS-stub-21).** See implementation: `cli/crates/cook-lang/src/cook_line.rs`, function `parse_ingredients_line`.
+
+## 4.4. Step kinds — overview
+
+Enumerates the seven step kinds that can appear in a recipe body: Shell, Interactive Shell, Lua line, Lua block, Cook, Plate, Test. Describes the dispatch rules from § 3.8.
+
+> **NORMATIVE-TODO (CS-stub-22).** See implementation: `cli/crates/cook-lang/src/ast.rs`, enum `Step`.
+
+## 4.5. `cook` step — single-output form
+
+Defines `cook "out"`, `cook "out" using "cmd"`, `cook "out" using >{ ... }`, `cook "out" using { ... }`.
+
+> **NORMATIVE-TODO (CS-stub-23).** See implementation: `cli/crates/cook-lang/src/cook_line.rs`, function `parse_cook_line`.
+
+## 4.6. `cook` step — multi-output form
+
+Defines `cook "a" "b" using { ... }` and `cook "a" "b" using >{ ... }`. Multi-output form requires a block-form `using` clause; `cook "a" "b" using "cmd"` is a parse error.
+
+> **NORMATIVE-TODO (CS-stub-24).** See implementation: `cli/crates/cook-lang/src/cook_line.rs`, function `parse_cook_line` — the multi-output validation branch.
+
+## 4.7. `plate` step
+
+Defines `plate "cmd"` — a step that runs the given command for each output produced by a preceding `cook` step in the same recipe.
+
+> **NORMATIVE-TODO (CS-stub-25).** See implementation: `cli/crates/cook-lang/src/recipe.rs` (syntax) and `cli/crates/cook-luagen/` (codegen).
+
+## 4.8. `test` step
+
+Defines `test "cmd" [timeout N] [should_fail]` — a step that runs the command and asserts its exit status and optional runtime bound.
+
+> **NORMATIVE-TODO (CS-stub-26).** See implementation: `cli/crates/cook-lang/src/cook_line.rs`, functions `parse_test_command` and `parse_test_timeout`.
+
+## 4.9. Lua steps — line and block
+
+Defines `> expr` (single-line Lua) and `>{ ... }` (multi-line Lua block) steps.
+
+> **NORMATIVE-TODO (CS-stub-27).** See implementation: `cli/crates/cook-lang/src/lexer.rs` (`LuaLine` / `LuaBlockOpen`) and `cli/crates/cook-lang/src/lua_block.rs`.
+
+## 4.10. Shell steps — plain and interactive
+
+Defines the default `shell_command` (any Content line not matching another step) and the `@`-prefixed `interactive_command`.
+
+> **NORMATIVE-TODO (CS-stub-28).** See implementation: `cli/crates/cook-lang/src/recipe.rs`, the shell/interactive branches of Content dispatch.
+
+## 4.11. Module-call steps
+
+Defines the heuristic that classifies a Content line matching `IDENTIFIER . IDENTIFIER ...` as a Lua expression (module call) rather than a shell command. Module calls MAY span multiple lines when braces are unbalanced on the first line.
+
+> **NORMATIVE-TODO (CS-stub-29).** See implementation: `cli/crates/cook-lang/src/recipe.rs`, functions `is_module_call` and `collect_module_call`.

@@ -1,5 +1,9 @@
 # Parser: Lexer, AST, and Parsing Pipeline
 
+> **This document describes the Rust parser implementation.** For the definition of the Cookfile language, see `docs/standard/` — in particular `02-lexical.mdx`, `03-syntactic-grammar.mdx`, `04-recipes.mdx`, and `A-grammar.mdx`.
+>
+> This document may lag behind the Standard on specific constructs; when in doubt, the Standard (and the Rust parser source) are authoritative.
+
 ## Overview
 
 Parsing a Cookfile happens in two sequential stages:

@@ -1,0 +1,5 @@
+use cpp
+
+recipe "colorize"
+    cpp.bin("colorize", { sources = { "src/colorize.c" } })
+end

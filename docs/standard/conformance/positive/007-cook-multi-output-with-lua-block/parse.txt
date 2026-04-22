@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  vars: []
+  config_blocks: []
+  recipes:
+    Recipe name="gen_lua" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["out/a.js", "out/a.wasm"] using=LuaBlock("        local f = io.open(outputs[1], \"w\"); f:write(\"js\"); f:close()\n        local g = io.open(outputs[2], \"w\"); g:write(\"wasm\"); g:close()")

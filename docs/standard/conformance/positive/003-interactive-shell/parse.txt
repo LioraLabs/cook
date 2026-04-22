@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  vars: []
+  config_blocks: []
+  recipes:
+    Recipe name="play" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Shell interactive=true command="./run"

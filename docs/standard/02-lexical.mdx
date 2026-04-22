@@ -1,0 +1,63 @@
+# 2. Lexical structure
+
+> **Normative.** This chapter defines how a Cookfile's text is broken into tokens. The productions in § 3 and Appendix A consume the token classes defined here.
+
+## 2.1. Source representation
+
+Describes the Cookfile as a sequence of UTF-8 bytes, the line-oriented nature of lexing, and line-ending handling.
+
+> **NORMATIVE-TODO (CS-stub-01).** See implementation: `cli/crates/cook-lang/src/lexer.rs`, function `tokenize`.
+
+## 2.2. Tokens
+
+Describes the one-token-per-line model and enumerates the token classes the lexer produces.
+
+> **NORMATIVE-TODO (CS-stub-02).** See implementation: `cli/crates/cook-lang/src/lexer.rs`, enum `Token` and function `tokenize`.
+
+## 2.3. Identifiers
+
+Defines the `BARE_IDENTIFIER` character class and what identifier forms are accepted as names.
+
+> **NORMATIVE-TODO (CS-stub-03).** See implementation: `cli/crates/cook-lang/src/lexer.rs`, function `try_parse_var_decl` (for identifier validation) and the regular expression used for identifiers.
+
+## 2.4. Keywords
+
+Enumerates reserved keywords and the contexts in which they are reserved.
+
+> **NORMATIVE-TODO (CS-stub-04).** See implementation: `cli/crates/cook-lang/src/lexer.rs`, function `try_parse_var_decl` (for the reserved keyword list blocking variable names).
+
+## 2.5. Strings
+
+Defines the `STRING` token class: opening `"`, any character except `"`, closing `"`.
+
+> **NORMATIVE-TODO (CS-stub-05).** See implementation: `cli/crates/cook-lang/src/lexer.rs` (string regex) and `cli/crates/cook-lang/src/cook_line.rs`, function `parse_single_quoted_string`.
+
+## 2.6. Comments
+
+Defines comment syntax (`#` to end-of-line) and the rules for where comments can appear.
+
+> **NORMATIVE-TODO (CS-stub-06).** See implementation: `cli/crates/cook-lang/src/lexer.rs`, handling of `#`-prefixed lines.
+
+## 2.7. Line prefixes
+
+Defines the `>`, `>{`, and `@` line prefixes and what they introduce.
+
+> **NORMATIVE-TODO (CS-stub-07).** See implementation: `cli/crates/cook-lang/src/lexer.rs` (for `>` and `>{`) and `cli/crates/cook-lang/src/recipe.rs` Content-dispatch (for `@`).
+
+## 2.8. Numbers
+
+Defines the `NUMBER` token class, used by `test` steps for timeouts.
+
+> **NORMATIVE-TODO (CS-stub-08).** See implementation: `cli/crates/cook-lang/src/cook_line.rs`, function `parse_test_timeout`.
+
+## 2.9. Brace-balanced blocks
+
+Defines how `>{ ... }` (Lua) and `{ ... }` (shell) blocks are collected, including brace counting through strings and comments.
+
+> **NORMATIVE-TODO (CS-stub-09).** See implementation: `cli/crates/cook-lang/src/lua_block.rs`, functions `collect_lua_block` and `count_brace_delta`; and `cli/crates/cook-lang/src/shell_block.rs`.
+
+## 2.10. Line classification cascade
+
+Describes the priority order in which a single raw line is classified into a token variant.
+
+> **NORMATIVE-TODO (CS-stub-10).** See implementation: `cli/crates/cook-lang/src/lexer.rs`, function `tokenize` — the `if`/`else if` cascade.

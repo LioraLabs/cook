@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  vars: []
+  config_blocks: []
+  recipes:
+    Recipe name="compile" line=1
+      deps: []
+      ingredients: ["src/main.c"]
+      excludes: []
+      steps:
+        Cook outputs=["build/main.o"] using=Shell("gcc -c {in} -o {out}")

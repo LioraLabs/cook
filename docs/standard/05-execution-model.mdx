@@ -1,0 +1,51 @@
+# 5. Execution model
+
+> **Normative.** This chapter defines the observable execution semantics of a Cookfile. Implementation details (scheduler thread counts, hash functions, I/O strategies) are not normative; see `docs/architecture/` for the reference implementation's approach.
+
+## 5.1. Two-phase execution
+
+Defines the register phase and the execute phase. During the register phase, Lua code in the Cookfile runs once in capture mode; API calls record work without performing it. During the execute phase, the scheduler runs the recorded work in dependency order.
+
+> **NORMATIVE-TODO (CS-stub-30).** See `docs/architecture/runtime.md` for the current reference description; normative text to be written from direct observation of `cli/crates/cook-register/` and `cli/crates/cook-luaotp/`.
+
+## 5.2. Capture-mode semantics
+
+Defines what Cook Lua API functions do during the register phase: they return handles / unit IDs synchronously and never block on external work.
+
+> **NORMATIVE-TODO (CS-stub-31).** See implementation: `cli/crates/cook-register/`.
+
+## 5.3. Step groups and within-recipe parallelism
+
+Defines how steps in a recipe body are grouped, and the rule that steps in the same group MAY run in parallel while steps in different groups are ordered.
+
+> **NORMATIVE-TODO (CS-stub-32).** See implementation: `cli/crates/cook-dag/` and `cli/crates/cook-luagen/`.
+
+## 5.4. Cross-recipe dependencies
+
+Defines how a recipe's `: "dep"` list creates explicit cross-recipe ordering.
+
+> **NORMATIVE-TODO (CS-stub-33).** See implementation: `cli/crates/cook-dag/`.
+
+## 5.5. Ingredient–serves matching
+
+Defines the implicit-dependency rule: a recipe that serves a string automatically becomes a dependency of any recipe listing that string as an ingredient. Matching is exact string equality.
+
+> **NORMATIVE-TODO (CS-stub-34).** See implementation: `cli/crates/cook-dag/`, ingredient/serves pairing logic.
+
+## 5.6. Interactive step draining
+
+Defines the rule that a step prefixed with `@` drains all concurrent work before running and runs on the main thread.
+
+> **NORMATIVE-TODO (CS-stub-35).** See implementation: `cli/crates/cook-dag/` or the scheduler crate that handles interactive scheduling.
+
+## 5.7. Cache semantics (abstract)
+
+Defines, abstractly, when a unit is considered up-to-date and when it is re-run: a unit is re-run when any of its observable inputs (source-text-derived) differ from the last successful run. The hash function and storage format are implementation-defined.
+
+> **NORMATIVE-TODO (CS-stub-36).** See implementation: `cli/crates/cook-cache/`.
+
+## 5.8. Diagnostic ordering
+
+Defines the rule that syntax errors are reported before semantic errors, and that parsing halts on the first syntax error.
+
+> **NORMATIVE-TODO (CS-stub-37).** See implementation: `cli/crates/cook-lang/src/lib.rs` (syntax halts) and the engine for semantic ordering.

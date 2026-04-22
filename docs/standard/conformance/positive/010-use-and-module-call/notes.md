@@ -1,0 +1,1 @@
+Pins the `use cpp` top-level declaration and the module-call classification: `cpp.bin(...)` inside a recipe body becomes a `Lua` step (not a `Shell` step). Exercises § 3.4, § 4.11, and App. A.4 (dispatch step 5).

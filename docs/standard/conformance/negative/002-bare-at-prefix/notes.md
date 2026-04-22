@@ -1,0 +1,1 @@
+Diagnostic class: `@` must be followed by non-empty content. Exercises § 2.7 (line prefixes) and § 4.10 (shell steps — interactive form). The substring "empty" is the normative class indicator; Task 18's harness may adjust the exact substring to match whatever the Rust parser's current wording uses — but the class ("empty interactive command") is normative.

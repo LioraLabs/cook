@@ -1,0 +1,17 @@
+# Appendix D. Changes (informative)
+
+> **Informative.** This appendix is the chronological changelog of amendments to the Cook Standard. Each entry has a stable `CS-NNNN` ID, a one-line summary, the list of sections affected, and the commit / PR reference.
+
+## CS-0001 — Cook Standard v0.1 established
+
+**Date:** 2026-04-22
+**Sections affected:** entire Standard (establishment).
+**Summary:** Initial skeleton established. Chapters 0, 1 and Appendix A are fully written; chapters 2–7 ship as numbered outlines with `NORMATIVE-TODO` stubs referencing the Rust parser as the de-facto authority. Conformance corpus and `cook-lang` integration harness are wired. `tree-sitter-cook` is known stale and is NOT wired for conformance in this change; see `CS-0002`.
+**Reference:** Established in the commit that introduces `docs/standard/`.
+
+## CS-0002 — Planned: tree-sitter-cook conformance audit
+
+**Date:** planned.
+**Sections affected:** none in the Standard itself. This entry is a forward reference to a follow-up plan that will audit `tree-sitter-cook/grammar.js` against the Standard and bring it into conformance, at which point a tree-sitter harness against the same corpus will be added alongside the existing `cook-lang` harness.
+**Summary:** Tree-sitter currently lags behind the Rust parser on several constructs: multi-output cook steps, shell-block `using` clauses, `test` steps, ingredient excludes (`!"..."`), Lua-code config blocks, and the module-call heuristic. The follow-up plan will: (a) enumerate divergences, (b) update `grammar.js` and its externals, (c) wire a tree-sitter corpus against `docs/standard/conformance/`, (d) verify both implementations agree.
+**Reference:** to be filled when the plan is written.

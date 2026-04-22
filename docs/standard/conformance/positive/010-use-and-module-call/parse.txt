@@ -1,0 +1,12 @@
+Cookfile
+  uses: [UseStatement module_name="cpp" line=1]
+  imports: []
+  vars: []
+  config_blocks: []
+  recipes:
+    Recipe name="colorize" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Lua code="cpp.bin(\"colorize\", { sources = { \"src/colorize.c\" } })"
