@@ -104,12 +104,16 @@ Handled by `generate_plate_step()` (line 248). Like `Cook`, always wrapped in `c
 
 `generate_cook_step()` (line 121) determines the generation mode by calling `cook_step_mode()` (line 107), which inspects the `using_clause` field of the `CookStep`:
 
-| `using_clause` | Mode |
-|---|---|
-| `None` | `DeclarationOnly` |
-| `Some(UsingClause::LuaBlock(_))` | `OneToOne` |
-| `Some(UsingClause::Shell(cmd))` where `cmd` contains `{in}` | `OneToOne` |
-| `Some(UsingClause::Shell(cmd))` where `cmd` does not contain `{in}` | `ManyToOne` |
+| `using_clause` | Outputs | Mode |
+|---|---|---|
+| `None` | any | `DeclarationOnly` |
+| `Some(UsingClause::ShellBlock(_))` | any | `BlockStep` |
+| `Some(UsingClause::LuaBlock(_))` | > 1 | `BlockStep` |
+| `Some(UsingClause::LuaBlock(_))` | 1 | `OneToOne` |
+| `Some(UsingClause::Shell(cmd))` where `cmd` contains `{in}` | 1 | `OneToOne` |
+| `Some(UsingClause::Shell(cmd))` where `cmd` does not contain `{in}` | 1 | `ManyToOne` |
+
+The single-line `using "cmd"` form is single-output only; the parser rejects it when more than one quoted output appears on the `cook` line.
 
 The input source for a cook step is either `recipe.ingredients[1]` (first cook step in the recipe, with no prior cook step) or `_cook_outputs_N` from the preceding cook step (line 130–134). Each cook step increments a `cook_index` counter (line 25–26), and `prev_cook_index` tracks the last value so the chaining works correctly.
 
@@ -223,6 +227,30 @@ The second `cook` step has no `{in}` in its command, so it becomes `ManyToOne`. 
 ```
 
 Note: `cook.layer()` here receives the full input list as its first argument (not a single file). The runtime handles this by treating the list as the dependency set for cache checking. `_cook_all` is a space-joined string used inside the command via `{all}` template expansion.
+
+### BlockStep (multi-output cook steps)
+
+Entered when the `using` clause is a plain-shell block (`using { ... }`) or when a Lua block is paired with two or more declared outputs. All declared outputs are produced by a single invocation, share one cache entry, and appear atomically — either all are materialized or none are.
+
+The codegen emits one `cook.layer()` call with the full output list, and threads the declared outputs back into `_cook_outputs_N` so downstream steps can consume them.
+
+**Example Cookfile (plain-shell block, working form):**
+```
+cook "out/parser.rs" "out/parser.h" using {
+    lalrpop src/grammar.lalrpop --out-dir out
+}
+```
+
+The generated Lua registers one layer whose `{out}` expands per-output inside the block body (the emitted code iterates the declared outputs and runs the command for each — or, for tools that emit all outputs in a single invocation, the block body runs once and the layer records all declared paths as produced).
+
+**Example Cookfile (Lua block, multi-output):**
+```
+cook "out/parser.rs" "out/parser.h" using >{
+    cook.sh("lalrpop src/grammar.lalrpop --out-dir out")
+}
+```
+
+The multi-output Lua-block form parses and codegens, but runtime execution of it as a combined multi-output work unit is a known pre-existing gap — it shares the same limitation as the single-output `cook "x" using >{ lua }` form. Prefer the plain-shell `using { ... }` block for multi-output cook steps until that gap is closed.
 
 ### Plate Steps
 

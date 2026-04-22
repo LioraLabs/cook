@@ -110,14 +110,23 @@ module.exports = grammar({
     ingredients_step: ($) =>
       seq("ingredients", repeat1($.string), $._newline),
 
+    // Cook steps may declare one or more output patterns. A multi-output
+    // step (two or more quoted strings before `using`) represents a single
+    // invocation that produces all outputs together; it requires a block-form
+    // `using` clause.
     cook_step: ($) =>
       seq(
         "cook",
-        field("output", $.string),
+        field("outputs", repeat1($.string)),
         optional($.using_clause),
         $._newline,
       ),
 
+    // TODO(tree-sitter): support the plain-shell block form
+    // `using { shell line; shell line }`. This requires a new external
+    // scanner (analogous to `_lua_block_content`) that handles brace balancing
+    // and nested comments. Tracked as a follow-up. For now only the quoted
+    // shell command and `>{ lua }` forms are recognized by the grammar.
     using_clause: ($) =>
       seq(
         "using",

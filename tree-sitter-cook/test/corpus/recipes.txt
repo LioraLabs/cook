@@ -139,7 +139,7 @@ end
       (dependency_list
         (identifier)))
     (cook_step
-      output: (string)
+      outputs: (string)
       (using_clause
         command: (string)))))
 
@@ -164,7 +164,7 @@ end
     (ingredients_step
       (string))
     (cook_step
-      output: (string)
+      outputs: (string)
       (using_clause
         command: (string)))
     (plate_step
@@ -290,7 +290,27 @@ end
     (ingredients_step
       (string))
     (cook_step
-      output: (string)
+      outputs: (string)
       (using_clause
         lua: (inline_lua_block
           (lua_code))))))
+
+================
+Cook with multiple outputs
+================
+
+recipe gen
+    cook "out/parser.rs" "out/parser.h" using "lalrpop src/grammar.lalrpop --out-dir out"
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string)
+      outputs: (string)
+      (using_clause
+        command: (string)))))
