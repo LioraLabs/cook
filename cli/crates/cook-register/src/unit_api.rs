@@ -32,7 +32,7 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
                 recipe_name: rname.clone(),
                 cache_key,
                 input_paths: inputs,
-                output_path: output,
+                output_paths: output.map(|o| vec![o]).unwrap_or_default(),
                 command_hash: hash_str(&command),
             })
         } else {
@@ -141,7 +141,7 @@ mod tests {
         assert_eq!(meta.recipe_name, "my_recipe");
         assert_eq!(meta.cache_key, "main");
         assert_eq!(meta.input_paths, vec!["main.c"]);
-        assert_eq!(meta.output_path, Some("main".to_string()));
+        assert_eq!(meta.output_paths, vec!["main".to_string()]);
         assert_eq!(meta.command_hash, hash_str("gcc -o main main.c"));
 
         assert!(matches!(unit.dep_kind, DepKind::Sequential));

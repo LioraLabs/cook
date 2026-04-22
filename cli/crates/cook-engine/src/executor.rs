@@ -243,7 +243,7 @@ pub fn execute_dag(
             Some(m) => m,
             None => return false,
         };
-        if meta.output_path.is_none() {
+        if meta.output_paths.is_empty() {
             return false;
         }
         let cm = match cache_managers.get(&work_node.recipe_name) {
@@ -253,7 +253,7 @@ pub fn execute_dag(
         let cache = cm.get_or_load(&meta.recipe_name);
         let entry = cache.steps.get(&meta.cache_key);
         let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
-        let current_outputs: Vec<&str> = meta.output_path.as_deref().into_iter().collect();
+        let current_outputs: Vec<&str> = meta.output_paths.iter().map(|s| s.as_str()).collect();
         let (result, updated) = cook_cache::needs_rebuild_cook(
             entry,
             &input_refs,
@@ -303,7 +303,7 @@ pub fn execute_dag(
                         recipe: work_node.recipe_name.clone(),
                         node_name: work_node.recipe_name.clone(),
                         artifact: work_node.cache_meta.as_ref()
-                            .and_then(|m| m.output_path.clone().map(std::path::PathBuf::from)),
+                            .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
                     },
                 );
                 finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
@@ -341,7 +341,7 @@ pub fn execute_dag(
                             recipe: work_node.recipe_name.clone(),
                             node_name: payload.display_name(),
                             artifact: work_node.cache_meta.as_ref()
-                                .and_then(|m| m.output_path.clone().map(std::path::PathBuf::from)),
+                                .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
                         },
                     );
                     finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
@@ -372,7 +372,7 @@ pub fn execute_dag(
                         recipe: work_node.recipe_name.clone(),
                         node_name: payload.display_name(),
                         artifact: work_node.cache_meta.as_ref()
-                            .and_then(|m| m.output_path.clone().map(std::path::PathBuf::from)),
+                            .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
                         fallback_label: payload.display_name(),
                     },
                 );
@@ -445,7 +445,7 @@ pub fn execute_dag(
                         recipe: recipe_name.clone(),
                         node_name: node_name.clone(),
                         artifact: work_node.cache_meta.as_ref()
-                            .and_then(|m| m.output_path.clone().map(std::path::PathBuf::from)),
+                            .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
                         fallback_label: node_name.clone(),
                     },
                 );
@@ -491,7 +491,7 @@ pub fn execute_dag(
                                 &meta.cache_key,
                                 meta.command_hash,
                                 &meta.input_paths,
-                                meta.output_path.as_ref(),
+                                meta.output_paths.first(),
                                 &dag.node(id).payload.working_dir,
                             );
                         }
@@ -595,7 +595,7 @@ pub fn execute_dag(
                         &meta.cache_key,
                         meta.command_hash,
                         &meta.input_paths,
-                        meta.output_path.as_ref(),
+                        meta.output_paths.first(),
                         &dag.node(result.id).payload.working_dir,
                     );
                 }
