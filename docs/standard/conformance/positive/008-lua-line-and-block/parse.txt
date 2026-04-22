@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  vars: []
+  config_blocks: []
+  recipes:
+    Recipe name="lua_step" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Lua code="print(\"hello\")"
+        LuaBlock code="        local x = 1\n        print(x + 1)"

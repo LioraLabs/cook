@@ -1,0 +1,6 @@
+recipe "gen"
+    cook "out/a.js" "out/a.wasm" using {
+        echo one
+        echo two
+    }
+end

@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  vars: []
+  config_blocks: []
+  recipes:
+    Recipe name="verify" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Test command="./check" timeout=Some(30) should_fail=false
+        Test command="./mustfail" timeout=None should_fail=true

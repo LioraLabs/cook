@@ -1,0 +1,1 @@
+Pins multi-output `cook` with `using >{ ... }` Lua block form. Exercises § 4.6 and § 6.4. Note: the `parse.txt` Lua-block content was written as a best-guess; Task 18's harness may need to regenerate it from the Rust parser's actual capture.
