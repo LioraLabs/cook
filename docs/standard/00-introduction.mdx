@@ -8,7 +8,7 @@ The Cook Standard is the authoritative specification of the Cookfile language. I
 
 ## 0.2. Scope
 
-The Standard covers the full language surface a Cookfile author may use:
+The Standard covers the full language surface a Cookfile author can use:
 
 - Lexical structure (tokens, lines, prefixes). See § 2.
 - Syntactic grammar (productions, ordering). See § 3 and App. A.
@@ -35,11 +35,11 @@ Chapters `00` through `07` and Appendix A are normative. Appendices B, C, and D 
 
 ## 0.5. Version stance
 
-The Standard tracks the state of `main`. There is no version pragma in the Cookfile header at this time. A future Cook 1.0 release may introduce dual-track versioning (tagged snapshots alongside head-of-main); this is out of scope for the present draft.
+The Standard tracks the state of `main`. There is no version pragma in the Cookfile header at this time. A future Cook 1.0 release could introduce dual-track versioning (tagged snapshots alongside head-of-main); this is out of scope for the present draft.
 
 ## 0.6. Relationship to `docs/architecture/`
 
-`docs/standard/` defines what Cookfiles **mean**. `docs/architecture/` documents how the current reference implementation **works** (parser module layout, runtime internals, scheduler thread-pool design, cache layout). Implementation documents may evolve freely without touching the Standard, provided they do not make normative claims about language behavior.
+`docs/standard/` defines what Cookfiles **mean**. `docs/architecture/` documents how the current reference implementation **works** (parser module layout, runtime internals, scheduler thread-pool design, cache layout). Implementation documents can evolve freely without touching the Standard, provided they do not make normative claims about language behavior.
 
 ## 0.7. Conformance
 

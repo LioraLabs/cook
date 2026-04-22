@@ -22,7 +22,7 @@ Defines the single `ingredients` line per recipe: one or more glob patterns, wit
 
 ## 4.4. Step kinds — overview
 
-Enumerates the seven step kinds that may appear in a recipe body: Shell, Interactive Shell, Lua line, Lua block, Cook, Plate, Test. Describes the dispatch rules from § 3.8.
+Enumerates the seven step kinds that can appear in a recipe body: Shell, Interactive Shell, Lua line, Lua block, Cook, Plate, Test. Describes the dispatch rules from § 3.8.
 
 > **NORMATIVE-TODO (CS-stub-22).** See implementation: `cli/crates/cook-lang/src/ast.rs`, enum `Step`.
 
@@ -64,6 +64,6 @@ Defines the default `shell_command` (any Content line not matching another step)
 
 ## 4.11. Module-call steps
 
-Defines the heuristic that classifies a Content line matching `IDENTIFIER . IDENTIFIER ...` as a Lua expression (module call) rather than a shell command. Module calls may span multiple lines when braces are unbalanced on the first line.
+Defines the heuristic that classifies a Content line matching `IDENTIFIER . IDENTIFIER ...` as a Lua expression (module call) rather than a shell command. Module calls MAY span multiple lines when braces are unbalanced on the first line.
 
 > **NORMATIVE-TODO (CS-stub-29).** See implementation: `cli/crates/cook-lang/src/recipe.rs`, functions `is_module_call` and `collect_module_call`.

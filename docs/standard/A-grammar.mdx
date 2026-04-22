@@ -141,9 +141,9 @@ BRACE_BALANCED        ::= /* text in which `{` and `}` counted outside of
 MODULE_CALL_TEXT      ::= /* see § 4.11 */
 ```
 
-**`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names may be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting). Variable declaration left-hand sides are always `BARE_IDENTIFIER`.
+**`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting). Variable declaration left-hand sides are always `BARE_IDENTIFIER`.
 
-**`lua_line` may be empty.** The `>` prefix alone (with no following content) is a valid `lua_line` producing an empty Lua expression.
+**`lua_line` MAY be empty.** The `>` prefix alone (with no following content) is a valid `lua_line` producing an empty Lua expression.
 
 **Brace-balance algorithm.** Both `LUA_BLOCK_CONTENT` and `SHELL_BLOCK_CONTENT` use the same brace-balance algorithm: `{` increments depth and `}` decrements depth, but braces inside Lua line comments (`--` to end of line), double-quoted strings, single-quoted strings, and long strings (`[[...]]`) are ignored. The block closes on the line where depth first returns to zero or below; that closing line is consumed but not included in the block body.
 
