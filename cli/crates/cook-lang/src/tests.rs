@@ -851,3 +851,11 @@ fn test_multi_output_shell_block() {
         _ => panic!("expected Cook step"),
     }
 }
+
+#[test]
+fn test_multi_output_string_form_rejected() {
+    let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"a.js\" \"b.wasm\" using \"cmd\"\nend\n";
+    let err = crate::parse(source).expect_err("should reject");
+    let msg = format!("{:?}", err);
+    assert!(msg.contains("block body"), "expected error about block body, got: {}", msg);
+}
