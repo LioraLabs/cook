@@ -1,0 +1,39 @@
+# 7. Modules
+
+> **Normative.** This chapter defines the module system: how modules are named, loaded, resolved, and what a module is expected to expose.
+
+## 7.1. Module concept
+
+Describes a module as a named bundle of Lua code that augments the Cook runtime (e.g., adding `cpp.bin`, `cpp.compile_commands`). A module is either built-in, imported by path, or resolved from `cook_modules/`.
+
+> **NORMATIVE-TODO (CS-stub-45).** See implementation: `cli/crates/cook-register/` — module registration surfaces.
+
+## 7.2. `use <name>` declarations
+
+Defines how `use foo` resolves: first as a built-in, then as a package in `cook_modules/`.
+
+> **NORMATIVE-TODO (CS-stub-46).** See implementation: the module-resolution logic used by `cook-register` / `cook-engine`.
+
+## 7.3. `import <name> <path>` declarations
+
+Defines how `import backend ./path/to/other` aliases another Cookfile as a local module under the given identifier.
+
+> **NORMATIVE-TODO (CS-stub-47).** See implementation: `cli/crates/cook-engine/` — import resolution.
+
+## 7.4. `cook_modules/` resolution
+
+Defines the lookup algorithm for `cook_modules/<name>/`: directory form, package.json contents, entry points.
+
+> **NORMATIVE-TODO (CS-stub-48).** See implementation: `cli/crates/cook-engine/` — `cook_modules/` lookup.
+
+## 7.5. Module authoring contract
+
+Defines what a conforming module must expose, how it registers step kinds, and what globals it may introduce.
+
+> **NORMATIVE-TODO (CS-stub-49).** See implementation: examples in `examples/*/cook_modules/` and the `cook-register` registration surface.
+
+## 7.6. Duplicate and cycle detection
+
+Defines the rule that duplicate `import` names are errors, and that import cycles are errors.
+
+> **NORMATIVE-TODO (CS-stub-50).** See implementation: `cli/crates/cook-lang/src/lib.rs` (duplicate import detection) and the engine (cycle detection).
