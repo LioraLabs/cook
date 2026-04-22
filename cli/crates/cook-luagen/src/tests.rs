@@ -1135,6 +1135,55 @@ fn test_cross_recipe_deps_codegen_integration() {
         "libmath should have no dep_output calls");
 }
 
+// ── BlockStep codegen (multi-output) ─────────────────────────────
+
+#[test]
+fn blockstep_shell_multi_output() {
+    let source = r#"recipe "wasm"
+    ingredients "src/*.rs"
+    cook "a.js" "b.wasm" using {
+        wasm-pack build
+        cp x a.js
+        cp y b.wasm
+    }
+end
+"#;
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let lua = crate::generate(&cookfile);
+    // Should produce a _cook_outs table with both declared outputs:
+    assert!(
+        lua.contains(r#"_cook_outs = {"a.js", "b.wasm"}"#),
+        "generated Lua missing outs table: {lua}"
+    );
+    // Should emit sh() for each command line:
+    assert!(lua.contains(r#"sh("wasm-pack build")"#), "missing sh call: {lua}");
+    assert!(lua.contains(r#"sh("cp x a.js")"#), "missing sh call: {lua}");
+    assert!(lua.contains(r#"sh("cp y b.wasm")"#), "missing sh call: {lua}");
+    // Should not iterate per input:
+    let for_count = lua.matches("for _, _cook_in in ipairs").count();
+    assert_eq!(for_count, 0, "BlockStep should not emit a per-input loop: {lua}");
+}
+
+#[test]
+fn blockstep_lua_multi_output() {
+    let source = r#"recipe "wasm"
+    ingredients "src/*.rs"
+    cook "a.js" "b.wasm" using >{
+        sh("wasm-pack build")
+    }
+end
+"#;
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let lua = crate::generate(&cookfile);
+    // Lua block with N > 1 outputs -> BlockStep, not OneToOne.
+    assert!(
+        lua.contains(r#"_cook_outs = {"a.js", "b.wasm"}"#),
+        "generated Lua missing outs table: {lua}"
+    );
+    let for_count = lua.matches("for _, _cook_in in ipairs").count();
+    assert_eq!(for_count, 0, "BlockStep should not emit a per-input loop: {lua}");
+}
+
 #[test]
 fn test_dep_ref_wave_grouping_integration() {
     let names: std::collections::BTreeSet<String> =
