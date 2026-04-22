@@ -1,0 +1,148 @@
+# Appendix A. Grammar (normative)
+
+> **Normative.** This appendix contains the full formal grammar of the Cookfile language in the W3C-style EBNF variant defined in § 1.4. Where this appendix disagrees with the prose of § 3 or § 4, this appendix is authoritative (§ 1.5).
+
+## A.1. Top level
+
+```ebnf
+cookfile              ::= toplevel_item*
+toplevel_item         ::= recipe
+                       | config_block
+                       | use_declaration
+                       | import_declaration
+                       | variable_declaration
+                       | comment
+                       | NEWLINE
+```
+
+## A.2. Top-level declarations
+
+```ebnf
+variable_declaration  ::= IDENTIFIER STRING NEWLINE
+use_declaration       ::= "use" name NEWLINE
+import_declaration    ::= "import" IDENTIFIER path NEWLINE
+config_block          ::= "config" name? NEWLINE config_body "end" NEWLINE
+config_body           ::= LUA_SOURCE
+```
+
+**Ordering (normative).** `variable_declaration`, `use_declaration`, `import_declaration`, and `config_block` MUST appear before the first `recipe`. A conforming implementation MUST reject a Cookfile that places any of these after a recipe.
+
+**Identifiers blocked from `variable_declaration`.** The identifiers `recipe`, `config`, `end`, `ingredients`, `cook`, `plate`, `using`, `use`, `import`, `test` MUST NOT be used as the left-hand side of a `variable_declaration`. A conforming implementation MUST reject any such declaration.
+
+**Duplicate `config_block` rule.** At most one unnamed `config_block` is permitted per Cookfile. Named `config_block` names MUST be unique. A conforming implementation MUST reject a Cookfile that violates either constraint.
+
+**Duplicate `import_declaration` rule.** The `IDENTIFIER` (local alias) of each `import_declaration` MUST be unique within a Cookfile. A conforming implementation MUST reject duplicate import names.
+
+**Reserved recipe name segments.** The identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `all` are reserved and MUST NOT appear as the final dot-separated segment of any recipe name. A conforming implementation MUST reject a recipe whose name ends with one of these segments (e.g., `backend.stem` is rejected; `backend.build` is accepted).
+
+## A.3. Recipes
+
+```ebnf
+recipe                ::= recipe_header NEWLINE recipe_body "end" NEWLINE?
+recipe_header         ::= explicit_header
+                       | implicit_header
+explicit_header       ::= "recipe" name (":" dependency_list)?
+implicit_header       ::= BARE_IDENTIFIER ":" dependency_list?
+dependency_list       ::= name+
+recipe_body           ::= recipe_item*
+recipe_item           ::= ingredients_step
+                       | cook_step
+                       | plate_step
+                       | test_step
+                       | lua_line
+                       | lua_block
+                       | module_call
+                       | interactive_command
+                       | shell_command
+                       | comment
+                       | NEWLINE
+```
+
+**Implicit header constraint.** The `implicit_header` form is only recognised when the line starts at column 0 (no leading whitespace). An indented `BARE_IDENTIFIER:` is treated as a `shell_command`, not a recipe header.
+
+**At-most-one-ingredients rule.** A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe with two or more `ingredients_step` items.
+
+## A.4. Steps
+
+```ebnf
+ingredients_step      ::= "ingredients" ingredient+ NEWLINE
+ingredient            ::= STRING            /* include */
+                       | "!" STRING          /* exclude */
+
+cook_step             ::= "cook" STRING+ using_clause? NEWLINE
+using_clause          ::= "using" ( inline_lua_block | shell_block | STRING )
+inline_lua_block      ::= ">{" LUA_BLOCK_CONTENT "}"
+shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
+
+plate_step            ::= "plate" STRING NEWLINE
+
+test_step             ::= "test" STRING ("timeout" NUMBER)? "should_fail"? NEWLINE
+
+lua_line              ::= ">" LUA_LINE_CONTENT? NEWLINE
+lua_block             ::= ">{" LUA_BLOCK_CONTENT "}" NEWLINE
+
+interactive_command   ::= "@" SHELL_LINE_CONTENT NEWLINE
+
+module_call           ::= MODULE_CALL_TEXT NEWLINE?
+                          /* MODULE_CALL_TEXT is any Content line whose first
+                             token matches BARE_IDENTIFIER "." BARE_IDENTIFIER
+                             (ident, dot, ident-start). Braces may be unbalanced
+                             on the first line, in which case subsequent source
+                             lines are consumed until brace depth returns to zero
+                             (see § 2.9). A single-line module call produces a
+                             Lua step; a multi-line one produces a LuaBlock step.
+                             See § 4.11. */
+
+shell_command         ::= SHELL_LINE_CONTENT NEWLINE
+                          /* Any Content line not matching a preceding
+                             alternative. A line of the form NAME "value"
+                             (which would be a variable_declaration at the
+                             top level) is treated as a shell_command inside
+                             a recipe body. See § 3.8. */
+```
+
+**Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before `using`, the `using_clause` MUST use `inline_lua_block` or `shell_block`. A conforming implementation MUST reject the form `cook "a" "b" using STRING`.
+
+**`using` dispatch order (normative).** After the keyword `using`, a conforming implementation checks in this order: `>{` (Lua block), then `{` (shell block), then `"` (single quoted string). The first match wins.
+
+**Declaration-only cook step.** A `cook_step` whose `using_clause` is absent is a declaration — it announces the output without providing a build command inline. Its build is assumed to be provided by preceding Lua registrations or a later amendment.
+
+**Step-dispatch priority (normative).** A single `Content` line inside a recipe body is dispatched in this order, with the first match winning:
+
+1. Prefix `ingredients` + separator (space, tab, or end of token) → `ingredients_step`.
+2. Prefix `cook` + separator → `cook_step`.
+3. Prefix `plate` + separator → `plate_step`.
+4. Prefix `test` + separator → `test_step`.
+5. Matches the module-call pattern (first token is `BARE_IDENTIFIER "." BARE_IDENTIFIER`) → `module_call`.
+6. First character is `@` and the remainder is non-empty → `interactive_command`.
+7. Otherwise → `shell_command`.
+
+## A.5. Primitives
+
+```ebnf
+name                  ::= BARE_IDENTIFIER | STRING
+BARE_IDENTIFIER       ::= /[A-Za-z_][A-Za-z0-9_.\\-]*/
+STRING                ::= /"[^"]*"/
+NUMBER                ::= /[0-9]+/
+path                  ::= /[^\s\n]+/
+comment               ::= /#[^\n]*/ NEWLINE
+NEWLINE               ::= /\n/
+LUA_LINE_CONTENT      ::= /[^\n]*/   /* zero or more characters; may be empty */
+LUA_BLOCK_CONTENT     ::= BRACE_BALANCED   /* see § 2.9 */
+SHELL_LINE_CONTENT    ::= /[^\n]+/
+SHELL_BLOCK_CONTENT   ::= BRACE_BALANCED   /* see § 2.9 */
+LUA_SOURCE            ::= /* any sequence of lines up to the matching "end" */
+BRACE_BALANCED        ::= /* text in which `{` and `}` counted outside of
+                             Lua comments (--), double-quoted strings, single-
+                             quoted strings, and long strings ([[...]]) balance
+                             to zero; see § 2.9 */
+MODULE_CALL_TEXT      ::= /* see § 4.11 */
+```
+
+**`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names may be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting). Variable declaration left-hand sides are always `BARE_IDENTIFIER`.
+
+**`lua_line` may be empty.** The `>` prefix alone (with no following content) is a valid `lua_line` producing an empty Lua expression.
+
+**Brace-balance algorithm.** Both `LUA_BLOCK_CONTENT` and `SHELL_BLOCK_CONTENT` use the same brace-balance algorithm: `{` increments depth and `}` decrements depth, but braces inside Lua line comments (`--` to end of line), double-quoted strings, single-quoted strings, and long strings (`[[...]]`) are ignored. The block closes on the line where depth first returns to zero or below; that closing line is consumed but not included in the block body.
+
+**Shell block line normalisation.** Each line of `SHELL_BLOCK_CONTENT` is trimmed of leading and trailing whitespace; blank lines after trimming are discarded. The result is a sequence of command strings, not a single raw string.
