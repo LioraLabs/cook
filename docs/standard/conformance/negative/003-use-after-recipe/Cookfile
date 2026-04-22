@@ -1,0 +1,4 @@
+recipe "a"
+end
+
+use cpp
