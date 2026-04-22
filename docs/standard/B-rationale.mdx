@@ -40,7 +40,31 @@ _To be filled in._
 
 ## B.7. On § 7 Modules
 
-_To be filled in._
+The module system is deliberately split into two declarations that look similar but answer different questions. `use` answers "give me additional Lua for my recipes to call"; `import` answers "tie another Cookfile's recipes into my dependency graph." Conflating them — for example, by making `import` also bring a Lua value into scope — would force authors to pick one semantics at every call site and would blur the two namespaces the dependency resolver walks. The Standard keeps them distinct so that each declaration has one job.
+
+Built-in modules are resolved before `cook_modules/` (§ 7.2) so that adding a new built-in in a future version of the implementation cannot silently break a project that happens to have a `cook_modules/<name>.lua` of the same name: the built-in always wins, so a project author who wants to override it renames their local module or picks a different name. The converse ordering — consulting `cook_modules/` first — would make the set of built-in names a latent hazard: every new built-in would be a silent semantic change for every project that had colonised the name first. v0.1 of the Standard defines no built-ins, but fixes the ordering now so that the first built-in to ship can do so without a migration.
+
+The choice of `cook_modules/` — an adjacent directory, resolved only relative to the enclosing Cookfile — rather than a global registry or a walk up through ancestor directories is a deliberate choice for locality. A Cookfile's modules are the ones it ships with; they travel with the project, they are the ones code review sees, and they are the ones `git clone` reproduces. A global registry would require side-channel installation; an ancestor walk would make module resolution sensitive to where on disk the project happened to live. Both are costs the Standard declines to pay.
+
+### B.7.1. Why duplicate-`import` is a parse-time error rather than last-wins
+
+A "last-wins" override is tempting because it is what most language include-systems do for simple `#include` and because it composes cleanly with machine-generated fragments. The Standard rejects it for two reasons.
+
+First, the duplicate-import rule is the only defence against a silent bug where a user edits one `import backend ./services/backend` into `import backend ./services/backend_v2` in a diff that also intends to keep the first line around for some other recipe to consume. Last-wins would silently redirect every `backend.*` dependency in the file to the new target, and the first import would become dead code with no diagnostic. A parse-time error surfaces the mistake at the moment of the edit.
+
+Second, a duplicate-import is diagnosable locally — it is a property of a single Cookfile's token stream, which the parser already holds in full. Pushing the check to a later stage (workspace load, DAG construction) would mean the diagnostic arrives after some non-trivial work has succeeded, and the error message would have to reconstruct which line declared which alias. Parse time is where the information is cheapest.
+
+### B.7.2. Why import cycles are detected at workspace-load time rather than at parse time
+
+Symmetrically, cycles are NOT caught at parse time because they cannot be: a single Cookfile's tokens cannot know whether `import b ../b` eventually loops back. Cycle detection requires the parser to have run on every Cookfile the edge set transitively touches, and that only happens at workspace-load time. Pushing cycle detection earlier would either require a separate pre-pass — effectively re-parsing every Cookfile before validating any — or would require `import` to be resolved synchronously during parsing, which would re-introduce the coupling that v0.1 deliberately separates (the parser produces an AST; the workspace loader consumes it).
+
+Canonicalisation at the edge boundary (§ 7.6) is load-bearing. Without it, `import b ./b` and `import b ./services/../b` would be different nodes in the cycle graph, and the diamond dedup rule of § 7.6 would fire on one but not the other. Canonicalising to absolute, symlink-resolved paths collapses these spellings into one node.
+
+### B.7.3. Why local module names do not collide with reserved recipe segments
+
+The reserved recipe segments of § 2.4 (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`) are reserved for the final segment of a recipe or dependency name, not for identifiers in general. A local module may therefore be named, for example, `out.lua` in `cook_modules/`, and bound by `use out`; the binding would collide with nothing in the grammar, because `use` resolves against `BARE_IDENTIFIER` and `STRING` (App. A.2) and is not subject to the recipe-segment reservation.
+
+The Standard declines to extend the reservation to module names because the two namespaces are independently diagnosable: a recipe body that writes `out.foo()` is a `module_call` only if `out` has been bound by a prior `use` declaration in the same Cookfile (§ 4.11). Without the `use`, the same line is a `shell_command`, and the dispatch cascade of App. A.4 will classify it so. Reserving the name globally would not prevent any bug the dispatch already handles, and would remove an axis of expressiveness from module authors.
 
 ## B.A. On Appendix A
 
