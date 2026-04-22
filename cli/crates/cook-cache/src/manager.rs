@@ -178,21 +178,24 @@ impl ThreadSafeCacheManager {
             })
             .collect();
 
-        let new_output = output_path.map(|rel| {
-            let abs = working_dir.join(rel);
-            FileRecord {
-                path: rel.clone(),
-                mtime: stat_mtime(&abs).unwrap_or(0),
-                hash: hash_file(&abs).unwrap_or(0),
-            }
-        });
+        let new_outputs: Vec<FileRecord> = output_path
+            .map(|rel| {
+                let abs = working_dir.join(rel);
+                FileRecord {
+                    path: rel.clone(),
+                    mtime: stat_mtime(&abs).unwrap_or(0),
+                    hash: hash_file(&abs).unwrap_or(0),
+                }
+            })
+            .into_iter()
+            .collect();
 
         self.update_step(
             recipe_name,
             cache_key,
             StepEntry {
                 inputs: new_inputs,
-                output: new_output,
+                outputs: new_outputs,
                 command_hash,
             },
         );
@@ -211,11 +214,11 @@ mod tests {
                 mtime: 1700000000,
                 hash: 0xaabbccdd,
             }],
-            output: Some(FileRecord {
+            outputs: vec![FileRecord {
                 path: "build/main.o".to_string(),
                 mtime: 1700000100,
                 hash: 0x11223344,
-            }),
+            }],
             command_hash,
         }
     }

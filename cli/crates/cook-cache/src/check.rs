@@ -128,7 +128,7 @@ fn check_inputs(
 pub fn needs_rebuild_cook(
     entry: Option<&StepEntry>,
     current_inputs: &[&str],
-    current_output: &str,
+    current_outputs: &[&str],
     command_hash: u64,
     working_dir: &Path,
 ) -> (RebuildResult, Option<StepEntry>) {
@@ -142,17 +142,26 @@ pub fn needs_rebuild_cook(
             None,
         );
     }
-    let abs_output = working_dir.join(current_output);
-    if !abs_output.exists() {
+
+    // Check output count matches.
+    if entry.outputs.len() != current_outputs.len() {
         return (RebuildResult::Rebuild(RebuildReason::OutputMissing), None);
     }
-    // Check output not tampered
-    if let (Some(cached_out), Some(disk_mtime)) = (&entry.output, stat_mtime(&abs_output))
-        && disk_mtime != cached_out.mtime
-        && let Some(disk_hash) = hash_file(&abs_output)
-        && disk_hash != cached_out.hash
-    {
-        return (RebuildResult::Rebuild(RebuildReason::OutputChanged), None);
+
+    for (cached_out, rel_path) in entry.outputs.iter().zip(current_outputs.iter()) {
+        let abs_output = working_dir.join(rel_path);
+        if !abs_output.exists() {
+            return (RebuildResult::Rebuild(RebuildReason::OutputMissing), None);
+        }
+        if let Some(disk_mtime) = stat_mtime(&abs_output) {
+            if disk_mtime != cached_out.mtime {
+                if let Some(disk_hash) = hash_file(&abs_output) {
+                    if disk_hash != cached_out.hash {
+                        return (RebuildResult::Rebuild(RebuildReason::OutputChanged), None);
+                    }
+                }
+            }
+        }
     }
 
     match check_inputs(&entry.inputs, current_inputs, working_dir) {
@@ -160,7 +169,7 @@ pub fn needs_rebuild_cook(
         Ok(updated_inputs) => {
             let updated = StepEntry {
                 inputs: updated_inputs,
-                output: entry.output.clone(),
+                outputs: entry.outputs.clone(),
                 command_hash: entry.command_hash,
             };
             (RebuildResult::Skip, Some(updated))
@@ -190,7 +199,7 @@ pub fn needs_rebuild_plate(
         Ok(updated_inputs) => {
             let updated = StepEntry {
                 inputs: updated_inputs,
-                output: None,
+                outputs: vec![],
                 command_hash: entry.command_hash,
             };
             (RebuildResult::Skip, Some(updated))
@@ -285,7 +294,8 @@ mod tests {
     #[test]
     fn test_no_cache_entry_rebuilds() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (result, updated) = needs_rebuild_cook(None, &["in.c"], "out.o", 0xdead, dir.path());
+        let (result, updated) =
+            needs_rebuild_cook(None, &["in.c"], &["out.o"], 0xdead, dir.path());
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::NoCacheEntry));
         assert!(updated.is_none());
     }
@@ -302,11 +312,12 @@ mod tests {
 
         let entry = StepEntry {
             inputs: vec![in_record],
-            output: Some(out_record),
+            outputs: vec![out_record],
             command_hash: 0x1111,
         };
 
-        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], "out.o", 0x2222, wd);
+        let (result, updated) =
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0x2222, wd);
         assert_eq!(
             result,
             RebuildResult::Rebuild(RebuildReason::CommandHashChanged)
@@ -325,11 +336,12 @@ mod tests {
 
         let entry = StepEntry {
             inputs: vec![in_record],
-            output: None,
+            outputs: vec![],
             command_hash: 0xbeef,
         };
 
-        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], "out.o", 0xbeef, wd);
+        let (result, updated) =
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, wd);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::OutputMissing));
         assert!(updated.is_none());
     }
@@ -346,11 +358,12 @@ mod tests {
 
         let entry = StepEntry {
             inputs: vec![in_record],
-            output: Some(out_record),
+            outputs: vec![out_record],
             command_hash: 0xbeef,
         };
 
-        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], "out.o", 0xbeef, wd);
+        let (result, updated) =
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, wd);
         assert_eq!(result, RebuildResult::Skip);
         assert!(updated.is_some());
     }
@@ -380,11 +393,12 @@ mod tests {
 
         let entry = StepEntry {
             inputs: vec![in_record],
-            output: Some(out_record),
+            outputs: vec![out_record],
             command_hash: 0xbeef,
         };
 
-        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], "out.o", 0xbeef, wd);
+        let (result, updated) =
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, wd);
         assert_eq!(
             result,
             RebuildResult::Rebuild(RebuildReason::InputChanged("in.c".to_string()))
@@ -410,14 +424,14 @@ mod tests {
 
         let entry = StepEntry {
             inputs: vec![in_record],
-            output: None,
+            outputs: vec![],
             command_hash: 0xbeef,
         };
 
         let (result, updated) = needs_rebuild_plate(Some(&entry), &["in.c"], 0xbeef, wd);
         assert_eq!(result, RebuildResult::Skip);
         let updated = updated.expect("should have updated entry");
-        assert!(updated.output.is_none());
+        assert!(updated.outputs.is_empty());
     }
 
     // -------------------------------------------------------------------------

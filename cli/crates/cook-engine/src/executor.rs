@@ -243,10 +243,9 @@ pub fn execute_dag(
             Some(m) => m,
             None => return false,
         };
-        let output = match &meta.output_path {
-            Some(o) => o,
-            None => return false,
-        };
+        if meta.output_path.is_none() {
+            return false;
+        }
         let cm = match cache_managers.get(&work_node.recipe_name) {
             Some(cm) => cm,
             None => return false,
@@ -254,10 +253,11 @@ pub fn execute_dag(
         let cache = cm.get_or_load(&meta.recipe_name);
         let entry = cache.steps.get(&meta.cache_key);
         let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
+        let current_outputs: Vec<&str> = meta.output_path.as_deref().into_iter().collect();
         let (result, updated) = cook_cache::needs_rebuild_cook(
             entry,
             &input_refs,
-            output,
+            &current_outputs,
             meta.command_hash,
             &work_node.working_dir,
         );

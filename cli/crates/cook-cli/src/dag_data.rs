@@ -230,10 +230,11 @@ fn build_wave(
                     let entry = cache.steps.get(&meta.cache_key);
                     let input_refs: Vec<&str> =
                         meta.input_paths.iter().map(|s| s.as_str()).collect();
+                    let current_outputs: [&str; 1] = [out.as_str()];
                     let (result, _) = needs_rebuild_cook(
                         entry,
                         &input_refs,
-                        out,
+                        &current_outputs,
                         meta.command_hash,
                         &ru.working_dir,
                     );
