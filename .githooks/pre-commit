@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+#
+# Cook Standard pre-commit hook.
+#
+# Warns when a commit touches language-surface code without also updating
+# docs/standard/. Install with:
+#     git config core.hooksPath .githooks
+#
+# Bypass with:
+#     COOK_STANDARD_BYPASS=1 git commit ...
+#
+# See CONTRIBUTING.md for the spec-first rule.
+
+set -euo pipefail
+
+if [ "${COOK_STANDARD_BYPASS:-0}" = "1" ]; then
+  exit 0
+fi
+
+staged="$(git diff --cached --name-only --diff-filter=ACMRT)"
+
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+is_language_surface() {
+  case "$1" in
+    cli/crates/cook-lang/*)       return 0 ;;
+    cli/crates/cook-luagen/*)     return 0 ;;
+    cli/crates/cook-register/*)   return 0 ;;
+    tree-sitter-cook/grammar.js)  return 0 ;;
+    tree-sitter-cook/src/*)       return 0 ;;
+    *)                            return 1 ;;
+  esac
+}
+
+is_standard() {
+  case "$1" in
+    docs/standard/*) return 0 ;;
+    *)               return 1 ;;
+  esac
+}
+
+touches_language=0
+touches_standard=0
+
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  if is_language_surface "$path"; then
+    touches_language=1
+  fi
+  if is_standard "$path"; then
+    touches_standard=1
+  fi
+done <<EOF
+$staged
+EOF
+
+if [ "$touches_language" = "1" ] && [ "$touches_standard" = "0" ]; then
+  cat >&2 <<'MSG'
+error: this commit touches language-surface code but does not update docs/standard/.
+
+The Cook Standard is the authoritative definition of the Cookfile language;
+language-affecting changes require an update to docs/standard/ in the same
+commit. See CONTRIBUTING.md.
+
+Staged language-surface paths:
+MSG
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    if is_language_surface "$path"; then
+      printf '  %s\n' "$path" >&2
+    fi
+  done <<EOF
+$staged
+EOF
+  cat >&2 <<'MSG'
+
+To bypass for a non-language-affecting change (refactor, performance work,
+error-message rewording), set COOK_STANDARD_BYPASS=1 for this commit.
+MSG
+  exit 1
+fi
+
+exit 0
