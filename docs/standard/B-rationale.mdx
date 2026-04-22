@@ -36,7 +36,37 @@ _To be filled in._
 
 ## B.6. On § 6 Cook Lua API
 
-_To be filled in._
+The Cook Lua API is deliberately small and sharply phase-split. Most build-system DSLs expose a single large API whose functions do different things depending on when they are called — declaration during a "load" pass, execution during a "run" pass, with the split encoded by convention rather than by contract. The Cook Standard commits to the split in its normative text: every function is classified as register-phase, execute-phase, or both, and a conforming implementation MUST install each function in the phases it is documented for.
+
+The reasoning is pragmatic:
+
+- **The register phase is the cache boundary.** Everything that happens during registration is observed by the cache (§ 5.7). Writing a file during registration makes that file a register-time input in a way that cache hashes do not see. The small `cook.sh` / `cook.exec` surface is the entire register-time effect mechanism; the larger `fs.*` surface is available in both phases because authors legitimately want it in both.
+- **The execute phase is the parallelism boundary.** Execute-phase work runs on a pool of worker VMs, each with its own Lua state. A function that mutates shared capture state cannot sensibly run on a worker. `cook.add_unit` is register-phase only for exactly this reason.
+- **Keeping the surface small means the phase split is memorable.** A surface this size can be held in an author's head: `cook.add_unit`, the `cook.sh`/`cook.exec`/`cook.interactive` helpers, seven `fs.*` functions, six `path.*` functions, and the execute-phase using-block globals. That is intentional.
+
+### B.6.1. Why placeholder substitutions exist alongside the using-block globals
+
+§ 6.7 defines `{in}`, `{out}`, `{all}`, `{stem}`, etc., for shell using-strings. § 6.4 defines `input`, `output`, `inputs`, `outputs`, and `input_N` for Lua-code blocks. Both express the same fundamental idea — "the current input and output of a step" — and an earlier draft of the Standard considered collapsing them to one.
+
+They remain separate because they inhabit different typographic contexts. A shell using-string is a shell line; shell has no binding mechanism for "the current file", so a placeholder syntax is the only option that keeps the surface readable. A Lua using-block is Lua code; Lua has direct variable binding, so exposing `input` and `outputs` as globals is more Lua-idiomatic than expanding `{in}` inside Lua text.
+
+The substitution also differs in timing. Shell using-string placeholders are substituted at register-time code generation — by the time the unit is recorded, the shell string is already concrete text. Lua using-block globals are bound at execute time on the worker VM. Collapsing the two would require either executing Lua fragments at register time (a re-entrancy hazard) or deferring shell substitution to execute time (a loss of register-phase observability). Keeping them separate is the less-bad outcome.
+
+### B.6.2. Why `fs.*` and `path.*` are separate namespaces
+
+`fs.*` performs I/O against the Cookfile's working directory. `path.*` performs pure string manipulation on path components and is working-directory-independent. An earlier sketch merged them under a single `path` namespace, distinguishing "pure" from "I/O" functions by naming convention. This was rejected.
+
+Keeping the namespaces apart matches a common Lua convention (see the standard library's `io` vs. `string`), and — more importantly — it mirrors the phase-split reasoning in the chapter intro. `path.*` can never observe anything phase-sensitive, so merging it with `fs.*` would invite readers to assume every `fs.*` call is similarly pure. The namespace split is a small, cheap signal that I/O is happening.
+
+### B.6.3. Why `cook.add_unit` is register-phase only
+
+A naive design might allow `cook.add_unit` inside `using >{ ... }` Lua blocks — that is, inside an execute-phase step — as a way to dynamically produce further units based on build outputs. The Standard forbids this: `cook.add_unit` is register-phase only.
+
+The reason is the cache. The set of work units is the input to the scheduler (§ 5), and the scheduler's correctness depends on knowing all units before any of them runs. A unit added during execution would have to either (a) force re-planning mid-execute — which invalidates any parallelism already in flight — or (b) sneak past the scheduler and run outside its ordering guarantees. Both options break the contract. Authors who need data-driven unit counts call `cook.sh` at register time (§ 6.3.1) to compute the data, then call `cook.add_unit` for each computed unit, all during registration. The examples in `cpp.lua` (e.g., `cpp.static_library`) are the canonical shape.
+
+### B.6.4. Why the cook-step using-string recognises recipe names
+
+A `{TOKEN}` in a using-string that is neither a known placeholder nor a recipe name falls through to `cook.env[TOKEN]` (§ 6.7). A `{TOKEN}` that matches a recipe name in the same Cookfile is instead rewritten to `cook.dep_output("TOKEN")`. This is a deliberate asymmetry: in practice, cross-recipe references to "the outputs of another recipe" are far more common than environment variables that happen to share a name with a recipe. Giving recipe names priority in the fallback order means authors rarely need to choose between the two at the token level — the parser picks the right one.
 
 ## B.7. On § 7 Modules
 
