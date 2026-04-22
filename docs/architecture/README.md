@@ -4,6 +4,8 @@
 
 Cook is a modern build system that combines Make's dependency-tracking power, Just's recipe clarity, and an embedded Lua scripting layer. It reads a `Cookfile` written in a custom DSL, transpiles it to Lua, and runs the result through a Lua VM backed by a parallel task scheduler with hash-based incremental caching. The result is a hybrid task runner and build system: you can describe file dependencies and get incremental rebuilds, or you can write pure task pipelines and get parallelism for free.
 
+> **Language definition.** This directory documents how the implementation works. For the definition of the Cookfile language itself — syntax, semantics, Cook Lua API, modules — see `docs/standard/`.
+
 ---
 
 ## System Pipeline
