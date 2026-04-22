@@ -24,7 +24,31 @@ The cost is small: `@`-prefixed lines become `Content` tokens whose string still
 
 ## B.3. On § 3 Syntactic grammar
 
-_To be filled in._
+Chapter 3 walks through a grammar that is almost entirely keyword-led at the outer layer. Most of the design decisions in § 3 are mechanical consequences of the lexical structure defined in § 2: each production is selected by a single leading token, and no backtracking is required. The rationale entries below address the places where § 3 imposes a constraint that goes beyond "pick the production the leading token names" — places where the grammar is deliberately narrower than a permissive reading would allow.
+
+### B.3.2. Why the top-level prefix is ordered
+
+Cookfiles allow declarations of four kinds — variables, `use`, `import`, and `config` — to precede recipes, and the Standard requires that they form a contiguous prefix: once the first recipe has been parsed, no further declaration of any of the four kinds is accepted.
+
+The ordering is not necessary for parsing — a context-free grammar that accepted interleaved declarations and recipes would parse unambiguously. It is a readability and configuration-layering choice. Config blocks and variable declarations are meant to be read as a header that frames the recipes that follow; scattering them between recipes defeats that reading, and permits confusing patterns where a `use` resolved by one recipe is not yet in scope for a sibling recipe that was parsed earlier in the same file. Requiring the prefix to be contiguous removes the question entirely: every declaration is in scope for every recipe.
+
+The rule is trivially removable if it ever proves onerous; nothing downstream depends on it. But while it is in place, the diagnostic is actionable — the parser names the offending item's line — and authors get a clean separation between file-level configuration and recipe definitions.
+
+### B.3.7. Why the implicit header requires column 0
+
+The implicit recipe header `name:` shares its surface form with a class of legitimate shell commands and Makefile-style targets. A permissive reading of `identifier:` anywhere in the file would make indented shell commands of that shape (e.g., `build: lib setup` as a line of a shell script inside a `using` block or a recipe body) ambiguous with nested recipe declarations, which Cookfiles do not permit.
+
+Anchoring the implicit header to column 0 resolves the ambiguity at the lexical layer without requiring the parser to know whether it is inside a recipe body. The rule is easy to state, easy to diagnose, and matches the typographic expectation that top-level declarations hug the left margin while recipe bodies are indented.
+
+The cost is small: authors who want an implicit header simply do not indent it. Authors who want a shell command of the shape `name:` indent it, as they would any other body line.
+
+### B.3.8. Why `NAME "value"` inside a recipe body is a shell command
+
+The top-level variable declaration `NAME "value"` and an equally-shaped shell invocation are lexically indistinguishable in isolation. The Standard disambiguates by position: the `variable_declaration` production is a top-level-only construct, and inside a recipe body the same surface form is dispatched as a `shell_command`.
+
+This is the right call for three reasons. First, variable declarations are strictly a file-level concept — they feed into the environment that `use` and `config` block interpretation sees, which is resolved before any recipe runs. Permitting them inside a recipe body would create a second, subtly different variable scope whose interaction with the top-level one would need its own specification. Second, the shell-command reading is the useful one: an author writing `CC "gcc"` inside a recipe body is invariably writing a shell command, since there is no meaningful language-level variable they could be declaring at that point. Third, the reconstitution is lossless — the shell command recovers the exact surface text the author wrote — so no information is lost in the classification.
+
+The rule is symmetric with the top-level-only classification of `use`, `import`, and `config`, and makes the variable-declaration form a true top-level construct rather than a construct with context-dependent semantics.
 
 ## B.4. On § 4 Recipes and step kinds
 
