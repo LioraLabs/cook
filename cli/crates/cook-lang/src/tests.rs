@@ -801,3 +801,16 @@ end
     assert_eq!(recipe.ingredients, vec!["src/*.c", "include/*.h"]);
     assert!(recipe.excludes.is_empty());
 }
+
+#[test]
+fn test_multi_output_lua_block() {
+    let source = "recipe \"wasm\"\n    ingredients \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" using >{\n        sh(\"cmd\")\n    }\nend\n";
+    let result = crate::parse(source).expect("should parse");
+    match &result.recipes[0].steps[0] {
+        crate::ast::Step::Cook { step, .. } => {
+            assert_eq!(step.outputs, vec!["a.js".to_string(), "b.wasm".to_string()]);
+            assert!(matches!(step.using_clause, Some(crate::ast::UsingClause::LuaBlock(_))));
+        }
+        _ => panic!("expected Cook step"),
+    }
+}

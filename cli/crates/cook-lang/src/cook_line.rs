@@ -132,18 +132,25 @@ pub(crate) fn parse_cook_line(
             message: "cook: expected quoted output pattern".to_string(),
         });
     }
-    let after_quote = &rest[1..];
-    let end = after_quote.find('"').ok_or(ParseError::Parse {
-        line,
-        message: "cook: unterminated output pattern".to_string(),
-    })?;
-    let output_pattern = after_quote[..end].to_string();
-    let after_pattern = after_quote[end + 1..].trim();
+
+    // Collect all leading quoted strings.
+    let mut outputs: Vec<String> = Vec::new();
+    let mut cursor = rest;
+    while cursor.starts_with('"') {
+        let after_quote = &cursor[1..];
+        let end = after_quote.find('"').ok_or(ParseError::Parse {
+            line,
+            message: "cook: unterminated output pattern".to_string(),
+        })?;
+        outputs.push(after_quote[..end].to_string());
+        cursor = after_quote[end + 1..].trim_start();
+    }
+    let after_pattern = cursor.trim();
 
     if after_pattern.is_empty() {
         return Ok((
             CookStep {
-                outputs: vec![output_pattern],
+                outputs,
                 using_clause: None,
             },
             current_pos + 1,
@@ -163,7 +170,7 @@ pub(crate) fn parse_cook_line(
         let (code, new_pos) = collect_lua_block(line, tokens, current_pos + 1, source_lines)?;
         Ok((
             CookStep {
-                outputs: vec![output_pattern],
+                outputs,
                 using_clause: Some(UsingClause::LuaBlock(code)),
             },
             new_pos,
@@ -172,7 +179,7 @@ pub(crate) fn parse_cook_line(
         let cmd = parse_single_quoted_string(after_using, line)?;
         Ok((
             CookStep {
-                outputs: vec![output_pattern],
+                outputs,
                 using_clause: Some(UsingClause::Shell(cmd)),
             },
             current_pos + 1,
