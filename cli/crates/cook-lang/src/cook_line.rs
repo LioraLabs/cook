@@ -143,7 +143,7 @@ pub(crate) fn parse_cook_line(
     if after_pattern.is_empty() {
         return Ok((
             CookStep {
-                output_pattern,
+                outputs: vec![output_pattern],
                 using_clause: None,
             },
             current_pos + 1,
@@ -163,7 +163,7 @@ pub(crate) fn parse_cook_line(
         let (code, new_pos) = collect_lua_block(line, tokens, current_pos + 1, source_lines)?;
         Ok((
             CookStep {
-                output_pattern,
+                outputs: vec![output_pattern],
                 using_clause: Some(UsingClause::LuaBlock(code)),
             },
             new_pos,
@@ -172,7 +172,7 @@ pub(crate) fn parse_cook_line(
         let cmd = parse_single_quoted_string(after_using, line)?;
         Ok((
             CookStep {
-                output_pattern,
+                outputs: vec![output_pattern],
                 using_clause: Some(UsingClause::Shell(cmd)),
             },
             current_pos + 1,

@@ -231,7 +231,7 @@ fn test_cook_step_shell() {
     match &recipe.steps[0] {
         Step::Cook { step, line } => {
             assert_eq!(*line, 3);
-            assert_eq!(step.output_pattern, "build/obj/{stem}.o");
+            assert_eq!(step.outputs[0], "build/obj/{stem}.o");
             assert_eq!(
                 step.using_clause,
                 Some(UsingClause::Shell("gcc -c {in} -o {out}".to_string()))
@@ -247,7 +247,7 @@ fn test_cook_step_many_to_one() {
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::Cook { step, .. } => {
-            assert_eq!(step.output_pattern, "build/lib.a");
+            assert_eq!(step.outputs[0], "build/lib.a");
             assert_eq!(
                 step.using_clause,
                 Some(UsingClause::Shell("ar rcs {out} {all}".to_string()))
@@ -265,7 +265,7 @@ fn test_cook_step_declaration_only() {
     assert_eq!(recipe.steps.len(), 2);
     match &recipe.steps[0] {
         Step::Cook { step, .. } => {
-            assert_eq!(step.output_pattern, "bin/app");
+            assert_eq!(step.outputs[0], "bin/app");
             assert!(step.using_clause.is_none());
         }
         other => panic!("expected Cook, got {:?}", other),
@@ -279,7 +279,7 @@ fn test_cook_step_lua_block() {
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::Cook { step, .. } => {
-            assert_eq!(step.output_pattern, "build/obj/{stem}.o");
+            assert_eq!(step.outputs[0], "build/obj/{stem}.o");
             match &step.using_clause {
                 Some(UsingClause::LuaBlock(code)) => {
                     assert!(code.contains("cook.sh"), "code was: {}", code);

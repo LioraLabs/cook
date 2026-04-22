@@ -364,11 +364,11 @@ fn build_single_recipe_infos(
                 serves: recipe
                     .steps
                     .iter()
-                    .filter_map(|s| {
+                    .flat_map(|s| {
                         if let cook_lang::ast::Step::Cook { step, .. } = s {
-                            Some(step.output_pattern.clone())
+                            step.outputs.clone()
                         } else {
-                            None
+                            Vec::new()
                         }
                     })
                     .collect(),
@@ -688,7 +688,7 @@ pub fn cmd_menu(cli: &Cli) -> Result<(), CookError> {
                 step: cook_step, ..
             } = step
             {
-                desc.push_str(&format!("  cook: {}", cook_step.output_pattern));
+                desc.push_str(&format!("  cook: {}", cook_step.outputs.join(" ")));
             }
         }
         println!("{desc}");

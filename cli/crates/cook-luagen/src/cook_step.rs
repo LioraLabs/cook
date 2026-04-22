@@ -44,7 +44,7 @@ pub(crate) fn generate_cook_step(
         "recipe.ingredients[1]".to_string()
     };
 
-    let pattern_kind = analyze_output_pattern(&cook_step.output_pattern, recipe_names);
+    let pattern_kind = analyze_output_pattern(&cook_step.outputs[0], recipe_names);
 
     match mode {
         CookMode::DeclarationOnly => {
@@ -53,7 +53,7 @@ pub(crate) fn generate_cook_step(
             out.push_str(&format!(
                 "    _cook_outputs_{}[1] = \"{}\"\n",
                 index,
-                crate::lua_string::escape_lua_string(&cook_step.output_pattern)
+                crate::lua_string::escape_lua_string(&cook_step.outputs[0])
             ));
         }
         CookMode::OneToOne => {
