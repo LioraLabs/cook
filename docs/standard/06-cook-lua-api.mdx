@@ -1,0 +1,45 @@
+# 6. Cook Lua API
+
+> **Normative.** This chapter defines the Cook API surface available to Lua code inside a Cookfile. Code encountered via `> expr`, `>{ ... }`, `using >{ ... }`, module bodies, and config blocks runs with this API in scope.
+
+## 6.1. API surface overview
+
+Enumerates the top-level Lua tables and functions the Cook runtime installs before any Cookfile code runs.
+
+> **NORMATIVE-TODO (CS-stub-38).** See implementation: `cli/crates/cook-register/src/lib.rs` (entry points `register_fs_api`, `register_path_api`) and submodules registering specific API surfaces.
+
+## 6.2. `cook.add_unit`
+
+Defines the core work-unit registration API: arguments, return value, and capture-phase semantics.
+
+> **NORMATIVE-TODO (CS-stub-39).** See implementation: `cli/crates/cook-register/` — the work-unit registration module.
+
+## 6.3. Shell and Lua step helpers
+
+Defines the Lua-side helpers that correspond to `shell` and `lua` step forms when invoked from inside a module body.
+
+> **NORMATIVE-TODO (CS-stub-40).** See implementation: `cli/crates/cook-register/`.
+
+## 6.4. Using-block globals
+
+Defines the globals `input`, `output`, `inputs`, `outputs`, and `input_N` that are bound inside a `using >{ ... }` or `using { ... }` block at execute time.
+
+> **NORMATIVE-TODO (CS-stub-41).** See implementation: `cli/crates/cook-luagen/` — codegen for `BlockStep` binding setup.
+
+## 6.5. Filesystem helpers (`fs.*`)
+
+Defines the `fs.*` functions available in Lua contexts.
+
+> **NORMATIVE-TODO (CS-stub-42).** See implementation: `cli/crates/cook-register/src/lib.rs` — `register_fs_api` and its submodule.
+
+## 6.6. Path helpers (`path.*`)
+
+Defines the `path.*` functions available in Lua contexts.
+
+> **NORMATIVE-TODO (CS-stub-43).** See implementation: `cli/crates/cook-register/src/lib.rs` — `register_path_api` and its submodule.
+
+## 6.7. Placeholder substitutions in shell strings
+
+Defines the `{in}`, `{out}`, `{all}`, `{stem}`, and related placeholders available in shell using-strings.
+
+> **NORMATIVE-TODO (CS-stub-44).** See implementation: `cli/crates/cook-luagen/` — placeholder expansion in shell `using` clauses.
