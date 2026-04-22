@@ -170,16 +170,24 @@ pub(crate) fn generate_cook_step(
 
             match &cook_step.using_clause {
                 Some(UsingClause::ShellBlock(lines)) => {
-                    out.push_str("    cook.add_unit({inputs = _cook_ins, outputs = _cook_outs, lua = function()\n");
-                    out.push_str("        local inputs = _cook_ins\n");
-                    out.push_str("        local outputs = _cook_outs\n");
+                    // Join lines with \n, prepend `set -e` for fail-fast.
+                    // The combined command is executed by the Shell worker via /bin/sh -c.
+                    let mut combined = String::from("set -e");
                     for shell_line in lines {
-                        let escaped = crate::lua_string::escape_lua_string(shell_line);
-                        out.push_str(&format!("        sh(\"{}\")\n", escaped));
+                        combined.push('\n');
+                        combined.push_str(shell_line);
                     }
-                    out.push_str("    end})\n");
+                    let escaped = crate::lua_string::escape_lua_string(&combined);
+                    out.push_str(&format!(
+                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, command = \"{}\"}})\n",
+                        escaped
+                    ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
+                    // Known runtime gap: cook-register's unit_api does not currently read the
+                    // `lua` key on cook.add_unit, so this function body is dropped at runtime.
+                    // This matches the pre-existing OneToOne LuaBlock behavior; tracked as a
+                    // follow-up and intentionally left unchanged in this chunk.
                     out.push_str("    cook.add_unit({inputs = _cook_ins, outputs = _cook_outs, lua = function()\n");
                     out.push_str("        local inputs = _cook_ins\n");
                     out.push_str("        local outputs = _cook_outs\n");

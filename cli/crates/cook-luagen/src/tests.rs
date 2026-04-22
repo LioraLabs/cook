@@ -1150,18 +1150,17 @@ end
 "#;
     let cookfile = cook_lang::parse(source).expect("parse");
     let lua = crate::generate(&cookfile);
-    // Should produce a _cook_outs table with both declared outputs:
-    assert!(
-        lua.contains(r#"_cook_outs = {"a.js", "b.wasm"}"#),
-        "generated Lua missing outs table: {lua}"
-    );
-    // Should emit sh() for each command line:
-    assert!(lua.contains(r#"sh("wasm-pack build")"#), "missing sh call: {lua}");
-    assert!(lua.contains(r#"sh("cp x a.js")"#), "missing sh call: {lua}");
-    assert!(lua.contains(r#"sh("cp y b.wasm")"#), "missing sh call: {lua}");
+    // Outputs table:
+    assert!(lua.contains(r#"_cook_outs = {"a.js", "b.wasm"}"#), "missing outs table: {lua}");
+    // Single add_unit call with all three commands joined, fail-fast via set -e:
+    assert!(lua.contains(r#"command = "set -e\nwasm-pack build\ncp x a.js\ncp y b.wasm""#)
+        || lua.contains(r#"command = "set -e\\nwasm-pack build\\ncp x a.js\\ncp y b.wasm""#),
+        "generated Lua missing expected shell command: {lua}");
     // Should not iterate per input:
     let for_count = lua.matches("for _, _cook_in in ipairs").count();
-    assert_eq!(for_count, 0, "BlockStep should not emit a per-input loop: {lua}");
+    assert_eq!(for_count, 0, "BlockStep should not emit a per-input loop");
+    // Should not emit a Lua function body for the shell block:
+    assert!(!lua.contains("lua = function()"), "ShellBlock should not emit lua = function(): {lua}");
 }
 
 #[test]
