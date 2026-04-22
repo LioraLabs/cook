@@ -1,0 +1,5 @@
+There once was a builder named Cook
+Who made every recipe a book
+With `@` it would pause
+And let you (because)
+Take over the terminal crook

@@ -424,14 +424,29 @@ pub fn execute_dag(
 
             let node = dag.node(id);
             let work_node = &node.payload;
-            if let Some(WorkPayload::Interactive { cmd, line }) = &work_node.payload {
+            if let Some(payload @ WorkPayload::Interactive { cmd, line }) = &work_node.payload {
                 let recipe_name = work_node.recipe_name.clone();
+                let node_name = payload.display_name();
                 ensure_recipe_started(&mut recipe_trackers, &recipe_name, &event_tx);
 
+                // InteractiveStart is emitted BEFORE NodeStarted so the renderer can
+                // freeze/clear the progress bars before any repaint triggered by the
+                // node's arrival into the build state.
                 emit(
                     &event_tx,
                     EngineEvent::InteractiveStart {
                         recipe: recipe_name.clone(),
+                        node_name: node_name.clone(),
+                    },
+                );
+                emit(
+                    &event_tx,
+                    EngineEvent::NodeStarted {
+                        recipe: recipe_name.clone(),
+                        node_name: node_name.clone(),
+                        artifact: work_node.cache_meta.as_ref()
+                            .and_then(|m| m.output_path.clone().map(std::path::PathBuf::from)),
+                        fallback_label: node_name.clone(),
                     },
                 );
                 let interactive_start = Instant::now();
@@ -441,17 +456,33 @@ pub fn execute_dag(
                 let interactive_elapsed = interactive_start.elapsed();
                 finished += 1;
 
+                // Terminal = no more queued interactives and this node has no
+                // (live) dependents, so after it completes the build will end.
+                let is_terminal = interactive_queue.is_empty()
+                    && dag.node(id).dependents.iter().all(|&d| cancelled[d]);
+
                 let success = result.is_ok();
                 emit(
                     &event_tx,
                     EngineEvent::InteractiveEnd {
                         recipe: recipe_name.clone(),
+                        node_name: node_name.clone(),
                         elapsed: interactive_elapsed,
                         success,
+                        is_terminal,
                     },
                 );
 
                 if success {
+                    emit(
+                        &event_tx,
+                        EngineEvent::NodeCompleted {
+                            recipe: recipe_name.clone(),
+                            node_name: node_name.clone(),
+                            elapsed: interactive_elapsed,
+                        },
+                    );
+
                     // Update cache if needed
                     if let Some(meta) = &dag.node(id).payload.cache_meta {
                         if let Some(cm) = cache_managers.get(&dag.node(id).payload.recipe_name) {
@@ -490,6 +521,15 @@ pub fn execute_dag(
                     }
                 } else {
                     let err_msg = result.unwrap_err();
+                    emit(
+                        &event_tx,
+                        EngineEvent::NodeFailed {
+                            recipe: recipe_name.clone(),
+                            node_name: node_name.clone(),
+                            elapsed: interactive_elapsed,
+                            error: err_msg.clone(),
+                        },
+                    );
                     failures.push((id, recipe_name.clone(), err_msg));
                     finish_recipe_node(
                         &mut recipe_trackers,

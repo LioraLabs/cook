@@ -1,0 +1,5 @@
+Build once, cache forever.
+Parallelism is not a feature, it is the default.
+Recipes describe outcomes, not steps.
+The terminal is sacred: when you ask for it, you get all of it.
+Every artifact is a proof of work.

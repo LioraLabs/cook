@@ -121,15 +121,15 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "stream": stream_str(*stream),
             "line": line,
         }),
-        ProgressEvent::InteractiveStart { recipe, node } => json!({
+        ProgressEvent::InteractiveStart { recipe, name, .. } => json!({
             "type": "interactive-start",
             "recipe": recipe_name(state, *recipe),
-            "node": node_name(state, *recipe, *node),
+            "node": name,
         }),
-        ProgressEvent::InteractiveEnd { recipe, node, elapsed, success } => json!({
+        ProgressEvent::InteractiveEnd { recipe, name, elapsed, success, .. } => json!({
             "type": "interactive-end",
             "recipe": recipe_name(state, *recipe),
-            "node": node_name(state, *recipe, *node),
+            "node": name,
             "elapsed_ms": duration_ms(*elapsed),
             "success": success,
         }),

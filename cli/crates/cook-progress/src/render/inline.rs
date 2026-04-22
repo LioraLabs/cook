@@ -168,21 +168,23 @@ impl Renderer for InlineRenderer {
             }
         }
 
-        // Handle interactive start: freeze bars by switching to hidden draw target.
-        if let ProgressEvent::InteractiveStart { recipe, node } = event {
-            let rname = state.recipes.get(recipe).map(|r| r.name.as_str()).unwrap_or("?");
-            let nname = state.recipes.get(recipe)
-                .and_then(|r| r.nodes.get(node))
-                .map(|n| n.name.as_str()).unwrap_or("?");
-            let _ = self.multi.println(format!("─── {rname}/{nname} (interactive) ───"));
-            let _ = self.multi.println("");
+        // Handle interactive start: erase the currently-drawn bars, then hide
+        // the draw target so nothing repaints over the interactive command's
+        // output. Clear must run BEFORE hiding — otherwise the clear command
+        // itself goes to the hidden target and the bars remain on screen.
+        if let ProgressEvent::InteractiveStart { .. } = event {
+            let _ = self.multi.clear();
             self.multi.set_draw_target(ProgressDrawTarget::hidden());
             return Ok(());
         }
 
-        // Handle interactive end: flag pending resume; do not draw yet.
-        if let ProgressEvent::InteractiveEnd { .. } = event {
-            self.pending_resume = true;
+        // Handle interactive end: flag pending resume unless the interactive
+        // was the last bit of work — in that case stay frozen so no bars are
+        // drawn between the command output and the final summary.
+        if let ProgressEvent::InteractiveEnd { is_terminal, .. } = event {
+            if !is_terminal {
+                self.pending_resume = true;
+            }
             return Ok(());
         }
 
@@ -380,10 +382,10 @@ mod tests {
                 recipe: RecipeId::new(0), node: NodeId::new(0),
                 name: "repl".into(), artifact: None, fallback_label: "gdb".into(),
             },
-            ProgressEvent::InteractiveStart { recipe: RecipeId::new(0), node: NodeId::new(0) },
+            ProgressEvent::InteractiveStart { recipe: RecipeId::new(0), node: NodeId::new(0), name: "@5".into() },
             ProgressEvent::InteractiveEnd {
-                recipe: RecipeId::new(0), node: NodeId::new(0),
-                elapsed: Duration::from_millis(10), success: true,
+                recipe: RecipeId::new(0), node: NodeId::new(0), name: "@5".into(),
+                elapsed: Duration::from_millis(10), success: true, is_terminal: false,
             },
         ];
         for ev in &events {
@@ -467,10 +469,10 @@ mod tests {
                 recipe: RecipeId::new(0), node: NodeId::new(0),
                 name: "x".into(), artifact: None, fallback_label: "x".into(),
             },
-            ProgressEvent::InteractiveStart { recipe: RecipeId::new(0), node: NodeId::new(0) },
+            ProgressEvent::InteractiveStart { recipe: RecipeId::new(0), node: NodeId::new(0), name: "x".into() },
             ProgressEvent::InteractiveEnd {
-                recipe: RecipeId::new(0), node: NodeId::new(0),
-                elapsed: Duration::from_millis(1), success: true,
+                recipe: RecipeId::new(0), node: NodeId::new(0), name: "x".into(),
+                elapsed: Duration::from_millis(1), success: true, is_terminal: false,
             },
         ];
         for ev in &setup {

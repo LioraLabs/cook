@@ -1,0 +1,41 @@
+use cpp
+
+config
+    env.CFLAGS = "-O2 -Wall"
+end
+
+recipe colorize
+    cpp.bin("colorize", {
+        sources = { "src/colorize.c" },
+    })
+end
+
+recipe wordcount
+    cpp.bin("wordcount", {
+        sources = { "src/wordcount.c" },
+    })
+end
+
+recipe reverse
+    cpp.bin("reverse", {
+        sources = { "src/reverse.c" },
+    })
+end
+
+recipe tools: colorize wordcount reverse
+end
+
+recipe play: tools
+    @mkdir -p .cook/scratch
+    @printf 'colorize\nwordcount\nreverse\n' | fzf --prompt='tool> ' --height=40% --border --header='pick a tool' > .cook/scratch/tool
+    @find data -type f | fzf --prompt='file> ' --height=40% --border --header='pick a file' --preview='cat {}' --preview-window=right:60% > .cook/scratch/file
+    @printf '\n\033[1m── running %s on %s ──\033[0m\n\n' "$(cat .cook/scratch/tool)" "$(cat .cook/scratch/file)" && ./build/bin/$(cat .cook/scratch/tool) < "$(cat .cook/scratch/file)"
+end
+
+recipe compile-commands: tools
+    cpp.compile_commands()
+end
+
+recipe clean
+    rm -rf build .cook
+end

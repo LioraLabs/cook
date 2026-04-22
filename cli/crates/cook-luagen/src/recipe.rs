@@ -97,12 +97,12 @@ pub fn generate_with_names(cookfile: &Cookfile, recipe_names: &BTreeSet<String>)
 
         for step in &recipe.steps {
             match step {
-                Step::Shell { command, line: _, interactive } => {
+                Step::Shell { command, line, interactive } => {
                     let wrapped = wrap_lua_string(command);
                     if *interactive {
                         out.push_str(&format!(
-                            "    cook.add_unit({{command = {}, interactive = true, cache = false}})\n",
-                            wrapped
+                            "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
+                            wrapped, line
                         ));
                     } else {
                         out.push_str(&format!(

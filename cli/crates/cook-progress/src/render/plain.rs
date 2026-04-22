@@ -97,22 +97,14 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 };
                 writeln!(self.out, "  [{rname}/{nname}] {tag}{line}")?;
             }
-            ProgressEvent::InteractiveStart { recipe, node } => {
+            ProgressEvent::InteractiveStart { recipe, name, .. } => {
                 let rname = self.name(state, *recipe);
-                let nname = state.recipes.get(recipe)
-                    .and_then(|r| r.nodes.get(node))
-                    .map(|n| n.name.clone())
-                    .unwrap_or_default();
-                writeln!(self.out, "─── {rname}/{nname} (interactive) ───")?;
+                writeln!(self.out, "─── {rname}/{name} ───")?;
             }
-            ProgressEvent::InteractiveEnd { recipe, node, elapsed, success } => {
+            ProgressEvent::InteractiveEnd { recipe, name, elapsed, success, .. } => {
                 let rname = self.name(state, *recipe);
-                let nname = state.recipes.get(recipe)
-                    .and_then(|r| r.nodes.get(node))
-                    .map(|n| n.name.clone())
-                    .unwrap_or_default();
                 let ok = if *success { "ok" } else { "failed" };
-                writeln!(self.out, "─── {rname}/{nname} resumed ({ok}, {}) ───", fmt_secs(*elapsed))?;
+                writeln!(self.out, "─── {rname}/{name} resumed ({ok}, {}) ───", fmt_secs(*elapsed))?;
             }
             ProgressEvent::Finished { .. } => {}
         }

@@ -45,7 +45,7 @@ impl WorkPayload {
                 }
             }
             Self::LuaChunk { .. } => "lua".to_string(),
-            Self::Interactive { cmd, .. } => format!("interactive: {cmd}"),
+            Self::Interactive { line, .. } => format!("@{line}"),
             Self::Test { test_name, .. } => test_name.clone(),
         }
     }

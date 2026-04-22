@@ -462,7 +462,7 @@ fn test_interactive_shell_step() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains("cook.add_unit({command = [[./bin/app]], interactive = true, cache = false})"),
+        output.contains("cook.add_unit({command = [[./bin/app]], interactive = true, line = 5, cache = false})"),
         "expected cook.add_unit with interactive=true, got: {output}"
     );
     assert!(

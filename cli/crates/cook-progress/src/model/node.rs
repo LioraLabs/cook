@@ -39,7 +39,8 @@ impl NodeState {
     }
 
     /// Basename of `artifact` if set; otherwise the first whitespace-separated token
-    /// of `fallback_label` (stripped of a leading `$ `).
+    /// of `fallback_label` (stripped of a leading `$ `). An `@N` token (an
+    /// interactive step keyed by source line) is returned as-is.
     pub fn display(&self) -> String {
         if let Some(artifact) = &self.artifact {
             if let Some(base) = artifact.file_name().and_then(|s| s.to_str()) {
@@ -48,7 +49,11 @@ impl NodeState {
         }
         let stripped = self.fallback_label.trim_start_matches("$ ").trim_start();
         let first = stripped.split_whitespace().next().unwrap_or("?");
-        format!("${first}")
+        if first.starts_with('@') {
+            first.to_string()
+        } else {
+            format!("${first}")
+        }
     }
 }
 

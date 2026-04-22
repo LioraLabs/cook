@@ -12,6 +12,8 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
     let rname = recipe_name.to_string();
     let add_unit_fn = lua.create_function(move |_, tbl: LuaTable| {
         let command: String = tbl.get::<String>("command").unwrap_or_default();
+        let interactive: bool = tbl.get::<Option<bool>>("interactive").unwrap_or(None).unwrap_or(false);
+        let line: usize = tbl.get::<Option<usize>>("line").unwrap_or(None).unwrap_or(0);
         let cache_enabled: bool = tbl.get::<Option<bool>>("cache").unwrap_or(None).unwrap_or(true);
         let inputs: Vec<String> = match tbl.get::<LuaTable>("inputs") {
             Ok(t) => t.sequence_values::<String>().filter_map(Result::ok).collect(),
@@ -37,6 +39,12 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
             None
         };
 
+        let payload = if interactive {
+            WorkPayload::Interactive { cmd: command, line }
+        } else {
+            WorkPayload::Shell { cmd: command, line: 0 }
+        };
+
         let mut state = cs.borrow_mut();
         let dep_kind = if let Some(group_idx) = state.current_group {
             DepKind::StepGroup(group_idx)
@@ -45,7 +53,7 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
         };
         let unit_idx = state.units.len();
         state.units.push(CapturedUnit {
-            payload: WorkPayload::Shell { cmd: command, line: 0 },
+            payload,
             cache_meta,
             dep_kind: dep_kind.clone(),
         });
@@ -152,6 +160,27 @@ mod tests {
         let state = capture_state.borrow();
         assert_eq!(state.units.len(), 1);
         assert!(state.units[0].cache_meta.is_none());
+    }
+
+    #[test]
+    fn test_add_unit_interactive_flag() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.load(r#"
+            cook.add_unit({
+                command = "build/bin/lua -e 'print(1)'",
+                interactive = true,
+                cache = false,
+            })
+        "#).exec().unwrap();
+
+        let state = capture_state.borrow();
+        assert_eq!(state.units.len(), 1);
+        match &state.units[0].payload {
+            WorkPayload::Interactive { cmd, .. } => {
+                assert_eq!(cmd, "build/bin/lua -e 'print(1)'");
+            }
+            other => panic!("expected Interactive payload, got {other:?}"),
+        }
     }
 
     #[test]

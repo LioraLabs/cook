@@ -265,26 +265,31 @@ fn bridge_engine_to_progress_events(
                         stream,
                     }
                 }
-                cook_engine::EngineEvent::InteractiveStart { recipe } => {
+                cook_engine::EngineEvent::InteractiveStart { recipe, node_name } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = NodeId::new(u32::MAX);
+                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
                     cook_progress::ProgressEvent::InteractiveStart {
                         recipe: rid,
                         node: nid,
+                        name: node_name,
                     }
                 }
                 cook_engine::EngineEvent::InteractiveEnd {
                     recipe,
+                    node_name,
                     elapsed,
                     success,
+                    is_terminal,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
-                    let nid = NodeId::new(u32::MAX);
+                    let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
                     cook_progress::ProgressEvent::InteractiveEnd {
                         recipe: rid,
                         node: nid,
+                        name: node_name,
                         elapsed,
                         success,
+                        is_terminal,
                     }
                 }
                 cook_engine::EngineEvent::Finished { success, .. } => {

@@ -132,12 +132,17 @@ pub enum EngineEvent {
     /// An interactive command is about to run on the main thread.
     InteractiveStart {
         recipe: String,
+        node_name: String,
     },
     /// An interactive command finished.
     InteractiveEnd {
         recipe: String,
+        node_name: String,
         elapsed: Duration,
         success: bool,
+        /// True when no further work will run after this node — the renderer
+        /// uses this to leave progress bars frozen instead of resuming them.
+        is_terminal: bool,
     },
     /// A line of output from a work node.
     OutputLine {

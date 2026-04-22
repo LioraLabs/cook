@@ -121,12 +121,17 @@ pub enum ProgressEvent {
     InteractiveStart {
         recipe: RecipeId,
         node: NodeId,
+        name: String,
     },
     InteractiveEnd {
         recipe: RecipeId,
         node: NodeId,
+        name: String,
         elapsed: Duration,
         success: bool,
+        /// True when this interactive was the final bit of work — renderers
+        /// use this to skip resuming progress bars.
+        is_terminal: bool,
     },
     Finished {
         success: bool,
