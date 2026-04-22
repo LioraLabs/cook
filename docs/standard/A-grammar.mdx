@@ -18,9 +18,9 @@ toplevel_item         ::= recipe
 ## A.2. Top-level declarations
 
 ```ebnf
-variable_declaration  ::= IDENTIFIER STRING NEWLINE
+variable_declaration  ::= BARE_IDENTIFIER STRING NEWLINE
 use_declaration       ::= "use" name NEWLINE
-import_declaration    ::= "import" IDENTIFIER path NEWLINE
+import_declaration    ::= "import" BARE_IDENTIFIER path NEWLINE
 config_block          ::= "config" name? NEWLINE config_body "end" NEWLINE
 config_body           ::= LUA_SOURCE
 ```
@@ -85,13 +85,15 @@ interactive_command   ::= "@" SHELL_LINE_CONTENT NEWLINE
 
 module_call           ::= MODULE_CALL_TEXT NEWLINE?
                           /* MODULE_CALL_TEXT is any Content line whose first
-                             token matches BARE_IDENTIFIER "." BARE_IDENTIFIER
-                             (ident, dot, ident-start). Braces may be unbalanced
-                             on the first line, in which case subsequent source
-                             lines are consumed until brace depth returns to zero
-                             (see § 2.9). A single-line module call produces a
-                             Lua step; a multi-line one produces a LuaBlock step.
-                             See § 4.11. */
+                             token matches /[A-Za-z_][A-Za-z0-9_]*/ (alphanumeric
+                             and underscore only; hyphens and dots are NOT
+                             permitted in the first segment), followed by a
+                             literal ".", followed by at least one character
+                             matching /[A-Za-z_]/ (ident-start). The remainder
+                             of the second segment is not validated at dispatch
+                             time; the full Lua-expression-hood of the line is
+                             the Lua runtime's concern. Braces may span
+                             subsequent lines (see § 2.9). */
 
 shell_command         ::= SHELL_LINE_CONTENT NEWLINE
                           /* Any Content line not matching a preceding
