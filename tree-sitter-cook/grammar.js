@@ -6,7 +6,12 @@ module.exports = grammar({
 
   extras: ($) => [/[ \t\r]/],
 
-  externals: ($) => [$._lua_block_content, $._shell_content, $._config_block_content],
+  externals: ($) => [
+    $._lua_block_content,
+    $._shell_content,
+    $._config_block_content,
+    $._shell_block_content,
+  ],
 
   word: ($) => $._bare_identifier,
 
@@ -122,22 +127,21 @@ module.exports = grammar({
         $._newline,
       ),
 
-    // TODO(tree-sitter): support the plain-shell block form
-    // `using { shell line; shell line }`. This requires a new external
-    // scanner (analogous to `_lua_block_content`) that handles brace balancing
-    // and nested comments. Tracked as a follow-up. For now only the quoted
-    // shell command and `>{ lua }` forms are recognized by the grammar.
     using_clause: ($) =>
       seq(
         "using",
         choice(
           field("command", $.string),
           field("lua", $.inline_lua_block),
+          field("shell", $.shell_block),
         ),
       ),
 
     inline_lua_block: ($) =>
       seq(">{", alias($._lua_block_content, $.lua_code), "}"),
+
+    shell_block: ($) =>
+      seq("{", alias($._shell_block_content, $.shell_content), "}"),
 
     plate_step: ($) => seq("plate", field("command", $.string), $._newline),
 

@@ -287,15 +287,15 @@ fn execute_work_item(
         }
         WorkPayload::LuaChunk {
             code,
-            input,
-            output,
+            inputs,
+            outputs,
             ingredient_groups,
         } => execute_lua_chunk(
             lua,
             work.id,
             code,
-            input,
-            output,
+            inputs,
+            outputs,
             ingredient_groups,
             &work.recipe_name,
             node_name,
@@ -392,8 +392,8 @@ fn execute_lua_chunk(
     lua: &mlua::Lua,
     id: usize,
     code: &str,
-    input: &str,
-    output: &str,
+    inputs: &[String],
+    outputs: &[String],
     ingredient_groups: &[Vec<String>],
     recipe_name: &str,
     node_name: String,
@@ -401,9 +401,20 @@ fn execute_lua_chunk(
     let setup = || -> mlua::Result<()> {
         let globals = lua.globals();
 
-        // Set input / output globals
-        globals.set("input", input)?;
-        globals.set("output", output)?;
+        let inputs_tbl = lua.create_table()?;
+        for (i, s) in inputs.iter().enumerate() {
+            inputs_tbl.set(i + 1, s.as_str())?;
+        }
+        globals.set("inputs", inputs_tbl)?;
+
+        let outputs_tbl = lua.create_table()?;
+        for (i, s) in outputs.iter().enumerate() {
+            outputs_tbl.set(i + 1, s.as_str())?;
+        }
+        globals.set("outputs", outputs_tbl)?;
+
+        globals.set("input", inputs.first().map(|s| s.as_str()).unwrap_or(""))?;
+        globals.set("output", outputs.first().map(|s| s.as_str()).unwrap_or(""))?;
 
         // Set input_1, input_2, ... for each ingredient group
         for (i, group) in ingredient_groups.iter().enumerate() {
@@ -692,6 +703,85 @@ mod tests {
 
         let result = rx.recv().unwrap();
         assert!(result.success, "expected success, got error: {:?}", result.error);
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_pool_executes_lua_chunk_writing_multiple_outputs() {
+        let dir = TempDir::new().unwrap();
+        let (pool, rx) = WorkerPool::spawn(1);
+
+        let code = r#"
+            local f = io.open(outputs[1], "w")
+            f:write("a")
+            f:close()
+            local g = io.open(outputs[2], "w")
+            g:write("b")
+            g:close()
+        "#;
+
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::LuaChunk {
+                code: code.to_string(),
+                inputs: vec!["src.rs".to_string()],
+                outputs: vec![
+                    dir.path().join("a.txt").to_string_lossy().into_owned(),
+                    dir.path().join("b.txt").to_string_lossy().into_owned(),
+                ],
+                ingredient_groups: vec![vec!["src.rs".to_string()]],
+            },
+            recipe_name: "multi".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+        });
+
+        let result = rx.recv().unwrap();
+        assert!(
+            result.success,
+            "expected success, got error: {:?}",
+            result.error
+        );
+        assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "a");
+        assert_eq!(fs::read_to_string(dir.path().join("b.txt")).unwrap(), "b");
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_pool_lua_chunk_sees_input_output_globals() {
+        let dir = TempDir::new().unwrap();
+        let out_path = dir.path().join("out.txt");
+        let (pool, rx) = WorkerPool::spawn(1);
+
+        // Use singular `input`/`output` convention (single input/output case).
+        let code = r#"
+            local f = io.open(output, "w")
+            f:write(input)
+            f:close()
+        "#;
+
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::LuaChunk {
+                code: code.to_string(),
+                inputs: vec!["hello".to_string()],
+                outputs: vec![out_path.to_string_lossy().into_owned()],
+                ingredient_groups: vec![],
+            },
+            recipe_name: "r".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+        });
+
+        let result = rx.recv().unwrap();
+        assert!(
+            result.success,
+            "expected success, got error: {:?}",
+            result.error
+        );
+        assert_eq!(fs::read_to_string(&out_path).unwrap(), "hello");
 
         pool.shutdown();
     }

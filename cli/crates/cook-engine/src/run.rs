@@ -55,6 +55,33 @@ pub fn run(
     inferred_deps: &BTreeMap<String, Vec<String>>,
     on_event: impl Fn(EngineEvent) + Send + Sync,
 ) -> Result<RunResult, EngineError> {
+    let started = std::time::Instant::now();
+    let result = run_inner(
+        recipe_infos,
+        targets,
+        registries,
+        num_jobs,
+        inferred_deps,
+        &on_event,
+    );
+    on_event(EngineEvent::Finished {
+        elapsed: started.elapsed(),
+        success: result.is_ok(),
+    });
+    result
+}
+
+fn run_inner<F>(
+    recipe_infos: &BTreeMap<String, analyzer::RecipeInfo>,
+    targets: &[String],
+    registries: &BTreeMap<String, (cook_register::Registry, String)>,
+    num_jobs: usize,
+    inferred_deps: &BTreeMap<String, Vec<String>>,
+    on_event: &F,
+) -> Result<RunResult, EngineError>
+where
+    F: Fn(EngineEvent) + Send + Sync,
+{
     // 1. Compute the full dependency graph for all targets.
     let edges = analyzer::dependency_edges_multi(recipe_infos, targets).map_err(|e| match e {
         GraphError::CycleDetected(s) => EngineError::CycleDetected(s),
@@ -301,6 +328,67 @@ mod tests {
             result.unwrap_err(),
             EngineError::CycleDetected(_)
         ));
+    }
+
+    #[test]
+    fn test_run_emits_finished_success_on_empty_targets() {
+        let mut recipes = BTreeMap::new();
+        recipes.insert(
+            "build".to_string(),
+            RecipeInfo {
+                ingredients: vec![],
+                serves: vec![],
+                requires: vec![],
+            },
+        );
+        let registries = BTreeMap::new();
+        let inferred = BTreeMap::new();
+
+        let events = std::sync::Mutex::new(Vec::new());
+        let result = run(&recipes, &[], &registries, 1, &inferred, |event| {
+            events.lock().unwrap().push(event)
+        });
+        assert!(result.is_ok());
+
+        let events = events.lock().unwrap();
+        let finished = events.iter().find_map(|e| match e {
+            EngineEvent::Finished { success, .. } => Some(*success),
+            _ => None,
+        });
+        assert_eq!(
+            finished,
+            Some(true),
+            "expected Finished{{success:true}} event"
+        );
+    }
+
+    #[test]
+    fn test_run_emits_finished_failure_on_unknown_target() {
+        let recipes = BTreeMap::new();
+        let registries = BTreeMap::new();
+        let inferred = BTreeMap::new();
+
+        let events = std::sync::Mutex::new(Vec::new());
+        let result = run(
+            &recipes,
+            &["missing".to_string()],
+            &registries,
+            1,
+            &inferred,
+            |event| events.lock().unwrap().push(event),
+        );
+        assert!(result.is_err());
+
+        let events = events.lock().unwrap();
+        let finished = events.iter().find_map(|e| match e {
+            EngineEvent::Finished { success, .. } => Some(*success),
+            _ => None,
+        });
+        assert_eq!(
+            finished,
+            Some(false),
+            "expected Finished{{success:false}} event"
+        );
     }
 
     #[test]

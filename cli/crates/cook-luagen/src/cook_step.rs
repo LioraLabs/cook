@@ -17,6 +17,13 @@ pub(crate) enum CookMode {
     BlockStep,
 }
 
+fn format_ingredient_groups(n: usize) -> String {
+    let parts: Vec<String> = (1..=n)
+        .map(|i| format!("recipe.ingredients[{}]", i))
+        .collect();
+    format!("{{{}}}", parts.join(", "))
+}
+
 pub(crate) fn cook_step_mode(step: &CookStep) -> CookMode {
     match &step.using_clause {
         None => CookMode::DeclarationOnly,
@@ -95,21 +102,12 @@ pub(crate) fn generate_cook_step(
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
-                    out.push_str("        cook.add_unit({inputs = {_cook_in}, output = _cook_out, lua = function()\n");
-                    out.push_str("            local input = _cook_in\n");
-                    out.push_str("            local output = _cook_out\n");
-                    // Expose all ingredient groups
-                    for (i, _) in ingredients.iter().enumerate() {
-                        out.push_str(&format!(
-                            "            local input_{} = recipe.ingredients[{}]\n",
-                            i + 1,
-                            i + 1
-                        ));
-                    }
-                    for code_line in code.lines() {
-                        out.push_str(&format!("            {}\n", code_line));
-                    }
-                    out.push_str("        end})\n");
+                    let code_literal = crate::lua_string::wrap_lua_string(code);
+                    let ing_groups = format_ingredient_groups(ingredients.len());
+                    out.push_str(&format!(
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}}})\n",
+                        code_literal, ing_groups
+                    ));
                 }
                 Some(UsingClause::ShellBlock(_)) => {
                     // ShellBlock routes to CookMode::BlockStep; unreachable here.
@@ -184,24 +182,12 @@ pub(crate) fn generate_cook_step(
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
-                    // Known runtime gap: cook-register's unit_api does not currently read the
-                    // `lua` key on cook.add_unit, so this function body is dropped at runtime.
-                    // This matches the pre-existing OneToOne LuaBlock behavior; tracked as a
-                    // follow-up and intentionally left unchanged in this chunk.
-                    out.push_str("    cook.add_unit({inputs = _cook_ins, outputs = _cook_outs, lua = function()\n");
-                    out.push_str("        local inputs = _cook_ins\n");
-                    out.push_str("        local outputs = _cook_outs\n");
-                    for (i, _) in ingredients.iter().enumerate() {
-                        out.push_str(&format!(
-                            "        local input_{} = recipe.ingredients[{}]\n",
-                            i + 1,
-                            i + 1
-                        ));
-                    }
-                    for code_line in code.lines() {
-                        out.push_str(&format!("        {}\n", code_line));
-                    }
-                    out.push_str("    end})\n");
+                    let code_literal = crate::lua_string::wrap_lua_string(code);
+                    let ing_groups = format_ingredient_groups(ingredients.len());
+                    out.push_str(&format!(
+                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}}})\n",
+                        code_literal, ing_groups
+                    ));
                 }
                 _ => unreachable!("BlockStep mode requires ShellBlock or LuaBlock using-clause"),
             }

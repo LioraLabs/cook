@@ -314,3 +314,54 @@ end
       outputs: (string)
       (using_clause
         command: (string)))))
+
+================
+Cook with plain-shell using block
+================
+
+recipe wasm
+    ingredients "src/*.rs"
+    cook "a.js" "b.wasm" using {
+        wasm-pack build
+        cp pkg/a.js a.js
+        cp pkg/b.wasm b.wasm
+    }
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      (string))
+    (cook_step
+      outputs: (string)
+      outputs: (string)
+      (using_clause
+        shell: (shell_block
+          (shell_content))))))
+
+================
+Cook plain-shell block with nested braces in content
+================
+
+recipe x
+    cook "out" using {
+        echo "hello { world }"
+        for f in a b; do echo "{ $f }"; done
+    }
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string)
+      (using_clause
+        shell: (shell_block
+          (shell_content))))))

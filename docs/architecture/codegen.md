@@ -167,7 +167,7 @@ The path helper variables (`_cook_stem`, `_cook_name`, `_cook_ext`, `_cook_dir`)
 
 The `<hash>` argument passed to `cook.layer()` is `hash_str(cmd)` computed at codegen time (line 161). The runtime uses this hash for cache invalidation: if the command text changes, the hash changes, and cached outputs are considered stale.
 
-For a **LuaBlock** `using` clause, the codegen emits the Lua code inline and additionally passes the raw source as a fifth `[=[ ... ]=]` long-string argument. This allows the runtime's capture mode to record the Lua chunk for deferred execution:
+For a **LuaBlock** `using` clause, the codegen emits the raw user Lua source as the `lua_code` field on `cook.add_unit`, together with an `ingredient_groups` list built from `recipe.ingredients`. The worker pool (`cook-luaotp`) later executes that code against a fresh Lua state where `input`, `output`, `inputs`, `outputs`, and `input_N` are pre-populated as globals.
 
 **Example Cookfile:**
 ```
@@ -176,30 +176,23 @@ cook "build/{stem}.o" using >{
 }
 ```
 
-**Generated Lua:**
+**Generated Lua (OneToOne):**
 ```lua
-    cook.begin_step()
     local _cook_outputs_1 = {}
-    for _, _cook_in in ipairs(recipe.ingredients[1]) do
-        local _cook_stem = path.stem(_cook_in)
-        local _cook_name = path.name(_cook_in)
-        local _cook_ext = path.ext(_cook_in)
-        local _cook_dir = path.dir(_cook_in)
-        local _cook_out = "build/" .. _cook_stem .. ".o"
-        cook.layer(_cook_in, _cook_out, <hash>, function()
-            local input = _cook_in
-            local output = _cook_out
-            local input_1 = recipe.ingredients[1]
-            cook.sh("gcc -c " .. input .. " -o " .. output)
-        end, [=[
-            cook.sh("gcc -c " .. input .. " -o " .. output)
-        ]=])
-        table.insert(_cook_outputs_1, _cook_out)
-    end
-    cook.end_step()
+    cook.step_group(function()
+        for _, _cook_in in ipairs(recipe.ingredients[1]) do
+            local _cook_stem = path.stem(_cook_in)
+            local _cook_name = path.name(_cook_in)
+            local _cook_ext = path.ext(_cook_in)
+            local _cook_dir = path.dir(_cook_in)
+            local _cook_out = "build/" .. _cook_stem .. ".o"
+            cook.add_unit({inputs = {_cook_in}, output = _cook_out, lua_code = [[
+                cook.sh("gcc -c " .. input .. " -o " .. output)
+            ]], ingredient_groups = {recipe.ingredients[1]}})
+            table.insert(_cook_outputs_1, _cook_out)
+        end
+    end)
 ```
-
-The `input` / `output` aliases and `input_N` ingredient group aliases are injected immediately before the user's Lua code (lines 181–190). The fifth argument replicates the raw Lua source for the capture-mode `LuaChunk` work unit.
 
 ### ManyToOne (`{in}` absent in shell command)
 
@@ -250,7 +243,7 @@ cook "out/parser.rs" "out/parser.h" using >{
 }
 ```
 
-The multi-output Lua-block form parses and codegens, but runtime execution of it as a combined multi-output work unit is a known pre-existing gap — it shares the same limitation as the single-output `cook "x" using >{ lua }` form. Prefer the plain-shell `using { ... }` block for multi-output cook steps until that gap is closed.
+The multi-output Lua-block form is emitted as a single `cook.add_unit` call with the user's Lua source passed via the `lua_code` field and any resolved ingredient-group tables passed via `ingredient_groups`. The worker pool (`cook-luaotp`) executes the code against a fresh Lua state where `inputs`, `outputs`, `input` (= `inputs[1]`), `output` (= `outputs[1]`), and `input_N` (= ingredient group N) are pre-populated globals.
 
 ### Plate Steps
 

@@ -217,13 +217,15 @@ fn test_cook_step_lua_block() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains("cook.add_unit({inputs = {_cook_in}, output = _cook_out, lua = function()"),
-        "missing cook.add_unit with lua function, got:\n{output}"
+        output.contains("lua_code ="),
+        "missing cook.add_unit with lua_code, got:\n{output}"
     );
-    assert!(output.contains("local input = _cook_in"));
-    assert!(output.contains("local output = _cook_out"));
-    assert!(output.contains("local input_1 = recipe.ingredients[1]"));
+    assert!(
+        output.contains("ingredient_groups = {recipe.ingredients[1]}"),
+        "missing ingredient_groups, got:\n{output}"
+    );
     assert!(output.contains("cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)"));
+    assert!(!output.contains("lua = function()"), "should not emit lua = function(), got:\n{output}");
     // Should NOT have old API
     assert!(!output.contains("cook.layer"), "should not use cook.layer");
 }
@@ -492,19 +494,17 @@ fn test_cook_step_lua_block_no_raw_string() {
         }],
     )]);
     let output = generate(&cookfile);
-    // New API uses lua = function() ... end} -- no raw [=[ string needed
+    // The emitted code must pass the user's Lua block through as a string
+    // (`lua_code = [[...]]`) rather than a Lua function value, because
+    // unit_api consumes `lua_code` and builds a WorkPayload::LuaChunk that
+    // the worker pool executes against a fresh Lua state.
     assert!(
-        output.contains("lua = function()"),
-        "LuaBlock should use lua = function()"
+        output.contains("lua_code ="),
+        "LuaBlock should emit lua_code = ..."
     );
     assert!(
-        output.contains("end})"),
-        "LuaBlock should close with end{{}})"
-    );
-    // Should NOT contain old-style [=[ raw string passthrough
-    assert!(
-        !output.contains("[=["),
-        "New API should not emit [=[ long string"
+        !output.contains("lua = function()"),
+        "LuaBlock should not emit lua = function()"
     );
 }
 
@@ -1181,6 +1181,46 @@ end
     );
     let for_count = lua.matches("for _, _cook_in in ipairs").count();
     assert_eq!(for_count, 0, "BlockStep should not emit a per-input loop: {lua}");
+    // Must emit lua_code = ... so the worker can execute the code body.
+    // Emitting `lua = function()` silently drops the code since unit_api
+    // does not consume Lua function values.
+    assert!(
+        !lua.contains("lua = function()"),
+        "BlockStep+LuaBlock must not emit lua = function(); got:\n{lua}"
+    );
+    assert!(
+        lua.contains("lua_code ="),
+        "BlockStep+LuaBlock must emit lua_code = ...; got:\n{lua}"
+    );
+    assert!(
+        lua.contains("ingredient_groups ="),
+        "BlockStep+LuaBlock must emit ingredient_groups = ...; got:\n{lua}"
+    );
+}
+
+#[test]
+fn onetoone_lua_emits_lua_code_not_function() {
+    let source = r#"recipe "lib"
+    ingredients "lib/*.c"
+    cook "build/obj/{stem}.o" using >{
+        sh("gcc -c " .. input .. " -o " .. output)
+    }
+end
+"#;
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let lua = crate::generate(&cookfile);
+    assert!(
+        !lua.contains("lua = function()"),
+        "OneToOne+LuaBlock must not emit lua = function(); got:\n{lua}"
+    );
+    assert!(
+        lua.contains("lua_code ="),
+        "OneToOne+LuaBlock must emit lua_code = ...; got:\n{lua}"
+    );
+    assert!(
+        lua.contains("ingredient_groups ="),
+        "OneToOne+LuaBlock must emit ingredient_groups = ...; got:\n{lua}"
+    );
 }
 
 #[test]

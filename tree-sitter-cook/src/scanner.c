@@ -8,6 +8,7 @@ enum TokenType {
   LUA_BLOCK_CONTENT,
   SHELL_CONTENT,
   CONFIG_BLOCK_CONTENT,
+  SHELL_BLOCK_CONTENT,
 };
 
 // ── Lua block scanner ──────────────────────────────────────────
@@ -77,6 +78,84 @@ static bool scan_lua_block_content(TSLexer *lexer) {
   if (has_content) {
     lexer->mark_end(lexer);
     lexer->result_symbol = LUA_BLOCK_CONTENT;
+    return true;
+  }
+  return false;
+}
+
+// ── Shell block scanner ────────────────────────────────────────
+// Scans brace-balanced shell content after `{`, stopping before the
+// closing `}` that balances the opening one. Handles shell quoting
+// (`"..."`, `'...'`) and `#` line comments so a `{` inside them does
+// not affect depth tracking.
+
+static bool scan_shell_block_content(TSLexer *lexer) {
+  int depth = 0;
+  bool has_content = false;
+  bool at_line_start = true;
+
+  while (!lexer->eof(lexer)) {
+    int32_t c = lexer->lookahead;
+
+    if (c == '{') {
+      depth++;
+      has_content = true;
+      at_line_start = false;
+      lexer->advance(lexer, false);
+    } else if (c == '}') {
+      if (depth == 0) {
+        lexer->mark_end(lexer);
+        lexer->result_symbol = SHELL_BLOCK_CONTENT;
+        return true;
+      }
+      depth--;
+      has_content = true;
+      at_line_start = false;
+      lexer->advance(lexer, false);
+    } else if (c == '"') {
+      has_content = true;
+      at_line_start = false;
+      lexer->advance(lexer, false);
+      while (!lexer->eof(lexer) && lexer->lookahead != '"') {
+        if (lexer->lookahead == '\\')
+          lexer->advance(lexer, false);
+        if (!lexer->eof(lexer))
+          lexer->advance(lexer, false);
+      }
+      if (!lexer->eof(lexer))
+        lexer->advance(lexer, false);
+    } else if (c == '\'') {
+      has_content = true;
+      at_line_start = false;
+      lexer->advance(lexer, false);
+      while (!lexer->eof(lexer) && lexer->lookahead != '\'') {
+        if (!lexer->eof(lexer))
+          lexer->advance(lexer, false);
+      }
+      if (!lexer->eof(lexer))
+        lexer->advance(lexer, false);
+    } else if (c == '#' && at_line_start) {
+      has_content = true;
+      while (!lexer->eof(lexer) && lexer->lookahead != '\n') {
+        lexer->advance(lexer, false);
+      }
+    } else if (c == '\n') {
+      has_content = true;
+      lexer->advance(lexer, false);
+      at_line_start = true;
+    } else if (c == ' ' || c == '\t') {
+      has_content = true;
+      lexer->advance(lexer, false);
+    } else {
+      has_content = true;
+      at_line_start = false;
+      lexer->advance(lexer, false);
+    }
+  }
+
+  if (has_content) {
+    lexer->mark_end(lexer);
+    lexer->result_symbol = SHELL_BLOCK_CONTENT;
     return true;
   }
   return false;
@@ -281,6 +360,10 @@ bool tree_sitter_cook_external_scanner_scan(void *payload, TSLexer *lexer,
                                             const bool *valid_symbols) {
   if (valid_symbols[CONFIG_BLOCK_CONTENT]) {
     return scan_config_block_content(lexer);
+  }
+
+  if (valid_symbols[SHELL_BLOCK_CONTENT]) {
+    return scan_shell_block_content(lexer);
   }
 
   if (valid_symbols[LUA_BLOCK_CONTENT]) {

@@ -187,8 +187,8 @@ pub enum UsingClause {
 ```
 
 - `Shell(String)` — a quoted shell command string following `using` (the `using "cmd"` form). Single-output only.
-- `LuaBlock(String)` — a `>{` ... `}` Lua block following `using` (the `using >{ ... }` form). The payload is the collected Lua source. Parseable in multi-output position, but runtime execution of the Lua-block form as a multi-output work unit is a known pre-existing gap (tracked as a follow-up; also applies to single-output `using >{ ... }`).
-- `ShellBlock(Vec<String>)` — a plain-brace block following `using` (the `using { ... }` form). Each element is one shell command line; lines run sequentially in a single shell work unit that claims all declared outputs. This is the working form for multi-output cook steps.
+- `LuaBlock(String)` — a `>{` ... `}` Lua block following `using` (the `using >{ ... }` form). The payload is the collected Lua source; codegen emits it as `lua_code` on `cook.add_unit`, which the worker pool executes with `input`/`output`/`inputs`/`outputs` and `input_N` globals.
+- `ShellBlock(Vec<String>)` — a plain-brace block following `using` (the `using { ... }` form). Each element is one shell command line; lines run sequentially in a single shell work unit that claims all declared outputs.
 
 **Cook-line syntax summary:**
 
@@ -197,7 +197,7 @@ cook "out"                          # declaration only
 cook "out" using "cmd ..."          # single-output shell (supports {in}/{out}/{all})
 cook "out" using >{ lua ... }       # single-output Lua block
 cook "a" "b" using { shell ... }    # multi-output shell block (a and b produced together)
-cook "a" "b" using >{ lua ... }     # multi-output Lua block (parseable; runtime gap)
+cook "a" "b" using >{ lua ... }     # multi-output Lua block (a and b produced together)
 ```
 
 ---

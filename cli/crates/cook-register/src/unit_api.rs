@@ -12,6 +12,7 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
     let rname = recipe_name.to_string();
     let add_unit_fn = lua.create_function(move |_, tbl: LuaTable| {
         let command: String = tbl.get::<String>("command").unwrap_or_default();
+        let lua_code: Option<String> = tbl.get::<String>("lua_code").ok();
         let interactive: bool = tbl.get::<Option<bool>>("interactive").unwrap_or(None).unwrap_or(false);
         let line: usize = tbl.get::<Option<usize>>("line").unwrap_or(None).unwrap_or(0);
         let cache_enabled: bool = tbl.get::<Option<bool>>("cache").unwrap_or(None).unwrap_or(true);
@@ -28,6 +29,19 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
             ),
             Err(_) => None,
         };
+        let ingredient_groups: Vec<Vec<String>> = match tbl.get::<LuaTable>("ingredient_groups") {
+            Ok(outer) => outer
+                .sequence_values::<LuaTable>()
+                .filter_map(Result::ok)
+                .map(|inner| {
+                    inner
+                        .sequence_values::<String>()
+                        .filter_map(Result::ok)
+                        .collect()
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
         if output.is_some() && outputs.is_some() {
             return Err(LuaError::RuntimeError(
                 "cook.add_unit: only one of `output` or `outputs` may be provided".into(),
@@ -42,24 +56,36 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
         };
         let outputs_for_tracking = output_paths.clone();
 
+        let command_hash = if let Some(code) = &lua_code {
+            hash_str(code)
+        } else {
+            hash_str(&command)
+        };
         let cache_meta = if cache_enabled {
             let cache_key = if let Some(first) = output_paths.first() {
                 first.clone()
             } else {
-                format!("{}@{:x}", inputs.first().map(|s| s.as_str()).unwrap_or(""), hash_str(&command))
+                format!("{}@{:x}", inputs.first().map(|s| s.as_str()).unwrap_or(""), command_hash)
             };
             Some(CacheMeta {
                 recipe_name: rname.clone(),
                 cache_key,
-                input_paths: inputs,
+                input_paths: inputs.clone(),
                 output_paths: output_paths.clone(),
-                command_hash: hash_str(&command),
+                command_hash,
             })
         } else {
             None
         };
 
-        let payload = if interactive {
+        let payload = if let Some(code) = lua_code {
+            WorkPayload::LuaChunk {
+                code,
+                inputs,
+                outputs: output_paths.clone(),
+                ingredient_groups,
+            }
+        } else if interactive {
             WorkPayload::Interactive { cmd: command, line }
         } else {
             WorkPayload::Shell { cmd: command, line: 0 }
@@ -327,6 +353,81 @@ mod tests {
             result.is_err(),
             "expected error when both `output` and `outputs` are provided"
         );
+    }
+
+    #[test]
+    fn test_add_unit_lua_code_one_to_one() {
+        let (lua, capture_state) = make_lua_with_unit_api("my_recipe");
+        lua.load(
+            r#"
+            cook.add_unit({
+                inputs = {"main.c"},
+                output = "main.o",
+                lua_code = "print('hi')",
+                ingredient_groups = {{"a.c", "b.c"}},
+            })
+        "#,
+        )
+        .exec()
+        .unwrap();
+
+        let state = capture_state.borrow();
+        assert_eq!(state.units.len(), 1);
+        let unit = &state.units[0];
+        match &unit.payload {
+            WorkPayload::LuaChunk {
+                code,
+                inputs,
+                outputs,
+                ingredient_groups,
+            } => {
+                assert_eq!(code, "print('hi')");
+                assert_eq!(inputs, &vec!["main.c".to_string()]);
+                assert_eq!(outputs, &vec!["main.o".to_string()]);
+                assert_eq!(
+                    ingredient_groups,
+                    &vec![vec!["a.c".to_string(), "b.c".to_string()]]
+                );
+            }
+            other => panic!("expected LuaChunk, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_add_unit_lua_code_multi_output_block_step() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.load(
+            r#"
+            cook.add_unit({
+                inputs = {"src.rs"},
+                outputs = {"a.js", "a.wasm"},
+                lua_code = "os.execute('wasm-pack build')",
+                ingredient_groups = {{"src.rs"}},
+            })
+        "#,
+        )
+        .exec()
+        .unwrap();
+
+        let state = capture_state.borrow();
+        assert_eq!(state.units.len(), 1);
+        match &state.units[0].payload {
+            WorkPayload::LuaChunk {
+                code,
+                inputs,
+                outputs,
+                ingredient_groups,
+            } => {
+                assert_eq!(code, "os.execute('wasm-pack build')");
+                assert_eq!(inputs, &vec!["src.rs".to_string()]);
+                assert_eq!(
+                    outputs,
+                    &vec!["a.js".to_string(), "a.wasm".to_string()]
+                );
+                assert_eq!(ingredient_groups, &vec![vec!["src.rs".to_string()]]);
+            }
+            other => panic!("expected LuaChunk, got {other:?}"),
+        }
     }
 
     #[test]

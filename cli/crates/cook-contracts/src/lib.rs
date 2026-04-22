@@ -19,8 +19,8 @@ pub enum WorkPayload {
     },
     LuaChunk {
         code: String,
-        input: String,
-        output: String,
+        inputs: Vec<String>,
+        outputs: Vec<String>,
         ingredient_groups: Vec<Vec<String>>,
     },
     Test {
@@ -122,13 +122,15 @@ mod tests {
     fn work_payload_lua_chunk_construction() {
         let p = WorkPayload::LuaChunk {
             code: "print('hi')".into(),
-            input: "in.txt".into(),
-            output: "out.txt".into(),
+            inputs: vec!["in.txt".into()],
+            outputs: vec!["out.txt".into()],
             ingredient_groups: vec![vec!["a".into(), "b".into()]],
         };
         match &p {
-            WorkPayload::LuaChunk { code, ingredient_groups, .. } => {
+            WorkPayload::LuaChunk { code, inputs, outputs, ingredient_groups } => {
                 assert_eq!(code, "print('hi')");
+                assert_eq!(inputs, &vec!["in.txt".to_string()]);
+                assert_eq!(outputs, &vec!["out.txt".to_string()]);
                 assert_eq!(ingredient_groups.len(), 1);
                 assert_eq!(ingredient_groups[0].len(), 2);
             }

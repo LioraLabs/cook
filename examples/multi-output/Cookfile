@@ -8,6 +8,20 @@ recipe generate
     }
 end
 
+recipe build_lua
+    ingredients "src/*.rs"
+    cook "staging-lua/out.js" "staging-lua/out.wasm" using >{
+        os.execute("mkdir -p staging-lua")
+        local sources = table.concat(inputs, " ")
+        local js = io.open(outputs[1], "w")
+        js:write("// generated from " .. sources .. "\n")
+        js:close()
+        local wasm = io.open(outputs[2], "w")
+        wasm:write("BINARY\n")
+        wasm:close()
+    }
+end
+
 recipe clean
-    rm -rf pkg staging .cook
+    rm -rf pkg staging staging-lua .cook
 end
