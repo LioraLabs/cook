@@ -1,69 +1,392 @@
 # 4. Recipes and step kinds
 
-> **Normative.** This chapter defines the structure of a recipe body and the meaning of each step kind.
+> **Normative.** This chapter defines the structure of a recipe body and the meaning of each step kind. The productions referenced here are given formally in Appendix A § A.3 and § A.4; where this chapter's prose disagrees with Appendix A, Appendix A is authoritative (§ 1.5).
 
 ## 4.1. Recipe header forms
 
-Defines the explicit form (`recipe <name>[: deps...]`) and the implicit form (`<identifier>: [deps...]`).
+A recipe is introduced by a **recipe header** and closed by a bare `end` on its own line (§ A.3, production `recipe`). The Cookfile language recognises two header forms:
 
-> **NORMATIVE-TODO (CS-stub-19).** See implementation: `cli/crates/cook-lang/src/recipe.rs`, recipe-header parsing.
+| Form | Shape | Defined in |
+|---|---|---|
+| Explicit | `recipe` `name` (`:` `dependency_list`)? | § A.3, `explicit_header` |
+| Implicit | `BARE_IDENTIFIER` `:` `dependency_list`? | § A.3, `implicit_header` |
+
+The **explicit header** begins with the keyword `recipe` followed by a `name` (§ A.5), which is either a `BARE_IDENTIFIER` or a double-quoted `STRING`. An optional `:` introduces a dependency list (§ 4.2). The explicit header is recognised whether or not the line has leading whitespace.
+
+The **implicit header** is a `BARE_IDENTIFIER` followed immediately by `:`, with an optional dependency list after the colon. A conforming implementation MUST only recognise the implicit header when the line starts at column 0, with no leading whitespace; an indented `BARE_IDENTIFIER:` line MUST instead be classified as a `shell_command` (§ 4.10). See § A.3, "Implicit header constraint".
+
+The reserved-segment rule of § A.2 applies to both header forms: a conforming implementation MUST reject a recipe whose name's final dot-separated segment is one of `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`.
+
+### Example 4.1.1
+
+```cook
+recipe "build": "setup"
+    gcc -o main main.c
+end
+
+recipe build: setup
+    gcc -o main main.c
+end
+
+build: setup
+    gcc -o main main.c
+end
+```
+
+All three recipes above are semantically identical. The first uses a quoted name in an explicit header; the second uses a bare name in an explicit header; the third uses the implicit form.
+
+### Note 4.1.1
+
+The tokens `recipe` and `end` are only recognised as keywords when followed by a separator (space, tab, or, for `recipe`, a `"`). An identifier with `recipe` as a prefix — e.g. `recipes_cleanup` — is a `Content` token, not a header. See lexer test `test_recipe_prefix_is_shell_command`.
+
+### Note 4.1.2
+
+The implicit form's column-0 restriction is what disambiguates an indented `backend: build` inside a recipe body from a nested recipe. The Cookfile language has no nested recipes; an indented `ident:` line is therefore a shell command. See lexer test `test_implicit_recipe_indented_not_detected`.
 
 ## 4.2. Dependency list
 
-Defines the semantics of the `:` dependency-list suffix: a recipe listed as a dependency MUST exist; cycles are errors detected downstream.
+A **dependency list** is a sequence of one or more `name`s following the `:` in a recipe header (§ A.3, `dependency_list`). Each name identifies another recipe that MUST complete successfully before this recipe runs.
 
-> **NORMATIVE-TODO (CS-stub-20).** See implementation: `cli/crates/cook-lang/src/recipe.rs` (syntactic) and `cli/crates/cook-dag/` (cycle detection).
+A conforming implementation MUST accept a mix of `BARE_IDENTIFIER` and `STRING` forms within a single dependency list. Dependencies MAY use the dotted form (e.g. `backend.build`) to refer to a recipe imported under an alias (§ 7); the dotted form is a single `BARE_IDENTIFIER` under the token rules of § 2.3, not two tokens separated by `.`.
+
+The dependency list is purely syntactic at parse time. The Standard requires only that:
+
+1. Each referenced recipe exists in the resolved Cookfile (itself, its `use` modules, or its `import` aliases). A conforming implementation MUST reject a Cookfile that references a non-existent recipe — this diagnostic MAY be deferred to the first resolution pass (§ 5).
+2. The dependency graph is acyclic. A conforming implementation MUST reject a Cookfile whose dependency graph contains a cycle — this diagnostic MAY be deferred to DAG construction (§ 5).
+
+### Example 4.2.1
+
+```cook
+recipe tools: colorize wordcount reverse
+end
+
+recipe bundle: "backend.build" "frontend.build"
+end
+```
+
+The first recipe lists three dependencies as bare identifiers. The second uses quoted strings for the same effect; it is semantically identical to `recipe bundle: backend.build frontend.build`.
+
+### Note 4.2.1
+
+A recipe with no dependencies MAY still use the implicit header form, yielding a bare `name:` line. The trailing colon is required by the implicit form's grammar even when the dependency list is empty. See parser test `test_implicit_recipe_parses`.
 
 ## 4.3. Ingredients
 
-Defines the single `ingredients` line per recipe: one or more glob patterns, with `!"pattern"` denoting exclusion.
+A recipe body MAY contain at most one `ingredients_step` (§ A.3, "At-most-one-ingredients rule"). A second `ingredients` line within the same recipe body MUST be rejected.
 
-> **NORMATIVE-TODO (CS-stub-21).** See implementation: `cli/crates/cook-lang/src/cook_line.rs`, function `parse_ingredients_line`.
+The `ingredients_step` is introduced by the keyword `ingredients` followed by one or more `ingredient` items (§ A.4, `ingredients_step`). Each item is either:
+
+| Form | Meaning |
+|---|---|
+| `STRING`        | **include**: the quoted text is a glob pattern added to the ingredient set. |
+| `!` `STRING`    | **exclude**: the quoted text is a glob pattern subtracted from the ingredient set. |
+
+A conforming implementation MUST accept an `ingredients` line containing only excludes, only includes, or a mix of the two in any order. The semantic effect is the set difference `(union of includes) \ (union of excludes)`; ordering of items on the line does not affect the result.
+
+The glob language itself — which characters are wildcards, whether `**` matches across directory separators, and so on — is not defined by § 4 and is resolved by the execution model (§ 5).
+
+### Example 4.3.1
+
+```cook
+recipe lib
+    ingredients "src/*.c" "include/*.h" !"src/lua.c" !"src/luac.c"
+    cook "build/libmath.a" using "ar rcs {out} {all}"
+end
+```
+
+The ingredient set is every `.c` file in `src/` and every `.h` file in `include/`, minus `src/lua.c` and `src/luac.c`.
+
+### Note 4.3.1
+
+An `ingredient` item is always a `STRING` (quoted). A bare word after `ingredients` is a syntax error. The `!` exclusion marker MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_ingredients_with_excludes` and `test_ingredients_excludes_only`.
 
 ## 4.4. Step kinds — overview
 
-Enumerates the seven step kinds that can appear in a recipe body: Shell, Interactive Shell, Lua line, Lua block, Cook, Plate, Test. Describes the dispatch rules from § 3.8.
+A `recipe_body` is a sequence of `recipe_item`s (§ A.3). Excluding the `ingredients_step` covered in § 4.3 and the structural `comment` / `NEWLINE` items, a conforming implementation MUST recognise exactly the following seven step kinds:
 
-> **NORMATIVE-TODO (CS-stub-22).** See implementation: `cli/crates/cook-lang/src/ast.rs`, enum `Step`.
+| § | Step kind | Introduced by |
+|---|---|---|
+| 4.5, 4.6 | `cook_step`           | keyword `cook` |
+| 4.7      | `plate_step`          | keyword `plate` |
+| 4.8      | `test_step`           | keyword `test` |
+| 4.9      | `lua_line`            | `>` line prefix (§ 2.7) |
+| 4.9      | `lua_block`           | `>{` line prefix (§ 2.7) |
+| 4.10     | `shell_command`       | default Content line |
+| 4.10     | `interactive_command` | `@` as the first non-whitespace character of a Content line |
+| 4.11     | `module_call`         | Content line matching the pattern of § A.4, `module_call` |
+
+A `Content` token inside a recipe body is classified into exactly one of the above kinds using the step-dispatch priority of § A.4 ("Step-dispatch priority"), reproduced here for convenience:
+
+1. `ingredients` + separator → `ingredients_step` (§ 4.3).
+2. `cook` + separator → `cook_step` (§ 4.5, § 4.6).
+3. `plate` + separator → `plate_step` (§ 4.7).
+4. `test` + separator → `test_step` (§ 4.8).
+5. Matches the module-call pattern of § A.4 → `module_call` (§ 4.11).
+6. First character is `@` and the remainder is non-empty → `interactive_command` (§ 4.10).
+7. Otherwise → `shell_command` (§ 4.10).
+
+The `>` and `>{` forms are not subject to this cascade: they are selected at the lexical layer (§ 2.7) and always produce `lua_line` or `lua_block` steps respectively, regardless of what follows the prefix.
+
+### Note 4.4.1
+
+The "separator" after a step keyword is space, tab, or end of token. A Content line whose first token is `cooking` is a `shell_command`, not a malformed `cook_step`. See parser test `test_strip_keyword`.
+
+### Note 4.4.2
+
+A top-level `variable_declaration` — a line of the form `NAME "value"` — is lexed as a `Token::VarDecl` regardless of position in the file. Inside a recipe body, a conforming implementation MUST reclassify a `VarDecl` token as a `shell_command` whose text is the original source (§ A.4, `shell_command` grammar comment). See parser test `test_var_after_recipe_is_shell_command`.
 
 ## 4.5. `cook` step — single-output form
 
-Defines `cook "out"`, `cook "out" using "cmd"`, `cook "out" using >{ ... }`, `cook "out" using { ... }`.
+A `cook_step` (§ A.4, `cook_step`) declares a build output. The single-output form has exactly one `STRING` output pattern before the optional `using` clause:
 
-> **NORMATIVE-TODO (CS-stub-23).** See implementation: `cli/crates/cook-lang/src/cook_line.rs`, function `parse_cook_line`.
+```ebnf
+cook "out" using_clause?
+```
+
+The output is a `STRING` whose interior MAY contain substitution placeholders (e.g. `{stem}`, `{in}`, `{out}`). The placeholder language is defined by the execution model (§ 5); § 4 treats placeholder text as opaque.
+
+A conforming implementation MUST accept all four of the following forms:
+
+| Form | `using_clause` | Semantic |
+|---|---|---|
+| `cook "out"`                    | absent                  | declaration-only: announces the output without a build command (§ A.4, "Declaration-only cook step"). The build command is expected to be registered by preceding Lua code or supplied by a later amendment. |
+| `cook "out" using "cmd"`        | `STRING`                | inline shell command. |
+| `cook "out" using >{ ... }`     | `inline_lua_block`      | inline Lua expression whose execution produces the build effect. |
+| `cook "out" using { ... }`      | `shell_block`           | sequence of shell commands, one per non-blank line of the block (§ 2.9, "Shell block line normalisation"). |
+
+After the `using` keyword, the `using`-dispatch order of § A.4 ("`using` dispatch order") applies: `>{` is tested before `{`, and `{` before `"`. The first match wins.
+
+### Example 4.5.1
+
+```cook
+recipe lib
+    ingredients "lib/*.c"
+    cook "build/obj/{stem}.o" using "gcc -c {in} -o {out}"
+    cook "build/libmath.a" using "ar rcs {out} {all}"
+end
+```
+
+The first `cook` is a one-to-one mapping from each ingredient to one object file. The second is a many-to-one mapping producing a single archive from the collected set. Both use the inline `STRING` form of `using`.
+
+### Example 4.5.2
+
+```cook
+recipe build
+    ingredients "src/*.c"
+    cook "bin/app"
+    gcc src/main.c -o bin/app
+end
+```
+
+The `cook "bin/app"` step is declaration-only. The following `shell_command` supplies the actual build command; the execution model (§ 5) is responsible for associating it with the declared output.
+
+### Note 4.5.1
+
+The `@` character inside a `using "cmd"` string is preserved verbatim — it is part of the quoted shell template, not an interactive-step marker. The interactive-step dispatch of § 4.10 applies only to a Content line's first non-whitespace character, not to text nested inside a `cook` step's `using` clause. See parser test `test_at_in_cook_using_is_not_interactive`.
 
 ## 4.6. `cook` step — multi-output form
 
-Defines `cook "a" "b" using { ... }` and `cook "a" "b" using >{ ... }`. Multi-output form requires a block-form `using` clause; `cook "a" "b" using "cmd"` is a parse error.
+A `cook_step` MAY declare two or more outputs by listing additional `STRING` patterns before the `using` clause:
 
-> **NORMATIVE-TODO (CS-stub-24).** See implementation: `cli/crates/cook-lang/src/cook_line.rs`, function `parse_cook_line` — the multi-output validation branch.
+```ebnf
+cook "a" "b" ... using_clause
+```
+
+When two or more outputs are present, the `using_clause` MUST use the block form — either `inline_lua_block` (`>{ ... }`) or `shell_block` (`{ ... }`). A conforming implementation MUST reject the multi-output form with a single-string `using`, i.e. the shape `cook "a" "b" using "cmd"` (§ A.4, "Multi-output cook-step rule").
+
+A conforming implementation MUST also reject a multi-output `cook_step` with no `using_clause` at all: the declaration-only form of § 4.5 applies only to the single-output case, because the execution model needs a block body in which the multiple outputs can be built together.
+
+### Example 4.6.1
+
+```cook
+recipe generate
+    ingredients "src/*.rs"
+    cook "staging/out.js" "staging/out.wasm" using {
+        ./fake-generator.sh
+        mkdir -p staging
+        cp pkg/out.js staging/out.js
+        cp pkg/out.wasm staging/out.wasm
+    }
+end
+```
+
+One `cook` step declares two outputs produced together by a sequence of shell commands. The commands are the four non-blank lines of the shell block, in order (§ 2.9).
+
+### Example 4.6.2
+
+```cook
+recipe build_lua
+    ingredients "src/*.rs"
+    cook "staging-lua/out.js" "staging-lua/out.wasm" using >{
+        os.execute("mkdir -p staging-lua")
+        local sources = table.concat(inputs, " ")
+        local js = io.open(outputs[1], "w")
+        js:write("// generated from " .. sources .. "\n")
+        js:close()
+        local wasm = io.open(outputs[2], "w")
+        wasm:write("BINARY\n")
+        wasm:close()
+    }
+end
+```
+
+The same two outputs are produced by a Lua block. The `inputs` and `outputs` names visible to the block are established by the execution model (§ 5); § 4 requires only that a block-form `using` clause be accepted as the body.
+
+### Note 4.6.1
+
+The shape `cook "a" "b" using "cmd"` is rejected with a diagnostic that mentions "block body". The rule exists so that the execution model can always identify, for multi-output steps, which command lines apply to which outputs; a single inline `STRING` cannot express that mapping unambiguously. See parser test `test_multi_output_string_form_rejected`.
 
 ## 4.7. `plate` step
 
-Defines `plate "cmd"` — a step that runs the given command for each output produced by a preceding `cook` step in the same recipe.
+A `plate_step` (§ A.4, `plate_step`) has the shape `plate STRING`. It holds a single shell command template that the execution model applies once per output of a preceding `cook` step in the same recipe body. The mapping from "preceding `cook`" to "which outputs" is defined by § 5; § 4 requires only that the syntactic shape `plate STRING` be accepted.
 
-> **NORMATIVE-TODO (CS-stub-25).** See implementation: `cli/crates/cook-lang/src/recipe.rs` (syntax) and `cli/crates/cook-luagen/` (codegen).
+The command template is a `STRING` and MAY contain the same placeholder set permitted in `cook` templates (e.g. `{out}`). Placeholder text is opaque at the syntactic layer.
+
+### Example 4.7.1
+
+```cook
+recipe run-tests
+    ingredients "tests/*.c"
+    cook "build/{stem}" using "cc {in} -o {out}"
+    plate "./{out}"
+end
+```
+
+The `plate` step runs `./<built-test>` once for each output produced by the preceding `cook` step.
+
+### Note 4.7.1
+
+A `plate_step` takes exactly one `STRING`. A `plate` line with zero strings, two strings, or a `using` clause is a syntax error. The deliberate simplicity — one command template, no `using` — is rationalised in § B.4.
 
 ## 4.8. `test` step
 
-Defines `test "cmd" [timeout N] [should_fail]` — a step that runs the command and asserts its exit status and optional runtime bound.
+A `test_step` (§ A.4, `test_step`) has the shape:
 
-> **NORMATIVE-TODO (CS-stub-26).** See implementation: `cli/crates/cook-lang/src/cook_line.rs`, functions `parse_test_command` and `parse_test_timeout`.
+```ebnf
+test STRING ("timeout" NUMBER)? "should_fail"?
+```
+
+The required `STRING` is a shell command template. The optional `timeout NUMBER` and `should_fail` modifiers MUST appear in that order when both are present. A conforming implementation MUST accept all four permutations:
+
+| Form | Behaviour |
+|---|---|
+| `test "cmd"`                              | Run `cmd`; expect exit status 0, no time bound. |
+| `test "cmd" timeout N`                    | Run `cmd`; expect exit status 0 within `N` seconds. |
+| `test "cmd" should_fail`                  | Run `cmd`; expect a non-zero exit status, no time bound. |
+| `test "cmd" timeout N should_fail`        | Run `cmd`; expect a non-zero exit status within `N` seconds. |
+
+`NUMBER` is the `NUMBER` token class of § 2.8: a sequence of one or more decimal digits, interpreted as an unsigned integer number of seconds. The upper bound on representable timeouts is implementation-defined.
+
+### Example 4.8.1
+
+```cook
+recipe run-tests
+    ingredients "tests/*.c"
+    cook "build/{stem}" using "cc {in} -o {out}"
+    test "./{out}" timeout 60 should_fail
+end
+```
+
+Each test binary is run with a 60-second time bound, and the step expects each to exit with non-zero status.
+
+### Note 4.8.1
+
+`should_fail` is a bare word, not a quoted string. It is recognised only as the trailing modifier on a `test` line; elsewhere it has no syntactic meaning and is not a reserved word (§ 2.4). See parser tests `test_test_step_with_should_fail` and `test_test_step_with_timeout_and_should_fail`.
 
 ## 4.9. Lua steps — line and block
 
-Defines `> expr` (single-line Lua) and `>{ ... }` (multi-line Lua block) steps.
+A `lua_line` step is produced by the `>` line prefix of § 2.7. Its body is the remainder of the line after `>` and an optional single space; the body MAY be empty (§ A.5, "`lua_line` MAY be empty").
 
-> **NORMATIVE-TODO (CS-stub-27).** See implementation: `cli/crates/cook-lang/src/lexer.rs` (`LuaLine` / `LuaBlockOpen`) and `cli/crates/cook-lang/src/lua_block.rs`.
+A `lua_block` step is produced by the `>{` line prefix of § 2.7. Its body is the source text between the opening `>{` and the matching `}`, collected by the brace-balance algorithm of § 2.9. The closing `}` line is consumed but is not part of the body.
+
+Both step kinds carry Lua source text through to the execution model (§ 5) and the Cook Lua API (§ 6); the Standard defines their **delimitation** here and defers their **semantics** to those chapters.
+
+A conforming implementation MUST NOT reinterpret the Lua body text. Comments, strings, and other Lua constructs inside the body are the Lua runtime's concern, with the single exception that the brace-balance algorithm (§ 2.9) MUST ignore braces appearing inside Lua line comments, double-quoted strings, single-quoted strings, and long strings (`[[...]]`) when locating the closing `}` of a `lua_block`.
+
+### Example 4.9.1
+
+```cook
+recipe build
+    > print("start")
+    >{
+        if true then
+            local t = {1, 2, 3}
+            print(#t)
+        end
+    }
+    >
+end
+```
+
+The first step is a single-line Lua expression. The second is a Lua block whose body contains a literal `{` that does not prematurely close the block. The third is an empty `lua_line`.
+
+### Note 4.9.1
+
+A `lua_block` opened on an indented line closes on the line where the running brace-depth first returns to zero, not on the first bare `}`. A line like `    local s = "}"` does not close the enclosing block because the `}` sits inside a double-quoted string (§ 2.9). See parser tests `test_lua_block_brace_in_string` and `test_lua_block_brace_in_comment`.
 
 ## 4.10. Shell steps — plain and interactive
 
-Defines the default `shell_command` (any Content line not matching another step) and the `@`-prefixed `interactive_command`.
+A `shell_command` is any `Content` line inside a recipe body that is not classified as one of the step kinds earlier in the § 4.4 dispatch cascade. Its body is the trimmed source line; a conforming implementation MUST preserve the body text verbatim, including any internal quoting, variable references, and shell metacharacters.
 
-> **NORMATIVE-TODO (CS-stub-28).** See implementation: `cli/crates/cook-lang/src/recipe.rs`, the shell/interactive branches of Content dispatch.
+An `interactive_command` is a `Content` line whose first non-whitespace character is `@` and whose remainder, after removing that `@`, is non-empty (§ A.4, `interactive_command`). A conforming implementation MUST:
+
+1. Strip the leading `@` when recording the command body.
+2. Mark the step as requiring interactive stdio (the precise semantics — TTY allocation, stdio inheritance — are defined by § 5).
+3. Reject an `@`-only line with no following command text.
+
+The `@` marker is not a lexical prefix (see § 2.7 and § B.2.7); it is interpreted only at step-dispatch time, and only inside a recipe body. A bare `@` outside a recipe body is a top-level parse error under § 3.2.
+
+### Example 4.10.1
+
+```cook
+recipe play
+    @mkdir -p .cook/scratch
+    @printf 'a\nb\nc\n' | fzf > .cook/scratch/pick
+    echo "picked: $(cat .cook/scratch/pick)"
+end
+```
+
+The first two steps are interactive commands: the runtime inherits the user's terminal so that `fzf` can draw a full-screen prompt. The third is a plain `shell_command` whose output is captured as the execution model dictates.
+
+### Note 4.10.1
+
+`@` embedded inside a `cook` step's `using "..."` template, or elsewhere inside a quoted string, is a literal `@` and does not trigger interactive-step dispatch. The `@` test runs only on the first non-whitespace character of a raw `Content` line. See parser test `test_at_in_cook_using_is_not_interactive`.
+
+### Note 4.10.2
+
+An empty interactive command — a line consisting only of `@` — is rejected with a diagnostic stating that `@` requires a command. See parser test `test_empty_interactive_step_errors`.
 
 ## 4.11. Module-call steps
 
-Defines the heuristic that classifies a Content line matching `IDENTIFIER . IDENTIFIER ...` as a Lua expression (module call) rather than a shell command. Module calls MAY span multiple lines when braces are unbalanced on the first line.
+A `module_call` is a `Content` line inside a recipe body whose shape matches the pattern given in § A.4, `module_call`:
 
-> **NORMATIVE-TODO (CS-stub-29).** See implementation: `cli/crates/cook-lang/src/recipe.rs`, functions `is_module_call` and `collect_module_call`.
+1. The first character is a `BARE_IDENTIFIER` start character — `[A-Za-z_]`.
+2. A run of `[A-Za-z0-9_]` follows (alphanumerics and underscore; dots and hyphens are **not** permitted in the first segment).
+3. A literal `.` follows.
+4. A character matching `[A-Za-z_]` follows the dot.
+
+The pattern is a **heuristic on the first two tokens only**. The remainder of the line is not validated at dispatch time; its well-formedness as a Lua expression is the Lua runtime's concern. When the first-line text contains an open `{` whose depth does not return to zero on that line, the step text MUST be extended to subsequent source lines until brace depth balances, using the same brace-balance algorithm as § 2.9. An unterminated brace balance MUST produce a parse error.
+
+A conforming implementation MUST emit a single-line `module_call` as a `lua_line` step (§ 4.9) and a multi-line `module_call` as a `lua_block` step. The resulting step body is the original source text, with newlines preserved across lines in the multi-line case.
+
+### Example 4.11.1
+
+```cook
+recipe build
+    cpp.compile("src/*.cpp")
+    cpp.compile {
+        sources = "src/*.cpp",
+        output_dir = "build/obj/",
+    }
+end
+```
+
+Both steps are module calls. The first is single-line and becomes a `lua_line`. The second spans four source lines because the opening `{` on the first line is not balanced until the closing `}` on the fourth; it becomes a `lua_block` whose body is those four lines joined by newlines.
+
+### Note 4.11.1
+
+A leading `.` (as in `./run.sh`) fails rule 1 of the pattern and falls through to `shell_command`. A hyphenated first token (as in `cargo-build.release`) fails rule 2 — hyphens are permitted inside a `BARE_IDENTIFIER` generally, but the module-call heuristic restricts the first segment to `[A-Za-z0-9_]` to avoid swallowing hyphenated shell commands. See parser tests `test_non_module_dot_is_shell` and `test_module_call_multiline`.
+
+### Note 4.11.2
+
+The rationale for dispatching module calls by heuristic rather than by parsing the full Lua expression is discussed in § B.4.
