@@ -18,6 +18,7 @@ pub(crate) fn cook_step_mode(step: &CookStep) -> CookMode {
     match &step.using_clause {
         None => CookMode::DeclarationOnly,
         Some(UsingClause::LuaBlock(_)) => CookMode::OneToOne,
+        Some(UsingClause::ShellBlock(_)) => CookMode::OneToOne, // placeholder; real mode in Chunk 6
         Some(UsingClause::Shell(cmd)) => {
             if cmd.contains("{in}") {
                 CookMode::OneToOne
@@ -105,6 +106,10 @@ pub(crate) fn generate_cook_step(
                         out.push_str(&format!("            {}\n", code_line));
                     }
                     out.push_str("        end})\n");
+                }
+                Some(UsingClause::ShellBlock(_)) => {
+                    // Codegen lands in Chunk 6 — until then, a recipe using this form will fail here.
+                    unreachable!("ShellBlock codegen not yet implemented");
                 }
                 None => {
                     // unreachable in OneToOne

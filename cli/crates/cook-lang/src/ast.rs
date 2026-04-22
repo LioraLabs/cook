@@ -41,6 +41,7 @@ pub struct Recipe {
 pub enum UsingClause {
     Shell(String),
     LuaBlock(String),
+    ShellBlock(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
