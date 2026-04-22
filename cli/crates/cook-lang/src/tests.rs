@@ -814,3 +814,40 @@ fn test_multi_output_lua_block() {
         _ => panic!("expected Cook step"),
     }
 }
+
+#[test]
+fn test_single_output_shell_block() {
+    let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"bin/out\" using {\n        cmd1\n        cmd2\n    }\nend\n";
+    let result = crate::parse(source).expect("should parse");
+    match &result.recipes[0].steps[0] {
+        crate::ast::Step::Cook { step, .. } => {
+            assert_eq!(step.outputs, vec!["bin/out".to_string()]);
+            match &step.using_clause {
+                Some(crate::ast::UsingClause::ShellBlock(cmds)) => {
+                    assert_eq!(cmds, &vec!["cmd1".to_string(), "cmd2".to_string()]);
+                }
+                _ => panic!("expected ShellBlock"),
+            }
+        }
+        _ => panic!("expected Cook step"),
+    }
+}
+
+#[test]
+fn test_multi_output_shell_block() {
+    let source = "recipe \"wasm\"\n    ingredients \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" using {\n        wasm-pack build\n        cp a.js out/a.js\n        cp b.wasm out/b.wasm\n    }\nend\n";
+    let result = crate::parse(source).expect("should parse");
+    match &result.recipes[0].steps[0] {
+        crate::ast::Step::Cook { step, .. } => {
+            assert_eq!(step.outputs, vec!["a.js".to_string(), "b.wasm".to_string()]);
+            match &step.using_clause {
+                Some(crate::ast::UsingClause::ShellBlock(cmds)) => {
+                    assert_eq!(cmds.len(), 3);
+                    assert_eq!(cmds[0], "wasm-pack build");
+                }
+                _ => panic!("expected ShellBlock"),
+            }
+        }
+        _ => panic!("expected Cook step"),
+    }
+}

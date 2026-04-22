@@ -175,6 +175,20 @@ pub(crate) fn parse_cook_line(
             },
             new_pos,
         ))
+    } else if after_using.starts_with('{') {
+        let (commands, new_pos) = crate::shell_block::collect_shell_block(
+            line,
+            tokens,
+            current_pos + 1,
+            source_lines,
+        )?;
+        Ok((
+            CookStep {
+                outputs,
+                using_clause: Some(UsingClause::ShellBlock(commands)),
+            },
+            new_pos,
+        ))
     } else if after_using.starts_with('"') {
         let cmd = parse_single_quoted_string(after_using, line)?;
         Ok((
@@ -187,7 +201,10 @@ pub(crate) fn parse_cook_line(
     } else {
         Err(ParseError::Parse {
             line,
-            message: format!("cook using: expected quoted command or >{{ block, found: {}", after_using),
+            message: format!(
+                "cook using: expected quoted command, >{{ Lua block, or {{ shell block, found: {}",
+                after_using
+            ),
         })
     }
 }
