@@ -491,7 +491,7 @@ pub fn execute_dag(
                                 &meta.cache_key,
                                 meta.command_hash,
                                 &meta.input_paths,
-                                meta.output_paths.first(),
+                                &meta.output_paths,
                                 &dag.node(id).payload.working_dir,
                             );
                         }
@@ -595,7 +595,7 @@ pub fn execute_dag(
                         &meta.cache_key,
                         meta.command_hash,
                         &meta.input_paths,
-                        meta.output_paths.first(),
+                        &meta.output_paths,
                         &dag.node(result.id).payload.working_dir,
                     );
                 }

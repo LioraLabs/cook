@@ -163,7 +163,7 @@ impl ThreadSafeCacheManager {
         cache_key: &str,
         command_hash: u64,
         input_paths: &[String],
-        output_path: Option<&String>,
+        output_paths: &[String],
         working_dir: &Path,
     ) {
         let new_inputs: Vec<FileRecord> = input_paths
@@ -178,7 +178,8 @@ impl ThreadSafeCacheManager {
             })
             .collect();
 
-        let new_outputs: Vec<FileRecord> = output_path
+        let new_outputs: Vec<FileRecord> = output_paths
+            .iter()
             .map(|rel| {
                 let abs = working_dir.join(rel);
                 FileRecord {
@@ -187,7 +188,6 @@ impl ThreadSafeCacheManager {
                     hash: hash_file(&abs).unwrap_or(0),
                 }
             })
-            .into_iter()
             .collect();
 
         self.update_step(
