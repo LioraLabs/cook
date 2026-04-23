@@ -80,7 +80,33 @@ The rule is symmetric with the top-level-only classification of `use`, `import`,
 
 ## B.4. On § 4 Recipes and step kinds
 
-_To be filled in._
+Chapter 4 defines the largest single surface area of the Cookfile language: the step kinds available inside a recipe body and the dispatch rules that separate them. The design is pragmatic rather than minimalist. The Cook authors had to balance three competing forces: (a) make the common cases (a shell command, a one-to-one build, an interactive prompt) trivially expressible; (b) keep the lexer and parser context-free and line-oriented so that editor tooling remains simple; (c) allow Lua to extend the language without requiring it to do so for basic use. The sections below record the non-obvious choices that follow from those forces.
+
+### B.4.6. Why `cook "a" "b" using "cmd"` is a parse error
+
+The single-string `using` form is convenient in the one-output case because the command template can reference `{out}` and the runtime knows exactly what to substitute. In the multi-output case that determinism evaporates: a single `"cmd"` template has no way to describe which of several outputs is produced by which sub-command, nor which sub-command produces any at all.
+
+The Standard could have papered over this by, for example, running the same `"cmd"` multiple times with `{out}` bound in turn to each output. That semantics is surprising — the user typically wants a single invocation of a generator that happens to produce several artifacts, not N invocations. It would also hide common bugs, because a `"cmd"` that produces only the first output would silently "succeed" on the others.
+
+Requiring a block body — either `{ ... }` or `>{ ... }` — forces the author to state exactly how the outputs are produced: either as a literal sequence of shell commands (whose joint effect produces all outputs) or as a Lua block (which has full access to the `outputs` array and can write each entry deliberately). The parser's rejection of the ambiguous single-string form is therefore normative (§ A.4, "Multi-output cook-step rule") and produces a diagnostic that names the block-body remedy directly.
+
+### B.4.7. Why `plate` is one command template, not a list
+
+A `plate` step holds exactly one `STRING` — a single command template — and has no `using` clause of its own. A natural generalisation would be `plate "cmd1" "cmd2" ...` or `plate using { ... }`, mirroring the `cook` step's surface.
+
+The Cook authors rejected that generalisation for two reasons. First, the intent of `plate` is narrow: given a set of outputs produced by a preceding `cook`, run one action per output. The generalised forms invite confusion about iteration order, fan-out semantics, and whether the block is run once or per output. Second, a user who wants richer iteration already has a better tool — a Lua block (`>{ ... }`) that loops over `outputs` explicitly. Keeping `plate` to a single template means its semantics are unambiguous: one command, parameterised by each output in turn.
+
+The cost is that multi-command `plate` cases require a Lua block. That is an acceptable trade because those cases are rare, and a Lua block with a `for _, out in ipairs(outputs) do ... end` loop reads more clearly than any implicit fan-out of a multi-command `plate` would.
+
+### B.4.11. Why module-call dispatch is a first-two-tokens heuristic
+
+The module-call pattern of § A.4 inspects only the first identifier, a literal `.`, and the first character after the dot. It does not attempt to parse the rest of the line as Lua. This is deliberate.
+
+A full Lua parse at dispatch time would couple the Cook parser to the Lua grammar, making the Cook parser's correctness depend on a Lua front-end and making its diagnostics worse: a Lua syntax error inside a module-call line would have to be reported as a Cook error at a Cook source position. It would also require the Cook parser to make an early commit between "this is a shell command" and "this is Lua", and a wrong early commit in either direction produces terrible error messages.
+
+The two-token heuristic is cheap, lexer-local, and has no false positives in practice. A line that looks like `identifier.identifier` and is not a valid Lua expression is virtually never a valid shell command either (hyphens in the first segment are excluded precisely to protect `cargo-build ...` and similar shell forms). When the heuristic matches, the Lua runtime is the right place to report a Lua syntax error: it has the full Lua grammar and a dedicated error reporter. When the heuristic does not match, the fall-through to `shell_command` is lossless — the line is passed verbatim to the shell, which will report its own error if the line is malformed there.
+
+The multi-line extension (continuing across source lines while braces are unbalanced) is the same brace-balance algorithm used for `lua_block` (§ 2.9). Reusing it keeps the lexer consistent: the Cookfile parser has exactly one way to recognise a brace-balanced region, and that region's body is always handed to Lua untouched.
 
 ## B.5. On § 5 Execution model
 
