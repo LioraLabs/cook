@@ -3,7 +3,7 @@
 # Cook Standard pre-commit hook.
 #
 # Warns when a commit touches language-surface code without also updating
-# docs/standard/. Install with:
+# standard/. Install with:
 #     git config core.hooksPath .githooks
 #
 # Bypass with:
@@ -30,14 +30,15 @@ is_language_surface() {
     cli/crates/cook-register/*)   return 0 ;;
     tree-sitter-cook/grammar.js)  return 0 ;;
     tree-sitter-cook/src/*)       return 0 ;;
+    standard/conformance/*)       return 0 ;;
     *)                            return 1 ;;
   esac
 }
 
 is_standard() {
   case "$1" in
-    docs/standard/*) return 0 ;;
-    *)               return 1 ;;
+    standard/*) return 0 ;;
+    *)          return 1 ;;
   esac
 }
 
@@ -58,10 +59,10 @@ EOF
 
 if [ "$touches_language" = "1" ] && [ "$touches_standard" = "0" ]; then
   cat >&2 <<'MSG'
-error: this commit touches language-surface code but does not update docs/standard/.
+error: this commit touches language-surface code but does not update standard/.
 
 The Cook Standard is the authoritative definition of the Cookfile language;
-language-affecting changes require an update to docs/standard/ in the same
+language-affecting changes require an update to standard/ in the same
 commit. See CONTRIBUTING.md.
 
 Staged language-surface paths:

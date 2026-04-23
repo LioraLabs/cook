@@ -1,10 +1,10 @@
 //! Conformance corpus harness.
 //!
-//! Walks `docs/standard/conformance/` and asserts that `cook-lang` parses
+//! Walks `standard/conformance/` and asserts that `cook-lang` parses
 //! positive cases into the expected AST summary and rejects negative cases
 //! with a diagnostic containing the expected class-substring.
 //!
-//! See `docs/standard/00-introduction.mdx` § 0.7 for conformance requirements.
+//! See `standard/00-introduction.mdx` § 0.7 for conformance requirements.
 
 use std::fs;
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ use cook_lang::parse;
 
 fn corpus_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../docs/standard/conformance")
+        .join("../../../standard/conformance")
         .canonicalize()
         .expect("conformance corpus root missing")
 }
