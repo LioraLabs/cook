@@ -110,7 +110,59 @@ The multi-line extension (continuing across source lines while braces are unbala
 
 ## B.5. On § 5 Execution model
 
-_To be filled in._
+The execution model in § 5 is organised around a two-phase design: every recipe is evaluated once to discover its work (the register phase) and then arranged for execution (the execute phase). This split is not cosmetic. It is the mechanism by which the Standard turns a scripting-flavoured surface syntax — arbitrary Lua embedded in a recipe body — into a dependency graph that can be reasoned about, parallelised, and cached. The rationale subsections below record why several load-bearing decisions in § 5 are the way they are.
+
+### B.5.1. Why the register phase is pure and non-blocking
+
+The register phase evaluates each recipe's Lua body once, with capture-mode bindings for the Cook Lua API (§ 5.2). The requirement that register-phase calls be pure with respect to the build state — no subprocesses against declared outputs, no output-file mutations, no blocking on external I/O — exists for three concrete reasons.
+
+First, **determinism of the graph.** If the register phase could block on a subprocess whose exit depended on a file produced by another recipe's execute phase, the topology of the dependency graph would depend on the order in which the implementation chose to register recipes. Two conforming implementations would then produce different graphs for the same Cookfile. By confining register-phase effects to appending entries to a record, the graph becomes a deterministic function of the Cookfile source and a bounded set of pre-existing inputs.
+
+Second, **bounded time.** The register phase runs on a single thread per recipe. If it could block, a long-running subprocess in one recipe's body would stall the discovery of every other recipe's work. Since the execute phase cannot begin until registration completes, this would reduce the whole build to serial execution even when the Cookfile would otherwise permit heavy parallelism.
+
+Third, **cache reasoning.** The cache (§ 5.7) keys work units on their register-phase record. If that record could reflect the transient state of a subprocess, cache hits would become order-dependent: the same command, on the same inputs, could produce different cache keys depending on whether an unrelated sibling step had already run. Purity eliminates that class of confusion.
+
+The narrowly-scoped exception allowed by the closing paragraph of § 5.2 — implementations MAY permit register-phase effects whose only purpose is to feed the register-phase Lua control flow itself — is load-bearing for the `cook.sh` utility in § 6. That call's return value drives whether a `cook` step fires at all, and suppressing it would force authors to split dynamic build logic across two passes.
+
+### B.5.2. Why ingredient–serves matching is exact string equality
+
+The rule in § 5.5 is that an ingredient string participates in implicit cross-recipe dependency only when it is byte-for-byte equal to a serves string. The Standard explicitly excludes glob expansion, path canonicalisation, symlink resolution, and any other form of path equivalence.
+
+The alternative — match any ingredient whose glob pattern, when expanded against the current filesystem, would include a file also served by another recipe — was considered and rejected. It has three compounding problems:
+
+1. **The graph depends on the filesystem.** A `build` recipe that globs `src/*.c` would acquire or lose a dependency on `gen` every time a generated source file appeared or disappeared. Authors reading the Cookfile would not be able to predict the dependency graph without also knowing the current state of the working tree.
+
+2. **The graph depends on scheduling.** The filesystem's contents change during execution. If `gen` runs first, `src/*.c` might expand to include a generated file; if `build`'s glob expands first, it might not. The graph would then need to be re-computed mid-run, and the two-phase model would cease to hold.
+
+3. **Cache invalidation loses a fixed point.** Caches rely on stable observable inputs. An ingredient list whose matched set depended on a sibling recipe's output would change between runs for reasons that do not correspond to any Cookfile edit.
+
+Exact string equality is coarse but explainable: two Cookfiles with the same text produce the same graph. Authors who need generated-file dependencies state them explicitly with `: dep` (§ 5.4), which is plainly visible in the recipe header.
+
+### B.5.3. Why `@` steps drain rather than serialise by default
+
+Section 5.6 requires an `@`-prefixed interactive step to drain all other running work before its command begins. The alternative — allowing an interactive step to run concurrently with background work and only inherit the TTY — was rejected because it produces user-hostile behaviour in the common case.
+
+Interactive steps are used for dev-loop commands like `@./build/app`, `@vim notes.md`, and `@./serve`. These share the terminal with the human operator. If background work continues while such a command is in progress, its stdout and stderr interleave with the interactive session, corrupting the user's view and often stealing focus from whatever TUI the interactive command is presenting. Users who saw this behaviour during prototyping reported it as a defect even when the concurrent output was mechanically correct.
+
+Draining is not the same as serial execution of the whole recipe. Work units before the `@` step MAY still have run in parallel; work units after it MAY again. The drain is local to the interactive step. This preserves parallelism for build work while giving interactive work the quiet terminal users expect.
+
+Authors who want concurrent background work alongside an interactive session can obtain it by running the background work in a separate recipe and not depending on the interactive recipe — the dependency graph continues to permit parallel execution of independent recipes under the usual rules.
+
+### B.5.4. Why cache semantics are abstract rather than specified by hash algorithm
+
+Section 5.7 fixes the **set** of observable inputs a cache MAY consider — command text, input paths, output paths, environment, and optionally input-file content and output-file mtime — but it does not fix the hash function, the on-disk layout, or the policy for when cache entries are evicted. The boundary is deliberate.
+
+The set of observable inputs is a language-level property: a Cookfile author reasoning about why a step did or did not re-run needs to know what the implementation is allowed to consider. The hash function and storage format are engineering concerns that implementations should be free to evolve — a switch from one hash family to another, or from a flat file to an embedded database, changes nothing the author sees at the Cookfile level.
+
+Specifying the hash function in the Standard would also lock every implementation into bit-compatibility with the reference, making caches transferable between implementations. That has never been a design goal. Caches are local artefacts; two implementations that both respect the observable-input rule produce equivalent cache decisions even if their on-disk caches are mutually unreadable.
+
+The closing paragraph of § 5.7 — that caching is optional altogether — follows from the same principle. An implementation that treats every run as a clean build satisfies the dependency rules of § 5.1–§ 5.6 and therefore conforms. The Standard does not require caching; it regulates it when it is present.
+
+### B.5.5. Why diagnostic ordering is normative but diagnostic wording is not
+
+The ordering rule in § 5.8 — syntactic diagnostics before semantic, first syntax error halts parsing — is normative because it determines what a Cookfile author sees on a single run. An implementation that reported a dependency cycle before reporting that a `cook` line was unterminated would mislead authors into debugging the graph when the real problem was a quote.
+
+The wording is not normative because diagnostic quality is a product concern where implementations should be free to differentiate. A terse parser-level message suitable for a CI log and a richly-formatted message suitable for an editor overlay are both conforming so long as the ordering holds and the class of error is identifiable. This matches the convention established in § 0.3 and § 0.7: exact wording is out of scope; the diagnostic class is in scope.
 
 ## B.6. On § 6 Cook Lua API
 
