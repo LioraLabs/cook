@@ -1,0 +1,12 @@
+# Build outputs
+dist/
+.astro/
+
+# Dependencies
+node_modules/
+
+# Generated WASM (built from ../tree-sitter-cook by prebuild)
+public/tree-sitter-cook.wasm
+
+# Test outputs
+coverage/

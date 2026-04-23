@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-NORMATIVE_GLOB='standard/0[0-9]-*.mdx standard/A-*.mdx'
+NORMATIVE_GLOB='src/content/docs/0[0-9]-*.mdx src/content/docs/appendix/A-*.mdx'
 
 hits=0
 for f in $NORMATIVE_GLOB; do

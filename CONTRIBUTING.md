@@ -9,8 +9,8 @@ The Cookfile language is defined by the Cook Standard in [`standard/`](standard/
 Any change that affects Cookfile surface syntax, execution semantics, the Cook Lua API, or the module system MUST:
 
 1. Update `standard/` in the same commit that modifies the implementation.
-2. Add one entry to `standard/D-changes.mdx` with a new stable `CS-NNNN` ID, a one-line summary, the sections affected, and the commit reference.
-3. If the grammar changes, update `standard/A-grammar.mdx`.
+2. Add one entry to `standard/src/content/docs/appendix/D-changes.mdx` with a new stable `CS-NNNN` ID, a one-line summary, the sections affected, and the commit reference.
+3. If the grammar changes, update `standard/src/content/docs/appendix/A-grammar.mdx`.
 4. If the change is observable from a Cookfile, add at least one case to `standard/conformance/positive/` or `standard/conformance/negative/`.
 
 Non-trivial language changes SHOULD be designed at the Standard level first; the implementation follows.
@@ -32,7 +32,7 @@ The hook's goal is to make language impact visible at commit time. If you're mak
 - `cli/crates/cook-lang/**` — the lexer, parser, and AST
 - `cli/crates/cook-luagen/**` — codegen that materializes language constructs
 - `cli/crates/cook-register/**` — Cook Lua API registration
-- `tree-sitter-cook/grammar.js` — tree-sitter grammar (currently out of date; see `standard/D-changes.mdx` CS-0002)
+- `tree-sitter-cook/grammar.js` — tree-sitter grammar (currently out of date; see `standard/src/content/docs/appendix/D-changes.mdx` CS-0002)
 - `tree-sitter-cook/src/**` — tree-sitter externals
 
 If you add a new crate that contributes to language surface, update both this list and the hook.
@@ -45,7 +45,7 @@ If you add a new crate that contributes to language surface, update both this li
 ### Running the normative-keyword lint
 
 ````bash
-bash scripts/check-normative-keywords.sh
+cd standard && pnpm lint:keywords
 ````
 
 The lint flags lowercase `must`/`shall`/`should`/`may` occurrences in normative chapters. Review each hit: either promote to all-caps (if the clause is meant to be binding) or reword (if the clause is descriptive).

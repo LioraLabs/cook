@@ -1,0 +1,27 @@
+{
+  "name": "cook-standard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Static-site renderer for the Cook Standard.",
+  "scripts": {
+    "prebuild": "tree-sitter build --wasm ../tree-sitter-cook -o public/tree-sitter-cook.wasm",
+    "build": "astro build",
+    "dev": "astro dev",
+    "preview": "astro preview",
+    "lint:keywords": "bash scripts/check-normative-keywords.sh",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.30.0",
+    "astro": "^5.0.0",
+    "web-tree-sitter": "^0.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

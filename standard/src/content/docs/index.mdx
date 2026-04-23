@@ -1,0 +1,57 @@
+---
+title: The Cook Standard
+description: The authoritative specification of the Cookfile language.
+---
+
+# The Cook Standard
+
+**Status:** Draft — head-of-main lockstep, pre-1.0.
+**Source of truth:** the Rust parser in `cli/crates/cook-lang/`.
+
+The Cook Standard is the authoritative specification of the Cookfile language. It is maintained in lockstep with the `main` branch: any change that affects language surface MUST be reflected in the Standard in the same commit that changes the implementation.
+
+The Standard is a living document. Chapters 0–7 and Appendix A are fully written. Amendments to any section MUST follow the spec-first rule in `CONTRIBUTING.md` and add a `CS-NNNN` entry to `D-changes.mdx`.
+
+## Table of contents
+
+### Normative
+
+- [§ 0 — Introduction](/00-introduction/)
+- [§ 1 — Notation and conventions](/01-notation/)
+- [§ 2 — Lexical structure](/02-lexical/)
+- [§ 3 — Syntactic grammar](/03-syntactic-grammar/)
+- [§ 4 — Recipes and step kinds](/04-recipes/)
+- [§ 5 — Execution model](/05-execution-model/)
+- [§ 6 — Cook Lua API](/06-cook-lua-api/)
+- [§ 7 — Modules](/07-modules/)
+- [App. A — Grammar](/appendix/a-grammar/)
+
+### Informative
+
+- [App. B — Rationale](/appendix/b-rationale/)
+- [App. C — Worked examples](/appendix/c-examples/)
+- [App. D — Changes](/appendix/d-changes/)
+
+### Conformance
+
+- `conformance/positive/` — Cookfiles that conforming implementations MUST accept. Browse the corpus at `standard/conformance/positive/` in the source tree.
+- `conformance/negative/` — Cookfiles that conforming implementations MUST reject. Browse the corpus at `standard/conformance/negative/` in the source tree.
+
+## How to change the Standard
+
+See `CONTRIBUTING.md` at the repo root. In brief:
+
+1. Any PR affecting Cookfile surface syntax, execution semantics, the Cook Lua API, or the module system MUST update `standard/` in the same PR.
+2. Add one entry to [`D-changes.mdx`](/appendix/d-changes/) with a new stable `CS-NNNN` ID.
+3. If the grammar changes, update [`A-grammar.mdx`](/appendix/a-grammar/).
+4. If the change is observable from a Cookfile, add at least one case to `conformance/positive/` or `conformance/negative/`.
+
+The repo ships a `.githooks/pre-commit` hook that checks this discipline locally. Install it with:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+## Reading order
+
+First-time readers: read § 0 and § 1, then the chapter relevant to the construct in question; Appendix A is the formal grammar reference. Skim App. C for worked examples and App. B for design rationale.
