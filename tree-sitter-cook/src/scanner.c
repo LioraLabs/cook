@@ -1,6 +1,6 @@
 #include "tree_sitter/parser.h"
 
-#include <ctype.h>
+#include <wctype.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -192,11 +192,11 @@ static bool scan_shell_content(TSLexer *lexer) {
     return false;
 
   // If starts with an identifier, check for step keywords and `end`
-  if (isalpha(c) || c == '_') {
+  if (iswalpha(c) || c == '_') {
     char word[16];
     int len = 0;
 
-    while ((isalnum(lexer->lookahead) || lexer->lookahead == '_') &&
+    while ((iswalnum(lexer->lookahead) || lexer->lookahead == '_') &&
            len < 15) {
       word[len++] = (char)lexer->lookahead;
       lexer->advance(lexer, false);
