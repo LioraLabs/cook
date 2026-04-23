@@ -44,12 +44,12 @@
 **Summary:** Replaced the `NORMATIVE-TODO` stubs for § 5.1–§ 5.8 with normative prose defining the two-phase register/execute model, capture-mode purity, step groups and within-recipe parallelism, explicit and implicit cross-recipe dependencies, exact-string ingredient–serves matching, interactive-step draining, abstract cache semantics keyed on source-derived observable inputs, and syntactic-before-semantic diagnostic ordering. Added five B.5.K rationale subsections covering register-phase purity, exact string matching, `@` draining, cache abstraction, and diagnostic-ordering scope.
 **Reference:** this commit.
 
-## CS-0007 — Planned: § 6 Cook Lua API filled
+## CS-0007 — § 6 Cook Lua API filled
 
-**Date:** planned.
+**Date:** 2026-04-22
 **Sections affected:** § 6.1–6.7, App. B.6.
-**Summary:** _To be filled by the § 6 agent._
-**Reference:** to be filled when the prose is written.
+**Summary:** Replaced the § 6 stubs with normative prose defining the Cook Lua API surface, classified by register-phase vs. execute-phase: the `cook` table (`cook.add_unit`, `cook.sh`, `cook.exec`, `cook.interactive`, `cook.recipe`), the using-block globals (`input`, `output`, `inputs`, `outputs`, `input_N`), the `fs.*` filesystem helpers, the `path.*` path helpers, and the shell-using-string placeholders (`{in}`, `{out}`, `{all}`, `{stem}`, `{name}`, `{ext}`, `{dir}`). Added App. B.6 rationale covering the phase-split design, why shell placeholders and using-block globals coexist, why `fs.*` and `path.*` are separate namespaces, why `cook.add_unit` is register-phase only, and why recipe-name tokens win over `cook.env` in the using-string fallback.
+**Reference:** this commit.
 
 ## CS-0008 — § 7 Modules filled
 
