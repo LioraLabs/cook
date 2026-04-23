@@ -27,6 +27,14 @@ pnpm test                # run plugin tests
 pnpm lint:keywords       # normative-keyword lint
 ```
 
+## Hosting on the tailnet
+
+```bash
+pnpm host
+```
+
+Builds the site if `dist/` is missing, serves it on `127.0.0.1:4321`, and exposes it as HTTPS on the machine's tailnet FQDN via `tailscale serve`. The site is reachable only by devices on the same tailnet — not the public internet. Ctrl-C stops the local server and removes the tailnet exposure.
+
 ## Changing the Standard
 
 See `../CONTRIBUTING.md` for the spec-first rule. A change to a Cookfile surface construct must update `src/content/docs/` in the same commit as the implementation change, and must add a `CS-NNNN` entry to `src/content/docs/appendix/D-changes.mdx`.
