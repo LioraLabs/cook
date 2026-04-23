@@ -192,9 +192,9 @@ A `cook_step` MAY declare two or more outputs by listing additional `STRING` pat
 cook "a" "b" ... using_clause
 ```
 
-When two or more outputs are present, the `using_clause` MUST use the block form — either `inline_lua_block` (`>{ ... }`) or `shell_block` (`{ ... }`). A conforming implementation MUST reject the multi-output form with a single-string `using`, i.e. the shape `cook "a" "b" using "cmd"` (§ A.4, "Multi-output cook-step rule").
+When two or more outputs are present and a `using_clause` is given, the `using_clause` MUST use the block form — either `inline_lua_block` (`>{ ... }`) or `shell_block` (`{ ... }`). A conforming implementation MUST reject the multi-output form with a single-string `using`, i.e. the shape `cook "a" "b" using "cmd"` (§ A.4, "Multi-output cook-step rule").
 
-A conforming implementation MUST also reject a multi-output `cook_step` with no `using_clause` at all: the declaration-only form of § 4.5 applies only to the single-output case, because the execution model needs a block body in which the multiple outputs can be built together.
+The declaration-only form of § 4.5 also applies to the multi-output case: a `cook_step` listing two or more outputs with no `using_clause` is accepted and announces the outputs without providing an inline build command. Its build is assumed to be provided by preceding Lua registrations or a later amendment (App. A.4, "Declaration-only cook step").
 
 ### Example 4.6.1
 
