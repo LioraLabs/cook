@@ -1,0 +1,72 @@
+/* ─────────────────────────────────────────────────────────────
+ * RFC 2119 keyword styling
+ * ──────────────────────────────────────────────────────────── */
+
+.rfc2119 {
+  font-variant-caps: small-caps;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.rfc2119-must,
+.rfc2119-shall {
+  color: var(--sl-color-red);
+}
+
+.rfc2119-should {
+  color: var(--sl-color-orange);
+}
+
+.rfc2119-may {
+  color: var(--sl-color-blue);
+}
+
+.rfc2119-required {
+  color: var(--sl-color-red);
+}
+
+.rfc2119-recommended {
+  color: var(--sl-color-orange);
+}
+
+.rfc2119-optional {
+  color: var(--sl-color-blue);
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Cookfile syntax highlighting
+ * ──────────────────────────────────────────────────────────── */
+
+.cook-block {
+  background: var(--sl-color-gray-6);
+  padding: 0.8rem 1rem;
+  border-radius: 0.25rem;
+  overflow-x: auto;
+}
+
+.hl-keyword           { color: var(--sl-color-purple); font-weight: 600; }
+.hl-function          { color: var(--sl-color-blue); }
+.hl-function-builtin  { color: var(--sl-color-blue); font-weight: 600; }
+.hl-module            { color: var(--sl-color-accent); }
+.hl-string            { color: var(--sl-color-green); }
+.hl-number            { color: var(--sl-color-orange); }
+.hl-comment           { color: var(--sl-color-gray-3); font-style: italic; }
+.hl-operator          { color: var(--sl-color-gray-2); }
+.hl-punctuation       { color: var(--sl-color-gray-3); }
+.hl-variable          { color: var(--sl-color-text); }
+.hl-identifier        { color: var(--sl-color-text); }
+
+/* ─────────────────────────────────────────────────────────────
+ * CS-NNNN references
+ * ──────────────────────────────────────────────────────────── */
+
+a[href*="#CS-"] {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--sl-font-mono);
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+}
+
+a[href*="#CS-"]:hover {
+  text-decoration: underline;
+}

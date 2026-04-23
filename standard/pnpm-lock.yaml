@@ -14,13 +14,43 @@ importers:
       astro:
         specifier: ^5.0.0
         version: 5.18.1(@types/node@22.19.17)(rollup@4.60.2)(typescript@5.9.3)
+      hast-util-from-html:
+        specifier: ^2.0.0
+        version: 2.0.3
+      mdast-util-to-hast:
+        specifier: ^13.0.0
+        version: 13.2.1
+      unified:
+        specifier: ^11.0.0
+        version: 11.0.5
+      unist-util-visit:
+        specifier: ^5.0.0
+        version: 5.1.0
+      vfile:
+        specifier: ^6.0.3
+        version: 6.0.3
       web-tree-sitter:
         specifier: ^0.25.0
         version: 0.25.10
     devDependencies:
+      '@types/hast':
+        specifier: ^3.0.0
+        version: 3.0.4
+      '@types/mdast':
+        specifier: ^4.0.0
+        version: 4.0.4
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
+      rehype:
+        specifier: ^13.0.0
+        version: 13.0.2
+      rehype-parse:
+        specifier: ^9.0.0
+        version: 9.0.1
+      remark:
+        specifier: ^15.0.0
+        version: 15.0.1
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
@@ -1871,6 +1901,9 @@ packages:
 
   remark-stringify@11.0.0:
     resolution: {integrity: sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw==}
+
+  remark@15.0.1:
+    resolution: {integrity: sha512-Eht5w30ruCXgFmxVUSlNWQ9iiimq07URKeFS3hNc8cUWy1llX4KDWfyEDZRycMc+znsN9Ux5/tJ/BFdgdOwA3A==}
 
   retext-latin@4.0.0:
     resolution: {integrity: sha512-hv9woG7Fy0M9IlRQloq/N6atV82NxLGveq+3H2WOi79dtIYWN8OaxogDm77f8YnVXJL2VD3bbqowu5E3EMhBYA==}
@@ -4590,6 +4623,15 @@ snapshots:
       '@types/mdast': 4.0.4
       mdast-util-to-markdown: 2.1.2
       unified: 11.0.5
+
+  remark@15.0.1:
+    dependencies:
+      '@types/mdast': 4.0.4
+      remark-parse: 11.0.0
+      remark-stringify: 11.0.0
+      unified: 11.0.5
+    transitivePeerDependencies:
+      - supports-color
 
   retext-latin@4.0.0:
     dependencies:

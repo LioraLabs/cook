@@ -1,11 +1,24 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { remarkCookHighlight } from './src/plugins/remark-cook-highlight.ts';
+import { remarkRfc2119 } from './src/plugins/remark-rfc2119.ts';
+import { rehypeClauseAnchors } from './src/plugins/rehype-clause-anchors.ts';
+import { rehypeCsPermalinks } from './src/plugins/rehype-cs-permalinks.ts';
+import { harvestCsIds, defaultChangesPath } from './src/plugins/cs-ids.ts';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const knownCsIds = harvestCsIds(defaultChangesPath(__dirname));
 
 export default defineConfig({
   integrations: [
     starlight({
       title: 'The Cook Standard',
       description: 'The authoritative specification of the Cookfile language.',
+      customCss: ['./src/styles/spec.css'],
       sidebar: [
         { label: 'Overview', link: '/' },
         {
@@ -25,13 +38,31 @@ export default defineConfig({
           label: 'Appendices',
           collapsed: true,
           items: [
-            { label: 'Appendix A — Grammar',        link: '/appendix/a-grammar/' },
-            { label: 'Appendix B — Rationale',      link: '/appendix/b-rationale/' },
+            { label: 'Appendix A — Grammar',         link: '/appendix/a-grammar/' },
+            { label: 'Appendix B — Rationale',       link: '/appendix/b-rationale/' },
             { label: 'Appendix C — Worked examples', link: '/appendix/c-examples/' },
-            { label: 'Appendix D — Changes',        link: '/appendix/d-changes/' },
+            { label: 'Appendix D — Changes',         link: '/appendix/d-changes/' },
           ],
         },
       ],
     }),
   ],
+  markdown: {
+    remarkPlugins: [
+      [remarkCookHighlight, {
+        wasmPath: path.join(__dirname, 'public/tree-sitter-cook.wasm'),
+        queryPath: path.join(__dirname, '../tree-sitter-cook/queries/highlights.scm'),
+      }],
+      remarkRfc2119,
+    ],
+    rehypePlugins: [
+      rehypeClauseAnchors,
+      [rehypeCsPermalinks, {
+        knownIds: knownCsIds,
+        // filePath is read per-invocation from unified's VFile.path —
+        // see Step 2 of this task for the plugin signature update.
+        changesHref: '/appendix/d-changes/',
+      }],
+    ],
+  },
 });
