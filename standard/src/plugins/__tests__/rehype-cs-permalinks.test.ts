@@ -19,19 +19,33 @@ function process(html: string, opts?: { knownIds?: Set<string>; filePath?: strin
 describe('rehypeCsPermalinks', () => {
   it('links a free-standing CS-NNNN reference to the changes page', () => {
     const out = process('<p>See CS-0007 for context.</p>');
-    expect(out).toContain('<a href="/appendix/d-changes/#CS-0007">CS-0007</a>');
+    expect(out).toContain('href="/appendix/d-changes/#CS-0007"');
+    expect(out).toContain('class="cs-link"');
+    expect(out).toContain('>CS-0007</a>');
   });
 
   it('does not wrap CS-NNNN that is already inside a link', () => {
     const out = process('<p>See <a href="/elsewhere">CS-0001</a>.</p>');
     expect(out).toContain('<a href="/elsewhere">CS-0001</a>');
-    expect(out).not.toContain('<a href="/appendix/d-changes/#CS-0001">');
+    expect(out).not.toContain('href="/appendix/d-changes/#CS-0001"');
   });
 
   it('does not wrap CS-NNNN inside inline code', () => {
     const out = process('<p>The token <code>CS-0001</code> is literal.</p>');
     expect(out).toContain('<code>CS-0001</code>');
-    expect(out).not.toContain('<a href="/appendix/d-changes/#CS-0001">');
+    expect(out).not.toContain('href="/appendix/d-changes/#CS-0001"');
+  });
+
+  it('links a CS-NNNN that follows a closed <a> in the same paragraph', () => {
+    // Regression test: the previous implementation tracked ancestors with a
+    // push-only stack, so after traversing into a sibling <a> it would still
+    // treat subsequent text siblings as "inside <a>" and skip them.
+    const out = process(
+      '<p>See <a href="/x">some link</a> and CS-0007 for context.</p>',
+    );
+    expect(out).toContain('<a href="/x">some link</a>');
+    expect(out).toContain('href="/appendix/d-changes/#CS-0007"');
+    expect(out).toContain('>CS-0007</a>');
   });
 
   it('throws on a dangling CS-NNNN reference', () => {

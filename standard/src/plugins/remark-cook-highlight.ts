@@ -37,6 +37,12 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+// Module-scoped cache: the first call's wasmPath/queryPath win for the
+// lifetime of the Node process. Calling the plugin a second time with
+// different options would silently reuse the first parser. Acceptable
+// today because there is exactly one call site with fixed paths; if a
+// future build needs multiple grammars, construct each plugin in a
+// separate module (each with its own cache) or switch to a keyed cache.
 async function getParser(opts: CookHighlightOptions) {
   if (parserPromise) return parserPromise;
   parserPromise = (async () => {

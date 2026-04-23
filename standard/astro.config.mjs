@@ -59,8 +59,6 @@ export default defineConfig({
       rehypeClauseAnchors,
       [rehypeCsPermalinks, {
         knownIds: knownCsIds,
-        // filePath is read per-invocation from unified's VFile.path —
-        // see Step 2 of this task for the plugin signature update.
         changesHref: '/appendix/d-changes/',
       }],
     ],

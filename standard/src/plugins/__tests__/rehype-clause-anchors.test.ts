@@ -34,8 +34,10 @@ describe('rehypeClauseAnchors', () => {
 
   it('handles appendix-only headings', () => {
     const out = process('<h1>Appendix A. Grammar (normative)</h1>');
-    // "Appendix" doesn't match at column 0; the regex requires a digit or
-    // capital letter immediately at the start. So this is not a clause.
+    // "Appendix" starts with 'A' which does satisfy [A-Z], but the regex
+    // requires the next character to be '.' or another clause token. Here
+    // the next character is 'p' ("ppendix"), so the match fails at the
+    // required trailing period.
     expect(out).not.toContain('id="sec-');
   });
 

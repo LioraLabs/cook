@@ -6,8 +6,8 @@ This project contains the authoritative specification of the Cookfile language a
 
 - `src/content/docs/` — the Standard's chapters and appendices (`.mdx`).
 - `conformance/` — the conformance corpus consumed by `cook-lang`'s test suite and (planned) by `tree-sitter-cook`'s harness.
-- `src/plugins/` — the remark/rehype plugins that drive spec-specific rendering (Cookfile syntax highlighting, RFC-2119 keyword styling, `§ X.Y.Z` clause anchors, `CS-NNNN` permalinks). Added in a subsequent commit.
-- `src/styles/spec.css` — styling for the above. Added in a subsequent commit.
+- `src/plugins/` — the remark/rehype plugins that drive spec-specific rendering (Cookfile syntax highlighting via `tree-sitter-cook`, RFC-2119 keyword styling, clause anchors, `CS-NNNN` permalinks).
+- `src/styles/spec.css` — styling for the above.
 - `scripts/check-normative-keywords.sh` — lint that flags lowercase RFC-2119 keywords in normative chapters.
 
 ## Building the site
