@@ -6,7 +6,7 @@
 
 The Cook Standard is the authoritative specification of the Cookfile language. It is maintained in lockstep with the `main` branch: any change that affects language surface MUST be reflected in the Standard in the same commit that changes the implementation.
 
-The Standard is a living document. Chapters are filled in incrementally; today, chapters 0, 1, and Appendix A are fully written, while chapters 2 through 7 are numbered outlines with `NORMATIVE-TODO` stubs referencing the de-facto authoritative implementation (the Rust parser). A language change that touches a stubbed section MUST fill that section's normative prose as part of the same change.
+The Standard is a living document. Chapters 0–7 and Appendix A are fully written. Amendments to any section MUST follow the spec-first rule in `CONTRIBUTING.md` and add a `CS-NNNN` entry to `D-changes.mdx`.
 
 ## Table of contents
 
@@ -14,17 +14,17 @@ The Standard is a living document. Chapters are filled in incrementally; today, 
 
 - [§ 0 — Introduction](00-introduction.mdx)
 - [§ 1 — Notation and conventions](01-notation.mdx)
-- [§ 2 — Lexical structure](02-lexical.mdx) (skeleton)
-- [§ 3 — Syntactic grammar](03-syntactic-grammar.mdx) (skeleton)
-- [§ 4 — Recipes and step kinds](04-recipes.mdx) (skeleton)
-- [§ 5 — Execution model](05-execution-model.mdx) (skeleton)
-- [§ 6 — Cook Lua API](06-cook-lua-api.mdx) (skeleton)
-- [§ 7 — Modules](07-modules.mdx) (skeleton)
+- [§ 2 — Lexical structure](02-lexical.mdx)
+- [§ 3 — Syntactic grammar](03-syntactic-grammar.mdx)
+- [§ 4 — Recipes and step kinds](04-recipes.mdx)
+- [§ 5 — Execution model](05-execution-model.mdx)
+- [§ 6 — Cook Lua API](06-cook-lua-api.mdx)
+- [§ 7 — Modules](07-modules.mdx)
 - [App. A — Grammar](A-grammar.mdx)
 
 ### Informative
 
-- [App. B — Rationale](B-rationale.mdx) (skeleton)
+- [App. B — Rationale](B-rationale.mdx)
 - [App. C — Worked examples](C-examples.mdx)
 - [App. D — Changes](D-changes.mdx)
 
@@ -50,5 +50,5 @@ git config core.hooksPath .githooks
 
 ## Reading order
 
-First-time readers: read § 0, § 1, and Appendix A in that order. Skim App. C for worked examples. Return to chapters 2–7 as their prose is filled in; for now, the Rust parser is the de-facto authority for constructs whose Standard section is stubbed.
+First-time readers: read § 0 and § 1, then the chapter relevant to the construct in question; Appendix A is the formal grammar reference. Skim App. C for worked examples and App. B for design rationale.
 ````
