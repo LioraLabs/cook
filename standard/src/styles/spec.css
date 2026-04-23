@@ -70,3 +70,17 @@ a[href*="#CS-"] {
 a[href*="#CS-"]:hover {
   text-decoration: underline;
 }
+
+/* ─────────────────────────────────────────────────────────────
+ * Clause cross-references (§ X.Y[.Z])
+ * ──────────────────────────────────────────────────────────── */
+
+a.clause-xref {
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+  font-variant-numeric: tabular-nums;
+}
+
+a.clause-xref:hover {
+  text-decoration: underline;
+}

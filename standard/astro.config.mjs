@@ -6,12 +6,15 @@ import { fileURLToPath } from 'node:url';
 import { remarkCookHighlight } from './src/plugins/remark-cook-highlight.ts';
 import { remarkRfc2119 } from './src/plugins/remark-rfc2119.ts';
 import { rehypeClauseAnchors } from './src/plugins/rehype-clause-anchors.ts';
+import { rehypeClauseXrefs } from './src/plugins/rehype-clause-xrefs.ts';
 import { rehypeCsPermalinks } from './src/plugins/rehype-cs-permalinks.ts';
 import { harvestCsIds, defaultChangesPath } from './src/plugins/cs-ids.ts';
+import { harvestClauses, defaultContentRoot } from './src/plugins/clauses.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const knownCsIds = harvestCsIds(defaultChangesPath(__dirname));
+const clauseMap = harvestClauses(defaultContentRoot(__dirname));
 
 export default defineConfig({
   integrations: [
@@ -57,6 +60,7 @@ export default defineConfig({
     ],
     rehypePlugins: [
       rehypeClauseAnchors,
+      [rehypeClauseXrefs, { clauseMap }],
       [rehypeCsPermalinks, {
         knownIds: knownCsIds,
         changesHref: '/appendix/d-changes/',
