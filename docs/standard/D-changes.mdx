@@ -16,12 +16,12 @@
 **Summary:** Tree-sitter currently lags behind the Rust parser on several constructs: multi-output cook steps, shell-block `using` clauses, `test` steps, ingredient excludes (`!"..."`), Lua-code config blocks, and the module-call heuristic. The follow-up plan will: (a) enumerate divergences, (b) update `grammar.js` and its externals, (c) wire a tree-sitter corpus against `docs/standard/conformance/`, (d) verify both implementations agree.
 **Reference:** to be filled when the plan is written.
 
-## CS-0003 — Planned: § 2 Lexical structure filled
+## CS-0003 — § 2 Lexical structure filled
 
-**Date:** planned.
-**Sections affected:** § 2.1–2.10 (except § 2.7 which was filled by the PoC), App. B.2.
-**Summary:** _To be filled by the § 2 agent._
-**Reference:** to be filled when the prose is written.
+**Date:** 2026-04-22
+**Sections affected:** § 2.1, § 2.2, § 2.3, § 2.4, § 2.5, § 2.6, § 2.8, § 2.9, § 2.10, App. B.2 (chapter intro plus B.2.2, B.2.3, B.2.4).
+**Summary:** Normative prose for chapter 2 filled, replacing the `NORMATIVE-TODO` stubs in § 2.1–2.6 and § 2.8–2.10. § 2.7 (line prefixes) was established by the PoC and is unchanged. The cascade in § 2.10 codifies the lexer's first-match ordering with a defined "keyword separator" term, and each section grounds its non-obvious edge cases in a governing test under `cli/crates/cook-lang/src/`. Appendix B gains three rationale subsections covering one-token-per-line, ASCII-only identifiers, and contextual keyword reservation.
+**Reference:** this commit.
 
 ## CS-0004 — Planned: § 3 Syntactic grammar filled
 

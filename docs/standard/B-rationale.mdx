@@ -12,7 +12,35 @@ _To be filled in._
 
 ## B.2. On § 2 Lexical structure
 
-_Expands as § 2 is filled in. The rationale below corresponds to the sections already completed._
+Chapter 2 is deliberately small. Cookfiles are tokenized line by line, each line classifies into exactly one token, and the step-dispatch cascade in App. A.4 handles every syntactic distinction the lexer declines to make. This pushes complexity out of the lexer and into a single prose cascade (§ 2.10) that mirrors the implementation's `if`/`else if` ladder. The rationale entries below record the places where a more sophisticated lexical design was considered and rejected; the unadorned sections are either mechanical (§ 2.1, § 2.6, § 2.8) or fall out of constraints explained elsewhere (§ 2.5 follows from App. A.5, § 2.9 follows from the embedded-Lua design in § 6).
+
+### B.2.2. Why one token per line
+
+The Cookfile grammar is strictly line-oriented: every source line produces exactly one token carrying that line's 1-indexed number. The alternative — a conventional multi-token-per-line lexer — was rejected on three grounds.
+
+First, error locality. Nearly every diagnostic in the Rust parser reports a 1-indexed line number, and authors of Cookfiles edit them in line-oriented tools (editors, diffs, code review). A one-token-per-line scheme makes "line N" unambiguous; a multi-token scheme would need column offsets and a column-aware diagnostic renderer for the same quality of error.
+
+Second, block locality. Brace-balanced blocks (§ 2.9) are collected by reading subsequent **source lines** and counting braces, not by reading subsequent tokens. A line-oriented lexer composes cleanly with that design: the block-collector asks the line iterator for the next N raw lines and the lexer asks for a single classification per line, and neither layer needs to hand the other a partial line.
+
+Third, authoring model. Cookfile authors think in steps, not in expressions, and one step per line is the idiom every existing example reinforces. There is no authoring convenience the multi-token model would unlock.
+
+The cost is that a `Content` token must be re-examined by the step-dispatch cascade (App. A.4) to distinguish `ingredients`, `cook`, `plate`, `test`, module calls, interactive commands, and shell commands. That re-examination is a small, linear, keyword-prefix test — cheaper than a general tokenizer would be and easier to reason about.
+
+### B.2.3. Why `BARE_IDENTIFIER` is ASCII-only
+
+The `BARE_IDENTIFIER` character class in App. A.5 is ASCII — no Unicode letters, no Unicode digits, no confusables. The reason is interoperability with the shell.
+
+Most `BARE_IDENTIFIER` values end up as filesystem-visible artefacts: recipe names become command-line arguments to the `cook` CLI, and module-call first-segments correspond to on-disk module roots. ASCII-only identifiers guarantee those names survive copy-paste between a Cookfile, a terminal, a CI log, a URL, and a filesystem without encoding surprises. Unicode identifiers would force the implementation to take a stance on normalisation, case-folding, and confusable-detection, none of which is justified by the expected author population.
+
+The cost is paid by authors working in non-Latin scripts, who can still use a `STRING`-form recipe name (App. A.5 allows `name ::= BARE_IDENTIFIER | STRING`) at the price of double quoting. The escape hatch keeps the simple case simple and charges the complexity only to the users who actually need it.
+
+### B.2.4. Why keywords are reserved contextually, not globally
+
+The Cookfile language has keywords (`recipe`, `config`, `cook`, `plate`, `ingredients`, `using`, `use`, `import`, `end`, `test`) and reserved recipe segments (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`), and neither set is reserved globally. `recipes_cleanup` is a perfectly valid shell command; `configure --prefix=/usr` is an ordinary `Content` line; a recipe named `backend.build` is accepted because `build` is not on the reserved-segment list.
+
+Global reservation would have been simpler to specify but would have broken the most common shell idioms. Cookfiles frequently call tools named `configure`, `cook-book`, `tester`, `using-*` — forbidding those as shell commands to protect a handful of language keywords would be a poor trade. The contextual rule instead places the reservation only where it is needed: the LHS of a `variable_declaration` (where ambiguity with keyword-prefixed step forms would otherwise arise) and the final segment of a recipe name (where the `{stem}`-style substitution rule would otherwise collide with a literal segment of the same name).
+
+The cost is that § 2.4 carries two lists instead of one, and the step-dispatch cascade in App. A.4 must insist on a separator after each keyword. Both costs are borne by the Standard and the implementation, not by the author.
 
 ### B.2.7. Why `@` is not a lexical prefix
 
