@@ -10,7 +10,7 @@
     "dev": "astro dev",
     "preview": "astro preview",
     "lint:keywords": "bash scripts/check-normative-keywords.sh",
-    "host": "bash scripts/host.sh",
+    "host": "astro preview --host",
     "test": "vitest run",
     "test:watch": "vitest"
   },

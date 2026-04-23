@@ -30,10 +30,11 @@ pnpm lint:keywords       # normative-keyword lint
 ## Hosting on the tailnet
 
 ```bash
+pnpm build   # if dist/ isn't current
 pnpm host
 ```
 
-Builds the site if `dist/` is missing, serves it on `127.0.0.1:4321`, and exposes it as HTTPS on the machine's tailnet FQDN via `tailscale serve`. The site is reachable only by devices on the same tailnet — not the public internet. Ctrl-C stops the local server and removes the tailnet exposure.
+`pnpm host` runs `astro preview --host`, binding the preview server to `0.0.0.0:4321` so it's reachable from any tailnet device at `http://archbtw:4321/` (or `http://archbtw.story-pike.ts.net:4321/`). The tailnet hostname is allowlisted in `astro.config.mjs` under `vite.preview.allowedHosts`. If this repo ever moves to a different host, update that list.
 
 ## Changing the Standard
 
