@@ -291,7 +291,7 @@ The substitution rules are:
 - **`{out}`** is the output pattern for the current iteration. Patterns in the cook-step's output strings (e.g., `"build/{stem}.o"`) are expanded using the same accessor names before `{out}` is substituted here.
 - **`{stem}`**, **`{name}`**, **`{ext}`**, **`{dir}`** expand to the corresponding accessor applied to the current input path.
 - **`{all}`** is only well-defined when the using-string does NOT contain `{in}`. In that case, the step is a many-to-one step (§ 4.5) and `{all}` expands to the inputs joined by a single space character. A step using both `{in}` and `{all}` is implementation-defined.
-- **Unknown placeholders.** A `{TOKEN}` whose name is not one of the above and is not the name of a recipe in the same Cookfile MUST be treated as a reference to `cook.env[TOKEN]`. A `{TOKEN}` whose name is the name of another recipe in the same Cookfile MUST be treated as a reference to that recipe's terminal outputs (see § 7 for `cook.dep_output`).
+- **Non-builtin placeholders.** A `{TOKEN}` that is not one of the current-iteration builtins above is resolved as a name reference per § 5.2. The resolution rule falls through to `cook.env[TOKEN]` when `TOKEN` is neither a recipe name (whole or accessor-split) nor a current-iteration builtin.
 
 ### Example 6.7.1
 
