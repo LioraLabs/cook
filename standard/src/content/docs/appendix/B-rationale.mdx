@@ -155,6 +155,32 @@ The ordering rule in § 8.7 — syntactic diagnostics before semantic, first syn
 
 The wording is not normative because diagnostic quality is a product concern where implementations should be free to differentiate. A terse parser-level message suitable for a CI log and a richly-formatted message suitable for an editor overlay are both conforming so long as the ordering holds and the class of error is identifiable. This matches the convention established in § 0.3 and § 0.7: exact wording is out of scope; the diagnostic class is in scope.
 
+### B.5.N. Name references as the sole implicit-dep source
+
+CS-0009 removed the implicit cross-recipe dependency rule based on byte-equality between an ingredient path of one recipe and a cook-output path of another (old § 5.5). Under the new rule (§ 8.4), only name references (§ 5) establish cross-recipe edges.
+
+The motivation is conservatism about hidden coupling. The string-match rule coupled scheduling to filesystem path coincidence: a refactor that renamed `build/lib/libmath.a` to `build/artifact/libmath.a` would silently rewire the DAG, with no diagnostic pointing at the recipe boundary that shifted. Authors routinely write output paths that happen to match an unrelated recipe's ingredient, particularly in large workspaces where paths are constructed algorithmically. The edge can surprise.
+
+The rule is also redundant once name references exist. Any dep the author meant to express by path equality can be expressed by `{lib}` or `{lib.ACCESSOR}` in the consuming recipe, or by `: lib` in the header. The former creates a fine-grained edge at the placeholder site (§ 5.6) — strictly more precise than the path-match rule, which always produced a whole-recipe edge.
+
+The small cost is a one-line migration for any existing Cookfile that relied on the rule: add `{lib}` to the using-string, or add `: lib` to the header.
+
+### B.5.O. Dep-driven iteration via output-pattern accessors
+
+CS-0009 specifies that `{lib.ACCESSOR}` appearing in a `cook` step's output pattern list is both a template substitution AND an iteration-source declaration: the step's work units are generated per item in `lib`'s output list rather than per item in this recipe's own input list (§ 5.4).
+
+The alternative considered was an explicit declaration such as `cook "build/{stem}.o" from lib using "…"`, where `from lib` names the iteration driver and placeholder substitutions are orthogonal. The explicit form is easier to spec and eliminates the context-sensitivity of `{lib}` vs `{lib.ACCESSOR}`. It was rejected on surface-syntax grounds: the accessor placeholder already mirrors the own-iteration placeholder set (`{stem}`, `{name}`, `{ext}`, `{dir}`, § 6.7), no new keyword is introduced, and Cookfiles already shipped with the terse form.
+
+The cost — that a step's iteration source is determined by placeholder inspection — is contained by the "one distinct recipe per step" rule (§ 5.4): the inspection is unambiguous, and the diagnostic for mixing two distinct drivers is straightforward.
+
+### B.5.P. Closed accessor set
+
+The set of path accessors (§ 5.3) is `{stem, name, ext, dir}` and is closed. Adding an accessor is a change to this Standard.
+
+The alternative — opening the set to every zero-arg `path.*` function — was rejected because the resolver in § 5.2 splits on a dot and checks the SUFFIX against a small fixed set. Opening the set would require the resolver to consult the `path` module at parse time, introducing semantic lookup into what is currently a syntactic pass and exposing resolver output to extensions of the standard library. Growth of surface syntax should be a Standard change; growth of Lua helpers should not require one.
+
+A zero-arg `path.*` addition not in the accessor set remains reachable from step bodies via a `{ … }` Lua block (§ 4.5, § 4.6). The closed-set rule does not restrict what authors can compute — only what syntactic shortcuts exist for the common cases.
+
 ## B.6. On § 6 Cook Lua API
 
 The Cook Lua API is deliberately small and sharply phase-split. Most build-system DSLs expose a single large API whose functions do different things depending on when they are called — declaration during a "load" pass, execution during a "run" pass, with the split encoded by convention rather than by contract. The Cook Standard commits to the split in its normative text: every function is classified as register-phase, execute-phase, or both, and a conforming implementation MUST install each function in the phases it is documented for.
