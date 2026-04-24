@@ -171,4 +171,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-C-3':   'examples.module-use-call',
   'sec-C-4':   'examples.lua-multi-output',
   'sec-C-5':   'examples.cross-recipe-refs',
+
+  // ── Appendix D — Changes (informative) ───────────────────────────────────
+  'sec-D-10':  'changes.cs-0010',
 };

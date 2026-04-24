@@ -69,3 +69,15 @@ sidebar:
 **Sections affected:** §{recipes.dep-list}, §{xref} (new), §{lua.shell-placeholders}, §{lua.use-env} (new), §{modules} (renamed), §{exec} (moved from §{xref}). App. B.5.N/O/P (new). App. C.N (new).
 **Summary:** Introduced §{xref} "Cross-recipe references" as the normative home for name-reference surface (dep-list, bare placeholder, accessor placeholder), resolution, path accessors, dep-driven iteration, string-substitution, and dependency implications. Split the former §{modules} "Modules" into §{lua.use-env} (`use` declaration, under Cook Lua API) and §{modules} "Cross-Cookfile composition" (`import` and qualified references). Moved "Execution model" to §{exec} so that later-chapter references do not forward-reference undefined surface. Removed the ingredient/serves byte-equality implicit-dep rule from the Execution model (old §{xref.string-substitution}); cross-recipe ordering is now established only by name references. Added rationale B.5.N (removal motivation), B.5.O (accessor-placeholder iteration surface vs. explicit `from`), and B.5.P (closed accessor set). Added a worked example under App. C. Runtime: `cli/crates/cook-engine/src/analyzer.rs` no longer constructs edges from ingredient/serves string equality.
 **Reference:** this commit.
+
+## D.10. CS-0010 — Slug-based cross-references. [#changes.cs-0010]
+
+**Date:** 2026-04-24
+**Sections affected:** §{notation.stable-anchors} (new); all prose source files (bulk rewrite of heading markers and inline refs); `scripts/slug-mapping.ts` (new registry file).
+**Summary:** Cross-references in this Standard are now author-assigned stable slugs of the form `chapter.leaf`. Prose refs use `§{chapter.leaf}` in source and render as the current section number. Heading anchors use the slug directly (URLs such as `/02-lexical/#lexical.identifiers`). The prior positional `sec-N-M-K` anchor scheme is removed.
+
+**Motivation.** Section renumbering previously drifted every ref pointing at the affected sections. The fix commits after the CS-0009 restructure (commits `35d46d9` and `e83c490`) repaired the visible drift; the underlying positional anchor scheme was the root cause. Slug-based refs decouple identity from ordering. See §{notation.stable-anchors} for the full chapter-prefix registry and invariants.
+
+**Impact.** Prose sources changed in bulk; rendered output unchanged. External deep links using the old `#sec-N-M-K` anchors break — the Standard is pre-release, no external consumers were affected. A new build-time lint rejects any bare `§ N.M` in prose to prevent regressions.
+
+**Conformance.** No impact. The change is authoring-surface only.
