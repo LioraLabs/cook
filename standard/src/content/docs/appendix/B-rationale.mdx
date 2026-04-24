@@ -113,39 +113,25 @@ The two-token heuristic is cheap, lexer-local, and has no false positives in pra
 
 The multi-line extension (continuing across source lines while braces are unbalanced) is the same brace-balance algorithm used for `lua_block` (§ 2.9). Reusing it keeps the lexer consistent: the Cookfile parser has exactly one way to recognise a brace-balanced region, and that region's body is always handed to Lua untouched.
 
-## B.5. On § 5 Execution model
+## B.5. On § 8 Execution model
 
-The execution model in § 5 is organised around a two-phase design: every recipe is evaluated once to discover its work (the register phase) and then arranged for execution (the execute phase). This split is not cosmetic. It is the mechanism by which the Standard turns a scripting-flavoured surface syntax — arbitrary Lua embedded in a recipe body — into a dependency graph that can be reasoned about, parallelised, and cached. The rationale subsections below record why several load-bearing decisions in § 5 are the way they are.
+The execution model in § 8 is organised around a two-phase design: every recipe is evaluated once to discover its work (the register phase) and then arranged for execution (the execute phase). This split is not cosmetic. It is the mechanism by which the Standard turns a scripting-flavoured surface syntax — arbitrary Lua embedded in a recipe body — into a dependency graph that can be reasoned about, parallelised, and cached. The rationale subsections below record why several load-bearing decisions in § 8 are the way they are.
 
 ### B.5.1. Why the register phase is pure and non-blocking
 
-The register phase evaluates each recipe's Lua body once, with capture-mode bindings for the Cook Lua API (§ 5.2). The requirement that register-phase calls be pure with respect to the build state — no subprocesses against declared outputs, no output-file mutations, no blocking on external I/O — exists for three concrete reasons.
+The register phase evaluates each recipe's Lua body once, with capture-mode bindings for the Cook Lua API (§ 8.2). The requirement that register-phase calls be pure with respect to the build state — no subprocesses against declared outputs, no output-file mutations, no blocking on external I/O — exists for three concrete reasons.
 
 First, **determinism of the graph.** If the register phase could block on a subprocess whose exit depended on a file produced by another recipe's execute phase, the topology of the dependency graph would depend on the order in which the implementation chose to register recipes. Two conforming implementations would then produce different graphs for the same Cookfile. By confining register-phase effects to appending entries to a record, the graph becomes a deterministic function of the Cookfile source and a bounded set of pre-existing inputs.
 
 Second, **bounded time.** The register phase runs on a single thread per recipe. If it could block, a long-running subprocess in one recipe's body would stall the discovery of every other recipe's work. Since the execute phase cannot begin until registration completes, this would reduce the whole build to serial execution even when the Cookfile would otherwise permit heavy parallelism.
 
-Third, **cache reasoning.** The cache (§ 5.7) keys work units on their register-phase record. If that record could reflect the transient state of a subprocess, cache hits would become order-dependent: the same command, on the same inputs, could produce different cache keys depending on whether an unrelated sibling step had already run. Purity eliminates that class of confusion.
+Third, **cache reasoning.** The cache (§ 8.6) keys work units on their register-phase record. If that record could reflect the transient state of a subprocess, cache hits would become order-dependent: the same command, on the same inputs, could produce different cache keys depending on whether an unrelated sibling step had already run. Purity eliminates that class of confusion.
 
-The narrowly-scoped exception allowed by the closing paragraph of § 5.2 — implementations MAY permit register-phase effects whose only purpose is to feed the register-phase Lua control flow itself — is load-bearing for the `cook.sh` utility in § 6. That call's return value drives whether a `cook` step fires at all, and suppressing it would force authors to split dynamic build logic across two passes.
+The narrowly-scoped exception allowed by the closing paragraph of § 8.2 — implementations MAY permit register-phase effects whose only purpose is to feed the register-phase Lua control flow itself — is load-bearing for the `cook.sh` utility in § 6. That call's return value drives whether a `cook` step fires at all, and suppressing it would force authors to split dynamic build logic across two passes.
 
-### B.5.2. Why ingredient–serves matching is exact string equality
+### B.5.2. Why `@` steps drain rather than serialise by default
 
-The rule in § 5.5 is that an ingredient string participates in implicit cross-recipe dependency only when it is byte-for-byte equal to a serves string. The Standard explicitly excludes glob expansion, path canonicalisation, symlink resolution, and any other form of path equivalence.
-
-The alternative — match any ingredient whose glob pattern, when expanded against the current filesystem, would include a file also served by another recipe — was considered and rejected. It has three compounding problems:
-
-1. **The graph depends on the filesystem.** A `build` recipe that globs `src/*.c` would acquire or lose a dependency on `gen` every time a generated source file appeared or disappeared. Authors reading the Cookfile would not be able to predict the dependency graph without also knowing the current state of the working tree.
-
-2. **The graph depends on scheduling.** The filesystem's contents change during execution. If `gen` runs first, `src/*.c` might expand to include a generated file; if `build`'s glob expands first, it might not. The graph would then need to be re-computed mid-run, and the two-phase model would cease to hold.
-
-3. **Cache invalidation loses a fixed point.** Caches rely on stable observable inputs. An ingredient list whose matched set depended on a sibling recipe's output would change between runs for reasons that do not correspond to any Cookfile edit.
-
-Exact string equality is coarse but explainable: two Cookfiles with the same text produce the same graph. Authors who need generated-file dependencies state them explicitly with `: dep` (§ 5.4), which is plainly visible in the recipe header.
-
-### B.5.3. Why `@` steps drain rather than serialise by default
-
-Section 5.6 requires an `@`-prefixed interactive step to drain all other running work before its command begins. The alternative — allowing an interactive step to run concurrently with background work and only inherit the TTY — was rejected because it produces user-hostile behaviour in the common case.
+Section 8.5 requires an `@`-prefixed interactive step to drain all other running work before its command begins. The alternative — allowing an interactive step to run concurrently with background work and only inherit the TTY — was rejected because it produces user-hostile behaviour in the common case.
 
 Interactive steps are used for dev-loop commands like `@./build/app`, `@vim notes.md`, and `@./serve`. These share the terminal with the human operator. If background work continues while such a command is in progress, its stdout and stderr interleave with the interactive session, corrupting the user's view and often stealing focus from whatever TUI the interactive command is presenting. Users who saw this behaviour during prototyping reported it as a defect even when the concurrent output was mechanically correct.
 
@@ -153,19 +139,19 @@ Draining is not the same as serial execution of the whole recipe. Work units bef
 
 Authors who want concurrent background work alongside an interactive session can obtain it by running the background work in a separate recipe and not depending on the interactive recipe — the dependency graph continues to permit parallel execution of independent recipes under the usual rules.
 
-### B.5.4. Why cache semantics are abstract rather than specified by hash algorithm
+### B.5.3. Why cache semantics are abstract rather than specified by hash algorithm
 
-Section 5.7 fixes the **set** of observable inputs a cache MAY consider — command text, input paths, output paths, environment, and optionally input-file content and output-file mtime — but it does not fix the hash function, the on-disk layout, or the policy for when cache entries are evicted. The boundary is deliberate.
+Section 8.6 fixes the **set** of observable inputs a cache MAY consider — command text, input paths, output paths, environment, and optionally input-file content and output-file mtime — but it does not fix the hash function, the on-disk layout, or the policy for when cache entries are evicted. The boundary is deliberate.
 
 The set of observable inputs is a language-level property: a Cookfile author reasoning about why a step did or did not re-run needs to know what the implementation is allowed to consider. The hash function and storage format are engineering concerns that implementations should be free to evolve — a switch from one hash family to another, or from a flat file to an embedded database, changes nothing the author sees at the Cookfile level.
 
 Specifying the hash function in the Standard would also lock every implementation into bit-compatibility with the reference, making caches transferable between implementations. That has never been a design goal. Caches are local artefacts; two implementations that both respect the observable-input rule produce equivalent cache decisions even if their on-disk caches are mutually unreadable.
 
-The closing paragraph of § 5.7 — that caching is optional altogether — follows from the same principle. An implementation that treats every run as a clean build satisfies the dependency rules of § 5.1–§ 5.6 and therefore conforms. The Standard does not require caching; it regulates it when it is present.
+The closing paragraph of § 8.6 — that caching is optional altogether — follows from the same principle. An implementation that treats every run as a clean build satisfies the dependency rules of § 8.1–§ 8.5 and therefore conforms. The Standard does not require caching; it regulates it when it is present.
 
-### B.5.5. Why diagnostic ordering is normative but diagnostic wording is not
+### B.5.4. Why diagnostic ordering is normative but diagnostic wording is not
 
-The ordering rule in § 5.8 — syntactic diagnostics before semantic, first syntax error halts parsing — is normative because it determines what a Cookfile author sees on a single run. An implementation that reported a dependency cycle before reporting that a `cook` line was unterminated would mislead authors into debugging the graph when the real problem was a quote.
+The ordering rule in § 8.7 — syntactic diagnostics before semantic, first syntax error halts parsing — is normative because it determines what a Cookfile author sees on a single run. An implementation that reported a dependency cycle before reporting that a `cook` line was unterminated would mislead authors into debugging the graph when the real problem was a quote.
 
 The wording is not normative because diagnostic quality is a product concern where implementations should be free to differentiate. A terse parser-level message suitable for a CI log and a richly-formatted message suitable for an editor overlay are both conforming so long as the ordering holds and the class of error is identifiable. This matches the convention established in § 0.3 and § 0.7: exact wording is out of scope; the diagnostic class is in scope.
 
@@ -175,7 +161,7 @@ The Cook Lua API is deliberately small and sharply phase-split. Most build-syste
 
 The reasoning is pragmatic:
 
-- **The register phase is the cache boundary.** Everything that happens during registration is observed by the cache (§ 5.7). Writing a file during registration makes that file a register-time input in a way that cache hashes do not see. The small `cook.sh` / `cook.exec` surface is the entire register-time effect mechanism; the larger `fs.*` surface is available in both phases because authors legitimately want it in both.
+- **The register phase is the cache boundary.** Everything that happens during registration is observed by the cache (§ 8.6). Writing a file during registration makes that file a register-time input in a way that cache hashes do not see. The small `cook.sh` / `cook.exec` surface is the entire register-time effect mechanism; the larger `fs.*` surface is available in both phases because authors legitimately want it in both.
 - **The execute phase is the parallelism boundary.** Execute-phase work runs on a pool of worker VMs, each with its own Lua state. A function that mutates shared capture state cannot sensibly run on a worker. `cook.add_unit` is register-phase only for exactly this reason.
 - **Keeping the surface small means the phase split is memorable.** A surface this size can be held in an author's head: `cook.add_unit`, the `cook.sh`/`cook.exec`/`cook.interactive` helpers, seven `fs.*` functions, six `path.*` functions, and the execute-phase using-block globals. That is intentional.
 
@@ -197,17 +183,17 @@ Keeping the namespaces apart matches a common Lua convention (see the standard l
 
 A naive design might allow `cook.add_unit` inside `using >{ ... }` Lua blocks — that is, inside an execute-phase step — as a way to dynamically produce further units based on build outputs. The Standard forbids this: `cook.add_unit` is register-phase only.
 
-The reason is the cache. The set of work units is the input to the scheduler (§ 5), and the scheduler's correctness depends on knowing all units before any of them runs. A unit added during execution would have to either (a) force re-planning mid-execute — which invalidates any parallelism already in flight — or (b) sneak past the scheduler and run outside its ordering guarantees. Both options break the contract. Authors who need data-driven unit counts call `cook.sh` at register time (§ 6.3.1) to compute the data, then call `cook.add_unit` for each computed unit, all during registration. The examples in `cpp.lua` (e.g., `cpp.static_library`) are the canonical shape.
+The reason is the cache. The set of work units is the input to the scheduler (§ 8), and the scheduler's correctness depends on knowing all units before any of them runs. A unit added during execution would have to either (a) force re-planning mid-execute — which invalidates any parallelism already in flight — or (b) sneak past the scheduler and run outside its ordering guarantees. Both options break the contract. Authors who need data-driven unit counts call `cook.sh` at register time (§ 6.3.1) to compute the data, then call `cook.add_unit` for each computed unit, all during registration. The examples in `cpp.lua` (e.g., `cpp.static_library`) are the canonical shape.
 
 ### B.6.4. Why the cook-step using-string recognises recipe names
 
 A `{TOKEN}` in a using-string that is neither a known placeholder nor a recipe name falls through to `cook.env[TOKEN]` (§ 6.7). A `{TOKEN}` that matches a recipe name in the same Cookfile is instead rewritten to `cook.dep_output("TOKEN")`. This is a deliberate asymmetry: in practice, cross-recipe references to "the outputs of another recipe" are far more common than environment variables that happen to share a name with a recipe. Giving recipe names priority in the fallback order means authors rarely need to choose between the two at the token level — the parser picks the right one.
 
-## B.7. On § 7 Modules
+## B.7. On § 7 Cross-Cookfile composition and § 6.8 `use`
 
-The module system is deliberately split into two declarations that look similar but answer different questions. `use` answers "give me additional Lua for my recipes to call"; `import` answers "tie another Cookfile's recipes into my dependency graph." Conflating them — for example, by making `import` also bring a Lua value into scope — would force authors to pick one semantics at every call site and would blur the two namespaces the dependency resolver walks. The Standard keeps them distinct so that each declaration has one job.
+Cross-Cookfile composition (§ 7) and Lua module loading (§ 6.8) are deliberately split into two declarations that look similar but answer different questions. `use` answers "give me additional Lua for my recipes to call"; `import` answers "tie another Cookfile's recipes into my dependency graph." Conflating them — for example, by making `import` also bring a Lua value into scope — would force authors to pick one semantics at every call site and would blur the two namespaces the dependency resolver walks. The Standard keeps them distinct so that each declaration has one job, and lives in a different chapter: `use` belongs with the Cook Lua API because it loads Lua code, whereas `import` belongs with cross-Cookfile composition because it binds an alias for cross-recipe references.
 
-Built-in modules are resolved before `cook_modules/` (§ 7.2) so that adding a new built-in in a future version of the implementation cannot silently break a project that happens to have a `cook_modules/<name>.lua` of the same name: the built-in always wins, so a project author who wants to override it renames their local module or picks a different name. The converse ordering — consulting `cook_modules/` first — would make the set of built-in names a latent hazard: every new built-in would be a silent semantic change for every project that had colonised the name first. v0.1 of the Standard defines no built-ins, but fixes the ordering now so that the first built-in to ship can do so without a migration.
+Built-in modules are resolved before `cook_modules/` (§ 6.8) so that adding a new built-in in a future version of the implementation cannot silently break a project that happens to have a `cook_modules/<name>.lua` of the same name: the built-in always wins, so a project author who wants to override it renames their local module or picks a different name. The converse ordering — consulting `cook_modules/` first — would make the set of built-in names a latent hazard: every new built-in would be a silent semantic change for every project that had colonised the name first. v0.1 of the Standard defines no built-ins, but fixes the ordering now so that the first built-in to ship can do so without a migration.
 
 The choice of `cook_modules/` — an adjacent directory, resolved only relative to the enclosing Cookfile — rather than a global registry or a walk up through ancestor directories is a deliberate choice for locality. A Cookfile's modules are the ones it ships with; they travel with the project, they are the ones code review sees, and they are the ones `git clone` reproduces. A global registry would require side-channel installation; an ancestor walk would make module resolution sensitive to where on disk the project happened to live. Both are costs the Standard declines to pay.
 
@@ -223,7 +209,7 @@ Second, a duplicate-import is diagnosable locally — it is a property of a sing
 
 Symmetrically, cycles are NOT caught at parse time because they cannot be: a single Cookfile's tokens cannot know whether `import b ../b` eventually loops back. Cycle detection requires the parser to have run on every Cookfile the edge set transitively touches, and that only happens at workspace-load time. Pushing cycle detection earlier would either require a separate pre-pass — effectively re-parsing every Cookfile before validating any — or would require `import` to be resolved synchronously during parsing, which would re-introduce the coupling that v0.1 deliberately separates (the parser produces an AST; the workspace loader consumes it).
 
-Canonicalisation at the edge boundary (§ 7.6) is load-bearing. Without it, `import b ./b` and `import b ./services/../b` would be different nodes in the cycle graph, and the diamond dedup rule of § 7.6 would fire on one but not the other. Canonicalising to absolute, symlink-resolved paths collapses these spellings into one node.
+Canonicalisation at the edge boundary (§ 7.4) is load-bearing. Without it, `import b ./b` and `import b ./services/../b` would be different nodes in the cycle graph, and the diamond dedup rule of § 7.4 would fire on one but not the other. Canonicalising to absolute, symlink-resolved paths collapses these spellings into one node.
 
 ### B.7.3. Why local module names do not collide with reserved recipe segments
 

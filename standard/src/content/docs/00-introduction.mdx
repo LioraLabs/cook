@@ -18,9 +18,10 @@ The Standard covers the full language surface a Cookfile author can use:
 - Lexical structure (tokens, lines, prefixes). See § 2.
 - Syntactic grammar (productions, ordering). See § 3 and App. A.
 - Recipe structure and step kinds. See § 4.
-- Execution semantics (register phase, execute phase, step groups, ingredient-serves matching, cache semantics). See § 5.
-- The Cook Lua API exposed in `>` / `>{ ... }` / `using >{ ... }` contexts. See § 6.
-- The module system (`use`, `import`, `cook_modules/` resolution, authoring contract). See § 7.
+- Cross-recipe references (name references, path accessors, dep-driven iteration, string substitution). See § 5.
+- The Cook Lua API exposed in `>` / `>{ ... }` / `using >{ ... }` contexts, including the `use` declaration. See § 6.
+- Cross-Cookfile composition (`import`, qualified references, `cook_modules/` resolution). See § 7.
+- Execution semantics (register phase, execute phase, step groups, cross-recipe ordering, cache semantics). See § 8.
 
 ## 0.3. Non-scope
 

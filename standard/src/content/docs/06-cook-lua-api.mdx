@@ -52,7 +52,7 @@ A conforming implementation MUST NOT expose the `recipe` global during the execu
 |---------------------|----------------|---------|---------|
 | `command`           | string         | `""`    | Shell command string, run via `/bin/sh -c` in the execute phase. |
 | `lua_code`          | string         | absent  | Lua source executed in the execute phase. If present, `command` is ignored. |
-| `interactive`       | boolean        | `false` | If `true`, the unit runs on the main thread and drains concurrent work (§ 5.6). |
+| `interactive`       | boolean        | `false` | If `true`, the unit runs on the main thread and drains concurrent work (§ 8.5). |
 | `line`              | integer        | `0`     | Source line number used in diagnostics. |
 | `cache`             | boolean        | `true`  | If `false`, the unit is never cached and is re-run on every invocation. |
 | `inputs`            | array of string | `{}`   | Files whose content contributes to the unit's cache key. |
@@ -68,9 +68,9 @@ A conforming implementation MUST NOT expose the `recipe` global during the execu
 2. Otherwise, if `interactive` is `true`, the unit is an **interactive shell unit**.
 3. Otherwise, the unit is a **non-interactive shell unit**.
 
-**Caching.** When `cache` is `true`, a conforming implementation MUST record cache metadata containing the recipe name, an input-path list, an output-path list, and a command hash. The hash inputs, cache-key derivation, and storage format are implementation-defined (§ 5.7).
+**Caching.** When `cache` is `true`, a conforming implementation MUST record cache metadata containing the recipe name, an input-path list, an output-path list, and a command hash. The hash inputs, cache-key derivation, and storage format are implementation-defined (§ 8.6).
 
-**Return value.** `cook.add_unit` returns nothing. A conforming implementation MUST NOT cause the function to block on external work — registration is synchronous by definition (§ 5.2).
+**Return value.** `cook.add_unit` returns nothing. A conforming implementation MUST NOT cause the function to block on external work — registration is synchronous by definition (§ 8.2).
 
 ### Example 6.2.1
 
@@ -99,11 +99,11 @@ Records one Lua-code unit with multiple outputs. At execute time, the `lua_code`
 
 ### Note 6.2.1
 
-Adjacent `cook.add_unit` calls made inside the same register-phase `cook.step_group(fn)` invocation become siblings in the same scheduler step group (§ 5.3) and MAY run in parallel. Outside a step group they are serial. The surface `cook` step (§ 4.5, § 4.6) routes through `cook.step_group` implicitly.
+Adjacent `cook.add_unit` calls made inside the same register-phase `cook.step_group(fn)` invocation become siblings in the same scheduler step group (§ 8.3) and MAY run in parallel. Outside a step group they are serial. The surface `cook` step (§ 4.5, § 4.6) routes through `cook.step_group` implicitly.
 
 ## 6.3. Shell and Lua step helpers
 
-The `cook` table exposes the following helpers. Unless stated otherwise, they behave identically in both phases — the register-phase behaviour is defined in terms of capture (§ 5.2), and the execute-phase behaviour is defined in terms of actual invocation.
+The `cook` table exposes the following helpers. Unless stated otherwise, they behave identically in both phases — the register-phase behaviour is defined in terms of capture (§ 8.2), and the execute-phase behaviour is defined in terms of actual invocation.
 
 ### 6.3.1. `cook.sh`
 

@@ -1,23 +1,23 @@
 ---
-title: "§ 5 — Execution model"
+title: "§ 8 — Execution model"
 sidebar:
-  order: 5
+  order: 8
 ---
-# 5. Execution model
+# 8. Execution model
 
 > **Normative.** This chapter defines the observable execution semantics of a Cookfile. Implementation details (scheduler thread counts, hash functions, I/O strategies) are not normative; see `docs/architecture/` for the reference implementation's approach.
 
-## 5.1. Two-phase execution
+## 8.1. Two-phase execution
 
 A conforming implementation MUST evaluate each selected recipe in two phases: a **register phase** and an **execute phase**. The register phase discovers the work a recipe wishes to perform; the execute phase performs it. The phases MUST NOT be interleaved within a single recipe: every unit of work produced by the register phase of a recipe MUST be known before the execute phase of that recipe begins.
 
 During the register phase, the implementation evaluates the recipe body as Lua code (§ 6) in **capture mode**. Cook Lua API calls that declare work — `cook.add_unit`, `cook.step_group`, and the step kinds in § 4 that desugar to these calls — record the work into a list of **work units** rather than performing it. The register phase MUST run on a single thread with a single Lua VM per recipe registration.
 
-During the execute phase, the implementation arranges the recorded work units into a dependency graph (§ 5.3, § 5.4, § 5.5, § 5.6) and executes the ready units. The execute phase MAY run work units in parallel where the dependency rules below permit it. The execute phase MUST respect every ordering relation established during the register phase.
+During the execute phase, the implementation arranges the recorded work units into a dependency graph (§ 8.3, § 8.4) and executes the ready units. The execute phase MAY run work units in parallel where the dependency rules below permit it. The execute phase MUST respect every ordering relation established during the register phase.
 
-A conforming implementation MAY register and execute different recipes concurrently only when doing so does not observably reorder work units relative to the rules in § 5.3–§ 5.6; in particular, a recipe that depends on another recipe (§ 5.4) MUST NOT begin execution of any of its work units until every work unit of the prerequisite has completed successfully.
+A conforming implementation MAY register and execute different recipes concurrently only when doing so does not observably reorder work units relative to the rules in § 8.3–§ 8.5; in particular, a recipe that depends on another recipe (§ 8.4) MUST NOT begin execution of any of its work units until every work unit of the prerequisite has completed successfully.
 
-### Example 5.1.1
+### Example 8.1.1
 
 ```cook
 recipe build
@@ -28,13 +28,13 @@ end
 
 Register phase: the recipe body runs once. The `cook` step expands to a step group containing one work unit per matched source file. No `gcc` process is spawned.
 
-Execute phase: the recorded units run, each in its own subprocess. Members of the step group MAY run in parallel (§ 5.3).
+Execute phase: the recorded units run, each in its own subprocess. Members of the step group MAY run in parallel (§ 8.3).
 
-### Note 5.1.1
+### Note 8.1.1
 
 The two phases use different Cook Lua API bindings for the same call. In the register phase `cook.exec` records a shell work unit and returns the empty string without spawning a process; in the execute phase a shell work unit is dispatched to a subprocess. See § 6 for the capture-mode contract of each API.
 
-## 5.2. Capture-mode semantics
+## 8.2. Capture-mode semantics
 
 Capture-mode Cook Lua API calls MUST be pure with respect to the Cookfile's observable build state: they MUST NOT spawn subprocesses that affect declared outputs, modify files under the working directory, or block on external I/O. Their only effect on conforming evaluation MUST be to append entries to the register-phase record or to read metadata already established (for example, the terminal outputs of a prerequisite recipe that has already completed its register phase — see § 6).
 
@@ -42,7 +42,7 @@ Capture-mode calls MUST return synchronously. Any value a capture-mode call prod
 
 An implementation MAY permit narrowly-scoped capture-mode side effects that participate in register-phase Lua control flow rather than in the build itself. Any such exception MUST be documented as part of the Cook Lua API contract in § 6 and MUST preserve the determinism requirement above with respect to the register-phase record.
 
-### Example 5.2.1
+### Example 8.2.1
 
 ```cook
 recipe build
@@ -54,13 +54,13 @@ end
 
 The `>` line runs during the register phase. It reads `cook.env` — a value established before the register phase began — and assigns a local. The `cook` step then records its work units. No subprocess is spawned during registration.
 
-### Note 5.2.1
+### Note 8.2.1
 
 The capture-mode contract makes work-unit discovery finite, deterministic, and independent of the order in which work units are later executed. A register phase that blocked on a running subprocess would serialise the register phase of other recipes against that subprocess, defeating the two-phase design.
 
-## 5.3. Step groups and within-recipe parallelism
+## 8.3. Step groups and within-recipe parallelism
 
-Work units registered inside a single invocation of `cook.step_group` form a **step group**. The units in one step group MAY execute in any order, and MAY execute in parallel, subject only to cross-recipe dependencies (§ 5.4, § 5.5) and the interactive rule (§ 5.6).
+Work units registered inside a single invocation of `cook.step_group` form a **step group**. The units in one step group MAY execute in any order, and MAY execute in parallel, subject only to cross-recipe dependencies (§ 8.4) and the interactive rule (§ 8.5).
 
 Work units registered outside any `cook.step_group` invocation are **sequential**. A sequential unit MUST execute strictly after every work unit that was registered earlier in the same recipe, and strictly before every work unit that is registered later in the same recipe.
 
@@ -74,10 +74,10 @@ The Cookfile surface syntax in § 4 produces step groups and sequential units as
 | `plate` step (§ 4.7) | One step group per `plate` step. |
 | `test` step (§ 4.8) | One step group per `test` step. |
 | `shell_command` (§ 4.10) | Sequential unit (not a step group). |
-| `interactive_command` (§ 4.10) | Sequential unit, additionally draining (§ 5.6). |
+| `interactive_command` (§ 4.10) | Sequential unit, additionally draining (§ 8.5). |
 | `lua_line`, `lua_block` (§ 4.9) | Evaluated during the register phase; produce units only via explicit Cook Lua API calls. |
 
-### Example 5.3.1
+### Example 8.3.1
 
 ```cook
 recipe build
@@ -89,80 +89,20 @@ end
 
 The first `cook` step expands to one step group containing one compile unit per source file; the compiles MAY run in parallel. The second `cook` step is a distinct step group. The barrier rule forces every compile to complete before the link unit begins.
 
-### Note 5.3.1
+### Note 8.3.1
 
 Parallelism is permissive, not prescriptive. A conforming implementation MAY run step-group members serially — for example, under a one-job flag. The Standard only requires that step-group members are not ordered with respect to one another; it does not require that they actually execute concurrently.
 
-## 5.4. Cross-recipe dependencies
+## 8.4. Cross-recipe ordering
 
-A recipe's `: dep1 dep2 …` header (§ 4.2) establishes an **explicit cross-recipe dependency** from the recipe to each named dependency. An implementation MUST ensure that every work unit of a named prerequisite completes successfully before any work unit of the dependent recipe begins.
+Cross-recipe ordering is established only by name references (§ 5 of this Standard). For each name reference from recipe `A` to recipe `B` — in a dep-list, bare placeholder, or accessor placeholder — a conforming implementation MUST treat `B` as a prerequisite of `A`:
 
-Explicit cross-recipe dependencies MUST be validated before the execute phase begins. If a recipe names a recipe that is not defined in scope as a dependency, the implementation MUST reject the Cookfile with a diagnostic. If the transitive closure of explicit and implicit (§ 5.5) dependencies contains a cycle, the implementation MUST reject the Cookfile with a cycle diagnostic before executing any work unit.
+- An implementation MUST validate that `B` is defined in scope before the execute phase begins, and MUST reject the Cookfile with a diagnostic naming `A` and `B` otherwise.
+- An implementation MUST reject the Cookfile with a cycle diagnostic if the transitive closure of all cross-recipe edges contains a cycle, before executing any work unit.
+- A placeholder-sourced edge MAY be refined per § 5.6. A dep-list-sourced edge MUST NOT be refined.
+- No other source of cross-recipe ordering is defined. Specifically, string equality between an ingredient path literal of `A` and a cook output path literal of `B` does NOT establish an edge. See rationale B.5.N.
 
-When a dependent recipe has a work unit whose register-phase record additionally names a specific prerequisite recipe — for example, via a reference to another recipe's terminal outputs — the implementation MAY refine the coarse recipe-to-recipe edge into a fine-grained edge from only that work unit to the terminal units of the named prerequisite. The observable constraint is unchanged: the named prerequisite MUST complete before the dependent work unit begins. A fine-grained edge MUST NOT permit the dependent work unit to begin before any part of the prerequisite it names.
-
-### Example 5.4.1
-
-```cook
-recipe build
-    cook "bin/app" using "gcc main.c -o {out}"
-end
-
-recipe run: build
-    @./bin/app
-end
-```
-
-`run: build` forces every work unit of `build` to complete before any work unit of `run` begins.
-
-### Note 5.4.1
-
-The `: dep` form is the only way to assert a cross-recipe ordering that is not inferable from ingredient/serves matching (§ 5.5). It is the appropriate construct when a recipe depends on the side effects of another recipe — for example, a `clean` step, or an interactive launcher — rather than on its file outputs.
-
-## 5.5. Ingredient–serves matching
-
-An **ingredient** of a recipe is a literal string listed in that recipe's `ingredients` line (§ 4.3). A recipe **serves** every string that appears as an output literal of a `cook` step in its body (§ 4.5, § 4.6). Matching between ingredients and serves is performed at the Cookfile level, before any glob expansion, and MUST be **exact string equality** between the ingredient string and the serves string.
-
-For each pair where the ingredient of recipe `A` equals the serves of recipe `B` and `A` is not `B`, the implementation MUST treat `B` as a prerequisite of `A` for the purposes of § 5.4. This relationship is called an **implicit cross-recipe dependency**.
-
-An ingredient string that contains a glob metacharacter MUST NOT participate in ingredient–serves matching. The rule is a string-level rule: matching is performed on the raw ingredient string and the raw serves string as they appear in the Cookfile source, without expansion, normalisation, or filesystem access.
-
-### Example 5.5.1
-
-```cook
-recipe compile
-    ingredients "src/main.c"
-    cook "lib.a" using "ar rcs {out} {in}"
-end
-
-recipe link
-    ingredients "lib.a"
-    cook "app" using "gcc {in} -o {out}"
-end
-```
-
-`link`'s ingredient `"lib.a"` equals `compile`'s serves `"lib.a"`. The implementation MUST run `compile` before `link`.
-
-### Example 5.5.2
-
-```cook
-recipe build
-    ingredients "src/*.c"
-    cook "build/{stem}.o" using "gcc -c {in} -o {out}"
-end
-
-recipe gen
-    cook "src/generated.c" using "./gen > {out}"
-end
-```
-
-`build`'s ingredient `"src/*.c"` is a glob pattern; it does NOT trigger ingredient–serves matching against `gen`'s serves `"src/generated.c"`, even though the path would match at glob-expansion time. No implicit dependency is inferred. A Cookfile author who wants `gen` to run first MUST state it explicitly with `recipe build: gen` (§ 5.4).
-
-### Note 5.5.1
-
-Exact string equality makes the dependency graph a deterministic function of the Cookfile source. Two Cookfiles with identical ingredients and serves strings produce the same graph regardless of the working tree's current contents.
-
-## 5.6. Interactive step draining
+## 8.5. Interactive step draining
 
 A step classified as `interactive_command` (§ 4.10) — that is, a step whose Cookfile source line begins with `@` — MUST, at execute time, **drain** the implementation's concurrent execute-phase work before its command begins. Draining means: at the instant the interactive unit is about to run, no other work unit of any recipe MUST be in progress. The implementation MUST wait until every then-running work unit has completed before beginning the interactive command.
 
@@ -170,7 +110,7 @@ An interactive unit MUST execute on a thread that inherits the controlling termi
 
 After an interactive unit completes, execution resumes under the normal rules: newly-ready units MAY be dispatched in parallel again. The drain applies only while the interactive unit is pending and running.
 
-### Example 5.6.1
+### Example 8.5.1
 
 ```cook
 recipe dev
@@ -180,15 +120,15 @@ recipe dev
 end
 ```
 
-When the interactive step is reached at execute time, any other work in progress is drained. `./build/app` runs on a thread with the controlling TTY. Once it completes, `echo "exited"` runs. The `cook` step in the same recipe MUST have completed before `./build/app` begins, by the within-recipe rule of § 5.3.
+When the interactive step is reached at execute time, any other work in progress is drained. `./build/app` runs on a thread with the controlling TTY. Once it completes, `echo "exited"` runs. The `cook` step in the same recipe MUST have completed before `./build/app` begins, by the within-recipe rule of § 8.3.
 
-### Note 5.6.1
+### Note 8.5.1
 
 Draining is stronger than "runs on a single thread": it also excludes the interactive unit from running while any other work unit is still active anywhere in the build. This mirrors the common user expectation that an `@`-prefixed command is a standalone interactive session with no concurrent output from background jobs.
 
-## 5.7. Cache semantics (abstract)
+## 8.6. Cache semantics (abstract)
 
-A conforming implementation MAY maintain a **build cache** that avoids re-executing a work unit whose observable inputs are unchanged since the last successful completion of that unit. The Standard specifies the cache abstractly; the hash function, on-disk layout, eviction policy, and storage medium are implementation-defined and are explicitly out of scope (§ 0.3).
+A conforming implementation MAY maintain a **build cache** that avoids re-executing a work unit whose observable inputs are unchanged since the last successful completion of that unit. The Standard specifies the cache abstractly; the hash function, on-disk layout, eviction policy, and storage medium are implementation-defined (§ 0.3).
 
 The **observable inputs** of a work unit are those of its properties that are derived from the Cookfile source or from the register-phase record. They comprise, at a minimum:
 
@@ -203,7 +143,7 @@ When the cache indicates that a unit is up-to-date, the implementation MAY skip 
 
 A unit for which the register-phase record disables caching — for example, a bare shell step or an `@` step, whose registration form sets the cache flag to false — MUST be executed on every run of the containing recipe.
 
-### Example 5.7.1
+### Example 8.6.1
 
 ```cook
 recipe build
@@ -214,19 +154,19 @@ end
 
 On the first run, `build/main.o`'s unit executes and its completion MAY be recorded. On a subsequent run with an unchanged `src/main.c` and unchanged command text, an implementation MAY skip the unit. If the command text changes or `src/main.c` changes, the unit MUST re-run.
 
-### Note 5.7.1
+### Note 8.6.1
 
-The cache is optional. A conforming implementation that always re-executes every work unit — a clean-build implementation — is conforming so long as the dependency rules of § 5.1–§ 5.6 are respected.
+The cache is optional. A conforming implementation that always re-executes every work unit — a clean-build implementation — is conforming so long as the dependency rules of § 8.1–§ 8.5 are respected.
 
-## 5.8. Diagnostic ordering
+## 8.7. Diagnostic ordering
 
 An implementation MUST report syntactic errors (those detectable by the rules of § 2 and § 3) before it reports semantic errors (those detectable only in the register or execute phase). On encountering a syntactic error, the implementation MUST halt parsing at the first such error and MUST NOT proceed to register-phase evaluation. Consequently, a Cookfile with both a syntactic error and a semantic error MUST produce only the syntactic diagnostic on a given run.
 
-Within the register and execute phases, the implementation MUST report dependency-graph errors — cycles and references to undefined recipes (§ 5.4) — before attempting to execute any work unit.
+Within the register and execute phases, the implementation MUST report dependency-graph errors — cycles and references to undefined recipes (§ 8.4) — before attempting to execute any work unit.
 
 The exact wording and formatting of diagnostics are implementation-defined (§ 0.3). The diagnostic **class** and its **ordering relative to other diagnostics** are normative.
 
-### Example 5.8.1
+### Example 8.7.1
 
 ```cook
 recipe build
@@ -237,6 +177,6 @@ end
 
 The unterminated string in the `cook` step is a syntactic error (§ 2.5). The implementation MUST report this diagnostic and MUST NOT proceed to register-phase evaluation; any semantic issue that would have been detected later — for example, a missing dependency — MUST NOT be reported for this run.
 
-### Note 5.8.1
+### Note 8.7.1
 
 The first-error halt in the syntactic layer means that a single run will not enumerate every syntactic problem in the file. A Cookfile author that wants batch syntax checking can re-run after each fix. Implementations MAY elect to attempt error recovery for better editor integration, but the Standard does not require it and does not relax the ordering rule: recovered-from errors MUST still be reported before any semantic diagnostic.
