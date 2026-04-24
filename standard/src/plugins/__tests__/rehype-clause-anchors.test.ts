@@ -71,4 +71,25 @@ describe('rehypeClauseAnchors', () => {
     const out = process('<h2>Installation</h2>');
     expect(out).not.toContain('id=');
   });
+
+  it('handles a heading with an inline <code> element before the marker', () => {
+    const out = process(
+      '<h2>2.3. The <code>cook</code> keyword. [#lexical.cook-keyword]</h2>',
+    );
+    expect(out).toContain('id="lexical.cook-keyword"');
+    expect(out).not.toContain('[#lexical.cook-keyword]');
+    // Inline element preserved in rendered output.
+    expect(out).toContain('<code>cook</code>');
+  });
+
+  it('handles a slug containing digits', () => {
+    const out = process('<h3>D.9. Entry. [#changes.cs-0009]</h3>');
+    expect(out).toContain('id="changes.cs-0009"');
+  });
+
+  it('throws when the [#slug] marker is wrapped in an inline element', () => {
+    expect(() =>
+      process('<h2>2.3. X. <em>[#foo.bar]</em></h2>'),
+    ).toThrowError(/marker could not be stripped/i);
+  });
 });

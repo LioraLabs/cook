@@ -66,6 +66,11 @@ export function rehypeClauseAnchors() {
       seen.set(slug, text);
 
       stripMarkerFromLastText(node);
+      if (MARKER_RE.test(extractText(node))) {
+        throw new Error(
+          `heading "${text}": [#slug] marker could not be stripped (wrapped in an inline element?)`,
+        );
+      }
       node.properties = node.properties ?? {};
       (node.properties as Record<string, unknown>).id = slug;
     });
