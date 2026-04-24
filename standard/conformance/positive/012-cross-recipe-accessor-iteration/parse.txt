@@ -1,0 +1,17 @@
+Cookfile
+  uses: []
+  imports: []
+  vars: []
+  config_blocks: []
+  recipes:
+    Recipe name="protos" line=1
+      deps: []
+      ingredients: ["proto/a.proto", "proto/b.proto"]
+      excludes: []
+      steps:
+    Recipe name="compile_protos" line=5
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["build/obj/{protos.stem}.pb.cc"] using=Shell("protoc --cpp_out=build/obj {in}")

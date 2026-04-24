@@ -35,7 +35,15 @@ pub fn read_and_parse(cli: &Cli) -> Result<(cook_lang::ast::Cookfile, String), C
 
     // Pre-scan: extract recipe names for codegen disambiguation
     let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
-    let lua_source = cook_luagen::generate_with_names(&cookfile, &recipe_names);
+
+    // § 5.5 — register-time warnings for references whose referent has an
+    // empty output list.
+    let (lua_source, warnings) =
+        cook_luagen::generate_with_names_and_warnings(&cookfile, &recipe_names);
+    for w in warnings {
+        eprintln!("cook: warning: {}", w);
+    }
+
     Ok((cookfile, lua_source))
 }
 

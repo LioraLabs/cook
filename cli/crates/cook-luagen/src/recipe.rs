@@ -3,12 +3,67 @@ use std::collections::BTreeSet;
 use cook_lang::ast::*;
 
 use crate::cook_step::generate_cook_step;
+use crate::dep_ref::extract_dep_refs;
 use crate::lua_string::{escape_lua_string, wrap_lua_string};
 use crate::plate_step::generate_plate_step;
 use crate::test_step;
 
 pub fn generate(cookfile: &Cookfile) -> String {
     generate_with_names(cookfile, &BTreeSet::new())
+}
+
+/// Lower `cookfile` and return any register-time warnings alongside the Lua
+/// source.
+///
+/// Current warnings:
+/// - **Empty-output reference (Cook Standard § 5.5).** When a `{NAME}` or
+///   `{NAME.ACCESSOR}` reference names a recipe whose output list at register
+///   time is empty (i.e. has no cook steps and no ingredients), we emit a
+///   warning naming both the referrer and referent. The reference itself is
+///   still lowered — the substitution is the empty string — so callers must
+///   not treat this as an error.
+pub fn generate_with_names_and_warnings(
+    cookfile: &Cookfile,
+    recipe_names: &BTreeSet<String>,
+) -> (String, Vec<String>) {
+    let warnings = warn_empty_output_refs(cookfile, recipe_names);
+    let output = generate_with_names(cookfile, recipe_names);
+    (output, warnings)
+}
+
+/// Detect references whose referent has an empty output list and return one
+/// warning per offending (referrer, referent) pair.
+///
+/// "Empty output list" is approximated at codegen time as: no cook steps AND
+/// no ingredients. A recipe with only ingredients still has a non-empty output
+/// list per § 5.4.1 passthrough; a recipe whose ingredient globs resolve to
+/// nothing at register time is still flagged by the runtime, not here.
+fn warn_empty_output_refs(
+    cookfile: &Cookfile,
+    recipe_names: &BTreeSet<String>,
+) -> Vec<String> {
+    let empty: BTreeSet<String> = cookfile
+        .recipes
+        .iter()
+        .filter(|r| {
+            r.ingredients.is_empty()
+                && !r.steps.iter().any(|s| matches!(s, Step::Cook { .. }))
+        })
+        .map(|r| r.name.clone())
+        .collect();
+
+    let mut warnings = Vec::new();
+    for recipe in &cookfile.recipes {
+        for dep_ref in extract_dep_refs(recipe, recipe_names) {
+            if empty.contains(&dep_ref.recipe_name) {
+                warnings.push(format!(
+                    "recipe '{}' references '{}' which has empty output",
+                    recipe.name, dep_ref.recipe_name
+                ));
+            }
+        }
+    }
+    warnings
 }
 
 pub fn generate_with_names(cookfile: &Cookfile, recipe_names: &BTreeSet<String>) -> String {

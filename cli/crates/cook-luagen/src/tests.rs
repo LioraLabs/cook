@@ -1250,3 +1250,46 @@ fn test_dep_ref_wave_grouping_integration() {
     // Wave 2: run (after explicit dep on app)
     assert_eq!(waves[1].recipes, vec!["run".to_string()]);
 }
+
+// ── CS-0009: empty-output warning + accessor-placement validation ──
+
+#[test]
+fn test_empty_output_reference_warns_not_errors() {
+    // A recipe with no steps and no ingredients has an empty output list.
+    // A name reference to such a recipe MUST warn at registration and expand
+    // to empty, not error.
+    let names: std::collections::BTreeSet<String> =
+        ["empty_recipe"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![
+        make_recipe("empty_recipe", vec![], vec![], vec![]),
+        make_recipe(
+            "consumer",
+            vec![],
+            vec![],
+            vec![Step::Cook {
+                step: CookStep {
+                    outputs: vec!["build/out".to_string()],
+                    using_clause: Some(UsingClause::Shell(
+                        "echo {empty_recipe} > {out}".into(),
+                    )),
+                },
+                line: 2,
+            }],
+        ),
+    ]);
+    let (output, warnings) =
+        crate::generate_with_names_and_warnings(&cookfile, &names);
+    assert!(!warnings.is_empty(), "expected empty-output warning");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("empty_recipe") && w.contains("consumer")),
+        "warning should name both referent and referrer, got: {:?}",
+        warnings
+    );
+    assert!(
+        output.contains(r#"cook.dep_output("empty_recipe")"#),
+        "lowering should still produce the call, not elide it"
+    );
+}
+

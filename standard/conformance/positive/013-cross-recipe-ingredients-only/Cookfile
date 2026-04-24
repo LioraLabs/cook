@@ -1,0 +1,7 @@
+recipe "headers"
+    ingredients "include/a.h" "include/b.h"
+end
+
+recipe "list_headers"
+    cook "build/{headers.stem}.listed" using "echo {in} > {out}"
+end

@@ -1,0 +1,17 @@
+Cookfile
+  uses: []
+  imports: []
+  vars: []
+  config_blocks: []
+  recipes:
+    Recipe name="headers" line=1
+      deps: []
+      ingredients: ["include/a.h", "include/b.h"]
+      excludes: []
+      steps:
+    Recipe name="list_headers" line=5
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["build/{headers.stem}.listed"] using=Shell("echo {in} > {out}")
