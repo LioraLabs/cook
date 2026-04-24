@@ -21,7 +21,8 @@ describe('rehypeClauseXrefs', () => {
     ['sec-2-3', { href: '/02-lexical/#sec-2-3', text: '2.3. Identifiers' }],
     ['sec-4-6-2', { href: '/04-recipes/#sec-4-6-2', text: '4.6.2. Multi-output cook' }],
     ['sec-A-3', { href: '/appendix/a-grammar/#sec-A-3', text: 'A.3. Top level' }],
-    ['sec-5', { href: '/05-execution-model/', text: '5. Execution model' }],
+    ['sec-5', { href: '/05-cross-recipe-references/', text: '5. Cross-recipe references' }],
+    ['sec-8', { href: '/08-execution-model/', text: '8. Execution model' }],
   ]);
 
   it('links a two-level § X.Y reference', () => {
@@ -46,7 +47,7 @@ describe('rehypeClauseXrefs', () => {
 
   it('links a chapter-level § X reference', () => {
     const out = process('<p>See § 5.</p>', defaultMap);
-    expect(out).toContain('href="/05-execution-model/"');
+    expect(out).toContain('href="/05-cross-recipe-references/"');
     expect(out).toContain('>§ 5</a>');
   });
 

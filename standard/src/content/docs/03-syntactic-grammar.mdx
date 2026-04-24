@@ -76,7 +76,7 @@ The ten reserved keywords coincide with the keywords that introduce other top-le
 
 ## 3.4. `use` declarations
 
-A `use_declaration` is the top-level form `"use" name NEWLINE` (App. A.2), where `name` is either a `BARE_IDENTIFIER` or a `STRING` (App. A.5). It requests that the named built-in or user-authored module be made available to the Cookfile's recipes and config blocks. Module resolution is governed by § 7.
+A `use_declaration` is the top-level form `"use" name NEWLINE` (App. A.2), where `name` is either a `BARE_IDENTIFIER` or a `STRING` (App. A.5). It requests that the named built-in or user-authored module be made available to the Cookfile's recipes and config blocks. Module resolution is governed by § 6.8.
 
 The keyword `use` MUST be followed by whitespace, a tab, or a `"` character before the name; otherwise the line is not a `use_declaration`. A bare word such as `useful` MUST be classified as a `Content` token rather than a `use_declaration`.
 

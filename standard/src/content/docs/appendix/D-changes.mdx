@@ -66,6 +66,6 @@ sidebar:
 ## CS-0009 — Cross-recipe references redesign
 
 **Date:** 2026-04-24
-**Sections affected:** § 4.3, § 5 (new), § 6.7, § 6.8 (new), § 7 (renamed), § 8 (moved from § 5). App. B.5.N/O/P (new). App. C.N (new).
+**Sections affected:** § 4.2, § 5 (new), § 6.7, § 6.8 (new), § 7 (renamed), § 8 (moved from § 5). App. B.5.N/O/P (new). App. C.N (new).
 **Summary:** Introduced § 5 "Cross-recipe references" as the normative home for name-reference surface (dep-list, bare placeholder, accessor placeholder), resolution, path accessors, dep-driven iteration, string-substitution, and dependency implications. Split the former § 7 "Modules" into § 6.8 (`use` declaration, under Cook Lua API) and § 7 "Cross-Cookfile composition" (`import` and qualified references). Moved "Execution model" to § 8 so that later-chapter references do not forward-reference undefined surface. Removed the ingredient/serves byte-equality implicit-dep rule from the Execution model (old § 5.5); cross-recipe ordering is now established only by name references. Added rationale B.5.N (removal motivation), B.5.O (accessor-placeholder iteration surface vs. explicit `from`), and B.5.P (closed accessor set). Added a worked example under App. C. Runtime: `cli/crates/cook-engine/src/analyzer.rs` no longer constructs edges from ingredient/serves string equality.
 **Reference:** this commit.
