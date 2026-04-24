@@ -7,7 +7,10 @@ function makeMap(entries: Array<[string, ClauseInfo]>): Map<string, ClauseInfo> 
   return new Map(entries);
 }
 
-function process(html: string, clauseMap: Map<string, ClauseInfo>): string {
+function process(
+  html: string,
+  clauseMap: Map<string, ClauseInfo>,
+): string {
   return String(
     rehype()
       .data('settings', { fragment: true })
@@ -18,69 +21,93 @@ function process(html: string, clauseMap: Map<string, ClauseInfo>): string {
 
 describe('rehypeClauseXrefs', () => {
   const defaultMap = makeMap([
-    ['sec-2-3', { href: '/02-lexical/#sec-2-3', text: '2.3. Identifiers' }],
-    ['sec-4-6-2', { href: '/04-recipes/#sec-4-6-2', text: '4.6.2. Multi-output cook' }],
-    ['sec-A-3', { href: '/appendix/a-grammar/#sec-A-3', text: 'A.3. Top level' }],
-    ['sec-5', { href: '/05-cross-recipe-references/', text: '5. Cross-recipe references' }],
-    ['sec-8', { href: '/08-execution-model/', text: '8. Execution model' }],
+    ['lexical.identifiers', {
+      href: '/02-lexical/#lexical.identifiers',
+      number: '2.3',
+      text: 'Identifiers',
+    }],
+    ['recipes.multi-output-cook', {
+      href: '/04-recipes/#recipes.multi-output-cook',
+      number: '4.6.2',
+      text: 'Multi-output cook',
+    }],
+    ['grammar-appendix.top-level', {
+      href: '/appendix/a-grammar/#grammar-appendix.top-level',
+      number: 'A.3',
+      text: 'Top level',
+    }],
+    ['xref', {
+      href: '/05-cross-recipe-references/#xref',
+      number: '5',
+      text: 'Cross-recipe references',
+    }],
   ]);
 
-  it('links a two-level § X.Y reference', () => {
-    const out = process('<p>See § 2.3 for details.</p>', defaultMap);
-    expect(out).toContain('href="/02-lexical/#sec-2-3"');
+  it('links a two-level §{slug} reference', () => {
+    const out = process('<p>See §{lexical.identifiers} for details.</p>', defaultMap);
+    expect(out).toContain('href="/02-lexical/#lexical.identifiers"');
     expect(out).toContain('class="clause-xref"');
     expect(out).toContain('title="2.3. Identifiers"');
     expect(out).toContain('>§ 2.3</a>');
   });
 
-  it('links a three-level § X.Y.Z reference', () => {
-    const out = process('<p>See § 4.6.2.</p>', defaultMap);
-    expect(out).toContain('href="/04-recipes/#sec-4-6-2"');
+  it('links a three-level §{slug} reference', () => {
+    const out = process('<p>See §{recipes.multi-output-cook}.</p>', defaultMap);
+    expect(out).toContain('href="/04-recipes/#recipes.multi-output-cook"');
     expect(out).toContain('>§ 4.6.2</a>');
   });
 
-  it('links an appendix reference', () => {
-    const out = process('<p>See § A.3.</p>', defaultMap);
-    expect(out).toContain('href="/appendix/a-grammar/#sec-A-3"');
+  it('links an appendix §{slug} reference', () => {
+    const out = process('<p>See §{grammar-appendix.top-level}.</p>', defaultMap);
+    expect(out).toContain('href="/appendix/a-grammar/#grammar-appendix.top-level"');
     expect(out).toContain('>§ A.3</a>');
   });
 
-  it('links a chapter-level § X reference', () => {
-    const out = process('<p>See § 5.</p>', defaultMap);
-    expect(out).toContain('href="/05-cross-recipe-references/"');
+  it('links a chapter-level §{slug} reference', () => {
+    const out = process('<p>See §{xref}.</p>', defaultMap);
+    expect(out).toContain('href="/05-cross-recipe-references/#xref"');
     expect(out).toContain('>§ 5</a>');
   });
 
-  it('leaves unresolved refs as plain text without failing', () => {
-    const out = process('<p>Where § N is a placeholder.</p>', defaultMap);
-    expect(out).not.toContain('class="clause-xref"');
-    expect(out).toContain('§ N');
+  it('throws on an unresolved slug', () => {
+    expect(() =>
+      process('<p>See §{nope.missing}.</p>', defaultMap),
+    ).toThrowError(/unknown clause slug "nope\.missing"/i);
   });
 
   it('handles multiple refs in one paragraph', () => {
-    const out = process('<p>Compare § 2.3 with § A.3.</p>', defaultMap);
+    const out = process(
+      '<p>Compare §{lexical.identifiers} with §{grammar-appendix.top-level}.</p>',
+      defaultMap,
+    );
     expect(out.match(/class="clause-xref"/g) || []).toHaveLength(2);
   });
 
-  it('does not wrap § X.Y inside inline code', () => {
-    const out = process('<p>The token <code>§ 2.3</code> is literal.</p>', defaultMap);
-    expect(out).toContain('<code>§ 2.3</code>');
+  it('does not wrap §{slug} inside inline code', () => {
+    const out = process(
+      '<p>The token <code>§{lexical.identifiers}</code> is literal.</p>',
+      defaultMap,
+    );
+    expect(out).toContain('<code>§{lexical.identifiers}</code>');
     expect(out).not.toContain('class="clause-xref"');
   });
 
-  it('does not wrap § X.Y that is already inside a link', () => {
-    const out = process('<p>See <a href="/elsewhere">§ 2.3</a> too.</p>', defaultMap);
-    expect(out).toContain('<a href="/elsewhere">§ 2.3</a>');
-    expect(out).not.toContain('href="/02-lexical/#sec-2-3"');
+  it('does not wrap §{slug} that is already inside a link', () => {
+    const out = process(
+      '<p>See <a href="/elsewhere">§{lexical.identifiers}</a> too.</p>',
+      defaultMap,
+    );
+    expect(out).toContain('<a href="/elsewhere">§{lexical.identifiers}</a>');
+    expect(out).not.toContain('href="/02-lexical/#lexical.identifiers"');
   });
 
-  it('links a ref that follows a closed <a> in the same paragraph (ancestor-tracking regression)', () => {
+  it('links a ref that follows a closed <a> in the same paragraph', () => {
     const out = process(
-      '<p>See <a href="/x">link</a> and § 2.3 for details.</p>',
+      '<p>See <a href="/x">link</a> and §{lexical.identifiers} for details.</p>',
       defaultMap,
     );
     expect(out).toContain('<a href="/x">link</a>');
-    expect(out).toContain('href="/02-lexical/#sec-2-3"');
+    expect(out).toContain('href="/02-lexical/#lexical.identifiers"');
     expect(out).toContain('>§ 2.3</a>');
   });
 });
