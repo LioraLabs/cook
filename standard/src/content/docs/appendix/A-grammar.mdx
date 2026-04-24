@@ -5,10 +5,9 @@ sidebar:
 ---
 # Appendix A. Grammar (normative)
 
-> **Normative.** This appendix contains the full formal grammar of the Cookfile language in the W3C-style EBNF variant defined in § 1.4. Where this appendix disagrees with the prose of § 3 or § 4, this appendix is authoritative (§ 1.5).
+> **Normative.** This appendix contains the full formal grammar of the Cookfile language in the W3C-style EBNF variant defined in §{notation.grammar}. Where this appendix disagrees with the prose of §{grammar} or §{recipes}, this appendix is authoritative (§{notation.grammar-precedence}).
 
-## A.1. Top level
-
+## A.1. Top level [#grammar-appendix.top-level]
 ```ebnf
 cookfile              ::= toplevel_item*
 toplevel_item         ::= recipe
@@ -20,8 +19,7 @@ toplevel_item         ::= recipe
                        | NEWLINE
 ```
 
-## A.2. Top-level declarations
-
+## A.2. Top-level declarations [#grammar-appendix.declarations]
 ```ebnf
 variable_declaration  ::= BARE_IDENTIFIER STRING NEWLINE
 use_declaration       ::= "use" name NEWLINE
@@ -40,8 +38,7 @@ config_body           ::= LUA_SOURCE
 
 **Reserved recipe name segments.** The identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `all` are reserved and MUST NOT appear as the final dot-separated segment of any recipe name. A conforming implementation MUST reject a recipe whose name ends with one of these segments (e.g., `backend.stem` is rejected; `backend.build` is accepted).
 
-## A.3. Recipes
-
+## A.3. Recipes [#grammar-appendix.recipes]
 ```ebnf
 recipe                ::= recipe_header NEWLINE recipe_body "end" NEWLINE?
 recipe_header         ::= explicit_header
@@ -67,8 +64,7 @@ recipe_item           ::= ingredients_step
 
 **At-most-one-ingredients rule.** A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe with two or more `ingredients_step` items.
 
-## A.4. Steps
-
+## A.4. Steps [#grammar-appendix.steps]
 ```ebnf
 ingredients_step      ::= "ingredients" ingredient+ NEWLINE
 ingredient            ::= STRING            /* include */
@@ -124,8 +120,7 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
 6. First character is `@` and the remainder is non-empty → `interactive_command`.
 7. Otherwise → `shell_command`.
 
-## A.5. Primitives
-
+## A.5. Primitives [#grammar-appendix.primitives]
 ```ebnf
 name                  ::= BARE_IDENTIFIER | STRING
 BARE_IDENTIFIER       ::= /[A-Za-z_][A-Za-z0-9_.\\-]*/

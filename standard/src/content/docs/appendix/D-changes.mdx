@@ -21,51 +21,51 @@ sidebar:
 **Summary:** Tree-sitter currently lags behind the Rust parser on several constructs: multi-output cook steps, shell-block `using` clauses, `test` steps, ingredient excludes (`!"..."`), Lua-code config blocks, and the module-call heuristic. The follow-up plan will: (a) enumerate divergences, (b) update `grammar.js` and its externals, (c) wire a tree-sitter corpus against `docs/standard/conformance/`, (d) verify both implementations agree.
 **Reference:** to be filled when the plan is written.
 
-## CS-0003 — § 2 Lexical structure filled
+## CS-0003 — §{lexical} Lexical structure filled
 
 **Date:** 2026-04-22
-**Sections affected:** § 2.1, § 2.2, § 2.3, § 2.4, § 2.5, § 2.6, § 2.8, § 2.9, § 2.10, App. B.2 (chapter intro plus B.2.2, B.2.3, B.2.4).
-**Summary:** Normative prose for chapter 2 filled, replacing the `NORMATIVE-TODO` stubs in § 2.1–2.6 and § 2.8–2.10. § 2.7 (line prefixes) was established by the PoC and is unchanged. The cascade in § 2.10 codifies the lexer's first-match ordering with a defined "keyword separator" term, and each section grounds its non-obvious edge cases in a governing test under `cli/crates/cook-lang/src/`. Appendix B gains three rationale subsections covering one-token-per-line, ASCII-only identifiers, and contextual keyword reservation.
+**Sections affected:** §{lexical.source-representation}, §{lexical.tokens}, §{lexical.identifiers}, §{lexical.keywords}, §{lexical.strings}, §{lexical.comments}, §{lexical.numbers}, §{lexical.brace-blocks}, §{lexical.line-classification}, App. B.2 (chapter intro plus B.2.2, B.2.3, B.2.4).
+**Summary:** Normative prose for chapter 2 filled, replacing the `NORMATIVE-TODO` stubs in §{lexical.source-representation}–2.6 and §{lexical.numbers}–2.10. §{lexical.line-prefixes} (line prefixes) was established by the PoC and is unchanged. The cascade in §{lexical.line-classification} codifies the lexer's first-match ordering with a defined "keyword separator" term, and each section grounds its non-obvious edge cases in a governing test under `cli/crates/cook-lang/src/`. Appendix B gains three rationale subsections covering one-token-per-line, ASCII-only identifiers, and contextual keyword reservation.
 **Reference:** this commit.
 
-## CS-0004 — § 3 Syntactic grammar filled
+## CS-0004 — §{grammar} Syntactic grammar filled
 
 **Date:** 2026-04-22
-**Sections affected:** § 3.1–3.8, App. B.3.
-**Summary:** Replaced the eight `NORMATIVE-TODO` stubs in § 3 (CS-stub-11 through CS-stub-18) with normative prose walking through the top-level grammar, top-level ordering, variable declarations, `use` and `import` declarations, config blocks, recipes (explicit and implicit headers, dependency lists, reserved-segment rule), and the step-dispatch cascade inside a recipe body. Filled App. B.3 with a chapter-level intro and three rationale subsections covering the top-level ordering rule, the column-0 requirement on implicit headers, and the recipe-body treatment of `NAME "value"`.
+**Sections affected:** §{grammar.overview}–3.8, App. B.3.
+**Summary:** Replaced the eight `NORMATIVE-TODO` stubs in §{grammar} (CS-stub-11 through CS-stub-18) with normative prose walking through the top-level grammar, top-level ordering, variable declarations, `use` and `import` declarations, config blocks, recipes (explicit and implicit headers, dependency lists, reserved-segment rule), and the step-dispatch cascade inside a recipe body. Filled App. B.3 with a chapter-level intro and three rationale subsections covering the top-level ordering rule, the column-0 requirement on implicit headers, and the recipe-body treatment of `NAME "value"`.
 **Reference:** this commit.
 
-## CS-0005 — § 4 Recipes and step kinds filled
+## CS-0005 — §{recipes} Recipes and step kinds filled
 
 **Date:** 2026-04-22
-**Sections affected:** § 4.1–4.11, App. B.4.
-**Summary:** Normative prose filled for the recipe body: explicit and implicit header forms with the column-0 restriction on the implicit form (§ 4.1), dependency-list semantics with parse-time/load-time split (§ 4.2), the single `ingredients` line with include and `!"…"` exclude items (§ 4.3), the seven-step-kind cascade and its dispatch priority (§ 4.4), the single-output `cook` step with its four forms including declaration-only (§ 4.5), the multi-output `cook` step with its block-only `using` rule (§ 4.6), the `plate` single-template step (§ 4.7), the `test` step with `timeout` and `should_fail` modifiers in fixed order (§ 4.8), `lua_line` and `lua_block` delimitation deferring semantics to § 5/§ 6 (§ 4.9), plain and interactive shell steps with `@` as a dispatch-time marker (§ 4.10), and the module-call heuristic with single-line and multi-line brace handling (§ 4.11). App. B.4 records the rationale for rejecting `cook "a" "b" using "cmd"`, the one-template `plate` shape, and the two-token module-call heuristic.
+**Sections affected:** §{recipes.header-forms}–4.11, App. B.4.
+**Summary:** Normative prose filled for the recipe body: explicit and implicit header forms with the column-0 restriction on the implicit form (§{recipes.header-forms}), dependency-list semantics with parse-time/load-time split (§{recipes.dep-list}), the single `ingredients` line with include and `!"…"` exclude items (§{recipes.ingredients}), the seven-step-kind cascade and its dispatch priority (§{recipes.step-kinds}), the single-output `cook` step with its four forms including declaration-only (§{recipes.cook-single-output}), the multi-output `cook` step with its block-only `using` rule (§{recipes.cook-multi-output}), the `plate` single-template step (§{recipes.plate-step}), the `test` step with `timeout` and `should_fail` modifiers in fixed order (§{recipes.test-step}), `lua_line` and `lua_block` delimitation deferring semantics to §{xref}/§{lua} (§{recipes.lua-steps}), plain and interactive shell steps with `@` as a dispatch-time marker (§{recipes.shell-steps}), and the module-call heuristic with single-line and multi-line brace handling (§{recipes.module-call-steps}). App. B.4 records the rationale for rejecting `cook "a" "b" using "cmd"`, the one-template `plate` shape, and the two-token module-call heuristic.
 **Reference:** this commit.
 
-## CS-0006 — § 5 Execution model filled
+## CS-0006 — §{xref} Execution model filled
 
 **Date:** 2026-04-22
-**Sections affected:** § 5.1–5.8, App. B.5.
-**Summary:** Replaced the `NORMATIVE-TODO` stubs for § 5.1–§ 5.8 with normative prose defining the two-phase register/execute model, capture-mode purity, step groups and within-recipe parallelism, explicit and implicit cross-recipe dependencies, exact-string ingredient–serves matching, interactive-step draining, abstract cache semantics keyed on source-derived observable inputs, and syntactic-before-semantic diagnostic ordering. Added five B.5.K rationale subsections covering register-phase purity, exact string matching, `@` draining, cache abstraction, and diagnostic-ordering scope.
+**Sections affected:** §{xref.name-references}–5.8, App. B.5.
+**Summary:** Replaced the `NORMATIVE-TODO` stubs for §{xref.name-references}–`§ 5.8` with normative prose defining the two-phase register/execute model, capture-mode purity, step groups and within-recipe parallelism, explicit and implicit cross-recipe dependencies, exact-string ingredient–serves matching, interactive-step draining, abstract cache semantics keyed on source-derived observable inputs, and syntactic-before-semantic diagnostic ordering. Added five B.5.K rationale subsections covering register-phase purity, exact string matching, `@` draining, cache abstraction, and diagnostic-ordering scope.
 **Reference:** this commit.
 
-## CS-0007 — § 6 Cook Lua API filled
+## CS-0007 — §{lua} Cook Lua API filled
 
 **Date:** 2026-04-22
-**Sections affected:** § 6.1–6.7, App. B.6.
-**Summary:** Replaced the § 6 stubs with normative prose defining the Cook Lua API surface, classified by register-phase vs. execute-phase: the `cook` table (`cook.add_unit`, `cook.sh`, `cook.exec`, `cook.interactive`, `cook.recipe`), the using-block globals (`input`, `output`, `inputs`, `outputs`, `input_N`), the `fs.*` filesystem helpers, the `path.*` path helpers, and the shell-using-string placeholders (`{in}`, `{out}`, `{all}`, `{stem}`, `{name}`, `{ext}`, `{dir}`). Added App. B.6 rationale covering the phase-split design, why shell placeholders and using-block globals coexist, why `fs.*` and `path.*` are separate namespaces, why `cook.add_unit` is register-phase only, and why recipe-name tokens win over `cook.env` in the using-string fallback.
+**Sections affected:** §{lua.api-overview}–6.7, App. B.6.
+**Summary:** Replaced the §{lua} stubs with normative prose defining the Cook Lua API surface, classified by register-phase vs. execute-phase: the `cook` table (`cook.add_unit`, `cook.sh`, `cook.exec`, `cook.interactive`, `cook.recipe`), the using-block globals (`input`, `output`, `inputs`, `outputs`, `input_N`), the `fs.*` filesystem helpers, the `path.*` path helpers, and the shell-using-string placeholders (`{in}`, `{out}`, `{all}`, `{stem}`, `{name}`, `{ext}`, `{dir}`). Added App. B.6 rationale covering the phase-split design, why shell placeholders and using-block globals coexist, why `fs.*` and `path.*` are separate namespaces, why `cook.add_unit` is register-phase only, and why recipe-name tokens win over `cook.env` in the using-string fallback.
 **Reference:** this commit.
 
-## CS-0008 — § 7 Modules filled
+## CS-0008 — §{modules} Modules filled
 
 **Date:** 2026-04-22
-**Sections affected:** § 7.1–7.6, App. B.7.
-**Summary:** Normative prose filled for the module system: the `use`/`import` split (§ 7.1), `use` resolution with built-in-then-`cook_modules/` ordering (§ 7.2), `import` path semantics (§ 7.3), the observable `cook_modules/` lookup algorithm with flat-then-directory precedence (§ 7.4), the module authoring contract including the `init` hook (§ 7.5), and the parse-time/load-time split for duplicate-import and cycle detection (§ 7.6). App. B.7 records the rationale for the two-declaration design, built-in resolution order, duplicate-parse-time enforcement, cycle load-time enforcement, and module-name/reserved-segment non-collision.
+**Sections affected:** §{modules.overview}–7.6, App. B.7.
+**Summary:** Normative prose filled for the module system: the `use`/`import` split (§{modules.overview}), `use` resolution with built-in-then-`cook_modules/` ordering (§{modules.import-declaration}), `import` path semantics (§{modules.qualified-refs}), the observable `cook_modules/` lookup algorithm with flat-then-directory precedence (§{modules.duplicates-and-cycles}), the module authoring contract including the `init` hook (`§ 7.5`), and the parse-time/load-time split for duplicate-import and cycle detection (`§ 7.6`). App. B.7 records the rationale for the two-declaration design, built-in resolution order, duplicate-parse-time enforcement, cycle load-time enforcement, and module-name/reserved-segment non-collision.
 **Reference:** this commit.
 
 ## CS-0009 — Cross-recipe references redesign
 
 **Date:** 2026-04-24
-**Sections affected:** § 4.2, § 5 (new), § 6.7, § 6.8 (new), § 7 (renamed), § 8 (moved from § 5). App. B.5.N/O/P (new). App. C.N (new).
-**Summary:** Introduced § 5 "Cross-recipe references" as the normative home for name-reference surface (dep-list, bare placeholder, accessor placeholder), resolution, path accessors, dep-driven iteration, string-substitution, and dependency implications. Split the former § 7 "Modules" into § 6.8 (`use` declaration, under Cook Lua API) and § 7 "Cross-Cookfile composition" (`import` and qualified references). Moved "Execution model" to § 8 so that later-chapter references do not forward-reference undefined surface. Removed the ingredient/serves byte-equality implicit-dep rule from the Execution model (old § 5.5); cross-recipe ordering is now established only by name references. Added rationale B.5.N (removal motivation), B.5.O (accessor-placeholder iteration surface vs. explicit `from`), and B.5.P (closed accessor set). Added a worked example under App. C. Runtime: `cli/crates/cook-engine/src/analyzer.rs` no longer constructs edges from ingredient/serves string equality.
+**Sections affected:** §{recipes.dep-list}, §{xref} (new), §{lua.shell-placeholders}, §{lua.use-env} (new), §{modules} (renamed), §{exec} (moved from §{xref}). App. B.5.N/O/P (new). App. C.N (new).
+**Summary:** Introduced §{xref} "Cross-recipe references" as the normative home for name-reference surface (dep-list, bare placeholder, accessor placeholder), resolution, path accessors, dep-driven iteration, string-substitution, and dependency implications. Split the former §{modules} "Modules" into §{lua.use-env} (`use` declaration, under Cook Lua API) and §{modules} "Cross-Cookfile composition" (`import` and qualified references). Moved "Execution model" to §{exec} so that later-chapter references do not forward-reference undefined surface. Removed the ingredient/serves byte-equality implicit-dep rule from the Execution model (old §{xref.string-substitution}); cross-recipe ordering is now established only by name references. Added rationale B.5.N (removal motivation), B.5.O (accessor-placeholder iteration surface vs. explicit `from`), and B.5.P (closed accessor set). Added a worked example under App. C. Runtime: `cli/crates/cook-engine/src/analyzer.rs` no longer constructs edges from ingredient/serves string equality.
 **Reference:** this commit.

@@ -1,28 +1,25 @@
 ---
-title: "§ 3 — Syntactic grammar"
+title: "§{grammar} — Syntactic grammar"
 sidebar:
   order: 3
 ---
-# 3. Syntactic grammar
+# 3. Syntactic grammar [#grammar]
+> **Normative.** This chapter walks through the productions of the Cookfile grammar in prose. The full formal grammar is in Appendix A, which is authoritative where it disagrees with the prose here (§{notation.grammar-precedence}).
 
-> **Normative.** This chapter walks through the productions of the Cookfile grammar in prose. The full formal grammar is in Appendix A, which is authoritative where it disagrees with the prose here (§ 1.5).
-
-## 3.1. Grammar overview
-
+## 3.1. Grammar overview [#grammar.overview]
 A Cookfile is parsed as a single top-level production, `cookfile`, consisting of zero or more `toplevel_item`s (App. A.1). Each `toplevel_item` is a `recipe`, a `config_block`, a `use_declaration`, an `import_declaration`, a `variable_declaration`, a `comment`, or a `NEWLINE` (blank line).
 
-A conforming implementation MUST drive parsing off the token stream produced by § 2: each syntactic form listed above is selected by the classification of its leading token. Comments and blank lines MUST be accepted at any top-level position and MUST NOT affect the grammatical shape of the surrounding items. A `Content` token at the top level (§ 2.7) is not a valid `toplevel_item` and MUST be rejected.
+A conforming implementation MUST drive parsing off the token stream produced by §{lexical}: each syntactic form listed above is selected by the classification of its leading token. Comments and blank lines MUST be accepted at any top-level position and MUST NOT affect the grammatical shape of the surrounding items. A `Content` token at the top level (§{lexical.line-prefixes}) is not a valid `toplevel_item` and MUST be rejected.
 
 ### Note 3.1.1
 
-The grammar is top-down and keyword-led at the outer layer: the leading token of each `toplevel_item` is sufficient to commit to one of the six productions above, with no backtracking. The one form without a reserved keyword — `variable_declaration` — is distinguished at the lexical layer (§ 2.3, § 2.4): its leading token is a `BARE_IDENTIFIER` that is not a reserved keyword, immediately followed by a `STRING`.
+The grammar is top-down and keyword-led at the outer layer: the leading token of each `toplevel_item` is sufficient to commit to one of the six productions above, with no backtracking. The one form without a reserved keyword — `variable_declaration` — is distinguished at the lexical layer (§{lexical.identifiers}, §{lexical.keywords}): its leading token is a `BARE_IDENTIFIER` that is not a reserved keyword, immediately followed by a `STRING`.
 
 ### Note 3.1.2
 
-Inside a recipe body, a different set of productions applies (App. A.3, App. A.4); see § 3.8.
+Inside a recipe body, a different set of productions applies (App. A.3, App. A.4); see §{grammar.step-dispatch}.
 
-## 3.2. Top-level ordering
-
+## 3.2. Top-level ordering [#grammar.top-level-ordering]
 A `variable_declaration`, `use_declaration`, `import_declaration`, or `config_block` MUST NOT follow the first `recipe` in a Cookfile. A conforming implementation MUST reject a Cookfile in which any such item appears after any `recipe`. The diagnostic MUST identify the offending item's source line.
 
 Comments and blank lines are not ordered: they MAY appear at any top-level position, both before and after recipes, without affecting the classification of any surrounding item.
@@ -51,15 +48,14 @@ Each of the four ordered forms appears before the single `recipe`. The `use`, `i
 
 The `cook-lang` parser test `test_parse_use_after_recipe_fails` (and companion tests for `import` and `config`) pin this ordering rule.
 
-## 3.3. Variable declarations
-
+## 3.3. Variable declarations [#grammar.var-declarations]
 A `variable_declaration` is the top-level form `BARE_IDENTIFIER STRING NEWLINE` (App. A.2). The `BARE_IDENTIFIER` is the variable's name; the `STRING` is its value. A variable declaration occupies a single Cookfile line.
 
 The `BARE_IDENTIFIER` on the left-hand side MUST NOT be any of the reserved keywords listed in App. A.2: `recipe`, `config`, `end`, `ingredients`, `cook`, `plate`, `using`, `use`, `import`, `test`. A conforming implementation MUST reject a variable declaration whose left-hand side is one of these keywords.
 
-A conforming implementation MUST recognise the `variable_declaration` form only at the top level (§ 3.2). Inside a recipe body, a line of the shape `BARE_IDENTIFIER "value"` is not a variable declaration; see § 3.8.
+A conforming implementation MUST recognise the `variable_declaration` form only at the top level (§{grammar.top-level-ordering}). Inside a recipe body, a line of the shape `BARE_IDENTIFIER "value"` is not a variable declaration; see §{grammar.step-dispatch}.
 
-A line MUST match the `variable_declaration` form only when the `STRING` is the last non-whitespace content on the line. A `BARE_IDENTIFIER` followed by a `STRING` followed by further non-whitespace text MUST NOT be classified as a `variable_declaration`; such a line is a `Content` token and, at the top level, is rejected under § 3.1.
+A line MUST match the `variable_declaration` form only when the `STRING` is the last non-whitespace content on the line. A `BARE_IDENTIFIER` followed by a `STRING` followed by further non-whitespace text MUST NOT be classified as a `variable_declaration`; such a line is a `Content` token and, at the top level, is rejected under §{grammar.overview}.
 
 ### Example 3.3.1
 
@@ -74,9 +70,8 @@ Both lines are `variable_declaration`s. The second illustrates that the `STRING`
 
 The ten reserved keywords coincide with the keywords that introduce other top-level or recipe-body productions. Forbidding them as variable names removes every case where a single line could be classified as either a `variable_declaration` or another production.
 
-## 3.4. `use` declarations
-
-A `use_declaration` is the top-level form `"use" name NEWLINE` (App. A.2), where `name` is either a `BARE_IDENTIFIER` or a `STRING` (App. A.5). It requests that the named built-in or user-authored module be made available to the Cookfile's recipes and config blocks. Module resolution is governed by § 6.8.
+## 3.4. `use` declarations [#grammar.use-declarations]
+A `use_declaration` is the top-level form `"use" name NEWLINE` (App. A.2), where `name` is either a `BARE_IDENTIFIER` or a `STRING` (App. A.5). It requests that the named built-in or user-authored module be made available to the Cookfile's recipes and config blocks. Module resolution is governed by §{lua.use-env}.
 
 The keyword `use` MUST be followed by whitespace, a tab, or a `"` character before the name; otherwise the line is not a `use_declaration`. A bare word such as `useful` MUST be classified as a `Content` token rather than a `use_declaration`.
 
@@ -95,9 +90,8 @@ Both forms are accepted; the module names are `cpp` and `proto` respectively.
 
 The `cook-lang` parser tests `test_use_prefix_is_content` and `test_use_bare_name` pin the distinction between `use` as a keyword and `use…` as the beginning of a `Content` token.
 
-## 3.5. `import` declarations
-
-An `import_declaration` is the top-level form `"import" BARE_IDENTIFIER path NEWLINE` (App. A.2), where `path` is a non-empty run of non-whitespace characters (App. A.5). The `BARE_IDENTIFIER` is the local alias under which the imported Cookfile's recipes become addressable; the `path` is the filesystem location of the imported Cookfile. Import resolution is governed by § 7.
+## 3.5. `import` declarations [#grammar.import-declarations]
+An `import_declaration` is the top-level form `"import" BARE_IDENTIFIER path NEWLINE` (App. A.2), where `path` is a non-empty run of non-whitespace characters (App. A.5). The `BARE_IDENTIFIER` is the local alias under which the imported Cookfile's recipes become addressable; the `path` is the filesystem location of the imported Cookfile. Import resolution is governed by §{modules}.
 
 Unlike `use_declaration`, the alias in `import_declaration` MUST be a `BARE_IDENTIFIER`; the quoted form is not accepted for the alias.
 
@@ -112,15 +106,14 @@ import backend ./services/backend
 import proto ../../libs/proto
 ```
 
-Two imports with distinct aliases `backend` and `proto`, and relative paths. Recipes from either imported Cookfile are subsequently addressable as `backend.<name>` and `proto.<name>`; see § 7.
+Two imports with distinct aliases `backend` and `proto`, and relative paths. Recipes from either imported Cookfile are subsequently addressable as `backend.<name>` and `proto.<name>`; see §{modules}.
 
 ### Note 3.5.1
 
 The `cook-lang` parser test `test_parse_duplicate_import_names_fails` pins the uniqueness rule.
 
-## 3.6. Config blocks
-
-A `config_block` is the top-level form `"config" name? NEWLINE config_body "end" NEWLINE` (App. A.2). The optional `name` is either a `BARE_IDENTIFIER` or a `STRING`. The `config_body` is a sequence of raw source lines (`LUA_SOURCE`, App. A.5) running from the line after the `config` header up to, but not including, the closing `end`. The contents of `config_body` are not parsed by the Cookfile grammar; the Lua runtime interprets them at load time (§ 5, § 6).
+## 3.6. Config blocks [#grammar.config-blocks]
+A `config_block` is the top-level form `"config" name? NEWLINE config_body "end" NEWLINE` (App. A.2). The optional `name` is either a `BARE_IDENTIFIER` or a `STRING`. The `config_body` is a sequence of raw source lines (`LUA_SOURCE`, App. A.5) running from the line after the `config` header up to, but not including, the closing `end`. The contents of `config_body` are not parsed by the Cookfile grammar; the Lua runtime interprets them at load time (§{xref}, §{lua}).
 
 At most one unnamed `config_block` MUST appear in a Cookfile. Named `config_block` names MUST be unique within a Cookfile. A conforming implementation MUST reject a Cookfile that violates either constraint.
 
@@ -150,8 +143,7 @@ Three config blocks: one unnamed, two named. Each body is raw Lua source that th
 
 The `config_body` is collected by source-line range rather than by re-tokenising the enclosed lines. Lines that would otherwise tokenise as Cookfile constructs (for example, a line that looks like `BARE_IDENTIFIER "value"`) are passed through verbatim to the Lua runtime.
 
-## 3.7. Recipes
-
+## 3.7. Recipes [#grammar.recipe-syntax]
 A `recipe` is the form `recipe_header NEWLINE recipe_body "end" NEWLINE?` (App. A.3). A `recipe_header` is one of two alternatives:
 
 - An **explicit header** of the form `"recipe" name (":" dependency_list)?`, where `name` is a `BARE_IDENTIFIER` or `STRING`.
@@ -159,7 +151,7 @@ A `recipe` is the form `recipe_header NEWLINE recipe_body "end" NEWLINE?` (App. 
 
 The `dependency_list` is one or more `name`s separated by whitespace; each element is a `BARE_IDENTIFIER` or a `STRING`, and the two forms MAY be freely mixed within a single list.
 
-The `implicit_header` form MUST be recognised only when the header line begins at column 0 — that is, when it has no leading whitespace. An indented line of the shape `BARE_IDENTIFIER:` MUST be classified as a `Content` token (and therefore, within a recipe body, dispatched as a `shell_command` per § 3.8); outside a recipe body, such an indented line is rejected under § 3.1.
+The `implicit_header` form MUST be recognised only when the header line begins at column 0 — that is, when it has no leading whitespace. An indented line of the shape `BARE_IDENTIFIER:` MUST be classified as a `Content` token (and therefore, within a recipe body, dispatched as a `shell_command` per §{grammar.step-dispatch}); outside a recipe body, such an indented line is rejected under §{grammar.overview}.
 
 A `recipe_header` MUST NOT be introduced by a line whose trimmed content begins with `recipe` but is immediately followed by a non-separator character — for example, `recipes_cleanup`. Such a line is a `Content` token. The keyword `recipe` is recognised only when separated from its name by whitespace, a tab, or a `"` character.
 
@@ -193,17 +185,16 @@ recipe build
 end
 ```
 
-The second line is indented. Its shape `BARE_IDENTIFIER ":" ...` does not introduce a nested recipe; it is a `Content` token and is dispatched inside the enclosing recipe body as a `shell_command` (§ 3.8).
+The second line is indented. Its shape `BARE_IDENTIFIER ":" ...` does not introduce a nested recipe; it is a `Content` token and is dispatched inside the enclosing recipe body as a `shell_command` (§{grammar.step-dispatch}).
 
 ### Note 3.7.1
 
 The `cook-lang` parser tests `test_implicit_recipe_indented_not_detected` and `test_recipe_prefix_is_shell_command` pin the column-0 rule and the keyword-separator rule respectively.
 
-## 3.8. Step dispatch inside a recipe
+## 3.8. Step dispatch inside a recipe [#grammar.step-dispatch]
+Inside a `recipe_body`, each source line is first classified by the lexer (§{lexical.line-classification}) into one of `Comment`, `Blank`, `LuaLine`, `LuaBlockOpen`, `VarDecl`, or `Content`. Comments and blank lines are skipped; `LuaLine` becomes a `lua_line` step; `LuaBlockOpen` begins a `lua_block` step collected by the brace-balance algorithm (§{lexical.brace-blocks}).
 
-Inside a `recipe_body`, each source line is first classified by the lexer (§ 2.10) into one of `Comment`, `Blank`, `LuaLine`, `LuaBlockOpen`, `VarDecl`, or `Content`. Comments and blank lines are skipped; `LuaLine` becomes a `lua_line` step; `LuaBlockOpen` begins a `lua_block` step collected by the brace-balance algorithm (§ 2.9).
-
-A `VarDecl` token that appears inside a `recipe_body` MUST NOT produce a `variable_declaration` step. A conforming implementation MUST reconstitute the original source text (`NAME "value"`) and dispatch it as a `shell_command` step. Variable declarations are a top-level-only construct (§ 3.3).
+A `VarDecl` token that appears inside a `recipe_body` MUST NOT produce a `variable_declaration` step. A conforming implementation MUST reconstitute the original source text (`NAME "value"`) and dispatch it as a `shell_command` step. Variable declarations are a top-level-only construct (§{grammar.var-declarations}).
 
 A `Content` token inside a `recipe_body` is dispatched to exactly one `recipe_item` by the priority cascade below (App. A.4, "Step-dispatch priority"). The first match wins; a conforming implementation MUST test the alternatives in this order:
 
@@ -215,7 +206,7 @@ A `Content` token inside a `recipe_body` is dispatched to exactly one `recipe_it
 6. First character is `@` and the remainder of the line is non-empty → `interactive_command`.
 7. Otherwise → `shell_command`.
 
-In step 5, the first segment (before the `.`) is restricted to ASCII letters, digits, and underscore; hyphens and dots are not permitted in the first segment. This is narrower than `BARE_IDENTIFIER` at large (§ 2.3), and the narrower form is what a conforming implementation MUST test against.
+In step 5, the first segment (before the `.`) is restricted to ASCII letters, digits, and underscore; hyphens and dots are not permitted in the first segment. This is narrower than `BARE_IDENTIFIER` at large (§{lexical.identifiers}), and the narrower form is what a conforming implementation MUST test against.
 
 In step 6, an `@` with no following content MUST be rejected rather than silently dispatched as any of the preceding alternatives. The diagnostic MUST identify the offending line.
 

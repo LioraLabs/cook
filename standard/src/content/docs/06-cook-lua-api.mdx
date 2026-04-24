@@ -1,11 +1,10 @@
 ---
-title: "§ 6 — Cook Lua API"
+title: "§{lua} — Cook Lua API"
 sidebar:
   order: 6
 ---
-# 6. Cook Lua API
-
-> **Normative.** This chapter defines the Cook API surface available to Lua code inside a Cookfile. Code encountered via `> expr` (§ 4.9), `>{ ... }` (§ 2.9, § 4.9), `using >{ ... }` (§ 4.5, § 4.6), module bodies (§ 6.8), and `config` blocks (§ 3.2) runs with this API in scope.
+# 6. Cook Lua API [#lua]
+> **Normative.** This chapter defines the Cook API surface available to Lua code inside a Cookfile. Code encountered via `> expr` (§{recipes.lua-steps}), `>{ ... }` (§{lexical.brace-blocks}, §{recipes.lua-steps}), `using >{ ... }` (§{recipes.cook-single-output}, §{recipes.cook-multi-output}), module bodies (§{lua.use-env}), and `config` blocks (§{grammar.top-level-ordering}) runs with this API in scope.
 
 The Cook runtime executes Lua code in two disjoint phases:
 
@@ -14,35 +13,32 @@ The Cook runtime executes Lua code in two disjoint phases:
 
 Every function defined in this chapter is classified as **register-phase only**, **execute-phase only**, or **both phases**. A conforming implementation MUST install a function in each of the phases indicated here, and MUST NOT silently install a register-phase-only function in the execute phase (or vice versa) — a Cookfile that calls a function in the wrong phase MUST observe either the documented behaviour for that phase or a Lua runtime error.
 
-## 6.1. API surface overview
-
+## 6.1. API surface overview [#lua.api-overview]
 A conforming implementation MUST install the following top-level Lua globals before any Cookfile-derived Lua code runs:
 
 | Global    | Type  | Phases        | Defined in |
 |-----------|-------|---------------|------------|
-| `cook`    | table | both          | § 6.2, § 6.3 |
-| `fs`      | table | both          | § 6.5 |
-| `path`    | table | both          | § 6.6 |
-| `recipe`  | table | register      | § 6.1.1 |
-| `inputs`  | table | execute       | § 6.4 |
-| `outputs` | table | execute       | § 6.4 |
-| `input`   | string | execute      | § 6.4 |
-| `output`  | string | execute      | § 6.4 |
-| `input_N` | table | execute       | § 6.4 |
+| `cook`    | table | both          | §{lua.add-unit}, §{lua.step-helpers} |
+| `fs`      | table | both          | §{lua.fs-helpers} |
+| `path`    | table | both          | §{lua.path-helpers} |
+| `recipe`  | table | register      | §{lua.recipe-global} |
+| `inputs`  | table | execute       | §{lua.using-block-globals} |
+| `outputs` | table | execute       | §{lua.using-block-globals} |
+| `input`   | string | execute      | §{lua.using-block-globals} |
+| `output`  | string | execute      | §{lua.using-block-globals} |
+| `input_N` | table | execute       | §{lua.using-block-globals} |
 
 The `cook` table carries recipe registration, work-unit registration, shell helpers, dependency-output accessors, module loading, platform information, export/import, and environment access. The full set of keys on the `cook` table is implementation-defined except for the members that are normatively specified in this chapter.
 
-### 6.1.1. The `recipe` global
+### 6.1.1. The `recipe` global [#lua.recipe-global]
+During the register phase, and only within the body of the Lua function registered by `cook.recipe(...)` (§{modules}), the `recipe` global is bound to a table with the following fields:
 
-During the register phase, and only within the body of the Lua function registered by `cook.recipe(...)` (§ 7), the `recipe` global is bound to a table with the following fields:
-
-- `recipe.name` — string; the declared recipe name (§ 4.1).
-- `recipe.ingredients` — a sequence (1-indexed Lua table) of ingredient groups. `recipe.ingredients[i]` is itself a sequence of relative file paths resolved from the `i`-th `ingredients` glob pattern, minus any entries matching an exclude pattern (§ 4.3).
+- `recipe.name` — string; the declared recipe name (§{recipes.header-forms}).
+- `recipe.ingredients` — a sequence (1-indexed Lua table) of ingredient groups. `recipe.ingredients[i]` is itself a sequence of relative file paths resolved from the `i`-th `ingredients` glob pattern, minus any entries matching an exclude pattern (§{recipes.ingredients}).
 
 A conforming implementation MUST NOT expose the `recipe` global during the execute phase; it is a register-phase artefact.
 
-## 6.2. `cook.add_unit`
-
+## 6.2. `cook.add_unit` [#lua.add-unit]
 **Signature.** `cook.add_unit(spec: table) -> nil`
 **Phase.** Register-phase only.
 
@@ -52,25 +48,25 @@ A conforming implementation MUST NOT expose the `recipe` global during the execu
 |---------------------|----------------|---------|---------|
 | `command`           | string         | `""`    | Shell command string, run via `/bin/sh -c` in the execute phase. |
 | `lua_code`          | string         | absent  | Lua source executed in the execute phase. If present, `command` is ignored. |
-| `interactive`       | boolean        | `false` | If `true`, the unit runs on the main thread and drains concurrent work (§ 8.5). |
+| `interactive`       | boolean        | `false` | If `true`, the unit runs on the main thread and drains concurrent work (§{exec.interactive-drain}). |
 | `line`              | integer        | `0`     | Source line number used in diagnostics. |
 | `cache`             | boolean        | `true`  | If `false`, the unit is never cached and is re-run on every invocation. |
 | `inputs`            | array of string | `{}`   | Files whose content contributes to the unit's cache key. |
-| `output`            | string         | absent  | Single declared output path (§ 4.5). |
-| `outputs`           | array of string | absent | Multiple declared output paths (§ 4.6). |
-| `ingredient_groups` | array of arrays of string | `{}` | For Lua-code units, the sequence of ingredient groups exposed as `input_N` (§ 6.4). |
+| `output`            | string         | absent  | Single declared output path (§{recipes.cook-single-output}). |
+| `outputs`           | array of string | absent | Multiple declared output paths (§{recipes.cook-multi-output}). |
+| `ingredient_groups` | array of arrays of string | `{}` | For Lua-code units, the sequence of ingredient groups exposed as `input_N` (§{lua.using-block-globals}). |
 
 **Output-field exclusivity.** A conforming implementation MUST reject `spec` if both `output` and `outputs` are set, raising a Lua runtime error.
 
 **Payload selection.** A conforming implementation MUST classify the recorded unit as follows:
 
-1. If `lua_code` is present, the unit is a **Lua-code unit**; `inputs`, `outputs`, and `ingredient_groups` are carried on the payload and used by § 6.4 bindings at execute time.
+1. If `lua_code` is present, the unit is a **Lua-code unit**; `inputs`, `outputs`, and `ingredient_groups` are carried on the payload and used by §{lua.using-block-globals} bindings at execute time.
 2. Otherwise, if `interactive` is `true`, the unit is an **interactive shell unit**.
 3. Otherwise, the unit is a **non-interactive shell unit**.
 
-**Caching.** When `cache` is `true`, a conforming implementation MUST record cache metadata containing the recipe name, an input-path list, an output-path list, and a command hash. The hash inputs, cache-key derivation, and storage format are implementation-defined (§ 8.6).
+**Caching.** When `cache` is `true`, a conforming implementation MUST record cache metadata containing the recipe name, an input-path list, an output-path list, and a command hash. The hash inputs, cache-key derivation, and storage format are implementation-defined (§{exec.cache}).
 
-**Return value.** `cook.add_unit` returns nothing. A conforming implementation MUST NOT cause the function to block on external work — registration is synchronous by definition (§ 8.2).
+**Return value.** `cook.add_unit` returns nothing. A conforming implementation MUST NOT cause the function to block on external work — registration is synchronous by definition (§{exec.capture-mode}).
 
 ### Example 6.2.1
 
@@ -82,7 +78,7 @@ cook.add_unit({
 })
 ```
 
-Records one shell unit with one input and one output. The same registration is produced by the surface form `cook "main.o" using "gcc -c {in} -o {out}"` in a single-output `cook` step (§ 4.5, § 6.7).
+Records one shell unit with one input and one output. The same registration is produced by the surface form `cook "main.o" using "gcc -c {in} -o {out}"` in a single-output `cook` step (§{recipes.cook-single-output}, §{lua.shell-placeholders}).
 
 ### Example 6.2.2
 
@@ -95,18 +91,16 @@ cook.add_unit({
 })
 ```
 
-Records one Lua-code unit with multiple outputs. At execute time, the `lua_code` runs with `inputs`, `outputs`, `input`, `output`, and `input_1` bound as described in § 6.4.
+Records one Lua-code unit with multiple outputs. At execute time, the `lua_code` runs with `inputs`, `outputs`, `input`, `output`, and `input_1` bound as described in §{lua.using-block-globals}.
 
 ### Note 6.2.1
 
-Adjacent `cook.add_unit` calls made inside the same register-phase `cook.step_group(fn)` invocation become siblings in the same scheduler step group (§ 8.3) and MAY run in parallel. Outside a step group they are serial. The surface `cook` step (§ 4.5, § 4.6) routes through `cook.step_group` implicitly.
+Adjacent `cook.add_unit` calls made inside the same register-phase `cook.step_group(fn)` invocation become siblings in the same scheduler step group (§{exec.step-groups}) and MAY run in parallel. Outside a step group they are serial. The surface `cook` step (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) routes through `cook.step_group` implicitly.
 
-## 6.3. Shell and Lua step helpers
+## 6.3. Shell and Lua step helpers [#lua.step-helpers]
+The `cook` table exposes the following helpers. Unless stated otherwise, they behave identically in both phases — the register-phase behaviour is defined in terms of capture (§{exec.capture-mode}), and the execute-phase behaviour is defined in terms of actual invocation.
 
-The `cook` table exposes the following helpers. Unless stated otherwise, they behave identically in both phases — the register-phase behaviour is defined in terms of capture (§ 8.2), and the execute-phase behaviour is defined in terms of actual invocation.
-
-### 6.3.1. `cook.sh`
-
+### 6.3.1. `cook.sh` [#lua.cook-sh]
 **Signature.** `cook.sh(cmd: string) -> string`
 **Phase.** Both.
 
@@ -114,32 +108,29 @@ In the register phase outside a layer context, `cook.sh` executes `cmd` via `/bi
 
 In the execute phase, `cook.sh` is not part of the normative API surface.
 
-### 6.3.2. `cook.exec` and `cook.interactive`
-
+### 6.3.2. `cook.exec` and `cook.interactive` [#lua.cook-exec]
 **Signatures.**
   - `cook.exec(cmd: string, line: integer) -> string`
   - `cook.interactive(cmd: string, line: integer) -> string`
 
 **Phase.** Register-phase only.
 
-These helpers are the Lua-side counterparts of the surface `shell_command` (§ 4.10) and `interactive_command` (§ 4.10) step forms. Each call records one unit (non-interactive or interactive, respectively) with caching disabled. The return value is the empty string; it is returned only so that callers composing results do not fail on `nil` concatenation.
+These helpers are the Lua-side counterparts of the surface `shell_command` (§{recipes.shell-steps}) and `interactive_command` (§{recipes.shell-steps}) step forms. Each call records one unit (non-interactive or interactive, respectively) with caching disabled. The return value is the empty string; it is returned only so that callers composing results do not fail on `nil` concatenation.
 
-### 6.3.3. `cook.recipe`
-
+### 6.3.3. `cook.recipe` [#lua.cook-recipe]
 **Signature.** `cook.recipe(name: string, metadata: table, body: function) -> nil`
 **Phase.** Register-phase only.
 
-Registers a recipe with the given name, metadata (`ingredients`, `excludes`, `requires`), and body function. Surface recipes (§ 4.1) are compiled to exactly one `cook.recipe` call. A conforming implementation is not required to expose `cook.recipe` as a user-facing extension point; its contract here is what the code generator (§ 3, Appendix A) produces.
+Registers a recipe with the given name, metadata (`ingredients`, `excludes`, `requires`), and body function. Surface recipes (§{recipes.header-forms}) are compiled to exactly one `cook.recipe` call. A conforming implementation is not required to expose `cook.recipe` as a user-facing extension point; its contract here is what the code generator (§{grammar}, Appendix A) produces.
 
 ### Note 6.3.1
 
-Additional `cook.*` helpers — notably `cook.env`, `cook.platform`, `cook.cache`, `cook.export`, `cook.import`, `cook.load_module`, `cook.dep_output`, and `cook.dep_output_list` — are part of the runtime but are specified in § 7 (modules and configuration), not here. § 6 defines only the work-unit surface and the two phase-split helper families.
+Additional `cook.*` helpers — notably `cook.env`, `cook.platform`, `cook.cache`, `cook.export`, `cook.import`, `cook.load_module`, `cook.dep_output`, and `cook.dep_output_list` — are part of the runtime but are specified in §{modules} (modules and configuration), not here. §{lua} defines only the work-unit surface and the two phase-split helper families.
 
-## 6.4. Using-block globals
-
+## 6.4. Using-block globals [#lua.using-block-globals]
 **Phase.** Execute-phase only.
 
-When the execute phase runs a Lua-code unit recorded by `cook.add_unit` (§ 6.2) with a `lua_code` payload — for example, one recorded from `using >{ ... }` on a `cook` step (§ 4.5, § 4.6) — a conforming implementation MUST, immediately before evaluating `lua_code`, bind the following globals on the worker's Lua VM:
+When the execute phase runs a Lua-code unit recorded by `cook.add_unit` (§{lua.add-unit}) with a `lua_code` payload — for example, one recorded from `using >{ ... }` on a `cook` step (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) — a conforming implementation MUST, immediately before evaluating `lua_code`, bind the following globals on the worker's Lua VM:
 
 | Global    | Type   | Value |
 |-----------|--------|-------|
@@ -177,50 +168,42 @@ the execute-phase worker binds `inputs` to the resolved ingredient paths, `outpu
 
 These globals are bindings on the worker VM, not on the register-phase VM. A register-phase Lua step (`> expr` or `>{ ... }` outside a `using` clause) MUST NOT observe them.
 
-## 6.5. Filesystem helpers (`fs.*`)
-
+## 6.5. Filesystem helpers (`fs.*`) [#lua.fs-helpers]
 **Phase.** Both. The same surface is installed in register-phase and execute-phase VMs; semantics are identical.
 
 All `fs.*` functions interpret relative path arguments against the Cookfile's working directory. A conforming implementation MUST NOT silently succeed on I/O errors: failures other than those made explicit below are reported as Lua runtime errors.
 
-### 6.5.1. `fs.exists`
-
+### 6.5.1. `fs.exists` [#lua.fs-exists]
 **Signature.** `fs.exists(path: string) -> boolean`
 
 Returns `true` if a filesystem entry exists at `path`, `false` otherwise. Broken symlinks and permission errors are implementation-defined with respect to the boolean result, but this function MUST NOT raise for a missing path.
 
-### 6.5.2. `fs.size`
-
+### 6.5.2. `fs.size` [#lua.fs-size]
 **Signature.** `fs.size(path: string) -> integer`
 
 Returns the size of the file at `path` in bytes. A missing or unreadable entry is a Lua runtime error.
 
-### 6.5.3. `fs.read`
-
+### 6.5.3. `fs.read` [#lua.fs-read]
 **Signature.** `fs.read(path: string) -> string`
 
 Returns the contents of `path` as a Lua string. A missing or unreadable entry is a Lua runtime error. Encoding is not transformed: the string carries raw bytes.
 
-### 6.5.4. `fs.write`
-
+### 6.5.4. `fs.write` [#lua.fs-write]
 **Signature.** `fs.write(path: string, content: string) -> nil`
 
 Writes `content` to `path`, creating parent directories as needed. Any existing file at `path` is overwritten. Write failure is a Lua runtime error.
 
-### 6.5.5. `fs.mkdir_p`
-
+### 6.5.5. `fs.mkdir_p` [#lua.fs-mkdir-p]
 **Signature.** `fs.mkdir_p(path: string) -> nil`
 
 Creates the directory at `path`, and any missing parent components, if they do not already exist. This function MUST succeed when `path` already exists and is a directory.
 
-### 6.5.6. `fs.glob`
-
+### 6.5.6. `fs.glob` [#lua.fs-glob]
 **Signature.** `fs.glob(pattern: string) -> array of string`
 
 Returns a 1-indexed sequence of absolute paths matching the glob `pattern`, interpreted relative to the working directory. The order of returned paths is implementation-defined. An invalid glob pattern is a Lua runtime error; a valid pattern with no matches MUST return an empty sequence.
 
-### 6.5.7. `fs.mtime`
-
+### 6.5.7. `fs.mtime` [#lua.fs-mtime]
 **Signature.** `fs.mtime(path: string) -> number`
 
 Returns the modification time of `path` as seconds since the Unix epoch, as a `number`. A missing or unreadable entry is a Lua runtime error.
@@ -229,69 +212,61 @@ Returns the modification time of `path` as seconds since the Unix epoch, as a `n
 
 The `fs.*` surface is intentionally minimal. Authors needing operations not listed here (symlink manipulation, recursive deletion, permission changes) invoke those operations through the shell — `fs.*` is a host-portable subset for the common cases.
 
-## 6.6. Path helpers (`path.*`)
-
+## 6.6. Path helpers (`path.*`) [#lua.path-helpers]
 **Phase.** Both. The `path.*` surface is pure string manipulation on path components; it performs no I/O and does not depend on the working directory.
 
-### 6.6.1. `path.stem`
-
+### 6.6.1. `path.stem` [#lua.path-stem]
 **Signature.** `path.stem(p: string) -> string`
 
 Returns the final path component of `p` with its extension removed. For `"src/foo.c"` the result is `"foo"`. For a path with no file name (e.g., `""` or `"/"`) the result is the empty string.
 
-### 6.6.2. `path.name`
-
+### 6.6.2. `path.name` [#lua.path-name]
 **Signature.** `path.name(p: string) -> string`
 
 Returns the final path component of `p` including its extension. For `"src/foo.c"` the result is `"foo.c"`.
 
-### 6.6.3. `path.ext`
-
+### 6.6.3. `path.ext` [#lua.path-ext]
 **Signature.** `path.ext(p: string) -> string`
 
 Returns the extension of `p` as a string beginning with a literal `.`; for a file with no extension, returns the empty string. For `"src/foo.c"` the result is `".c"`.
 
-### 6.6.4. `path.dir`
-
+### 6.6.4. `path.dir` [#lua.path-dir]
 **Signature.** `path.dir(p: string) -> string`
 
 Returns `p` with its final component removed. For `"src/foo.c"` the result is `"src"`.
 
-### 6.6.5. `path.replace_ext`
-
+### 6.6.5. `path.replace_ext` [#lua.path-replace-ext]
 **Signature.** `path.replace_ext(p: string, new_ext: string) -> string`
 
 Returns `p` with its extension replaced by `new_ext`. A leading `.` on `new_ext` is optional: `path.replace_ext("a.c", "o")` and `path.replace_ext("a.c", ".o")` both yield `"a.o"`.
 
-### 6.6.6. `path.join`
-
+### 6.6.6. `path.join` [#lua.path-join]
 **Signature.** `path.join(a: string, b: string) -> string`
 
 Returns the path formed by joining `b` onto `a` with the host separator. If `b` is absolute, the result is `b`.
 
-## 6.7. Placeholder substitutions in shell strings
-
+## 6.7. Placeholder substitutions in shell strings [#lua.shell-placeholders]
 **Phase.** Substitution is performed by the code generator before the register phase runs; the resulting Lua expression is evaluated at register time.
 
-When a `cook` step uses a single-string `using` clause (`cook "out" using "cmd"`, § 4.5) the string `cmd` is a **shell using-string**. Before a conforming implementation records the unit, it MUST substitute the following placeholders in the shell using-string:
+When a `cook` step uses a single-string `using` clause (`cook "out" using "cmd"`, §{recipes.cook-single-output}) the string `cmd` is a **shell using-string**. Before a conforming implementation records the unit, it MUST substitute the following placeholders in the shell using-string:
 
 | Placeholder | Meaning |
 |-------------|---------|
 | `{in}`      | The current input path. |
 | `{out}`     | The current output path. |
-| `{stem}`    | `path.stem(current input)` (§ 6.6.1). |
-| `{name}`    | `path.name(current input)` (§ 6.6.2). |
-| `{ext}`     | `path.ext(current input)` (§ 6.6.3). |
-| `{dir}`     | `path.dir(current input)` (§ 6.6.4). |
+| `{stem}`    | `path.stem(current input)` (§{lua.path-stem}). |
+| `{name}`    | `path.name(current input)` (§{lua.path-name}). |
+| `{ext}`     | `path.ext(current input)` (§{lua.path-ext}). |
+| `{dir}`     | `path.dir(current input)` (§{lua.path-dir}). |
 | `{all}`     | The space-joined concatenation of the full input list (see below). |
 
 The substitution rules are:
 
-- **`{in}`** refers to the current input in the iteration driving the step. For a step whose `using`-string contains `{in}`, the step is a one-to-one step (§ 4.5): it iterates over its inputs and records one unit per input (§ 6.2). In each iteration, `{in}` is the current input path.
+- **`{in}`** refers to the current input in the iteration driving the step. For a step whose `using`-string contains `{in}`, the step is a one-to-one step (§{recipes.cook-single-output}): it iterates over its inputs and records one unit per input (§{lua.add-unit}). In each iteration, `{in}` is the current input path.
 - **`{out}`** is the output pattern for the current iteration. Patterns in the cook-step's output strings (e.g., `"build/{stem}.o"`) are expanded using the same accessor names before `{out}` is substituted here.
 - **`{stem}`**, **`{name}`**, **`{ext}`**, **`{dir}`** expand to the corresponding accessor applied to the current input path.
-- **`{all}`** is only well-defined when the using-string does NOT contain `{in}`. In that case, the step is a many-to-one step (§ 4.5) and `{all}` expands to the inputs joined by a single space character. A step using both `{in}` and `{all}` is implementation-defined.
-- **Non-builtin placeholders.** A `{TOKEN}` that is not one of the current-iteration builtins above is resolved as a name reference per § 5.2. The resolution rule falls through to `cook.env[TOKEN]` when `TOKEN` is neither a recipe name (whole or accessor-split) nor a current-iteration builtin.
+- **`{all}`** is only well-defined when the using-string does NOT contain `{in}`. In that case, the step is a many-to-one step (§{recipes.cook-single-output}) and `{all}` expands to the inputs joined by a single space character. A step using both `{in}` and `{all}` is implementation-defined.
+- **Non-builtin placeholders.** A `{TOKEN}` that is not one of the current-iteration builtins above is resolved as a name reference per §{xref.resolution}. The resolution rule falls through to `cook.env[TOKEN]` when `TOKEN` is neither a recipe name (whole or accessor-split) nor a current-iteration builtin.
 
 ### Example 6.7.1
 
@@ -311,33 +286,30 @@ The surface step
 cook "dist/app" using "gcc {all} -o {out}"
 ```
 
-with ingredients `a.c` and `b.c` records one shell unit whose `command` field is `gcc a.c b.c -o dist/app`. Because the using-string does not contain `{in}`, the step is many-to-one (§ 4.5).
+with ingredients `a.c` and `b.c` records one shell unit whose `command` field is `gcc a.c b.c -o dist/app`. Because the using-string does not contain `{in}`, the step is many-to-one (§{recipes.cook-single-output}).
 
 ### Note 6.7.1
 
-Placeholder substitution is the terser surface for the common case; the `using >{ ... }` and `using { ... }` forms (§ 4.5, § 4.6) expose the same iteration directly as Lua or shell text. The two surfaces are interchangeable for any step that fits the placeholder model.
+Placeholder substitution is the terser surface for the common case; the `using >{ ... }` and `using { ... }` forms (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) expose the same iteration directly as Lua or shell text. The two surfaces are interchangeable for any step that fits the placeholder model.
 
-## 6.8. The `use` declaration
-
+## 6.8. The `use` declaration [#lua.use-env]
 > **Normative.** This section defines the `use` declaration, which brings a Lua module into the Cookfile's Lua environment. The grammar is given in App. A.2.
 
 A `use` declaration has the form `use <name>`, where `<name>` is either a `BARE_IDENTIFIER` or a `STRING` (App. A.2). A conforming implementation MUST resolve a `use` declaration by applying the following steps in order, with the first matching step winning:
 
-1. If `<name>` designates a built-in module (§ 6.8.1), the built-in module is selected.
-2. Otherwise, the implementation MUST attempt to resolve `<name>` as a local module under `cook_modules/` by the lookup algorithm of § 6.8.2.
+1. If `<name>` designates a built-in module (§{lua.builtin-modules}), the built-in module is selected.
+2. Otherwise, the implementation MUST attempt to resolve `<name>` as a local module under `cook_modules/` by the lookup algorithm of §{lua.local-modules}.
 
 A conforming implementation MUST reject a Cookfile for which no step succeeds, with a diagnostic that names `<name>` and indicates which locations were searched. The resolution step MUST occur before any recipe body executes; failure to resolve is a load-time error, not a run-time error.
 
-The result of resolution is a Lua table bound in the Cookfile's Lua environment under the identifier derived from `<name>` by replacing each ASCII hyphen (`-`) with an underscore (`_`). All other characters admitted by `BARE_IDENTIFIER` (App. A.5) pass through unchanged. A conforming implementation MUST make this binding visible to every subsequent `lua_line`, `lua_block`, `module_call` (§ 4.11), and `cook_step` `using` clause in the same Cookfile.
+The result of resolution is a Lua table bound in the Cookfile's Lua environment under the identifier derived from `<name>` by replacing each ASCII hyphen (`-`) with an underscore (`_`). All other characters admitted by `BARE_IDENTIFIER` (App. A.5) pass through unchanged. A conforming implementation MUST make this binding visible to every subsequent `lua_line`, `lua_block`, `module_call` (§{recipes.module-call-steps}), and `cook_step` `using` clause in the same Cookfile.
 
 A module MAY expose a function named `init` on its returned table. If present, `init` MUST be called exactly once immediately after the module's Lua source has been executed, before any recipe body in the enclosing Cookfile is registered.
 
-### 6.8.1. Built-in modules
+### 6.8.1. Built-in modules [#lua.builtin-modules]
+A **built-in module** is supplied by the implementation and available without any project-level file. No built-in modules are defined by v0.1 of this Standard; the built-in kind is reserved to allow future extension (§{rationale.modules}).
 
-A **built-in module** is supplied by the implementation and available without any project-level file. No built-in modules are defined by v0.1 of this Standard; the built-in kind is reserved to allow future extension (§ B.7).
-
-### 6.8.2. Local modules
-
+### 6.8.2. Local modules [#lua.local-modules]
 A **local module** is a file in the project's `cook_modules/` directory. The lookup algorithm resolves `<name>` against `cook_modules/<name>.lua`, then `cook_modules/<name>/init.lua`. The first existing file wins.
 
 ### Example 6.8.1
@@ -350,7 +322,7 @@ recipe "colorize"
 end
 ```
 
-The declaration `use cpp` binds the identifier `cpp` in the Cookfile's Lua environment to the table returned by `cook_modules/cpp.lua` (or `cook_modules/cpp/init.lua`). The `cpp.bin(...)` line in the recipe body is then dispatched as a `module_call` step (App. A.4, dispatch step 5) rather than a `shell_command`, because its first dot-separated segment `cpp` matches a bound identifier pattern (§ 4.11).
+The declaration `use cpp` binds the identifier `cpp` in the Cookfile's Lua environment to the table returned by `cook_modules/cpp.lua` (or `cook_modules/cpp/init.lua`). The `cpp.bin(...)` line in the recipe body is then dispatched as a `module_call` step (App. A.4, dispatch step 5) rather than a `shell_command`, because its first dot-separated segment `cpp` matches a bound identifier pattern (§{recipes.module-call-steps}).
 
 ### Note 6.8.1
 

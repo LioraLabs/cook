@@ -1,28 +1,24 @@
 ---
-title: "§ 1 — Notation and conventions"
+title: "§{notation} — Notation and conventions"
 sidebar:
   order: 1
 ---
-# 1. Notation and conventions
-
+# 1. Notation and conventions [#notation]
 > **Normative.** This chapter defines the typographic, grammatical, and structural conventions used throughout the Standard. Conforming implementations and Standard authors rely on these conventions for correct interpretation.
 
-## 1.1. Normative keywords
-
+## 1.1. Normative keywords [#notation.keywords]
 The key words MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, RECOMMENDED, NOT RECOMMENDED, MAY, and OPTIONAL, when appearing in all capitals in this Standard, are to be interpreted as described in RFC 2119 and RFC 8174.
 
 A paragraph that does NOT contain one of these all-caps keywords is descriptive, not normative. Lowercase spellings of any RFC 2119 keyword are not normative — such wording MUST be either promoted to all-caps (making the clause normative) or rephrased (keeping the clause descriptive).
 
-## 1.2. Section numbering and citation
-
+## 1.2. Section numbering and citation [#notation.section-numbering]
 Chapters are cited as `§ N`. Sections within a chapter are cited as `§ N.M`, subsections as `§ N.M.K`, and deepest-level subsections as `§ N.M.K.P`. Nesting deeper than four levels MUST NOT appear in this Standard.
 
 Appendices are cited as `App. X` (where X is a letter). Appendix subsections use the same dotted form: `App. A.1`, `App. A.2.3`.
 
 Examples within a section are numbered locally: `Example N.M.1`, `Example N.M.2`, and so on. Numbering restarts at 1 within each section.
 
-## 1.3. Normative and informative blocks
-
+## 1.3. Normative and informative blocks [#notation.normative-blocks]
 Each chapter and appendix begins with a single-line banner:
 
 - `> **Normative.** …` — the chapter establishes binding requirements.
@@ -35,9 +31,8 @@ Within a normative chapter:
 - **Rationale** blocks are informative.
 - All other prose is normative when it contains an RFC 2119 keyword.
 
-## 1.4. Grammar notation
-
-The Standard uses a W3C-style EBNF variant. The full formal grammar is in Appendix A. The productions in § 3 and § 4 are prose walkthroughs of the productions in Appendix A; where the two disagree, Appendix A is authoritative and the prose is a bug.
+## 1.4. Grammar notation [#notation.grammar]
+The Standard uses a W3C-style EBNF variant. The full formal grammar is in Appendix A. The productions in §{grammar} and §{recipes} are prose walkthroughs of the productions in Appendix A; where the two disagree, Appendix A is authoritative and the prose is a bug.
 
 The notation is:
 
@@ -52,7 +47,7 @@ The notation is:
 | `"literal"` | Terminal string |
 | `/regex/` | Terminal regular-expression class |
 
-Production names use `lower_snake_case`. Terminal classes defined by regular expression use `UPPER_SNAKE_CASE`. Whitespace between tokens is significant where § 2 says it is; elsewhere, whitespace between tokens is ignored.
+Production names use `lower_snake_case`. Terminal classes defined by regular expression use `UPPER_SNAKE_CASE`. Whitespace between tokens is significant where §{lexical} says it is; elsewhere, whitespace between tokens is ignored.
 
 ### Example 1.4.1
 
@@ -63,16 +58,13 @@ ingredient       ::= STRING | "!" STRING
 
 This defines `ingredients_step` as the keyword `ingredients` followed by one or more ingredients and a newline. Each ingredient is either a bare string (include) or `!` followed by a string (exclude).
 
-## 1.5. Precedence on grammar disagreements
-
+## 1.5. Precedence on grammar disagreements [#notation.grammar-precedence]
 Where the normative prose in chapters 03 or 04 disagrees with a production in Appendix A, Appendix A is authoritative. The prose is then a defect in the Standard and MUST be corrected to match Appendix A.
 
 This rule applies only to grammar productions. Where a chapter's prose defines a semantic property not expressed in Appendix A (for example, the ordering constraint "`use` declarations MUST precede any recipe"), that prose is the normative source.
 
-## 1.6. Amendment markers
-
+## 1.6. Amendment markers [#notation.amendment-markers]
 When a normative clause is materially revised, an inline marker `[amended CS-NNNN]` MUST be appended to the clause, linking to the corresponding entry in `D-changes.mdx`. Additions do not require a marker. When a clause is removed, it is struck through (`~~...~~`) with an `[amended CS-NNNN]` marker; the struck-through form is retained for one release cycle and then purged.
 
-## 1.7. Stable anchors
-
+## 1.7. Stable anchors [#notation.stable-anchors]
 Every numbered chunk (chapter, section, subsection, example, production, note) has a stable markdown anchor so that cross-references survive renames. Anchors follow the pattern `s-N-M-K` for sections and `ex-N-M-K` for examples. Authors MUST NOT change an anchor without recording the change in `D-changes.mdx`.

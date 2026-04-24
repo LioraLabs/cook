@@ -7,8 +7,7 @@ sidebar:
 
 > **Informative.** This appendix presents worked Cookfile examples, each annotated with the sections of the Standard it exercises. Examples are non-binding; they illustrate the normative rules defined in chapters 2–7 and Appendix A.
 
-## C.1. Multi-output cook step (from `examples/multi-output/Cookfile`)
-
+## C.1. Multi-output cook step (from `examples/multi-output/Cookfile`) [#examples.multi-output-cook]
 ```cook
 recipe generate
     ingredients "src/*.rs"
@@ -21,10 +20,9 @@ recipe generate
 end
 ```
 
-Exercises: § 4.1 (explicit header), § 4.3 (ingredients), § 4.6 (multi-output cook with `using { ... }` shell block), App. A.3, App. A.4.
+Exercises: §{recipes.header-forms} (explicit header), §{recipes.ingredients} (ingredients), §{recipes.cook-multi-output} (multi-output cook with `using { ... }` shell block), App. A.3, App. A.4.
 
-## C.2. Recipe with cross-recipe dependency (from `examples/cross-recipe-deps/Cookfile`)
-
+## C.2. Recipe with cross-recipe dependency (from `examples/cross-recipe-deps/Cookfile`) [#examples.cross-recipe-dep]
 ```cook
 recipe tools: colorize wordcount reverse
 end
@@ -37,10 +35,9 @@ recipe play: tools
 end
 ```
 
-Exercises: § 4.1 (explicit header with deps), § 4.2 (dependency list), § 4.10 (interactive `@` shell commands), App. A.3, App. A.4.
+Exercises: §{recipes.header-forms} (explicit header with deps), §{recipes.dep-list} (dependency list), §{recipes.shell-steps} (interactive `@` shell commands), App. A.3, App. A.4.
 
-## C.3. Module use and call (from `examples/fzf-picker/Cookfile`)
-
+## C.3. Module use and call (from `examples/fzf-picker/Cookfile`) [#examples.module-use-call]
 ```cook
 use cpp
 
@@ -55,10 +52,9 @@ recipe colorize
 end
 ```
 
-Exercises: § 3.4 (`use` declaration), § 3.6 (config block with Lua body), § 3.8 (step dispatch), § 4.11 (module-call step), App. A.2, App. A.4.
+Exercises: §{grammar.use-declarations} (`use` declaration), §{grammar.config-blocks} (config block with Lua body), §{grammar.step-dispatch} (step dispatch), §{recipes.module-call-steps} (module-call step), App. A.2, App. A.4.
 
-## C.4. Using-block Lua with multiple outputs (from `examples/multi-output/Cookfile`)
-
+## C.4. Using-block Lua with multiple outputs (from `examples/multi-output/Cookfile`) [#examples.lua-multi-output]
 ```cook
 recipe build_lua
     ingredients "src/*.rs"
@@ -75,10 +71,9 @@ recipe build_lua
 end
 ```
 
-Exercises: § 4.6 (multi-output cook with `using >{ ... }` Lua block), § 6.4 (using-block globals `inputs` / `outputs`), App. A.4.
-## C.5. Cross-recipe references
-
-This example exercises the four surfaces of cross-recipe references defined in § 5.
+Exercises: §{recipes.cook-multi-output} (multi-output cook with `using >{ ... }` Lua block), §{lua.using-block-globals} (using-block globals `inputs` / `outputs`), App. A.4.
+## C.5. Cross-recipe references [#examples.cross-recipe-refs]
+This example exercises the four surfaces of cross-recipe references defined in §{xref}.
 
 ### Bare string substitution
 
@@ -94,7 +89,7 @@ recipe app
 end
 ```
 
-In `app`, the `{libmath}` placeholder is a bare name reference (§ 5.5). It expands at register time to the single-element output list of `libmath`, i.e., `"build/lib/libmath.a"`. The resulting `app` step's command is `gcc -o build/bin/app main.c build/lib/libmath.a`.
+In `app`, the `{libmath}` placeholder is a bare name reference (§{xref.string-substitution}). It expands at register time to the single-element output list of `libmath`, i.e., `"build/lib/libmath.a"`. The resulting `app` step's command is `gcc -o build/bin/app main.c build/lib/libmath.a`.
 
 ### Dep-driven iteration
 
@@ -108,7 +103,7 @@ recipe compile_protos
 end
 ```
 
-In `compile_protos`, the `{protos.stem}` placeholder in the output pattern (§ 5.4) is an accessor placeholder. It names `protos` as the iteration driver. The step registers one work unit per item in `protos`'s output list — which, because `protos` has no cook step, is the resolved glob `proto/*.proto` passed through (§ 5.4.1). For each resolved path `x`, `{in}` = `x`, `{stem}` = `path.stem(x)`, and `{protos.stem}` = `path.stem(x)`.
+In `compile_protos`, the `{protos.stem}` placeholder in the output pattern (§{xref.dep-driven}) is an accessor placeholder. It names `protos` as the iteration driver. The step registers one work unit per item in `protos`'s output list — which, because `protos` has no cook step, is the resolved glob `proto/*.proto` passed through (§{xref.dep-recipe-output}). For each resolved path `x`, `{in}` = `x`, `{stem}` = `path.stem(x)`, and `{protos.stem}` = `path.stem(x)`.
 
 ### Ingredients-only recipe referenced by another
 
@@ -122,7 +117,7 @@ recipe check: headers
 end
 ```
 
-`headers` is a passthrough recipe with no cook step; its output is the resolved glob (§ 5.4.1). `{headers}` in `check`'s test command expands to the space-joined list. The `: headers` dep-list reference (§ 5.1 dep-list surface) creates a whole-recipe edge (§ 5.6); `{headers}` in the test command is redundant as an edge but fine for string substitution.
+`headers` is a passthrough recipe with no cook step; its output is the resolved glob (§{xref.dep-recipe-output}). `{headers}` in `check`'s test command expands to the space-joined list. The `: headers` dep-list reference (§{xref.name-references} dep-list surface) creates a whole-recipe edge (§{xref.dep-implications}); `{headers}` in the test command is redundant as an edge but fine for string substitution.
 
 ### Mixed: one driver plus string substitution
 
@@ -140,6 +135,6 @@ recipe server
 end
 ```
 
-The `server` step is dep-driven by `protos` (output pattern contains `{protos.stem}`). The `{core}` in the using-string is a bare string-substitution reference (§ 5.5) to `core`'s single output. The step thus depends on both `protos` (per-unit, driving iteration) and `core` (whole-recipe or refined per-unit, per § 5.6) — two distinct cross-recipe edges from a single step.
+The `server` step is dep-driven by `protos` (output pattern contains `{protos.stem}`). The `{core}` in the using-string is a bare string-substitution reference (§{xref.string-substitution}) to `core`'s single output. The step thus depends on both `protos` (per-unit, driving iteration) and `core` (whole-recipe or refined per-unit, per §{xref.dep-implications}) — two distinct cross-recipe edges from a single step.
 
-Exercises: § 5 (full chapter), § 4.3 (ingredients), § 4.5 (one-to-one cook step), § 8.4 (cross-recipe ordering).
+Exercises: §{xref} (full chapter), §{recipes.ingredients} (ingredients), §{recipes.cook-single-output} (one-to-one cook step), §{exec.cross-recipe-ordering} (cross-recipe ordering).

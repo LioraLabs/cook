@@ -1,43 +1,40 @@
 ---
-title: "§ 2 — Lexical structure"
+title: "§{lexical} — Lexical structure"
 sidebar:
   order: 2
 ---
-# 2. Lexical structure
+# 2. Lexical structure [#lexical]
+> **Normative.** This chapter defines how a Cookfile's text is broken into tokens. The productions in §{grammar} and Appendix A consume the token classes defined here.
 
-> **Normative.** This chapter defines how a Cookfile's text is broken into tokens. The productions in § 3 and Appendix A consume the token classes defined here.
-
-## 2.1. Source representation
-
+## 2.1. Source representation [#lexical.source-representation]
 A Cookfile is a sequence of Unicode characters encoded as UTF-8. A conforming implementation MUST accept any valid UTF-8 input and MUST NOT require a byte-order mark. The behaviour on input that is not valid UTF-8 is unspecified.
 
-Lexical analysis is **line-oriented**: the source is divided into lines by the newline character `U+000A` (`\n`), and each line is classified independently as a single token (§ 2.2). A conforming implementation MUST accept `\r\n` as a line terminator by treating the carriage return as part of the preceding line's trailing whitespace, which is trimmed before classification (§ 2.10). The final line of the source need not be terminated by `\n`.
+Lexical analysis is **line-oriented**: the source is divided into lines by the newline character `U+000A` (`\n`), and each line is classified independently as a single token (§{lexical.tokens}). A conforming implementation MUST accept `\r\n` as a line terminator by treating the carriage return as part of the preceding line's trailing whitespace, which is trimmed before classification (§{lexical.line-classification}). The final line of the source need not be terminated by `\n`.
 
-Leading and trailing whitespace on a line are not significant to token classification, with the following exceptions already stated in App. A: column-zero positioning distinguishes an `implicit_header` from a `shell_command` (App. A.3), and leading whitespace is preserved inside brace-balanced block bodies (§ 2.9) because the body is reassembled from the raw source lines. In all other cases, a line is trimmed of leading and trailing whitespace before its prefix is tested (§ 2.7, § 2.10).
+Leading and trailing whitespace on a line are not significant to token classification, with the following exceptions already stated in App. A: column-zero positioning distinguishes an `implicit_header` from a `shell_command` (App. A.3), and leading whitespace is preserved inside brace-balanced block bodies (§{lexical.brace-blocks}) because the body is reassembled from the raw source lines. In all other cases, a line is trimmed of leading and trailing whitespace before its prefix is tested (§{lexical.line-prefixes}, §{lexical.line-classification}).
 
 ### Note 2.1.1
 
 The reference tokenizer in `cli/crates/cook-lang/src/lexer.rs` iterates `source.lines()`, which is defined by Rust to split on `\n` and strip a trailing `\r`. The observable effect matches the rule above: `\r\n` and `\n` produce the same token stream.
 
-## 2.2. Tokens
-
-The Cookfile lexer produces **exactly one token per source line**. A token carries its 1-indexed line number; downstream phases (§ 3, § 4) use that number for diagnostics and for locating multi-line block bodies (§ 2.9). There is no concept of "multiple tokens on one line" at the Cookfile layer — the interior structure of a line (for example, the output patterns of a `cook` step) is parsed at the syntactic layer on top of the single `Content` token.
+## 2.2. Tokens [#lexical.tokens]
+The Cookfile lexer produces **exactly one token per source line**. A token carries its 1-indexed line number; downstream phases (§{grammar}, §{recipes}) use that number for diagnostics and for locating multi-line block bodies (§{lexical.brace-blocks}). There is no concept of "multiple tokens on one line" at the Cookfile layer — the interior structure of a line (for example, the output patterns of a `cook` step) is parsed at the syntactic layer on top of the single `Content` token.
 
 The token classes produced by the lexer are:
 
 | Token class            | Produced for                                                                 | Defined in |
 |---|---|---|
-| `Comment`              | Line whose first non-whitespace character is `#`                              | § 2.6      |
-| `RecipeHeader`         | Explicit `recipe` line or column-zero `BARE_IDENTIFIER ":" …`                 | § 3.7      |
-| `ConfigHeader`         | Line `config` or `config` + name                                              | § 3.6      |
-| `VarDecl`              | Top-level `BARE_IDENTIFIER STRING`                                            | § 3.3      |
-| `UseDecl`              | Line `use` + name                                                             | § 3.4      |
-| `ImportDecl`           | Line `import` + `BARE_IDENTIFIER` + path                                      | § 3.5      |
-| `RecipeEnd`            | Line whose only non-whitespace content is `end`                               | § 3.7      |
-| `LuaLine`              | Line whose first non-whitespace characters are `>` (but not `>{`)             | § 2.7, § 4.9 |
-| `LuaBlockOpen`         | Line whose first non-whitespace characters are `>{`                           | § 2.7, § 2.9 |
-| `Blank`                | Line containing only whitespace                                               | § 2.10     |
-| `Content`              | Any other line; its classification within a recipe body is deferred to § 3.8  | § 3.8      |
+| `Comment`              | Line whose first non-whitespace character is `#`                              | §{lexical.comments}      |
+| `RecipeHeader`         | Explicit `recipe` line or column-zero `BARE_IDENTIFIER ":" …`                 | §{grammar.recipe-syntax}      |
+| `ConfigHeader`         | Line `config` or `config` + name                                              | §{grammar.config-blocks}      |
+| `VarDecl`              | Top-level `BARE_IDENTIFIER STRING`                                            | §{grammar.var-declarations}      |
+| `UseDecl`              | Line `use` + name                                                             | §{grammar.use-declarations}      |
+| `ImportDecl`           | Line `import` + `BARE_IDENTIFIER` + path                                      | §{grammar.import-declarations}      |
+| `RecipeEnd`            | Line whose only non-whitespace content is `end`                               | §{grammar.recipe-syntax}      |
+| `LuaLine`              | Line whose first non-whitespace characters are `>` (but not `>{`)             | §{lexical.line-prefixes}, §{recipes.lua-steps} |
+| `LuaBlockOpen`         | Line whose first non-whitespace characters are `>{`                           | §{lexical.line-prefixes}, §{lexical.brace-blocks} |
+| `Blank`                | Line containing only whitespace                                               | §{lexical.line-classification}     |
+| `Content`              | Any other line; its classification within a recipe body is deferred to §{grammar.step-dispatch}  | §{grammar.step-dispatch}      |
 
 A conforming implementation MAY represent these classes with any internal data structure. The token names above are used descriptively throughout this Standard; they do not mandate a specific variant name in an implementation.
 
@@ -45,8 +42,7 @@ A conforming implementation MAY represent these classes with any internal data s
 
 `Content` is deliberately broad: the lexer does not distinguish `ingredients "…"`, `cook "…" using …`, `@vim notes.txt`, or `gcc -o main main.c` — all four produce `Content` tokens whose string form is the line after trimming. The step-dispatch cascade in App. A.4 resolves which step kind applies.
 
-## 2.3. Identifiers
-
+## 2.3. Identifiers [#lexical.identifiers]
 A `BARE_IDENTIFIER` is a sequence of ASCII characters matching the regular expression in App. A.5:
 
 ```ebnf
@@ -59,9 +55,9 @@ The first character MUST be an ASCII letter (`A`–`Z`, `a`–`z`) or underscore
 
 | Role                                   | Supplementary constraint                                                      |
 |---|---|
-| Variable name (`variable_declaration`) | MUST NOT be any of the reserved keywords listed in § 2.4 (App. A.2).          |
+| Variable name (`variable_declaration`) | MUST NOT be any of the reserved keywords listed in §{lexical.keywords} (App. A.2).          |
 | Import alias (`import_declaration`)    | MUST be unique across imports within the Cookfile (App. A.2).                 |
-| Recipe / dependency name               | Final dot-separated segment MUST NOT be a reserved segment (§ 2.4, App. A.2). |
+| Recipe / dependency name               | Final dot-separated segment MUST NOT be a reserved segment (§{lexical.keywords}, App. A.2). |
 | First segment of a `module_call`       | MUST NOT contain `.` or `-` (App. A.4).                                       |
 
 Where the grammar admits either a `BARE_IDENTIFIER` or a double-quoted `STRING` (for example, a recipe name or a dependency), the two forms are equivalent in meaning; the quoted form exists to admit names that would not otherwise match `BARE_IDENTIFIER`.
@@ -74,10 +70,9 @@ recipe backend.build: lib setup
 end
 ```
 
-`backend.build` is a valid `BARE_IDENTIFIER` (dot is an interior character). `lib` and `setup` are valid `BARE_IDENTIFIER` dependency names. The final segment `build` is not a reserved recipe segment (§ 2.4), so the header is accepted.
+`backend.build` is a valid `BARE_IDENTIFIER` (dot is an interior character). `lib` and `setup` are valid `BARE_IDENTIFIER` dependency names. The final segment `build` is not a reserved recipe segment (§{lexical.keywords}), so the header is accepted.
 
-## 2.4. Keywords
-
+## 2.4. Keywords [#lexical.keywords]
 Two disjoint reserved-word sets exist in the Cookfile language: **blocking keywords** (which MUST NOT be used as `variable_declaration` left-hand sides) and **reserved recipe segments** (which MUST NOT appear as the final dot-separated segment of a recipe or dependency name). Reservation is **contextual**: each keyword is reserved only in the role below, not as a general identifier.
 
 | Blocking keyword | Role where reserved           |
@@ -111,8 +106,7 @@ Outside these two roles, the identifiers above are ordinary tokens. In particula
 
 The separator test is the governing subtlety. See the test `test_recipe_prefix_is_shell_command` in `cli/crates/cook-lang/src/lexer.rs`, which confirms that `recipes_cleanup` produces a `Content` token and not a `RecipeHeader`.
 
-## 2.5. Strings
-
+## 2.5. Strings [#lexical.strings]
 A `STRING` token is a double-quoted sequence of characters defined in App. A.5:
 
 ```ebnf
@@ -121,7 +115,7 @@ STRING ::= /"[^"]*"/
 
 A `STRING` opens with `U+0022` (`"`), contains zero or more characters none of which is `"`, and closes with `U+0022` (`"`). A conforming implementation MUST NOT interpret backslash escapes inside a `STRING`: the character sequence is taken literally. A conforming implementation MUST reject a `STRING` that is not terminated on the same line — `STRING` tokens do not span lines.
 
-The empty string `""` is a valid `STRING`. A double quote inside a `STRING` is not expressible in the current grammar; authors needing such content can use the inline-block forms of § 2.9, whose interior language (Lua or shell) has its own quoting rules.
+The empty string `""` is a valid `STRING`. A double quote inside a `STRING` is not expressible in the current grammar; authors needing such content can use the inline-block forms of §{lexical.brace-blocks}, whose interior language (Lua or shell) has its own quoting rules.
 
 `STRING` appears in top-level `variable_declaration` (the value), in recipe and dependency names, in `ingredients`, `cook`, `plate`, and `test` steps, and as the single-string form of `using_clause`. In each of those roles, a conforming implementation parses the `STRING` inside the single line that produced the governing `Content` token.
 
@@ -142,13 +136,12 @@ Each `"…"` is a `STRING`. The `!"src/legacy.c"` form is an `ingredient` exclus
 
 The reference implementation of the single-quoted-string parser is in `cli/crates/cook-lang/src/cook_line.rs`, function `parse_single_quoted_string`. The lack of escape processing is observable: the test `test_cook_step_shell` asserts that a `STRING` value containing `{in}` and `{out}` is delivered verbatim to the step.
 
-## 2.6. Comments
-
+## 2.6. Comments [#lexical.comments]
 A **comment** is a line whose first non-whitespace character is `#`. The comment extends to the end of the line. A conforming implementation MUST produce a `Comment` token for such a line and MUST NOT treat the `#` character as beginning a comment in any other lexical position.
 
 In particular, a `#` that appears after the first non-whitespace character of a line is part of that line's content and is not stripped by the lexer. Downstream phases (notably the shell runtime) MAY assign their own meaning to in-line `#` characters; that meaning is not part of Cookfile lexical syntax.
 
-A `Comment` token is accepted anywhere a `toplevel_item` (App. A.1) or a `recipe_item` (App. A.3) is admitted, and is discarded at the syntactic layer. Comments are permitted inside `config_body` (App. A.2) and inside brace-balanced blocks (§ 2.9), where they are preserved verbatim in the collected block body because their removal is the interior language's concern, not the Cookfile lexer's.
+A `Comment` token is accepted anywhere a `toplevel_item` (App. A.1) or a `recipe_item` (App. A.3) is admitted, and is discarded at the syntactic layer. Comments are permitted inside `config_body` (App. A.2) and inside brace-balanced blocks (§{lexical.brace-blocks}), where they are preserved verbatim in the collected block body because their removal is the interior language's concern, not the Cookfile lexer's.
 
 ### Example 2.6.1
 
@@ -161,20 +154,19 @@ recipe "build"
 end
 ```
 
-The first two `#` lines produce `Comment` tokens. The `# not a comment` sequence on the third source line is part of the `Content` token for the `gcc` command; its treatment is up to the shell runtime (§ 5).
+The first two `#` lines produce `Comment` tokens. The `# not a comment` sequence on the third source line is part of the `Content` token for the `gcc` command; its treatment is up to the shell runtime (§{xref}).
 
-## 2.7. Line prefixes
-
+## 2.7. Line prefixes [#lexical.line-prefixes]
 A **line prefix** is a character sequence that, when it appears as the first non-whitespace characters of a Cookfile line, selects a token classification other than `Content`. The Cookfile language recognises two lexical line prefixes:
 
 | Prefix | Token produced | Defined in |
 |---|---|---|
-| `>{`   | `LuaBlockOpen` | § 2.9 |
-| `>`    | `LuaLine`      | § 4.9 |
+| `>{`   | `LuaBlockOpen` | §{lexical.brace-blocks} |
+| `>`    | `LuaLine`      | §{recipes.lua-steps} |
 
 A conforming implementation MUST test for `>{` before `>`, so that a Lua-block prefix is never consumed as a Lua-line prefix followed by a literal `{`. A conforming implementation MUST apply these prefixes only after leading whitespace has been trimmed from the line; thus `    >{` opens a Lua block identically to `>{` at column zero.
 
-The `@` character is not a lexical prefix. A line whose first non-whitespace character is `@` produces a `Content` token whose string form includes the leading `@`. Its classification as `interactive_command` is made at step-dispatch time (§ 3.8, § 4.10) and only inside a recipe body. Outside a recipe body, such a line remains a `Content` token, which the syntactic layer rejects because `Content` tokens are not valid at the top level (§ 3.2).
+The `@` character is not a lexical prefix. A line whose first non-whitespace character is `@` produces a `Content` token whose string form includes the leading `@`. Its classification as `interactive_command` is made at step-dispatch time (§{grammar.step-dispatch}, §{recipes.shell-steps}) and only inside a recipe body. Outside a recipe body, such a line remains a `Content` token, which the syntactic layer rejects because `Content` tokens are not valid at the top level (§{grammar.top-level-ordering}).
 
 ### Example 2.7.1
 
@@ -189,14 +181,13 @@ recipe build
 end
 ```
 
-The `>` line produces a `LuaLine` token. The `>{` line produces a `LuaBlockOpen` token that begins a brace-balanced block (§ 2.9) closing at the matching `}`. The `@vim …` and `gcc …` lines both produce `Content` tokens; the former dispatches to `interactive_command` in § 4.10, the latter to `shell_command`.
+The `>` line produces a `LuaLine` token. The `>{` line produces a `LuaBlockOpen` token that begins a brace-balanced block (§{lexical.brace-blocks}) closing at the matching `}`. The `@vim …` and `gcc …` lines both produce `Content` tokens; the former dispatches to `interactive_command` in §{recipes.shell-steps}, the latter to `shell_command`.
 
 ### Note 2.7.1
 
-A `LuaLine` body MAY be empty: the line `>` alone produces a `LuaLine` whose body is the empty string. See § 4.9.
+A `LuaLine` body MAY be empty: the line `>` alone produces a `LuaLine` whose body is the empty string. See §{recipes.lua-steps}.
 
-## 2.8. Numbers
-
+## 2.8. Numbers [#lexical.numbers]
 A `NUMBER` token is a non-empty sequence of ASCII digits defined in App. A.5:
 
 ```ebnf
@@ -221,8 +212,7 @@ end
 
 The reference implementation is `parse_test_timeout` in `cli/crates/cook-lang/src/cook_line.rs`. The test `test_test_step_with_timeout_and_should_fail` demonstrates the admitted operand ordering: a `NUMBER` directly after `timeout`, followed by the optional `should_fail` marker.
 
-## 2.9. Brace-balanced blocks
-
+## 2.9. Brace-balanced blocks [#lexical.brace-blocks]
 A **brace-balanced block** is a span of source text delimited by `{` and a matching `}`, where matching is defined by a single-pass brace-counting algorithm that ignores braces appearing inside certain syntactic contexts. Both the `LUA_BLOCK_CONTENT` (inside `>{ … }`) and the `SHELL_BLOCK_CONTENT` (inside `{ … }` after `using`) are brace-balanced blocks; they differ only in how their collected body is normalised after the block closes.
 
 The opening brace is consumed on the line that introduced the block (a `LuaBlockOpen` token for `>{`, or the `{` immediately after `using` for `shell_block`), establishing initial depth `1`. Each subsequent source line is examined character by character; `{` increments depth and `}` decrements depth, except that braces are ignored when they appear:
@@ -262,26 +252,25 @@ The `>{ … }` block's body includes the `if`/`end` structure and the nested tab
 
 The governing examples are the tests `test_lua_block_nested_braces`, `test_lua_block_brace_in_string`, and `test_lua_block_brace_in_comment` in `cli/crates/cook-lang/src/tests.rs`, and the tests `collects_three_lines`, `drops_blank_lines`, and `respects_nested_braces_in_content` in `cli/crates/cook-lang/src/shell_block.rs`.
 
-## 2.10. Line classification cascade
-
+## 2.10. Line classification cascade [#lexical.line-classification]
 For each source line, a conforming implementation MUST classify the line into exactly one token by applying the following tests in order, with the first matching test winning. The line's trimmed form (leading and trailing whitespace removed) is the subject of each test except where noted.
 
-A **keyword separator** in tests 6–8 below is a space (`U+0020`), a tab (`U+0009`), or a double quote (`U+0022`). The double quote is admitted so that authors can write `recipe "foo"` with no space between the keyword and the opening quote of a quoted name; the quote is not consumed by the keyword test and remains available to the `STRING` parser (§ 2.5). Test 9 (`import`) admits only space or tab: no quoted form exists for the `import` alias (App. A.2).
+A **keyword separator** in tests 6–8 below is a space (`U+0020`), a tab (`U+0009`), or a double quote (`U+0022`). The double quote is admitted so that authors can write `recipe "foo"` with no space between the keyword and the opening quote of a quoted name; the quote is not consumed by the keyword test and remains available to the `STRING` parser (§{lexical.strings}). Test 9 (`import`) admits only space or tab: no quoted form exists for the `import` alias (App. A.2).
 
 1. If the trimmed line is empty, the token is `Blank`.
-2. If the trimmed line's first character is `#`, the token is `Comment` (§ 2.6).
-3. If the trimmed line begins with `>{`, the token is `LuaBlockOpen` (§ 2.7, § 2.9).
-4. If the trimmed line begins with `>` (but not `>{`, by test 3), the token is `LuaLine` (§ 2.7, § 4.9).
-5. If the trimmed line is exactly `end`, the token is `RecipeEnd` (§ 3.7).
-6. If the trimmed line begins with the keyword `recipe` followed by a keyword separator, the token is `RecipeHeader` (§ 3.7).
-7. If the trimmed line is exactly `config`, or begins with `config` followed by a keyword separator, the token is `ConfigHeader` (§ 3.6).
-8. If the trimmed line begins with `use` followed by a keyword separator, the token is `UseDecl` (§ 3.4).
-9. If the trimmed line begins with `import` followed by a whitespace separator (space or tab only; not `"`), the token is `ImportDecl` (§ 3.5).
+2. If the trimmed line's first character is `#`, the token is `Comment` (§{lexical.comments}).
+3. If the trimmed line begins with `>{`, the token is `LuaBlockOpen` (§{lexical.line-prefixes}, §{lexical.brace-blocks}).
+4. If the trimmed line begins with `>` (but not `>{`, by test 3), the token is `LuaLine` (§{lexical.line-prefixes}, §{recipes.lua-steps}).
+5. If the trimmed line is exactly `end`, the token is `RecipeEnd` (§{grammar.recipe-syntax}).
+6. If the trimmed line begins with the keyword `recipe` followed by a keyword separator, the token is `RecipeHeader` (§{grammar.recipe-syntax}).
+7. If the trimmed line is exactly `config`, or begins with `config` followed by a keyword separator, the token is `ConfigHeader` (§{grammar.config-blocks}).
+8. If the trimmed line begins with `use` followed by a keyword separator, the token is `UseDecl` (§{grammar.use-declarations}).
+9. If the trimmed line begins with `import` followed by a whitespace separator (space or tab only; not `"`), the token is `ImportDecl` (§{grammar.import-declarations}).
 10. If the original (untrimmed) line has no leading whitespace — it starts at column 0 — and its trimmed form is `BARE_IDENTIFIER ":"` optionally followed by a dependency list, the token is `RecipeHeader` via the implicit-header form (App. A.3).
-11. Otherwise, if the trimmed line is `BARE_IDENTIFIER STRING` and the `BARE_IDENTIFIER` is not one of the blocking keywords of § 2.4, the token is `VarDecl`. This test is applied both at column 0 and on indented lines; the syntactic layer rejects a `VarDecl` that appears after the first recipe (App. A.2).
+11. Otherwise, if the trimmed line is `BARE_IDENTIFIER STRING` and the `BARE_IDENTIFIER` is not one of the blocking keywords of §{lexical.keywords}, the token is `VarDecl`. This test is applied both at column 0 and on indented lines; the syntactic layer rejects a `VarDecl` that appears after the first recipe (App. A.2).
 12. Otherwise, the token is `Content`. Its further classification as `ingredients_step`, `cook_step`, `plate_step`, `test_step`, `module_call`, `interactive_command`, or `shell_command` is the concern of the step-dispatch cascade in App. A.4 and is made only inside a recipe body.
 
-The ordering is significant. In particular, test 3 (`>{`) MUST precede test 4 (`>`) so that a Lua-block prefix is not consumed as a Lua-line prefix followed by a literal `{` (§ 2.7); tests 6–9 MUST require a separator so that identifiers whose first word merely starts with a keyword (for example, `recipes_cleanup`, `configure`, `useful`, `important`) fall through to test 11 or 12 and are not misclassified as declarations.
+The ordering is significant. In particular, test 3 (`>{`) MUST precede test 4 (`>`) so that a Lua-block prefix is not consumed as a Lua-line prefix followed by a literal `{` (§{lexical.line-prefixes}); tests 6–9 MUST require a separator so that identifiers whose first word merely starts with a keyword (for example, `recipes_cleanup`, `configure`, `useful`, `important`) fall through to test 11 or 12 and are not misclassified as declarations.
 
 Tests 1–9 and 11–12 apply to lines whether or not they are indented; only test 10 (implicit recipe header) is sensitive to column-0 positioning, by the constraint in App. A.3.
 
