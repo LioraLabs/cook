@@ -42,21 +42,15 @@ pub struct RecipeInfo {
 
 /// Build an adjacency map: for each recipe, the set of recipes it depends on.
 ///
-/// Dependencies come from two sources:
-/// 1. Explicit `requires` declarations.
-/// 2. Implicit file dependencies: if recipe A lists "lib.a" as an ingredient
-///    and recipe B serves "lib.a", then A depends on B.
+/// Edges come from explicit `requires` declarations only. Name-reference
+/// edges (`{lib}` / `{lib.accessor}`) are produced during codegen by
+/// `cook-luagen` and composed into the DAG separately; they do not flow
+/// through this adjacency map. Path-string equality between an ingredient
+/// and another recipe's cook-output is opaque and does NOT produce an
+/// edge — see Cook Standard § 5.6 and rationale B.5.N.
 fn build_adjacency<'a>(
     recipes: &'a BTreeMap<String, RecipeInfo>,
 ) -> Result<BTreeMap<&'a str, BTreeSet<&'a str>>, GraphError> {
-    // Build serves_map: file path -> recipe name that produces it
-    let mut serves_map: BTreeMap<&str, &str> = BTreeMap::new();
-    for (name, info) in recipes {
-        for path in &info.serves {
-            serves_map.insert(path.as_str(), name.as_str());
-        }
-    }
-
     let mut deps: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for (name, info) in recipes {
         let mut recipe_deps = BTreeSet::new();
@@ -66,16 +60,8 @@ fn build_adjacency<'a>(
             }
             recipe_deps.insert(req.as_str());
         }
-        for ingredient in &info.ingredients {
-            if let Some(&provider) = serves_map.get(ingredient.as_str()) {
-                if provider != name.as_str() {
-                    recipe_deps.insert(provider);
-                }
-            }
-        }
         deps.insert(name.as_str(), recipe_deps);
     }
-
     Ok(deps)
 }
 
@@ -370,9 +356,11 @@ mod tests {
     }
 
     #[test]
-    fn test_implicit_file_dependency() {
+    fn test_ingredient_serves_string_match_is_opaque() {
+        // Historical rule (removed): ingredient-serves string match implied a dep.
+        // New rule: only `requires` and name references (outside this module)
+        // create cross-recipe edges. This test pins the removal.
         let mut recipes = BTreeMap::new();
-        // "build" needs "lib.a" as ingredient; "compile" serves "lib.a"
         recipes.insert(
             "build".to_string(),
             info(vec!["lib.a"], vec!["app"], vec![]),
@@ -382,49 +370,29 @@ mod tests {
             info(vec![], vec!["lib.a"], vec![]),
         );
         let order = topological_sort(&recipes, "build").unwrap();
-        assert_eq!(order, vec!["compile", "build"]);
-    }
-
-    #[test]
-    fn test_glob_pattern_does_not_trigger_implicit_dep() {
-        // Glob patterns like "src/*.c" should NOT match exact serves paths
-        let mut recipes = BTreeMap::new();
-        recipes.insert(
-            "build".to_string(),
-            info(vec!["src/*.c"], vec![], vec![]),
-        );
-        recipes.insert(
-            "gen".to_string(),
-            info(vec![], vec!["src/gen.c"], vec![]),
-        );
-        let order = topological_sort(&recipes, "build").unwrap();
-        // "gen" should NOT be included because "src/*.c" != "src/gen.c"
         assert_eq!(order, vec!["build"]);
     }
 
     #[test]
-    fn test_mixed_implicit_and_explicit() {
+    fn test_path_match_does_not_imply_dep() {
+        // Under the new rule, string equality between an ingredient path and a
+        // cook-output path is NOT a cross-recipe edge. Only explicit `: dep` and
+        // name references (handled in codegen) create edges.
         let mut recipes = BTreeMap::new();
         recipes.insert(
-            "deploy".to_string(),
-            info(vec!["bin/app"], vec![], vec!["test"]),
+            "build".to_string(),
+            info(vec!["lib.a"], vec!["app"], vec![]),
         );
         recipes.insert(
-            "build".to_string(),
-            info(vec![], vec!["bin/app"], vec![]),
+            "compile".to_string(),
+            info(vec![], vec!["lib.a"], vec![]),
         );
-        recipes.insert("test".to_string(), info(vec![], vec![], vec![]));
-        let order = topological_sort(&recipes, "deploy").unwrap();
-        // test and build must come before deploy
-        assert!(
-            order.iter().position(|x| x == "test").unwrap()
-                < order.iter().position(|x| x == "deploy").unwrap()
-        );
-        assert!(
-            order.iter().position(|x| x == "build").unwrap()
-                < order.iter().position(|x| x == "deploy").unwrap()
-        );
-        assert_eq!(order.len(), 3);
+        // `build` lists "lib.a" as ingredient; `compile` serves "lib.a".
+        // After the rule removal, `compile` MUST NOT be pulled in as a dep
+        // of `build`.
+        let order = topological_sort(&recipes, "build").unwrap();
+        assert_eq!(order, vec!["build"],
+            "path-match must not imply dep; got {:?}", order);
     }
 
     #[test]
@@ -511,7 +479,9 @@ mod tests {
 
     #[test]
     fn test_duplicate_edges_are_harmless() {
-        // Recipe has same dep via both requires and implicit
+        // Explicit `requires` is the only source of edges here. The path-match
+        // rule is gone (see `test_ingredient_serves_string_match_is_opaque`),
+        // so the ingredient/serves overlap below contributes nothing.
         let mut recipes = BTreeMap::new();
         recipes.insert(
             "build".to_string(),
@@ -600,7 +570,10 @@ mod tests {
     }
 
     #[test]
-    fn test_dependency_edges_implicit_via_serves() {
+    fn test_dependency_edges_no_implicit_via_serves() {
+        // Path-match implicit-dep has been removed (see § 5.6 / B.5.N).
+        // Ingredient/serves string overlap MUST NOT produce an edge through
+        // `dependency_edges`; unreachable recipes MUST NOT appear in the map.
         let mut recipes = BTreeMap::new();
         recipes.insert(
             "build".to_string(),
@@ -611,9 +584,9 @@ mod tests {
             info(vec![], vec!["lib.a"], vec![]),
         );
         let edges = dependency_edges(&recipes, "build").unwrap();
-        assert_eq!(edges.len(), 2);
-        assert_eq!(edges["build"], vec!["compile"]);
-        assert!(edges["compile"].is_empty());
+        assert_eq!(edges.len(), 1);
+        assert!(edges["build"].is_empty());
+        assert!(!edges.contains_key("compile"));
     }
 
     #[test]

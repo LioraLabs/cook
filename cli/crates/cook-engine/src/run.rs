@@ -90,7 +90,7 @@ where
 
     // 2. Compute waves using the two-tier grouping algorithm.
     //    `edges` (from the analyzer) contains all non-inferred dependency edges
-    //    (`: dep` declarations + ingredient/serves matching) and serves as
+    //    (`: dep` declarations + name references from codegen) and serves as
     //    `explicit_deps` — these create wave boundaries.
     //    `inferred_deps` (`{dep}` references) cause same-wave merging.
     let all_recipe_names: BTreeSet<String> = edges.keys().cloned().collect();
