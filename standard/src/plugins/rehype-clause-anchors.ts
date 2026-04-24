@@ -1,29 +1,41 @@
-import type { Root, Element } from 'hast';
+import type { Root, Element, Text } from 'hast';
 import { visit } from 'unist-util-visit';
 
-// Matches `N[.M[.K]].` at the start of a clause heading, where N is either a
-// digit (normative chapters) or a single uppercase letter (appendices), and
-// M/K are digits. Normative chapters use `## 2.1. Title` style (trailing
-// period, no section sign). The trailing period is required so that stray
-// numeric prefixes like "Note 2.1.1 ..." on a non-clause heading don't match
-// — but "Note" starts with a letter anyway, so the `^` anchor alone is enough.
-// The required trailing `.` combined with whitespace-or-EOL after it also
-// excludes things like "Appendix A. Grammar (normative)" (which does match
-// and produces sec-A — that's intentional, it's the appendix's own anchor).
-const CLAUSE_RE = /^([0-9]+|[A-Z])(?:\.([0-9]+)(?:\.([0-9]+))?)?\.(\s|$)/;
+// Clause-number prefix at start of heading text. N is a digit run or a
+// single uppercase letter; optional .M[.K] subsection numbers.
+const CLAUSE_RE = /^([0-9]+|[A-Z])(?:\.[0-9]+(?:\.[0-9]+)?)?\.(\s|$)/;
+
+// Trailing [#slug] marker. Slug grammar: chapter.leaf with dash-separated
+// words; single level (bare chapter) also accepted.
+const MARKER_RE = /\s+\[#([^\]]+)\]\s*$/;
+const SLUG_RE = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)?$/;
 
 function extractText(el: Element): string {
   let out = '';
   for (const child of el.children) {
     if (child.type === 'text') out += child.value;
-    else if (child.type === 'element') out += extractText(child);
+    else if (child.type === 'element') out += extractText(child as Element);
   }
   return out;
 }
 
-function clauseIdFrom(match: RegExpMatchArray): string {
-  const parts = [match[1], match[2], match[3]].filter(Boolean);
-  return `sec-${parts.join('-')}`;
+function stripMarkerFromLastText(el: Element): void {
+  // Walk children in reverse; the marker lives in the trailing text node.
+  for (let i = el.children.length - 1; i >= 0; i--) {
+    const c = el.children[i];
+    if (c.type === 'text') {
+      const t = c as Text;
+      const m = t.value.match(MARKER_RE);
+      if (m) {
+        t.value = t.value.slice(0, m.index);
+      }
+      return;
+    }
+    if (c.type === 'element') {
+      stripMarkerFromLastText(c as Element);
+      return;
+    }
+  }
 }
 
 export function rehypeClauseAnchors() {
@@ -32,17 +44,30 @@ export function rehypeClauseAnchors() {
     visit(tree, 'element', (node: Element) => {
       if (!/^h[1-6]$/.test(node.tagName)) return;
       const text = extractText(node);
-      const m = text.match(CLAUSE_RE);
-      if (!m) return;
-      const id = clauseIdFrom(m);
-      if (seen.has(id)) {
+      if (!CLAUSE_RE.test(text)) return;
+
+      const markerMatch = text.match(MARKER_RE);
+      if (!markerMatch) {
         throw new Error(
-          `duplicate clause number: "${id}" appears in both "${seen.get(id)}" and "${text}"`,
+          `clause-numbered heading missing [#slug] marker: "${text}"`,
         );
       }
-      seen.set(id, text);
+      const slug = markerMatch[1];
+      if (!SLUG_RE.test(slug)) {
+        throw new Error(
+          `invalid slug "${slug}" in heading "${text}" — must match [a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)?`,
+        );
+      }
+      if (seen.has(slug)) {
+        throw new Error(
+          `duplicate slug "${slug}": appears in both "${seen.get(slug)}" and "${text}"`,
+        );
+      }
+      seen.set(slug, text);
+
+      stripMarkerFromLastText(node);
       node.properties = node.properties ?? {};
-      (node.properties as Record<string, unknown>).id = id;
+      (node.properties as Record<string, unknown>).id = slug;
     });
   };
 }
