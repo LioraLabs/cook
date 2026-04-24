@@ -1,0 +1,18 @@
+Cookfile
+  uses: []
+  imports: []
+  vars: []
+  config_blocks: []
+  recipes:
+    Recipe name="compile" line=1
+      deps: []
+      ingredients: ["src/a.c"]
+      excludes: []
+      steps:
+        Cook outputs=["build/lib.a"] using=Shell("ar rcs {out} {in}")
+    Recipe name="link" line=6
+      deps: []
+      ingredients: ["build/lib.a"]
+      excludes: []
+      steps:
+        Cook outputs=["build/app"] using=Shell("cc -o {out} {in}")

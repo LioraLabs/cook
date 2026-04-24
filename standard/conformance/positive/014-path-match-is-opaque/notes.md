@@ -1,0 +1,3 @@
+Pins § 5.6 bullet four: "Only name references create edges." `link` lists `"build/lib.a"` as an ingredient — a literal string equal to `compile`'s output — but the Standard forbids an implementation from inferring a `link → compile` edge from this string equality. The author must use an explicit `: compile` in the recipe header to establish the edge.
+
+The parsed AST shape pinned by this fixture shows both recipes as independent: `link.deps = []`. The conformance harness is parser-only, so the observable "no path-match implicit edge" rule is pinned indirectly — the parser MUST NOT synthesize a dep entry for `link` based on its ingredient strings. Runtime behaviour (missing-file error at execute time when `link` is run alone) is out of scope for this corpus.
