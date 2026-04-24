@@ -62,3 +62,10 @@ sidebar:
 **Sections affected:** § 7.1–7.6, App. B.7.
 **Summary:** Normative prose filled for the module system: the `use`/`import` split (§ 7.1), `use` resolution with built-in-then-`cook_modules/` ordering (§ 7.2), `import` path semantics (§ 7.3), the observable `cook_modules/` lookup algorithm with flat-then-directory precedence (§ 7.4), the module authoring contract including the `init` hook (§ 7.5), and the parse-time/load-time split for duplicate-import and cycle detection (§ 7.6). App. B.7 records the rationale for the two-declaration design, built-in resolution order, duplicate-parse-time enforcement, cycle load-time enforcement, and module-name/reserved-segment non-collision.
 **Reference:** this commit.
+
+## CS-0009 — Cross-recipe references redesign
+
+**Date:** 2026-04-24
+**Sections affected:** § 4.3, § 5 (new), § 6.7, § 6.8 (new), § 7 (renamed), § 8 (moved from § 5). App. B.5.N/O/P (new). App. C.N (new).
+**Summary:** Introduced § 5 "Cross-recipe references" as the normative home for name-reference surface (dep-list, bare placeholder, accessor placeholder), resolution, path accessors, dep-driven iteration, string-substitution, and dependency implications. Split the former § 7 "Modules" into § 6.8 (`use` declaration, under Cook Lua API) and § 7 "Cross-Cookfile composition" (`import` and qualified references). Moved "Execution model" to § 8 so that later-chapter references do not forward-reference undefined surface. Removed the ingredient/serves byte-equality implicit-dep rule from the Execution model (old § 5.5); cross-recipe ordering is now established only by name references. Added rationale B.5.N (removal motivation), B.5.O (accessor-placeholder iteration surface vs. explicit `from`), and B.5.P (closed accessor set). Added a worked example under App. C. Runtime: `cli/crates/cook-engine/src/analyzer.rs` no longer constructs edges from ingredient/serves string equality.
+**Reference:** this commit.
