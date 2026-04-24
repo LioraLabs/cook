@@ -20,7 +20,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   // ── Chapter 1 — Notation and conventions ──────────────────────────────────
   'sec-1':     'notation',
   'sec-1-1':   'notation.keywords',
-  'sec-1-2':   'notation.section-numbering',
+  'sec-1-2':   'notation.numbering-and-citation',
   'sec-1-3':   'notation.normative-blocks',
   'sec-1-4':   'notation.grammar',
   'sec-1-5':   'notation.grammar-precedence',
