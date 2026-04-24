@@ -28,12 +28,12 @@ The token classes produced by the lexer are:
 | Token class            | Produced for                                                                 | Defined in |
 |---|---|---|
 | `Comment`              | Line whose first non-whitespace character is `#`                              | § 2.6      |
-| `RecipeHeader`         | Explicit `recipe` line or column-zero `BARE_IDENTIFIER ":" …`                 | § 3.3      |
-| `ConfigHeader`         | Line `config` or `config` + name                                              | § 3.5      |
-| `VarDecl`              | Top-level `BARE_IDENTIFIER STRING`                                            | § 3.4      |
-| `UseDecl`              | Line `use` + name                                                             | § 3.6      |
-| `ImportDecl`           | Line `import` + `BARE_IDENTIFIER` + path                                      | § 3.7      |
-| `RecipeEnd`            | Line whose only non-whitespace content is `end`                               | § 3.3      |
+| `RecipeHeader`         | Explicit `recipe` line or column-zero `BARE_IDENTIFIER ":" …`                 | § 3.7      |
+| `ConfigHeader`         | Line `config` or `config` + name                                              | § 3.6      |
+| `VarDecl`              | Top-level `BARE_IDENTIFIER STRING`                                            | § 3.3      |
+| `UseDecl`              | Line `use` + name                                                             | § 3.4      |
+| `ImportDecl`           | Line `import` + `BARE_IDENTIFIER` + path                                      | § 3.5      |
+| `RecipeEnd`            | Line whose only non-whitespace content is `end`                               | § 3.7      |
 | `LuaLine`              | Line whose first non-whitespace characters are `>` (but not `>{`)             | § 2.7, § 4.9 |
 | `LuaBlockOpen`         | Line whose first non-whitespace characters are `>{`                           | § 2.7, § 2.9 |
 | `Blank`                | Line containing only whitespace                                               | § 2.10     |
@@ -272,11 +272,11 @@ A **keyword separator** in tests 6–8 below is a space (`U+0020`), a tab (`U+00
 2. If the trimmed line's first character is `#`, the token is `Comment` (§ 2.6).
 3. If the trimmed line begins with `>{`, the token is `LuaBlockOpen` (§ 2.7, § 2.9).
 4. If the trimmed line begins with `>` (but not `>{`, by test 3), the token is `LuaLine` (§ 2.7, § 4.9).
-5. If the trimmed line is exactly `end`, the token is `RecipeEnd` (§ 3.3).
-6. If the trimmed line begins with the keyword `recipe` followed by a keyword separator, the token is `RecipeHeader` (§ 3.3).
-7. If the trimmed line is exactly `config`, or begins with `config` followed by a keyword separator, the token is `ConfigHeader` (§ 3.5).
-8. If the trimmed line begins with `use` followed by a keyword separator, the token is `UseDecl` (§ 3.6).
-9. If the trimmed line begins with `import` followed by a whitespace separator (space or tab only; not `"`), the token is `ImportDecl` (§ 3.7).
+5. If the trimmed line is exactly `end`, the token is `RecipeEnd` (§ 3.7).
+6. If the trimmed line begins with the keyword `recipe` followed by a keyword separator, the token is `RecipeHeader` (§ 3.7).
+7. If the trimmed line is exactly `config`, or begins with `config` followed by a keyword separator, the token is `ConfigHeader` (§ 3.6).
+8. If the trimmed line begins with `use` followed by a keyword separator, the token is `UseDecl` (§ 3.4).
+9. If the trimmed line begins with `import` followed by a whitespace separator (space or tab only; not `"`), the token is `ImportDecl` (§ 3.5).
 10. If the original (untrimmed) line has no leading whitespace — it starts at column 0 — and its trimmed form is `BARE_IDENTIFIER ":"` optionally followed by a dependency list, the token is `RecipeHeader` via the implicit-header form (App. A.3).
 11. Otherwise, if the trimmed line is `BARE_IDENTIFIER STRING` and the `BARE_IDENTIFIER` is not one of the blocking keywords of § 2.4, the token is `VarDecl`. This test is applied both at column 0 and on indented lines; the syntactic layer rejects a `VarDecl` that appears after the first recipe (App. A.2).
 12. Otherwise, the token is `Content`. Its further classification as `ingredients_step`, `cook_step`, `plate_step`, `test_step`, `module_call`, `interactive_command`, or `shell_command` is the concern of the step-dispatch cascade in App. A.4 and is made only inside a recipe body.
