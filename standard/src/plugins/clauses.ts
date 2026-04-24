@@ -13,10 +13,13 @@ export interface ClauseInfo {
   text: string;
 }
 
-// Matches clause-numbered heading text:
+// Canonical slug grammar: chapter.leaf or bare word, all lowercase-kebab.
+const SLUG_SHAPE_RE = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)?$/;
+
+// Matches clause-numbered heading text that carries a valid [#slug] marker:
 //   <NUM>. <TITLE>. [#<slug>]
 // where NUM is a digit run or single uppercase letter (plus optional .M[.K]),
-// TITLE is any run up to the [#, and slug matches the slug grammar.
+// TITLE is any run up to the [#, and slug matches SLUG_SHAPE_RE.
 // Capture groups:
 //   1 = top   (digit run or letter)
 //   2 = mid   (digits, optional)
@@ -25,6 +28,14 @@ export interface ClauseInfo {
 //   5 = slug  (chapter.leaf grammar)
 const HEADING_RE =
   /^(?:#+)\s+([0-9]+|[A-Z])(?:\.([0-9]+)(?:\.([0-9]+))?)?\.\s+(.+?)\s+\[#([a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)?)\]\s*$/gm;
+
+// Matches any clause-numbered heading line regardless of whether it has a marker.
+// Capture group 1 = everything after the number-and-period prefix.
+const NUMBERED_HEADING_RE =
+  /^#+\s+(?:[0-9]+|[A-Z])(?:\.[0-9]+(?:\.[0-9]+)?)?\.\s+(.+)$/gm;
+
+// Matches a trailing [#<anything>] marker (present but possibly invalid slug).
+const MARKER_PRESENT_RE = /\[#([^\]]+)\]\s*$/;
 
 function numberFrom(top: string, mid?: string, bot?: string): string {
   return [top, mid, bot].filter(Boolean).join('.');
@@ -46,27 +57,35 @@ function walkMdx(root: string, out: string[]): void {
   }
 }
 
-/**
- * Harvests every clause-numbered heading and returns a map from slug
- * (e.g. "lexical.identifiers") to the cross-file route + live number +
- * title. Consumed by rehype-clause-xrefs at build time.
- *
- * Throws on:
- * - Duplicate slug across any two headings.
- * - Any clause-numbered heading that lacks a [#slug] marker.
- */
-export function harvestClauses(contentRoot: string): Map<string, ClauseInfo> {
+// Strip fenced code blocks from MDX source so that heading-like lines inside
+// them are not matched by either pass. Line count is preserved (blanked lines
+// replace fenced content) so error messages stay line-accurate if added later.
+function stripFencedCode(src: string): string {
+  const out: string[] = [];
+  let inFence = false;
+  for (const line of src.split('\n')) {
+    if (/^```/.test(line.trimStart())) {
+      inFence = !inFence;
+      out.push(''); // preserve line count
+      continue;
+    }
+    out.push(inFence ? '' : line);
+  }
+  return out.join('\n');
+}
+
+// Pass 1: collect every heading that already carries a valid [#slug] marker.
+function harvestSluggedHeadings(
+  files: string[],
+  contentRoot: string,
+): Map<string, ClauseInfo> {
   const map = new Map<string, ClauseInfo>();
   const seenAt = new Map<string, string>();
-
-  // First pass: collect slugged headings.
-  const files: string[] = [];
-  walkMdx(contentRoot, files);
 
   for (const abs of files) {
     const rel = path.relative(contentRoot, abs);
     const route = fileToRoute(rel);
-    const src = fs.readFileSync(abs, 'utf8');
+    const src = stripFencedCode(fs.readFileSync(abs, 'utf8'));
 
     for (const m of src.matchAll(HEADING_RE)) {
       const [, top, mid, bot, title, slug] = m;
@@ -85,23 +104,55 @@ export function harvestClauses(contentRoot: string): Map<string, ClauseInfo> {
     }
   }
 
-  // Second pass: detect numbered headings missing a slug marker.
-  // A heading line starts with #+ space, then clause grammar, then period.
-  // If it lacks `[#...]` trailing, that's a build error.
-  const numberedNoSlug = /^#+\s+(?:[0-9]+|[A-Z])(?:\.[0-9]+(?:\.[0-9]+)?)?\.\s+(.+)$/gm;
+  return map;
+}
+
+// Pass 2: assert that every clause-numbered heading has a valid [#slug] marker.
+// Distinguishes "marker absent" from "marker present but slug grammar invalid".
+function assertAllNumberedHeadingsSlugged(
+  files: string[],
+  contentRoot: string,
+): void {
   for (const abs of files) {
     const rel = path.relative(contentRoot, abs);
-    const src = fs.readFileSync(abs, 'utf8');
-    for (const m of src.matchAll(numberedNoSlug)) {
+    const src = stripFencedCode(fs.readFileSync(abs, 'utf8'));
+
+    for (const m of src.matchAll(NUMBERED_HEADING_RE)) {
+      const heading = m[0];
       const rest = m[1];
-      if (!/\[#[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)?\]\s*$/.test(rest)) {
+      const markerMatch = MARKER_PRESENT_RE.exec(rest);
+
+      if (!markerMatch) {
         throw new Error(
-          `numbered heading without [#slug] marker in ${rel}: "${m[0]}"`,
+          `numbered heading without [#slug] marker in ${rel}: "${heading}"`,
+        );
+      }
+
+      const slug = markerMatch[1];
+      if (!SLUG_SHAPE_RE.test(slug)) {
+        throw new Error(
+          `invalid slug "${slug}" in ${rel}: "${heading}" — expected [a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)?`,
         );
       }
     }
   }
+}
 
+/**
+ * Harvests every clause-numbered heading and returns a map from slug
+ * (e.g. "lexical.identifiers") to the cross-file route + live number +
+ * title. Consumed by rehype-clause-xrefs at build time.
+ *
+ * Throws on:
+ * - Duplicate slug across any two headings.
+ * - Any clause-numbered heading that lacks a [#slug] marker.
+ * - Any clause-numbered heading whose [#slug] marker violates the slug grammar.
+ */
+export function harvestClauses(contentRoot: string): Map<string, ClauseInfo> {
+  const files: string[] = [];
+  walkMdx(contentRoot, files);
+  const map = harvestSluggedHeadings(files, contentRoot);
+  assertAllNumberedHeadingsSlugged(files, contentRoot);
   return map;
 }
 
