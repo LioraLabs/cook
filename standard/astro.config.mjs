@@ -3,6 +3,7 @@ import starlight from '@astrojs/starlight';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { remarkSlugXrefs } from './src/plugins/remark-slug-xrefs.ts';
 import { remarkCookHighlight } from './src/plugins/remark-cook-highlight.ts';
 import { remarkRfc2119 } from './src/plugins/remark-rfc2119.ts';
 import { rehypeClauseAnchors } from './src/plugins/rehype-clause-anchors.ts';
@@ -53,6 +54,7 @@ export default defineConfig({
   ],
   markdown: {
     remarkPlugins: [
+      remarkSlugXrefs,
       [remarkCookHighlight, {
         wasmPath: path.join(__dirname, 'public/tree-sitter-cook.wasm'),
         queryPath: path.join(__dirname, '../tree-sitter-cook/queries/highlights.scm'),
