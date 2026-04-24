@@ -9,6 +9,7 @@ import { remarkRfc2119 } from './src/plugins/remark-rfc2119.ts';
 import { rehypeClauseAnchors } from './src/plugins/rehype-clause-anchors.ts';
 import { rehypeClauseXrefs } from './src/plugins/rehype-clause-xrefs.ts';
 import { rehypeCsPermalinks } from './src/plugins/rehype-cs-permalinks.ts';
+import { rehypeBareRefLint } from './src/plugins/rehype-bare-ref-lint.ts';
 import { harvestCsIds, defaultChangesPath } from './src/plugins/cs-ids.ts';
 import { harvestClauses, defaultContentRoot } from './src/plugins/clauses.ts';
 
@@ -68,6 +69,7 @@ export default defineConfig({
         knownIds: knownCsIds,
         changesHref: '/appendix/d-changes/',
       }],
+      rehypeBareRefLint,
     ],
   },
   vite: {
