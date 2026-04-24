@@ -316,3 +316,42 @@ with ingredients `a.c` and `b.c` records one shell unit whose `command` field is
 ### Note 6.7.1
 
 Placeholder substitution is the terser surface for the common case; the `using >{ ... }` and `using { ... }` forms (§ 4.5, § 4.6) expose the same iteration directly as Lua or shell text. The two surfaces are interchangeable for any step that fits the placeholder model.
+
+## 6.8. The `use` declaration
+
+> **Normative.** This section defines the `use` declaration, which brings a Lua module into the Cookfile's Lua environment. The grammar is given in App. A.2.
+
+A `use` declaration has the form `use <name>`, where `<name>` is either a `BARE_IDENTIFIER` or a `STRING` (App. A.2). A conforming implementation MUST resolve a `use` declaration by applying the following steps in order, with the first matching step winning:
+
+1. If `<name>` designates a built-in module (§ 6.8.1), the built-in module is selected.
+2. Otherwise, the implementation MUST attempt to resolve `<name>` as a local module under `cook_modules/` by the lookup algorithm of § 6.8.2.
+
+A conforming implementation MUST reject a Cookfile for which no step succeeds, with a diagnostic that names `<name>` and indicates which locations were searched. The resolution step MUST occur before any recipe body executes; failure to resolve is a load-time error, not a run-time error.
+
+The result of resolution is a Lua table bound in the Cookfile's Lua environment under the identifier derived from `<name>` by replacing each ASCII hyphen (`-`) with an underscore (`_`). All other characters admitted by `BARE_IDENTIFIER` (App. A.5) pass through unchanged. A conforming implementation MUST make this binding visible to every subsequent `lua_line`, `lua_block`, `module_call` (§ 4.11), and `cook_step` `using` clause in the same Cookfile.
+
+A module MAY expose a function named `init` on its returned table. If present, `init` MUST be called exactly once immediately after the module's Lua source has been executed, before any recipe body in the enclosing Cookfile is registered.
+
+### 6.8.1. Built-in modules
+
+A **built-in module** is supplied by the implementation and available without any project-level file. No built-in modules are defined by v0.1 of this Standard; the built-in kind is reserved to allow future extension (§ B.7).
+
+### 6.8.2. Local modules
+
+A **local module** is a file in the project's `cook_modules/` directory. The lookup algorithm resolves `<name>` against `cook_modules/<name>.lua`, then `cook_modules/<name>/init.lua`. The first existing file wins.
+
+### Example 6.8.1
+
+```cook
+use cpp
+
+recipe "colorize"
+    cpp.bin("colorize", { sources = { "src/colorize.c" } })
+end
+```
+
+The declaration `use cpp` binds the identifier `cpp` in the Cookfile's Lua environment to the table returned by `cook_modules/cpp.lua` (or `cook_modules/cpp/init.lua`). The `cpp.bin(...)` line in the recipe body is then dispatched as a `module_call` step (App. A.4, dispatch step 5) rather than a `shell_command`, because its first dot-separated segment `cpp` matches a bound identifier pattern (§ 4.11).
+
+### Note 6.8.1
+
+The hyphen-to-underscore rewrite exists because `BARE_IDENTIFIER` permits internal hyphens (App. A.5) whereas Lua identifiers do not. Thus `use my-mod` binds the Lua global `my_mod`, but the on-disk lookup searches for `cook_modules/my-mod.lua` verbatim: the disk name is not rewritten.

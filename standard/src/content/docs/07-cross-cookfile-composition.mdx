@@ -1,0 +1,88 @@
+---
+title: "§ 7 — Cross-Cookfile composition"
+sidebar:
+  order: 7
+---
+# 7. Cross-Cookfile composition
+
+> **Normative.** This chapter defines cross-Cookfile composition: how a Cookfile loads a sibling Cookfile via `import`, how qualified name references (`alias.recipe`) resolve across the boundary, and how a workspace of Cookfiles is composed. The `use` declaration, which brings a Lua module into scope, is defined in § 6.8 — not in this chapter. The grammar of the `import` declaration is given in App. A.2.
+
+## 7.1. Overview
+
+This chapter specifies cross-Cookfile composition. The `import` declaration (§ 7.2) binds a sibling Cookfile to a local alias. A qualified name reference (`alias.recipe`) resolves under the rules of § 5.2, with the lookup set replaced by the recipe names of the imported Cookfile instead of the current one. All other name-reference rules of § 5 — accessors (§ 5.3), iteration (§ 5.4), string-substitution (§ 5.5), dependency implications (§ 5.6) — apply unchanged.
+
+## 7.2. `import <name> <path>` declarations
+
+An `import` declaration has the form `import <name> <path>`, where `<name>` is a `BARE_IDENTIFIER` and `<path>` is a non-whitespace path token (App. A.5). A conforming implementation MUST treat `<path>` as a directory path resolved relative to the directory of the enclosing Cookfile, and MUST load the Cookfile at `<path>/Cookfile` as a sibling Cookfile bound to the local alias `<name>`.
+
+A conforming implementation MUST reject an `import` declaration for which:
+
+- the directory `<path>` does not exist;
+- `<path>/Cookfile` does not exist;
+- `<path>/Cookfile` fails to parse.
+
+An `import` declaration does NOT bring a Lua value into scope under `<name>`. The alias `<name>` is reserved for cross-Cookfile recipe references of the form `<name>.<recipe>` that appear in dependency lists (§ 4.3), not for Lua expressions. A Cookfile loaded by `import` is parsed independently; its own `use` and `import` declarations are resolved relative to its own directory, not the importer's directory.
+
+A conforming implementation MUST reject a Cookfile in which two `import` declarations share the same `<name>` (App. A.2, duplicate-import clause; see also § 7.4).
+
+### Example 7.2.1
+
+```cook
+import backend ./services/backend
+import frontend ./apps/frontend
+
+recipe "bundle": "backend.build" "frontend.build"
+end
+```
+
+Here `backend` and `frontend` are local aliases for the Cookfiles at `./services/backend/Cookfile` and `./apps/frontend/Cookfile`, respectively. The dependencies `"backend.build"` and `"frontend.build"` refer to recipes in those sibling Cookfiles; the first segment before the dot selects the import alias, and the remainder is the recipe name in the imported Cookfile.
+
+### Note 7.2.1
+
+Because an `import` alias does not bind a Lua value, there is no interaction between `import backend …` and a `use backend` for a module of the same name: they occupy different namespaces. The duplicate rule of § 7.4 only prohibits collisions within the `import` alias namespace.
+
+## 7.3. Qualified name references across Cookfiles
+
+A **qualified name reference** has the form `alias.recipe`, where `alias` is a local alias introduced by an `import` declaration (§ 7.2) in the referring Cookfile and `recipe` is a recipe name defined in the imported Cookfile. Qualified name references are governed by § 5 (Cross-recipe references) with the following refinement of resolution:
+
+- In § 5.2 step (2), the lookup set is the union of the recipe names in the current Cookfile and the set of `alias.recipe` names, where `alias` ranges over the importing Cookfile's `import` aliases and `recipe` ranges over the recipe names in the Cookfile bound to `alias`. A whole-token match against `alias.recipe` wins over an accessor split on the same token (§ 5.2 step (3)).
+- In § 5.2 step (3), the accessor-split rule applies as written: the `PREFIX` may itself be a qualified name `alias.recipe`, in which case the reference is `{alias.recipe.ACCESSOR}` and PREFIX is matched whole against the qualified lookup set before the SUFFIX is checked against the path-accessor set (§ 5.3).
+
+All other rules of § 5 apply unchanged: dependency implications (§ 5.6), dep-driven iteration (§ 5.4), string-substitution (§ 5.5), reserved final segment (§ 5.2.2). In particular, a qualified name reference establishes a cross-recipe edge with the same granularity rules as an unqualified one.
+
+## 7.4. Duplicate and cycle detection
+
+A conforming implementation MUST reject a Cookfile in which two `import` declarations share the same local alias. This rule is restated normatively in App. A.2 (duplicate-import clause); this section specifies the timing and the diagnostic surface.
+
+**Duplicate imports.** The check is a **parse-time** check performed on the Cookfile in which the duplicates appear. A conforming implementation MUST detect the duplicate before loading the imported Cookfiles (§ 7.2) and MUST report both offending lines in the diagnostic. The rule is per-Cookfile: two different Cookfiles in the same workspace MAY each define an `import foo ...` of their own, because each alias namespace is scoped to its declaring Cookfile.
+
+**Import cycles.** A conforming implementation MUST detect cycles in the `import` graph when loading the workspace and MUST reject a workspace whose `import` edges form a cycle. A cycle is defined as a sequence of canonicalised directory paths `D_1, D_2, ..., D_k, D_1` such that each `D_i/Cookfile` contains an `import` declaration whose path resolves to `D_{i+1}` (and the last edge resolves back to `D_1`). Detection MUST use canonicalised paths so that two syntactically different `<path>` strings that refer to the same directory are recognised as the same node.
+
+A conforming implementation MUST NOT reject the diamond case: if two distinct imports both resolve to the same canonicalised `D`, the implementation MUST load `D` once and reuse it. Diamond deduplication is not a cycle.
+
+The duplicate check and the cycle check operate on different graphs and are independent. A Cookfile MAY violate either without violating the other.
+
+### Example 7.4.1
+
+```cook
+import backend ./services/backend
+import backend ./services/backend_v2
+```
+
+Rejected at parse time: both lines declare the alias `backend` (App. A.2). The first line's target is irrelevant to the diagnostic; the collision is on the alias, not the path.
+
+### Example 7.4.2
+
+Given three Cookfiles:
+
+```
+/ws/a/Cookfile:       import b ../b
+/ws/b/Cookfile:       import a ../a
+/ws/Cookfile:         import a ./a
+```
+
+The workspace load that begins at `/ws/Cookfile` MUST be rejected: canonicalisation yields the cycle `/ws/a -> /ws/b -> /ws/a`.
+
+### Note 7.4.1
+
+Duplicate-import detection fires at parse time because the governing grammar production (App. A.2) constrains a single Cookfile's token stream, which is the unit the parser consumes. Cycle detection, by contrast, is a property of the `import` graph and necessarily crosses Cookfile boundaries; it fires at workspace-load time as the graph is walked (§ B.7).
