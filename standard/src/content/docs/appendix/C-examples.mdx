@@ -76,3 +76,70 @@ end
 ```
 
 Exercises: § 4.6 (multi-output cook with `using >{ ... }` Lua block), § 6.4 (using-block globals `inputs` / `outputs`), App. A.4.
+## C.5. Cross-recipe references
+
+This example exercises the four surfaces of cross-recipe references defined in § 5.
+
+### Bare string substitution
+
+```cook
+recipe libmath
+    ingredients "src/math/*.c"
+    cook "build/obj/math/{stem}.o" using "gcc -c {in} -o {out}"
+    cook "build/lib/libmath.a" using "ar rcs {out} {all}"
+end
+
+recipe app
+    cook "build/bin/app" using "gcc -o {out} main.c {libmath}"
+end
+```
+
+In `app`, the `{libmath}` placeholder is a bare name reference (§ 5.5). It expands at register time to the single-element output list of `libmath`, i.e., `"build/lib/libmath.a"`. The resulting `app` step's command is `gcc -o build/bin/app main.c build/lib/libmath.a`.
+
+### Dep-driven iteration
+
+```cook
+recipe protos
+    ingredients "proto/*.proto"
+end
+
+recipe compile_protos
+    cook "build/obj/{protos.stem}.pb.cc" using "protoc --cpp_out=build/obj {in}"
+end
+```
+
+In `compile_protos`, the `{protos.stem}` placeholder in the output pattern (§ 5.4) is an accessor placeholder. It names `protos` as the iteration driver. The step registers one work unit per item in `protos`'s output list — which, because `protos` has no cook step, is the resolved glob `proto/*.proto` passed through (§ 5.4.1). For each resolved path `x`, `{in}` = `x`, `{stem}` = `path.stem(x)`, and `{protos.stem}` = `path.stem(x)`.
+
+### Ingredients-only recipe referenced by another
+
+```cook
+recipe headers
+    ingredients "include/*.h"
+end
+
+recipe check: headers
+    test "clang-tidy {headers}"
+end
+```
+
+`headers` is a passthrough recipe with no cook step; its output is the resolved glob (§ 5.4.1). `{headers}` in `check`'s test command expands to the space-joined list. The `: headers` dep-list reference (§ 5.1 dep-list surface) creates a whole-recipe edge (§ 5.6); `{headers}` in the test command is redundant as an edge but fine for string substitution.
+
+### Mixed: one driver plus string substitution
+
+```cook
+recipe core
+    cook "build/lib/libcore.a" using "…"
+end
+
+recipe protos
+    ingredients "proto/*.proto"
+end
+
+recipe server
+    cook "build/obj/{protos.stem}.o" using "gcc -c {in} -I{core}/include -o {out}"
+end
+```
+
+The `server` step is dep-driven by `protos` (output pattern contains `{protos.stem}`). The `{core}` in the using-string is a bare string-substitution reference (§ 5.5) to `core`'s single output. The step thus depends on both `protos` (per-unit, driving iteration) and `core` (whole-recipe or refined per-unit, per § 5.6) — two distinct cross-recipe edges from a single step.
+
+Exercises: § 5 (full chapter), § 4.3 (ingredients), § 4.5 (one-to-one cook step), § 8.4 (cross-recipe ordering).
