@@ -48,7 +48,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-3-4':   'grammar.use-declarations',
   'sec-3-5':   'grammar.import-declarations',
   'sec-3-6':   'grammar.config-blocks',
-  'sec-3-7':   'grammar.recipes',
+  'sec-3-7':   'grammar.recipe-syntax',
   'sec-3-8':   'grammar.step-dispatch',
 
   // ── Chapter 4 — Recipes and step kinds ────────────────────────────────────
@@ -106,7 +106,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-6-6-5':   'lua.path-replace-ext',
   'sec-6-6-6':   'lua.path-join',
   'sec-6-7':     'lua.shell-placeholders',
-  'sec-6-8':     'lua.use-declaration',
+  'sec-6-8':     'lua.use-env',
   'sec-6-8-1':   'lua.builtin-modules',
   'sec-6-8-2':   'lua.local-modules',
 
@@ -115,7 +115,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-7-1':   'modules.overview',
   'sec-7-2':   'modules.import-declaration',
   'sec-7-3':   'modules.qualified-refs',
-  'sec-7-4':   'modules.duplicate-cycle-detection',
+  'sec-7-4':   'modules.duplicates-and-cycles',
 
   // ── Chapter 8 — Execution model ───────────────────────────────────────────
   'sec-8':     'exec',
