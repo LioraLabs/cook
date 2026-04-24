@@ -50,14 +50,14 @@ The implicit form's column-0 restriction is what disambiguates an indented `back
 
 ## 4.2. Dependency list
 
-A **dependency list** is a sequence of one or more `name`s following the `:` in a recipe header (§ A.3, `dependency_list`). Each name identifies another recipe that MUST complete successfully before this recipe runs.
+A **dependency list** is a sequence of one or more `name`s following the `:` in a recipe header (§ A.3, `dependency_list`). Each name in a dependency list is a name reference; its resolution rules are given in § 5.2 and its effect on execution ordering in § 5.6 and § 8.4.
 
 A conforming implementation MUST accept a mix of `BARE_IDENTIFIER` and `STRING` forms within a single dependency list. Dependencies MAY use the dotted form (e.g. `backend.build`) to refer to a recipe imported under an alias (§ 7); the dotted form is a single `BARE_IDENTIFIER` under the token rules of § 2.3, not two tokens separated by `.`.
 
 The dependency list is purely syntactic at parse time. The Standard requires only that:
 
-1. Each referenced recipe exists in the resolved Cookfile (itself, its `use` modules, or its `import` aliases). A conforming implementation MUST reject a Cookfile that references a non-existent recipe — this diagnostic MAY be deferred to the first resolution pass (§ 5).
-2. The dependency graph is acyclic. A conforming implementation MUST reject a Cookfile whose dependency graph contains a cycle — this diagnostic MAY be deferred to DAG construction (§ 5).
+1. Each referenced recipe exists in the resolved Cookfile (itself, its `use` modules, or its `import` aliases). A conforming implementation MUST reject a Cookfile that references a non-existent recipe — this diagnostic MAY be deferred to the first resolution pass (§ 8).
+2. The dependency graph is acyclic. A conforming implementation MUST reject a Cookfile whose dependency graph contains a cycle — this diagnostic MAY be deferred to DAG construction (§ 8).
 
 ### Example 4.2.1
 
@@ -88,7 +88,7 @@ The `ingredients_step` is introduced by the keyword `ingredients` followed by on
 
 A conforming implementation MUST accept an `ingredients` line containing only excludes, only includes, or a mix of the two in any order. The semantic effect is the set difference `(union of includes) \ (union of excludes)`; ordering of items on the line does not affect the result.
 
-The glob language itself — which characters are wildcards, whether `**` matches across directory separators, and so on — is not defined by § 4 and is resolved by the execution model (§ 5).
+The glob language itself — which characters are wildcards, whether `**` matches across directory separators, and so on — is not defined by § 4 and is resolved by the execution model (§ 8).
 
 ### Example 4.3.1
 
@@ -148,7 +148,7 @@ A `cook_step` (§ A.4, `cook_step`) declares a build output. The single-output f
 cook "out" using_clause?
 ```
 
-The output is a `STRING` whose interior MAY contain substitution placeholders (e.g. `{stem}`, `{in}`, `{out}`). The placeholder language is defined by the execution model (§ 5); § 4 treats placeholder text as opaque.
+The output is a `STRING` whose interior MAY contain substitution placeholders (e.g. `{stem}`, `{in}`, `{out}`). The placeholder language is defined by the Cook Lua API chapter (§ 6.7) and by § 5 for cross-recipe references; § 4 treats placeholder text as opaque.
 
 A conforming implementation MUST accept all four of the following forms:
 
@@ -183,7 +183,7 @@ recipe build
 end
 ```
 
-The `cook "bin/app"` step is declaration-only. The following `shell_command` supplies the actual build command; the execution model (§ 5) is responsible for associating it with the declared output.
+The `cook "bin/app"` step is declaration-only. The following `shell_command` supplies the actual build command; the execution model (§ 8) is responsible for associating it with the declared output.
 
 ### Note 4.5.1
 
@@ -235,7 +235,7 @@ recipe build_lua
 end
 ```
 
-The same two outputs are produced by a Lua block. The `inputs` and `outputs` names visible to the block are established by the execution model (§ 5); § 4 requires only that a block-form `using` clause be accepted as the body.
+The same two outputs are produced by a Lua block. The `inputs` and `outputs` names visible to the block are established by the execution model (§ 8) and the Cook Lua API (§ 6.4); § 4 requires only that a block-form `using` clause be accepted as the body.
 
 ### Note 4.6.1
 
@@ -243,7 +243,7 @@ The shape `cook "a" "b" using "cmd"` is rejected with a diagnostic that mentions
 
 ## 4.7. `plate` step
 
-A `plate_step` (§ A.4, `plate_step`) has the shape `plate STRING`. It holds a single shell command template that the execution model applies once per output of a preceding `cook` step in the same recipe body. The mapping from "preceding `cook`" to "which outputs" is defined by § 5; § 4 requires only that the syntactic shape `plate STRING` be accepted.
+A `plate_step` (§ A.4, `plate_step`) has the shape `plate STRING`. It holds a single shell command template that the execution model applies once per output of a preceding `cook` step in the same recipe body. The mapping from "preceding `cook`" to "which outputs" is defined by § 8; § 4 requires only that the syntactic shape `plate STRING` be accepted.
 
 The command template is a `STRING` and MAY contain the same placeholder set permitted in `cook` templates (e.g. `{out}`). Placeholder text is opaque at the syntactic layer.
 
@@ -304,7 +304,7 @@ A `lua_line` step is produced by the `>` line prefix of § 2.7. Its body is the 
 
 A `lua_block` step is produced by the `>{` line prefix of § 2.7. Its body is the source text between the opening `>{` and the matching `}`, collected by the brace-balance algorithm of § 2.9. The closing `}` line is consumed but is not part of the body.
 
-Both step kinds carry Lua source text through to the execution model (§ 5) and the Cook Lua API (§ 6); the Standard defines their **delimitation** here and defers their **semantics** to those chapters.
+Both step kinds carry Lua source text through to the execution model (§ 8) and the Cook Lua API (§ 6); the Standard defines their **delimitation** here and defers their **semantics** to those chapters.
 
 A conforming implementation MUST NOT reinterpret the Lua body text. Comments, strings, and other Lua constructs inside the body are the Lua runtime's concern, with the single exception that the brace-balance algorithm (§ 2.9) MUST ignore braces appearing inside Lua line comments, double-quoted strings, single-quoted strings, and long strings (`[[...]]`) when locating the closing `}` of a `lua_block`.
 
@@ -336,7 +336,7 @@ A `shell_command` is any `Content` line inside a recipe body that is not classif
 An `interactive_command` is a `Content` line whose first non-whitespace character is `@` and whose remainder, after removing that `@`, is non-empty (§ A.4, `interactive_command`). A conforming implementation MUST:
 
 1. Strip the leading `@` when recording the command body.
-2. Mark the step as requiring interactive stdio (the precise semantics — TTY allocation, stdio inheritance — are defined by § 5).
+2. Mark the step as requiring interactive stdio (the precise semantics — TTY allocation, stdio inheritance — are defined by § 8).
 3. Reject an `@`-only line with no following command text.
 
 The `@` marker is not a lexical prefix (see § 2.7 and § B.2.7); it is interpreted only at step-dispatch time, and only inside a recipe body. A bare `@` outside a recipe body is a top-level parse error under § 3.2.
