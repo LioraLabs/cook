@@ -36,9 +36,14 @@ pub fn read_and_parse(cli: &Cli) -> Result<(cook_lang::ast::Cookfile, String), C
     // Pre-scan: extract recipe names for codegen disambiguation
     let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
 
+    // § 5.4 — accessor placement validation rejects `{lib.ACCESSOR}` in
+    // contexts that lack a matching driver in an output pattern.
+    let lua_source = cook_luagen::generate_with_names_checked(&cookfile, &recipe_names)
+        .map_err(|e| CookError::Other(e.to_string()))?;
+
     // § 5.5 — register-time warnings for references whose referent has an
     // empty output list.
-    let (lua_source, warnings) =
+    let (_, warnings) =
         cook_luagen::generate_with_names_and_warnings(&cookfile, &recipe_names);
     for w in warnings {
         eprintln!("cook: warning: {}", w);

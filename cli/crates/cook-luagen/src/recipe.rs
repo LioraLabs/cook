@@ -3,10 +3,36 @@ use std::collections::BTreeSet;
 use cook_lang::ast::*;
 
 use crate::cook_step::generate_cook_step;
-use crate::dep_ref::extract_dep_refs;
+use crate::dep_ref::{extract_brace_tokens, extract_dep_refs};
 use crate::lua_string::{escape_lua_string, wrap_lua_string};
 use crate::plate_step::generate_plate_step;
 use crate::test_step;
+
+/// Known accessor suffixes for `{dep.accessor}` syntax.
+/// Keep in lockstep with `dep_ref::ACCESSORS`.
+const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
+
+/// Error raised by `generate_with_names_checked` when codegen-phase
+/// validation rejects a Cookfile.
+///
+/// Per Cook Standard § 5.4, `{lib.ACCESSOR}` is only valid in a step whose
+/// output pattern declares `lib` as an iteration driver. Appearing in a
+/// using-string, plate command, test command, or bare shell without a
+/// matching driver is an error.
+#[derive(Debug, thiserror::Error)]
+pub enum CodegenError {
+    #[error(
+        "line {line}: recipe '{referrer}': '{referent}.{accessor}' appears in {surface} but \
+         '{referent}' is not named as an iteration driver in this step's output pattern"
+    )]
+    AccessorWithoutDriver {
+        referrer: String,
+        referent: String,
+        accessor: String,
+        surface: &'static str,
+        line: usize,
+    },
+}
 
 pub fn generate(cookfile: &Cookfile) -> String {
     generate_with_names(cookfile, &BTreeSet::new())
@@ -29,6 +55,17 @@ pub fn generate_with_names_and_warnings(
     let warnings = warn_empty_output_refs(cookfile, recipe_names);
     let output = generate_with_names(cookfile, recipe_names);
     (output, warnings)
+}
+
+/// Lower `cookfile` after running codegen-phase validation. Returns an error
+/// if any `{NAME.ACCESSOR}` placeholder appears where no output pattern in the
+/// same step declares `NAME` as an iteration driver (Cook Standard § 5.4).
+pub fn generate_with_names_checked(
+    cookfile: &Cookfile,
+    recipe_names: &BTreeSet<String>,
+) -> Result<String, CodegenError> {
+    validate_accessor_placement(cookfile, recipe_names)?;
+    Ok(generate_with_names(cookfile, recipe_names))
 }
 
 /// Detect references whose referent has an empty output list and return one
@@ -64,6 +101,115 @@ fn warn_empty_output_refs(
         }
     }
     warnings
+}
+
+/// For each cook step, verify that every `{NAME.ACCESSOR}` placeholder in the
+/// using-string shares a driver with the output pattern. Reject any accessor
+/// placeholder that appears in plate / test / bare shell steps, which have no
+/// output pattern and thus cannot declare a driver.
+fn validate_accessor_placement(
+    cookfile: &Cookfile,
+    recipe_names: &BTreeSet<String>,
+) -> Result<(), CodegenError> {
+    for recipe in &cookfile.recipes {
+        for step in &recipe.steps {
+            match step {
+                Step::Cook { step: cook_step, line } => {
+                    let drivers = collect_drivers(&cook_step.outputs, recipe_names);
+                    if let Some(UsingClause::Shell(cmd)) = &cook_step.using_clause {
+                        check_command(
+                            cmd,
+                            &drivers,
+                            recipe_names,
+                            &recipe.name,
+                            "using-string",
+                            *line,
+                        )?;
+                    }
+                }
+                Step::Plate { step: plate_step, line } => {
+                    check_command(
+                        &plate_step.command,
+                        &BTreeSet::new(),
+                        recipe_names,
+                        &recipe.name,
+                        "plate command",
+                        *line,
+                    )?;
+                }
+                Step::Test { step: test_step, line } => {
+                    check_command(
+                        &test_step.command,
+                        &BTreeSet::new(),
+                        recipe_names,
+                        &recipe.name,
+                        "test command",
+                        *line,
+                    )?;
+                }
+                Step::Shell { command, line, .. } => {
+                    check_command(
+                        command,
+                        &BTreeSet::new(),
+                        recipe_names,
+                        &recipe.name,
+                        "shell step",
+                        *line,
+                    )?;
+                }
+                Step::Lua { .. } | Step::LuaBlock { .. } => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_drivers(
+    output_patterns: &[String],
+    recipe_names: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut drivers = BTreeSet::new();
+    for pat in output_patterns {
+        for token in extract_brace_tokens(pat) {
+            if let Some(dot) = token.rfind('.') {
+                let prefix = &token[..dot];
+                let suffix = &token[dot + 1..];
+                if ACCESSORS.contains(&suffix) && recipe_names.contains(prefix) {
+                    drivers.insert(prefix.to_string());
+                }
+            }
+        }
+    }
+    drivers
+}
+
+fn check_command(
+    command: &str,
+    drivers: &BTreeSet<String>,
+    recipe_names: &BTreeSet<String>,
+    referrer: &str,
+    surface: &'static str,
+    line: usize,
+) -> Result<(), CodegenError> {
+    for token in extract_brace_tokens(command) {
+        if let Some(dot) = token.rfind('.') {
+            let prefix = &token[..dot];
+            let suffix = &token[dot + 1..];
+            if ACCESSORS.contains(&suffix)
+                && recipe_names.contains(prefix)
+                && !drivers.contains(prefix)
+            {
+                return Err(CodegenError::AccessorWithoutDriver {
+                    referrer: referrer.to_string(),
+                    referent: prefix.to_string(),
+                    accessor: suffix.to_string(),
+                    surface,
+                    line,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn generate_with_names(cookfile: &Cookfile, recipe_names: &BTreeSet<String>) -> String {

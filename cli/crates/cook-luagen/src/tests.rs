@@ -1293,3 +1293,152 @@ fn test_empty_output_reference_warns_not_errors() {
     );
 }
 
+#[test]
+fn test_accessor_placeholder_in_using_string_without_driver_is_rejected() {
+    let names: std::collections::BTreeSet<String> =
+        ["protos"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![
+        make_recipe("protos", vec![], vec![], vec![]),
+        make_recipe(
+            "bad",
+            vec![],
+            vec![],
+            vec![Step::Cook {
+                step: CookStep {
+                    outputs: vec!["build/fixed.o".to_string()], // no accessor in output
+                    using_clause: Some(UsingClause::Shell(
+                        "echo {protos.stem}".into(), // accessor in using-string only
+                    )),
+                },
+                line: 2,
+            }],
+        ),
+    ]);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_err(),
+        "accessor placeholder in using-string without matching driver must error"
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("protos") && err.to_string().contains("output pattern"),
+        "error should name the accessor ref and explain, got: {}",
+        err
+    );
+}
+
+#[test]
+fn test_accessor_placeholder_in_plate_command_rejected() {
+    let names: std::collections::BTreeSet<String> =
+        ["protos"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![
+        make_recipe("protos", vec![], vec![], vec![]),
+        make_recipe(
+            "bad",
+            vec![],
+            vec![],
+            vec![
+                Step::Cook {
+                    step: CookStep {
+                        outputs: vec!["bin/app".to_string()],
+                        using_clause: None,
+                    },
+                    line: 2,
+                },
+                Step::Plate {
+                    step: PlateStep {
+                        command: "./{out} {protos.stem}".to_string(),
+                    },
+                    line: 3,
+                },
+            ],
+        ),
+    ]);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_err(),
+        "accessor placeholder in plate command must error"
+    );
+}
+
+#[test]
+fn test_accessor_placeholder_in_test_command_rejected() {
+    let names: std::collections::BTreeSet<String> =
+        ["protos"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![
+        make_recipe("protos", vec![], vec![], vec![]),
+        make_recipe(
+            "bad",
+            vec![],
+            vec![],
+            vec![Step::Test {
+                step: TestStep {
+                    command: "echo {protos.stem}".to_string(),
+                    timeout: None,
+                    should_fail: false,
+                },
+                line: 2,
+            }],
+        ),
+    ]);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_err(),
+        "accessor placeholder in test command must error"
+    );
+}
+
+#[test]
+fn test_accessor_placeholder_in_bare_shell_rejected() {
+    let names: std::collections::BTreeSet<String> =
+        ["protos"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![
+        make_recipe("protos", vec![], vec![], vec![]),
+        make_recipe(
+            "bad",
+            vec![],
+            vec![],
+            vec![Step::Shell {
+                command: "echo {protos.stem}".to_string(),
+                line: 2,
+                interactive: false,
+            }],
+        ),
+    ]);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_err(),
+        "accessor placeholder in bare shell must error"
+    );
+}
+
+#[test]
+fn test_accessor_placeholder_with_driver_in_output_pattern_ok() {
+    // When the output pattern declares the accessor, the same accessor in the
+    // using-string is legal (they share the driver).
+    let names: std::collections::BTreeSet<String> =
+        ["protos"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![
+        make_recipe("protos", vec![], vec![], vec![]),
+        make_recipe(
+            "compile",
+            vec![],
+            vec![],
+            vec![Step::Cook {
+                step: CookStep {
+                    outputs: vec!["build/{protos.stem}.o".to_string()],
+                    using_clause: Some(UsingClause::Shell(
+                        "gcc -c {in} -o {out} -D{protos.stem}".into(),
+                    )),
+                },
+                line: 2,
+            }],
+        ),
+    ]);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_ok(),
+        "accessor with matching driver should pass, got: {:?}",
+        result.err()
+    );
+}

@@ -1,0 +1,3 @@
+Pins the § 5.4 rule: a `{lib.ACCESSOR}` placeholder in a using-string, plate command, test command, or bare shell must be rejected when the same step's output pattern does not declare `lib` as an iteration driver.
+
+This is a codegen-phase rejection, not a parser-phase one: the Cookfile is syntactically well-formed and parses cleanly into an AST. The rejection is enforced by `cook-luagen::generate_with_names_checked`. Negative fixtures carrying a `codegen_error.txt` (rather than `error.txt`) are consumed by the companion conformance harness in `cli/crates/cook-luagen/tests/conformance.rs`; the cook-lang parser-only harness skips them.

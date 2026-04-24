@@ -212,6 +212,14 @@ fn negative_conformance_corpus() {
         let input_path = case.join("Cookfile");
         let expected_path = case.join("error.txt");
 
+        // Fixtures that carry only a `codegen_error.txt` assert a
+        // post-parse rejection (e.g. `{lib.ACCESSOR}` without a driver,
+        // § 5.4). The parser-only harness skips them; the companion
+        // harness in `cook-luagen/tests/conformance.rs` consumes them.
+        if !expected_path.exists() && case.join("codegen_error.txt").exists() {
+            continue;
+        }
+
         let input = fs::read_to_string(&input_path)
             .unwrap_or_else(|e| panic!("read {}: {}", input_path.display(), e));
         let expected_substring = fs::read_to_string(&expected_path)
