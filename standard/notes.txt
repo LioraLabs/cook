@@ -1,0 +1,50 @@
+notes on the standard
+
+the {sigil}{_} is visibile in all of the headres
+
+
+the doc should stand on its own ... eleminate local and external file references (there is a fair amount of references to rust test files and examples)
+
+remove relationship to dcs/architcture (again ,this should stand on its own)
+
+conformance examples should be in the standard
+
+NOT in "NOT RECOMMENDED" is not highlighted correctly
+
+App. (A/B/C/D) should be linked ... (links to appendices should be fixed throughout the document)
+
+note 2.1.1 ( do not talk about rust)
+
+note 2.4.1 - remove files references from the standard -- include the examples directly in the document either as conformance examples or in another section
+
+example 2.8.1 - example is an invalid cookfile ... no ingredients (each example should be confrorming unless directly stated otherwise)
+
+any specific test refrences must have the test in the actual text ... do not reference external files in the standard (Note 2.9.1)
+
+example 2.10.1 ... this is a terrrible example
+
+---
+
+We should consider removing VarDecl in favor of the config blocks
+
+We should do a pass on accepting quoted and unquotted stuff ... i.e. with 3.5, why is unquotted rejected when accepted in similar cases
+
+Thinking we could eliminate the "end" keyword ... recipe end and config end could be implied from the end of file or start of another top level object
+
+quoted recipe names look weird (we should try to eliminate them if possible)
+
+"all" is a very common target in make files ... i can't help but feel that keeping it as a reserved word is a bad idea
+
+should we drop the keyword "recipe" in favor of just implit recip decls? does this mean we must keep the "end" keyword?
+
+NOTE 4.4.1 - why is it necessary to mention "cooking" here?
+
+STARRED - maybe we remove declaration only cook steps (seems totally pointless and confusing -- we should always encourage use of the "using" clauses)
+
+In a cook inline single shell command wrapped in a string seems strange ... maybe we always use lua/shell blocks? Worth a brainstorm
+
+the plate examples are not showing what plate is good for ... we should have an example where we push the build to some remote target, like an android phone etc.
+
+exampl 4.10.1 - let's only show interactive examples where interactive makes sense @mkdir should never be interactive
+
+6.1.1 - the recipe global may be a bit of an out of date idea ... we should rethink this and how it fits within cook today.
