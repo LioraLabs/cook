@@ -38,6 +38,6 @@ pnpm host
 
 ## Changing the Standard
 
-See `../CONTRIBUTING.md` for the spec-first rule. A change to a Cookfile surface construct must update `src/content/docs/` in the same commit as the implementation change, and must add a `CS-NNNN` entry to `src/content/docs/appendix/D-changes.mdx`.
+See `../CONTRIBUTING.md` for the spec-first rule. A change to a Cookfile surface construct must update `src/content/docs/` in the same commit as the implementation change, and must add a `CS-NNNN` entry to `src/content/docs/appendix/D-changes.mdx`. To publish a new MINOR version of the Standard, see the **Cutting a Cook Standard version** subsection in the same file.
 
 Rendering-infrastructure changes (files under `src/plugins/`, `src/styles/`, `astro.config.mjs`, `package.json`, `tsconfig.json`) are not spec changes and do not require a `CS-NNNN` entry.
