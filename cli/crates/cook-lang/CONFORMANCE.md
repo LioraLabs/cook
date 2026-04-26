@@ -21,10 +21,12 @@ cd cli && cargo test -p cook-lang --test conformance
 To verify that this parser still satisfies a previously-cut Standard version:
 
 ```bash
-standard/scripts/check-conformance-against-tag.sh v0.1
+standard/scripts/check-conformance-against-tag.sh v0.2
 ```
 
-The script materializes the corpus from the `cs-standard/v0.1` git tag into a temp directory and runs the harness against it. The corpus path is overridable via the `COOK_CONFORMANCE_CORPUS` environment variable.
+The script materializes the corpus from the `cs-standard/v0.2` git tag into a temp directory and runs the harness against it. The corpus path is overridable via the `COOK_CONFORMANCE_CORPUS` environment variable.
+
+> **Pre-1.0 caveat.** The `parse.txt` files in the corpus are textual dumps of the parser's AST output. When a parser change alters that dump format — for example, CS-0011 (v0.2) removed the `vars: []` line — a tag whose corpus predates the format change cannot be checked against the current parser. This is a known limitation of the parse-dump-as-corpus design, tracked for revisit before 1.0. Concretely: `check-conformance-against-tag.sh v0.1` does **not** pass post-CS-0011, because the v0.1 tag's `parse.txt` files still contain `vars: []`. The cut procedure (see `CONTRIBUTING.md`) addresses this going forward by re-tagging at the merge commit when the dump format changes.
 
 ## Pending CSes
 
