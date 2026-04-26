@@ -38,6 +38,10 @@ During the register phase, and only within the body of the Lua function register
 
 A conforming implementation MUST NOT expose the `recipe` global during the execute phase; it is a register-phase artefact.
 
+### 6.1.2. The `env` alias inside `config_block` bodies [#lua.env-alias]
+
+Within the body of a `config_block` (§{grammar.config-blocks}), the bare global `env` MUST be bound such that `env` and `cook.env` refer to the same table. Writes through either name MUST be observable through both. The `env` alias is in scope only within `config_block` bodies; it MUST NOT be bound in recipe-body Lua, in `using` blocks, in module bodies, or at any other Lua entry point.
+
 ## 6.2. `cook.add_unit` [#lua.add-unit]
 **Signature.** `cook.add_unit(spec: table) -> nil`
 **Phase.** Register-phase only.
