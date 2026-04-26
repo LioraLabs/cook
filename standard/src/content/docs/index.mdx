@@ -3,9 +3,12 @@ title: The Cook Standard
 description: The authoritative specification of the Cookfile language.
 ---
 
+import standardVersion from '../../../VERSION?raw';
+
 # The Cook Standard
 
-**Status:** Draft — head-of-main lockstep, pre-1.0.
+**Version:** v{standardVersion.trim()} (head-of-main; see [App. D Versions index](/appendix/d-changes/#versions)).
+**Status:** Draft — pre-1.0, head-of-main lockstep.
 **Source of truth:** the Rust parser in `cli/crates/cook-lang/`.
 
 The Cook Standard is the authoritative specification of the Cookfile language. It is maintained in lockstep with the `main` branch: any change that affects language surface MUST be reflected in the Standard in the same commit that changes the implementation.
