@@ -81,3 +81,16 @@ sidebar:
 **Impact.** Prose sources changed in bulk; rendered output unchanged. External deep links using the old `#sec-N-M-K` anchors break — the Standard is pre-release, no external consumers were affected. A new build-time lint rejects any bare `§ N.M` in prose to prevent regressions.
 
 **Conformance.** No impact. The change is authoring-surface only.
+
+## D.11. CS-0011 — Remove top-level variable declarations. [#changes.cs-0011]
+
+**Date:** 2026-04-26
+**Sections affected:** §{lexical.tokens}, §{lexical.identifiers}, §{lexical.keywords}, §{lexical.strings}, §{lexical.line-classification} (test-cascade renumber); §{grammar.overview}, §{grammar.top-level-ordering}, §{grammar.config-blocks}, §{grammar.step-dispatch}; grammar.var-declarations (deleted); §{grammar.config-composition} (new); §{recipes.step-kinds} (Note 4.4.2 deleted); §{lua.env-alias} (new); App. A.1, A.2, A.4, A.5; App. B.2.4 (rewritten), B.3.8 (deleted), B.3.9 (new).
+
+**Summary:** Removes the top-level `variable_declaration` form (`NAME "value"`) and its supporting machinery: the `VarDecl` lexer token (§{lexical.tokens}), the blocking-keyword half of the contextual reservation (§{lexical.keywords}), the line-classification cascade test for the form (§{lexical.line-classification} test 11; the former test 12 renumbers to 11), and the recipe-body reclassification rule (§{grammar.step-dispatch}). The §3.3 prose-grammar section, the App. A.2 production, the App. A.2 "Identifiers blocked" rule, and the App. A.4 `shell_command` grammar comment's parenthetical reference are all deleted; App. B.2.4 is rewritten to motivate the contextual-keyword rule purely on the reserved-recipe-segment set, and App. B.3.8 is deleted as moot.
+
+In place of the removed surface, the Standard adds §{grammar.config-composition} (new §3.6.1) specifying that a Cookfile MAY contain at most one unnamed `config_block` (the *base config*) and zero or more named `config_block`s (the *overlay configs*); a conforming implementation MUST select at most one overlay at load time by an implementation-defined mechanism, MUST reject a selection that does not match any declared overlay, and MUST execute base before overlay against shared Cook Lua API state with last-write-wins semantics on overlay writes. Both bodies execute during the load phase, after `use` resolution and before recipe registration. §{lua.env-alias} (new §6.1.2) binds the bare global `env` to `cook.env` inside `config_block` bodies only, bringing the `env.X = "..."` usage already shown in examples into normative conformance. App. B.3.9 (new) records the design rationale for consolidating variables into config blocks, the single-overlay choice over multi-select, and the implementation-defined selection mechanism.
+
+**Implementation status.** This change is spec-only. The Rust parser (`cli/crates/cook-lang`) and `tree-sitter-cook` continue to accept the old form; bringing them into conformance with the Standard at this version is the subject of a follow-up CS that will also add the §3.6.1 conformance fixtures (base-only, base + overlay last-write-wins, overlay-only, missing-overlay-is-error, base-runs-before-overlay).
+
+**Reference:** this commit.
