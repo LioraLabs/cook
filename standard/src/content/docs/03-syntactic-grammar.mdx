@@ -102,6 +102,8 @@ Every `config_block` MUST be terminated by a line whose sole non-whitespace cont
 
 A `config_body` MAY be empty — that is, the `end` line MAY immediately follow the header line — in which case the block contributes the empty Lua source.
 
+Composition of multiple `config_block`s — base + at most one selected overlay — is specified in §{grammar.config-composition}.
+
 ### Example 3.6.1
 
 ```cook
@@ -123,6 +125,45 @@ Three config blocks: one unnamed, two named. Each body is raw Lua source that th
 ### Note 3.6.1
 
 The `config_body` is collected by source-line range rather than by re-tokenising the enclosed lines. Lines that would otherwise tokenise as Cookfile constructs (for example, a line that looks like `BARE_IDENTIFIER "value"`) are passed through verbatim to the Lua runtime.
+
+### 3.6.1. Config-block composition [#grammar.config-composition]
+
+A Cookfile MAY contain at most one unnamed `config_block` (the *base config*) and zero or more named `config_block`s (the *overlay configs*). At load time, a conforming implementation MUST select at most one overlay config by name. The selection mechanism is implementation-defined.
+
+A conforming implementation MUST report a load-time error when the selected name does not match any named `config_block` declared in the Cookfile. The diagnostic MUST identify the requested name.
+
+When a base config is present, its body MUST execute first against the Cook Lua API tables defined in §{lua} — including `cook.env` and any other mutable state those tables expose. When an overlay is selected, its body MUST execute second against the same tables. The overlay's writes therefore observe values established by the base; an overlay write to a key already set by the base replaces the base's value (last-write-wins). When no overlay is selected, only the base (if present) executes. When neither is present, no `config_block` Lua executes during the load phase.
+
+Both bodies execute during the load phase, after `use` resolution (§{lua.use-env}) and before recipe registration (§{exec}).
+
+#### Example 3.6.1.1
+
+```cook
+use cpp
+
+config
+    env.CC = "gcc"
+    env.CXXFLAGS = "-O0 -g"
+end
+
+config release
+    env.CXXFLAGS = "-O3"
+end
+
+config dev
+    env.CXXFLAGS = "-O0 -g -DDEBUG"
+end
+
+recipe build
+    cook "build/main" using "{CC} {CXXFLAGS} -o {out} main.c"
+end
+```
+
+When no overlay is selected, the base alone executes and `{CXXFLAGS}` resolves to `-O0 -g`. When `release` is selected, the base runs first (`env.CXXFLAGS = "-O0 -g"`), then `release` runs (`env.CXXFLAGS = "-O3"`); `{CXXFLAGS}` resolves to `-O3`. Selecting a name that does not appear as a named `config_block` in the Cookfile is a load-time error.
+
+#### Note 3.6.1.1
+
+Multi-overlay selection is deliberately not specified in this revision: per the rule above, a conforming implementation permits at most one overlay. The single-overlay restriction avoids ordering questions across multiple selected overlays and is non-breaking to relax in a future revision; the design rationale appears in App. B.
 
 ## 3.7. Recipes [#grammar.recipe-syntax]
 A `recipe` is the form `recipe_header NEWLINE recipe_body "end" NEWLINE?` (App. A.3). A `recipe_header` is one of two alternatives:
