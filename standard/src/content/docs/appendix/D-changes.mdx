@@ -5,7 +5,12 @@ sidebar:
 ---
 # Appendix D. Changes (informative)
 
-> **Informative.** This appendix is the chronological changelog of amendments to the Cook Standard. Each entry has a stable `CS-NNNN` ID, a one-line summary, the list of sections affected, and the commit / PR reference.
+> **Informative.** This appendix is the chronological changelog of amendments to the Cook Standard. Each entry has a stable `CS-NNNN` ID, a one-line summary, the list of sections affected, and the commit / PR reference. Entries are grouped under tagged versions; see the [Versions](#versions) index immediately below.
+
+## Versions
+
+- **v0.2** (`cs-standard/v0.2`, 2026-04-26) — CS-0011, CS-0012
+- **v0.1** (`cs-standard/v0.1`, 2026-04-22..2026-04-24) — CS-0001 through CS-0010
 
 ## CS-0001 — Cook Standard v0.1 established
 
@@ -99,7 +104,7 @@ In place of the removed surface, the Standard adds §{grammar.config-composition
 
 **Date:** 2026-04-26
 **Version:** v0.2
-**Sections affected:** §{intro.version} (rewritten); §{intro.conformance} (amended); App. B.0.1 (new); App. D (new Versions index, per-CS `**Version:**` lines, this entry); `standard/VERSION` (new); `standard/src/content/docs/index.mdx` (Status header now reads from VERSION); `standard/scripts/slug-mapping.ts` (new slug `rationale.versioning-pre-1-0`, new slug `changes.versions`); `standard/README.md` (cross-link to the cut procedure); `CONTRIBUTING.md` (two new subsections: cut procedure and implementation conformance claims).
+**Sections affected:** §{intro.version} (rewritten); §{intro.conformance} (amended); App. B.0.1 (new); App. D (new Versions index, per-CS `**Version:**` lines, this entry); `standard/VERSION` (new); `standard/src/content/docs/index.mdx` (Status header now reads from VERSION); `standard/scripts/slug-mapping.ts` (new slug `rationale.versioning-pre-1-0`); `standard/README.md` (cross-link to the cut procedure); `CONTRIBUTING.md` (two new subsections: cut procedure and implementation conformance claims).
 
 **Summary:** Adopts `MAJOR.MINOR` versioning for the pre-1.0 era. A *cut* (= MINOR bump + App. D Versions index entry + `cs-standard/vX.Y` git tag, all in one commit on `main`) MAY batch one or more CS entries; CSes per cut and version cadence are independent. No PATCH track pre-1.0. The transition to strict SemVer at 1.0 is deferred.
 
