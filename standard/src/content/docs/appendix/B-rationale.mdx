@@ -8,7 +8,17 @@ sidebar:
 > **Informative.** This appendix records the reasoning behind design decisions in the Standard. It is non-binding.
 
 ## B.0. On §{intro} Introduction [#rationale.intro]
-_To be filled in._
+
+### B.0.1. Versioning posture pre-1.0 [#rationale.versioning-pre-1-0]
+The §{intro.version} model — `MAJOR.MINOR` pre-1.0, batched cuts, convention-only conformance claim, git-tagged corpus — embeds four design decisions worth recording.
+
+**Why `MAJOR.MINOR` not strict SemVer pre-1.0.** Breaking changes are normal pre-1.0; the discipline of distinguishing MAJOR from MINOR is performative when every cut may contain a breakage. PATCH buys nothing — there is no installed base whose conformance is broken by a typo fix that nobody has to back-port. Strict SemVer arrives at 1.0 along with an installed base for which the discipline starts to matter.
+
+**Why version cuts MAY batch CSes.** Authoring (one CS per merge) and publication (one cut per N CSes) are different concerns. Batching keeps the cut cadence at "when an implementation needs to claim a new version" rather than "after every spec edit," which would inflate the version number into the dozens with little reader benefit.
+
+**Why the conformance-claim mechanism is convention, not a normative requirement.** No consumer pre-1.0; §{intro.non-scope} excludes the CLI surface; no automated check enforces a MUST without an ecosystem to enforce against. The convention is documented in `CONTRIBUTING.md`, where it is amendable without a CS.
+
+**Why the corpus is identified by git tag rather than versioned subdirectory.** Git already snapshots prose and corpus together at the tag. Versioned subdirectories duplicate that snapshot in a place where it must be manually maintained; they also imply a back-port story that pre-1.0 explicitly disclaims.
 
 ## B.1. On §{notation} Notation and conventions [#rationale.notation]
 _To be filled in._

@@ -136,6 +136,7 @@ export const SLUG_MAPPING: Record<string, string> = {
 
   // ── Appendix B — Rationale (informative) ──────────────────────────────────
   'sec-B-0':     'rationale.intro',
+  'sec-B-0-1':   'rationale.versioning-pre-1-0',
   'sec-B-1':     'rationale.notation',
   'sec-B-2':     'rationale.lexical',
   'sec-B-2-2':   'rationale.one-token-per-line',
