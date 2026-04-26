@@ -13,6 +13,11 @@ use cook_lang::ast::*;
 use cook_lang::parse;
 
 fn corpus_root() -> PathBuf {
+    if let Ok(override_path) = std::env::var("COOK_CONFORMANCE_CORPUS") {
+        return PathBuf::from(override_path)
+            .canonicalize()
+            .unwrap_or_else(|e| panic!("COOK_CONFORMANCE_CORPUS does not resolve: {}", e));
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../../standard/conformance")
         .canonicalize()
@@ -250,5 +255,15 @@ fn negative_conformance_corpus() {
         failures.is_empty(),
         "negative conformance failures:\n\n{}",
         failures.join("\n")
+    );
+}
+
+#[test]
+fn conformance_summary() {
+    let root = corpus_root();
+    eprintln!(
+        "cook-lang claims Cook Standard v{} (corpus: {})",
+        cook_lang::COOK_STANDARD_VERSION,
+        root.display(),
     );
 }
