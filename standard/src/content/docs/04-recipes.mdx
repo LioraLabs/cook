@@ -131,10 +131,6 @@ The `>` and `>{` forms are not subject to this cascade: they are selected at the
 
 The "separator" after a step keyword is space, tab, or end of token. A Content line whose first token is `cooking` is a `shell_command`, not a malformed `cook_step`. See parser test `test_strip_keyword`.
 
-### Note 4.4.2
-
-A top-level `variable_declaration` — a line of the form `NAME "value"` — is lexed as a `Token::VarDecl` regardless of position in the file. Inside a recipe body, a conforming implementation MUST reclassify a `VarDecl` token as a `shell_command` whose text is the original source (§{grammar-appendix.steps}, `shell_command` grammar comment). See parser test `test_var_after_recipe_is_shell_command`.
-
 ## 4.5. `cook` step — single-output form [#recipes.cook-single-output]
 A `cook_step` (§{grammar-appendix.steps}, `cook_step`) declares a build output. The single-output form has exactly one `STRING` output pattern before the optional `using` clause:
 
