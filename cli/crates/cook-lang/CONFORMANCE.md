@@ -4,7 +4,7 @@ This crate is the current reference implementation of the [Cook Standard](../../
 
 ## Claim
 
-`cook-lang` claims **Cook Standard v0.1**.
+`cook-lang` claims **Cook Standard v0.2**.
 
 The claim is the constant `COOK_STANDARD_VERSION` in `src/lib.rs`. The constant is the single source of truth; the README and `cook --version` mirror it.
 
@@ -30,7 +30,7 @@ The script materializes the corpus from the `cs-standard/v0.1` git tag into a te
 
 CSes that this crate is in the middle of implementing — included here when the parser is mid-catch-up between cuts. The conformance harness output is authoritative; this list is a human summary.
 
-- **CS-0011** (top-level VarDecl removal): pending. The parser currently accepts top-level `NAME "value"` as a variable declaration, which the Standard at v0.2 rejects. See `standard/specs/2026-04-26-remove-vardecl-design.md` for the spec design.
+None at this version.
 
 ## Bumping the claim
 
