@@ -94,3 +94,21 @@ In place of the removed surface, the Standard adds §{grammar.config-composition
 **Implementation status.** This change is spec-only. The Rust parser (`cli/crates/cook-lang`) and `tree-sitter-cook` continue to accept the old form; bringing them into conformance with the Standard at this version is the subject of a follow-up CS that will also add the §3.6.1 conformance fixtures (base-only, base + overlay last-write-wins, overlay-only, missing-overlay-is-error, base-runs-before-overlay).
 
 **Reference:** this commit.
+
+## D.12. CS-0012 — Cook Standard versioning, App. D reshape, conformance-claim convention. [#changes.cs-0012]
+
+**Date:** 2026-04-26
+**Version:** v0.2
+**Sections affected:** §{intro.version} (rewritten); §{intro.conformance} (amended); App. B.0.1 (new); App. D (new Versions index, per-CS `**Version:**` lines, this entry); `standard/VERSION` (new); `standard/src/content/docs/index.mdx` (Status header now reads from VERSION); `standard/scripts/slug-mapping.ts` (new slug `rationale.versioning-pre-1-0`, new slug `changes.versions`); `standard/README.md` (cross-link to the cut procedure); `CONTRIBUTING.md` (two new subsections: cut procedure and implementation conformance claims).
+
+**Summary:** Adopts `MAJOR.MINOR` versioning for the pre-1.0 era. A *cut* (= MINOR bump + App. D Versions index entry + `cs-standard/vX.Y` git tag, all in one commit on `main`) MAY batch one or more CS entries; CSes per cut and version cadence are independent. No PATCH track pre-1.0. The transition to strict SemVer at 1.0 is deferred.
+
+`standard/VERSION` becomes the canonical machine-readable version source; the docs index `index.mdx` imports it via Vite's `?raw` and renders `v{VERSION}` in the page header. §{intro.conformance} is amended to define what "conforms to Cook Standard v0.X" means (the implementation satisfies the existing three points against the prose and corpus of the `cs-standard/v0.X` tag); the mechanism by which an implementation claims a version is implementation-defined and not normatively required.
+
+App. D is restructured: a top-of-page Versions index lists each cut and the CSes it covers; every CS body now carries a `**Version:**` line between `**Date**` and `**Sections affected**`. CS-0001 through CS-0010 are grouped under v0.1; CS-0011 and CS-0012 are grouped under v0.2.
+
+App. B.0.1 (new) records the rationale for `MAJOR.MINOR` over strict SemVer pre-1.0, batched cuts, convention-only conformance claims, and git-tagged corpus. `CONTRIBUTING.md` gains the procedural recipe for cutting a version and the project convention by which an implementation claims a Standard version.
+
+**Implementation status.** This change is authoring-surface only. No conformance-corpus changes. Two `cs-standard/vX.Y` tags are cut as a manual post-merge step (see the design's §4 for the exact `git merge-base` and `git tag` invocations).
+
+**Reference:** this commit.
