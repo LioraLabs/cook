@@ -15,6 +15,7 @@ sidebar:
 ## CS-0001 — Cook Standard v0.1 established
 
 **Date:** 2026-04-22
+**Version:** v0.1
 **Sections affected:** entire Standard (establishment).
 **Summary:** Initial skeleton established. Chapters 0, 1 and Appendix A are fully written; chapters 2–7 ship as numbered outlines with `NORMATIVE-TODO` stubs referencing the Rust parser as the de-facto authority. Conformance corpus and `cook-lang` integration harness are wired. `tree-sitter-cook` is known stale and is NOT wired for conformance in this change; see `CS-0002`.
 **Reference:** Established in the commit that introduces `docs/standard/`.
@@ -22,6 +23,7 @@ sidebar:
 ## CS-0002 — Planned: tree-sitter-cook conformance audit
 
 **Date:** planned.
+**Version:** v0.1
 **Sections affected:** none in the Standard itself. This entry is a forward reference to a follow-up plan that will audit `tree-sitter-cook/grammar.js` against the Standard and bring it into conformance, at which point a tree-sitter harness against the same corpus will be added alongside the existing `cook-lang` harness.
 **Summary:** Tree-sitter currently lags behind the Rust parser on several constructs: multi-output cook steps, shell-block `using` clauses, `test` steps, ingredient excludes (`!"..."`), Lua-code config blocks, and the module-call heuristic. The follow-up plan will: (a) enumerate divergences, (b) update `grammar.js` and its externals, (c) wire a tree-sitter corpus against `docs/standard/conformance/`, (d) verify both implementations agree.
 **Reference:** to be filled when the plan is written.
@@ -29,6 +31,7 @@ sidebar:
 ## CS-0003 — §{lexical} Lexical structure filled
 
 **Date:** 2026-04-22
+**Version:** v0.1
 **Sections affected:** §{lexical.source-representation}, §{lexical.tokens}, §{lexical.identifiers}, §{lexical.keywords}, §{lexical.strings}, §{lexical.comments}, §{lexical.numbers}, §{lexical.brace-blocks}, §{lexical.line-classification}, App. B.2 (chapter intro plus B.2.2, B.2.3, B.2.4).
 **Summary:** Normative prose for chapter 2 filled, replacing the `NORMATIVE-TODO` stubs in §{lexical.source-representation}–2.6 and §{lexical.numbers}–2.10. §{lexical.line-prefixes} (line prefixes) was established by the PoC and is unchanged. The cascade in §{lexical.line-classification} codifies the lexer's first-match ordering with a defined "keyword separator" term, and each section grounds its non-obvious edge cases in a governing test under `cli/crates/cook-lang/src/`. Appendix B gains three rationale subsections covering one-token-per-line, ASCII-only identifiers, and contextual keyword reservation.
 **Reference:** this commit.
@@ -36,6 +39,7 @@ sidebar:
 ## CS-0004 — §{grammar} Syntactic grammar filled
 
 **Date:** 2026-04-22
+**Version:** v0.1
 **Sections affected:** §{grammar.overview}–3.8, App. B.3.
 **Summary:** Replaced the eight `NORMATIVE-TODO` stubs in §{grammar} (CS-stub-11 through CS-stub-18) with normative prose walking through the top-level grammar, top-level ordering, variable declarations, `use` and `import` declarations, config blocks, recipes (explicit and implicit headers, dependency lists, reserved-segment rule), and the step-dispatch cascade inside a recipe body. Filled App. B.3 with a chapter-level intro and three rationale subsections covering the top-level ordering rule, the column-0 requirement on implicit headers, and the recipe-body treatment of `NAME "value"`.
 **Reference:** this commit.
@@ -43,6 +47,7 @@ sidebar:
 ## CS-0005 — §{recipes} Recipes and step kinds filled
 
 **Date:** 2026-04-22
+**Version:** v0.1
 **Sections affected:** §{recipes.header-forms}–4.11, App. B.4.
 **Summary:** Normative prose filled for the recipe body: explicit and implicit header forms with the column-0 restriction on the implicit form (§{recipes.header-forms}), dependency-list semantics with parse-time/load-time split (§{recipes.dep-list}), the single `ingredients` line with include and `!"…"` exclude items (§{recipes.ingredients}), the seven-step-kind cascade and its dispatch priority (§{recipes.step-kinds}), the single-output `cook` step with its four forms including declaration-only (§{recipes.cook-single-output}), the multi-output `cook` step with its block-only `using` rule (§{recipes.cook-multi-output}), the `plate` single-template step (§{recipes.plate-step}), the `test` step with `timeout` and `should_fail` modifiers in fixed order (§{recipes.test-step}), `lua_line` and `lua_block` delimitation deferring semantics to §{xref}/§{lua} (§{recipes.lua-steps}), plain and interactive shell steps with `@` as a dispatch-time marker (§{recipes.shell-steps}), and the module-call heuristic with single-line and multi-line brace handling (§{recipes.module-call-steps}). App. B.4 records the rationale for rejecting `cook "a" "b" using "cmd"`, the one-template `plate` shape, and the two-token module-call heuristic.
 **Reference:** this commit.
@@ -50,6 +55,7 @@ sidebar:
 ## CS-0006 — §{xref} Execution model filled
 
 **Date:** 2026-04-22
+**Version:** v0.1
 **Sections affected:** §{xref.name-references}–5.8, App. B.5.
 **Summary:** Replaced the `NORMATIVE-TODO` stubs for §{xref.name-references}–`§ 5.8` with normative prose defining the two-phase register/execute model, capture-mode purity, step groups and within-recipe parallelism, explicit and implicit cross-recipe dependencies, exact-string ingredient–serves matching, interactive-step draining, abstract cache semantics keyed on source-derived observable inputs, and syntactic-before-semantic diagnostic ordering. Added five B.5.K rationale subsections covering register-phase purity, exact string matching, `@` draining, cache abstraction, and diagnostic-ordering scope.
 **Reference:** this commit.
@@ -57,6 +63,7 @@ sidebar:
 ## CS-0007 — §{lua} Cook Lua API filled
 
 **Date:** 2026-04-22
+**Version:** v0.1
 **Sections affected:** §{lua.api-overview}–6.7, App. B.6.
 **Summary:** Replaced the §{lua} stubs with normative prose defining the Cook Lua API surface, classified by register-phase vs. execute-phase: the `cook` table (`cook.add_unit`, `cook.sh`, `cook.exec`, `cook.interactive`, `cook.recipe`), the using-block globals (`input`, `output`, `inputs`, `outputs`, `input_N`), the `fs.*` filesystem helpers, the `path.*` path helpers, and the shell-using-string placeholders (`{in}`, `{out}`, `{all}`, `{stem}`, `{name}`, `{ext}`, `{dir}`). Added App. B.6 rationale covering the phase-split design, why shell placeholders and using-block globals coexist, why `fs.*` and `path.*` are separate namespaces, why `cook.add_unit` is register-phase only, and why recipe-name tokens win over `cook.env` in the using-string fallback.
 **Reference:** this commit.
@@ -64,6 +71,7 @@ sidebar:
 ## CS-0008 — §{modules} Modules filled
 
 **Date:** 2026-04-22
+**Version:** v0.1
 **Sections affected:** §{modules.overview}–7.6, App. B.7.
 **Summary:** Normative prose filled for the module system: the `use`/`import` split (§{modules.overview}), `use` resolution with built-in-then-`cook_modules/` ordering (§{modules.import-declaration}), `import` path semantics (§{modules.qualified-refs}), the observable `cook_modules/` lookup algorithm with flat-then-directory precedence (§{modules.duplicates-and-cycles}), the module authoring contract including the `init` hook (`§ 7.5`), and the parse-time/load-time split for duplicate-import and cycle detection (`§ 7.6`). App. B.7 records the rationale for the two-declaration design, built-in resolution order, duplicate-parse-time enforcement, cycle load-time enforcement, and module-name/reserved-segment non-collision.
 **Reference:** this commit.
@@ -71,6 +79,7 @@ sidebar:
 ## CS-0009 — Cross-recipe references redesign
 
 **Date:** 2026-04-24
+**Version:** v0.1
 **Sections affected:** §{recipes.dep-list}, §{xref} (new), §{lua.shell-placeholders}, §{lua.use-env} (new), §{modules} (renamed), §{exec} (moved from §{xref}). App. B.5.N/O/P (new). App. C.N (new).
 **Summary:** Introduced §{xref} "Cross-recipe references" as the normative home for name-reference surface (dep-list, bare placeholder, accessor placeholder), resolution, path accessors, dep-driven iteration, string-substitution, and dependency implications. Split the former §{modules} "Modules" into §{lua.use-env} (`use` declaration, under Cook Lua API) and §{modules} "Cross-Cookfile composition" (`import` and qualified references). Moved "Execution model" to §{exec} so that later-chapter references do not forward-reference undefined surface. Removed the ingredient/serves byte-equality implicit-dep rule from the Execution model (old §{xref.string-substitution}); cross-recipe ordering is now established only by name references. Added rationale B.5.N (removal motivation), B.5.O (accessor-placeholder iteration surface vs. explicit `from`), and B.5.P (closed accessor set). Added a worked example under App. C. Runtime: `cli/crates/cook-engine/src/analyzer.rs` no longer constructs edges from ingredient/serves string equality.
 **Reference:** this commit.
@@ -78,6 +87,7 @@ sidebar:
 ## D.10. CS-0010 — Slug-based cross-references. [#changes.cs-0010]
 
 **Date:** 2026-04-24
+**Version:** v0.1
 **Sections affected:** §{notation.stable-anchors} (new); all prose source files (bulk rewrite of heading markers and inline refs); `scripts/slug-mapping.ts` (new registry file).
 **Summary:** Cross-references in this Standard are now author-assigned stable slugs of the form `chapter.leaf`. Prose refs use `§{chapter.leaf}` in source and render as the current section number. Heading anchors use the slug directly (URLs such as `/02-lexical/#lexical.identifiers`). The prior positional `sec-N-M-K` anchor scheme is removed.
 
@@ -90,6 +100,7 @@ sidebar:
 ## D.11. CS-0011 — Remove top-level variable declarations. [#changes.cs-0011]
 
 **Date:** 2026-04-26
+**Version:** v0.2
 **Sections affected:** §{lexical.tokens}, §{lexical.identifiers}, §{lexical.keywords}, §{lexical.strings}, §{lexical.line-classification} (test-cascade renumber); §{grammar.overview}, §{grammar.top-level-ordering}, §{grammar.config-blocks}, §{grammar.step-dispatch}; grammar.var-declarations (deleted); §{grammar.config-composition} (new); §{recipes.step-kinds} (Note 4.4.2 deleted); §{lua.env-alias} (new); App. A.1, A.2, A.4, A.5; App. B.2.4 (rewritten), B.3.8 (deleted), B.3.9 (new).
 
 **Summary:** Removes the top-level `variable_declaration` form (`NAME "value"`) and its supporting machinery: the `VarDecl` lexer token (§{lexical.tokens}), the blocking-keyword half of the contextual reservation (§{lexical.keywords}), the line-classification cascade test for the form (§{lexical.line-classification} test 11; the former test 12 renumbers to 11), and the recipe-body reclassification rule (§{grammar.step-dispatch}). The §3.3 prose-grammar section, the App. A.2 production, the App. A.2 "Identifiers blocked" rule, and the App. A.4 `shell_command` grammar comment's parenthetical reference are all deleted; App. B.2.4 is rewritten to motivate the contextual-keyword rule purely on the reserved-recipe-segment set, and App. B.3.8 is deleted as moot.
