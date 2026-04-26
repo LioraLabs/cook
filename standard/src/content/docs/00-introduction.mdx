@@ -34,8 +34,14 @@ These are implementation concerns and are documented in `docs/architecture/`.
 ## 0.4. Normative and informative material [#intro.normative-informative]
 Chapters `00` through `08` and Appendix A are normative. Appendices B, C, and D are informative. Within a normative chapter, **Example** and **Note** blocks are informative unless explicitly marked otherwise; the surrounding paragraphs are normative when they contain RFC 2119 keywords. See §{notation.normative-blocks} for the full convention.
 
-## 0.5. Version stance [#intro.version]
-The Standard tracks the state of `main`. There is no version pragma in the Cookfile header at this time. A future Cook 1.0 release could introduce dual-track versioning (tagged snapshots alongside head-of-main); this is out of scope for the present draft.
+## 0.5. Versioning [#intro.version]
+Cook Standard versions are of the form `MAJOR.MINOR`. The current version is recorded in `standard/VERSION` and rendered in the site header. Pre-1.0, MINOR increments on each *version cut*. A cut MAY contain one or more CS entries (App. D); authoring granularity (one CS per merge) and publication granularity (one cut per N CSes) are decoupled. There is no PATCH track pre-1.0; clarifications and typo fixes that ship without a CS land on head-of-`main` and are absorbed into the next cut.
+
+A cut consists of three actions performed in a single commit on `main`: bumping `standard/VERSION`, adding the new version to the top of the App. D Versions index, and tagging the commit `cs-standard/vX.Y`. The tag and index entry together constitute the published cut.
+
+CS-0001 through CS-0010 are grouped retroactively under v0.1; CS-0011 (top-level `variable_declaration` removal) and the present versioning-machinery CS ship in v0.2.
+
+There is no version pragma in the Cookfile header at this time. At 1.0, the Standard will transition to strict SemVer (`MAJOR.MINOR.PATCH`); the rules for that transition are out of scope for the present draft.
 
 ## 0.6. Relationship to `docs/architecture/` [#intro.architecture-relationship]
 `docs/standard/` defines what Cookfiles **mean**. `docs/architecture/` documents how the current reference implementation **works** (parser module layout, runtime internals, scheduler thread-pool design, cache layout). Implementation documents can evolve freely without touching the Standard, provided they do not make normative claims about language behavior.
@@ -48,3 +54,5 @@ A conforming implementation:
 3. For accepted Cookfiles, MUST produce a parse whose structural shape matches the expected shape recorded for each case.
 
 See §{modules} of the Standard (Modules) for additional module-specific conformance requirements.
+
+An implementation is said to **conform to Cook Standard v0.X** when, against the prose and corpus of the `cs-standard/v0.X` tag, it satisfies the three points above. The mechanism by which an implementation claims a version (a README statement, a library constant, a CLI flag, or any other surface) is implementation-defined and is not normatively required by this Standard.
