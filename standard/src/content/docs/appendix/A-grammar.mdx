@@ -14,23 +14,19 @@ toplevel_item         ::= recipe
                        | config_block
                        | use_declaration
                        | import_declaration
-                       | variable_declaration
                        | comment
                        | NEWLINE
 ```
 
 ## A.2. Top-level declarations [#grammar-appendix.declarations]
 ```ebnf
-variable_declaration  ::= BARE_IDENTIFIER STRING NEWLINE
 use_declaration       ::= "use" name NEWLINE
 import_declaration    ::= "import" BARE_IDENTIFIER path NEWLINE
 config_block          ::= "config" name? NEWLINE config_body "end" NEWLINE
 config_body           ::= LUA_SOURCE
 ```
 
-**Ordering (normative).** `variable_declaration`, `use_declaration`, `import_declaration`, and `config_block` MUST appear before the first `recipe`. A conforming implementation MUST reject a Cookfile that places any of these after a recipe.
-
-**Identifiers blocked from `variable_declaration`.** The identifiers `recipe`, `config`, `end`, `ingredients`, `cook`, `plate`, `using`, `use`, `import`, `test` MUST NOT be used as the left-hand side of a `variable_declaration`. A conforming implementation MUST reject any such declaration.
+**Ordering (normative).** `use_declaration`, `import_declaration`, and `config_block` MUST appear before the first `recipe`. A conforming implementation MUST reject a Cookfile that places any of these after a recipe.
 
 **Duplicate `config_block` rule.** At most one unnamed `config_block` is permitted per Cookfile. Named `config_block` names MUST be unique. A conforming implementation MUST reject a Cookfile that violates either constraint.
 
@@ -98,10 +94,7 @@ module_call           ::= MODULE_CALL_TEXT NEWLINE?
 
 shell_command         ::= SHELL_LINE_CONTENT NEWLINE
                           /* Any Content line not matching a preceding
-                             alternative. A line of the form NAME "value"
-                             (which would be a variable_declaration at the
-                             top level) is treated as a shell_command inside
-                             a recipe body. See § 3.8. */
+                             alternative. See § 3.8. */
 ```
 
 **Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before `using`, the `using_clause` MUST use `inline_lua_block` or `shell_block`. A conforming implementation MUST reject the form `cook "a" "b" using STRING`.
@@ -141,7 +134,7 @@ BRACE_BALANCED        ::= /* text in which `{` and `}` counted outside of
 MODULE_CALL_TEXT      ::= /* see § 4.11 */
 ```
 
-**`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting). Variable declaration left-hand sides are always `BARE_IDENTIFIER`.
+**`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting).
 
 **`lua_line` MAY be empty.** The `>` prefix alone (with no following content) is a valid `lua_line` producing an empty Lua expression.
 
