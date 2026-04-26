@@ -1,0 +1,8 @@
+config
+    cook.env.CC = "gcc"
+    cook.env.CFLAGS = "-Wall"
+end
+
+recipe "build"
+    @echo hello
+end

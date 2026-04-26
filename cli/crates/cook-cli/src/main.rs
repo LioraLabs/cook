@@ -13,13 +13,21 @@ mod test_output;
 mod watcher;
 mod workspace;
 
-use clap::Parser;
+use clap::CommandFactory;
 
 use cli::{Cli, Command};
 use pipeline::{cmd_dag, cmd_init, cmd_menu, cmd_run, cmd_serve, cmd_test};
 
 fn main() {
-    let cli = Cli::parse();
+    let version_string: &'static str = Box::leak(Box::new(format!(
+        "{} (Cook Standard v{})",
+        env!("CARGO_PKG_VERSION"),
+        cook_lang::COOK_STANDARD_VERSION,
+    )));
+    let cli_command = <Cli as CommandFactory>::command().version(version_string);
+    let matches = cli_command.get_matches();
+    let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)
+        .expect("clap derive guarantees this conversion");
 
     let result = if cli.dag {
         match &cli.command {

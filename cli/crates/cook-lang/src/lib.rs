@@ -5,6 +5,16 @@ pub(crate) mod lua_block;
 pub(crate) mod recipe;
 pub(crate) mod shell_block;
 
+/// The Cook Standard version this crate claims to fully implement.
+///
+/// "Fully implement" means every case under `standard/conformance/` (relative
+/// to the workspace root, or under `$COOK_CONFORMANCE_CORPUS` if set) passes
+/// the conformance harness in `tests/conformance.rs`.
+///
+/// Move this constant in lockstep with `standard/VERSION` when the parser
+/// catches up to a new cut. See `cli/crates/cook-lang/CONFORMANCE.md`.
+pub const COOK_STANDARD_VERSION: &str = "0.2";
+
 use ast::*;
 use lexer::*;
 use recipe::{parse_config_block_lua, parse_recipe};
@@ -23,7 +33,6 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
     let source_lines: Vec<&str> = source.lines().collect();
     let mut pos = 0;
     let mut recipes = Vec::new();
-    let mut vars = Vec::new();
     let mut config_blocks: Vec<ConfigBlock> = Vec::new();
     let mut uses = Vec::new();
     let mut imports = Vec::new();
@@ -33,16 +42,6 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
         let tok = &tokens[pos];
         match &tok.value {
             Token::Comment(_) | Token::Blank => {
-                pos += 1;
-            }
-            Token::VarDecl { name, value } => {
-                if seen_recipe {
-                    return Err(ParseError::Parse {
-                        line: tok.line,
-                        message: "variable declarations must appear before recipes".to_string(),
-                    });
-                }
-                vars.push((name.clone(), value.clone()));
                 pos += 1;
             }
             Token::ConfigHeader { name } => {
@@ -147,7 +146,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
         }
     }
 
-    Ok(Cookfile { vars, config_blocks, recipes, uses, imports })
+    Ok(Cookfile { config_blocks, recipes, uses, imports })
 }
 
 #[cfg(test)]

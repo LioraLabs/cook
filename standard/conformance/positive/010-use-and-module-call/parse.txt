@@ -1,7 +1,6 @@
 Cookfile
   uses: [UseStatement module_name="cpp" line=1]
   imports: []
-  vars: []
   config_blocks: []
   recipes:
     Recipe name="colorize" line=3

@@ -1,0 +1,11 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: [ConfigBlock name=None body="    cook.env.CC = \"gcc\"\n    cook.env.CFLAGS = \"-Wall\"" line=1]
+  recipes:
+    Recipe name="build" line=6
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Shell interactive=true command="echo hello"

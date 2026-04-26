@@ -16,27 +16,6 @@ pub(crate) fn strip_keyword<'a>(text: &'a str, keyword: &str) -> Option<&'a str>
     None
 }
 
-pub(crate) fn parse_quoted_strings_parser(text: &str, line: usize) -> Result<Vec<String>, ParseError> {
-    let mut result = Vec::new();
-    let mut remaining = text.trim();
-    while !remaining.is_empty() {
-        if !remaining.starts_with('"') {
-            return Err(ParseError::Parse {
-                line,
-                message: format!("expected '\"', found: {}", remaining),
-            });
-        }
-        let rest = &remaining[1..];
-        let end = rest.find('"').ok_or(ParseError::Parse {
-            line,
-            message: "unterminated string".to_string(),
-        })?;
-        result.push(rest[..end].to_string());
-        remaining = rest[end + 1..].trim();
-    }
-    Ok(result)
-}
-
 /// Parse an ingredients line into (includes, excludes).
 /// Includes are bare `"pattern"`, excludes are `!"pattern"`.
 pub(crate) fn parse_ingredients_line(text: &str, line: usize) -> Result<(Vec<String>, Vec<String>), ParseError> {

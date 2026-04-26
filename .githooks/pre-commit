@@ -83,4 +83,44 @@ MSG
   exit 1
 fi
 
+# Second arm: warn when D-changes.mdx grows a new CS-NNNN entry without
+# growing standard/conformance/. Most language CSes ship a corpus case;
+# spec-only CSes (rendering, navigation) legitimately don't, and can
+# bypass this warning with COOK_STANDARD_BYPASS=1.
+
+dchanges_path="standard/src/content/docs/appendix/D-changes.mdx"
+dchanges_changed=0
+conformance_grew=0
+
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  if [ "$path" = "$dchanges_path" ]; then
+    dchanges_changed=1
+  fi
+  case "$path" in
+    standard/conformance/*) conformance_grew=1 ;;
+  esac
+done <<EOF
+$staged
+EOF
+
+if [ "$dchanges_changed" = "1" ]; then
+  # Only warn if the diff adds at least one new "## CS-NNNN" heading.
+  added_cs="$(git diff --cached -- "$dchanges_path" \
+    | grep -E '^\+##[[:space:]]+CS-[0-9]{4}' || true)"
+  if [ -n "$added_cs" ] && [ "$conformance_grew" = "0" ]; then
+    cat >&2 <<'MSG'
+warning: this commit adds a CS entry to D-changes.mdx without growing standard/conformance/.
+
+Most language-surface CSes should ship at least one positive or negative
+conformance case. Spec-only CSes (rendering plugins, doc cleanups,
+navigation) legitimately do not; bypass with COOK_STANDARD_BYPASS=1.
+
+Newly added CS heading(s):
+MSG
+    printf '%s\n' "$added_cs" >&2
+    echo "" >&2
+  fi
+fi
+
 exit 0

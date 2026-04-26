@@ -42,6 +42,18 @@ If you add a new crate that contributes to language surface, update both this li
 - `cli/crates/cook-lang/tests/conformance.rs` walks `standard/conformance/` and asserts the Rust parser's behavior. Run it with `cargo test -p cook-lang --test conformance`.
 - A tree-sitter harness against the same corpus is planned; see `D-changes.mdx` CS-0002.
 
+### `cook-lang` conformance workflow
+
+The Rust parser claims a Cook Standard version via the `pub const COOK_STANDARD_VERSION: &str = "X.Y";` constant in `cli/crates/cook-lang/src/lib.rs`. This constant is the single source of truth; the README and `cook --version` output mirror it.
+
+**Default harness mode.** `cargo test -p cook-lang --test conformance` walks `standard/conformance/` as it exists in the working tree. Every case must pass. When the parser falls behind a spec change, this gate goes red — that's the visible signal to catch up. There is no separate ledger of "pending CSes"; the failing harness is the ledger.
+
+**Backwards-conformance mode.** `standard/scripts/check-conformance-against-tag.sh <vX.Y>` materializes the corpus from the `cs-standard/<vX.Y>` git tag and runs the harness against that corpus. Use this to verify the parser still satisfies a previously-cut version during a brief catch-up window, or to bisect when a regression appeared.
+
+**Bumping the claim.** When the parser catches up to a new cut, bump `COOK_STANDARD_VERSION` in `cli/crates/cook-lang/src/lib.rs` to match `standard/VERSION` in the same commit. Update the claim in `cli/crates/cook-lang/README.md`, the project root `README.md`, and `cli/crates/cook-lang/CONFORMANCE.md`'s "Pending CSes" section. The conformance harness should be green at that commit.
+
+**Brief catch-up windows.** A spec-side commit may land conformance cases for a CS without simultaneously implementing the parser change, in which case the default harness will fail until catch-up. This is allowed. The backwards-conformance script can verify the parser still conforms to the previous cut during the window.
+
 ### Cutting a Cook Standard version
 
 The Standard uses `MAJOR.MINOR` versioning pre-1.0 (see [`§ 0.5`](standard/src/content/docs/00-introduction.mdx)). A *cut* publishes a new MINOR by performing three actions in a single commit on `main`:

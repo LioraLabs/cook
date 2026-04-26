@@ -257,16 +257,6 @@ pub(crate) fn parse_recipe(
                     message: "import declarations must appear before recipes".to_string(),
                 });
             }
-            Token::VarDecl { name: var_name, value } => {
-                // Inside a recipe, NAME "value" is a shell command, not a var decl
-                let command = format!("{} \"{}\"", var_name, value);
-                steps.push(Step::Shell {
-                    command,
-                    line: tok.line,
-                    interactive: false,
-                });
-                pos += 1;
-            }
         }
     }
 

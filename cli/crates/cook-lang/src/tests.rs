@@ -418,22 +418,6 @@ fn test_strip_keyword() {
 }
 
 #[test]
-fn test_bare_vars_parsed() {
-    let source = r#"CC "gcc"
-CFLAGS "-Wall"
-
-recipe "build"
-    echo hello
-end
-"#;
-    let result = parse(source).unwrap();
-    assert_eq!(result.vars.len(), 2);
-    assert_eq!(result.vars[0], ("CC".to_string(), "gcc".to_string()));
-    assert_eq!(result.vars[1], ("CFLAGS".to_string(), "-Wall".to_string()));
-    assert_eq!(result.recipes.len(), 1);
-}
-
-#[test]
 fn test_mixed_named_and_unnamed_config_blocks() {
     let source = "\
 config
@@ -454,24 +438,6 @@ end
 }
 
 #[test]
-fn test_vars_and_configs_together() {
-    let source = r#"CC "gcc"
-
-config "debug"
-    env.CFLAGS = "-g"
-end
-
-recipe "build"
-    echo hello
-end
-"#;
-    let result = parse(source).unwrap();
-    assert_eq!(result.vars.len(), 1);
-    assert_eq!(result.config_blocks.len(), 1);
-    assert_eq!(result.recipes.len(), 1);
-}
-
-#[test]
 fn test_empty_config_block() {
     let source = r#"config "empty"
 end
@@ -486,13 +452,12 @@ end
 }
 
 #[test]
-fn test_var_after_recipe_is_shell_command() {
+fn test_indented_quoted_pair_is_shell_command() {
     let source = r#"recipe "build"
     CC "gcc"
 end
 "#;
     let result = parse(source).unwrap();
-    assert_eq!(result.vars.len(), 0);
     assert_eq!(result.recipes.len(), 1);
     assert!(matches!(
         &result.recipes[0].steps[0],
@@ -631,12 +596,12 @@ fn test_parse_multiple_use_statements() {
 }
 
 #[test]
-fn test_parse_use_with_vars_and_configs() {
-    let source = "use \"cpp\"\nCC \"gcc\"\n\nconfig \"debug\"\n    env.CFLAGS = \"-g\"\nend\n\nrecipe \"build\"\n    echo hello\nend\n";
+fn test_parse_use_with_configs() {
+    let source = "use \"cpp\"\n\nconfig \"debug\"\n    env.CFLAGS = \"-g\"\nend\n\nrecipe \"build\"\n    @echo hello\nend\n";
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.uses.len(), 1);
-    assert_eq!(cookfile.vars.len(), 1);
     assert_eq!(cookfile.config_blocks.len(), 1);
+    assert_eq!(cookfile.recipes.len(), 1);
 }
 
 #[test]

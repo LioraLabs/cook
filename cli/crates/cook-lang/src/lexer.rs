@@ -5,7 +5,6 @@ pub enum Token {
     Comment(String),
     RecipeHeader { name: String, deps: Vec<String> },
     ConfigHeader { name: Option<String> },
-    VarDecl { name: String, value: String },
     UseDecl { name: String },
     ImportDecl { name: String, path: String },
     RecipeEnd,
@@ -85,29 +84,6 @@ fn parse_names(text: &str, line: usize) -> Result<Vec<String>, LexError> {
     Ok(result)
 }
 
-fn try_parse_var_decl(line: &str) -> Option<(String, String)> {
-    let line = line.trim();
-    let space_pos = line.find(|c: char| c == ' ' || c == '\t')?;
-    let name = &line[..space_pos];
-
-    // Var names must not be keywords
-    if matches!(name, "recipe" | "config" | "end" | "ingredients" | "cook" | "plate" | "using" | "use" | "import" | "test") {
-        return None;
-    }
-
-    let rest = line[space_pos..].trim();
-    if !rest.starts_with('"') {
-        return None;
-    }
-    let inner = &rest[1..];
-    let end = inner.find('"')?;
-    let after = inner[end + 1..].trim();
-    if !after.is_empty() {
-        return None;
-    }
-    Some((name.to_string(), inner[..end].to_string()))
-}
-
 pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
     let mut tokens = Vec::new();
 
@@ -184,7 +160,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                 }
             }
         } else if !line.starts_with(|c: char| c.is_whitespace()) {
-            // Check for implicit recipe: bare identifier followed by `:` at column 0
+            // Bare top-level line.
             if let Some(colon_pos) = trimmed.find(':') {
                 let potential_name = &trimmed[..colon_pos];
                 if !potential_name.is_empty()
@@ -198,23 +174,14 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                         name: potential_name.to_string(),
                         deps,
                     }
-                } else if let Some(var) = try_parse_var_decl(trimmed) {
-                    Token::VarDecl { name: var.0, value: var.1 }
                 } else {
                     Token::Content(trimmed.to_string())
                 }
-            } else if let Some(var) = try_parse_var_decl(trimmed) {
-                Token::VarDecl { name: var.0, value: var.1 }
-            } else {
-                Token::Content(trimmed.to_string())
-            }
-        } else if !trimmed.starts_with('@') {
-            if let Some(var) = try_parse_var_decl(trimmed) {
-                Token::VarDecl { name: var.0, value: var.1 }
             } else {
                 Token::Content(trimmed.to_string())
             }
         } else {
+            // Indented line: shell command or `@`-prefix interactive shell.
             Token::Content(trimmed.to_string())
         };
 
@@ -484,32 +451,6 @@ end
     }
 
     #[test]
-    fn test_var_decl() {
-        let tokens = tokenize(r#"CC "gcc""#).unwrap();
-        assert_eq!(tokens.len(), 1);
-        assert_eq!(
-            tokens[0].value,
-            Token::VarDecl {
-                name: "CC".to_string(),
-                value: "gcc".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn test_var_decl_with_spaces_in_value() {
-        let tokens = tokenize(r#"CFLAGS "-Wall -Wextra""#).unwrap();
-        assert_eq!(tokens.len(), 1);
-        assert_eq!(
-            tokens[0].value,
-            Token::VarDecl {
-                name: "CFLAGS".to_string(),
-                value: "-Wall -Wextra".to_string(),
-            }
-        );
-    }
-
-    #[test]
     fn test_config_header() {
         let tokens = tokenize(r#"config "debug""#).unwrap();
         assert_eq!(tokens.len(), 1);
@@ -533,12 +474,6 @@ end
         let tokens = tokenize(r#"use "cpp""#).unwrap();
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].value, Token::UseDecl { name: "cpp".to_string() });
-    }
-
-    #[test]
-    fn test_use_decl_not_var() {
-        let tokens = tokenize(r#"use "cpp""#).unwrap();
-        assert!(!matches!(tokens[0].value, Token::VarDecl { .. }));
     }
 
     #[test]

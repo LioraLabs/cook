@@ -13,6 +13,11 @@ use cook_lang::ast::*;
 use cook_lang::parse;
 
 fn corpus_root() -> PathBuf {
+    if let Ok(override_path) = std::env::var("COOK_CONFORMANCE_CORPUS") {
+        return PathBuf::from(override_path)
+            .canonicalize()
+            .unwrap_or_else(|e| panic!("COOK_CONFORMANCE_CORPUS does not resolve: {}", e));
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../../standard/conformance")
         .canonicalize()
@@ -107,10 +112,6 @@ fn format_import(i: &ImportDecl) -> String {
     )
 }
 
-fn format_var(v: &(String, String)) -> String {
-    format!("({}, {})", repr(&v.0), repr(&v.1))
-}
-
 fn format_config(cb: &ConfigBlock) -> String {
     let name = match &cb.name {
         None    => "None".to_string(),
@@ -128,9 +129,6 @@ fn format_cookfile(c: &Cookfile) -> String {
 
     let imports: Vec<String> = c.imports.iter().map(format_import).collect();
     out.push_str(&format!("  imports: [{}]\n", imports.join(", ")));
-
-    let vars: Vec<String> = c.vars.iter().map(format_var).collect();
-    out.push_str(&format!("  vars: [{}]\n", vars.join(", ")));
 
     let configs: Vec<String> = c.config_blocks.iter().map(format_config).collect();
     out.push_str(&format!("  config_blocks: [{}]\n", configs.join(", ")));
@@ -250,5 +248,15 @@ fn negative_conformance_corpus() {
         failures.is_empty(),
         "negative conformance failures:\n\n{}",
         failures.join("\n")
+    );
+}
+
+#[test]
+fn conformance_summary() {
+    let root = corpus_root();
+    eprintln!(
+        "cook-lang claims Cook Standard v{} (corpus: {})",
+        cook_lang::COOK_STANDARD_VERSION,
+        root.display(),
     );
 }
