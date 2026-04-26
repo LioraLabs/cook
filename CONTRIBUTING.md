@@ -42,6 +42,41 @@ If you add a new crate that contributes to language surface, update both this li
 - `cli/crates/cook-lang/tests/conformance.rs` walks `standard/conformance/` and asserts the Rust parser's behavior. Run it with `cargo test -p cook-lang --test conformance`.
 - A tree-sitter harness against the same corpus is planned; see `D-changes.mdx` CS-0002.
 
+### Cutting a Cook Standard version
+
+The Standard uses `MAJOR.MINOR` versioning pre-1.0 (see [`§ 0.5`](standard/src/content/docs/00-introduction.mdx)). A *cut* publishes a new MINOR by performing three actions in a single commit on `main`:
+
+1. Bump `standard/VERSION` to the next MINOR (e.g. `0.2` → `0.3`).
+2. Add a new entry to the top of the App. D **Versions** index in `standard/src/content/docs/appendix/D-changes.mdx`, listing the CSes the cut covers and the cut date.
+3. Set each batched CS body's `**Version:**` line to the new version.
+
+After the commit lands on `main`, tag it:
+
+```bash
+git tag cs-standard/vX.Y
+git push origin cs-standard/vX.Y
+```
+
+The tag and the index entry together constitute the published cut.
+
+The cut commit MAY also batch the CS that introduced the cut-worthy change (i.e. the CS that adds the `**Version:**` line and the index entry can do so in the same commit that adds its own body). There is no rule against a cut containing exactly one CS — it is simply not required.
+
+**Operating rules.**
+
+- **`**Version:**` records when a CS entry was authored, not when its work ships.** It is never rewritten retroactively. If a CS forward-references work that later ships in a higher version, record the completion as a new CS in the higher version, not by editing the original entry's `**Version:**` line. (Example: CS-0002 forward-references the planned tree-sitter conformance audit; it carries `**Version:** v0.1`. When the audit ships, it gets its own CS entry under the then-current version, and CS-0002 stays at v0.1.)
+- **Update the Versions index date field when additional CSes land in the same in-progress version.** A cut that initially contained only CS-0011 on 2026-04-26 lists the date as `2026-04-26`; if CS-0013 lands in v0.2 on a later day, widen the entry to a date range (`2026-04-26..YYYY-MM-DD`) at that time.
+- **Informative-appendix navigational headings (e.g. App. D's Versions index, future Index/Acknowledgements sections) use Starlight's natural slugifier.** Do NOT add a `[#slug]` marker. The `rehype-clause-anchors` plugin only strips `[#slug]` markers from clause-numbered headings (`N.` or `[A-Z].` prefix); other headings get the marker text leaked into their rendered HTML id. Cross-references to navigational headings use plain markdown links (e.g. `[Versions](#versions)`), not `§{...}` slug refs.
+
+### Implementation conformance claims
+
+The Cook Standard does not normatively require an implementation to expose its claimed Standard version (see [`§ 0.7`](standard/src/content/docs/00-introduction.mdx)). As a project convention:
+
+- **`cli/crates/cook-lang`** — set a `pub const COOK_STANDARD_VERSION: &str = "X.Y";` in the crate root, mirrored into the README badge or status line.
+- **`tree-sitter-cook`** (when CS-0002 lands) — set the claimed version in a header comment in `grammar.js`.
+- **Each implementation's README** — state the claimed version in the project description.
+
+These are not enforced by any automated check pre-1.0; they are a project discipline. When the Standard cuts a new version, each implementation is responsible for either updating its claim or accepting that it now lags the Standard by one version.
+
 ### Running the normative-keyword lint
 
 ````bash
