@@ -112,10 +112,6 @@ fn format_import(i: &ImportDecl) -> String {
     )
 }
 
-fn format_var(v: &(String, String)) -> String {
-    format!("({}, {})", repr(&v.0), repr(&v.1))
-}
-
 fn format_config(cb: &ConfigBlock) -> String {
     let name = match &cb.name {
         None    => "None".to_string(),
@@ -133,9 +129,6 @@ fn format_cookfile(c: &Cookfile) -> String {
 
     let imports: Vec<String> = c.imports.iter().map(format_import).collect();
     out.push_str(&format!("  imports: [{}]\n", imports.join(", ")));
-
-    let vars: Vec<String> = c.vars.iter().map(format_var).collect();
-    out.push_str(&format!("  vars: [{}]\n", vars.join(", ")));
 
     let configs: Vec<String> = c.config_blocks.iter().map(format_config).collect();
     out.push_str(&format!("  config_blocks: [{}]\n", configs.join(", ")));

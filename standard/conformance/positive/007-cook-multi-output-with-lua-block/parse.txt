@@ -1,7 +1,6 @@
 Cookfile
   uses: []
   imports: []
-  vars: []
   config_blocks: []
   recipes:
     Recipe name="gen_lua" line=1

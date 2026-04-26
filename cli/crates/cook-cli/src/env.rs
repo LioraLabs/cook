@@ -2,11 +2,11 @@
 //!
 //! Layer order (later wins):
 //!   1. System env
-//!   2. Cookfile bare vars
-//!   3. .env file (dotenvy)
-//!   4. CLI --set flags
+//!   2. .env file (dotenvy)
+//!   3. CLI --set flags
 //!
-//! Per-config env mutation is handled later by `config ... end` Lua blocks at runtime.
+//! Cookfile-defined variables live inside `config ... end` Lua blocks
+//! and are applied at runtime, not as part of this static layering.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,7 +24,6 @@ pub fn load_env(cookfile_dir: &Path) -> HashMap<String, String> {
 
 /// Merge all environment layers into a single map.
 pub fn resolve_env(
-    cookfile: &cook_lang::ast::Cookfile,
     selected_config: Option<&str>,
     dotenv_vars: HashMap<String, String>,
     cli_sets: &[String],
@@ -37,17 +36,12 @@ pub fn resolve_env(
     // Layer 1: system env
     let mut env: HashMap<String, String> = std::env::vars().collect();
 
-    // Layer 2: Cookfile bare vars
-    for (k, v) in &cookfile.vars {
-        env.insert(k.clone(), v.clone());
-    }
-
-    // Layer 3: .env file
+    // Layer 2: .env file
     for (k, v) in dotenv_vars {
         env.insert(k, v);
     }
 
-    // Layer 4: CLI --set (split on first '=')
+    // Layer 3: CLI --set (split on first '=')
     for set_arg in cli_sets {
         if let Some(eq_pos) = set_arg.find('=') {
             let key = set_arg[..eq_pos].to_string();

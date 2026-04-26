@@ -1,7 +1,6 @@
 Cookfile
   uses: []
   imports: []
-  vars: []
   config_blocks: []
   recipes:
     Recipe name="compile" line=1

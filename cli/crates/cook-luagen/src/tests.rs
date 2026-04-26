@@ -6,7 +6,6 @@ use crate::template::expand_template_to_lua;
 
 fn make_cookfile(recipes: Vec<Recipe>) -> Cookfile {
     Cookfile {
-        vars: vec![],
         config_blocks: vec![],
         recipes,
         uses: vec![],
@@ -511,7 +510,6 @@ fn test_cook_step_lua_block_no_raw_string() {
 #[test]
 fn test_use_generates_load_module() {
     let cookfile = Cookfile {
-        vars: vec![],
         config_blocks: vec![],
         recipes: vec![make_recipe("build", vec![], vec![], vec![
             Step::Shell { command: "echo hi".to_string(), line: 2, interactive: false },
@@ -604,7 +602,6 @@ fn test_test_step_codegen_with_options() {
 #[test]
 fn test_multiple_uses_generate_in_order() {
     let cookfile = Cookfile {
-        vars: vec![],
         config_blocks: vec![],
         recipes: vec![],
         uses: vec![
@@ -977,7 +974,6 @@ fn test_mixed_dep_iteration_and_substitution() {
 #[test]
 fn test_codegen_emits_unnamed_config_block() {
     let cookfile = Cookfile {
-        vars: vec![],
         config_blocks: vec![ConfigBlock {
             name: None,
             body: "env.CC = \"gcc\"".to_string(),
@@ -995,7 +991,6 @@ fn test_codegen_emits_unnamed_config_block() {
 #[test]
 fn test_codegen_emits_named_config_block() {
     let cookfile = Cookfile {
-        vars: vec![],
         config_blocks: vec![ConfigBlock {
             name: Some("release".to_string()),
             body: "env.CXXFLAGS = \"-O3\"".to_string(),
@@ -1014,7 +1009,6 @@ fn test_codegen_emits_named_config_block() {
 #[test]
 fn test_codegen_skips_dispatcher_when_no_config_blocks() {
     let cookfile = Cookfile {
-        vars: vec![],
         config_blocks: vec![],
         recipes: vec![],
         uses: vec![],
@@ -1027,7 +1021,6 @@ fn test_codegen_skips_dispatcher_when_no_config_blocks() {
 #[test]
 fn test_codegen_emits_unnamed_and_named_in_order() {
     let cookfile = Cookfile {
-        vars: vec![],
         config_blocks: vec![
             ConfigBlock { name: None,                           body: "base()".into(), line: 1 },
             ConfigBlock { name: Some("dev".to_string()),        body: "dev()".into(),  line: 4 },

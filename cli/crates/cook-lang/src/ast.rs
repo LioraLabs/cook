@@ -20,7 +20,6 @@ pub struct ConfigBlock {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cookfile {
-    pub vars: Vec<(String, String)>,
     pub config_blocks: Vec<ConfigBlock>,
     pub recipes: Vec<Recipe>,
     pub uses: Vec<UseStatement>,
@@ -163,7 +162,6 @@ mod tests {
     #[test]
     fn test_cookfile_with_uses() {
         let cookfile = Cookfile {
-            vars: vec![],
             config_blocks: vec![],
             recipes: vec![],
             uses: vec![UseStatement { module_name: "cpp".to_string(), line: 1 }],
@@ -198,7 +196,6 @@ mod tests {
     #[test]
     fn test_cookfile_with_config_blocks() {
         let cookfile = Cookfile {
-            vars: vec![],
             config_blocks: vec![
                 ConfigBlock { name: None,                    body: "base".into(), line: 1 },
                 ConfigBlock { name: Some("release".into()),  body: "rel".into(),  line: 4 },

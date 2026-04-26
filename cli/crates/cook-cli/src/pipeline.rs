@@ -413,7 +413,7 @@ fn build_workspace_registries(
     cli_sets: &[String],
 ) -> Result<BTreeMap<String, (cook_register::Registry, String)>, CookError> {
     let dotenv_vars = load_env(&workspace.root.dir);
-    let root_env = resolve_env(&workspace.root.cookfile, config, dotenv_vars, cli_sets)?;
+    let root_env = resolve_env(config, dotenv_vars, cli_sets)?;
 
     let mut registries: BTreeMap<String, (cook_register::Registry, String)> = BTreeMap::new();
 
@@ -427,7 +427,6 @@ fn build_workspace_registries(
     for (canonical_path, loaded) in &workspace.imports {
         let prefix = find_full_prefix(workspace, canonical_path);
         let import_env = resolve_env(
-            &loaded.cookfile,
             config,
             std::collections::HashMap::new(),
             cli_sets,
@@ -522,7 +521,7 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
             cookfile_dir
         };
         let dotenv_vars = load_env(cookfile_dir);
-        let env_vars = resolve_env(&cookfile, config, dotenv_vars, &cli.set)?;
+        let env_vars = resolve_env(config, dotenv_vars, &cli.set)?;
 
         let recipe_infos = build_single_recipe_infos(&cookfile);
 
@@ -647,7 +646,7 @@ pub fn cmd_test(
             cookfile_dir
         };
         let dotenv_vars = load_env(cookfile_dir);
-        let env_vars = resolve_env(&cookfile, None, dotenv_vars, &cli.set)?;
+        let env_vars = resolve_env(None, dotenv_vars, &cli.set)?;
 
         // Find all recipes that contain test steps
         let test_recipes: Vec<String> = cookfile
@@ -835,7 +834,7 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         cookfile_dir
     };
     let dotenv_vars = load_env(cookfile_dir);
-    let env_vars = resolve_env(&cookfile, config, dotenv_vars, &cli.set)?;
+    let env_vars = resolve_env(config, dotenv_vars, &cli.set)?;
 
     let recipe_infos = build_single_recipe_infos(&cookfile);
     let targets = vec![recipe_name.to_string()];

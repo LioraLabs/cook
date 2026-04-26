@@ -126,7 +126,6 @@ mod tests {
 
     fn make_cookfile(recipes: Vec<Recipe>) -> Cookfile {
         Cookfile {
-            vars: vec![],
             config_blocks: vec![],
             recipes,
             uses: vec![],
