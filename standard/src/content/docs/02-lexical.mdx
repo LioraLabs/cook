@@ -27,7 +27,6 @@ The token classes produced by the lexer are:
 | `Comment`              | Line whose first non-whitespace character is `#`                              | §{lexical.comments}      |
 | `RecipeHeader`         | Explicit `recipe` line or column-zero `BARE_IDENTIFIER ":" …`                 | §{grammar.recipe-syntax}      |
 | `ConfigHeader`         | Line `config` or `config` + name                                              | §{grammar.config-blocks}      |
-| `VarDecl`              | Top-level `BARE_IDENTIFIER STRING`                                            | §{grammar.var-declarations}      |
 | `UseDecl`              | Line `use` + name                                                             | §{grammar.use-declarations}      |
 | `ImportDecl`           | Line `import` + `BARE_IDENTIFIER` + path                                      | §{grammar.import-declarations}      |
 | `RecipeEnd`            | Line whose only non-whitespace content is `end`                               | §{grammar.recipe-syntax}      |
@@ -51,11 +50,10 @@ BARE_IDENTIFIER ::= /[A-Za-z_][A-Za-z0-9_.\-]*/
 
 The first character MUST be an ASCII letter (`A`–`Z`, `a`–`z`) or underscore (`_`); each subsequent character MUST be an ASCII letter, ASCII digit, underscore, hyphen (`-`), or dot (`.`). A conforming implementation MUST reject any other character. Unicode letters and digits are NOT part of `BARE_IDENTIFIER`.
 
-`BARE_IDENTIFIER` is used in four syntactic roles, each with its own supplementary constraints documented where that role is defined:
+`BARE_IDENTIFIER` is used in three syntactic roles, each with its own supplementary constraints documented where that role is defined:
 
 | Role                                   | Supplementary constraint                                                      |
 |---|---|
-| Variable name (`variable_declaration`) | MUST NOT be any of the reserved keywords listed in §{lexical.keywords} (App. A.2).          |
 | Import alias (`import_declaration`)    | MUST be unique across imports within the Cookfile (App. A.2).                 |
 | Recipe / dependency name               | Final dot-separated segment MUST NOT be a reserved segment (§{lexical.keywords}, App. A.2). |
 | First segment of a `module_call`       | MUST NOT contain `.` or `-` (App. A.4).                                       |
@@ -73,20 +71,7 @@ end
 `backend.build` is a valid `BARE_IDENTIFIER` (dot is an interior character). `lib` and `setup` are valid `BARE_IDENTIFIER` dependency names. The final segment `build` is not a reserved recipe segment (§{lexical.keywords}), so the header is accepted.
 
 ## 2.4. Keywords [#lexical.keywords]
-Two disjoint reserved-word sets exist in the Cookfile language: **blocking keywords** (which MUST NOT be used as `variable_declaration` left-hand sides) and **reserved recipe segments** (which MUST NOT appear as the final dot-separated segment of a recipe or dependency name). Reservation is **contextual**: each keyword is reserved only in the role below, not as a general identifier.
-
-| Blocking keyword | Role where reserved           |
-|---|---|
-| `recipe`        | Variable name                  |
-| `config`        | Variable name                  |
-| `end`           | Variable name                  |
-| `ingredients`   | Variable name                  |
-| `cook`          | Variable name                  |
-| `plate`         | Variable name                  |
-| `using`         | Variable name                  |
-| `use`           | Variable name                  |
-| `import`        | Variable name                  |
-| `test`          | Variable name                  |
+The Cookfile language reserves seven identifiers contextually, each in a single role: the final dot-separated segment of a recipe name. Outside that role the identifiers are ordinary tokens.
 
 | Reserved recipe segment | Role where reserved             |
 |---|---|
@@ -98,9 +83,9 @@ Two disjoint reserved-word sets exist in the Cookfile language: **blocking keywo
 | `out`                  | Final segment of a recipe name   |
 | `all`                  | Final segment of a recipe name   |
 
-A conforming implementation MUST reject a `variable_declaration` whose left-hand side is one of the blocking keywords (App. A.2). A conforming implementation MUST reject a recipe whose name's final dot-separated segment is a reserved recipe segment (App. A.2). A reserved recipe segment MAY appear as a non-final segment — for example, `backend.build` is valid because `build` is the final segment, whereas `backend.stem` is rejected because `stem` is the final segment.
+A conforming implementation MUST reject a recipe whose name's final dot-separated segment is a reserved recipe segment (App. A.2). A reserved recipe segment MAY appear as a non-final segment — for example, `backend.build` is valid because `build` is the final segment, whereas `backend.stem` is rejected because `stem` is the final segment.
 
-Outside these two roles, the identifiers above are ordinary tokens. In particular, a `Content` line whose first word is `cook`, `plate`, `test`, or `ingredients` is dispatched by App. A.4 to the corresponding step kind only when followed by a separator; a `Content` line whose first word is one of these keywords followed directly by other identifier characters (for example, `cooking`, `testify`) is a `shell_command`.
+The keywords that introduce other top-level or recipe-body productions — `recipe`, `config`, `end`, `ingredients`, `cook`, `plate`, `using`, `use`, `import`, `test` — are recognised as keywords only when followed by a keyword separator (space, tab, or `"`). A `Content` line whose first word is one of these keywords followed directly by other identifier characters (for example, `cooking`, `testify`) is a `shell_command`. The dispatch rule is normative in App. A.4.
 
 ### Note 2.4.1
 
@@ -117,13 +102,11 @@ A `STRING` opens with `U+0022` (`"`), contains zero or more characters none of w
 
 The empty string `""` is a valid `STRING`. A double quote inside a `STRING` is not expressible in the current grammar; authors needing such content can use the inline-block forms of §{lexical.brace-blocks}, whose interior language (Lua or shell) has its own quoting rules.
 
-`STRING` appears in top-level `variable_declaration` (the value), in recipe and dependency names, in `ingredients`, `cook`, `plate`, and `test` steps, and as the single-string form of `using_clause`. In each of those roles, a conforming implementation parses the `STRING` inside the single line that produced the governing `Content` token.
+`STRING` appears in recipe and dependency names, in `ingredients`, `cook`, `plate`, and `test` steps, in the optional name of a `config_block` header, and as the single-string form of `using_clause`. In each of those roles, a conforming implementation parses the `STRING` inside the single line that produced the governing token.
 
 ### Example 2.5.1
 
 ```cook
-CFLAGS "-Wall -Wextra -I/usr/local/include"
-
 recipe "build"
     ingredients "src/*.c" !"src/legacy.c"
     cook "bin/app" using "gcc {all} -o {out}"
@@ -267,32 +250,26 @@ A **keyword separator** in tests 6–8 below is a space (`U+0020`), a tab (`U+00
 8. If the trimmed line begins with `use` followed by a keyword separator, the token is `UseDecl` (§{grammar.use-declarations}).
 9. If the trimmed line begins with `import` followed by a whitespace separator (space or tab only; not `"`), the token is `ImportDecl` (§{grammar.import-declarations}).
 10. If the original (untrimmed) line has no leading whitespace — it starts at column 0 — and its trimmed form is `BARE_IDENTIFIER ":"` optionally followed by a dependency list, the token is `RecipeHeader` via the implicit-header form (App. A.3).
-11. Otherwise, if the trimmed line is `BARE_IDENTIFIER STRING` and the `BARE_IDENTIFIER` is not one of the blocking keywords of §{lexical.keywords}, the token is `VarDecl`. This test is applied both at column 0 and on indented lines; the syntactic layer rejects a `VarDecl` that appears after the first recipe (App. A.2).
-12. Otherwise, the token is `Content`. Its further classification as `ingredients_step`, `cook_step`, `plate_step`, `test_step`, `module_call`, `interactive_command`, or `shell_command` is the concern of the step-dispatch cascade in App. A.4 and is made only inside a recipe body.
+11. Otherwise, the token is `Content`. Its further classification as `ingredients_step`, `cook_step`, `plate_step`, `test_step`, `module_call`, `interactive_command`, or `shell_command` is the concern of the step-dispatch cascade in App. A.4 and is made only inside a recipe body.
 
-The ordering is significant. In particular, test 3 (`>{`) MUST precede test 4 (`>`) so that a Lua-block prefix is not consumed as a Lua-line prefix followed by a literal `{` (§{lexical.line-prefixes}); tests 6–9 MUST require a separator so that identifiers whose first word merely starts with a keyword (for example, `recipes_cleanup`, `configure`, `useful`, `important`) fall through to test 11 or 12 and are not misclassified as declarations.
+The ordering is significant. In particular, test 3 (`>{`) MUST precede test 4 (`>`) so that a Lua-block prefix is not consumed as a Lua-line prefix followed by a literal `{` (§{lexical.line-prefixes}); tests 6–9 MUST require a separator so that identifiers whose first word merely starts with a keyword (for example, `recipes_cleanup`, `configure`, `useful`, `important`) fall through to test 11 and are not misclassified as declarations.
 
-Tests 1–9 and 11–12 apply to lines whether or not they are indented; only test 10 (implicit recipe header) is sensitive to column-0 positioning, by the constraint in App. A.3.
+Tests 1–9 and 11 apply to lines whether or not they are indented; only test 10 (implicit recipe header) is sensitive to column-0 positioning, by the constraint in App. A.3.
 
 ### Example 2.10.1
 
 ```cook
-CC "gcc"                  # test 11: VarDecl
 use "cpp"                 # test 8:  UseDecl
 config debug              # test 7:  ConfigHeader
-    env.CC = CC
+    env.CC = "gcc"
 end
 
 build: lib setup          # test 10: implicit-header RecipeHeader
     # test 2: Comment
-    ingredients "src/*.c" # test 12: Content (step-dispatched to ingredients_step)
+    ingredients "src/*.c" # test 11: Content (step-dispatched to ingredients_step)
     >{                    # test 3:  LuaBlockOpen
         print("hi")
     }
-    recipes_cleanup       # test 12: Content (falls through test 6 — no separator)
+    recipes_cleanup       # test 11: Content (falls through test 6 — no separator)
 end
 ```
-
-### Note 2.10.1
-
-Test 11 admits `VarDecl` on indented lines, but the syntactic layer (App. A.2) rejects any `VarDecl` that follows a recipe header. The test `test_var_after_recipe_is_shell_command` in `cli/crates/cook-lang/src/tests.rs` demonstrates the user-visible consequence: a line of the form `NAME "value"` inside a recipe body is re-interpreted as a `shell_command`, so that a `VarDecl` token emitted at test 11 is effectively reclassified by the step layer when it appears inside a recipe.
