@@ -1,0 +1,58 @@
+# Cookfile for the Cook project itself.
+#
+# Common invocations:
+#   cook check        — pre-commit smoke test (build + test + conformance + standard build/lint).
+#   cook bump-claim   — after a Standard cut, mirror the version into cook-lang's claim sites.
+#   cook retag        — force-move cs-standard/v$VERSION to HEAD (when the parser dump format changed).
+#   cook against-tag  — verify the parser still satisfies a previously-cut Standard version.
+#   cook install      — cargo install the binary in place.
+#
+# Recipes that take a version (bump-claim, retag, against-tag) read VERSION from
+#   cook <recipe> --set VERSION=X.Y
+# and default to the current contents of standard/VERSION.
+#
+# First-time install of `cook` is documented in README.md.
+
+recipe build
+    @cargo build --manifest-path cli/Cargo.toml
+end
+
+recipe test
+    @cargo test --manifest-path cli/Cargo.toml
+end
+
+recipe conformance
+    @cargo test --manifest-path cli/Cargo.toml -p cook-lang --test conformance
+end
+
+recipe version
+    @cargo build --manifest-path cli/Cargo.toml --bin cook
+    @cli/target/debug/cook --version
+end
+
+recipe standard-build
+    @cd standard && pnpm build
+end
+
+recipe standard-lint
+    @cd standard && pnpm lint:keywords
+end
+
+recipe against-tag
+    @V="${VERSION:-$(cat standard/VERSION)}" && standard/scripts/check-conformance-against-tag.sh "v$V"
+end
+
+recipe install
+    @cargo install --locked --path cli/crates/cook-cli
+end
+
+recipe bump-claim
+    @V="${VERSION:-$(cat standard/VERSION)}" && sed -i "s|pub const COOK_STANDARD_VERSION: &str = \"[^\"]*\"|pub const COOK_STANDARD_VERSION: \&str = \"$V\"|" cli/crates/cook-lang/src/lib.rs && for f in cli/crates/cook-lang/README.md cli/crates/cook-lang/CONFORMANCE.md README.md; do sed -i "s|claims \*\*Cook Standard v[0-9.]*\*\*|claims **Cook Standard v$V**|" "$f"; done
+end
+
+recipe retag
+    @V="${VERSION:-$(cat standard/VERSION)}" && git tag --force "cs-standard/v$V" HEAD
+end
+
+recipe check: build test conformance standard-build standard-lint
+end
