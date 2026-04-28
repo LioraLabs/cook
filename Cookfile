@@ -6,6 +6,9 @@
 #   cook retag        — force-move cs-standard/v$VERSION to HEAD (when the parser dump format changed).
 #   cook against-tag  — verify the parser still satisfies a previously-cut Standard version.
 #   cook install      — cargo install the binary in place.
+#   cook ts-test      — run the tree-sitter-cook corpus tests.
+#   cook ts-wasm      — rebuild the wasm and drop it into standard/public/.
+#   cook nvim-install — install the tree-sitter grammar into Neovim's site dir.
 #
 # Recipes that take a version (bump-claim, retag, against-tag) read VERSION from
 #   cook <recipe> --set VERSION=X.Y
@@ -38,6 +41,10 @@ recipe standard-lint
     @cd standard && pnpm lint:keywords
 end
 
+recipe standard-host
+    @cd standard && pnpm host
+end
+
 recipe against-tag
     @V="${VERSION:-$(cat standard/VERSION)}" && standard/scripts/check-conformance-against-tag.sh "v$V"
 end
@@ -52,6 +59,22 @@ end
 
 recipe retag
     @V="${VERSION:-$(cat standard/VERSION)}" && git tag --force "cs-standard/v$V" HEAD
+end
+
+recipe ts-generate
+    @cd tree-sitter-cook && tree-sitter generate
+end
+
+recipe ts-test
+    @cd tree-sitter-cook && tree-sitter test
+end
+
+recipe ts-wasm
+    @tree-sitter build --wasm tree-sitter-cook -o standard/public/tree-sitter-cook.wasm
+end
+
+recipe nvim-install: ts-generate
+    @NVIM_SITE="${NVIM_SITE:-$HOME/.local/share/nvim/site}" && mkdir -p "$NVIM_SITE/parser" "$NVIM_SITE/queries/cook" && tree-sitter build tree-sitter-cook -o "$NVIM_SITE/parser/cook.so" && cp tree-sitter-cook/queries/*.scm "$NVIM_SITE/queries/cook/"
 end
 
 recipe check: build test conformance standard-build standard-lint
