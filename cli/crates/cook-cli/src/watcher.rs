@@ -1,4 +1,4 @@
-//! File watcher for `cook serve`.
+//! File watcher for `cook --serve`.
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
@@ -95,7 +95,7 @@ impl CookWatcher {
                     if relevant {
                         last_trigger = Instant::now();
                         if let Err(e) = on_change(cookfile_changed) {
-                            eprintln!("cook serve: rebuild failed: {e}");
+                            eprintln!("cook --serve: rebuild failed: {e}");
                         }
                     }
                 }

@@ -1,4 +1,4 @@
-//! `cook logs` subcommand — dump per-node logs from .cook/logs/.
+//! `cook --logs` built-in — dump per-node logs from .cook/logs/.
 
 use std::fs;
 use std::path::PathBuf;

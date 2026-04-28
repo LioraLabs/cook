@@ -58,7 +58,7 @@ All application logic lives in those modules. The binary just calls into `cli`.
 | `contracts` | `src/contracts/mod.rs` | Shared types between runtime and scheduler (WorkPayload, CapturedUnit, etc.) | None |
 | `analyzer` | `src/analyzer/` | Resolves implicit dependencies, performs topological sort | `parser` |
 | `cache` | `src/cache/` | Hash-based incremental rebuild with mtime fast-path | None |
-| `watcher` | `src/watcher/mod.rs` | File system monitoring for `cook serve` | `parser` |
+| `watcher` | `src/watcher/mod.rs` | File system monitoring for `cook --serve` | `parser` |
 | `env` | `src/env/mod.rs` | Loads `.env` files into the process environment | None |
 
 ---

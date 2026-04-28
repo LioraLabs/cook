@@ -15,7 +15,7 @@ mod workspace;
 
 use clap::CommandFactory;
 
-use cli::{Cli, Command};
+use cli::Cli;
 use pipeline::{cmd_dag, cmd_init, cmd_menu, cmd_run, cmd_serve, cmd_test};
 
 fn main() {
@@ -29,51 +29,30 @@ fn main() {
     let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)
         .expect("clap derive guarantees this conversion");
 
+    let recipe = cli.recipe.clone().unwrap_or_else(|| "build".to_string());
+    let config = cli.config.clone();
+
     let result = if cli.dag {
-        match &cli.command {
-            Some(Command::External(args)) => {
-                let recipe = args.first().map(|s| s.as_str()).unwrap_or("build");
-                let config = args.get(1).map(|s| s.as_str());
-                cmd_dag(&cli, recipe, config)
-            }
-            None => cmd_dag(&cli, "build", None),
-            _ => {
-                eprintln!("cook: --dag can only be used with a recipe target");
-                std::process::exit(1);
-            }
-        }
+        cmd_dag(&cli, &recipe, config.as_deref())
+    } else if cli.init {
+        cmd_init()
+    } else if cli.menu {
+        cmd_menu(&cli)
+    } else if cli.serve {
+        cmd_serve(&cli, &recipe, config.as_deref())
+    } else if cli.test {
+        cmd_test(
+            &cli,
+            cli.filter.clone(),
+            cli.verbose,
+            cli.timeout_multiplier,
+            cli.wrapper.clone(),
+            cli.list,
+        )
+    } else if cli.logs {
+        crate::cmd_logs::cmd_logs(cli.recipe.as_deref(), cli.build.as_deref(), cli.failed)
     } else {
-        match &cli.command {
-            Some(Command::Init) => cmd_init(),
-            Some(Command::Menu) => cmd_menu(&cli),
-            Some(Command::Serve { recipe, config }) => {
-                let recipe = recipe.clone();
-                cmd_serve(&cli, &recipe, config.as_deref())
-            }
-            Some(Command::Test {
-                filter,
-                verbose,
-                timeout_multiplier,
-                wrapper,
-                list,
-            }) => cmd_test(
-                &cli,
-                filter.clone(),
-                *verbose,
-                *timeout_multiplier,
-                wrapper.clone(),
-                *list,
-            ),
-            Some(Command::Logs { selector, build, failed }) => {
-                crate::cmd_logs::cmd_logs(selector.as_deref(), build.as_deref(), *failed)
-            }
-            Some(Command::External(args)) => {
-                let recipe = args.first().map(|s| s.as_str()).unwrap_or("build");
-                let config = args.get(1).map(|s| s.as_str());
-                cmd_run(&cli, recipe, config)
-            }
-            None => cmd_run(&cli, "build", None),
-        }
+        cmd_run(&cli, &recipe, config.as_deref())
     };
 
     if let Err(e) = result {

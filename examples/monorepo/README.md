@@ -20,7 +20,7 @@ pnpm install
 
 ```bash
 cook build    # builds all packages in dependency order
-cook test     # runs tests (depends on build)
+cook check    # runs tests (depends on build)
 cook clean    # removes dist/ and .cook/ artifacts
 ```
 

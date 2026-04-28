@@ -748,7 +748,7 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
     let (cookfile, _lua_source) = read_and_parse(cli)?;
     validate_selected_config(&cookfile, config)?;
 
-    // Check for interactive steps -- not supported under cook serve
+    // Check for interactive steps -- not supported under cook --serve
     for recipe in &cookfile.recipes {
         for step in &recipe.steps {
             if let cook_lang::ast::Step::Shell {
@@ -758,7 +758,7 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
             } = step
             {
                 return Err(CookError::Other(format!(
-                    "line {}: interactive '@' steps are not supported under 'cook serve'",
+                    "line {}: interactive '@' steps are not supported under 'cook --serve'",
                     line
                 )));
             }
@@ -802,14 +802,14 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
 
     let watcher = CookWatcher::new(globs, cookfile_paths);
 
-    eprintln!("cook serve: initial build...");
+    eprintln!("cook --serve: initial build...");
     let _ = cmd_run(cli, recipe_name, config);
 
-    eprintln!("cook serve: watching for changes...");
+    eprintln!("cook --serve: watching for changes...");
     watcher
         .watch(|cookfile_changed| {
             if cookfile_changed {
-                eprintln!("cook serve: Cookfile changed, rebuilding...");
+                eprintln!("cook --serve: Cookfile changed, rebuilding...");
             }
             cmd_run(cli, recipe_name, config).map_err(|e| e.to_string())?;
             Ok(())
