@@ -1,0 +1,41 @@
+---
+title: "Appendix E — Pre-1.0 checklist"
+sidebar:
+  order: 14
+---
+
+# Appendix E. Pre-1.0 checklist (informative)
+
+> **Informative.** This appendix tracks language-level frictions and design tensions known to need resolution before the Cook Standard is declared stable at 1.0. Each entry names a concrete symptom, the workaround in current use, and the resolution path.
+
+## E.1. Conformance corpus is parser-impl-coupled [#pre-v1.parse-txt-coupling]
+
+**Symptom.** The `parse.txt` files under `standard/conformance/positive/` are textual dumps of one specific implementation's AST shape. When that implementation changes its dump format — for example, CS-0011 dropped the `vars: []` line in v0.2 — a previously-tagged corpus does not match the current parser, breaking `standard/scripts/check-conformance-against-tag.sh` against any prior tag whose dump predates the change.
+
+**Workaround.** When a parser change alters the dump format, the `cs-standard/vX.Y` tag for the in-progress version is force-moved to the merge commit where the parser and the corpus agree (operating rule in `CONTRIBUTING.md`'s cut procedure). Earlier tags are accepted as broken; their corpora remain frozen historical records.
+
+**Resolution path.** Either move `parse.txt` out of the normative corpus into impl-specific fixtures (each implementation owns its own dump checks), or define an impl-agnostic structured AST format (e.g., JSON of a normative shape) so historical tags stay verifiable.
+
+## E.2. `${...}` syntax in `using` and `plate` strings [#pre-v1.template-vs-bash-expansion]
+
+**Symptom.** Cook's templater inside `using "..."` and `plate "..."` strings interprets `${VAR}` as its own env-lookup form. Bash's `${VAR:-default}` parameter-expansion form fails: the codegen treats `VAR:-default` as a literal env field name, gets `nil`, and errors during generation. Other parameter-expansion forms (`${VAR%suffix}`, `${VAR/find/replace}`) likely have the same issue.
+
+**Workaround.** Use bare `$VAR` (no braces) inside `using`/`plate` strings — passes through to the spawned shell unmodified. Set defaults in a `config` block: `cook.env.X = cook.env.X or "default"`. Plain shell command lines (raw `Token::Content` steps in a recipe body) are pass-through and accept `${...}` normally — that's why `${VERSION:-$(cat ...)}` works in a regular shell line but breaks in a `plate "..."` template.
+
+**Resolution path.** Either pass `${...}` through to shell unchanged in templates (give up the env-lookup form, since `$VAR` already does the same job), or introduce an explicit escape (e.g., `$${VAR:-default}` to mean "literal `${...}` for shell") so bash's full expansion vocabulary is reachable from cook strings.
+
+## E.3. Cook strings have no `"` escape [#pre-v1.no-string-escape]
+
+**Symptom.** The string literal in `cook "..."`, `using "..."`, `plate "..."`, `recipe "..."`, etc. is parsed by a routine that finds the first `"` and stops — `\"` is not recognized as an escape. Embedding a literal `"` inside any cook string truncates the string at the first inner `"`, producing surprising and silent behaviour (the truncated command runs, the rest of the line is leftover content).
+
+**Workaround.** Avoid embedding double quotes in cook strings. Paths without spaces don't need shell-quoting. When shell-quoting is genuinely needed, move the step to a Lua-block `using >{ … }` form: Lua handles its own quoting and `cook.sh` accepts arbitrary strings.
+
+**Resolution path.** Add an escape mechanism — `\"` and `\\` at minimum — to cook string literals. Spec the escape set in §{lexical.strings} and update the lexer's string-parsing routines accordingly.
+
+## E.4. tree-sitter-cook is stale [#pre-v1.tree-sitter-stale]
+
+**Symptom.** `tree-sitter-cook/grammar.js` does not implement Cook Standard v0.2. Notably, it still produces `variable_declaration` for top-level `NAME "value"` (rejected by the Standard since CS-0011); other gaps are enumerated in [CS-0002](D-changes#cs-0002-planned-tree-sitter-cook-conformance-audit).
+
+**Workaround.** The grammar's `tree-sitter test` corpus passes against its own (stale) view of the language. The Standard does not require tree-sitter conformance pre-1.0; the cook-lang Rust parser is the reference implementation.
+
+**Resolution path.** The follow-up plan referenced by CS-0002 will: enumerate divergences, update `grammar.js` and externals, wire a tree-sitter conformance harness against `standard/conformance/`, and verify both implementations agree on the corpus.

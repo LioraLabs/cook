@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.2** (`cs-standard/v0.2`, 2026-04-26) — CS-0011, CS-0012
+- **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013
 - **v0.1** (`cs-standard/v0.1`, 2026-04-22..2026-04-24) — CS-0001 through CS-0010
 
 ## CS-0001 — Cook Standard v0.1 established
@@ -126,5 +126,19 @@ App. D is restructured: a top-of-page Versions index lists each cut and the CSes
 App. B.0.1 (new) records the rationale for `MAJOR.MINOR` over strict SemVer pre-1.0, batched cuts, convention-only conformance claims, and git-tagged corpus. `CONTRIBUTING.md` gains the procedural recipe for cutting a version and the project convention by which an implementation claims a Standard version.
 
 **Implementation status.** This change is authoring-surface only. No conformance-corpus changes. Two `cs-standard/vX.Y` tags are cut as a manual post-merge step (see the design's §4 for the exact `git merge-base` and `git tag` invocations).
+
+**Reference:** this commit.
+
+## D.13. CS-0013 — App. E pre-1.0 checklist (informative). [#changes.cs-0013]
+
+**Date:** 2026-04-28
+**Version:** v0.2
+**Sections affected:** App. E (new informative appendix); App. D (this entry).
+
+**Summary:** Adds App. E to track language-level frictions and design tensions known to need resolution before 1.0. Initial entries: (E.1) the conformance corpus's `parse.txt` files are coupled to one implementation's AST dump format, so historical-tag corpora break when the dump format changes; (E.2) cook's templater inside `using` and `plate` strings interprets `${...}` as its own env-lookup form, which collides with bash's `${VAR:-default}` parameter-expansion vocabulary; (E.3) cook string literals do not recognize `\"` as an escape, so embedded double quotes silently truncate the string; (E.4) cross-references CS-0002 for the standing tree-sitter staleness item.
+
+App. E is informative — no normative obligations on implementations. Each entry pairs a symptom with the current workaround and the resolution path. None of the listed frictions is blocking pre-1.0 work; the appendix exists as a single canonical location so they aren't relitigated each time they're encountered.
+
+**Implementation status.** No conformance-corpus changes. No parser changes. The `cs-standard/v0.2` tag is not moved (E.1's coupling does not apply to this change — it's appendix prose only).
 
 **Reference:** this commit.
