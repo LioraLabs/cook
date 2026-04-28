@@ -16,6 +16,10 @@
 #
 # First-time install of `cook` is documented in README.md.
 
+config
+    cook.env.NVIM_SITE = cook.env.NVIM_SITE or (os.getenv("HOME") .. "/.local/share/nvim/site")
+end
+
 recipe build
     cargo build --manifest-path cli/Cargo.toml
 end
@@ -62,19 +66,25 @@ recipe retag
 end
 
 recipe ts-generate
-    cd tree-sitter-cook && tree-sitter generate
+    ingredients "tree-sitter-cook/grammar.js"
+    cook "tree-sitter-cook/src/parser.c" using "cd tree-sitter-cook && tree-sitter generate"
 end
 
 recipe ts-test
     cd tree-sitter-cook && tree-sitter test
 end
 
-recipe ts-wasm
-    tree-sitter build --wasm tree-sitter-cook -o standard/public/tree-sitter-cook.wasm
+recipe ts-wasm: ts-generate
+    ingredients "tree-sitter-cook/grammar.js" "tree-sitter-cook/src/parser.c" "tree-sitter-cook/src/scanner.c"
+    cook "standard/public/tree-sitter-cook.wasm" using "mkdir -p standard/public && tree-sitter build --wasm tree-sitter-cook -o {out}"
 end
 
 recipe nvim-install: ts-generate
-    NVIM_SITE="${NVIM_SITE:-$HOME/.local/share/nvim/site}" && mkdir -p "$NVIM_SITE/parser" "$NVIM_SITE/queries/cook" && tree-sitter build tree-sitter-cook -o "$NVIM_SITE/parser/cook.so" && cp tree-sitter-cook/queries/*.scm "$NVIM_SITE/queries/cook/"
+    ingredients "tree-sitter-cook/src/parser.c" "tree-sitter-cook/src/scanner.c"
+    cook "build/parser/cook.so" using "mkdir -p build/parser && tree-sitter build tree-sitter-cook -o {out}"
+    plate "mkdir -p $NVIM_SITE/parser && cp {out} $NVIM_SITE/parser/cook.so"
+    mkdir -p "$NVIM_SITE/queries/cook"
+    cp tree-sitter-cook/queries/*.scm "$NVIM_SITE/queries/cook/"
 end
 
 recipe check: build test conformance standard-build standard-lint
