@@ -17,28 +17,28 @@
 # First-time install of `cook` is documented in README.md.
 
 recipe build
-    @cargo build --manifest-path cli/Cargo.toml
+    cargo build --manifest-path cli/Cargo.toml
 end
 
 recipe test
-    @cargo test --manifest-path cli/Cargo.toml
+    cargo test --manifest-path cli/Cargo.toml
 end
 
 recipe conformance
-    @cargo test --manifest-path cli/Cargo.toml -p cook-lang --test conformance
+    cargo test --manifest-path cli/Cargo.toml -p cook-lang --test conformance
 end
 
 recipe version
-    @cargo build --manifest-path cli/Cargo.toml --bin cook
-    @cli/target/debug/cook --version
+    cargo build --manifest-path cli/Cargo.toml --bin cook
+    cli/target/debug/cook --version
 end
 
 recipe standard-build
-    @cd standard && pnpm build
+    cd standard && pnpm build
 end
 
 recipe standard-lint
-    @cd standard && pnpm lint:keywords
+    cd standard && pnpm lint:keywords
 end
 
 recipe standard-host
@@ -46,35 +46,35 @@ recipe standard-host
 end
 
 recipe against-tag
-    @V="${VERSION:-$(cat standard/VERSION)}" && standard/scripts/check-conformance-against-tag.sh "v$V"
+    V="${VERSION:-$(cat standard/VERSION)}" && standard/scripts/check-conformance-against-tag.sh "v$V"
 end
 
 recipe install
-    @cargo install --locked --path cli/crates/cook-cli
+    cargo install --locked --path cli/crates/cook-cli
 end
 
 recipe bump-claim
-    @V="${VERSION:-$(cat standard/VERSION)}" && sed -i "s|pub const COOK_STANDARD_VERSION: &str = \"[^\"]*\"|pub const COOK_STANDARD_VERSION: \&str = \"$V\"|" cli/crates/cook-lang/src/lib.rs && for f in cli/crates/cook-lang/README.md cli/crates/cook-lang/CONFORMANCE.md README.md; do sed -i "s|claims \*\*Cook Standard v[0-9.]*\*\*|claims **Cook Standard v$V**|" "$f"; done
+    V="${VERSION:-$(cat standard/VERSION)}" && sed -i "s|pub const COOK_STANDARD_VERSION: &str = \"[^\"]*\"|pub const COOK_STANDARD_VERSION: \&str = \"$V\"|" cli/crates/cook-lang/src/lib.rs && for f in cli/crates/cook-lang/README.md cli/crates/cook-lang/CONFORMANCE.md README.md; do sed -i "s|claims \*\*Cook Standard v[0-9.]*\*\*|claims **Cook Standard v$V**|" "$f"; done
 end
 
 recipe retag
-    @V="${VERSION:-$(cat standard/VERSION)}" && git tag --force "cs-standard/v$V" HEAD
+    V="${VERSION:-$(cat standard/VERSION)}" && git tag --force "cs-standard/v$V" HEAD
 end
 
 recipe ts-generate
-    @cd tree-sitter-cook && tree-sitter generate
+    cd tree-sitter-cook && tree-sitter generate
 end
 
 recipe ts-test
-    @cd tree-sitter-cook && tree-sitter test
+    cd tree-sitter-cook && tree-sitter test
 end
 
 recipe ts-wasm
-    @tree-sitter build --wasm tree-sitter-cook -o standard/public/tree-sitter-cook.wasm
+    tree-sitter build --wasm tree-sitter-cook -o standard/public/tree-sitter-cook.wasm
 end
 
 recipe nvim-install: ts-generate
-    @NVIM_SITE="${NVIM_SITE:-$HOME/.local/share/nvim/site}" && mkdir -p "$NVIM_SITE/parser" "$NVIM_SITE/queries/cook" && tree-sitter build tree-sitter-cook -o "$NVIM_SITE/parser/cook.so" && cp tree-sitter-cook/queries/*.scm "$NVIM_SITE/queries/cook/"
+    NVIM_SITE="${NVIM_SITE:-$HOME/.local/share/nvim/site}" && mkdir -p "$NVIM_SITE/parser" "$NVIM_SITE/queries/cook" && tree-sitter build tree-sitter-cook -o "$NVIM_SITE/parser/cook.so" && cp tree-sitter-cook/queries/*.scm "$NVIM_SITE/queries/cook/"
 end
 
 recipe check: build test conformance standard-build standard-lint
