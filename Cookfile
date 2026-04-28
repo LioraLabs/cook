@@ -34,7 +34,7 @@ end
 
 recipe version
     cargo build --manifest-path cli/Cargo.toml --bin cook
-    cli/target/debug/cook --version
+    @cli/target/debug/cook --version
 end
 
 recipe standard-build
