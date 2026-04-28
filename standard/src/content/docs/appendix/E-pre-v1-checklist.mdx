@@ -59,3 +59,25 @@ sidebar:
 **Possible resolution.** Drop the implicit form. §{grammar.recipe-syntax} collapses to one shape; App. A.3's `recipe_header` becomes `"recipe" name (":" dependency_list)?`; App. B.3.7 is deleted; six implicit-form parser tests are removed; one new negative conformance case under `standard/conformance/negative/` asserts that `name: deps` at column 0 is rejected (becomes `Token::Content` and falls into "unexpected content outside of a recipe"). No corpus migration is required because the form is unused.
 
 **Composability.** Removes the typo vector and lets a future E.5 ("drop `end`") change rely on top-level keywords as the unambiguous block-boundary signal. The two are independent but compose well in either order; bundling them in a single cut is reasonable.
+
+## E.7. `chore` as a sibling of `recipe` [#pre-v1.chore]
+
+**Tension.** Cook's keyword surface conflates two operationally distinct things: build targets (cached, ingredient-driven, output-producing) and command runners (uncached, sequence-of-shell-commands, no artifacts). Both are written as `recipe NAME ... end`, so a reader can't tell from the header what a thing actually does. In this project's own top-level `Cookfile`, only three of fifteen recipes use cook-step machinery (`ts-generate`, `ts-wasm`, `nvim-install`); the other twelve are pure command runners. The example projects show the same split: `recipe play` in `examples/fzf-picker/Cookfile` is all-interactive task work; `recipe clean` in every example is `rm -rf` with no cook step. The conflation also hurts diagnostics — `cook "out" using "..."` inside a recipe-the-author-meant-as-a-task silently allocates a phantom build artifact and caches it on first run, with no signal that the author had something else in mind.
+
+**Status quo.** Authors hand-mark interactivity per shell line via the `@`-prefix (§{recipes.shell-steps}) and rely on convention to distinguish task-shaped recipes from build-shaped ones. The engine treats both identically; caching is implicit on the presence of a `cook` step.
+
+**Possible resolution.** Introduce a new top-level construct, `chore NAME [: deps] ... end` (or, post-E.5, `chore NAME [: deps] ... <until-next-top-level>`), as a thin specialization of `recipe`:
+
+- **Step kinds allowed:** `shell_command`, `interactive_command`, `lua_line`, `lua_block`, `module_call`. (Module call is debatable — modules typically emit cook steps; ban-from-chore is the conservative choice.)
+- **Step kinds banned at parse time:** `ingredients`, `cook_step`, `plate_step`, `test_step`. The diagnostic names the keyword and points the author at `recipe`.
+- **Default-interactive:** every `shell_command` inside a `chore` body is treated as if `@`-prefixed. The `@` marker remains valid (no-op) for symmetry with recipe bodies, but is unnecessary.
+- **No caching.** Chores always run when invoked. Engine-identical to a recipe with no outputs; the distinction is purely an authoring/static-checking layer over the existing engine.
+- **Deps:** same `: dep1 dep2` syntax. Chores may depend on recipes (run a build, post-process) and recipes may depend on chores (rare but legal).
+
+The keyword choice is a deliberate departure from Cook's culinary metaphor (recipe / ingredients / cook / plate / menu / serve). Plain English wins here — `chore` reads as "thing you just run" without the cognitive hop required for a strained metaphor (`prep`, `serve`).
+
+**Spec impact.** New normative chapter on chores parallel to §{recipes}, plus a `chore_def` production in App. A. App. B picks up a rationale section (why `chore` is a separate form rather than a flag on `recipe`, why the specific banned step kinds, why default-interactive). Conformance corpus gains ~3 positive cases (basic chore, chore with deps, chore with Lua block) and ~3 negative cases (chore with `ingredients`, with `cook`, with `plate`).
+
+**Migration.** Purely additive — no existing Cookfile breaks. This project's top-level `Cookfile` would convert ~12 recipes to chores in a single pass; example Cookfiles would convert their `clean` and similar recipes opportunistically; conformance fixtures would stay as recipes (they exercise recipe-specific semantics).
+
+**Composability.** Stacks cleanly with E.5 (chores adopt the same implicit termination rule) and is orthogonal to E.6. Bundling all three into a single "recipe-form simplification" cut is reasonable; staging them across cuts is also fine.
