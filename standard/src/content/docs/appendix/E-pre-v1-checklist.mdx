@@ -39,3 +39,23 @@ sidebar:
 **Workaround.** The grammar's `tree-sitter test` corpus passes against its own (stale) view of the language. The Standard does not require tree-sitter conformance pre-1.0; the cook-lang Rust parser is the reference implementation.
 
 **Resolution path.** The follow-up plan referenced by CS-0002 will: enumerate divergences, update `grammar.js` and externals, wire a tree-sitter conformance harness against `standard/conformance/`, and verify both implementations agree on the corpus.
+
+## E.5. Implicit termination of recipe and config bodies [#pre-v1.implicit-end]
+
+**Tension.** Each `recipe` and `config` block must close with an explicit `end` line. The closing keyword is ceremony — every author writes it without thinking, and the parser has no need for it that couldn't be served by "next top-level construct or EOF." A Cookfile with ten recipes has ten lines that exist only to satisfy the grammar.
+
+**Status quo.** §{recipes} (recipes) requires `end` at the close of every `recipe` body; §{grammar.config-blocks} requires it for `config` blocks. App. A.3 enumerates `end` in the recipe production. The lexer produces `Token::RecipeEnd` for column-0 `end` lines; the parser consumes one per body.
+
+**Constraints.** The brace-block-as-opaque-source-lines model already cleanly separates Lua- and shell-block boundaries from recipe boundaries — a `recipe` keyword appearing inside a Lua block's source is never seen by the recipe-body parser, because the brace-counter skips the token stream over the block. Implicit termination by next top-level keyword does not interfere with embedded blocks. The lexer currently classifies `recipe`/`config`/`use`/`import` keywords on the trimmed line content (any indentation), which would let an indented `recipe foo` silently close an outer recipe under the new rule. Tightening the lexer to require column 0 for those keywords is part of the resolution.
+
+**Possible resolution.** Drop `end` from the recipe and config grammars. Body extends until the next column-0 line classified as `recipe`, `config`, `use`, or `import`, or EOF. Lexer changes: require column 0 for top-level keywords; remove `Token::RecipeEnd` (a bare `end` line then becomes `Token::Content` and falls into the existing "unexpected content outside a recipe" path or, inside a recipe, into a shell command). Conformance corpus migrates by stripping `end` lines and updating `parse.txt` line counts. Diagnostics for "you forgot to close this recipe" largely disappear because there is nothing to forget.
+
+## E.6. Implicit recipe header form [#pre-v1.implicit-recipe-header]
+
+**Tension.** §{grammar.recipe-syntax} normatively defines two recipe header shapes: explicit (`recipe NAME [: deps]`) and implicit (`NAME : deps`). The implicit form has zero usage in `examples/` or `standard/conformance/`; every Cookfile in the project uses the explicit form. App. B.3.7 rationalises only the form's column-0 anchor — the only published rationale is defensive ("here is how we keep it from causing trouble"). An accidental `name: value` at column 0 silently parses as a recipe named `name` with dep `value`, with no diagnostic.
+
+**Status quo.** Both forms accepted, six parser tests pin the implicit form (three in `cli/crates/cook-lang/src/tests.rs`, three in `cli/crates/cook-lang/src/lexer.rs`), and App. A.3 lists both productions.
+
+**Possible resolution.** Drop the implicit form. §{grammar.recipe-syntax} collapses to one shape; App. A.3's `recipe_header` becomes `"recipe" name (":" dependency_list)?`; App. B.3.7 is deleted; six implicit-form parser tests are removed; one new negative conformance case under `standard/conformance/negative/` asserts that `name: deps` at column 0 is rejected (becomes `Token::Content` and falls into "unexpected content outside of a recipe"). No corpus migration is required because the form is unused.
+
+**Composability.** Removes the typo vector and lets a future E.5 ("drop `end`") change rely on top-level keywords as the unambiguous block-boundary signal. The two are independent but compose well in either order; bundling them in a single cut is reasonable.
