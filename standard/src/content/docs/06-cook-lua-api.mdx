@@ -181,7 +181,6 @@ recipe build_lua
         wasm:write("BINARY\n")
         wasm:close()
     }
-end
 ```
 
 the execute-phase worker binds `inputs` to the resolved ingredient paths, `outputs` to `{ "staging-lua/out.js", "staging-lua/out.wasm" }`, `input` to `inputs[1]`, `output` to `"staging-lua/out.js"`, and `input_1` to the first (and only) ingredient group.
@@ -341,7 +340,6 @@ use cpp
 
 recipe "colorize"
     cpp.bin("colorize", { sources = { "src/colorize.c" } })
-end
 ```
 
 The declaration `use cpp` binds the identifier `cpp` in the Cookfile's Lua environment to the table returned by `cook_modules/cpp.lua` (or `cook_modules/cpp/init.lua`). The `cpp.bin(...)` line in the recipe body is then dispatched as a `module_call` step (App. A.4, dispatch step 5) rather than a `shell_command`, because its first dot-separated segment `cpp` matches a bound identifier pattern (§{recipes.module-call-steps}).

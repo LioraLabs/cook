@@ -238,3 +238,17 @@ The parser-side change (delete the implicit-form lex branch and six pinned parse
 **Implementation status.** Spec-side only in this commit. Parser-side in Task 2 of the same plan.
 
 **Reference:** this commit.
+
+## D.19. CS-0019 — Drop `end`; implicit termination by next top-level keyword or EOF. [#changes.cs-0019]
+
+**Date:** 2026-04-29
+**Version:** v0.4
+**Sections affected:** §{lexical.tokens} (Token table — `RecipeEnd` removed); §{lexical.keywords} (column-0 enforcement on top-level keywords; `end` removed from the keyword list); §{lexical.line-classification} (cascade test for bare `end` removed); §{grammar.config-blocks} (closing `end` requirement removed; `config_block` form definition updated); §{grammar.recipe-syntax} (closing `end` requirement removed; `recipe` form definition updated); §{recipes.termination} (new §4.1.1; slug new); App. A.2 `config_block` production (drop `"end" NEWLINE`); App. A.3 `recipe` production (drop `"end" NEWLINE?`); App. A.5 `LUA_SOURCE` definition (rephrased); App. B.3.10 (new — implicit-termination rationale, slug new).
+
+**Summary:** A `recipe_body` and `config_body` extend from the line after the introducing header up to (but not including) the next column-0 line whose first whitespace-separated token is `recipe`, `config`, `use`, or `import`, or end-of-file (whichever comes first). The closing `end` keyword is removed entirely from the language. A bare `end` line is now a `Token::Content`: at top level it is rejected (§{grammar.overview}); inside a recipe body it dispatches as a `shell_command` running the literal command `end`. The lexer is tightened to require column 0 for the four top-level keywords; an indented `recipe foo` line inside a recipe body is no longer misclassified as a header.
+
+**Why:** `end` was ceremony — every author wrote it without thinking, and the parser had no need for it that the next top-level construct or EOF could not serve. App. B.3.10 records the full rationale.
+
+**Implementation status.** Spec-side only in this commit. The conformance-corpus migration (strip trailing `end` from every Cookfile fixture), the Rust parser change (drop `Token::RecipeEnd`, column-0 enforcement, body-by-implicit-termination), and the tree-sitter grammar update (drop `"end"` from `recipe` and `config_block` rules) are Tasks 5–8 of the v0.4 plan and land in subsequent commits.
+
+**Reference:** this commit.

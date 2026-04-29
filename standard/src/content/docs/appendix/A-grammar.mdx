@@ -22,11 +22,13 @@ toplevel_item         ::= recipe
 ```ebnf
 use_declaration       ::= "use" name NEWLINE
 import_declaration    ::= "import" BARE_IDENTIFIER path NEWLINE
-config_block          ::= "config" name? NEWLINE config_body "end" NEWLINE
+config_block          ::= "config" name? NEWLINE config_body
 config_body           ::= LUA_SOURCE
 ```
 
 **Ordering (normative).** `use_declaration`, `import_declaration`, and `config_block` MUST appear before the first `recipe`. A conforming implementation MUST reject a Cookfile that places any of these after a recipe.
+
+**Body termination (normative).** A `config_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `config`, `use`, or `import`, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
 
 **Duplicate `config_block` rule.** At most one unnamed `config_block` is permitted per Cookfile. Named `config_block` names MUST be unique. A conforming implementation MUST reject a Cookfile that violates either constraint.
 
@@ -36,7 +38,7 @@ config_body           ::= LUA_SOURCE
 
 ## A.3. Recipes [#grammar-appendix.recipes]
 ```ebnf
-recipe                ::= recipe_header NEWLINE recipe_body "end" NEWLINE?
+recipe                ::= recipe_header NEWLINE recipe_body
 recipe_header         ::= "recipe" name (":" dependency_list)?
 dependency_list       ::= name+
 recipe_body           ::= declarative_region imperative_region?
@@ -62,6 +64,8 @@ imperative_item       ::= lua_line
 **At-most-one-ingredients rule.** A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe with two or more `ingredients_step` items.
 
 **Region ordering rule.** A conforming implementation MUST reject a `recipe_body` in which a `declarative_item` (other than `comment` or `NEWLINE`) appears after the first `imperative_item` (other than `comment` or `NEWLINE`) of the same recipe. The diagnostic MUST identify the offending step's line and the line on which the imperative region began. See §{recipes.step-kinds}, Note 4.4.2 for the prose treatment.
+
+**Body termination (normative).** A `recipe_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `config`, `use`, or `import`, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
 
 ## A.4. Steps [#grammar-appendix.steps]
 ```ebnf
@@ -134,7 +138,8 @@ LUA_LINE_CONTENT      ::= /[^\n]*/   /* zero or more characters; may be empty */
 LUA_BLOCK_CONTENT     ::= BRACE_BALANCED   /* see § 2.9 */
 SHELL_LINE_CONTENT    ::= /[^\n]+/
 SHELL_BLOCK_CONTENT   ::= BRACE_BALANCED   /* see § 2.9 */
-LUA_SOURCE            ::= /* any sequence of lines up to the matching "end" */
+LUA_SOURCE            ::= /* any sequence of lines up to the next column-0
+                             top-level keyword or end-of-file; see §{recipes.termination} */
 BRACE_BALANCED        ::= /* text in which `{` and `}` counted outside of
                              Lua comments (--), double-quoted strings, single-
                              quoted strings, and long strings ([[...]]) balance

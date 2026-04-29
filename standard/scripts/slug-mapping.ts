@@ -54,6 +54,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   // ── Chapter 4 — Recipes and step kinds ────────────────────────────────────
   'sec-4':     'recipes',
   'sec-4-1':   'recipes.header-forms',
+  'sec-4-1-1': 'recipes.termination',
   'sec-4-2':   'recipes.dep-list',
   'sec-4-3':   'recipes.ingredients',
   'sec-4-4':   'recipes.step-kinds',
@@ -147,6 +148,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-B-3-2':   'rationale.ordered-prefix',
   'sec-B-3-7':   'rationale.implicit-header-col0',
   'sec-B-3-8':   'rationale.name-value-shell',
+  'sec-B-3-10':  'rationale.implicit-end',
   'sec-B-4':     'rationale.recipes',
   'sec-B-4-6':   'rationale.multi-output-using-error',
   'sec-B-4-7':   'rationale.plate-single-template',
