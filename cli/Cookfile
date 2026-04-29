@@ -1,0 +1,25 @@
+# Cookfile for the Rust CLI / parser.
+#
+# Imported by the top-level Cookfile as `cli`. Recipes here run with cwd
+# = ./cli/, so paths are relative to this directory.
+
+recipe build
+    cargo build --manifest-path Cargo.toml
+end
+
+recipe test
+    cargo test --manifest-path Cargo.toml
+end
+
+recipe conformance
+    cargo test --manifest-path Cargo.toml -p cook-lang --test conformance
+end
+
+recipe version
+    cargo build --manifest-path Cargo.toml --bin cook
+    @target/debug/cook --version
+end
+
+recipe install
+    cargo install --locked --path crates/cook-cli
+end

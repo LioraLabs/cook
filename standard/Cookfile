@@ -1,0 +1,40 @@
+# Cookfile for the Cook Standard.
+#
+# Imported by the top-level Cookfile as `standard`. Recipes here run
+# with cwd = ./standard/, so paths are relative to this directory.
+#
+# `lint` and `against-tag` route through cook_modules/checks.lua, which
+# is the in-repo replacement for the bash scripts that used to live in
+# standard/scripts/.
+#
+# `against-tag` reads VERSION from
+#   cook standard.against-tag --set VERSION=X.Y
+# and defaults to the current contents of standard/VERSION.
+
+use checks
+
+recipe build
+    pnpm build
+end
+
+recipe lint
+    checks.lint_keywords()
+end
+
+recipe host
+    @pnpm host
+end
+
+recipe against-tag
+    >{
+        local version = cook.env.VERSION
+        if not version or version == "" then
+            version = fs.read("VERSION"):gsub("%s+$", "")
+        end
+        checks.against_tag(version)
+    }
+end
+
+recipe retag
+    V="${VERSION:-$(cat VERSION)}" && git tag --force "cs-standard/v$V" HEAD
+end

@@ -1,0 +1,37 @@
+# Cookfile for tree-sitter-cook.
+#
+# Imported by the top-level Cookfile as `ts`. Recipes here run with cwd
+# = ./tree-sitter-cook/, so paths are relative to this directory.
+#
+# `wasm` writes into ../standard/public/ because the rendered Standard
+# bundles the wasm parser for in-browser code highlighting.
+
+config
+    cook.env.NVIM_SITE = cook.env.NVIM_SITE or (os.getenv("HOME") .. "/.local/share/nvim/site")
+end
+
+recipe generate
+    ingredients "grammar.js"
+    cook "src/parser.c" using "tree-sitter generate"
+end
+
+recipe test
+    tree-sitter test
+end
+
+recipe conformance
+    node scripts/conformance.mjs
+end
+
+recipe wasm: generate
+    ingredients "grammar.js" "src/parser.c" "src/scanner.c"
+    cook "../standard/public/tree-sitter-cook.wasm" using "mkdir -p ../standard/public && tree-sitter build --wasm . -o {out}"
+end
+
+recipe nvim-install: generate
+    ingredients "src/parser.c" "src/scanner.c"
+    cook "build/parser/cook.so" using "mkdir -p build/parser && tree-sitter build . -o {out}"
+    plate "mkdir -p $NVIM_SITE/parser && cp {out} $NVIM_SITE/parser/cook.so"
+    mkdir -p "$NVIM_SITE/queries/cook"
+    cp queries/*.scm "$NVIM_SITE/queries/cook/"
+end
