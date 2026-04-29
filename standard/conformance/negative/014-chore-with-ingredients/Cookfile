@@ -1,0 +1,3 @@
+chore clean
+    ingredients "build/*"
+    rm -rf build

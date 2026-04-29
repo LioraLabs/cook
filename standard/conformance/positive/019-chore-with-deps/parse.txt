@@ -1,0 +1,16 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["out/app"] using=None
+  chores:
+    Chore name="play" line=4
+      deps: ["build"]
+      steps:
+        Shell interactive=true command="./out/app"

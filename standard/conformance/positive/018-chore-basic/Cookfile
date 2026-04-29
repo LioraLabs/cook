@@ -1,0 +1,2 @@
+chore clean
+    rm -rf build
