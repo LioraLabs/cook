@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="outer" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Shell interactive=false command="echo before"
+        Shell interactive=false command="recipe inner"
+        Shell interactive=false command="echo after"
