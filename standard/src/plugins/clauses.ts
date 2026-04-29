@@ -18,21 +18,23 @@ const SLUG_SHAPE_RE = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)?$/;
 
 // Matches clause-numbered heading text that carries a valid [#slug] marker:
 //   <NUM>. <TITLE>. [#<slug>]
-// where NUM is a digit run or single uppercase letter (plus optional .M[.K]),
-// TITLE is any run up to the [#, and slug matches SLUG_SHAPE_RE.
+// where NUM is a digit run (optionally followed by a single lowercase letter,
+// e.g. "4a" for interstitial chapters), or a single uppercase letter (appendix),
+// with an optional .M[.K] numeric sub-number. TITLE is any run up to the [#,
+// and slug matches SLUG_SHAPE_RE.
 // Capture groups:
-//   1 = top   (digit run or letter)
+//   1 = top   (digit run + optional letter, or single uppercase letter)
 //   2 = mid   (digits, optional)
 //   3 = bot   (digits, optional)
 //   4 = title (non-greedy)
 //   5 = slug  (chapter.leaf grammar)
 const HEADING_RE =
-  /^(?:#+)\s+([0-9]+|[A-Z])(?:\.([0-9]+)(?:\.([0-9]+))?)?\.\s+(.+?)\s+\[#([a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)?)\]\s*$/gm;
+  /^(?:#+)\s+([0-9]+[a-z]?|[A-Z])(?:\.([0-9]+)(?:\.([0-9]+))?)?\.\s+(.+?)\s+\[#([a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)?)\]\s*$/gm;
 
 // Matches any clause-numbered heading line regardless of whether it has a marker.
 // Capture group 1 = everything after the number-and-period prefix.
 const NUMBERED_HEADING_RE =
-  /^#+\s+(?:[0-9]+|[A-Z])(?:\.[0-9]+(?:\.[0-9]+)?)?\.\s+(.+)$/gm;
+  /^#+\s+(?:[0-9]+[a-z]?|[A-Z])(?:\.[0-9]+(?:\.[0-9]+)?)?\.\s+(.+)$/gm;
 
 // Matches a trailing [#<anything>] marker (present but possibly invalid slug).
 const MARKER_PRESENT_RE = /\[#([^\]]+)\]\s*$/;

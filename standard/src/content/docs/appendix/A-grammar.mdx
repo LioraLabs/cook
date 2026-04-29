@@ -11,6 +11,7 @@ sidebar:
 ```ebnf
 cookfile              ::= toplevel_item*
 toplevel_item         ::= recipe
+                       | chore
                        | config_block
                        | use_declaration
                        | import_declaration
@@ -26,9 +27,9 @@ config_block          ::= "config" name? NEWLINE config_body
 config_body           ::= LUA_SOURCE
 ```
 
-**Ordering (normative).** `use_declaration`, `import_declaration`, and `config_block` MUST appear before the first `recipe`. A conforming implementation MUST reject a Cookfile that places any of these after a recipe.
+**Ordering (normative).** `use_declaration`, `import_declaration`, and `config_block` MUST appear before the first `recipe` or `chore`. A conforming implementation MUST reject a Cookfile that places any of these after a `recipe` or `chore`.
 
-**Body termination (normative).** A `config_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `config`, `use`, or `import`, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
+**Body termination (normative).** A `config_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, or `import`, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
 
 **Duplicate `config_block` rule.** At most one unnamed `config_block` is permitted per Cookfile. Named `config_block` names MUST be unique. A conforming implementation MUST reject a Cookfile that violates either constraint.
 
@@ -65,7 +66,34 @@ imperative_item       ::= lua_line
 
 **Region ordering rule.** A conforming implementation MUST reject a `recipe_body` in which a `declarative_item` (other than `comment` or `NEWLINE`) appears after the first `imperative_item` (other than `comment` or `NEWLINE`) of the same recipe. The diagnostic MUST identify the offending step's line and the line on which the imperative region began. See §{recipes.step-kinds}, Note 4.4.2 for the prose treatment.
 
-**Body termination (normative).** A `recipe_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `config`, `use`, or `import`, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
+**Body termination (normative).** A `recipe_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, or `import`, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
+
+### A.3.1. Chore [#grammar-appendix.chore]
+
+```ebnf
+chore                    ::= chore_header NEWLINE chore_body
+chore_header             ::= "chore" name (":" dependency_list)?
+chore_body               ::= chore_declarative_region chore_imperative_region?
+chore_declarative_region ::= chore_declarative_item*
+chore_declarative_item   ::= inline_lua_line
+                           | inline_lua_block
+                           | module_call
+                           | comment
+                           | NEWLINE
+chore_imperative_region  ::= chore_imperative_item+
+chore_imperative_item    ::= lua_line
+                           | lua_block
+                           | shell_command
+                           | interactive_command
+                           | comment
+                           | NEWLINE
+```
+
+**Chore step-kind ban (normative).** A `chore_body` MUST NOT contain `ingredients_step`, `cook_step`, `plate_step`, or `test_step`. A conforming implementation MUST reject a chore body that contains any of these. The diagnostic MUST identify the offending step's keyword.
+
+**Chore default-interactive (normative).** Every `shell_command` inside a `chore_body` MUST be treated as if it had been an `interactive_command` (§{grammar-appendix.steps}, `interactive_command`). The `@` prefix MAY be present (no-op) but is unnecessary.
+
+**Chore no-caching (normative).** A unit registered from inside a chore body via `cook.add_unit` or the Cook Lua API's unit-recording helpers MUST be registered with `cache = false`. A conforming implementation MUST reject a register-phase call that would set `cache = true` (or equivalent) from within a chore body.
 
 ## A.4. Steps [#grammar-appendix.steps]
 ```ebnf

@@ -156,6 +156,32 @@ The two-token heuristic is cheap, lexer-local, and has no false positives in pra
 
 The multi-line extension (continuing across source lines while braces are unbalanced) is the same brace-balance algorithm used for `lua_block` (§{lexical.brace-blocks}). Reusing it keeps the lexer consistent: the Cookfile parser has exactly one way to recognise a brace-balanced region, and that region's body is always handed to Lua untouched.
 
+### B.4.14. Why chore is a separate form rather than a flag on recipe [#rationale.chore-form-not-flag]
+
+The chore-vs-recipe distinction could have been spelled `recipe foo (chore)`, `recipe foo @chore`, `recipe! foo`, or any number of recipe-with-modifier shapes. CS-0020 instead introduces `chore` as a peer top-level keyword. Three forces drive the choice.
+
+First, the keyword is the carrier of intent. A reader who scans a Cookfile reads `recipe build` and `chore deploy` differently — the keyword tells the eye whether the body is a build target or a command runner. A modifier on `recipe` is read after the keyword, by which time the reader has already committed to "build target". The split keyword is a pure UX win for navigation.
+
+Second, the parse-time step-kind ban is naturally expressed at the production level. A chore production has a smaller `chore_body` alternation than a recipe production has for `recipe_body`, and the ban falls out of the grammar rather than being a separate rule the parser checks after the fact. The implementation is less code than a `recipe (chore)` modifier whose validation runs after step-kind dispatch.
+
+Third, the syntactic peerage models the semantic peerage. Chores and recipes are equally first-class — a recipe may depend on a chore, a chore on a recipe — and giving them peer keywords is an accurate model of that. A modifier shape would suggest one is a special case of the other.
+
+The cost is a new keyword to remember. Cook's keyword surface remains small (`recipe`, `chore`, `config`, `use`, `import`, `ingredients`, `cook`, `plate`, `test`, `using`); even with `chore` added, the set is well within "memorable in one sitting" range.
+
+### B.4.15. Why chore bans `ingredients`, `cook`, `plate`, `test` [#rationale.chore-banned-steps]
+
+The four banned step kinds — `ingredients`, `cook`, `plate`, `test` — share a common property: each declares part of a build-graph node (inputs, outputs, plating, validation). A chore is by definition a body that does NOT participate in the build graph: it always runs, it produces no cacheable output, and its outputs are not consumed by other recipes via the cross-recipe-reference mechanism (§{xref}).
+
+Allowing a `cook` step inside a chore body would be incoherent: either (a) the engine ignores the cook step's output declaration, in which case it serves no purpose, or (b) the engine treats it as a build target despite the chore's no-cache rule, in which case the rule is violated. The same argument applies to `ingredients` (declares inputs, but a chore has no cache to invalidate against), `plate` (one-template-per-cook-output, but no cook step), and `test` (validates a cook step's output, but no cook step).
+
+Banning module calls was considered and rejected. A module call typically expands into a sequence of register-phase declarative steps, some of which might be `cook` steps and would be caught by the recipe-body region rule's existing diagnostics. A flat ban would be over-strict — a module that exposes a `cleanup()` function returning no `cook.add_unit` calls is a perfectly valid chore body call. The conservative choice is therefore to allow `module_call` in chore bodies; module authors who emit `cook` units inside a chore-context call see a diagnostic at the `cook.add_unit` site (per §{chores.no-caching}) rather than at parse time.
+
+### B.4.16. Why default-interactive [#rationale.chore-default-interactive]
+
+A chore is by intent a thing the user runs at a terminal. The `@` marker (§{recipes.shell-steps}) on every shell line of a recipe-shaped command-runner is ceremony — the author already chose `chore` over `recipe` because the body is interactive. The default-interactive rule deletes the ceremony.
+
+The `@` marker is preserved as a no-op inside chore bodies for symmetry: a recipe body author migrating to `chore` does not need to strip every `@`, and a Cookfile that is moved between forms during refactoring continues to parse. The non-symmetric direction (chore → recipe) requires the author to add `@` markers where they want interactivity preserved; this is an authoring choice and is the expected path for "this used to be a chore but I want to add cook steps now".
+
 ## B.5. On §{exec} Execution model [#rationale.exec]
 The execution model in §{exec} is organised around a two-phase design: every recipe is evaluated once to discover its work (the register phase) and then arranged for execution (the execute phase). This split is not cosmetic. It is the mechanism by which the Standard turns a scripting-flavoured surface syntax — arbitrary Lua embedded in a recipe body — into a dependency graph that can be reasoned about, parallelised, and cached. The rationale subsections below record why several load-bearing decisions in §{exec} are the way they are.
 

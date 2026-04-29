@@ -30,11 +30,11 @@ Both recipes above are semantically identical; the first uses a quoted name, the
 The token `recipe` is recognised as a top-level keyword only when followed by a separator (space, tab, or `"`). An identifier whose first word merely begins with `recipe` (for example, `recipes_cleanup`) is a `Content` token, not a header. See lexer test `test_recipe_prefix_is_shell_command`.
 
 ## 4.1.1. Body termination [#recipes.termination]
-A `recipe_body` (§{grammar-appendix.recipes}) and a `config_body` (§{grammar-appendix.declarations}) both extend from the line following the introducing header up to, but not including, the next **terminating line** of the surrounding Cookfile. A line is a terminating line when it begins at column 0 (no leading whitespace) and its first whitespace-separated token is one of the top-level keywords `recipe`, `config`, `use`, `import` (§{lexical.keywords}). End-of-file is also a terminating boundary.
+A `recipe_body` (§{grammar-appendix.recipes}) and a `config_body` (§{grammar-appendix.declarations}) both extend from the line following the introducing header up to, but not including, the next **terminating line** of the surrounding Cookfile. A line is a terminating line when it begins at column 0 (no leading whitespace) and its first whitespace-separated token is one of the top-level keywords `recipe`, `chore`, `config`, `use`, `import` (§{lexical.keywords}). End-of-file is also a terminating boundary.
 
 A conforming implementation MUST consume only the source lines strictly between the header and the next terminating line (or EOF) as the body. The terminating line itself is parsed independently as the next `toplevel_item`. There is no closing keyword.
 
-Comments and blank lines inside a body are part of the body (per the existing recipe-body and config-body conventions) and do not terminate it. An indented `recipe foo` line inside a recipe body is not a terminating line — the column-0 requirement applies — and falls through to the body's step-dispatch cascade as a `shell_command` (§{recipes.shell-steps}).
+Comments and blank lines inside a body are part of the body (per the existing recipe-body and config-body conventions) and do not terminate it. An indented `recipe foo` or `chore foo` line inside a recipe body is not a terminating line — the column-0 requirement applies — and falls through to the body's step-dispatch cascade as a `shell_command` (§{recipes.shell-steps}).
 
 A bare `end` line is not a terminating line. It is a `Content` token: at top level it is rejected (§{grammar.overview}); inside a recipe body it dispatches as a `shell_command` whose body text is `end` (§{recipes.shell-steps}).
 

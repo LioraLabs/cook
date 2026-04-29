@@ -1,0 +1,104 @@
+---
+title: "§{chores} — Chores"
+sidebar:
+  order: 4.5
+---
+# 4a. Chores [#chores]
+> **Normative.** This chapter defines the `chore` top-level form: a thin specialization of `recipe` for command-runner-shaped bodies. The productions referenced here are given formally in App. A §{grammar-appendix.recipes} and §{grammar-appendix.steps}; where this chapter's prose disagrees with App. A, App. A is authoritative (§{notation.grammar-precedence}).
+
+## 4a.1. Chore header [#chores.header]
+A chore is introduced by a **chore header** of the form `chore name (":" dependency_list)?`, where `name` is either a `BARE_IDENTIFIER` or a double-quoted `STRING` (App. A.5). An optional `:` introduces a dependency list (semantics identical to §{recipes.dep-list}).
+
+The keyword `chore` MUST be followed by a separator — whitespace, a tab, or a `"` character — before the name. The keyword is recognised only at column 0 (§{lexical.keywords}); an indented `chore foo` line inside a recipe body or chore body is a `Content` token dispatched as a `shell_command`.
+
+The reserved-segment rule of §{grammar-appendix.declarations} applies: a conforming implementation MUST reject a chore whose name's final dot-separated segment is one of `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`.
+
+A chore body is terminated by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, or `import`, or end-of-file (whichever comes first).
+
+### Example 4a.1.1
+
+```cook
+chore clean
+    rm -rf build
+
+chore play: build
+    fzf < build/menu.txt
+```
+
+Two chores: `clean` (no deps), `play` (depends on the recipe `build`).
+
+## 4a.2. Chore body — allowed and banned step kinds [#chores.body]
+
+A chore body MAY contain any of the following step kinds:
+
+| § | Step kind | Phase |
+|---|---|---|
+| 4.10     | `shell_command`       | execute (default-interactive) |
+| 4.10     | `interactive_command` | execute |
+| 4.9      | `lua_line`            | execute |
+| 4.9      | `lua_block`           | execute |
+| 4.9      | `inline_lua_line`     | register |
+| 4.9      | `inline_lua_block`    | register |
+| 4.11     | `module_call`         | register |
+
+A chore body MUST NOT contain any of the following step kinds:
+
+| § | Step kind | Diagnostic guidance |
+|---|---|---|
+| 4.3 | `ingredients_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
+| 4.5–4.6 | `cook_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
+| 4.7 | `plate_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
+| 4.8 | `test_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
+
+A conforming implementation MUST reject a chore body that contains any of the four banned step kinds. The diagnostic MUST identify the offending step's line and the offending keyword by name; the recommended message form names the keyword and suggests the `recipe` form.
+
+The recipe-body region rule (§{recipes.step-kinds} Note 4.4.2) applies to chore bodies as well, restricted to the allowed step kinds: `inline_lua_line` and `inline_lua_block` are declarative-region; `shell_command`, `interactive_command`, `lua_line`, `lua_block` are imperative-region. A conforming implementation MUST reject a chore body in which a declarative-region step appears after the first imperative-region step.
+
+A `module_call` (§{recipes.module-call-steps}) is permitted in a chore body — it is register-phase (declarative region) and desugars to `inline_lua_line` / `inline_lua_block`. This is consistent with the chore's allowed-step-kinds set.
+
+## 4a.3. Default-interactive shell semantics [#chores.default-interactive]
+
+Every `shell_command` step inside a chore body MUST be treated as if it were `@`-prefixed (§{recipes.shell-steps}, "interactive_command"). The `@` marker remains valid (no-op) for symmetry with recipe bodies, but is unnecessary. A chore therefore inherits the TTY-allocation, stdio-inheritance semantics of an interactive recipe step.
+
+The Lua-step phases (`>`/`>{`/`>>`/`>>{`) are unchanged by this rule. An execute-phase Lua step inside a chore body runs on the worker VM exactly as it does inside a recipe body; the body-bundling rule (§{recipes.body-bundling}) does NOT apply to chores — every shell step is its own draining unit per §{exec.interactive-drain}.
+
+### Example 4a.3.1
+
+```cook
+chore deploy
+    cd build
+    rsync -av out/ user@host:/srv/app/
+    > print("deploy complete")
+```
+
+The two shell steps are interactive: `cd build` and `rsync ...` run with the user's TTY inherited. The `>` line runs at execute phase on a worker VM after the two shell drainage units complete. There is no body-bundling — each shell line is its own draining unit.
+
+## 4a.4. No caching [#chores.no-caching]
+
+A chore body MUST NOT register a cached work unit. This is satisfied trivially by the parse-time ban on `cook` and `plate` steps (§{chores.body}); a chore has no declarative cook step that would produce a cacheable output. The Cook Lua API helpers `cook.add_unit` (§{lua.add-unit}) and the unit-recording helpers, if called from an `inline_lua_line` or `inline_lua_block` inside a chore body, MUST register their units with `cache = false`. A conforming implementation MUST raise a Lua runtime error from `inline_lua` inside a chore body if the call would record a unit with `cache = true` (or any equivalent caching opt-in).
+
+This rule preserves the chore-vs-recipe semantic distinction: chores always run when invoked; they never short-circuit on a cache hit.
+
+### Note 4a.4.1
+
+The engine does not need a chore-specific code path. A chore compiles to a recipe-body Lua function whose registered units are all `cache = false` and whose shell steps default to `interactive = true`. The distinction is a parse-time / codegen-time layer over the existing engine.
+
+## 4a.5. Cross-form dependencies [#chores.cross-form-deps]
+
+A chore MAY depend on a recipe (run a build, then post-process) and a recipe MAY depend on a chore (rare but legal — for example, a recipe that depends on a one-off database-seed chore). Dependency resolution and ordering follow the rules of §{xref}; the form of the depender and depended-upon does not affect the resolution algorithm.
+
+### Example 4a.5.1
+
+```cook
+recipe build
+    ingredients "src/*.c"
+    cook "build/app" using "cc {in} -o {out}"
+
+chore play: build
+    ./build/app
+
+recipe install: play
+    cp build/app /usr/local/bin/
+```
+
+`play` depends on the recipe `build`; the recipe `install` depends on the chore `play`. The graph: `build` (recipe, cached) → `play` (chore, never cached) → `install` (recipe, cached). Each edge is a normal name reference; no special wording for cross-form.
