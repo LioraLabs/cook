@@ -25,6 +25,7 @@ module.exports = grammar({
     _toplevel_item: ($) =>
       choice(
         $.recipe,
+        $.chore,
         $.config_block,
         $.use_declaration,
         $.import_declaration,
@@ -79,6 +80,37 @@ module.exports = grammar({
       ),
 
     dependency_list: ($) => repeat1($._name),
+
+    // ── Chores ─────────────────────────────────────────────────
+
+    chore: ($) =>
+      prec.right(
+        seq(
+          $.chore_header,
+          $._newline,
+          repeat($._chore_item),
+        ),
+      ),
+
+    chore_header: ($) =>
+      seq(
+        "chore",
+        field("name", $._name),
+        optional(seq(":", $.dependency_list)),
+      ),
+
+    _chore_item: ($) =>
+      choice(
+        $.inline_lua_line,
+        $.inline_lua_block,
+        $.lua_line,
+        $.lua_block,
+        $.module_call,
+        $.interactive_command,
+        $.shell_command,
+        $.comment,
+        $._newline,
+      ),
 
     // ── Recipe body ────────────────────────────────────────────
 

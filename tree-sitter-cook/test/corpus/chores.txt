@@ -1,0 +1,57 @@
+==================
+basic chore
+==================
+
+chore clean
+    rm -rf build
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier))
+    (shell_command
+      (shell_content))))
+
+
+==================
+chore with deps
+==================
+
+chore play: build
+    ./build/app
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (shell_command
+      (shell_content))))
+
+
+==================
+chore with lua and interactive
+==================
+
+chore status
+    >> local h = "localhost"
+    > print(h)
+    @uname -a
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier))
+    (inline_lua_line
+      (lua_code))
+    (lua_line
+      (lua_code))
+    (interactive_command
+      (shell_content))))

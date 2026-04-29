@@ -216,9 +216,13 @@ static bool scan_shell_content(TSLexer *lexer) {
         return false;
     }
 
-    // `recipe` keyword — explicit recipe shouldn't appear inside body,
-    // but let the internal lexer handle it for error recovery
+    // `recipe` / `chore` keyword — explicit recipe/chore shouldn't appear
+    // inside a body; let the internal lexer handle it for error recovery
     if (!word_truncated && len == 6 && strcmp(word, "recipe") == 0) {
+      if (next == ' ' || next == '\t' || next == '"')
+        return false;
+    }
+    if (!word_truncated && len == 5 && strcmp(word, "chore") == 0) {
       if (next == ' ' || next == '\t' || next == '"')
         return false;
     }
@@ -254,6 +258,7 @@ static bool scan_shell_content(TSLexer *lexer) {
 
 static bool is_toplevel_keyword(const char *buf, int len) {
   return (len == 6 && strncmp(buf, "recipe", 6) == 0) ||
+         (len == 5 && strncmp(buf, "chore", 5) == 0) ||
          (len == 6 && strncmp(buf, "config", 6) == 0) ||
          (len == 3 && strncmp(buf, "use", 3) == 0) ||
          (len == 6 && strncmp(buf, "import", 6) == 0);
