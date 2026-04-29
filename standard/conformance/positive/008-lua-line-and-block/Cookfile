@@ -4,4 +4,3 @@ recipe "lua_step"
         local x = 1
         print(x + 1)
     }
-end

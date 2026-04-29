@@ -1,7 +1,5 @@
 recipe "protos"
     ingredients "proto/a.proto"
-end
 
 recipe "bad"
     cook "build/fixed.o" using "echo {protos.stem}"
-end

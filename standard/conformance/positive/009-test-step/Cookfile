@@ -1,4 +1,3 @@
 recipe "verify"
     test "./check" timeout 30
     test "./mustfail" should_fail
-end
