@@ -224,3 +224,17 @@ A module function loaded into the execute-phase VM that calls register-only API 
 **Implementation status.** Lockstep — codegen, worker VM, and spec land together. New positive conformance fixture (`017-use-from-execute`) pins the AST shape; the codegen-side and runtime-side checks are in `cook-luagen/tests/conformance.rs` and the runnable demo in `examples/v03-phase-split/Cookfile` (recipes `module-call-execute` and `module-via-require`).
 
 **Reference:** this commit.
+
+## D.18. CS-0018 — Drop the `name:` recipe header form. [#changes.cs-0018]
+
+**Date:** 2026-04-29
+**Version:** v0.4
+**Sections affected:** §{lexical.source-representation} (§2.1); §{lexical.line-classification} (test 12 deleted, test 13 renumbered to 12); §{grammar.recipe-syntax} (two-alternative `recipe_header` collapsed to one); §{recipes.header-forms} (§4.1 rewritten: table and two-form prose removed, Note 4.1.2 removed); §{recipes.dep-list} (Note 4.2.1 deleted); App. A.3 (EBNF: `explicit | bare-colon` alternatives collapsed to single production; "Implicit header constraint" deleted); App. B.3.7 (deleted — rationale for the column-0 anchor no longer applies); App. E.6 (resolved).
+
+**Summary:** Removes the `BARE_IDENTIFIER ":" dependency_list?` recipe header form (previously called the "implicit" form). The `recipe_header` production is now a single alternative: `"recipe" name (":" dependency_list)?`. The form had zero in-repo usage, created a silent typo vector (an accidental `name: value` line at column 0 silently parsed as a recipe named `name` with dep `value`), and the only published rationale (App. B.3.7) was defensive — it justified only the column-0 anchor that made the form less dangerous, not the form's existence. Removing the form eliminates the anchor rule, the "Implicit header constraint" in App. A.3, and the B.3.7 rationale subsection. The lexer's line-classification cascade loses the column-0 `BARE_IDENTIFIER ":"` test and renumbers.
+
+The parser-side change (delete the implicit-form lex branch and six pinned parser tests, add a negative conformance fixture under `standard/conformance/negative/`) lands as Task 2 of the same v0.4 plan.
+
+**Implementation status.** Spec-side only in this commit. Parser-side in Task 2 of the same plan.
+
+**Reference:** this commit.

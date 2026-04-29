@@ -166,14 +166,9 @@ When no overlay is selected, the base alone executes and `{CXXFLAGS}` resolves t
 Multi-overlay selection is deliberately not specified in this revision: per the rule above, a conforming implementation permits at most one overlay. The single-overlay restriction avoids ordering questions across multiple selected overlays and is non-breaking to relax in a future revision; the design rationale appears in App. B.
 
 ## 3.7. Recipes [#grammar.recipe-syntax]
-A `recipe` is the form `recipe_header NEWLINE recipe_body "end" NEWLINE?` (App. A.3). A `recipe_header` is one of two alternatives:
-
-- An **explicit header** of the form `"recipe" name (":" dependency_list)?`, where `name` is a `BARE_IDENTIFIER` or `STRING`.
-- An **implicit header** of the form `BARE_IDENTIFIER ":" dependency_list?`.
+A `recipe` is the form `recipe_header NEWLINE recipe_body "end" NEWLINE?` (App. A.3). The `recipe_header` is the form `"recipe" name (":" dependency_list)?`, where `name` is a `BARE_IDENTIFIER` or a `STRING`.
 
 The `dependency_list` is one or more `name`s separated by whitespace; each element is a `BARE_IDENTIFIER` or a `STRING`, and the two forms MAY be freely mixed within a single list.
-
-The `implicit_header` form MUST be recognised only when the header line begins at column 0 — that is, when it has no leading whitespace. An indented line of the shape `BARE_IDENTIFIER:` MUST be classified as a `Content` token (and therefore, within a recipe body, dispatched as a `shell_command` per §{grammar.step-dispatch}); outside a recipe body, such an indented line is rejected under §{grammar.overview}.
 
 A `recipe_header` MUST NOT be introduced by a line whose trimmed content begins with `recipe` but is immediately followed by a non-separator character — for example, `recipes_cleanup`. Such a line is a `Content` token. The keyword `recipe` is recognised only when separated from its name by whitespace, a tab, or a `"` character.
 
@@ -191,27 +186,9 @@ end
 recipe "bundle": backend.build frontend.build
     echo bundling
 end
-
-clean:
-    rm -rf build
-end
 ```
 
-Three recipes, in three valid header shapes: explicit with a bare name (`build`), explicit with a quoted name and dependency list mixing bare and quoted forms, and implicit (`clean:`) at column 0.
-
-### Example 3.7.2
-
-```cook
-recipe build
-    build: lib setup
-end
-```
-
-The second line is indented. Its shape `BARE_IDENTIFIER ":" ...` does not introduce a nested recipe; it is a `Content` token and is dispatched inside the enclosing recipe body as a `shell_command` (§{grammar.step-dispatch}).
-
-### Note 3.7.1
-
-The `cook-lang` parser tests `test_implicit_recipe_indented_not_detected` and `test_recipe_prefix_is_shell_command` pin the column-0 rule and the keyword-separator rule respectively.
+Two recipes, in two valid header shapes: explicit with a bare name (`build`), and explicit with a quoted name and dependency list mixing bare and quoted forms.
 
 ## 3.8. Step dispatch inside a recipe [#grammar.step-dispatch]
 Inside a `recipe_body`, each source line is first classified by the lexer (§{lexical.line-classification}) into one of `Comment`, `Blank`, `LuaLine`, `LuaBlockOpen`, `InlineLuaLine`, `InlineLuaBlockOpen`, or `Content`. Comments and blank lines are skipped; `LuaLine` becomes a `lua_line` step; `LuaBlockOpen` begins a `lua_block` step collected by the brace-balance algorithm (§{lexical.brace-blocks}); `InlineLuaLine` becomes an `inline_lua_line` step; `InlineLuaBlockOpen` begins an `inline_lua_block` step (also brace-balanced).

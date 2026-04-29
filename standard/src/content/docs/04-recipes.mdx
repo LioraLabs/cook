@@ -6,19 +6,12 @@ sidebar:
 # 4. Recipes and step kinds [#recipes]
 > **Normative.** This chapter defines the structure of a recipe body and the meaning of each step kind. The productions referenced here are given formally in Appendix A §{grammar-appendix.recipes} and §{grammar-appendix.steps}; where this chapter's prose disagrees with Appendix A, Appendix A is authoritative (§{notation.grammar-precedence}).
 
-## 4.1. Recipe header forms [#recipes.header-forms]
-A recipe is introduced by a **recipe header** and closed by a bare `end` on its own line (§{grammar-appendix.recipes}, production `recipe`). The Cookfile language recognises two header forms:
+## 4.1. Recipe header [#recipes.header-forms]
+A recipe is introduced by a **recipe header** of the form `recipe name (":" dependency_list)?`, where `name` is either a `BARE_IDENTIFIER` or a double-quoted `STRING` (App. A.5, `name`). An optional `:` introduces a dependency list (§{recipes.dep-list}).
 
-| Form | Shape | Defined in |
-|---|---|---|
-| Explicit | `recipe` `name` (`:` `dependency_list`)? | §{grammar-appendix.recipes}, `explicit_header` |
-| Implicit | `BARE_IDENTIFIER` `:` `dependency_list`? | §{grammar-appendix.recipes}, `implicit_header` |
+The keyword `recipe` MUST be followed by a separator — whitespace, a tab, or a `"` character — before the name. An identifier whose first word merely begins with `recipe` (for example, `recipes_cleanup`) is a `Content` token, not a header (§{lexical.line-classification}).
 
-The **explicit header** begins with the keyword `recipe` followed by a `name` (§{grammar-appendix.primitives}), which is either a `BARE_IDENTIFIER` or a double-quoted `STRING`. An optional `:` introduces a dependency list (§{recipes.dep-list}). The explicit header is recognised whether or not the line has leading whitespace.
-
-The **implicit header** is a `BARE_IDENTIFIER` followed immediately by `:`, with an optional dependency list after the colon. A conforming implementation MUST only recognise the implicit header when the line starts at column 0, with no leading whitespace; an indented `BARE_IDENTIFIER:` line MUST instead be classified as a `shell_command` (§{recipes.shell-steps}). See §{grammar-appendix.recipes}, "Implicit header constraint".
-
-The reserved-segment rule of §{grammar-appendix.declarations} applies to both header forms: a conforming implementation MUST reject a recipe whose name's final dot-separated segment is one of `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`.
+The reserved-segment rule of §{grammar-appendix.declarations} applies: a conforming implementation MUST reject a recipe whose name's final dot-separated segment is one of `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`.
 
 ### Example 4.1.1
 
@@ -30,21 +23,13 @@ end
 recipe build: setup
     gcc -o main main.c
 end
-
-build: setup
-    gcc -o main main.c
-end
 ```
 
-All three recipes above are semantically identical. The first uses a quoted name in an explicit header; the second uses a bare name in an explicit header; the third uses the implicit form.
+Both recipes above are semantically identical; the first uses a quoted name, the second a bare name.
 
 ### Note 4.1.1
 
-The tokens `recipe` and `end` are only recognised as keywords when followed by a separator (space, tab, or, for `recipe`, a `"`). An identifier with `recipe` as a prefix — e.g. `recipes_cleanup` — is a `Content` token, not a header. See lexer test `test_recipe_prefix_is_shell_command`.
-
-### Note 4.1.2
-
-The implicit form's column-0 restriction is what disambiguates an indented `backend: build` inside a recipe body from a nested recipe. The Cookfile language has no nested recipes; an indented `ident:` line is therefore a shell command. See lexer test `test_implicit_recipe_indented_not_detected`.
+The token `recipe` is recognised as a top-level keyword only when followed by a separator (space, tab, or `"`). An identifier whose first word merely begins with `recipe` (for example, `recipes_cleanup`) is a `Content` token, not a header. See lexer test `test_recipe_prefix_is_shell_command`.
 
 ## 4.2. Dependency list [#recipes.dep-list]
 A **dependency list** is a sequence of one or more `name`s following the `:` in a recipe header (§{grammar-appendix.recipes}, `dependency_list`). Each name in a dependency list is a name reference; its resolution rules are given in §{xref.resolution} and its effect on execution ordering in §{xref.dep-implications} and §{exec.cross-recipe-ordering}.
@@ -67,10 +52,6 @@ end
 ```
 
 The first recipe lists three dependencies as bare identifiers. The second uses quoted strings for the same effect; it is semantically identical to `recipe bundle: backend.build frontend.build`.
-
-### Note 4.2.1
-
-A recipe with no dependencies MAY still use the implicit header form, yielding a bare `name:` line. The trailing colon is required by the implicit form's grammar even when the dependency list is empty. See parser test `test_implicit_recipe_parses`.
 
 ## 4.3. Ingredients [#recipes.ingredients]
 A recipe body MAY contain at most one `ingredients_step` (§{grammar-appendix.recipes}, "At-most-one-ingredients rule"). A second `ingredients` line within the same recipe body MUST be rejected.

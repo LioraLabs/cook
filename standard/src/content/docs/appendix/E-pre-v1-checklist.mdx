@@ -52,6 +52,8 @@ sidebar:
 
 ## E.6. Implicit recipe header form [#pre-v1.implicit-recipe-header]
 
+**Status.** Resolved in v0.4 by [CS-0018](D-changes#changes-cs-0018).
+
 **Tension.** §{grammar.recipe-syntax} normatively defines two recipe header shapes: explicit (`recipe NAME [: deps]`) and implicit (`NAME : deps`). The implicit form has zero usage in `examples/` or `standard/conformance/`; every Cookfile in the project uses the explicit form. App. B.3.7 rationalises only the form's column-0 anchor — the only published rationale is defensive ("here is how we keep it from causing trouble"). An accidental `name: value` at column 0 silently parses as a recipe named `name` with dep `value`, with no diagnostic.
 
 **Status quo.** Both forms accepted, six parser tests pin the implicit form (three in `cli/crates/cook-lang/src/tests.rs`, three in `cli/crates/cook-lang/src/lexer.rs`), and App. A.3 lists both productions.

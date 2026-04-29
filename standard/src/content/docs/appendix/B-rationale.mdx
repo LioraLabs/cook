@@ -68,13 +68,6 @@ The ordering is not necessary for parsing — a context-free grammar that accept
 
 The rule is trivially removable if it ever proves onerous; nothing downstream depends on it. But while it is in place, the diagnostic is actionable — the parser names the offending item's line — and authors get a clean separation between file-level configuration and recipe definitions.
 
-### B.3.7. Why the implicit header requires column 0 [#rationale.implicit-header-col0]
-The implicit recipe header `name:` shares its surface form with a class of legitimate shell commands and Makefile-style targets. A permissive reading of `identifier:` anywhere in the file would make indented shell commands of that shape (e.g., `build: lib setup` as a line of a shell script inside a `using` block or a recipe body) ambiguous with nested recipe declarations, which Cookfiles do not permit.
-
-Anchoring the implicit header to column 0 resolves the ambiguity at the lexical layer without requiring the parser to know whether it is inside a recipe body. The rule is easy to state, easy to diagnose, and matches the typographic expectation that top-level declarations hug the left margin while recipe bodies are indented.
-
-The cost is small: authors who want an implicit header simply do not indent it. Authors who want a shell command of the shape `name:` indent it, as they would any other body line.
-
 ### B.3.9. Config blocks as the sole variable surface [#rationale.config-only-variables]
 A previous revision of the Standard admitted a top-level `variable_declaration` form (`NAME "value"`) that fed values into `cook.env` independently of any `config_block`. This amendment removes that form. The remaining surface is the `config_block` Lua body, which writes `cook.env` (and any other Cook API state) through ordinary Lua assignment.
 
