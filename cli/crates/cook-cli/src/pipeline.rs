@@ -364,7 +364,12 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
 // Build recipe_infos + registries (shared by cmd_run and cmd_test)
 // ---------------------------------------------------------------------------
 
-/// Build recipe_infos from a single Cookfile's recipes.
+/// Build recipe_infos from a single Cookfile's recipes and chores.
+///
+/// Chores are registered as recipes with no ingredients and no cook outputs
+/// (they never produce cached artifacts). The engine sees them as ordinary
+/// recipes; the chore contract (interactive-only, cache=false) is enforced
+/// at codegen time by `compile_chore` (cook-luagen).
 fn build_single_recipe_infos(
     cookfile: &cook_lang::ast::Cookfile,
 ) -> BTreeMap<String, cook_engine::analyzer::RecipeInfo> {
@@ -386,6 +391,17 @@ fn build_single_recipe_infos(
                     })
                     .collect(),
                 requires: recipe.deps.clone(),
+            },
+        );
+    }
+    // Chores have no ingredients or cook outputs; their deps are explicit only.
+    for chore in &cookfile.chores {
+        recipe_infos.insert(
+            chore.name.clone(),
+            cook_engine::analyzer::RecipeInfo {
+                ingredients: vec![],
+                serves: vec![],
+                requires: chore.deps.clone(),
             },
         );
     }

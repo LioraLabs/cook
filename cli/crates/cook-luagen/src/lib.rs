@@ -11,6 +11,6 @@ pub mod dep_ref;
 mod tests;
 
 pub use recipe::{
-    generate, generate_with_names, generate_with_names_and_warnings,
+    compile_chore, generate, generate_with_names, generate_with_names_and_warnings,
     generate_with_names_checked, CodegenError,
 };

@@ -3,9 +3,26 @@ use cook_contracts::{CacheMeta, CapturedUnit, DepKind, WorkPayload};
 
 use crate::{hash_str, SharedCaptureState};
 
-/// Register `cook.add_unit(table)` and `cook.step_group(fn)` on the cook table.
+/// Register `cook.add_unit(table)`, `cook.step_group(fn)`, `cook._enter_chore()`,
+/// and `cook._exit_chore()` on the cook table.
 pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_name: &str) -> LuaResult<()> {
     let cook: LuaTable = lua.globals().get("cook")?;
+
+    // cook._enter_chore() — called by chore-generated Lua before the body runs.
+    let cs_enter = capture_state.clone();
+    let enter_fn = lua.create_function(move |_, ()| {
+        cs_enter.borrow_mut().current_chore_active = true;
+        Ok(())
+    })?;
+    cook.set("_enter_chore", enter_fn)?;
+
+    // cook._exit_chore() — called by chore-generated Lua after the body runs.
+    let cs_exit = capture_state.clone();
+    let exit_fn = lua.create_function(move |_, ()| {
+        cs_exit.borrow_mut().current_chore_active = false;
+        Ok(())
+    })?;
+    cook.set("_exit_chore", exit_fn)?;
 
     // cook.add_unit(table)
     let cs = capture_state.clone();
@@ -16,6 +33,15 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
         let interactive: bool = tbl.get::<Option<bool>>("interactive").unwrap_or(None).unwrap_or(false);
         let line: usize = tbl.get::<Option<usize>>("line").unwrap_or(None).unwrap_or(0);
         let cache_enabled: bool = tbl.get::<Option<bool>>("cache").unwrap_or(None).unwrap_or(true);
+
+        // §{chores.no-caching}: cache = true is not permitted inside a chore body.
+        if cache_enabled && cs.borrow().current_chore_active {
+            return Err(LuaError::RuntimeError(
+                "cook.add_unit: cache = true is not permitted in a chore body \
+                 (§{chores.no-caching}); chore units are never cached"
+                    .into(),
+            ));
+        }
         let inputs: Vec<String> = match tbl.get::<LuaTable>("inputs") {
             Ok(t) => t.sequence_values::<String>().filter_map(Result::ok).collect(),
             Err(_) => vec![],

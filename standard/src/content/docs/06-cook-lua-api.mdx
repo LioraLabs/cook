@@ -97,6 +97,10 @@ cook.add_unit({
 
 Records one Lua-code unit with multiple outputs. At execute time, the `lua_code` runs with `inputs`, `outputs`, `input`, `output`, and `input_1` bound as described in §{lua.using-block-globals}.
 
+**Chore-body restriction (§{chores.no-caching}).** When `cook.add_unit` is called from within the register-phase body of a chore, a conforming implementation MUST raise a Lua runtime error if `cache = true` is passed (or if `cache` is absent, since the default is `true`). The codegen layer enforces this at the source level by always emitting `cache = false` for every unit in a chore body; the runtime check is a defence-in-depth guard against inline-Lua (`>>` / `>>{`) that bypasses the codegen path.
+
+A conforming implementation MAY use implementation-defined internal markers to track whether a chore body is executing. In the reference implementation, the generated Lua calls `cook._enter_chore()` before the body and `cook._exit_chore()` after; `cook.add_unit` checks an internal flag. These helpers are an implementation detail and MUST NOT be relied upon by Cookfile authors.
+
 ### Note 6.2.1
 
 Adjacent `cook.add_unit` calls made inside the same register-phase `cook.step_group(fn)` invocation become siblings in the same scheduler step group (§{exec.step-groups}) and MAY run in parallel. Outside a step group they are serial. The surface `cook` step (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) routes through `cook.step_group` implicitly.

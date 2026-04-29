@@ -62,6 +62,10 @@ pub struct CaptureState {
     /// Cleared when step_group ends. Each add_unit call within the group
     /// inherits all accumulated dep refs as edges.
     pub step_group_dep_refs: Vec<String>,
+    /// True while the register-phase body of a chore is executing.
+    /// `cook.add_unit` raises a Lua error if `cache = true` is passed
+    /// while this flag is set (§{chores.no-caching}).
+    pub current_chore_active: bool,
 }
 
 impl CaptureState {
@@ -76,6 +80,7 @@ impl CaptureState {
             last_cook_step_outputs: Vec::new(),
             dep_edges: Vec::new(),
             step_group_dep_refs: Vec::new(),
+            current_chore_active: false,
         }
     }
 }

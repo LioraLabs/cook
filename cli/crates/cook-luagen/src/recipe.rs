@@ -481,7 +481,179 @@ pub fn generate_with_names(cookfile: &Cookfile, recipe_names: &BTreeSet<String>)
         out.push_str("end)\n\n");
     }
 
+    // Emit chores after recipes. Chores compile to the same `cook.recipe(...)`
+    // shape as recipes, but every unit has `cache = false` and every shell step
+    // has `interactive = true` (§{chores.no-caching}, §{exec.interactive-drain}).
+    for chore in &cookfile.chores {
+        out.push_str(&compile_chore(chore, &cookfile.uses));
+    }
+
     out
+}
+
+/// Compile a `Chore` to register-phase Lua.
+///
+/// A chore compiles to the same shape as a recipe body (a `cook.recipe(...)`
+/// call), with two chore-specific differences:
+///
+/// 1. Every `Step::Shell` is emitted with `interactive = true`.  The parser
+///    already enforces this; codegen passes it through.
+/// 2. Every `cook.add_unit` records `cache = false`.  No body-bundling
+///    across shell steps: because all chore shells are interactive, the
+///    existing `is_bundleable` predicate already breaks the bundle at each
+///    shell step, so one-shell-per-unit comes for free.
+///
+/// The generated Lua wraps the body with `cook._enter_chore()` / `cook._exit_chore()`
+/// so the runtime can enforce §{chores.no-caching} (see `unit_api.rs`).
+pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
+    let mut out = String::new();
+
+    // Emit chore metadata (only deps, no ingredients/excludes for chores).
+    let meta = if chore.deps.is_empty() {
+        "{}".to_string()
+    } else {
+        let items: Vec<String> = chore
+            .deps
+            .iter()
+            .map(|s| format!("\"{}\"", escape_lua_string(s)))
+            .collect();
+        format!("{{requires = {{{}}}}}", items.join(", "))
+    };
+
+    out.push_str(&format!(
+        "cook.recipe(\"{}\", {}, function()\n",
+        escape_lua_string(&chore.name),
+        meta,
+    ));
+
+    // Mark chore-body start so cook.add_unit can enforce §{chores.no-caching}.
+    out.push_str("    cook._enter_chore()\n");
+
+    // Emit steps. All shell steps are interactive (parser guarantees this).
+    // Consecutive Lua steps may still coalesce into a body unit, but shell
+    // steps always stand alone (interactive = true => not bundleable).
+    let mut i = 0;
+    while i < chore.steps.len() {
+        match &chore.steps[i] {
+            Step::Shell { command, line, interactive: true } => {
+                let wrapped = wrap_lua_string(command);
+                out.push_str(&format!(
+                    "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
+                    wrapped, line
+                ));
+                i += 1;
+            }
+            Step::Shell { interactive: false, .. } => {
+                // Parser enforces all chore shells are interactive; this arm
+                // is unreachable in a well-formed AST, but emit defensively.
+                // Treat as interactive to match the chore contract.
+                if let Step::Shell { command, line, .. } = &chore.steps[i] {
+                    let wrapped = wrap_lua_string(command);
+                    out.push_str(&format!(
+                        "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
+                        wrapped, line
+                    ));
+                }
+                i += 1;
+            }
+            Step::Lua { .. } | Step::LuaBlock { .. } => {
+                // Coalesce consecutive execute-phase Lua steps into one body
+                // unit (same rule as in recipes), but force cache = false.
+                let bundle_start = i;
+                while i < chore.steps.len()
+                    && matches!(&chore.steps[i], Step::Lua { .. } | Step::LuaBlock { .. })
+                {
+                    i += 1;
+                }
+                emit_chore_body_unit(&mut out, &chore.steps[bundle_start..i], uses);
+            }
+            Step::InlineLua { code, .. } => {
+                out.push_str(&format!("    {}\n", code));
+                i += 1;
+            }
+            Step::InlineLuaBlock { code, .. } => {
+                for code_line in code.lines() {
+                    out.push_str(&format!("    {}\n", code_line));
+                }
+                i += 1;
+            }
+            // Cook / Plate / Test steps are banned in chores by the parser.
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    // Mark chore-body end.
+    out.push_str("    cook._exit_chore()\n");
+
+    out.push_str("end)\n\n");
+    out
+}
+
+/// Emit a body unit for a bundle of execute-phase Lua steps within a chore.
+///
+/// Identical to `emit_body_unit` except the `cook.add_unit` call always
+/// passes `cache = false` (chores never cache — §{chores.no-caching}).
+fn emit_chore_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]) {
+    let mut chunk = String::new();
+    let mut shell_run: Vec<String> = Vec::new();
+
+    for use_stmt in uses {
+        let lua_name = use_stmt.module_name.replace('-', "_");
+        chunk.push_str(&format!(
+            "local {} = cook.load_module(\"{}\")\n",
+            lua_name,
+            escape_lua_string(&use_stmt.module_name),
+        ));
+    }
+
+    fn flush(chunk: &mut String, run: &mut Vec<String>) {
+        if run.is_empty() {
+            return;
+        }
+        let mut joined = String::from("set -e\n");
+        for (idx, line) in run.iter().enumerate() {
+            if idx > 0 {
+                joined.push('\n');
+            }
+            joined.push_str(line);
+        }
+        let wrapped = wrap_lua_string(&joined);
+        chunk.push_str(&format!("io.write(cook.sh({}))\n", wrapped));
+        run.clear();
+    }
+
+    for step in bundle {
+        match step {
+            Step::Lua { code, .. } => {
+                flush(&mut chunk, &mut shell_run);
+                chunk.push_str(code);
+                if !code.ends_with('\n') {
+                    chunk.push('\n');
+                }
+            }
+            Step::LuaBlock { code, .. } => {
+                flush(&mut chunk, &mut shell_run);
+                chunk.push_str(code);
+                if !code.ends_with('\n') {
+                    chunk.push('\n');
+                }
+            }
+            _ => unreachable!("emit_chore_body_unit called with non-Lua step"),
+        }
+    }
+    flush(&mut chunk, &mut shell_run);
+
+    if chunk.is_empty() {
+        return;
+    }
+
+    let wrapped = wrap_lua_string(&chunk);
+    out.push_str(&format!(
+        "    cook.add_unit({{lua_code = {}, cache = false}})\n",
+        wrapped
+    ));
 }
 
 fn generate_metadata(recipe: &Recipe) -> String {
