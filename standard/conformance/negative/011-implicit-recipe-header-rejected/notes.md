@@ -1,0 +1,1 @@
+Pins CS-0018 (E.6): the bare `name: deps` form at column 0 was an implicit recipe header in v0.3 and earlier; v0.4 removes the form. The line is now a `Token::Content`, which is not a valid `toplevel_item` (§{grammar.overview}); the parser rejects with the substring `unexpected content outside of a recipe`. Error class: `unexpected content outside of a recipe`.

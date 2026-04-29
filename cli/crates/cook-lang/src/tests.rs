@@ -84,33 +84,6 @@ fn test_config_block_unclosed_errors() {
     assert!(format!("{}", err).contains("not closed"));
 }
 
-// ── SHI-72: Implicit recipes ───────────────────────────────────────
-
-#[test]
-fn test_implicit_recipe_parses() {
-    let source = "build:\n    echo hello\nend\n";
-    let result = parse(source).unwrap();
-    assert_eq!(result.recipes.len(), 1);
-    assert_eq!(result.recipes[0].name, "build");
-    assert!(result.recipes[0].deps.is_empty());
-}
-
-#[test]
-fn test_implicit_recipe_with_deps() {
-    let source = "build: lib setup\n    echo hello\nend\n";
-    let result = parse(source).unwrap();
-    assert_eq!(result.recipes[0].name, "build");
-    assert_eq!(result.recipes[0].deps, vec!["lib", "setup"]);
-}
-
-#[test]
-fn test_implicit_recipe_with_body() {
-    let source = "clean:\n    rm -rf build\nend\n";
-    let result = parse(source).unwrap();
-    assert_eq!(result.recipes[0].steps.len(), 1);
-    assert!(matches!(&result.recipes[0].steps[0], Step::Shell { command, .. } if command == "rm -rf build"));
-}
-
 // ── SHI-73: Module calls without Lua delimiters ────────────────────
 
 #[test]

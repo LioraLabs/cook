@@ -174,29 +174,11 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                     return Err(LexError::MissingRecipeName { line: line_num });
                 }
             }
-        } else if !line.starts_with(|c: char| c.is_whitespace()) {
-            // Bare top-level line.
-            if let Some(colon_pos) = trimmed.find(':') {
-                let potential_name = &trimmed[..colon_pos];
-                if !potential_name.is_empty()
-                    && is_ident_start(potential_name.as_bytes()[0] as char)
-                    && potential_name.chars().all(is_ident_char)
-                {
-                    check_reserved_recipe_name(potential_name, line_num)?;
-                    let after_colon = trimmed[colon_pos + 1..].trim();
-                    let deps = parse_names(after_colon, line_num)?;
-                    Token::RecipeHeader {
-                        name: potential_name.to_string(),
-                        deps,
-                    }
-                } else {
-                    Token::Content(trimmed.to_string())
-                }
-            } else {
-                Token::Content(trimmed.to_string())
-            }
         } else {
-            // Indented line: shell command or `@`-prefix interactive shell.
+            // Anything else: a Content line. Whether it dispatches inside a
+            // recipe body (shell_command, interactive_command, module_call,
+            // ingredients_step, etc.) or is rejected at top level is the
+            // syntactic-layer's concern (§{grammar.overview}, §{grammar.step-dispatch}).
             Token::Content(trimmed.to_string())
         };
 
@@ -515,27 +497,24 @@ end
     }
 
     #[test]
-    fn test_implicit_recipe() {
-        let tokens = tokenize("build:\n  echo hi\nend").unwrap();
-        assert_eq!(tokens[0].value, Token::RecipeHeader {
-            name: "build".to_string(),
-            deps: vec![],
-        });
+    fn test_implicit_form_is_now_content() {
+        // CS-0018 (E.6): the bare `name: deps` line at column 0, formerly
+        // an implicit recipe header, is now a `Content` token. Inside a
+        // recipe body it would dispatch as a `shell_command`; at top level
+        // it is rejected as not a valid `toplevel_item`.
+        let tokens = tokenize("build: lib setup").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(
+            tokens[0].value,
+            Token::Content("build: lib setup".to_string()),
+        );
     }
 
     #[test]
-    fn test_implicit_recipe_with_deps() {
-        let tokens = tokenize("build: lib setup\n  echo hi\nend").unwrap();
-        assert_eq!(tokens[0].value, Token::RecipeHeader {
-            name: "build".to_string(),
-            deps: vec!["lib".to_string(), "setup".to_string()],
-        });
-    }
-
-    #[test]
-    fn test_implicit_recipe_indented_not_detected() {
-        let tokens = tokenize("  build: lib").unwrap();
-        assert_eq!(tokens[0].value, Token::Content("build: lib".to_string()));
+    fn test_bare_colon_line_at_column_0_is_content() {
+        let tokens = tokenize("clean:").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].value, Token::Content("clean:".to_string()));
     }
 
     #[test]
