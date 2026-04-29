@@ -7,7 +7,6 @@ pub enum Token {
     ConfigHeader { name: Option<String> },
     UseDecl { name: String },
     ImportDecl { name: String, path: String },
-    RecipeEnd,
     LuaLine(String),
     LuaBlockOpen,
     InlineLuaLine(String),
@@ -116,9 +115,8 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
             let code = &trimmed[1..];
             let code = code.strip_prefix(' ').unwrap_or(code);
             Token::LuaLine(code.to_string())
-        } else if trimmed == "end" {
-            Token::RecipeEnd
-        } else if trimmed.starts_with("recipe")
+        } else if !line.starts_with(|c: char| c.is_whitespace())
+            && trimmed.starts_with("recipe")
             && trimmed.len() > 6
             && (trimmed.as_bytes()[6] == b' '
                 || trimmed.as_bytes()[6] == b'\t'
@@ -135,9 +133,10 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
             };
 
             Token::RecipeHeader { name, deps }
-        } else if trimmed == "config" {
+        } else if !line.starts_with(|c: char| c.is_whitespace()) && trimmed == "config" {
             Token::ConfigHeader { name: None }
-        } else if trimmed.starts_with("config")
+        } else if !line.starts_with(|c: char| c.is_whitespace())
+            && trimmed.starts_with("config")
             && trimmed.len() > 6
             && (trimmed.as_bytes()[6] == b' '
                 || trimmed.as_bytes()[6] == b'\t'
@@ -146,7 +145,8 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
             let rest = trimmed["config".len()..].trim();
             let (name, _) = parse_name(rest, line_num)?;
             Token::ConfigHeader { name: Some(name) }
-        } else if trimmed.starts_with("use")
+        } else if !line.starts_with(|c: char| c.is_whitespace())
+            && trimmed.starts_with("use")
             && trimmed.len() > 3
             && (trimmed.as_bytes()[3] == b' '
                 || trimmed.as_bytes()[3] == b'\t'
@@ -155,7 +155,8 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
             let rest = trimmed["use".len()..].trim();
             let (name, _) = parse_name(rest, line_num)?;
             Token::UseDecl { name }
-        } else if trimmed.starts_with("import")
+        } else if !line.starts_with(|c: char| c.is_whitespace())
+            && trimmed.starts_with("import")
             && trimmed.len() > 6
             && (trimmed.as_bytes()[6] == b' ' || trimmed.as_bytes()[6] == b'\t')
         {
@@ -240,17 +241,17 @@ mod tests {
     }
 
     #[test]
-    fn test_recipe_end() {
+    fn test_bare_end_is_content() {
         let tokens = tokenize("end").unwrap();
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].value, Token::RecipeEnd);
+        assert_eq!(tokens[0].value, Token::Content("end".to_string()));
     }
 
     #[test]
-    fn test_indented_end() {
+    fn test_indented_end_is_content() {
         let tokens = tokenize("   end").unwrap();
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].value, Token::RecipeEnd);
+        assert_eq!(tokens[0].value, Token::Content("end".to_string()));
     }
 
     #[test]
@@ -329,10 +330,9 @@ mod tests {
         let source = r#"# header comment
 recipe "build"
   gcc -o main main.c
-end
 "#;
         let tokens = tokenize(source).unwrap();
-        assert_eq!(tokens.len(), 4);
+        assert_eq!(tokens.len(), 3);
         assert_eq!(
             tokens[0].value,
             Token::Comment(" header comment".to_string())
@@ -342,7 +342,38 @@ end
             tokens[2].value,
             Token::Content("gcc -o main main.c".to_string())
         );
-        assert_eq!(tokens[3].value, Token::RecipeEnd);
+    }
+
+    #[test]
+    fn test_indented_recipe_is_content() {
+        // CS-0019 (E.5): the `recipe` keyword is recognised only at column 0.
+        let tokens = tokenize("    recipe inner").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].value, Token::Content("recipe inner".to_string()));
+    }
+
+    #[test]
+    fn test_indented_config_is_content() {
+        let tokens = tokenize("  config debug").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].value, Token::Content("config debug".to_string()));
+    }
+
+    #[test]
+    fn test_indented_use_is_content() {
+        let tokens = tokenize("\tuse cpp").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].value, Token::Content("use cpp".to_string()));
+    }
+
+    #[test]
+    fn test_indented_import_is_content() {
+        let tokens = tokenize("    import backend ./backend").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(
+            tokens[0].value,
+            Token::Content("import backend ./backend".to_string()),
+        );
     }
 
     #[test]
@@ -588,7 +619,7 @@ end
     #[test]
     fn test_reserved_recipe_name_rejected() {
         for reserved in &["stem", "name", "ext", "dir", "in", "out", "all"] {
-            let input = format!("recipe {}\n    echo hi\nend\n", reserved);
+            let input = format!("recipe {}\n    echo hi\n", reserved);
             let result = crate::parse(&input);
             assert!(
                 result.is_err(),
@@ -600,14 +631,14 @@ end
 
     #[test]
     fn test_reserved_name_in_dotted_recipe_rejected() {
-        let input = "recipe backend.stem\n    echo hi\nend\n";
+        let input = "recipe backend.stem\n    echo hi\n";
         let result = crate::parse(input);
         assert!(result.is_err(), "expected error for recipe named 'backend.stem'");
     }
 
     #[test]
     fn test_non_reserved_dotted_name_accepted() {
-        let input = "recipe backend.build\n    echo hi\nend\n";
+        let input = "recipe backend.build\n    echo hi\n";
         let result = crate::parse(input);
         assert!(result.is_ok(), "expected ok for recipe named 'backend.build', got: {:?}", result.err());
     }

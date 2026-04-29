@@ -80,31 +80,41 @@ pub(crate) fn parse_config_block_lua(
     open_line: usize,
     source_lines: &[&str],
 ) -> Result<(String, usize), ParseError> {
-    // Find the closing `end` token; collect source lines between the header and `end`.
+    // CS-0019: scan to the next column-0 top-level keyword or EOF.
+    // The terminating token is left in place for parse() to dispatch.
     let mut pos = start;
     while pos < tokens.len() {
-        if matches!(&tokens[pos].value, Token::RecipeEnd) {
-            let end_line = tokens[pos].line; // 1-indexed
-            // Source lines between open_line (exclusive) and end_line (exclusive).
-            // open_line is 1-indexed; source_lines is 0-indexed.
-            let start_idx = open_line; // line after the header
-            let end_idx = end_line.saturating_sub(1); // line of `end`, exclusive
-
-            let body = if start_idx < end_idx && end_idx <= source_lines.len() {
-                source_lines[start_idx..end_idx].join("\n")
-            } else {
-                String::new()
-            };
-
-            return Ok((body, pos + 1));
+        match &tokens[pos].value {
+            Token::RecipeHeader { .. }
+            | Token::ConfigHeader { .. }
+            | Token::UseDecl { .. }
+            | Token::ImportDecl { .. } => break,
+            _ => pos += 1,
         }
-        pos += 1;
     }
 
-    Err(ParseError::Parse {
-        line: open_line,
-        message: "config block was not closed with 'end'".to_string(),
-    })
+    let end_line = if pos < tokens.len() {
+        tokens[pos].line
+    } else {
+        source_lines.len() + 1
+    };
+
+    let start_idx = open_line; // 1-indexed line of header; body starts at the next line
+    let end_idx = end_line.saturating_sub(1);
+    let body = if start_idx < end_idx && end_idx <= source_lines.len() {
+        // Trim trailing blank lines so that a blank separator between the
+        // config block body and the next keyword does not become part of
+        // the body (consistent with v0.3 explicit-`end` behaviour).
+        let lines = &source_lines[start_idx..end_idx];
+        let trimmed_end = lines.iter().rposition(|l| !l.trim().is_empty())
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        lines[..trimmed_end].join("\n")
+    } else {
+        String::new()
+    };
+
+    Ok((body, pos))
 }
 
 pub(crate) fn parse_recipe(
@@ -137,8 +147,13 @@ pub(crate) fn parse_recipe(
     while pos < tokens.len() {
         let tok = &tokens[pos];
         match &tok.value {
-            Token::RecipeEnd => {
-                pos += 1;
+            // CS-0019: implicit termination — the next column-0 top-level
+            // keyword closes the body. The token is left in place so that
+            // parse() dispatches it as the next toplevel_item.
+            Token::RecipeHeader { .. }
+            | Token::ConfigHeader { .. }
+            | Token::UseDecl { .. }
+            | Token::ImportDecl { .. } => {
                 return Ok((
                     Recipe {
                         name,
@@ -299,35 +314,19 @@ pub(crate) fn parse_recipe(
                 });
                 pos = new_pos;
             }
-            Token::RecipeHeader { .. } => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: format!("recipe '{}' was not closed with 'end'", name),
-                });
-            }
-            Token::ConfigHeader { .. } => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: "unexpected config declaration inside a recipe".to_string(),
-                });
-            }
-            Token::UseDecl { .. } => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: "use statements must appear before recipes".to_string(),
-                });
-            }
-            Token::ImportDecl { .. } => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: "import declarations must appear before recipes".to_string(),
-                });
-            }
         }
     }
 
-    Err(ParseError::Parse {
-        line: recipe_line,
-        message: format!("recipe '{}' was not closed with 'end'", name),
-    })
+    // CS-0019: EOF terminates a body. No "missing end" error in v0.4.
+    Ok((
+        Recipe {
+            name,
+            deps,
+            ingredients,
+            excludes,
+            steps,
+            line: recipe_line,
+        },
+        pos,
+    ))
 }

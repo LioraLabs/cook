@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn test_no_imports_loads_root_only() {
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("Cookfile"), "recipe \"build\"\nend\n").unwrap();
+        fs::write(dir.path().join("Cookfile"), "recipe \"build\"\n").unwrap();
         let ws = Workspace::load(&dir.path().join("Cookfile"), &[]).unwrap();
         assert!(ws.imports.is_empty());
         assert!(ws.namespace_map.is_empty());
@@ -198,12 +198,12 @@ mod tests {
         fs::create_dir_all(dir.path().join("lib")).unwrap();
         fs::write(
             dir.path().join("lib/Cookfile"),
-            "recipe \"build\"\nend\n",
+            "recipe \"build\"\n",
         )
         .unwrap();
         fs::write(
             dir.path().join("Cookfile"),
-            "import lib ./lib\nrecipe \"bundle\": \"lib.build\"\nend\n",
+            "import lib ./lib\nrecipe \"bundle\": \"lib.build\"\n",
         )
         .unwrap();
         let ws = Workspace::load(&dir.path().join("Cookfile"), &[]).unwrap();
@@ -218,17 +218,17 @@ mod tests {
         fs::create_dir_all(dir.path().join("b")).unwrap();
         fs::write(
             dir.path().join("a/Cookfile"),
-            "import b ../b\nrecipe \"x\"\nend\n",
+            "import b ../b\nrecipe \"x\"\n",
         )
         .unwrap();
         fs::write(
             dir.path().join("b/Cookfile"),
-            "import a ../a\nrecipe \"y\"\nend\n",
+            "import a ../a\nrecipe \"y\"\n",
         )
         .unwrap();
         fs::write(
             dir.path().join("Cookfile"),
-            "import a ./a\nrecipe \"z\"\nend\n",
+            "import a ./a\nrecipe \"z\"\n",
         )
         .unwrap();
         let result = Workspace::load(&dir.path().join("Cookfile"), &[]);
@@ -248,22 +248,22 @@ mod tests {
         fs::create_dir_all(dir.path().join("b")).unwrap();
         fs::write(
             dir.path().join("shared/Cookfile"),
-            "recipe \"s\"\nend\n",
+            "recipe \"s\"\n",
         )
         .unwrap();
         fs::write(
             dir.path().join("a/Cookfile"),
-            "import shared ../shared\nrecipe \"a\"\nend\n",
+            "import shared ../shared\nrecipe \"a\"\n",
         )
         .unwrap();
         fs::write(
             dir.path().join("b/Cookfile"),
-            "import shared ../shared\nrecipe \"b\"\nend\n",
+            "import shared ../shared\nrecipe \"b\"\n",
         )
         .unwrap();
         fs::write(
             dir.path().join("Cookfile"),
-            "import a ./a\nimport b ./b\nrecipe \"bundle\"\nend\n",
+            "import a ./a\nimport b ./b\nrecipe \"bundle\"\n",
         )
         .unwrap();
         let ws = Workspace::load(&dir.path().join("Cookfile"), &[]).unwrap();
@@ -280,7 +280,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join("Cookfile"),
-            "import missing ./nonexistent\nrecipe \"x\"\nend\n",
+            "import missing ./nonexistent\nrecipe \"x\"\n",
         )
         .unwrap();
         let result = Workspace::load(&dir.path().join("Cookfile"), &[]);
@@ -294,7 +294,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("empty")).unwrap();
         fs::write(
             dir.path().join("Cookfile"),
-            "import empty ./empty\nrecipe \"x\"\nend\n",
+            "import empty ./empty\nrecipe \"x\"\n",
         )
         .unwrap();
         let result = Workspace::load(&dir.path().join("Cookfile"), &[]);

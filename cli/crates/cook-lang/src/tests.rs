@@ -4,14 +4,14 @@ use super::*;
 
 #[test]
 fn test_bare_recipe_name_parses() {
-    let source = "recipe build\n    echo hello\nend\n";
+    let source = "recipe build\n    echo hello\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].name, "build");
 }
 
 #[test]
 fn test_bare_recipe_name_with_deps() {
-    let source = "recipe build: lib setup\n    echo hello\nend\n";
+    let source = "recipe build: lib setup\n    echo hello\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].name, "build");
     assert_eq!(result.recipes[0].deps, vec!["lib", "setup"]);
@@ -19,14 +19,14 @@ fn test_bare_recipe_name_with_deps() {
 
 #[test]
 fn test_bare_dotted_dep() {
-    let source = "recipe bundle: backend.build\nend\n";
+    let source = "recipe bundle: backend.build\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].deps, vec!["backend.build"]);
 }
 
 #[test]
 fn test_bare_use_statement() {
-    let source = "use cpp\n\nrecipe build\n    echo hello\nend\n";
+    let source = "use cpp\n\nrecipe build\n    echo hello\n";
     let cookfile = parse(source).unwrap();
     assert_eq!(cookfile.uses[0].module_name, "cpp");
 }
@@ -37,7 +37,6 @@ fn test_config_block_with_lua_body_parses() {
 config release
     env.CXXFLAGS = \"-O3\"
     cpp.defaults({defines = {\"NDEBUG\"}})
-end
 ";
     let result = parse(source).unwrap();
     assert_eq!(result.config_blocks.len(), 1);
@@ -52,7 +51,6 @@ fn test_unnamed_config_block_parses() {
     let source = "\
 config
     env.CC = \"gcc\"
-end
 ";
     let result = parse(source).unwrap();
     assert_eq!(result.config_blocks.len(), 1);
@@ -67,7 +65,6 @@ config dev
     env.CC = \"clang\"
     -- debug flags
     env.CXXFLAGS = \"-O0 -g\"
-end
 ";
     let result = parse(source).unwrap();
     let body = &result.config_blocks[0].body;
@@ -77,19 +74,12 @@ end
     assert_eq!(body.lines().count(), 3);
 }
 
-#[test]
-fn test_config_block_unclosed_errors() {
-    let source = "config release\n    env.CC = \"gcc\"\n";
-    let err = parse(source).unwrap_err();
-    assert!(format!("{}", err).contains("not closed"));
-}
-
 // ── SHI-73: Module calls without Lua delimiters ────────────────────
 
 #[test]
 fn test_module_call_single_line() {
     // Per §4.11, single-line module-call desugars to InlineLua (register-phase).
-    let source = "recipe build\n    cpp.compile(\"src/*.cpp\")\nend\n";
+    let source = "recipe build\n    cpp.compile(\"src/*.cpp\")\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].steps.len(), 1);
     match &result.recipes[0].steps[0] {
@@ -108,7 +98,6 @@ fn test_module_call_multiline() {
         sources = "src/*.cpp",
         output_dir = "build/obj/",
     }
-end
 "#;
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].steps.len(), 1);
@@ -125,14 +114,14 @@ end
 #[test]
 fn test_non_module_dot_is_shell() {
     // A line starting with `.` is not a module call
-    let source = "recipe build\n    ./run.sh\nend\n";
+    let source = "recipe build\n    ./run.sh\n";
     let result = parse(source).unwrap();
     assert!(matches!(&result.recipes[0].steps[0], Step::Shell { .. }));
 }
 
 #[test]
 fn test_module_call_no_args() {
-    let source = "recipe build\n    cpp.detect_compiler()\nend\n";
+    let source = "recipe build\n    cpp.detect_compiler()\n";
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::InlineLua { code, .. } => {
@@ -152,7 +141,7 @@ fn test_empty_cookfile() {
 
 #[test]
 fn test_minimal_recipe() {
-    let source = "recipe \"build\"\n    gcc -o main main.c\nend\n";
+    let source = "recipe \"build\"\n    gcc -o main main.c\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes.len(), 1);
     assert_eq!(result.recipes[0].name, "build");
@@ -171,7 +160,7 @@ fn test_minimal_recipe() {
 
 #[test]
 fn test_recipe_with_deps() {
-    let source = "recipe \"build\": \"setup\" \"lib\"\n    echo building\nend\n";
+    let source = "recipe \"build\": \"setup\" \"lib\"\n    echo building\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.deps, vec!["setup".to_string(), "lib".to_string()]);
@@ -179,7 +168,7 @@ fn test_recipe_with_deps() {
 
 #[test]
 fn test_recipe_with_ingredients() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\" \"include/*.h\"\n    echo compiling\nend\n";
+    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\" \"include/*.h\"\n    echo compiling\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(
@@ -190,7 +179,7 @@ fn test_recipe_with_ingredients() {
 
 #[test]
 fn test_duplicate_ingredients_error() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    ingredients \"include/*.h\"\nend\n";
+    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    ingredients \"include/*.h\"\n";
     let result = parse(source);
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
@@ -199,7 +188,7 @@ fn test_duplicate_ingredients_error() {
 
 #[test]
 fn test_cook_step_shell() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" using \"gcc -c {in} -o {out}\"\nend\n";
+    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" using \"gcc -c {in} -o {out}\"\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.steps.len(), 1);
@@ -218,7 +207,7 @@ fn test_cook_step_shell() {
 
 #[test]
 fn test_cook_step_many_to_one() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/lib.a\" using \"ar rcs {out} {all}\"\nend\n";
+    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/lib.a\" using \"ar rcs {out} {all}\"\n";
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::Cook { step, .. } => {
@@ -234,7 +223,7 @@ fn test_cook_step_many_to_one() {
 
 #[test]
 fn test_cook_step_declaration_only() {
-    let source = "recipe \"build\"\n    ingredients \"src/*.c\"\n    cook \"bin/app\"\n    gcc src/main.c -o bin/app\nend\n";
+    let source = "recipe \"build\"\n    ingredients \"src/*.c\"\n    cook \"bin/app\"\n    gcc src/main.c -o bin/app\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.steps.len(), 2);
@@ -250,7 +239,7 @@ fn test_cook_step_declaration_only() {
 
 #[test]
 fn test_cook_step_lua_block() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" using >{\n        cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)\n    }\nend\n";
+    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" using >{\n        cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)\n    }\n";
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::Cook { step, .. } => {
@@ -268,7 +257,7 @@ fn test_cook_step_lua_block() {
 
 #[test]
 fn test_plate_step() {
-    let source = "recipe \"test\"\n    ingredients \"tests/*.c\"\n    cook \"build/{stem}\" using \"cc {in} -o {out}\"\n    plate \"./{out}\"\nend\n";
+    let source = "recipe \"test\"\n    ingredients \"tests/*.c\"\n    cook \"build/{stem}\" using \"cc {in} -o {out}\"\n    plate \"./{out}\"\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.steps.len(), 2);
@@ -286,7 +275,7 @@ fn test_mixed_steps() {
     // Note 4.4.2 region rule: imperative-region steps (> shell @) must come
     // after all declarative-region steps. The middle step here uses `>>`
     // (register-phase InlineLua) so it can sit between two cook steps.
-    let source = "recipe \"lib\": \"setup\"\n    ingredients \"lib/*.c\" \"include/*.h\"\n    cook \"build/obj/{stem}.o\" using \"gcc -c {in} -o {out}\"\n    >> print(\"compiled\")\n    cook \"build/libmath.a\" using \"ar rcs {out} {all}\"\nend\n";
+    let source = "recipe \"lib\": \"setup\"\n    ingredients \"lib/*.c\" \"include/*.h\"\n    cook \"build/obj/{stem}.o\" using \"gcc -c {in} -o {out}\"\n    >> print(\"compiled\")\n    cook \"build/libmath.a\" using \"ar rcs {out} {all}\"\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.deps, vec!["setup".to_string()]);
@@ -301,7 +290,7 @@ fn test_mixed_steps() {
 fn test_imperative_then_declarative_rejected() {
     // App. A.3 "Region ordering rule": once the imperative region begins,
     // no declarative-region step may follow.
-    let source = "recipe \"bad\"\n    cook \"a\" using \"echo a\"\n    > print(\"x\")\n    cook \"b\" using \"echo b\"\nend\n";
+    let source = "recipe \"bad\"\n    cook \"a\" using \"echo a\"\n    > print(\"x\")\n    cook \"b\" using \"echo b\"\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
     assert!(msg.contains("imperative region"), "got: {}", msg);
@@ -309,7 +298,7 @@ fn test_imperative_then_declarative_rejected() {
 
 #[test]
 fn test_inline_lua_line_register_phase() {
-    let source = "recipe \"r\"\n    >> local x = 1\n    >>{\n        cook.env.K = \"v\"\n    }\nend\n";
+    let source = "recipe \"r\"\n    >> local x = 1\n    >>{\n        cook.env.K = \"v\"\n    }\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.steps.len(), 2);
@@ -320,7 +309,7 @@ fn test_inline_lua_line_register_phase() {
 #[test]
 fn test_using_register_block_rejected() {
     // App. A.4 "`using >>{` is rejected".
-    let source = "recipe \"r\"\n    cook \"out\" using >>{\n        cook.add_unit({command = \"x\"})\n    }\nend\n";
+    let source = "recipe \"r\"\n    cook \"out\" using >>{\n        cook.add_unit({command = \"x\"})\n    }\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
     assert!(msg.contains("using"), "got: {}", msg);
@@ -329,7 +318,7 @@ fn test_using_register_block_rejected() {
 #[test]
 fn test_triple_arrow_reserved() {
     // §{lexical.line-prefixes}: `>>>` and longer are reserved.
-    let source = "recipe \"r\"\n    >>> print(\"x\")\nend\n";
+    let source = "recipe \"r\"\n    >>> print(\"x\")\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
     assert!(msg.contains(">"), "got: {}", msg);
@@ -337,7 +326,7 @@ fn test_triple_arrow_reserved() {
 
 #[test]
 fn test_task_runner_no_metadata() {
-    let source = "recipe \"clean\"\n    rm -rf build bin\nend\n";
+    let source = "recipe \"clean\"\n    rm -rf build bin\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert!(recipe.deps.is_empty());
@@ -347,7 +336,7 @@ fn test_task_runner_no_metadata() {
 
 #[test]
 fn test_multiple_recipes() {
-    let source = "recipe \"setup\"\n    mkdir -p build\nend\n\nrecipe \"build\": \"setup\"\n    echo building\nend\n";
+    let source = "recipe \"setup\"\n    mkdir -p build\n\nrecipe \"build\": \"setup\"\n    echo building\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes.len(), 2);
     assert_eq!(result.recipes[0].name, "setup");
@@ -356,14 +345,8 @@ fn test_multiple_recipes() {
 }
 
 #[test]
-fn test_unclosed_recipe() {
-    let source = "recipe \"build\"\n    gcc -o main main.c\n";
-    assert!(parse(source).is_err());
-}
-
-#[test]
 fn test_lua_block_in_recipe() {
-    let source = "recipe \"build\"\n>{\n    local x = 1\n    print(x)\n}\nend\n";
+    let source = "recipe \"build\"\n>{\n    local x = 1\n    print(x)\n}\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].steps.len(), 1);
     assert!(matches!(&result.recipes[0].steps[0], Step::LuaBlock { .. }));
@@ -371,7 +354,7 @@ fn test_lua_block_in_recipe() {
 
 #[test]
 fn test_lua_block_nested_braces() {
-    let source = "recipe \"build\"\n>{\n    if true then\n        local t = {1, 2, 3}\n    end\n}\nend\n";
+    let source = "recipe \"build\"\n>{\n    if true then\n        local t = {1, 2, 3}\n    end\n}\n";
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::LuaBlock { code, .. } => {
@@ -383,7 +366,7 @@ fn test_lua_block_nested_braces() {
 
 #[test]
 fn test_comments_and_blanks_skipped() {
-    let source = "recipe \"build\"\n    # comment\n    gcc -o main main.c\n\nend\n";
+    let source = "recipe \"build\"\n    # comment\n    gcc -o main main.c\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].steps.len(), 1);
 }
@@ -401,7 +384,7 @@ fn test_unclosed_lua_block() {
 
 #[test]
 fn test_lua_block_brace_in_string() {
-    let source = "recipe \"build\"\n>{\n    local s = \"}\"\n    print(s)\n}\nend\n";
+    let source = "recipe \"build\"\n>{\n    local s = \"}\"\n    print(s)\n}\n";
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::LuaBlock { code, .. } => {
@@ -413,7 +396,7 @@ fn test_lua_block_brace_in_string() {
 
 #[test]
 fn test_lua_block_brace_in_comment() {
-    let source = "recipe \"build\"\n>{\n    local x = 1 -- }\n    print(x)\n}\nend\n";
+    let source = "recipe \"build\"\n>{\n    local x = 1 -- }\n    print(x)\n}\n";
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::LuaBlock { code, .. } => {
@@ -456,11 +439,9 @@ end
 #[test]
 fn test_empty_config_block() {
     let source = r#"config "empty"
-end
 
 recipe "build"
     echo hello
-end
 "#;
     let result = parse(source).unwrap();
     assert_eq!(result.config_blocks.len(), 1);
@@ -471,7 +452,6 @@ end
 fn test_indented_quoted_pair_is_shell_command() {
     let source = r#"recipe "build"
     CC "gcc"
-end
 "#;
     let result = parse(source).unwrap();
     assert_eq!(result.recipes.len(), 1);
@@ -485,11 +465,9 @@ end
 fn test_config_after_recipe_errors() {
     let source = r#"recipe "build"
     echo hello
-end
 
 config "debug"
     CFLAGS "-g"
-end
 "#;
     let result = parse(source);
     assert!(result.is_err());
@@ -527,7 +505,7 @@ end
 
 #[test]
 fn test_interactive_shell_step() {
-    let source = "recipe \"run\"\n    @./bin/app\nend\n";
+    let source = "recipe \"run\"\n    @./bin/app\n";
     let result = parse(source).unwrap();
     let step = &result.recipes[0].steps[0];
     match step {
@@ -541,7 +519,7 @@ fn test_interactive_shell_step() {
 
 #[test]
 fn test_non_interactive_shell_step() {
-    let source = "recipe \"build\"\n    echo hello\nend\n";
+    let source = "recipe \"build\"\n    echo hello\n";
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::Shell { interactive, .. } => {
@@ -553,7 +531,7 @@ fn test_non_interactive_shell_step() {
 
 #[test]
 fn test_empty_interactive_step_errors() {
-    let source = "recipe \"run\"\n    @\nend\n";
+    let source = "recipe \"run\"\n    @\n";
     let result = parse(source);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -565,7 +543,6 @@ fn test_at_in_cook_using_is_not_interactive() {
     let source = r#"recipe "build"
     ingredients "src/*.c"
     cook "build/{stem}.o" using "@gcc -c {in} -o {out}"
-end
 "#;
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
@@ -582,19 +559,8 @@ end
 }
 
 #[test]
-fn test_unterminated_config_block_errors() {
-    let source = r#"config "debug"
-    CFLAGS "-g"
-"#;
-    let result = parse(source);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("not closed"), "got: {err}");
-}
-
-#[test]
 fn test_parse_use_statement() {
-    let source = "use \"cpp\"\n\nrecipe \"build\"\n    echo hello\nend\n";
+    let source = "use \"cpp\"\n\nrecipe \"build\"\n    echo hello\n";
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.uses.len(), 1);
     assert_eq!(cookfile.uses[0].module_name, "cpp");
@@ -604,7 +570,7 @@ fn test_parse_use_statement() {
 
 #[test]
 fn test_parse_multiple_use_statements() {
-    let source = "use \"cpp\"\nuse \"proto\"\n\nrecipe \"build\"\n    echo hello\nend\n";
+    let source = "use \"cpp\"\nuse \"proto\"\n\nrecipe \"build\"\n    echo hello\n";
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.uses.len(), 2);
     assert_eq!(cookfile.uses[0].module_name, "cpp");
@@ -613,7 +579,7 @@ fn test_parse_multiple_use_statements() {
 
 #[test]
 fn test_parse_use_with_configs() {
-    let source = "use \"cpp\"\n\nconfig \"debug\"\n    env.CFLAGS = \"-g\"\nend\n\nrecipe \"build\"\n    @echo hello\nend\n";
+    let source = "use \"cpp\"\n\nconfig \"debug\"\n    env.CFLAGS = \"-g\"\n\nrecipe \"build\"\n    @echo hello\n";
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.uses.len(), 1);
     assert_eq!(cookfile.config_blocks.len(), 1);
@@ -626,7 +592,6 @@ fn test_test_step_basic() {
     ingredients "tests/*.c"
     cook "build/{stem}" using "cc {in} -o {out}"
     test "./{out}"
-end
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
@@ -646,7 +611,6 @@ end
 fn test_test_step_with_timeout() {
     let source = r#"recipe "run-tests"
     test "./{out}" timeout 30
-end
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
@@ -664,7 +628,6 @@ end
 fn test_test_step_with_should_fail() {
     let source = r#"recipe "run-tests"
     test "./{out}" should_fail
-end
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
@@ -682,7 +645,6 @@ end
 fn test_test_step_with_timeout_and_should_fail() {
     let source = r#"recipe "run-tests"
     test "./{out}" timeout 60 should_fail
-end
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
@@ -698,7 +660,7 @@ end
 
 #[test]
 fn test_parse_use_after_recipe_fails() {
-    let source = "recipe \"build\"\n    echo hello\nend\n\nuse \"cpp\"\n";
+    let source = "recipe \"build\"\n    echo hello\n\nuse \"cpp\"\n";
     let result = crate::parse(source);
     assert!(result.is_err());
 }
@@ -710,7 +672,6 @@ import backend ./services/backend
 import frontend ./apps/frontend
 
 recipe "bundle": "backend.build" "frontend.build"
-end
 "#;
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.imports.len(), 2);
@@ -749,7 +710,6 @@ fn test_ingredients_with_excludes() {
     let source = r#"recipe build
     ingredients "src/*.c" !"src/lua.c" !"src/luac.c"
     echo compiling
-end
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
@@ -762,7 +722,6 @@ fn test_ingredients_excludes_only() {
     let source = r#"recipe build
     ingredients !"src/test.c"
     echo compiling
-end
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
@@ -775,7 +734,6 @@ fn test_ingredients_no_excludes() {
     let source = r#"recipe build
     ingredients "src/*.c" "include/*.h"
     echo compiling
-end
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
@@ -785,7 +743,7 @@ end
 
 #[test]
 fn test_multi_output_lua_block() {
-    let source = "recipe \"wasm\"\n    ingredients \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" using >{\n        sh(\"cmd\")\n    }\nend\n";
+    let source = "recipe \"wasm\"\n    ingredients \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" using >{\n        sh(\"cmd\")\n    }\n";
     let result = crate::parse(source).expect("should parse");
     match &result.recipes[0].steps[0] {
         crate::ast::Step::Cook { step, .. } => {
@@ -798,7 +756,7 @@ fn test_multi_output_lua_block() {
 
 #[test]
 fn test_single_output_shell_block() {
-    let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"bin/out\" using {\n        cmd1\n        cmd2\n    }\nend\n";
+    let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"bin/out\" using {\n        cmd1\n        cmd2\n    }\n";
     let result = crate::parse(source).expect("should parse");
     match &result.recipes[0].steps[0] {
         crate::ast::Step::Cook { step, .. } => {
@@ -816,7 +774,7 @@ fn test_single_output_shell_block() {
 
 #[test]
 fn test_multi_output_shell_block() {
-    let source = "recipe \"wasm\"\n    ingredients \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" using {\n        wasm-pack build\n        cp a.js out/a.js\n        cp b.wasm out/b.wasm\n    }\nend\n";
+    let source = "recipe \"wasm\"\n    ingredients \"src/*.rs\"\n    cook \"a.js\" \"b.wasm\" using {\n        wasm-pack build\n        cp a.js out/a.js\n        cp b.wasm out/b.wasm\n    }\n";
     let result = crate::parse(source).expect("should parse");
     match &result.recipes[0].steps[0] {
         crate::ast::Step::Cook { step, .. } => {
@@ -835,7 +793,7 @@ fn test_multi_output_shell_block() {
 
 #[test]
 fn test_multi_output_string_form_rejected() {
-    let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"a.js\" \"b.wasm\" using \"cmd\"\nend\n";
+    let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"a.js\" \"b.wasm\" using \"cmd\"\n";
     let err = crate::parse(source).expect_err("should reject");
     let msg = format!("{:?}", err);
     assert!(msg.contains("block body"), "expected error about block body, got: {}", msg);

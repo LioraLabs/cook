@@ -92,12 +92,6 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 recipes.push(recipe);
                 pos = new_pos;
             }
-            Token::RecipeEnd => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: "unexpected 'end' outside of a recipe or config block".to_string(),
-                });
-            }
             Token::Content(_) => {
                 return Err(ParseError::Parse {
                     line: tok.line,

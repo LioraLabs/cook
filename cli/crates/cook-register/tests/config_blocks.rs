@@ -1,5 +1,5 @@
 //! End-to-end test: parse → codegen → register-phase execution with a
-//! `config NAME ... end` block that mutates env and asserts the mutation
+//! `config NAME` block that mutates env and asserts the mutation
 //! reaches RecipeUnits.env_vars.
 
 use cook_contracts::RecipeUnits;
@@ -24,10 +24,8 @@ fn unnamed_config_applies_to_default_build() {
     let source = "\
 config
     env.GREETING = \"hello\"
-end
 
 recipe build
-end
 ";
     let units = compile_and_run(source, None);
     assert_eq!(units.env_vars.get("GREETING").map(|s| s.as_str()), Some("hello"));
@@ -39,15 +37,12 @@ fn named_config_overlays_base() {
 config
     env.MODE = \"base\"
     env.OPT = \"-O0\"
-end
 
 config release
     env.MODE = \"release\"
     env.OPT = \"-O3\"
-end
 
 recipe build
-end
 ";
     let units_rel = compile_and_run(source, Some("release"));
     assert_eq!(units_rel.env_vars.get("MODE").map(|s| s.as_str()), Some("release"));
@@ -60,7 +55,7 @@ end
 
 #[test]
 fn no_config_blocks_still_builds() {
-    let source = "recipe build\nend\n";
+    let source = "recipe build\n";
     let units = compile_and_run(source, None);
     assert!(units.env_vars.get("GREETING").is_none());
 }

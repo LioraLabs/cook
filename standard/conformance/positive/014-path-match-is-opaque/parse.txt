@@ -9,7 +9,7 @@ Cookfile
       excludes: []
       steps:
         Cook outputs=["build/lib.a"] using=Shell("ar rcs {out} {in}")
-    Recipe name="link" line=6
+    Recipe name="link" line=5
       deps: []
       ingredients: ["build/lib.a"]
       excludes: []

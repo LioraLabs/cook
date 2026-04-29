@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["include/a.h", "include/b.h"]
       excludes: []
       steps:
-    Recipe name="list_headers" line=5
+    Recipe name="list_headers" line=4
       deps: []
       ingredients: []
       excludes: []

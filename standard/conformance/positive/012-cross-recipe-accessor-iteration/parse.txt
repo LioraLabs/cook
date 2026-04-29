@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["proto/a.proto", "proto/b.proto"]
       excludes: []
       steps:
-    Recipe name="compile_protos" line=5
+    Recipe name="compile_protos" line=4
       deps: []
       ingredients: []
       excludes: []
