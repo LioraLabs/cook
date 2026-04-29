@@ -9,6 +9,7 @@ sidebar:
 
 ## Versions
 
+- **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
 - **v0.3** (`cs-standard/v0.3`, 2026-04-28) — CS-0015, CS-0016, CS-0017
 - **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013, CS-0014
 - **v0.1** (`cs-standard/v0.1`, 2026-04-22..2026-04-24) — CS-0001 through CS-0010
@@ -264,5 +265,19 @@ The parser-side change (delete the implicit-form lex branch and six pinned parse
 The chore-vs-recipe distinction is purely an authoring/static-checking layer over the existing engine. A chore compiles to register-phase Lua identical in shape to a recipe with no cook step and `interactive = true` on every shell unit. App. B.4.14–4.16 record the rationale: keyword-as-intent-carrier, naturally-grammatical step-kind ban, peer-keyword reflects peer-semantics.
 
 **Implementation status.** Spec-side only in this commit. The Rust parser (`Token::ChoreHeader`, `Chore` AST struct, `parse_chore`), codegen + runtime (chore-as-recipe-with-default-interactive + cache=false ban), tree-sitter grammar (chore rule with `_chore_item` alternation), and 6 conformance fixtures (3 positive, 3 negative) land in Tasks 10–13 of the v0.4 plan.
+
+**Reference:** this commit.
+
+## D.21. CS-0021 — Standard cut: v0.4. [#changes.cs-0021]
+
+**Date:** 2026-04-29
+**Version:** v0.4
+**Sections affected:** `standard/VERSION` (`0.3` → `0.4`); App. D Versions index (new v0.4 entry); this entry. App. E entries E.5, E.6, E.7 marked resolved with cross-links to CS-0019, CS-0018, CS-0020 respectively.
+
+**Summary:** Cuts the Cook Standard at v0.4. Per the cut procedure in `CONTRIBUTING.md` (and §{intro.version}), this entry plus the v0.4 row in the Versions index plus a `cs-standard/v0.4` git tag at the merge commit constitute the published cut. v0.4 batches CS-0018, CS-0019, and CS-0020 — the three pre-1.0 checklist items from App. E that compose into "recipe-form simplification + chore". E.5 (drop `end`), E.6 (drop implicit header), E.7 (chore as sibling) all close.
+
+The conformance corpus's `parse.txt` files change format in this cut: `format_cookfile` adds a `chores:` section per Cookfile, so every existing positive fixture's `parse.txt` gained a `chores:` line in CS-0020. Per CONTRIBUTING.md's rule on parse-format-altering cuts, the `cs-standard/v0.4` tag is force-moved to the merge commit where the parser and the corpus agree. `cs-standard/v0.3` and earlier tags are left in place as historical records.
+
+**Implementation status.** Authoring + tagging step. No prose changes beyond the Versions index, this entry, and the App. E resolution markers.
 
 **Reference:** this commit.

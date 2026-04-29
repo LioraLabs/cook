@@ -3,7 +3,7 @@
 # Sub-projects each have their own Cookfile; this file imports them and
 # wires up cross-cutting umbrella recipes.
 #
-# Top-level recipes:
+# Top-level chores:
 #   cook check        — pre-commit smoke test (cli build/test/conformance, ts test/conformance, standard build/lint).
 #   cook bump-claim   — after a Standard cut, mirror the version into every
 #                       in-repo claim site (cook-lang Rust constant + 3 markdown
@@ -11,7 +11,7 @@
 #                       description, tree-sitter.json description). Routes
 #                       through cook_modules/release.lua.
 #
-# Sub-project recipes are reachable via their import alias:
+# Sub-project chores are reachable via their import alias:
 #   cli.build            cli.test            cli.conformance
 #   cli.version          cli.install
 #   standard.build       standard.lint       standard.host
@@ -19,8 +19,8 @@
 #   ts.generate          ts.test             ts.conformance
 #   ts.wasm              ts.nvim-install
 #
-# Recipes that take a version (bump-claim, standard.retag, standard.against-tag)
-# read VERSION from `cook <recipe> --set VERSION=X.Y` and default to the
+# Chores that take a version (bump-claim, standard.retag, standard.against-tag)
+# read VERSION from `cook <chore> --set VERSION=X.Y` and default to the
 # current contents of standard/VERSION.
 #
 # First-time install of `cook` is documented in README.md.
@@ -31,29 +31,22 @@ import ts ./tree-sitter-cook
 
 use release
 
-recipe bump-claim
+chore bump-claim
     > release.bump_claim(cook.env.VERSION)
-end
 
 # ── Common workflow aliases ────────────────────────────────
 # Forward the most-used commands to their qualified targets so the
 # top-level UX stays terse. Use the qualified names directly for
 # everything else.
 
-recipe build: cli.build
-end
+chore build: cli.build
 
-recipe test: cli.test
-end
+chore test: cli.test
 
-recipe conformance: cli.conformance
-end
+chore conformance: cli.conformance
 
-recipe version: cli.version
-end
+chore version: cli.version
 
-recipe install: cli.install
-end
+chore install: cli.install
 
-recipe check: cli.build cli.test cli.conformance ts.test ts.conformance standard.build standard.lint
-end
+chore check: cli.build cli.test cli.conformance ts.test ts.conformance standard.build standard.lint

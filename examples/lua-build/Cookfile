@@ -4,17 +4,14 @@ config
     env.CFLAGS = "-O2"
     env.CXXFLAGS = "-O2"
     env.CPP_DEFINES = cook.platform.os == "linux" and "LUA_USE_LINUX" or ""
-end
 
 config debug
     env.CFLAGS = "-O0 -g"
     env.CXXFLAGS = "-O0 -g"
-end
 
 config release
     env.CFLAGS = "-O3 -DNDEBUG"
     env.CXXFLAGS = "-O3 -DNDEBUG"
-end
 
 recipe liblua
     ingredients "lua-5.4.7/src/*.c" !"lua-5.4.7/src/lua.c" !"lua-5.4.7/src/luac.c"
@@ -22,7 +19,6 @@ recipe liblua
         sources = ingredients,
         system_libs = { "m", "dl" },
     })
-end
 
 recipe lua: liblua
     cpp.bin("lua", {
@@ -30,26 +26,20 @@ recipe lua: liblua
         links = { "liblua" },
         system_libs = { "readline" },
     })
-end
 
 recipe luac: liblua
     cpp.bin("luac", {
         sources = { "lua-5.4.7/src/luac.c" },
         links = { "liblua" },
     })
-end
 
 recipe build: lua luac
-end
 
 recipe test: lua
     test "build/bin/lua -e 'print(\"hello from lua built by cook\")'"
-end
 
 recipe compile-commands: liblua lua luac
     cpp.compile_commands()
-end
 
-recipe clean
+chore clean
     rm -rf build .cook
-end

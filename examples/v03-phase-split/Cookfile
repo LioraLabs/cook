@@ -27,7 +27,6 @@ recipe register-line
     >> local kind = cook.env.KIND or "default"
     >> print("[register] selected kind:", kind)
     >> print("[register] this recipe registers no units")
-end
 
 # ── `>>{ }` (register-phase block): runs eagerly during planning.
 # Multiple `>>` lines and `>>{ }` blocks share register-phase scope.
@@ -42,13 +41,11 @@ recipe register-block
             print(string.format("[register-block] %d: %s", i, name))
         end
     }
-end
 
 # ── module call desugars to register-phase (single-line → InlineLua,
 #    multi-line → InlineLuaBlock).
 recipe module-call
     checks.greet("world")
-end
 
 # ── use-bound alias is visible from execute-phase too (CS-0017).
 # `> checks.greet(...)` calls the same function the bare module-call
@@ -56,18 +53,15 @@ end
 # resolution; only the phase differs.
 recipe module-call-execute
     > checks.greet("from execute phase")
-end
 
 # ── `require` works on the worker VM too: package.path is set per-unit
 # to the calling Cookfile's cook_modules/ (CS-0017).
 recipe module-via-require
     > require("checks").greet("via require")
-end
 
 # ── `>` (execute-phase): runs as part of a body unit when the recipe runs.
 recipe execute-line
     > print("[execute] hello from a body unit")
-end
 
 # ── `>{ }` (execute-phase block): same phase as `>`, multi-line.
 recipe execute-block
@@ -75,7 +69,6 @@ recipe execute-block
         local answer = 42
         print("[execute] the answer is", answer)
     }
-end
 
 # ── shell bundling: two consecutive shell lines coalesce into one
 # /bin/sh -c invocation, so `cd` persists into `pwd`. The body unit
@@ -85,7 +78,6 @@ recipe shell-bundle
     pwd
     > print("[execute] back in lua; the next shell call is a fresh process.")
     pwd
-end
 
 # ── Lua scope: `>` lines within the same body unit share one Lua VM,
 # so locals declared in one line are visible in the next.
@@ -94,7 +86,6 @@ recipe lua-scope
     > count = count + 1
     > count = count + 1
     > print("[execute] count:", count)
-end
 
 # ── lua / shell interleaving: one body unit, one Lua VM, two cook.sh
 # calls (the `>` line breaks the shell coalescence).
@@ -102,7 +93,6 @@ recipe lua-shell-mix
     echo "[shell] line 1"
     > print("[lua] separator")
     echo "[shell] line 2"
-end
 
 # ── `@interactive` ends the body bundle and runs as its own draining
 # unit (§{exec.interactive-drain}). The `>` line after it gets a fresh
@@ -113,7 +103,6 @@ recipe interactive-breaks
     @echo "[interactive] this line drains the DAG before running"
     > local b = "after"
     > print("[execute, bundle 2] b =", b)
-end
 
 # ── A full mixed recipe: declarative region (>>+ingredients+cook) followed
 # by imperative region (`>` + shell). The cook step runs first; then the
@@ -124,7 +113,6 @@ recipe full-mixed
     cook "build/full.txt" using "mkdir -p build && echo done > {out}"
     > print("[execute] cook step done; reading the output:")
     cat build/full.txt
-end
 
 # ── REJECTED forms — uncomment ONE at a time to see the diagnostic.
 #

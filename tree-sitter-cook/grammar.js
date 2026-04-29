@@ -2,7 +2,7 @@
 // @ts-check
 
 // tree-sitter-cook claims conformance with Cook Standard v0.4
-// (cs-standard/v0.3). See standard/src/content/docs/appendix/A-grammar.mdx
+// (cs-standard/v0.4). See standard/src/content/docs/appendix/A-grammar.mdx
 // for the normative grammar this file mirrors.
 
 module.exports = grammar({

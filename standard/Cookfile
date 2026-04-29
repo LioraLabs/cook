@@ -1,6 +1,6 @@
 # Cookfile for the Cook Standard.
 #
-# Imported by the top-level Cookfile as `standard`. Recipes here run
+# Imported by the top-level Cookfile as `standard`. Chores here run
 # with cwd = ./standard/, so paths are relative to this directory.
 #
 # `lint` and `against-tag` route through cook_modules/checks.lua, which
@@ -13,19 +13,16 @@
 
 use checks
 
-recipe build
+chore build
     pnpm build
-end
 
-recipe lint
+chore lint
     checks.lint_keywords()
-end
 
-recipe host
+chore host
     @pnpm host
-end
 
-recipe against-tag
+chore against-tag
     >{
         local version = cook.env.VERSION
         if not version or version == "" then
@@ -33,8 +30,6 @@ recipe against-tag
         end
         checks.against_tag(version)
     }
-end
 
-recipe retag
+chore retag
     V="${VERSION:-$(cat VERSION)}" && git tag --force "cs-standard/v$V" HEAD
-end
