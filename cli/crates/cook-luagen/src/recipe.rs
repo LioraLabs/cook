@@ -127,6 +127,10 @@ fn validate_accessor_placement(
                         )?;
                     }
                 }
+                Step::InlineLua { .. } | Step::InlineLuaBlock { .. } => {
+                    // Inline Lua bodies are opaque to the accessor-placement
+                    // check; the templater does not run on Lua source.
+                }
                 Step::Plate { step: plate_step, line } => {
                     check_command(
                         &plate_step.command,
@@ -157,11 +161,106 @@ fn validate_accessor_placement(
                         *line,
                     )?;
                 }
-                Step::Lua { .. } | Step::LuaBlock { .. } => {}
+                Step::Lua { .. } | Step::LuaBlock { .. } => {
+                    // Execute-phase Lua bodies are opaque to the templater
+                    // accessor-placement check; the {NAME.ACCESSOR} surface
+                    // does not run inside a Lua chunk.
+                }
             }
         }
     }
     Ok(())
+}
+
+/// Returns true for step kinds that compose into a body unit
+/// (§{recipes.body-bundling}). Interactive shell steps and any
+/// declarative-region step return false.
+fn is_bundleable(step: &Step) -> bool {
+    matches!(
+        step,
+        Step::Shell { interactive: false, .. } | Step::Lua { .. } | Step::LuaBlock { .. }
+    )
+}
+
+/// Emit one execute-phase body unit for a bundle of imperative-region
+/// steps. The bundle is assumed to contain only bundleable steps
+/// (§{recipes.body-bundling}). Adjacent non-interactive shell lines
+/// coalesce into a single `cook.sh` call inside the unit's `lua_code`
+/// payload, with `set -e` prepended so per-line halt-on-failure matches
+/// the historical per-shell-unit semantic.
+///
+/// The chunk is prefixed with `local <alias> = cook.load_module("<name>")`
+/// per `use` declaration in the source Cookfile (CS-0017,
+/// §{lua.cook-load-module}). This makes the same alias visible to
+/// imperative-region Lua as is visible to declarative-region Lua, so
+/// `> compile.assemble(target)` reads identically to
+/// `compile.plan(target)` without a `cook.` prefix.
+fn emit_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]) {
+    let mut chunk = String::new();
+    let mut shell_run: Vec<String> = Vec::new();
+
+    for use_stmt in uses {
+        let lua_name = use_stmt.module_name.replace('-', "_");
+        chunk.push_str(&format!(
+            "local {} = cook.load_module(\"{}\")\n",
+            lua_name,
+            escape_lua_string(&use_stmt.module_name),
+        ));
+    }
+
+    fn flush(chunk: &mut String, run: &mut Vec<String>) {
+        if run.is_empty() {
+            return;
+        }
+        let mut joined = String::from("set -e\n");
+        for (idx, line) in run.iter().enumerate() {
+            if idx > 0 {
+                joined.push('\n');
+            }
+            joined.push_str(line);
+        }
+        let wrapped = wrap_lua_string(&joined);
+        // io.write echoes the captured stdout to the worker's stdout so the
+        // user sees `pwd`-style output the way they would in a Make `.ONESHELL`
+        // recipe. The cook.sh return value is still discarded; callers who
+        // need to consume it should call cook.sh from a `>` line directly.
+        chunk.push_str(&format!("io.write(cook.sh({}))\n", wrapped));
+        run.clear();
+    }
+
+    for step in bundle {
+        match step {
+            Step::Shell { command, interactive: false, .. } => {
+                shell_run.push(command.clone());
+            }
+            Step::Lua { code, .. } => {
+                flush(&mut chunk, &mut shell_run);
+                chunk.push_str(code);
+                if !code.ends_with('\n') {
+                    chunk.push('\n');
+                }
+            }
+            Step::LuaBlock { code, .. } => {
+                flush(&mut chunk, &mut shell_run);
+                chunk.push_str(code);
+                if !code.ends_with('\n') {
+                    chunk.push('\n');
+                }
+            }
+            _ => unreachable!("emit_body_unit called with non-bundleable step"),
+        }
+    }
+    flush(&mut chunk, &mut shell_run);
+
+    if chunk.is_empty() {
+        return;
+    }
+
+    let wrapped = wrap_lua_string(&chunk);
+    out.push_str(&format!(
+        "    cook.add_unit({{lua_code = {}, cache = false}})\n",
+        wrapped
+    ));
 }
 
 fn collect_drivers(
@@ -296,37 +395,27 @@ pub fn generate_with_names(cookfile: &Cookfile, recipe_names: &BTreeSet<String>)
         let mut prev_cook_index: Option<usize> = None;
         let mut cook_index: usize = 0;
 
-        for step in &recipe.steps {
-            match step {
-                Step::Shell { command, line, interactive } => {
-                    let wrapped = wrap_lua_string(command);
-                    if *interactive {
-                        out.push_str(&format!(
-                            "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
-                            wrapped, line
-                        ));
-                    } else {
-                        out.push_str(&format!(
-                            "    cook.add_unit({{command = {}, cache = false}})\n",
-                            wrapped
-                        ));
-                    }
-                }
-                Step::Lua { code, .. } => {
+        let mut i = 0;
+        while i < recipe.steps.len() {
+            match &recipe.steps[i] {
+                Step::InlineLua { code, .. } => {
+                    // §{recipes.lua-steps}: register-phase, inlined into the
+                    // recipe-body Lua function.
                     out.push_str(&format!("    {}\n", code));
+                    i += 1;
                 }
-                Step::LuaBlock { code, .. } => {
+                Step::InlineLuaBlock { code, .. } => {
+                    // §{recipes.lua-steps}: register-phase, inlined.
                     for code_line in code.lines() {
                         out.push_str(&format!("    {}\n", code_line));
                     }
+                    i += 1;
                 }
                 Step::Cook {
                     step: cook_step,
                     line,
                 } => {
                     cook_index += 1;
-                    // Hoist output collection variable to recipe scope
-                    // so subsequent step_groups can reference it
                     out.push_str(&format!("    local _cook_outputs_{} = {{}}\n", cook_index));
                     out.push_str("    cook.step_group(function()\n");
                     generate_cook_step(
@@ -340,6 +429,7 @@ pub fn generate_with_names(cookfile: &Cookfile, recipe_names: &BTreeSet<String>)
                     );
                     out.push_str("    end)\n");
                     prev_cook_index = Some(cook_index);
+                    i += 1;
                 }
                 Step::Plate {
                     step: plate_step,
@@ -348,6 +438,7 @@ pub fn generate_with_names(cookfile: &Cookfile, recipe_names: &BTreeSet<String>)
                     out.push_str("    cook.step_group(function()\n");
                     generate_plate_step(&mut out, plate_step, *line, prev_cook_index, recipe_names);
                     out.push_str("    end)\n");
+                    i += 1;
                 }
                 Step::Test {
                     step: test_step_val,
@@ -356,6 +447,33 @@ pub fn generate_with_names(cookfile: &Cookfile, recipe_names: &BTreeSet<String>)
                     out.push_str("    cook.step_group(function()\n");
                     test_step::generate_test_step(&mut out, test_step_val, *line, prev_cook_index, recipe_names);
                     out.push_str("    end)\n");
+                    i += 1;
+                }
+                Step::Shell { interactive: true, command, line } => {
+                    // §{exec.interactive-drain}: own draining unit, breaks
+                    // body-bundling (the next imperative step starts a fresh
+                    // body unit).
+                    let wrapped = wrap_lua_string(command);
+                    out.push_str(&format!(
+                        "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
+                        wrapped, line
+                    ));
+                    i += 1;
+                }
+                Step::Shell { interactive: false, .. }
+                | Step::Lua { .. }
+                | Step::LuaBlock { .. } => {
+                    // §{recipes.body-bundling}: coalesce a run of
+                    // execute-phase imperative steps into one body unit.
+                    let bundle_start = i;
+                    while i < recipe.steps.len() && is_bundleable(&recipe.steps[i]) {
+                        i += 1;
+                    }
+                    emit_body_unit(
+                        &mut out,
+                        &recipe.steps[bundle_start..i],
+                        &cookfile.uses,
+                    );
                 }
             }
         }

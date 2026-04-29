@@ -108,9 +108,11 @@ The `cook` table exposes the following helpers. Unless stated otherwise, they be
 **Signature.** `cook.sh(cmd: string) -> string`
 **Phase.** Both.
 
-In the register phase outside a layer context, `cook.sh` executes `cmd` via `/bin/sh -c` in the Cookfile's working directory with the current `cook.env` values merged onto the inherited environment, and returns the captured standard output as a string. A non-zero exit status MUST be reported as a Lua runtime error whose message begins with the token `COOK_CMD_FAILED:`. `cook.sh` is a utility for control-flow decisions during registration (feature detection, tool discovery) — it is not the mechanism by which work units are recorded; use `cook.add_unit` for that.
+`cook.sh` executes `cmd` via `/bin/sh -c` in the Cookfile's working directory with the current `cook.env` values merged onto the inherited environment, and returns the captured standard output as a string. A non-zero exit status MUST be reported as a Lua runtime error whose message begins with the token `COOK_CMD_FAILED:`. The function name is intentionally shared between phases because the user-visible behaviour — "run this command and give me its stdout, error on non-zero" — is the same in both; only the surrounding scheduling differs.
 
-In the execute phase, `cook.sh` is not part of the normative API surface.
+In the **register phase**, `cook.sh` is a utility for control-flow decisions during registration (feature detection, tool discovery, reading version files). It is NOT the mechanism by which work units are recorded; use `cook.add_unit` for that. The capture-mode contract of §{exec.capture-mode} applies: a register-phase `cook.sh` call MUST be deterministic with respect to the Cookfile source and the register-phase record accumulated so far, and MUST NOT modify files under the working directory in a way that affects declared outputs.
+
+In the **execute phase**, `cook.sh` runs on the worker VM that is evaluating an execute-phase Lua chunk — for example, the body unit of an imperative-region run (§{recipes.body-bundling}) or a `using >{ … }` payload (§{lua.using-block-globals}). It is the mechanism by which a `lua_line` or `lua_block` shells out, and it is the call into which a coalesced run of adjacent `shell_command` steps desugars (§{recipes.body-bundling}). Stdout is captured and returned to the calling Lua code; stderr is streamed to the worker's stderr. The `COOK_CMD_FAILED:` Lua error is identical in shape to the register-phase variant.
 
 ### 6.3.2. `cook.exec` and `cook.interactive` [#lua.cook-exec]
 **Signatures.**
@@ -121,15 +123,31 @@ In the execute phase, `cook.sh` is not part of the normative API surface.
 
 These helpers are the Lua-side counterparts of the surface `shell_command` (§{recipes.shell-steps}) and `interactive_command` (§{recipes.shell-steps}) step forms. Each call records one unit (non-interactive or interactive, respectively) with caching disabled. The return value is the empty string; it is returned only so that callers composing results do not fail on `nil` concatenation.
 
+A conforming implementation MUST raise a Lua runtime error when `cook.exec` or `cook.interactive` is called from execute-phase Lua (a `lua_line`, a `lua_block`, or a `using >{ … }` payload). The diagnostic MUST identify the function name and the calling step kind. The same rule applies to other register-only Cook Lua API helpers: `cook.add_unit`, `cook.step_group`, `cook.recipe`. See §{rationale.execute-phase-api}.
+
 ### 6.3.3. `cook.recipe` [#lua.cook-recipe]
 **Signature.** `cook.recipe(name: string, metadata: table, body: function) -> nil`
 **Phase.** Register-phase only.
 
 Registers a recipe with the given name, metadata (`ingredients`, `excludes`, `requires`), and body function. Surface recipes (§{recipes.header-forms}) are compiled to exactly one `cook.recipe` call. A conforming implementation is not required to expose `cook.recipe` as a user-facing extension point; its contract here is what the code generator (§{grammar}, Appendix A) produces.
 
+### 6.3.4. `cook.load_module` [#lua.cook-load-module]
+**Signature.** `cook.load_module(name: string) -> table`
+**Phase.** Both.
+
+`cook.load_module` resolves `name` against the `cook_modules/` directory of the **calling work unit's source Cookfile**, loads the module file (`<name>.lua` or `<name>/init.lua`), evaluates it on the calling VM, runs the returned table's `init()` function if present (§{modules.overview}), and returns the module table. Repeated calls within one VM MUST be cached: a second `cook.load_module(name)` with the same `(working_dir, name)` MUST return the same table without re-reading or re-evaluating the file.
+
+The lookup is **lexical per Cookfile** (§{modules.use-scope}): an imported Cookfile's body unit, whose `working_dir` is its own import directory, resolves `cook.load_module("foo")` against `<import_dir>/cook_modules/foo.lua`. The importing Cookfile cannot reach into the imported Cookfile's `cook_modules/` and vice versa.
+
+`cook.load_module` is the resolver behind the `use` declaration (§{lua.use-env}). The codegen for `use foo` emits `local foo = cook.load_module("foo")` at the top of the Cookfile's register-phase Lua, and prepends the same binding to every execute-phase body unit's `lua_code` payload, so the alias `foo` is in scope for both phases of every recipe in the declaring Cookfile.
+
+A conforming implementation MUST report a runtime error when `name` does not resolve to a file under the calling Cookfile's `cook_modules/`. The diagnostic MUST identify `name` and the absolute path that was searched.
+
+The body of a module loaded into the execute-phase VM MUST NOT call register-only API (`cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, `cook.recipe`). A conforming implementation MUST surface such a call as the §{rationale.execute-phase-api} runtime error. Module functions whose bodies are restricted to both-phase API (`cook.sh`, `cook.env`, `cook.cache`, `cook.platform`, `fs.*`, `path.*`) work in either phase; module authors document per-function which phase a function targets.
+
 ### Note 6.3.1
 
-Additional `cook.*` helpers — notably `cook.env`, `cook.platform`, `cook.cache`, `cook.export`, `cook.import`, `cook.load_module`, `cook.dep_output`, and `cook.dep_output_list` — are part of the runtime but are specified in §{modules} (modules and configuration), not here. §{lua} defines only the work-unit surface and the two phase-split helper families.
+Additional `cook.*` helpers — notably `cook.env`, `cook.platform`, `cook.cache`, `cook.export`, `cook.import`, `cook.dep_output`, and `cook.dep_output_list` — are part of the runtime but are specified in §{modules} (modules and configuration), not here. §{lua} defines only the work-unit surface and the two phase-split helper families.
 
 ## 6.4. Using-block globals [#lua.using-block-globals]
 **Phase.** Execute-phase only.

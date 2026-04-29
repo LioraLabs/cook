@@ -9,7 +9,8 @@ sidebar:
 
 ## Versions
 
-- **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013
+- **v0.3** (`cs-standard/v0.3`, 2026-04-28) — CS-0015, CS-0016, CS-0017
+- **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013, CS-0014
 - **v0.1** (`cs-standard/v0.1`, 2026-04-22..2026-04-24) — CS-0001 through CS-0010
 
 ## CS-0001 — Cook Standard v0.1 established
@@ -140,5 +141,86 @@ App. B.0.1 (new) records the rationale for `MAJOR.MINOR` over strict SemVer pre-
 App. E is informative — no normative obligations on implementations. Each entry pairs the current behaviour with the workaround (for active frictions) or the possible resolution (for design tensions). None of the listed items is blocking pre-1.0 work; the appendix exists as a single canonical location so they aren't relitigated each time they're encountered.
 
 **Implementation status.** No conformance-corpus changes. No parser changes. The `cs-standard/v0.2` tag is not moved (E.1's coupling does not apply to this change — it's appendix prose only).
+
+**Reference:** this commit.
+
+## D.14. CS-0014 — tree-sitter-cook v0.2 conformance audit. [#changes.cs-0014]
+
+**Date:** 2026-04-28
+**Version:** v0.2
+**Sections affected:** none in the Standard itself. App. D (this entry); CS-0002 is now closed by this CS.
+
+**Summary:** Brings `tree-sitter-cook/grammar.js` and its external scanner into syntactic conformance with Cook Standard v0.2 (App. A), addressing the divergences catalogued in CS-0002.
+
+Grammar changes: removes the `variable_declaration` rule (per CS-0011); adds the `module_call` step kind per App. A.4 (line whose first token is `BARE_IDENTIFIER` "." `[A-Za-z_]…`); adds the `ingredient_exclude` form to `ingredients_step` (`!"…"`); restructures `cook_step` so the multi-output form takes a `block_using_clause` only (rejecting `cook "a" "b" using STRING` per the App. A.4 normative rule). The external scanner's `scan_shell_content` now defers any `IDENT.IDENT_START…` line at the start of a recipe body to the grammar's `module_call` rule.
+
+A new conformance harness at `tree-sitter-cook/scripts/conformance.mjs` walks `standard/conformance/{positive,negative}` and asserts every positive parses cleanly while every syntactic negative produces an `ERROR`/`MISSING` node. Three negatives encode rules that the Standard places on the parser but that tree-sitter cannot enforce from the grammar alone (top-level ordering, duplicate `ingredients`, accessor placeholders inside `using` strings); the harness records them as accepted-with-note rather than failing. Run with `node scripts/conformance.mjs` from `tree-sitter-cook/`, or `npm run conformance`.
+
+`tree-sitter-cook` claims Cook Standard v0.2: a header comment in `grammar.js`, the `version` and `description` fields in `package.json` and `tree-sitter.json` carry the claim. CS-0002's "tree-sitter-cook is known stale" note is superseded by this entry.
+
+**Implementation status.** Implementation-only change. The Rust parser's behaviour is unchanged. No prose changes to the Standard, no corpus additions or removals.
+
+**Reference:** this commit.
+
+## D.15. CS-0015 — Recipe-body phase split (`>` execute / `>>` register / module-call register), region rule, body-unit bundling. [#changes.cs-0015]
+
+**Date:** 2026-04-28
+**Version:** v0.3
+**Sections affected:** §{lexical.line-prefixes} (rewritten); §{lexical.line-classification} (cascade renumbered, `>>{` and `>>` tests added, triple-arrow reservation); §{grammar.step-dispatch} (token classes + region cross-link); §{recipes.step-kinds} (new step kinds, Note 4.4.2 region rule); §{recipes.lua-steps} (rewritten — `>` /`>{`/`>>`/`>>{` family, body bundling §{recipes.body-bundling}); §{recipes.module-call-steps} (desugaring target updated); §{lua.cook-sh} (promoted to both phases); §{lua.cook-exec} (execute-phase ban added); §{exec.two-phase} (Example 8.2.1 rewritten to `>>`); §{exec.phase-classification} (new normative table); §{exec.step-groups} (surface-construct table rewritten); App. A.3 (recipe_body split into `declarative_region` and `imperative_region`, "Region ordering rule" added); App. A.4 (`inline_lua_line` and `inline_lua_block` productions added; `inline_lua_block` of using-clause renamed to `using_lua_block`; `using >>{` rejected); App. A.5 line prefixes; App. B.4.8–B.4.12 (new rationale subsections); App. B.4.13 (renumbered from B.4.11).
+
+**Summary:** Splits the Cookfile's Lua surface into two phase-explicit families:
+- **Single-`>` family** (`>` *body*, `>{ … }`) is **execute-phase**. Lines and blocks compile into a body unit (§{recipes.body-bundling}) whose `lua_code` payload runs on a worker VM at execute, after the recipe's declarative work units complete. This is the "runs when the recipe runs" form.
+- **Doubled-`>` family** (`>>` *body*, `>>{ … }`) is **register-phase**. Lines and blocks are inlined into the recipe-body Lua function and evaluated during recipe registration. This is the surface form a Cookfile uses to call register-only Cook Lua API helpers (`cook.add_unit`, `cook.export`, `cook.step_group`) and to declare register-phase locals consumed by subsequent declarative steps.
+- **`module_call`** (e.g., `m.fn(…)`) desugars to `inline_lua_line` (single-line) or `inline_lua_block` (multi-line) per §4.11 — register-phase, matching the doubled-prefix family.
+
+A **recipe-body region rule** (Note 4.4.2 / App. A.3) partitions every `recipe_body` into a declarative region followed by an imperative region. Declarative-region steps (`ingredients`, `cook`, `plate`, `test`, `inline_lua_line`, `inline_lua_block`, `module_call`) MUST appear before imperative-region steps (`lua_line`, `lua_block`, `shell_command`, `interactive_command`). A conforming implementation MUST reject a recipe in which a declarative-region step appears after the first imperative-region step. The diagnostic identifies the offending step's line and the line on which the imperative region began.
+
+A **body-bundling rule** (§{recipes.body-bundling}) coalesces consecutive imperative-region steps into one execute-phase work unit per `@interactive`-bounded run. Inside the body unit, adjacent `shell_command` lines coalesce into a single `cook.sh` call (newline-joined, `set -e` prefixed) so that a `cd` followed by a `./app` runs in one shell process. The Lua VM persists across the whole bundle, so a `local` declared in one `>` line is visible to the next. `@interactive` steps remain their own draining units (§{exec.interactive-drain}) and break the bundle.
+
+`cook.sh` is promoted to both phases (§{lua.cook-sh}). `cook.exec`, `cook.interactive`, `cook.add_unit`, `cook.step_group`, and `cook.recipe` remain register-only and MUST raise a Lua runtime error when called from execute-phase Lua. A new normative phase-classification table at §{exec.phase-classification} records every place a Lua expression can appear and the phase that evaluates it.
+
+App. A.4 introduces `inline_lua_line ::= ">>" LUA_LINE_CONTENT? NEWLINE` and `inline_lua_block ::= ">>{" LUA_BLOCK_CONTENT "}" NEWLINE`. The grammar production formerly named `inline_lua_block` (the `>{ … }` form inside a `using` clause) is renamed to `using_lua_block` to disambiguate from the new step kind. App. A.4 also adds the rule "`using >>{` is rejected": a register-phase Lua block in a using-clause position is incoherent and a conforming implementation MUST reject it. §{lexical.line-prefixes} adds two new prefixes (`>>{`, `>>`) and the §{lexical.line-classification} cascade gains corresponding tests in longest-prefix order, plus a parse-time rejection for runs of three or more `>` characters at line start.
+
+App. B.4.8–B.4.12 record the rationale: why `>` is execute and `>>` is register (B.4.8), why `module_call` defaults to register-phase (B.4.9), why the recipe body splits into declarative and imperative regions (B.4.10), why bundling is per-recipe rather than per-line (B.4.11), and why register-only Cook Lua API helpers raise from execute-phase Lua (B.4.12). The previous B.4.11 (module-call heuristic) is renumbered to B.4.13.
+
+The design and trade-offs (alternatives considered, the "fresh shell after `>`" gap, body-unit UI granularity, `>>` aesthetic) are tracked in `standard/specs/2026-04-28-recipe-body-phase-split-design.md`.
+
+**Implementation status.** Lockstep — the Rust parser, codegen, and tree-sitter grammar update in this same change. New conformance fixtures land under §{intro.conformance}: positive 016 (`>>` and `>>{`), updated 008 and 010; negative 008 (imperative-then-declarative), 009 (using-register-block), 010 (triple-arrow reservation).
+
+**Reference:** this commit.
+
+## D.16. CS-0016 — Standard cut: v0.3. [#changes.cs-0016]
+
+**Date:** 2026-04-28
+**Version:** v0.3
+**Sections affected:** `standard/VERSION` (`0.2` → `0.3`); App. D Versions index (new v0.3 entry); this entry.
+
+**Summary:** Cuts the Cook Standard at v0.3. Per the cut procedure in `CONTRIBUTING.md` (and §{intro.version}), this entry plus the v0.3 row in the Versions index plus a `cs-standard/v0.3` git tag at the merge commit constitute the published cut. v0.3 batches CS-0015, the recipe-body phase split that adopts the `>` /`>>` /module-call surface, the region rule, the body-unit bundling rule, the §{exec.phase-classification} table, and the lockstep Rust + tree-sitter implementation that follows it.
+
+The conformance corpus's `parse.txt` files change format in this cut: `Step::Lua` and `Step::LuaBlock` continue to be emitted by the existing dump, but module-call lines now dump as `InlineLua` / `InlineLuaBlock` rather than `Lua` / `LuaBlock`, and two new dump lines (`InlineLua code=…`, `InlineLuaBlock code=…`) appear for `>>`-prefixed steps. Per CONTRIBUTING.md's rule on parse-format-altering cuts, the `cs-standard/v0.3` tag is force-moved to the merge commit where the parser and the corpus agree. `cs-standard/v0.2` and `cs-standard/v0.1` are left in place as historical records; the backwards-conformance recipe (`cook --set VERSION=0.2 standard.against-tag`) does not pass against v0.2 post-CS-0015.
+
+**Implementation status.** Authoring + tagging step. No prose changes beyond the Versions index and this entry.
+
+**Reference:** this commit.
+
+## D.17. CS-0017 — `use` aliases visible to execute-phase Lua; `cook.load_module` two-phase. [#changes.cs-0017]
+
+**Date:** 2026-04-28
+**Version:** v0.3
+**Sections affected:** §{lua.cook-load-module} (new §6.3.4); §{modules.use-scope} (new §7.4 with the existing §7.4 renumbered to §7.5); §{lua.use-env} (clarification on dual-phase binding); App. B (rationale subsection on lexical scoping); positive conformance fixture 017-use-from-execute (new).
+
+**Summary:** Extends the `use` declaration so the alias it introduces is in scope for **both** phases of every recipe in the declaring Cookfile, not register-only. The codegen (`cli/crates/cook-luagen/src/recipe.rs`) prepends a `local <alias> = cook.load_module("<name>")` line per `use` to every execute-phase body unit's `lua_code` payload, so `> alias.fn(...)` calls the same module function as `alias.fn(...)` in declarative position — the only difference is the phase it runs in.
+
+`cook.load_module` is promoted from register-phase to **both phases** (§6.3.4 new). The execute-phase variant lives on the worker VM (`cli/crates/cook-luaotp/src/pool.rs`) and uses the same `cook_modules/<name>.lua` / `cook_modules/<name>/init.lua` lookup as its register counterpart, resolved against the calling work unit's `current_working_dir`. Loaded modules are cached per-VM by `(working_dir, name)` so a worker thread that handles units from two different Cookfiles does not serve one Cookfile's `foo` to the other. The `init()` hook (§7.5) runs at first load on each (worker VM, working_dir, name) tuple.
+
+The worker VM also refreshes `package.path` per work unit to `<working_dir>/cook_modules/?.lua;<working_dir>/cook_modules/?/init.lua;<defaults>`, so `require("foo")` is a working synonym for `cook.load_module("foo")` on the worker side.
+
+§7.4 (new) records the **lexical-per-Cookfile** scoping rule: a `use` declaration's alias is scoped to its declaring Cookfile and is not visible across `import` boundaries; cross-Cookfile composition stays at the **recipe** level via qualified name references (§{modules.qualified-refs}), not at the **module** level. Two Cookfiles that both `use` a module with the same name resolve to their own `cook_modules/` independently; the worker-VM cache key is `(working_dir, name)` so the two loads do not collide.
+
+A module function loaded into the execute-phase VM that calls register-only API (`cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, `cook.recipe`) raises the §{rationale.execute-phase-api} error. Module authors document per-function which phase a function targets; both-phase functions restrict themselves to `cook.sh`, `cook.env`, `cook.cache`, `cook.platform`, `fs.*`, and `path.*`.
+
+**Why:** Before CS-0017, the only way to invoke a `use`-d module function from imperative-region Lua was to (a) re-resolve it manually via `cook.load_module(...)` on the worker VM (which wasn't even installed there) or (b) wrap it in a register-phase call that records a unit. Both were verbose and asymmetric. CS-0017 collapses the asymmetry: `use` means "bring this alias into scope," period. Whether a given function call lands in the declarative or imperative region is decided by the recipe-body region rule (§{recipes.step-kinds}, Note 4.4.2), and the alias is bound either way.
+
+**Implementation status.** Lockstep — codegen, worker VM, and spec land together. New positive conformance fixture (`017-use-from-execute`) pins the AST shape; the codegen-side and runtime-side checks are in `cook-luagen/tests/conformance.rs` and the runnable demo in `examples/v03-phase-split/Cookfile` (recipes `module-call-execute` and `module-via-require`).
 
 **Reference:** this commit.

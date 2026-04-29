@@ -1,0 +1,1 @@
+Pins the single-line `>>` form (InlineLua, register-phase) and the multi-line `>>{ ... }` form (InlineLuaBlock, register-phase). Companion to 008 (which exercises the execute-phase `>` and `>{ ... }` forms). Exercises § 4.9.

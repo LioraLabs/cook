@@ -42,7 +42,10 @@ pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTr
             Step::Plate { step: plate_step, .. } => extract_brace_tokens(&plate_step.command),
             Step::Test { step: test_step, .. } => extract_brace_tokens(&test_step.command),
             Step::Shell { command, .. } => extract_brace_tokens(command),
-            Step::Lua { .. } | Step::LuaBlock { .. } => vec![],
+            Step::Lua { .. }
+            | Step::LuaBlock { .. }
+            | Step::InlineLua { .. }
+            | Step::InlineLuaBlock { .. } => vec![],
         };
 
         for token in tokens {

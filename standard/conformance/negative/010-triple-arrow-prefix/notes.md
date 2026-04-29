@@ -1,0 +1,1 @@
+Pins the §{lexical.line-prefixes} reservation: a run of three or more consecutive `>` characters at line start is reserved and MUST be rejected with a parse error. Error mentions the `>` character to scope the diagnostic class.

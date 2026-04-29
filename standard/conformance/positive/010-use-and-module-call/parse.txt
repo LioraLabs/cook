@@ -8,4 +8,4 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Lua code="cpp.bin(\"colorize\", { sources = { \"src/colorize.c\" } })"
+        InlineLua code="cpp.bin(\"colorize\", { sources = { \"src/colorize.c\" } })"

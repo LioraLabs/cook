@@ -292,31 +292,11 @@ end
     (cook_step
       outputs: (string)
       (using_clause
-        lua: (inline_lua_block
+        lua: (using_lua_block
           (lua_code))))))
 
 ================
-Cook with multiple outputs
-================
-
-recipe gen
-    cook "out/parser.rs" "out/parser.h" using "lalrpop src/grammar.lalrpop --out-dir out"
-end
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier))
-    (cook_step
-      outputs: (string)
-      outputs: (string)
-      (using_clause
-        command: (string)))))
-
-================
-Cook with plain-shell using block
+Cook multi-output with shell block
 ================
 
 recipe wasm
@@ -339,9 +319,94 @@ end
     (cook_step
       outputs: (string)
       outputs: (string)
-      (using_clause
+      (block_using_clause
         shell: (shell_block
           (shell_content))))))
+
+================
+Cook multi-output with lua block
+================
+
+recipe gen
+    cook "out/parser.rs" "out/parser.h" using >{
+        cook.sh("lalrpop src/grammar.lalrpop --out-dir out")
+    }
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string)
+      outputs: (string)
+      (block_using_clause
+        lua: (using_lua_block
+          (lua_code))))))
+
+================
+Ingredients with exclude
+================
+
+recipe pack
+    ingredients "src/*.c" !"src/excluded.c"
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      (string)
+      (ingredient_exclude
+        (string)))))
+
+================
+Module call
+================
+
+use cpp
+
+recipe colorize
+    cpp.bin("colorize", { sources = { "src/colorize.c" } })
+end
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (module_call
+      (module_call_text))))
+
+================
+Inline lua line and block (register-phase >>)
+================
+
+recipe init
+    >> local std = "c++20"
+    >>{
+        cook.env.CXXFLAGS = "-std=" .. std
+    }
+end
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (inline_lua_line
+      (lua_code))
+    (inline_lua_block
+      (lua_code))))
 
 ================
 Cook plain-shell block with nested braces in content

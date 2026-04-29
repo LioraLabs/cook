@@ -10,6 +10,8 @@ pub enum Token {
     RecipeEnd,
     LuaLine(String),
     LuaBlockOpen,
+    InlineLuaLine(String),
+    InlineLuaBlockOpen,
     Blank,
     Content(String),
 }
@@ -28,6 +30,8 @@ pub enum LexError {
     MissingRecipeName { line: usize },
     #[error("line {line}: '{segment}' is a reserved word and cannot be used as a recipe name (or final segment of a dotted recipe name)")]
     ReservedRecipeName { line: usize, segment: String },
+    #[error("line {line}: a run of three or more `>` characters at line start is reserved (§{{lexical.line-prefixes}})")]
+    ReservedTripleArrow { line: usize },
 }
 
 const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "all"];
@@ -95,6 +99,17 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
             Token::Blank
         } else if trimmed.starts_with('#') {
             Token::Comment(trimmed[1..].to_string())
+        } else if trimmed.starts_with(">>>") {
+            // Reserved for future prefixes; reject explicitly so a four-arrow
+            // line is a sharp diagnostic rather than a confusing parse error
+            // further down (§{lexical.line-prefixes}).
+            return Err(LexError::ReservedTripleArrow { line: line_num });
+        } else if trimmed.starts_with(">>{") {
+            Token::InlineLuaBlockOpen
+        } else if trimmed.starts_with(">>") {
+            let code = &trimmed[2..];
+            let code = code.strip_prefix(' ').unwrap_or(code);
+            Token::InlineLuaLine(code.to_string())
         } else if trimmed.starts_with(">{") {
             Token::LuaBlockOpen
         } else if trimmed.starts_with('>') {

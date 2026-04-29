@@ -1,0 +1,5 @@
+use greet
+
+recipe "say-hello"
+    > greet.say("world")
+end

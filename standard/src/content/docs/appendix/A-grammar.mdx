@@ -42,16 +42,22 @@ recipe_header         ::= explicit_header
 explicit_header       ::= "recipe" name (":" dependency_list)?
 implicit_header       ::= BARE_IDENTIFIER ":" dependency_list?
 dependency_list       ::= name+
-recipe_body           ::= recipe_item*
-recipe_item           ::= ingredients_step
+recipe_body           ::= declarative_region imperative_region?
+declarative_region    ::= declarative_item*
+declarative_item      ::= ingredients_step
                        | cook_step
                        | plate_step
                        | test_step
-                       | lua_line
-                       | lua_block
+                       | inline_lua_line
+                       | inline_lua_block
                        | module_call
-                       | interactive_command
+                       | comment
+                       | NEWLINE
+imperative_region     ::= imperative_item+
+imperative_item       ::= lua_line
+                       | lua_block
                        | shell_command
+                       | interactive_command
                        | comment
                        | NEWLINE
 ```
@@ -60,6 +66,8 @@ recipe_item           ::= ingredients_step
 
 **At-most-one-ingredients rule.** A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe with two or more `ingredients_step` items.
 
+**Region ordering rule.** A conforming implementation MUST reject a `recipe_body` in which a `declarative_item` (other than `comment` or `NEWLINE`) appears after the first `imperative_item` (other than `comment` or `NEWLINE`) of the same recipe. The diagnostic MUST identify the offending step's line and the line on which the imperative region began. See §{recipes.step-kinds}, Note 4.4.2 for the prose treatment.
+
 ## A.4. Steps [#grammar-appendix.steps]
 ```ebnf
 ingredients_step      ::= "ingredients" ingredient+ NEWLINE
@@ -67,8 +75,8 @@ ingredient            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
 
 cook_step             ::= "cook" STRING+ using_clause? NEWLINE
-using_clause          ::= "using" ( inline_lua_block | shell_block | STRING )
-inline_lua_block      ::= ">{" LUA_BLOCK_CONTENT "}"
+using_clause          ::= "using" ( using_lua_block | shell_block | STRING )
+using_lua_block       ::= ">{" LUA_BLOCK_CONTENT "}"
 shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
 
 plate_step            ::= "plate" STRING NEWLINE
@@ -77,6 +85,9 @@ test_step             ::= "test" STRING ("timeout" NUMBER)? "should_fail"? NEWLI
 
 lua_line              ::= ">" LUA_LINE_CONTENT? NEWLINE
 lua_block             ::= ">{" LUA_BLOCK_CONTENT "}" NEWLINE
+
+inline_lua_line       ::= ">>" LUA_LINE_CONTENT? NEWLINE
+inline_lua_block      ::= ">>{" LUA_BLOCK_CONTENT "}" NEWLINE
 
 interactive_command   ::= "@" SHELL_LINE_CONTENT NEWLINE
 
@@ -97,9 +108,11 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
                              alternative. See § 3.8. */
 ```
 
-**Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before `using`, the `using_clause` MUST use `inline_lua_block` or `shell_block`. A conforming implementation MUST reject the form `cook "a" "b" using STRING`.
+**Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before `using`, the `using_clause` MUST use `using_lua_block` or `shell_block`. A conforming implementation MUST reject the form `cook "a" "b" using STRING`.
 
-**`using` dispatch order (normative).** After the keyword `using`, a conforming implementation checks in this order: `>{` (Lua block), then `{` (shell block), then `"` (single quoted string). The first match wins.
+**`using >>{` is rejected.** A `using_clause` MUST NOT use the `>>{` (register-phase Lua block) prefix. The using clause produces work for execute, not register-phase orchestration; a register-phase Lua block in this position is incoherent. A conforming implementation MUST reject `cook STR using >>{ … }`.
+
+**`using` dispatch order (normative).** After the keyword `using`, a conforming implementation checks in this order: `>>{` (rejected as above), `>{` (Lua block), `{` (shell block), `"` (single quoted string). The `>>{` test is present so the diagnostic for the rejected form is sharp; the first matching admitted alternative wins for the others.
 
 **Declaration-only cook step.** A `cook_step` whose `using_clause` is absent is a declaration — it announces the output without providing a build command inline. Its build is assumed to be provided by preceding Lua registrations or a later amendment.
 

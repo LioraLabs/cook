@@ -1,7 +1,7 @@
 {
   "name": "tree-sitter-cook",
-  "version": "0.1.0",
-  "description": "Tree-sitter grammar for the Cook build system DSL",
+  "version": "0.3.0",
+  "description": "Tree-sitter grammar for the Cook build system DSL (claims Cook Standard v0.3)",
   "license": "MIT",
   "main": "bindings/node",
   "tree-sitter": [
@@ -13,6 +13,12 @@
       "injections": "queries/injections.scm"
     }
   ],
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "test": "tree-sitter test",
+    "conformance": "node scripts/conformance.mjs",
+    "check": "tree-sitter generate && tree-sitter test && node scripts/conformance.mjs"
+  },
   "dependencies": {
     "node-addon-api": "^8.3.1",
     "node-gyp-build": "^4.8.4"

@@ -1,0 +1,11 @@
+Cookfile
+  uses: [UseStatement module_name="greet" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="say-hello" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Lua code="greet.say(\"world\")"

@@ -10,7 +10,7 @@ sidebar:
 
 ## E.1. Conformance corpus is parser-impl-coupled [#pre-v1.parse-txt-coupling]
 
-**Symptom.** The `parse.txt` files under `standard/conformance/positive/` are textual dumps of one specific implementation's AST shape. When that implementation changes its dump format — for example, CS-0011 dropped the `vars: []` line in v0.2 — a previously-tagged corpus does not match the current parser, breaking `standard/scripts/check-conformance-against-tag.sh` against any prior tag whose dump predates the change.
+**Symptom.** The `parse.txt` files under `standard/conformance/positive/` are textual dumps of one specific implementation's AST shape. When that implementation changes its dump format — for example, CS-0011 dropped the `vars: []` line in v0.2 — a previously-tagged corpus does not match the current parser, breaking the backwards-conformance recipe (`cook standard.against-tag`, which routes through `standard/cook_modules/checks.lua`) against any prior tag whose dump predates the change.
 
 **Workaround.** When a parser change alters the dump format, the `cs-standard/vX.Y` tag for the in-progress version is force-moved to the merge commit where the parser and the corpus agree (operating rule in `CONTRIBUTING.md`'s cut procedure). Earlier tags are accepted as broken; their corpora remain frozen historical records.
 

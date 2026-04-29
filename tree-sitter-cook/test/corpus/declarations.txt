@@ -1,17 +1,4 @@
 ================
-Variable declaration
-================
-
-CC "gcc"
-
----
-
-(source_file
-  (variable_declaration
-    name: (variable_name)
-    value: (string)))
-
-================
 Use declaration (bare)
 ================
 
@@ -109,10 +96,9 @@ Comment
 Multiple top-level declarations
 ================
 
-CC "gcc"
-AR "ar"
-
 use cpp
+
+import backend ./services/backend
 
 config debug
     env.CFLAGS = "-g"
@@ -121,14 +107,11 @@ end
 ---
 
 (source_file
-  (variable_declaration
-    name: (variable_name)
-    value: (string))
-  (variable_declaration
-    name: (variable_name)
-    value: (string))
   (use_declaration
     module: (identifier))
+  (import_declaration
+    name: (import_name)
+    path: (path))
   (config_block
     name: (identifier)
     (lua_code)))

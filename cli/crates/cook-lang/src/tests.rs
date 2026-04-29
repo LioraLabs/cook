@@ -115,19 +115,21 @@ fn test_implicit_recipe_with_body() {
 
 #[test]
 fn test_module_call_single_line() {
+    // Per §4.11, single-line module-call desugars to InlineLua (register-phase).
     let source = "recipe build\n    cpp.compile(\"src/*.cpp\")\nend\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].steps.len(), 1);
     match &result.recipes[0].steps[0] {
-        Step::Lua { code, .. } => {
+        Step::InlineLua { code, .. } => {
             assert_eq!(code, "cpp.compile(\"src/*.cpp\")");
         }
-        other => panic!("expected Lua step, got {:?}", other),
+        other => panic!("expected InlineLua step, got {:?}", other),
     }
 }
 
 #[test]
 fn test_module_call_multiline() {
+    // Per §4.11, multi-line module-call desugars to InlineLuaBlock (register-phase).
     let source = r#"recipe build
     cpp.compile {
         sources = "src/*.cpp",
@@ -138,12 +140,12 @@ end
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].steps.len(), 1);
     match &result.recipes[0].steps[0] {
-        Step::LuaBlock { code, .. } => {
+        Step::InlineLuaBlock { code, .. } => {
             assert!(code.contains("cpp.compile {"), "code was: {}", code);
             assert!(code.contains("sources"), "code was: {}", code);
             assert!(code.contains("}"), "code was: {}", code);
         }
-        other => panic!("expected LuaBlock step, got {:?}", other),
+        other => panic!("expected InlineLuaBlock step, got {:?}", other),
     }
 }
 
@@ -160,10 +162,10 @@ fn test_module_call_no_args() {
     let source = "recipe build\n    cpp.detect_compiler()\nend\n";
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
-        Step::Lua { code, .. } => {
+        Step::InlineLua { code, .. } => {
             assert_eq!(code, "cpp.detect_compiler()");
         }
-        other => panic!("expected Lua step, got {:?}", other),
+        other => panic!("expected InlineLua step, got {:?}", other),
     }
 }
 
@@ -308,15 +310,56 @@ fn test_plate_step() {
 
 #[test]
 fn test_mixed_steps() {
-    let source = "recipe \"lib\": \"setup\"\n    ingredients \"lib/*.c\" \"include/*.h\"\n    cook \"build/obj/{stem}.o\" using \"gcc -c {in} -o {out}\"\n    > print(\"compiled\")\n    cook \"build/libmath.a\" using \"ar rcs {out} {all}\"\nend\n";
+    // Note 4.4.2 region rule: imperative-region steps (> shell @) must come
+    // after all declarative-region steps. The middle step here uses `>>`
+    // (register-phase InlineLua) so it can sit between two cook steps.
+    let source = "recipe \"lib\": \"setup\"\n    ingredients \"lib/*.c\" \"include/*.h\"\n    cook \"build/obj/{stem}.o\" using \"gcc -c {in} -o {out}\"\n    >> print(\"compiled\")\n    cook \"build/libmath.a\" using \"ar rcs {out} {all}\"\nend\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.deps, vec!["setup".to_string()]);
     assert_eq!(recipe.ingredients, vec!["lib/*.c".to_string(), "include/*.h".to_string()]);
     assert_eq!(recipe.steps.len(), 3);
     assert!(matches!(&recipe.steps[0], Step::Cook { .. }));
-    assert!(matches!(&recipe.steps[1], Step::Lua { .. }));
+    assert!(matches!(&recipe.steps[1], Step::InlineLua { .. }));
     assert!(matches!(&recipe.steps[2], Step::Cook { .. }));
+}
+
+#[test]
+fn test_imperative_then_declarative_rejected() {
+    // App. A.3 "Region ordering rule": once the imperative region begins,
+    // no declarative-region step may follow.
+    let source = "recipe \"bad\"\n    cook \"a\" using \"echo a\"\n    > print(\"x\")\n    cook \"b\" using \"echo b\"\nend\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("imperative region"), "got: {}", msg);
+}
+
+#[test]
+fn test_inline_lua_line_register_phase() {
+    let source = "recipe \"r\"\n    >> local x = 1\n    >>{\n        cook.env.K = \"v\"\n    }\nend\n";
+    let result = parse(source).unwrap();
+    let recipe = &result.recipes[0];
+    assert_eq!(recipe.steps.len(), 2);
+    assert!(matches!(&recipe.steps[0], Step::InlineLua { .. }));
+    assert!(matches!(&recipe.steps[1], Step::InlineLuaBlock { .. }));
+}
+
+#[test]
+fn test_using_register_block_rejected() {
+    // App. A.4 "`using >>{` is rejected".
+    let source = "recipe \"r\"\n    cook \"out\" using >>{\n        cook.add_unit({command = \"x\"})\n    }\nend\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("using"), "got: {}", msg);
+}
+
+#[test]
+fn test_triple_arrow_reserved() {
+    // §{lexical.line-prefixes}: `>>>` and longer are reserved.
+    let source = "recipe \"r\"\n    >>> print(\"x\")\nend\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains(">"), "got: {}", msg);
 }
 
 #[test]

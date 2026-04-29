@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="inline_step" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="print(\"register-phase line\")"
+        InlineLuaBlock code="        local x = 1\n        print(x + 1)"

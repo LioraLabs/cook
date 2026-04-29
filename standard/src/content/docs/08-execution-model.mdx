@@ -32,6 +32,29 @@ Execute phase: the recorded units run, each in its own subprocess. Members of th
 
 The two phases use different Cook Lua API bindings for the same call. In the register phase `cook.exec` records a shell work unit and returns the empty string without spawning a process; in the execute phase a shell work unit is dispatched to a subprocess. See §{lua} for the capture-mode contract of each API.
 
+### 8.1.2. Phase classification of every Lua-bearing surface form [#exec.phase-classification]
+
+
+Every Lua expression in a Cookfile is evaluated in exactly one of three timings. The following table is normative; rows that link to other sections defer the surface-level definition to that section, and merely state the phase here.
+
+| Surface form | Source section | Phase | Produces a unit? |
+|---|---|---|---|
+| `config` block body                          | §{grammar.config-blocks}, §{grammar.config-composition} | **load** (before any register phase begins) | no — runs against Cook Lua API state directly |
+| Cook module top level (`return mod`) and `init()` | §{modules.overview} | **load** (when the importing Cookfile's `use` resolves) | no |
+| `inline_lua_line` (`>>` *body*)              | §{recipes.lua-steps} | **register** | no — inlined into the recipe-body Lua function |
+| `inline_lua_block` (`>>{ … }`)               | §{recipes.lua-steps} | **register** | no — inlined |
+| `module_call` (`alias.fn(…)`)                 | §{recipes.module-call-steps} | **register** | no — desugared to `inline_lua_line` / `inline_lua_block` |
+| `lua_line` (`>` *body*)                      | §{recipes.lua-steps} | **execute** | yes — contributes to the body unit per §{recipes.body-bundling} |
+| `lua_block` (`>{ … }`)                       | §{recipes.lua-steps} | **execute** | yes — contributes to the body unit |
+| `cook STR using >{ … }` (using-clause Lua)   | §{recipes.cook-single-output}, §{recipes.cook-multi-output} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals} bindings |
+| `cook.add_unit({lua_code = "…"})` payload    | §{lua.add-unit} | **execute** | yes — runs on the worker VM that picks up the unit |
+
+Three corollaries:
+
+1. **The single-`>` family is execute-phase, the doubled-`>` family is register-phase.** This is the surface-level rule a Cookfile author needs to remember; everything else in the table follows from it plus desugaring rules in §{recipes}.
+2. **Module-call orchestration is register-phase.** It desugars to `inline_lua_line` / `inline_lua_block` (§{recipes.module-call-steps}), so the module's recorded `cook.add_unit` calls fire during registration. The work units those calls record run at execute, exactly like the cook step's own units.
+3. **Inside an execute-phase Lua chunk, register-only Cook Lua API helpers are unavailable.** `cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, and `cook.recipe` MUST raise a Lua runtime error when invoked from execute-phase Lua. `cook.sh` is available in both phases (§{lua.cook-sh}). See §{rationale.execute-phase-api}.
+
 ## 8.2. Capture-mode semantics [#exec.capture-mode]
 Capture-mode Cook Lua API calls MUST be pure with respect to the Cookfile's observable build state: they MUST NOT spawn subprocesses that affect declared outputs, modify files under the working directory, or block on external I/O. Their only effect on conforming evaluation MUST be to append entries to the register-phase record or to read metadata already established (for example, the terminal outputs of a prerequisite recipe that has already completed its register phase — see §{lua}).
 
@@ -43,13 +66,15 @@ An implementation MAY permit narrowly-scoped capture-mode side effects that part
 
 ```cook
 recipe build
-    > local flag = cook.env.OPTIMISE or "-O0"
+    >> local flag = cook.env.OPTIMISE or "-O0"
     ingredients "src/*.c"
     cook "build/{stem}.o" using "gcc -c {in} -o {out}"
 end
 ```
 
-The `>` line runs during the register phase. It reads `cook.env` — a value established before the register phase began — and assigns a local. The `cook` step then records its work units. No subprocess is spawned during registration.
+The `>>` line runs during the register phase (`>>` is the inline-Lua prefix; see §{recipes.lua-steps}). It reads `cook.env` — a value established before the register phase began — and assigns a local visible to subsequent declarative-region steps. The `cook` step then records its work units. No subprocess is spawned during registration.
+
+Substituting `>` for `>>` would change the semantics: `>` is execute-phase, so the `flag` local would be set on a worker VM during execute, after the cook step's units have already been recorded — too late to influence registration.
 
 ### Note 8.2.1
 
@@ -66,12 +91,14 @@ The Cookfile surface syntax in §{recipes} produces step groups and sequential u
 
 | Surface construct | Registration behaviour |
 |---|---|
-| `cook` step (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) | One step group per `cook` step. |
-| `plate` step (§{recipes.plate-step}) | One step group per `plate` step. |
-| `test` step (§{recipes.test-step}) | One step group per `test` step. |
-| `shell_command` (§{recipes.shell-steps}) | Sequential unit (not a step group). |
-| `interactive_command` (§{recipes.shell-steps}) | Sequential unit, additionally draining (§{exec.interactive-drain}). |
-| `lua_line`, `lua_block` (§{recipes.lua-steps}) | Evaluated during the register phase; produce units only via explicit Cook Lua API calls. |
+| `cook` step (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) | One step group per `cook` step. Recorded by the declarative region. |
+| `plate` step (§{recipes.plate-step}) | One step group per `plate` step. Recorded by the declarative region. |
+| `test` step (§{recipes.test-step}) | One step group per `test` step. Recorded by the declarative region. |
+| `inline_lua_line`, `inline_lua_block` (§{recipes.lua-steps}) | Inlined into the recipe-body Lua function and evaluated during the register phase. Produce units only via explicit Cook Lua API calls. |
+| `module_call` (§{recipes.module-call-steps}) | Desugars to `inline_lua_line` / `inline_lua_block`; same registration behaviour. |
+| `lua_line`, `lua_block` (§{recipes.lua-steps}) | Coalesced into a body unit per imperative-region run (§{recipes.body-bundling}); the unit is sequential and its `lua_code` runs on the worker VM at execute. |
+| `shell_command` (§{recipes.shell-steps}) | Coalesced into the same body unit as the surrounding `lua_line` / `lua_block` steps; consecutive shell lines join into one `cook.sh` call within the unit (§{recipes.body-bundling}). |
+| `interactive_command` (§{recipes.shell-steps}) | Sequential unit, additionally draining (§{exec.interactive-drain}). Breaks the body-bundling run; the next imperative-region step starts a fresh body unit. |
 
 ### Example 8.3.1
 

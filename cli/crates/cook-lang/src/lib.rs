@@ -13,7 +13,7 @@ pub(crate) mod shell_block;
 ///
 /// Move this constant in lockstep with `standard/VERSION` when the parser
 /// catches up to a new cut. See `cli/crates/cook-lang/CONFORMANCE.md`.
-pub const COOK_STANDARD_VERSION: &str = "0.2";
+pub const COOK_STANDARD_VERSION: &str = "0.3";
 
 use ast::*;
 use lexer::*;
@@ -104,7 +104,10 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                     message: "unexpected content outside of a recipe".to_string(),
                 });
             }
-            Token::LuaLine(_) | Token::LuaBlockOpen => {
+            Token::LuaLine(_)
+            | Token::LuaBlockOpen
+            | Token::InlineLuaLine(_)
+            | Token::InlineLuaBlockOpen => {
                 return Err(ParseError::Parse {
                     line: tok.line,
                     message: "unexpected content outside of a recipe".to_string(),

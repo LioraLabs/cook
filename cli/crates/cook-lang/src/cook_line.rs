@@ -145,6 +145,16 @@ pub(crate) fn parse_cook_line(
 
     let after_using = after_pattern["using".len()..].trim();
 
+    // App. A.4 "`using >>{` is rejected": register-phase Lua block is incoherent
+    // as a using-clause payload (the using clause produces work for execute, not
+    // register-time orchestration). Diagnose sharply.
+    if after_using.starts_with(">>{") {
+        return Err(ParseError::Parse {
+            line,
+            message: "cook using: `>>{ … }` (register-phase Lua block) is not a valid using-clause payload — use `>{ … }` for an execute-phase Lua block".to_string(),
+        });
+    }
+
     if after_using.starts_with(">{") {
         let (code, new_pos) = collect_lua_block(line, tokens, current_pos + 1, source_lines)?;
         Ok((

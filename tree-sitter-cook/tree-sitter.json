@@ -12,9 +12,9 @@
     }
   ],
   "metadata": {
-    "version": "0.1.0",
+    "version": "0.3.0",
     "license": "MIT",
-    "description": "Tree-sitter grammar for the Cook build system DSL",
+    "description": "Tree-sitter grammar for the Cook build system DSL (claims Cook Standard v0.3)",
     "links": {
       "repository": "https://github.com/peppapig450/cook"
     }

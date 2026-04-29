@@ -1,6 +1,10 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
+// tree-sitter-cook claims conformance with Cook Standard v0.3
+// (cs-standard/v0.3). See standard/src/content/docs/appendix/A-grammar.mdx
+// for the normative grammar this file mirrors.
+
 module.exports = grammar({
   name: "cook",
 
@@ -24,7 +28,6 @@ module.exports = grammar({
         $.config_block,
         $.use_declaration,
         $.import_declaration,
-        $.variable_declaration,
         $.comment,
         $._newline,
       ),
@@ -33,13 +36,6 @@ module.exports = grammar({
     _newline: ($) => /\n/,
 
     // ── Top-level declarations ─────────────────────────────────
-
-    variable_declaration: ($) =>
-      seq(
-        field("name", alias($._bare_identifier, $.variable_name)),
-        field("value", $.string),
-        $._newline,
-      ),
 
     use_declaration: ($) => seq("use", field("module", $._name), $._newline),
 
@@ -104,27 +100,47 @@ module.exports = grammar({
         $.cook_step,
         $.plate_step,
         $.test_step,
+        $.inline_lua_line,
+        $.inline_lua_block,
         $.lua_line,
         $.lua_block,
+        $.module_call,
         $.interactive_command,
         $.shell_command,
         $.comment,
         $._newline,
       ),
 
+    // App. A.4: ingredients_step ::= "ingredients" ingredient+ NEWLINE
+    //          ingredient ::= STRING | "!" STRING
     ingredients_step: ($) =>
-      seq("ingredients", repeat1($.string), $._newline),
-
-    // Cook steps may declare one or more output patterns. A multi-output
-    // step (two or more quoted strings before `using`) represents a single
-    // invocation that produces all outputs together; it requires a block-form
-    // `using` clause.
-    cook_step: ($) =>
       seq(
-        "cook",
-        field("outputs", repeat1($.string)),
-        optional($.using_clause),
+        "ingredients",
+        repeat1(choice($.string, $.ingredient_exclude)),
         $._newline,
+      ),
+
+    ingredient_exclude: ($) => seq("!", $.string),
+
+    // App. A.4 multi-output rule: when two or more outputs are given,
+    // the using_clause MUST be a block (`>{...}` or `{...}`); a bare
+    // string is rejected. The single-output form keeps all four shapes
+    // (declaration-only, string, lua block, shell block).
+    cook_step: ($) =>
+      choice(
+        seq(
+          "cook",
+          field("outputs", $.string),
+          optional($.using_clause),
+          $._newline,
+        ),
+        seq(
+          "cook",
+          field("outputs", $.string),
+          repeat1(field("outputs", $.string)),
+          $.block_using_clause,
+          $._newline,
+        ),
       ),
 
     using_clause: ($) =>
@@ -132,12 +148,24 @@ module.exports = grammar({
         "using",
         choice(
           field("command", $.string),
-          field("lua", $.inline_lua_block),
+          field("lua", $.using_lua_block),
           field("shell", $.shell_block),
         ),
       ),
 
-    inline_lua_block: ($) =>
+    block_using_clause: ($) =>
+      seq(
+        "using",
+        choice(
+          field("lua", $.using_lua_block),
+          field("shell", $.shell_block),
+        ),
+      ),
+
+    // App. A.4 `using_lua_block`: the `>{ … }` execute-phase Lua block in a
+    // using clause, with §6.4 input/output bindings. Distinct in name from
+    // the recipe-body step kind `inline_lua_block` (`>>{ … }`, register-phase).
+    using_lua_block: ($) =>
       seq(">{", alias($._lua_block_content, $.lua_code), "}"),
 
     shell_block: ($) =>
@@ -163,6 +191,35 @@ module.exports = grammar({
 
     lua_block: ($) =>
       seq(">{", alias($._lua_block_content, $.lua_code), "}", $._newline),
+
+    // §{recipes.lua-steps} register-phase forms: `>>` line and `>>{ ... }`
+    // block. Both desugar at the lexer / scanner level — `>>` and `>>{`
+    // tokens, then the same brace-balanced LUA_BLOCK_CONTENT collection
+    // for the block form.
+    inline_lua_line: ($) =>
+      seq(
+        ">>",
+        alias(token.immediate(/[^{\n][^\n]*/), $.lua_code),
+        $._newline,
+      ),
+
+    inline_lua_block: ($) =>
+      seq(">>{", alias($._lua_block_content, $.lua_code), "}", $._newline),
+
+    // App. A.4 module_call: BARE_IDENT "." IDENT_START ...
+    // First segment is alphanumeric+underscore only (no hyphens/dots).
+    // Second segment must begin with [A-Za-z_]. The remainder of the
+    // line is not validated here; Lua-expression-hood is the runtime's
+    // concern. Multi-line brace-spanning forms (§ 4.11) are not yet
+    // supported by this grammar.
+    module_call: ($) =>
+      seq(
+        alias(
+          token(prec(1, /[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][^\n]*/)),
+          $.module_call_text,
+        ),
+        $._newline,
+      ),
 
     interactive_command: ($) =>
       seq(

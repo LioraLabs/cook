@@ -54,14 +54,6 @@
 (config_block
   name: (string) @type)
 
-; ── Variables ───────────────────────────────────────────────────
-
-(variable_declaration
-  name: (variable_name) @variable)
-
-(variable_declaration
-  value: (string) @string)
-
 ; ── Recipe steps ────────────────────────────────────────────────
 
 (cook_step
@@ -82,12 +74,26 @@
 (ingredients_step
   (string) @string)
 
+(ingredient_exclude
+  "!" @operator)
+
+(ingredient_exclude
+  (string) @string)
+
+; ── Module call ─────────────────────────────────────────────────
+
+(module_call
+  (module_call_text) @function.call)
+
 ; ── Lua ─────────────────────────────────────────────────────────
 
 (lua_line
   (lua_code) @none)
 
 (lua_block
+  (lua_code) @none)
+
+(using_lua_block
   (lua_code) @none)
 
 (inline_lua_block

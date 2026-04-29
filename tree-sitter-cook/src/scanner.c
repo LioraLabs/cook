@@ -191,14 +191,19 @@ static bool scan_shell_content(TSLexer *lexer) {
   if (c == '"')
     return false;
 
-  // If starts with an identifier, check for step keywords and `end`
+  // If starts with an identifier, check for step keywords, `end`, and
+  // the module-call dispatch pattern (App. A.4).
   if (iswalpha(c) || c == '_') {
     char word[16];
     int len = 0;
+    bool word_truncated = false;
 
-    while ((iswalnum(lexer->lookahead) || lexer->lookahead == '_') &&
-           len < 15) {
-      word[len++] = (char)lexer->lookahead;
+    while ((iswalnum(lexer->lookahead) || lexer->lookahead == '_')) {
+      if (len < 15) {
+        word[len++] = (char)lexer->lookahead;
+      } else {
+        word_truncated = true;
+      }
       lexer->advance(lexer, false);
     }
     word[len] = '\0';
@@ -206,22 +211,36 @@ static bool scan_shell_content(TSLexer *lexer) {
     int32_t next = lexer->lookahead;
 
     // `end` keyword — only when it's the entire line (followed by newline/EOF)
-    if (len == 3 && strcmp(word, "end") == 0) {
+    if (!word_truncated && len == 3 && strcmp(word, "end") == 0) {
       if (next == '\n' || next == 0 || next == ' ' || next == '\t')
         return false;
     }
 
     // Step keywords — when followed by whitespace or quote
-    if (is_step_keyword(word, len)) {
+    if (!word_truncated && is_step_keyword(word, len)) {
       if (next == ' ' || next == '\t' || next == '"')
         return false;
     }
 
     // `recipe` keyword — explicit recipe shouldn't appear inside body,
     // but let the internal lexer handle it for error recovery
-    if (len == 6 && strcmp(word, "recipe") == 0) {
+    if (!word_truncated && len == 6 && strcmp(word, "recipe") == 0) {
       if (next == ' ' || next == '\t' || next == '"')
         return false;
+    }
+
+    // Module-call dispatch (App. A.4): the first segment is a bare
+    // alphanumeric+underscore identifier (no dots, no hyphens), then a
+    // literal `.`, then a character matching ident-start. If both
+    // hold, defer to the grammar's `module_call` rule by refusing.
+    if (next == '.') {
+      lexer->advance(lexer, false);
+      int32_t after_dot = lexer->lookahead;
+      if (iswalpha(after_dot) || after_dot == '_') {
+        return false;
+      }
+      // Otherwise (`foo.123`, `foo.-x`, `foo.`) fall through and
+      // consume the rest of the line as a shell command.
     }
   }
 

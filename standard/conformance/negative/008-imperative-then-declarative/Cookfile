@@ -1,0 +1,5 @@
+recipe "bad"
+    cook "a" using "echo a"
+    > print("midway")
+    cook "b" using "echo b"
+end

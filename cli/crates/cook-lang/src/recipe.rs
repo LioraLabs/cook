@@ -118,7 +118,21 @@ pub(crate) fn parse_recipe(
     let mut pos = start;
     let mut ingredients = Vec::new();
     let mut excludes: Vec<String> = Vec::new();
-    let mut steps = Vec::new();
+    let mut steps: Vec<Step> = Vec::new();
+
+    // Track the line on which the imperative region began (the first
+    // imperative-region step). None until we see one. App. A.3 "Region
+    // ordering rule" / §{recipes.step-kinds} Note 4.4.2: once set, no
+    // declarative-region step may follow.
+    let mut imperative_began: Option<usize> = None;
+
+    let region_violation = |kind: &str, step_line: usize, started_line: usize| ParseError::Parse {
+        line: step_line,
+        message: format!(
+            "{} step on line {} is not allowed after the imperative region began on line {}",
+            kind, step_line, started_line
+        ),
+    };
 
     while pos < tokens.len() {
         let tok = &tokens[pos];
@@ -142,6 +156,9 @@ pub(crate) fn parse_recipe(
             }
             Token::Content(text) => {
                 if let Some(rest) = strip_keyword(text, "ingredients") {
+                    if let Some(started) = imperative_began {
+                        return Err(region_violation("ingredients", tok.line, started));
+                    }
                     if !ingredients.is_empty() || !excludes.is_empty() {
                         return Err(ParseError::Parse {
                             line: tok.line,
@@ -152,6 +169,9 @@ pub(crate) fn parse_recipe(
                     ingredients = inc;
                     excludes = exc;
                 } else if let Some(rest) = strip_keyword(text, "cook") {
+                    if let Some(started) = imperative_began {
+                        return Err(region_violation("cook", tok.line, started));
+                    }
                     let (cook_step, new_pos) =
                         parse_cook_line(rest, tok.line, tokens, pos, source_lines)?;
                     steps.push(Step::Cook {
@@ -161,12 +181,18 @@ pub(crate) fn parse_recipe(
                     pos = new_pos;
                     continue;
                 } else if let Some(rest) = strip_keyword(text, "plate") {
+                    if let Some(started) = imperative_began {
+                        return Err(region_violation("plate", tok.line, started));
+                    }
                     let command = parse_single_quoted_string(rest, tok.line)?;
                     steps.push(Step::Plate {
                         step: PlateStep { command },
                         line: tok.line,
                     });
                 } else if let Some(rest) = strip_keyword(text, "test") {
+                    if let Some(started) = imperative_began {
+                        return Err(region_violation("test", tok.line, started));
+                    }
                     let (command, rest) = parse_test_command(rest, tok.line)?;
                     let (timeout, rest) = parse_test_timeout(rest);
                     let should_fail = rest.trim() == "should_fail";
@@ -179,15 +205,20 @@ pub(crate) fn parse_recipe(
                         line: tok.line,
                     });
                 } else if is_module_call(text) {
+                    if let Some(started) = imperative_began {
+                        return Err(region_violation("module-call", tok.line, started));
+                    }
                     let (code, new_pos) =
                         collect_module_call(text, tok.line, tokens, pos, source_lines)?;
+                    // Module calls are register-phase per §4.11. Single-line
+                    // desugars to InlineLua, multi-line to InlineLuaBlock.
                     if code.contains('\n') {
-                        steps.push(Step::LuaBlock {
+                        steps.push(Step::InlineLuaBlock {
                             code,
                             line: tok.line,
                         });
                     } else {
-                        steps.push(Step::Lua {
+                        steps.push(Step::InlineLua {
                             code,
                             line: tok.line,
                         });
@@ -202,12 +233,18 @@ pub(crate) fn parse_recipe(
                             message: "interactive '@' prefix requires a command".to_string(),
                         });
                     }
+                    if imperative_began.is_none() {
+                        imperative_began = Some(tok.line);
+                    }
                     steps.push(Step::Shell {
                         command: cmd,
                         line: tok.line,
                         interactive: true,
                     });
                 } else {
+                    if imperative_began.is_none() {
+                        imperative_began = Some(tok.line);
+                    }
                     steps.push(Step::Shell {
                         command: text.clone(),
                         line: tok.line,
@@ -217,6 +254,9 @@ pub(crate) fn parse_recipe(
                 pos += 1;
             }
             Token::LuaLine(code) => {
+                if imperative_began.is_none() {
+                    imperative_began = Some(tok.line);
+                }
                 steps.push(Step::Lua {
                     code: code.clone(),
                     line: tok.line,
@@ -224,10 +264,36 @@ pub(crate) fn parse_recipe(
                 pos += 1;
             }
             Token::LuaBlockOpen => {
+                if imperative_began.is_none() {
+                    imperative_began = Some(tok.line);
+                }
                 let block_line = tok.line;
                 pos += 1;
                 let (code, new_pos) = collect_lua_block(block_line, tokens, pos, source_lines)?;
                 steps.push(Step::LuaBlock {
+                    code,
+                    line: block_line,
+                });
+                pos = new_pos;
+            }
+            Token::InlineLuaLine(code) => {
+                if let Some(started) = imperative_began {
+                    return Err(region_violation("inline-lua (`>>`)", tok.line, started));
+                }
+                steps.push(Step::InlineLua {
+                    code: code.clone(),
+                    line: tok.line,
+                });
+                pos += 1;
+            }
+            Token::InlineLuaBlockOpen => {
+                if let Some(started) = imperative_began {
+                    return Err(region_violation("inline-lua-block (`>>{`)", tok.line, started));
+                }
+                let block_line = tok.line;
+                pos += 1;
+                let (code, new_pos) = collect_lua_block(block_line, tokens, pos, source_lines)?;
+                steps.push(Step::InlineLuaBlock {
                     code,
                     line: block_line,
                 });

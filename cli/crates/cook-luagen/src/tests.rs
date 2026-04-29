@@ -67,6 +67,8 @@ fn test_expand_template_all() {
 
 #[test]
 fn test_minimal_recipe() {
+    // §{recipes.body-bundling}: a non-interactive shell line bundles into
+    // one body unit whose lua_code calls cook.sh with `set -e\n<line>`.
     let cookfile = make_cookfile(vec![make_recipe(
         "build",
         vec![],
@@ -80,10 +82,9 @@ fn test_minimal_recipe() {
     let output = generate(&cookfile);
     assert!(output.contains("cook.recipe(\"build\", {}, function()"));
     assert!(
-        output.contains("cook.add_unit({command = [[echo hello]], cache = false})"),
-        "Shell steps should emit cook.add_unit with cache=false, got:\n{output}"
+        output.contains("cook.add_unit({lua_code = ") && output.contains("cook.sh(") && output.contains("set -e\necho hello"),
+        "Single shell line should produce one body unit calling cook.sh, got:\n{output}"
     );
-    // Shell steps should NOT have cook.layer or cook.exec
     assert!(!output.contains("cook.layer"), "Shell steps should not use cook.layer");
     assert!(!output.contains("cook.exec"), "Shell steps should not use cook.exec");
 }
@@ -269,6 +270,8 @@ fn test_plate_step() {
 
 #[test]
 fn test_lua_line_emitted() {
+    // Step::Lua is execute-phase per §{recipes.lua-steps}; it goes into
+    // a body unit's lua_code payload, NOT inlined as raw register-phase Lua.
     let cookfile = make_cookfile(vec![make_recipe(
         "test",
         vec![],
@@ -279,9 +282,91 @@ fn test_lua_line_emitted() {
         }],
     )]);
     let output = generate(&cookfile);
-    assert!(output.contains("    print(\"hello\")"));
+    assert!(
+        output.contains("cook.add_unit({lua_code = ") && output.contains("print(\"hello\")"),
+        "execute-phase `>` line should appear inside cook.add_unit's lua_code payload, got:\n{output}"
+    );
     assert!(!output.contains("cook.exec"));
-    assert!(!output.contains("cook.add_unit"));
+}
+
+#[test]
+fn test_inline_lua_line_inlined() {
+    // Step::InlineLua is register-phase per §{recipes.lua-steps}; it's
+    // inlined into the recipe-body Lua function, NOT wrapped in cook.add_unit.
+    let cookfile = make_cookfile(vec![make_recipe(
+        "test",
+        vec![],
+        vec![],
+        vec![Step::InlineLua {
+            code: "print(\"hello\")".to_string(),
+            line: 2,
+        }],
+    )]);
+    let output = generate(&cookfile);
+    assert!(output.contains("    print(\"hello\")"), "got:\n{output}");
+    assert!(!output.contains("cook.add_unit"), "got:\n{output}");
+}
+
+#[test]
+fn test_body_bundling_coalesces_shell_lines() {
+    // Two consecutive shell lines coalesce into one cook.sh call inside
+    // one body unit (§{recipes.body-bundling}).
+    let cookfile = make_cookfile(vec![make_recipe(
+        "smoke",
+        vec![],
+        vec![],
+        vec![
+            Step::Shell { command: "cd build".to_string(), line: 2, interactive: false },
+            Step::Shell { command: "./app".to_string(), line: 3, interactive: false },
+        ],
+    )]);
+    let output = generate(&cookfile);
+    let cook_add_unit_count = output.matches("cook.add_unit").count();
+    assert_eq!(
+        cook_add_unit_count, 1,
+        "two adjacent shell lines should coalesce into one body unit, got {cook_add_unit_count}:\n{output}"
+    );
+    assert!(output.contains("set -e\ncd build\n./app"), "got:\n{output}");
+    assert!(output.contains("io.write(cook.sh("), "got:\n{output}");
+}
+
+#[test]
+fn test_body_bundling_lua_breaks_shell_coalescence() {
+    // A `>` line between two shell lines breaks the shell coalescence:
+    // both shell calls live in the SAME body unit (one Lua VM), but as
+    // two separate cook.sh calls (§{recipes.body-bundling}).
+    let cookfile = make_cookfile(vec![make_recipe(
+        "split",
+        vec![],
+        vec![],
+        vec![
+            Step::Shell { command: "echo a".to_string(), line: 2, interactive: false },
+            Step::Lua { code: "local x = 1".to_string(), line: 3 },
+            Step::Shell { command: "echo b".to_string(), line: 4, interactive: false },
+        ],
+    )]);
+    let output = generate(&cookfile);
+    assert_eq!(output.matches("cook.add_unit").count(), 1, "got:\n{output}");
+    assert_eq!(output.matches("cook.sh(").count(), 2, "got:\n{output}");
+}
+
+#[test]
+fn test_body_bundling_interactive_breaks_bundle() {
+    // @interactive is its own draining unit; it breaks the body bundle.
+    let cookfile = make_cookfile(vec![make_recipe(
+        "demo",
+        vec![],
+        vec![],
+        vec![
+            Step::Shell { command: "echo before".to_string(), line: 2, interactive: false },
+            Step::Shell { command: "vim x".to_string(), line: 3, interactive: true },
+            Step::Shell { command: "echo after".to_string(), line: 4, interactive: false },
+        ],
+    )]);
+    let output = generate(&cookfile);
+    // 3 cook.add_unit: first body, interactive, second body
+    assert_eq!(output.matches("cook.add_unit").count(), 3, "got:\n{output}");
+    assert!(output.contains("interactive = true"), "got:\n{output}");
 }
 
 #[test]
@@ -297,7 +382,11 @@ fn test_shell_with_double_brackets() {
         }],
     )]);
     let output = generate(&cookfile);
-    assert!(output.contains("[=[echo ]]]=]"));
+    // `]]` inside the shell command body still needs the [=[ ... ]=] long-bracket
+    // wrap to round-trip safely. Under body bundling, the wrap appears around
+    // the whole body unit's lua_code payload (which contains a nested cook.sh
+    // call whose argument also long-brackets).
+    assert!(output.contains("echo ]]"), "got:\n{output}");
 }
 
 #[test]
@@ -648,7 +737,8 @@ fn test_no_hash_in_output() {
 
 #[test]
 fn test_shell_step_no_step_group() {
-    // Shell steps are standalone, not wrapped in step_group
+    // Shell steps live in a body unit, not a step group
+    // (§{recipes.body-bundling}, §{exec.step-groups}).
     let cookfile = make_cookfile(vec![make_recipe(
         "clean",
         vec![],
@@ -661,13 +751,12 @@ fn test_shell_step_no_step_group() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains("cook.add_unit({command = [[rm -rf build]], cache = false})"),
-        "shell step should emit add_unit, got:\n{output}"
+        output.contains("cook.add_unit({lua_code = ") && output.contains("rm -rf build"),
+        "shell step should be wrapped in a body unit's lua_code payload, got:\n{output}"
     );
-    // Shell steps should NOT be wrapped in step_group
     assert!(
         !output.contains("cook.step_group"),
-        "raw shell steps should not be wrapped in step_group"
+        "body units are not wrapped in step_group, got:\n{output}"
     );
 }
 

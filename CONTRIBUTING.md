@@ -32,7 +32,7 @@ The hook's goal is to make language impact visible at commit time. If you're mak
 - `cli/crates/cook-lang/**` — the lexer, parser, and AST
 - `cli/crates/cook-luagen/**` — codegen that materializes language constructs
 - `cli/crates/cook-register/**` — Cook Lua API registration
-- `tree-sitter-cook/grammar.js` — tree-sitter grammar (currently out of date; see `standard/src/content/docs/appendix/D-changes.mdx` CS-0002)
+- `tree-sitter-cook/grammar.js` — tree-sitter grammar (claims Cook Standard v0.2; see CS-0014)
 - `tree-sitter-cook/src/**` — tree-sitter externals
 
 If you add a new crate that contributes to language surface, update both this list and the hook.
@@ -40,7 +40,7 @@ If you add a new crate that contributes to language surface, update both this li
 ### Conformance
 
 - `cli/crates/cook-lang/tests/conformance.rs` walks `standard/conformance/` and asserts the Rust parser's behavior. Run it with `cargo test -p cook-lang --test conformance`.
-- A tree-sitter harness against the same corpus is planned; see `D-changes.mdx` CS-0002.
+- `tree-sitter-cook/scripts/conformance.mjs` walks the same corpus and asserts every positive parses cleanly and every syntactic negative produces an `ERROR`/`MISSING` node. Three negatives are semantic-only and recorded as accepted with a note. Run it with `node scripts/conformance.mjs` from `tree-sitter-cook/`, or `npm run conformance`. See CS-0014.
 
 ### `cook-lang` conformance workflow
 
@@ -48,7 +48,7 @@ The Rust parser claims a Cook Standard version via the `pub const COOK_STANDARD_
 
 **Default harness mode.** `cargo test -p cook-lang --test conformance` walks `standard/conformance/` as it exists in the working tree. Every case must pass. When the parser falls behind a spec change, this gate goes red — that's the visible signal to catch up. There is no separate ledger of "pending CSes"; the failing harness is the ledger.
 
-**Backwards-conformance mode.** `standard/scripts/check-conformance-against-tag.sh <vX.Y>` materializes the corpus from the `cs-standard/<vX.Y>` git tag and runs the harness against that corpus. Use this to verify the parser still satisfies a previously-cut version during a brief catch-up window, or to bisect when a regression appeared.
+**Backwards-conformance mode.** `cook --set VERSION=X.Y standard.against-tag` materializes the corpus from the `cs-standard/<vX.Y>` git tag and runs the harness against that corpus. The recipe routes through `standard/cook_modules/checks.lua` (`checks.against_tag`). Use this to verify the parser still satisfies a previously-cut version during a brief catch-up window, or to bisect when a regression appeared.
 
 **Bumping the claim.** When the parser catches up to a new cut, bump `COOK_STANDARD_VERSION` in `cli/crates/cook-lang/src/lib.rs` to match `standard/VERSION` in the same commit. Update the claim in `cli/crates/cook-lang/README.md`, the project root `README.md`, and `cli/crates/cook-lang/CONFORMANCE.md`'s "Pending CSes" section. The conformance harness should be green at that commit.
 
@@ -78,14 +78,14 @@ The cut commit MAY also batch the CS that introduced the cut-worthy change (i.e.
 - **`**Version:**` records when a CS entry was authored, not when its work ships.** It is never rewritten retroactively. If a CS forward-references work that later ships in a higher version, record the completion as a new CS in the higher version, not by editing the original entry's `**Version:**` line. (Example: CS-0002 forward-references the planned tree-sitter conformance audit; it carries `**Version:** v0.1`. When the audit ships, it gets its own CS entry under the then-current version, and CS-0002 stays at v0.1.)
 - **Update the Versions index date field when additional CSes land in the same in-progress version.** A cut that initially contained only CS-0011 on 2026-04-26 lists the date as `2026-04-26`; if CS-0013 lands in v0.2 on a later day, widen the entry to a date range (`2026-04-26..YYYY-MM-DD`) at that time.
 - **Informative-appendix navigational headings (e.g. App. D's Versions index, future Index/Acknowledgements sections) use Starlight's natural slugifier.** Do NOT add a `[#slug]` marker. The `rehype-clause-anchors` plugin only strips `[#slug]` markers from clause-numbered headings (`N.` or `[A-Z].` prefix); other headings get the marker text leaked into their rendered HTML id. Cross-references to navigational headings use plain markdown links (e.g. `[Versions](#versions)`), not `§{...}` slug refs.
-- **When a parser change alters the conformance dump format (the `parse.txt` files), the `cs-standard/vX.Y` tag for the in-progress version MUST be force-moved to the merge commit where the parser and the corpus agree.** The `parse.txt` dumps are coupled to the parser's serialization; a tag whose corpus predates a format change cannot be verified by the current parser via `check-conformance-against-tag.sh`. (Example: CS-0011 dropped the `vars: []` line in v0.2; the `cs-standard/v0.2` tag was force-moved to the merge commit so the script keeps working. The `cs-standard/v0.1` tag was left in place as a frozen historical record — the script does not pass against it post-CS-0011, and that is documented in `cli/crates/cook-lang/CONFORMANCE.md`.) Pre-1.0 only; revisit before 1.0 by either making the dump format impl-agnostic or moving `parse.txt` out of the normative corpus.
+- **When a parser change alters the conformance dump format (the `parse.txt` files), the `cs-standard/vX.Y` tag for the in-progress version MUST be force-moved to the merge commit where the parser and the corpus agree.** The `parse.txt` dumps are coupled to the parser's serialization; a tag whose corpus predates a format change cannot be verified by the current parser via `cook standard.against-tag`. (Example: CS-0011 dropped the `vars: []` line in v0.2; the `cs-standard/v0.2` tag was force-moved to the merge commit so the recipe keeps working. The `cs-standard/v0.1` tag was left in place as a frozen historical record — the script does not pass against it post-CS-0011, and that is documented in `cli/crates/cook-lang/CONFORMANCE.md`.) Pre-1.0 only; revisit before 1.0 by either making the dump format impl-agnostic or moving `parse.txt` out of the normative corpus.
 
 ### Implementation conformance claims
 
 The Cook Standard does not normatively require an implementation to expose its claimed Standard version (see [`§ 0.7`](standard/src/content/docs/00-introduction.mdx)). As a project convention:
 
 - **`cli/crates/cook-lang`** — set a `pub const COOK_STANDARD_VERSION: &str = "X.Y";` in the crate root, mirrored into the README badge or status line.
-- **`tree-sitter-cook`** (when CS-0002 lands) — set the claimed version in a header comment in `grammar.js`.
+- **`tree-sitter-cook`** — set the claimed version in a header comment in `grammar.js`, mirrored in `package.json` and `tree-sitter.json`'s `version`/`description` fields. Currently claims v0.2 (see CS-0014).
 - **Each implementation's README** — state the claimed version in the project description.
 
 These are not enforced by any automated check pre-1.0; they are a project discipline. When the Standard cuts a new version, each implementation is responsible for either updating its claim or accepting that it now lags the Standard by one version.
@@ -93,7 +93,7 @@ These are not enforced by any automated check pre-1.0; they are a project discip
 ### Running the normative-keyword lint
 
 ````bash
-cd standard && pnpm lint:keywords
+cook standard.lint
 ````
 
-The lint flags lowercase `must`/`shall`/`should`/`may` occurrences in normative chapters. Review each hit: either promote to all-caps (if the clause is meant to be binding) or reword (if the clause is descriptive).
+The lint routes through `standard/cook_modules/checks.lua` (`checks.lint_keywords`) and flags lowercase `must`/`shall`/`should`/`may` occurrences in normative chapters. Review each hit: either promote to all-caps (if the clause is meant to be binding) or reword (if the clause is descriptive).

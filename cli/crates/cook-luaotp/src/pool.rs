@@ -172,6 +172,10 @@ fn worker_loop(
                     fs_api_registered = true;
                 }
 
+                // Refresh package.path so `require` resolves cook_modules/
+                // relative to this unit's source Cookfile (CS-0017).
+                let _ = refresh_package_path(&lua, &work.working_dir);
+
                 let result = execute_work_item(&lua, &work, &work.working_dir, &work.env_vars);
                 let _ = tx.send(result);
             }
@@ -229,7 +233,100 @@ fn register_worker_cook_table(
     // cook.platform
     crate::platform_api::register_platform_api(lua, &cook)?;
 
+    // cook.load_module(name) — execute-phase counterpart of the register-phase
+    // resolver in cook-register/src/module_loader.rs (CS-0017,
+    // §{lua.cook-load-module}). Lookup uses the unit's current_working_dir,
+    // so an imported Cookfile's body unit resolves against its own
+    // cook_modules/ directory (lexical per Cookfile, §{modules.use-scope}).
+    //
+    // Caches loaded modules in `_cook_module_cache` (a per-VM table keyed
+    // by `<cwd>::<name>`) so repeated calls within one body unit don't
+    // re-read the file. Module top-level and `init()` run once per
+    // (cwd, name, worker VM).
+    let wd_load = Arc::clone(current_working_dir);
+    lua.globals().set("_cook_module_cache", lua.create_table()?)?;
+    let load_module_fn = lua.create_function(move |lua, name: String| {
+        let cwd = wd_load.lock().expect("working_dir lock").clone();
+        let cache_key = format!("{}::{}", cwd.display(), name);
+
+        // Cache hit?
+        let cache: mlua::Table = lua.globals().get("_cook_module_cache")?;
+        if let Ok(cached) = cache.get::<mlua::Value>(cache_key.clone()) {
+            if !matches!(cached, mlua::Value::Nil) {
+                return Ok(cached);
+            }
+        }
+
+        // Resolve cook_modules/<name>.lua or cook_modules/<name>/init.lua
+        let modules_dir = cwd.join("cook_modules");
+        let flat_path = modules_dir.join(format!("{}.lua", name));
+        let init_path = modules_dir.join(&name).join("init.lua");
+        let module_path = if flat_path.exists() {
+            flat_path
+        } else if init_path.exists() {
+            init_path
+        } else {
+            return Err(mlua::Error::runtime(format!(
+                "cook.load_module: module '{}' not found in {}/cook_modules/ \
+                 (tried {}.lua and {}/init.lua)",
+                name, cwd.display(), name, name,
+            )));
+        };
+
+        let source = std::fs::read_to_string(&module_path).map_err(|e| {
+            mlua::Error::runtime(format!(
+                "cook.load_module: failed to read {}: {}",
+                module_path.display(),
+                e
+            ))
+        })?;
+
+        let chunk_name = format!("@{}", module_path.display());
+        let result: mlua::Value = lua.load(&source).set_name(&chunk_name).eval()?;
+
+        // Run init() if the returned table has one (§7.5).
+        if let mlua::Value::Table(ref tbl) = result {
+            if let Ok(mlua::Value::Function(init_fn)) = tbl.get::<mlua::Value>("init") {
+                init_fn.call::<()>(())?;
+            }
+        }
+
+        cache.set(cache_key, result.clone())?;
+        Ok(result)
+    })?;
+    cook.set("load_module", load_module_fn)?;
+
     lua.globals().set("cook", cook)?;
+    Ok(())
+}
+
+/// Refresh `package.path` for the upcoming work unit so `require("foo")`
+/// finds `<cwd>/cook_modules/foo.lua` (CS-0017). Called per-unit from the
+/// worker loop because `cwd` is per-Cookfile and each body unit may come
+/// from a different one.
+fn refresh_package_path(lua: &mlua::Lua, cwd: &PathBuf) -> mlua::Result<()> {
+    let cook_modules = cwd.join("cook_modules");
+    let pkg: mlua::Table = match lua.globals().get::<mlua::Value>("package")? {
+        mlua::Value::Table(t) => t,
+        _ => return Ok(()),
+    };
+    // Hold onto the original (OS-default) suffix so we don't grow it
+    // per-unit. We stash it on the package table itself the first time we
+    // see it.
+    let original: String = match pkg.get::<mlua::Value>("_cook_original_path")? {
+        mlua::Value::String(s) => s.to_str()?.to_string(),
+        _ => {
+            let cur: String = pkg.get::<String>("path").unwrap_or_default();
+            pkg.set("_cook_original_path", cur.clone())?;
+            cur
+        }
+    };
+    let new_path = format!(
+        "{cm}/?.lua;{cm}/?/init.lua;{orig}",
+        cm = cook_modules.display(),
+        orig = original,
+    );
+    pkg.set("path", new_path)?;
     Ok(())
 }
 

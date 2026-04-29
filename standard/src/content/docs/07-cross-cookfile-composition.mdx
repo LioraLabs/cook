@@ -46,7 +46,34 @@ A **qualified name reference** has the form `alias.recipe`, where `alias` is a l
 
 All other rules of §{xref} apply unchanged: dependency implications (§{xref.dep-implications}), dep-driven iteration (§{xref.dep-driven}), string-substitution (§{xref.string-substitution}), reserved final segment (§{xref.reserved-segment}). In particular, a qualified name reference establishes a cross-recipe edge with the same granularity rules as an unqualified one.
 
-## 7.4. Duplicate and cycle detection [#modules.duplicates-and-cycles]
+## 7.4. `use` scope is lexical per Cookfile [#modules.use-scope]
+A `use` declaration's alias is scoped to its **declaring Cookfile** and is not visible across `import` boundaries. Each Cookfile in a workspace defines its own `use`-resolution scope. The aliases established by `use foo` in Cookfile A are not in scope for any Lua evaluated from Cookfile B's recipes, and vice versa, regardless of import direction.
+
+For an execute-phase work unit, "the calling work unit's source Cookfile" (§{lua.cook-load-module}) is the Cookfile that contained the recipe whose body unit is being evaluated. A conforming implementation MUST resolve `cook.load_module(name)` and `require(name)` against that Cookfile's `cook_modules/` directory and MUST NOT fall back to a sibling Cookfile's `cook_modules/`.
+
+Cross-Cookfile composition is at the **recipe** level via qualified name references (§{modules.qualified-refs}), not at the **module** level. Sharing module code between Cookfiles happens via the filesystem (a vendored copy, a symlink, or a shared parent) — the cook runtime treats each Cookfile's `cook_modules/` as an independent search root.
+
+### Example 7.4.1
+
+```
+ws/Cookfile:        import b ./b
+                    use cpp           # resolves to ws/cook_modules/cpp.lua
+                    recipe top
+                        cpp.plan("a")               # register-phase
+                        > cpp.assemble("a")         # execute-phase, same alias
+                        b.build                     # qualified dep on B's recipe
+                    end
+
+ws/b/Cookfile:      use proto         # resolves to ws/b/cook_modules/proto.lua
+                    recipe build
+                        proto.regen()
+                        > proto.verify()
+                    end
+```
+
+`top`'s body unit sees `cpp` (only). `b.build`'s body unit sees `proto` (only). Neither sees the other's modules. Filesystem-level sharing — for example, two Cookfiles vendoring the same `cpp.lua` — is independent: each Cookfile's worker VM caches its load by `(working_dir, name)`, so the same source file evaluated from two Cookfiles is two distinct module instances with independent state.
+
+## 7.5. Duplicate and cycle detection [#modules.duplicates-and-cycles]
 A conforming implementation MUST reject a Cookfile in which two `import` declarations share the same local alias. This rule is restated normatively in App. A.2 (duplicate-import clause); this section specifies the timing and the diagnostic surface.
 
 **Duplicate imports.** The check is a **parse-time** check performed on the Cookfile in which the duplicates appear. A conforming implementation MUST detect the duplicate before loading the imported Cookfiles (§{modules.import-declaration}) and MUST report both offending lines in the diagnostic. The rule is per-Cookfile: two different Cookfiles in the same workspace MAY each define an `import foo ...` of their own, because each alias namespace is scoped to its declaring Cookfile.

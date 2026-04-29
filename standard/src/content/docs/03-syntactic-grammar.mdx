@@ -214,9 +214,9 @@ The second line is indented. Its shape `BARE_IDENTIFIER ":" ...` does not introd
 The `cook-lang` parser tests `test_implicit_recipe_indented_not_detected` and `test_recipe_prefix_is_shell_command` pin the column-0 rule and the keyword-separator rule respectively.
 
 ## 3.8. Step dispatch inside a recipe [#grammar.step-dispatch]
-Inside a `recipe_body`, each source line is first classified by the lexer (§{lexical.line-classification}) into one of `Comment`, `Blank`, `LuaLine`, `LuaBlockOpen`, or `Content`. Comments and blank lines are skipped; `LuaLine` becomes a `lua_line` step; `LuaBlockOpen` begins a `lua_block` step collected by the brace-balance algorithm (§{lexical.brace-blocks}).
+Inside a `recipe_body`, each source line is first classified by the lexer (§{lexical.line-classification}) into one of `Comment`, `Blank`, `LuaLine`, `LuaBlockOpen`, `InlineLuaLine`, `InlineLuaBlockOpen`, or `Content`. Comments and blank lines are skipped; `LuaLine` becomes a `lua_line` step; `LuaBlockOpen` begins a `lua_block` step collected by the brace-balance algorithm (§{lexical.brace-blocks}); `InlineLuaLine` becomes an `inline_lua_line` step; `InlineLuaBlockOpen` begins an `inline_lua_block` step (also brace-balanced).
 
-A `Content` token inside a `recipe_body` is dispatched to exactly one `recipe_item` by the priority cascade below (App. A.4, "Step-dispatch priority"). The first match wins; a conforming implementation MUST test the alternatives in this order:
+A `Content` token inside a `recipe_body` is dispatched to exactly one `declarative_item` or `imperative_item` (App. A.3) by the priority cascade below (App. A.4, "Step-dispatch priority"). The first match wins; a conforming implementation MUST test the alternatives in this order:
 
 1. Prefix `ingredients` + separator (space, tab, or end of token) → `ingredients_step`.
 2. Prefix `cook` + separator → `cook_step`.
@@ -231,6 +231,8 @@ In step 5, the first segment (before the `.`) is restricted to ASCII letters, di
 In step 6, an `@` with no following content MUST be rejected rather than silently dispatched as any of the preceding alternatives. The diagnostic MUST identify the offending line.
 
 A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe with two or more `ingredients_step` items (App. A.3).
+
+A `recipe_body` MUST satisfy the **region ordering rule** (App. A.3, "Region ordering rule"; §{recipes.step-kinds}, Note 4.4.2): every `declarative_item` (other than `comment` or `NEWLINE`) MUST appear before the first `imperative_item` of the recipe body. A conforming implementation MUST reject a recipe in which a declarative-region step (cook, plate, test, ingredients, `>>`, `>>{`, or a module call) appears after the first imperative-region step (`>`, `>{`, shell, or `@`). The diagnostic MUST identify the offending step's line and the line on which the imperative region began.
 
 ### Example 3.8.1
 
