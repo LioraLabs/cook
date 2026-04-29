@@ -15,3 +15,4 @@ Cookfile
       excludes: []
       steps:
         Cook outputs=["build/bin/app"] using=Shell("gcc -o {out} main.c {libmath}")
+  chores:

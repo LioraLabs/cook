@@ -10,3 +10,4 @@ Cookfile
       steps:
         InlineLua code="print(\"register-phase line\")"
         InlineLuaBlock code="        local x = 1\n        print(x + 1)"
+  chores:

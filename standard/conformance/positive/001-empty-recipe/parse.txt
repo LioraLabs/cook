@@ -8,3 +8,4 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
+  chores:

@@ -8,3 +8,4 @@ Cookfile
       ingredients: ["src/*.c"]
       excludes: ["src/excluded.c"]
       steps:
+  chores:

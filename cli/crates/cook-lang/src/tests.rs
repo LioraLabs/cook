@@ -791,6 +791,107 @@ fn test_multi_output_shell_block() {
     }
 }
 
+// ── Chore tests (CS-0020, E.7) ────────────────────────────────────
+
+#[test]
+fn test_chore_basic() {
+    let input = "chore clean\n    rm -rf build\n";
+    let cookfile = parse(input).expect("chore should parse");
+    assert_eq!(cookfile.chores.len(), 1);
+    assert_eq!(cookfile.chores[0].name, "clean");
+    assert_eq!(cookfile.chores[0].steps.len(), 1);
+    match &cookfile.chores[0].steps[0] {
+        Step::Shell { command, interactive, .. } => {
+            assert_eq!(command, "rm -rf build");
+            assert!(*interactive, "chore shell step must be default-interactive");
+        }
+        _ => panic!("expected Shell step"),
+    }
+}
+
+#[test]
+fn test_chore_at_prefix_no_op() {
+    let input = "chore deploy\n    @rsync -av out/\n";
+    let cookfile = parse(input).expect("chore should parse");
+    match &cookfile.chores[0].steps[0] {
+        Step::Shell { command, interactive, .. } => {
+            // `@` is stripped (preserving symmetry with recipe bodies);
+            // chore default-interactive remains.
+            assert_eq!(command, "rsync -av out/");
+            assert!(*interactive);
+        }
+        _ => panic!("expected Shell step"),
+    }
+}
+
+#[test]
+fn test_chore_with_deps() {
+    let input = "chore play: build\n    ./build/app\n";
+    let cookfile = parse(input).expect("chore should parse");
+    assert_eq!(cookfile.chores[0].deps, vec!["build".to_string()]);
+}
+
+#[test]
+fn test_chore_with_ingredients_rejected() {
+    let input = "chore clean\n    ingredients \"build/*\"\n";
+    let result = parse(input);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("'ingredients' is not allowed in a chore"), "got: {}", msg);
+}
+
+#[test]
+fn test_chore_with_cook_rejected() {
+    let input = "chore deploy\n    cook \"out\" using \"true\"\n";
+    let result = parse(input);
+    assert!(result.is_err());
+    let msg = format!("{}", result.unwrap_err());
+    assert!(msg.contains("'cook' is not allowed in a chore"), "got: {}", msg);
+}
+
+#[test]
+fn test_chore_with_plate_rejected() {
+    let input = "chore deploy\n    plate \"./{out}\"\n";
+    assert!(parse(input).is_err());
+}
+
+#[test]
+fn test_chore_with_test_rejected() {
+    let input = "chore play\n    test \"./run\"\n";
+    assert!(parse(input).is_err());
+}
+
+#[test]
+fn test_chore_lua_step() {
+    let input = "chore status\n    > print(\"hello\")\n";
+    let cookfile = parse(input).expect("chore should parse");
+    assert!(matches!(cookfile.chores[0].steps[0], Step::Lua { .. }));
+}
+
+#[test]
+fn test_chore_implicit_termination() {
+    let input = "chore clean\n    rm -rf build\nchore play\n    ./app\n";
+    let cookfile = parse(input).expect("two chores should parse");
+    assert_eq!(cookfile.chores.len(), 2);
+    assert_eq!(cookfile.chores[0].steps.len(), 1);
+    assert_eq!(cookfile.chores[1].steps.len(), 1);
+}
+
+#[test]
+fn test_recipe_after_chore_ok() {
+    let input = "chore clean\n    rm -rf build\nrecipe build\n    cook \"out\"\n";
+    let cookfile = parse(input).expect("recipe after chore should parse");
+    assert_eq!(cookfile.chores.len(), 1);
+    assert_eq!(cookfile.recipes.len(), 1);
+}
+
+#[test]
+fn test_use_after_chore_rejected() {
+    let input = "chore clean\n    rm -rf build\nuse cpp\n";
+    assert!(parse(input).is_err());
+}
+
 #[test]
 fn test_multi_output_string_form_rejected() {
     let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"a.js\" \"b.wasm\" using \"cmd\"\n";

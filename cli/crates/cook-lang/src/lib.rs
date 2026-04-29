@@ -17,7 +17,7 @@ pub const COOK_STANDARD_VERSION: &str = "0.3";
 
 use ast::*;
 use lexer::*;
-use recipe::{parse_config_block_lua, parse_recipe};
+use recipe::{parse_chore, parse_config_block_lua, parse_recipe};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -33,6 +33,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
     let source_lines: Vec<&str> = source.lines().collect();
     let mut pos = 0;
     let mut recipes = Vec::new();
+    let mut chores: Vec<ast::Chore> = Vec::new();
     let mut config_blocks: Vec<ConfigBlock> = Vec::new();
     let mut uses = Vec::new();
     let mut imports = Vec::new();
@@ -48,7 +49,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 if seen_recipe {
                     return Err(ParseError::Parse {
                         line: tok.line,
-                        message: "config blocks must appear before recipes".to_string(),
+                        message: "config blocks must appear before recipes and chores".to_string(),
                     });
                 }
                 let header_line = tok.line;
@@ -92,6 +93,17 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 recipes.push(recipe);
                 pos = new_pos;
             }
+            Token::ChoreHeader { name, deps } => {
+                seen_recipe = true;  // chores count toward the ordering rule
+                let chore_line = tok.line;
+                let name = name.clone();
+                let deps = deps.clone();
+                pos += 1;
+                let (chore, new_pos) =
+                    parse_chore(name, deps, chore_line, &tokens, pos, &source_lines)?;
+                chores.push(chore);
+                pos = new_pos;
+            }
             Token::Content(_) => {
                 return Err(ParseError::Parse {
                     line: tok.line,
@@ -111,7 +123,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 if seen_recipe {
                     return Err(ParseError::Parse {
                         line: tok.line,
-                        message: "use statements must appear before recipes".to_string(),
+                        message: "use statements must appear before recipes and chores".to_string(),
                     });
                 }
                 uses.push(ast::UseStatement {
@@ -124,7 +136,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 if seen_recipe {
                     return Err(ParseError::Parse {
                         line: tok.line,
-                        message: "import declarations must appear before recipes".to_string(),
+                        message: "import declarations must appear before recipes and chores".to_string(),
                     });
                 }
                 if imports.iter().any(|i: &ast::ImportDecl| i.name == *name) {
@@ -143,7 +155,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
         }
     }
 
-    Ok(Cookfile { config_blocks, recipes, uses, imports })
+    Ok(Cookfile { config_blocks, recipes, chores, uses, imports })
 }
 
 #[cfg(test)]

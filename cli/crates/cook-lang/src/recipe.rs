@@ -86,6 +86,7 @@ pub(crate) fn parse_config_block_lua(
     while pos < tokens.len() {
         match &tokens[pos].value {
             Token::RecipeHeader { .. }
+            | Token::ChoreHeader { .. }
             | Token::ConfigHeader { .. }
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. } => break,
@@ -151,6 +152,7 @@ pub(crate) fn parse_recipe(
             // keyword closes the body. The token is left in place so that
             // parse() dispatches it as the next toplevel_item.
             Token::RecipeHeader { .. }
+            | Token::ChoreHeader { .. }
             | Token::ConfigHeader { .. }
             | Token::UseDecl { .. }
             | Token::ImportDecl { .. } => {
@@ -329,4 +331,153 @@ pub(crate) fn parse_recipe(
         },
         pos,
     ))
+}
+
+pub(crate) fn parse_chore(
+    name: String,
+    deps: Vec<String>,
+    chore_line: usize,
+    tokens: &[Located<Token>],
+    start: usize,
+    source_lines: &[&str],
+) -> Result<(Chore, usize), ParseError> {
+    let mut pos = start;
+    let mut steps: Vec<Step> = Vec::new();
+    let mut imperative_began: Option<usize> = None;
+
+    let region_violation = |kind: &str, step_line: usize, started_line: usize| ParseError::Parse {
+        line: step_line,
+        message: format!(
+            "{} step on line {} is not allowed after the imperative region began on line {}",
+            kind, step_line, started_line
+        ),
+    };
+
+    let chore_banned = |keyword: &str, line: usize| -> ParseError {
+        let kind_descriptor = match keyword {
+            "ingredients" => "inputs",
+            "cook"        => "outputs",
+            "plate"       => "plated outputs",
+            "test"        => "tested outputs",
+            _             => "targets",
+        };
+        ParseError::Parse {
+            line,
+            message: format!(
+                "'{}' is not allowed in a chore; use 'recipe' for build {}",
+                keyword, kind_descriptor
+            ),
+        }
+    };
+
+    while pos < tokens.len() {
+        let tok = &tokens[pos];
+        match &tok.value {
+            // CS-0019/0020 implicit termination: any column-0 top-level
+            // keyword closes the chore body. Token left in place for parse().
+            Token::RecipeHeader { .. }
+            | Token::ChoreHeader { .. }
+            | Token::ConfigHeader { .. }
+            | Token::UseDecl { .. }
+            | Token::ImportDecl { .. } => {
+                return Ok((
+                    Chore { name, deps, steps, line: chore_line },
+                    pos,
+                ));
+            }
+            Token::Comment(_) | Token::Blank => {
+                pos += 1;
+            }
+            Token::Content(text) => {
+                let text = text.clone();
+                if strip_keyword(&text, "ingredients").is_some() {
+                    return Err(chore_banned("ingredients", tok.line));
+                } else if strip_keyword(&text, "cook").is_some() {
+                    return Err(chore_banned("cook", tok.line));
+                } else if strip_keyword(&text, "plate").is_some() {
+                    return Err(chore_banned("plate", tok.line));
+                } else if strip_keyword(&text, "test").is_some() {
+                    return Err(chore_banned("test", tok.line));
+                } else if is_module_call(&text) {
+                    if let Some(started) = imperative_began {
+                        return Err(region_violation("module-call", tok.line, started));
+                    }
+                    let (code, new_pos) =
+                        collect_module_call(&text, tok.line, tokens, pos, source_lines)?;
+                    if code.contains('\n') {
+                        steps.push(Step::InlineLuaBlock { code, line: tok.line });
+                    } else {
+                        steps.push(Step::InlineLua { code, line: tok.line });
+                    }
+                    pos = new_pos;
+                    continue;
+                } else if let Some(cmd) = text.strip_prefix('@') {
+                    let cmd = cmd.to_string();
+                    if cmd.is_empty() {
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: "interactive '@' prefix requires a command".to_string(),
+                        });
+                    }
+                    if imperative_began.is_none() {
+                        imperative_began = Some(tok.line);
+                    }
+                    // Default-interactive — `@` marker is no-op (always interactive)
+                    steps.push(Step::Shell {
+                        command: cmd,
+                        line: tok.line,
+                        interactive: true,
+                    });
+                } else {
+                    if imperative_began.is_none() {
+                        imperative_began = Some(tok.line);
+                    }
+                    // Default-interactive — no `@` required
+                    steps.push(Step::Shell {
+                        command: text.clone(),
+                        line: tok.line,
+                        interactive: true,
+                    });
+                }
+                pos += 1;
+            }
+            Token::LuaLine(code) => {
+                if imperative_began.is_none() {
+                    imperative_began = Some(tok.line);
+                }
+                steps.push(Step::Lua { code: code.clone(), line: tok.line });
+                pos += 1;
+            }
+            Token::LuaBlockOpen => {
+                if imperative_began.is_none() {
+                    imperative_began = Some(tok.line);
+                }
+                let block_line = tok.line;
+                pos += 1;
+                let (code, new_pos) = collect_lua_block(block_line, tokens, pos, source_lines)?;
+                steps.push(Step::LuaBlock { code, line: block_line });
+                pos = new_pos;
+            }
+            Token::InlineLuaLine(code) => {
+                if let Some(started) = imperative_began {
+                    return Err(region_violation("inline-lua (`>>`)", tok.line, started));
+                }
+                steps.push(Step::InlineLua { code: code.clone(), line: tok.line });
+                pos += 1;
+            }
+            Token::InlineLuaBlockOpen => {
+                if let Some(started) = imperative_began {
+                    return Err(region_violation("inline-lua-block (`>>{`)", tok.line, started));
+                }
+                let block_line = tok.line;
+                pos += 1;
+                let (code, new_pos) = collect_lua_block(block_line, tokens, pos, source_lines)?;
+                steps.push(Step::InlineLuaBlock { code, line: block_line });
+                pos = new_pos;
+            }
+        }
+    }
+
+    // EOF terminates
+    Ok((Chore { name, deps, steps, line: chore_line }, pos))
 }

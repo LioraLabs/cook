@@ -4,6 +4,7 @@ use thiserror::Error;
 pub enum Token {
     Comment(String),
     RecipeHeader { name: String, deps: Vec<String> },
+    ChoreHeader { name: String, deps: Vec<String> },
     ConfigHeader { name: Option<String> },
     UseDecl { name: String },
     ImportDecl { name: String, path: String },
@@ -133,6 +134,24 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
             };
 
             Token::RecipeHeader { name, deps }
+        } else if !line.starts_with(|c: char| c.is_whitespace())
+            && trimmed.starts_with("chore")
+            && trimmed.len() > 5
+            && (trimmed.as_bytes()[5] == b' '
+                || trimmed.as_bytes()[5] == b'\t'
+                || trimmed.as_bytes()[5] == b'"')
+        {
+            let rest = trimmed["chore".len()..].trim();
+            let (name, after_name) = parse_name(rest, line_num)?;
+            check_reserved_recipe_name(&name, line_num)?;
+
+            let deps = if let Some(after_colon) = after_name.strip_prefix(':') {
+                parse_names(after_colon.trim(), line_num)?
+            } else {
+                vec![]
+            };
+
+            Token::ChoreHeader { name, deps }
         } else if !line.starts_with(|c: char| c.is_whitespace()) && trimmed == "config" {
             Token::ConfigHeader { name: None }
         } else if !line.starts_with(|c: char| c.is_whitespace())
@@ -614,6 +633,58 @@ recipe "build"
         // "configure" starts with "config" but is a bareword command
         let tokens = tokenize("configure --prefix=/usr").unwrap();
         assert!(!matches!(tokens[0].value, Token::ConfigHeader { .. }));
+    }
+
+    #[test]
+    fn test_chore_header_bare_name() {
+        let tokens = tokenize("chore clean").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(
+            tokens[0].value,
+            Token::ChoreHeader { name: "clean".to_string(), deps: vec![] },
+        );
+    }
+
+    #[test]
+    fn test_chore_header_quoted_name() {
+        let tokens = tokenize(r#"chore "play""#).unwrap();
+        assert_eq!(
+            tokens[0].value,
+            Token::ChoreHeader { name: "play".to_string(), deps: vec![] },
+        );
+    }
+
+    #[test]
+    fn test_chore_header_with_deps() {
+        let tokens = tokenize("chore play: build setup").unwrap();
+        assert_eq!(
+            tokens[0].value,
+            Token::ChoreHeader {
+                name: "play".to_string(),
+                deps: vec!["build".to_string(), "setup".to_string()],
+            },
+        );
+    }
+
+    #[test]
+    fn test_chore_prefix_is_content() {
+        let tokens = tokenize("chores_cleanup").unwrap();
+        assert_eq!(tokens[0].value, Token::Content("chores_cleanup".to_string()));
+    }
+
+    #[test]
+    fn test_indented_chore_is_content() {
+        let tokens = tokenize("    chore inner").unwrap();
+        assert_eq!(tokens[0].value, Token::Content("chore inner".to_string()));
+    }
+
+    #[test]
+    fn test_chore_reserved_name_rejected() {
+        for reserved in &["stem", "name", "ext", "dir", "in", "out", "all"] {
+            let input = format!("chore {}\n", reserved);
+            let result = tokenize(&input);
+            assert!(result.is_err(), "expected error for chore name '{}'", reserved);
+        }
     }
 
     #[test]

@@ -14,3 +14,4 @@ Cookfile
       excludes: []
       steps:
         Cook outputs=["build/obj/{protos.stem}.pb.cc"] using=Shell("protoc --cpp_out=build/obj {in}")
+  chores:

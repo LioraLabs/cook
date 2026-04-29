@@ -9,3 +9,4 @@ Cookfile
       excludes: []
       steps:
         Shell interactive=true command="echo hello"
+  chores:

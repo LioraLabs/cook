@@ -8,6 +8,7 @@ fn make_cookfile(recipes: Vec<Recipe>) -> Cookfile {
     Cookfile {
         config_blocks: vec![],
         recipes,
+        chores: vec![],
         uses: vec![],
         imports: vec![],
     }
@@ -603,6 +604,7 @@ fn test_use_generates_load_module() {
         recipes: vec![make_recipe("build", vec![], vec![], vec![
             Step::Shell { command: "echo hi".to_string(), line: 2, interactive: false },
         ])],
+        chores: vec![],
         uses: vec![
             UseStatement { module_name: "cpp".to_string(), line: 1 },
         ],
@@ -693,6 +695,7 @@ fn test_multiple_uses_generate_in_order() {
     let cookfile = Cookfile {
         config_blocks: vec![],
         recipes: vec![],
+        chores: vec![],
         uses: vec![
             UseStatement { module_name: "cpp".to_string(), line: 1 },
             UseStatement { module_name: "proto".to_string(), line: 2 },
@@ -1069,6 +1072,7 @@ fn test_codegen_emits_unnamed_config_block() {
             line: 1,
         }],
         recipes: vec![],
+        chores: vec![],
         uses: vec![],
         imports: vec![],
     };
@@ -1086,6 +1090,7 @@ fn test_codegen_emits_named_config_block() {
             line: 1,
         }],
         recipes: vec![],
+        chores: vec![],
         uses: vec![],
         imports: vec![],
     };
@@ -1100,6 +1105,7 @@ fn test_codegen_skips_dispatcher_when_no_config_blocks() {
     let cookfile = Cookfile {
         config_blocks: vec![],
         recipes: vec![],
+        chores: vec![],
         uses: vec![],
         imports: vec![],
     };
@@ -1116,6 +1122,7 @@ fn test_codegen_emits_unnamed_and_named_in_order() {
             ConfigBlock { name: Some("release".to_string()),    body: "rel()".into(),  line: 7 },
         ],
         recipes: vec![],
+        chores: vec![],
         uses: vec![],
         imports: vec![],
     };

@@ -14,3 +14,4 @@ Cookfile
       excludes: []
       steps:
         Cook outputs=["build/{headers.stem}.listed"] using=Shell("echo {in} > {out}")
+  chores:

@@ -9,3 +9,4 @@ Cookfile
       excludes: []
       steps:
         Lua code="greet.say(\"world\")"
+  chores:
