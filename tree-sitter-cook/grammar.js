@@ -1,7 +1,7 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-// tree-sitter-cook claims conformance with Cook Standard v0.3
+// tree-sitter-cook claims conformance with Cook Standard v0.4
 // (cs-standard/v0.3). See standard/src/content/docs/appendix/A-grammar.mdx
 // for the normative grammar this file mirrors.
 
@@ -53,8 +53,6 @@ module.exports = grammar({
         optional(field("name", $._name)),
         $._newline,
         alias($._config_block_content, $.lua_code),
-        "end",
-        $._newline,
       ),
 
     // ── Recipes ────────────────────────────────────────────────
@@ -65,13 +63,10 @@ module.exports = grammar({
           $._recipe_header,
           $._newline,
           repeat($._recipe_item),
-          "end",
-          optional($._newline),
         ),
       ),
 
-    _recipe_header: ($) =>
-      choice($.explicit_recipe_header, $.implicit_recipe_header),
+    _recipe_header: ($) => $.explicit_recipe_header,
 
     explicit_recipe_header: ($) =>
       prec(
@@ -81,13 +76,6 @@ module.exports = grammar({
           field("name", $._name),
           optional(seq(":", $.dependency_list)),
         ),
-      ),
-
-    implicit_recipe_header: ($) =>
-      seq(
-        field("name", alias($._bare_identifier, $.identifier)),
-        ":",
-        optional($.dependency_list),
       ),
 
     dependency_list: ($) => repeat1($._name),

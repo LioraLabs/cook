@@ -5,7 +5,6 @@
   "config"
   "use"
   "import"
-  "end"
   "ingredients"
   "cook"
   "plate"
@@ -22,9 +21,6 @@
 
 (explicit_recipe_header
   name: (string) @function.builtin)
-
-(implicit_recipe_header
-  name: (identifier) @function.builtin)
 
 ; ── Dependencies ────────────────────────────────────────────────
 

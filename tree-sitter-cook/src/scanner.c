@@ -210,12 +210,6 @@ static bool scan_shell_content(TSLexer *lexer) {
 
     int32_t next = lexer->lookahead;
 
-    // `end` keyword — only when it's the entire line (followed by newline/EOF)
-    if (!word_truncated && len == 3 && strcmp(word, "end") == 0) {
-      if (next == '\n' || next == 0 || next == ' ' || next == '\t')
-        return false;
-    }
-
     // Step keywords — when followed by whitespace or quote
     if (!word_truncated && is_step_keyword(word, len)) {
       if (next == ' ' || next == '\t' || next == '"')
@@ -254,10 +248,22 @@ static bool scan_shell_content(TSLexer *lexer) {
   return true;
 }
 
+// ── Top-level keyword check ────────────────────────────────────
+// Returns true if the buffer (length len) matches a top-level Cookfile
+// keyword: recipe, config, use, import.
+
+static bool is_toplevel_keyword(const char *buf, int len) {
+  return (len == 6 && strncmp(buf, "recipe", 6) == 0) ||
+         (len == 6 && strncmp(buf, "config", 6) == 0) ||
+         (len == 3 && strncmp(buf, "use", 3) == 0) ||
+         (len == 6 && strncmp(buf, "import", 6) == 0);
+}
+
 // ── Config block scanner ───────────────────────────────────────
-// Scans Lua content between `config NAME\n` and `end` (on its own
-// line). Stops before the `end` keyword, leaving it for the grammar
-// to consume. Handles strings/comments so `end` inside them doesn't
+// Scans Lua content between `config NAME\n` and the next column-0
+// top-level keyword (recipe, config, use, import) or EOF. Stops
+// before the top-level keyword line, leaving it for the grammar to
+// consume. Handles strings/comments so keywords inside them don't
 // terminate the body.
 
 static bool scan_config_block_content(TSLexer *lexer) {
@@ -268,30 +274,29 @@ static bool scan_config_block_content(TSLexer *lexer) {
     int32_t c = lexer->lookahead;
 
     if (at_line_start) {
-      // Skip leading whitespace on this line
-      while (c == ' ' || c == '\t') {
-        lexer->advance(lexer, false);
-        c = lexer->lookahead;
-      }
-      // Check for `end` as the entire line
-      if (c == 'e') {
-        // Peek ahead for `end` followed by newline/EOF
+      // At column 0: check for a top-level keyword that would start a
+      // new top-level declaration. We do NOT skip leading whitespace
+      // here — column-0 means the very first character of the line.
+      if (c != ' ' && c != '\t' && c != '\n' && c != 0) {
+        // Peek ahead to read an identifier
+        char word[8];
+        int len = 0;
+        // Mark position before consuming any chars
         lexer->mark_end(lexer);
-        lexer->advance(lexer, false);
-        if (lexer->lookahead == 'n') {
+        while (len < 7 && (iswalpha(lexer->lookahead) || lexer->lookahead == '_')) {
+          word[len++] = (char)lexer->lookahead;
           lexer->advance(lexer, false);
-          if (lexer->lookahead == 'd') {
-            lexer->advance(lexer, false);
-            int32_t after = lexer->lookahead;
-            if (after == '\n' || after == 0 || after == ' ' || after == '\t' || after == '\r') {
-              // Found `end` on its own line — stop before it
-              lexer->result_symbol = CONFIG_BLOCK_CONTENT;
-              return has_content;
-            }
-          }
         }
-        // Not `end` — we've already advanced past some chars; the
-        // partial content is already accumulated via has_content.
+        word[len] = '\0';
+        int32_t after = lexer->lookahead;
+        // Check if it's a top-level keyword followed by whitespace/newline/EOF
+        if (is_toplevel_keyword(word, len) &&
+            (after == ' ' || after == '\t' || after == '\n' || after == 0 || after == '"')) {
+          // Found top-level keyword at column 0 — stop before it
+          lexer->result_symbol = CONFIG_BLOCK_CONTENT;
+          return has_content;
+        }
+        // Not a top-level keyword — we've already advanced past some chars
         has_content = true;
         at_line_start = false;
         continue;
