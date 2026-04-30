@@ -25,10 +25,10 @@ recipe libstr
 recipe app
     ingredients "src/main.c"
     cook "build/obj/main.o" using {
-        mkdir -p build/obj && gcc -c {in} -Isrc -o {out}
+        mkdir -p build/obj && gcc -c {all} -Isrc -o {out}
     }
     cook "build/bin/app" using {
-        mkdir -p build/bin && gcc -o {out} {in} {libmath} {libstr}
+        mkdir -p build/bin && gcc -o {out} {all} {libmath} {libstr}
     }
 
 recipe run: app

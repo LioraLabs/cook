@@ -9,7 +9,6 @@ recipe build: install
 recipe check: build
     ingredients ""
     pnpm.run("test")
-    cook "" using "packages/monorepo-a/Cookfile"
     serve ""
 
 chore clean
