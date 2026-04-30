@@ -118,6 +118,9 @@
 (shell_command
   (shell_content) @none)
 
+(shell_block
+  (shell_content) @none)
+
 ; ── Punctuation ─────────────────────────────────────────────────
 
 ":" @punctuation.delimiter

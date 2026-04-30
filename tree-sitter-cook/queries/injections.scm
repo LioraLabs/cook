@@ -32,3 +32,7 @@
 (interactive_command
   (shell_content) @injection.content
   (#set! injection.language "bash"))
+
+(shell_block
+  (shell_content) @injection.content
+  (#set! injection.language "bash"))

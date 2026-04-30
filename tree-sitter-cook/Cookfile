@@ -25,7 +25,9 @@ recipe wasm: generate
 
 recipe nvim-install: generate
     ingredients "src/parser.c" "src/scanner.c"
-    cook "build/parser/cook.so" using "mkdir -p build/parser && tree-sitter build . -o {out}"
+    cook "build/parser/cook.so" using {
+        mkdir -p build/parser
+        tree-sitter build . -o {out}
+    }
     plate "mkdir -p $NVIM_SITE/parser && cp {out} $NVIM_SITE/parser/cook.so"
-    mkdir -p "$NVIM_SITE/queries/cook"
-    cp queries/*.scm "$NVIM_SITE/queries/cook/"
+    bash scripts/install-nvim-queries.sh
