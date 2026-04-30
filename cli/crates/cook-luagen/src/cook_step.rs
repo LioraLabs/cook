@@ -3,8 +3,7 @@ use std::collections::BTreeSet;
 use cook_lang::ast::*;
 
 use crate::template::{
-    analyze_output_pattern, expand_template_to_lua_with_deps, validate_placeholders,
-    OutputPatternKind, PlaceholderValidationContext,
+    analyze_output_pattern, expand_template_to_lua_with_deps, OutputPatternKind,
 };
 
 /// Modes for cook step code generation.
@@ -119,23 +118,9 @@ pub(crate) fn generate_cook_step(
 
     let pattern_kind = analyze_output_pattern(&cook_step.outputs[0], recipe_names);
 
-    // Validate shell-block placeholders before emitting.
-    if let Some(UsingClause::ShellBlock(lines)) = &cook_step.using_clause {
-        let ctx = PlaceholderValidationContext {
-            mode: &mode,
-            declared_output_count: cook_step.outputs.len(),
-            recipe_names,
-        };
-        for (idx, line) in lines.iter().enumerate() {
-            if let Err(msg) = validate_placeholders(line, &ctx) {
-                panic!(
-                    "cook step body line {}: {}",
-                    idx + 1,
-                    msg
-                );
-            }
-        }
-    }
+    // Note: placeholder validation (CS-0022 §6.7) is performed in
+    // recipe::validate_accessor_placement, called from generate_with_names_checked.
+    // generate_cook_step is called from generate_with_names (unchecked path).
 
     match mode {
         CookMode::DeclarationOnly => {

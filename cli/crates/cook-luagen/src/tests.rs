@@ -1724,3 +1724,153 @@ fn test_generate_includes_chores() {
         "chore section must have cache = false, got section:\n{chore_section}"
     );
 }
+
+// ── CS-0022 Phase G: placeholder validation returns error not panic ──
+
+#[test]
+fn cs_0022_validate_placeholders_returns_error_not_panic() {
+    // {out_1} in single-output step must return Err, not panic.
+    // Use a one-to-one step (output has {in.stem}) so {in} is valid,
+    // but {out_1} is the only violation.
+    let src = r#"recipe "build"
+    ingredients "src/*.c"
+    cook "build/{in.stem}.o" using {
+        gcc -c {in} -o {out_1}
+    }
+end
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_err(),
+        "{{out_1}} in single-output step must error, not panic"
+    );
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("CS-0022"),
+        "error must contain CS-0022, got: {err_str}"
+    );
+    assert!(
+        err_str.contains("out_1"),
+        "error must name the bad placeholder, got: {err_str}"
+    );
+}
+
+#[test]
+fn cs_0022_validate_bare_in_in_many_to_one_returns_error() {
+    // {in} in a many-to-one (literal output) step must error.
+    let src = r#"recipe "build"
+    ingredients "src/*.c"
+    cook "build/app" using {
+        gcc {in} -o {out}
+    }
+end
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_err(),
+        "{{in}} in many-to-one step must error"
+    );
+    let err_str = result.unwrap_err().to_string();
+    assert!(err_str.contains("CS-0022"), "error must contain CS-0022, got: {err_str}");
+}
+
+#[test]
+fn cs_0022_bare_stem_in_output_pattern_returns_error() {
+    // {stem} in output pattern must be rejected per CS-0022 §6.7.
+    let src = r#"recipe "build"
+    ingredients "src/*.c"
+    cook "build/{stem}.o" using {
+        gcc -c {in} -o {out}
+    }
+end
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_err(),
+        "bare {{stem}} in output pattern must error"
+    );
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("CS-0022"),
+        "error must contain CS-0022, got: {err_str}"
+    );
+    assert!(
+        err_str.contains("stem"),
+        "error must name 'stem', got: {err_str}"
+    );
+}
+
+#[test]
+fn cs_0022_lib_accessor_in_body_returns_error() {
+    // {libmath.dir} in using-clause body must error per CS-0022 §6.7.
+    let src = r#"recipe "libmath"
+    ingredients "src/math/*.c"
+
+recipe "build"
+    ingredients "src/*.c"
+    cook "build/{in.stem}.o" using {
+        gcc -c {in} -o {out} -L {libmath.dir}
+    }
+end
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_err(),
+        "{{libmath.dir}} in using-clause body must error"
+    );
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("CS-0022") || err_str.contains("libmath"),
+        "error must mention libmath, got: {err_str}"
+    );
+}
+
+#[test]
+fn cs_0022_out_bare_in_multi_output_returns_error() {
+    // {out} in multi-output step must error.
+    let src = r#"recipe "build"
+    cook "a.js" "a.wasm" using {
+        gen --js {out}
+    }
+end
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(result.is_err(), "{{out}} in multi-output step must error");
+    let err_str = result.unwrap_err().to_string();
+    assert!(err_str.contains("CS-0022"), "error must contain CS-0022, got: {err_str}");
+}
+
+#[test]
+fn cs_0022_multi_output_mixed_drivers_returns_error() {
+    // A cook step with mixed iteration drivers must error.
+    let src = r#"recipe "libmath"
+    ingredients "src/math/*.c"
+
+recipe "build"
+    ingredients "src/*.c"
+    cook "{in.stem}.o" "{libmath.stem}.bin" using {
+        do-stuff
+    }
+end
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(result.is_err(), "mixed iteration drivers must error");
+    // The coherence error message mentions the patterns
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("CS-0022") || err_str.contains("driver"),
+        "error must mention driver mismatch, got: {err_str}"
+    );
+}

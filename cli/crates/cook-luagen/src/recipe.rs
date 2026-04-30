@@ -19,6 +19,12 @@ const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 /// output pattern declares `lib` as an iteration driver. Appearing in a
 /// using-string, plate command, test command, or bare shell without a
 /// matching driver is an error.
+///
+/// Per CS-0022 §6.7, placeholder rules also cover:
+/// - bare `{stem}` / `{name}` / `{ext}` / `{dir}` in output patterns (rejected)
+/// - `{out_N}` in single-output steps (rejected)
+/// - `{out}` in multi-output steps (rejected)
+/// - `{lib.ACCESSOR}` inside using-clause body (rejected)
 #[derive(Debug, thiserror::Error)]
 pub enum CodegenError {
     #[error(
@@ -30,6 +36,13 @@ pub enum CodegenError {
         referent: String,
         accessor: String,
         surface: &'static str,
+        line: usize,
+    },
+    /// CS-0022 placeholder validation failure (body or output pattern).
+    #[error("line {line}: recipe '{recipe}': {message}")]
+    PlaceholderViolation {
+        recipe: String,
+        message: String,
         line: usize,
     },
 }
@@ -143,10 +156,40 @@ fn drivers_match(
     }
 }
 
+/// Validate that an output pattern contains no bare path accessors.
+/// Bare `{stem}`, `{name}`, `{ext}`, `{dir}` are rejected per CS-0022 §6.7;
+/// the canonical form is `{in.stem}` etc.
+fn check_output_pattern_no_bare_accessors(
+    pattern: &str,
+    recipe: &str,
+    line: usize,
+) -> Result<(), CodegenError> {
+    use crate::template::iter_placeholders;
+    for inner in iter_placeholders(pattern) {
+        match inner {
+            "stem" | "name" | "ext" | "dir" => {
+                return Err(CodegenError::PlaceholderViolation {
+                    recipe: recipe.to_string(),
+                    message: format!(
+                        "CS-0022: bare {{{inner}}} in output pattern was removed; \
+                         use {{in.{inner}}} (or {{dep.{inner}}} for a dep-driven pattern)"
+                    ),
+                    line,
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// For each cook step, verify that every `{NAME.ACCESSOR}` placeholder in the
 /// using-block shares a driver with the output pattern. Reject any accessor
 /// placeholder that appears in plate / test / bare shell steps, which have no
 /// output pattern and thus cannot declare a driver.
+///
+/// Also validates CS-0022 §6.7 placeholder rules inside shell-block bodies
+/// (replaces the former `panic!` in `generate_cook_step`).
 fn validate_accessor_placement(
     cookfile: &Cookfile,
     recipe_names: &BTreeSet<String>,
@@ -155,6 +198,11 @@ fn validate_accessor_placement(
         for step in &recipe.steps {
             match step {
                 Step::Cook { step: cook_step, line } => {
+                    // Check output patterns for bare path accessors (CS-0022 §6.7).
+                    for pattern in &cook_step.outputs {
+                        check_output_pattern_no_bare_accessors(pattern, &recipe.name, *line)?;
+                    }
+
                     // Multi-output coherence check.
                     if let Err(msg) = check_multi_output_coherence(cook_step, recipe_names) {
                         return Err(CodegenError::AccessorWithoutDriver {
@@ -167,9 +215,29 @@ fn validate_accessor_placement(
                     }
 
                     let drivers = collect_drivers(&cook_step.outputs, recipe_names);
-                    // Check ShellBlock lines for accessor-without-driver.
+                    // Check ShellBlock lines for accessor-without-driver and
+                    // CS-0022 placeholder rules.
                     if let Some(UsingClause::ShellBlock(lines)) = &cook_step.using_clause {
+                        // Determine the mode so validate_placeholders can check
+                        // {in}, {out}, {out_N}, {all}, bare accessors, and lib refs.
+                        let mode = crate::cook_step::cook_step_mode_with_names(
+                            cook_step, recipe_names,
+                        );
+                        let ctx = crate::template::PlaceholderValidationContext {
+                            mode: &mode,
+                            declared_output_count: cook_step.outputs.len(),
+                            recipe_names,
+                        };
                         for shell_line in lines {
+                            if let Err(msg) =
+                                crate::template::validate_placeholders(shell_line, &ctx)
+                            {
+                                return Err(CodegenError::PlaceholderViolation {
+                                    recipe: recipe.name.clone(),
+                                    message: msg,
+                                    line: *line,
+                                });
+                            }
                             check_command(
                                 shell_line,
                                 &drivers,
