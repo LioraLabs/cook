@@ -704,7 +704,7 @@ pub fn cmd_menu(cli: &Cli) -> Result<(), CookError> {
     let (cookfile, _) = read_and_parse(cli)?;
 
     for recipe in &cookfile.recipes {
-        let mut desc = format!("  {}", recipe.name);
+        let mut desc = format!("  recipe {}", recipe.name);
         if !recipe.ingredients.is_empty() {
             desc.push_str(&format!("  ingredients: {:?}", recipe.ingredients));
         }
@@ -722,12 +722,23 @@ pub fn cmd_menu(cli: &Cli) -> Result<(), CookError> {
         println!("{desc}");
     }
 
+    for chore in &cookfile.chores {
+        let mut desc = format!("  chore  {}", chore.name);
+        if !chore.deps.is_empty() {
+            desc.push_str(&format!("  deps: {:?}", chore.deps));
+        }
+        println!("{desc}");
+    }
+
     if !cookfile.imports.is_empty() {
         let workspace = Workspace::load(&cli.file, &cli.set)?;
         for (canonical_path, loaded) in &workspace.imports {
             let prefix = find_full_prefix(&workspace, canonical_path);
             for recipe in &loaded.cookfile.recipes {
-                println!("  {}.{}", prefix, recipe.name);
+                println!("  recipe {}.{}", prefix, recipe.name);
+            }
+            for chore in &loaded.cookfile.chores {
+                println!("  chore  {}.{}", prefix, chore.name);
             }
         }
     }
@@ -959,12 +970,23 @@ fn workspace_to_layout(
     let root_dir = std::fs::canonicalize(&workspace.root.dir)
         .unwrap_or_else(|_| workspace.root.dir.clone());
 
+    // Chores are first-class peers of recipes from the engine's POV: they
+    // carry a name and a deps list; cross-form deps work transparently.
+    // Merge both into the layout's name→deps tables.
     let root_recipes: Vec<(String, Vec<String>)> = workspace
         .root
         .cookfile
         .recipes
         .iter()
         .map(|r| (r.name.clone(), r.deps.clone()))
+        .chain(
+            workspace
+                .root
+                .cookfile
+                .chores
+                .iter()
+                .map(|c| (c.name.clone(), c.deps.clone())),
+        )
         .collect();
 
     let imported_recipes: Vec<(std::path::PathBuf, Vec<(String, Vec<String>)>)> = workspace
@@ -976,6 +998,13 @@ fn workspace_to_layout(
                 .recipes
                 .iter()
                 .map(|r| (r.name.clone(), r.deps.clone()))
+                .chain(
+                    loaded
+                        .cookfile
+                        .chores
+                        .iter()
+                        .map(|c| (c.name.clone(), c.deps.clone())),
+                )
                 .collect();
             (canonical_path.clone(), recipes)
         })
