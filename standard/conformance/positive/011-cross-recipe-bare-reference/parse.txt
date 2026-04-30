@@ -8,11 +8,11 @@ Cookfile
       ingredients: ["src/math/a.c"]
       excludes: []
       steps:
-        Cook outputs=["build/libmath.a"] using=Shell("ar rcs {out} {in}")
-    Recipe name="app" line=5
+        Cook outputs=["build/libmath.a"] using=ShellBlock(["ar rcs {out} {in}"])
+    Recipe name="app" line=7
       deps: []
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["build/bin/app"] using=Shell("gcc -o {out} main.c {libmath}")
+        Cook outputs=["build/bin/app"] using=ShellBlock(["gcc -o {out} main.c {libmath}"])
   chores:

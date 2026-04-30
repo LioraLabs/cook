@@ -2,4 +2,6 @@ recipe "protos"
     ingredients "proto/a.proto"
 
 recipe "bad"
-    cook "build/fixed.o" using "echo {protos.stem}"
+    cook "build/fixed.o" using {
+        echo {protos.stem}
+    }
