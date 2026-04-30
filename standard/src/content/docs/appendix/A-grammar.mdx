@@ -102,7 +102,7 @@ ingredient            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
 
 cook_step             ::= "cook" STRING+ using_clause? NEWLINE
-using_clause          ::= "using" ( using_lua_block | shell_block | STRING )
+using_clause          ::= "using" ( using_lua_block | shell_block )
 using_lua_block       ::= ">{" LUA_BLOCK_CONTENT "}"
 shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
 
@@ -135,11 +135,13 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
                              alternative. See § 3.8. */
 ```
 
-**Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before `using`, the `using_clause` MUST use `using_lua_block` or `shell_block`. A conforming implementation MUST reject the form `cook "a" "b" using STRING`.
+**Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before `using`, the `using_clause` resolves per the unrestricted production above — the bare-`STRING` arm having been removed in CS-0022, the form `cook "a" "b" using STRING` is rejected by the production itself rather than by a separate well-formedness rule.
+
+**Iteration coherence (CS-0022).** All `STRING` output patterns of a single `cook_step` MUST share an iteration source: every output is literal (no accessor placeholder), or every output bears `{in.ACCESSOR}` (own-input driver), or every output bears `{lib.ACCESSOR}` for the same recipe `lib` (dep-driven driver). A conforming implementation MUST reject a `cook_step` whose output patterns mix sources, with a diagnostic naming the offending outputs. See §{recipes.iteration-mode}.
 
 **`using >>{` is rejected.** A `using_clause` MUST NOT use the `>>{` (register-phase Lua block) prefix. The using clause produces work for execute, not register-phase orchestration; a register-phase Lua block in this position is incoherent. A conforming implementation MUST reject `cook STR using >>{ … }`.
 
-**`using` dispatch order (normative).** After the keyword `using`, a conforming implementation checks in this order: `>>{` (rejected as above), `>{` (Lua block), `{` (shell block), `"` (single quoted string). The `>>{` test is present so the diagnostic for the rejected form is sharp; the first matching admitted alternative wins for the others.
+**`using` dispatch order (normative).** After the keyword `using`, a conforming implementation checks in this order: `>>{` (rejected as above), `>{` (Lua block), `{` (shell block). The `>>{` test is present so the diagnostic for the rejected form is sharp; the first matching admitted alternative wins for the others. The bare-`STRING` form is no longer admitted (CS-0022).
 
 **Declaration-only cook step.** A `cook_step` whose `using_clause` is absent is a declaration — it announces the output without providing a build command inline. Its build is assumed to be provided by preceding Lua registrations or a later amendment.
 
