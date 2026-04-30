@@ -85,7 +85,9 @@ Recipe with cook step
 ================
 
 recipe lib: setup
-    cook "build/obj/{stem}.o" using "{CC} -c {in} -o {out}"
+    cook "build/obj/{in.stem}.o" using {
+        {CC} -c {in} -o {out}
+    }
 
 ---
 
@@ -98,7 +100,8 @@ recipe lib: setup
     (cook_step
       outputs: (string)
       (using_clause
-        command: (string)))))
+        shell: (shell_block
+          (shell_content))))))
 
 ================
 Recipe with plate step
@@ -106,7 +109,9 @@ Recipe with plate step
 
 recipe test: lib
     ingredients "tests/*.c"
-    cook "build/{stem}" using "cc {in} -o {out}"
+    cook "build/{in.stem}" using {
+        cc {in} -o {out}
+    }
     plate "./{out}"
 
 ---
@@ -122,7 +127,8 @@ recipe test: lib
     (cook_step
       outputs: (string)
       (using_clause
-        command: (string)))
+        shell: (shell_block
+          (shell_content))))
     (plate_step
       command: (string))))
 
