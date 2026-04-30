@@ -1,0 +1,9 @@
+recipe "libmath"
+    ingredients "src/math/*.c"
+
+recipe "build"
+    ingredients "src/*.c"
+    cook "{in.stem}.o" "{libmath.stem}.bin" using {
+        do-stuff
+    }
+end

@@ -1,0 +1,6 @@
+recipe "build"
+    ingredients "src/*.rs"
+    cook "{in.stem}.js" "out.wasm" using {
+        gen
+    }
+end
