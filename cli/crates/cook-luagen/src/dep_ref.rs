@@ -6,7 +6,8 @@ use cook_lang::ast::*;
 const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 
 /// Built-in placeholders that are never recipe references.
-const BUILTINS: &[&str] = &["in", "out", "stem", "name", "ext", "dir", "all"];
+/// Note: "out_N" forms are handled structurally in parse_dep_token.
+const BUILTINS: &[&str] = &["in", "out", "all"];
 
 /// A reference to another recipe found in a step template.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -34,8 +35,11 @@ pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTr
                 for pat in &cook_step.outputs {
                     t.extend(extract_brace_tokens(pat));
                 }
-                if let Some(UsingClause::Shell(cmd)) = &cook_step.using_clause {
-                    t.extend(extract_brace_tokens(cmd));
+                // CS-0022: walk ShellBlock lines for {NAME} tokens (§5.5 surface extension).
+                if let Some(UsingClause::ShellBlock(lines)) = &cook_step.using_clause {
+                    for line in lines {
+                        t.extend(extract_brace_tokens(line));
+                    }
                 }
                 t
             }
@@ -87,18 +91,40 @@ pub fn extract_brace_tokens(template: &str) -> Vec<String> {
 }
 
 /// Parse a single {FOO} token into a DepRef if it matches a recipe name.
-/// Rules:
-/// 1. Skip builtins (in, out, stem, name, ext, dir, all)
-/// 2. If whole token is a recipe name → DepRef { recipe_name, accessor: None }
-/// 3. If token has a dot, split on LAST dot: if suffix is a known accessor AND prefix is a recipe name → DepRef with accessor
-/// 4. Otherwise → None (it's an env var)
+///
+/// Rules (CS-0022 updated):
+/// 1. Skip builtins: `in`, `out`, `all`
+/// 2. Skip CS-0022 dotted own-input/output forms: `in.X`, `out.X`, `out_N.X`
+/// 3. If whole token is a recipe name → DepRef { recipe_name, accessor: None }
+/// 4. If token has a dot, split on LAST dot: if suffix is a known accessor AND prefix
+///    is a recipe name → DepRef with accessor
+/// 5. Otherwise → None (it's an env var)
 fn parse_dep_token(token: &str, recipe_names: &BTreeSet<String>) -> Option<DepRef> {
     // Rule 1: skip builtins
     if BUILTINS.contains(&token) {
         return None;
     }
 
-    // Rule 2: whole token is a recipe name
+    // Rule 2: skip CS-0022 own-input/output accessor forms.
+    // `in.X` — own-input accessor
+    if token.starts_with("in.") {
+        return None;
+    }
+    // `out.X` — single-output accessor
+    if token.starts_with("out.") {
+        return None;
+    }
+    // `out_N` and `out_N.X` — multi-output accessor
+    if token.starts_with("out_") {
+        // Check if the part after "out_" is numeric (possibly with .accessor suffix)
+        let rest = &token[4..];
+        let num_part = rest.split('.').next().unwrap_or(rest);
+        if num_part.parse::<usize>().is_ok() {
+            return None;
+        }
+    }
+
+    // Rule 3: whole token is a recipe name
     if recipe_names.contains(token) {
         return Some(DepRef {
             recipe_name: token.to_string(),
@@ -106,7 +132,7 @@ fn parse_dep_token(token: &str, recipe_names: &BTreeSet<String>) -> Option<DepRe
         });
     }
 
-    // Rule 3: split on LAST dot, check if suffix is accessor and prefix is recipe name
+    // Rule 4: split on LAST dot, check if suffix is accessor and prefix is recipe name
     if let Some(dot_pos) = token.rfind('.') {
         let prefix = &token[..dot_pos];
         let suffix = &token[dot_pos + 1..];
@@ -119,7 +145,7 @@ fn parse_dep_token(token: &str, recipe_names: &BTreeSet<String>) -> Option<DepRe
         }
     }
 
-    // Rule 4: env var or unknown — skip
+    // Rule 5: env var or unknown — skip
     None
 }
 
@@ -237,8 +263,8 @@ mod tests {
             vec![Step::Cook {
                 step: CookStep {
                     outputs: vec!["build/app".to_string()],
-                    using_clause: Some(UsingClause::Shell(
-                        "gcc -o {out} {in} {libmath} {libstr}".to_string(),
+                    using_clause: Some(UsingClause::ShellBlock(
+                        vec!["gcc -o {out} {in} {libmath} {libstr}".to_string()],
                     )),
                 },
                 line: 2,
@@ -273,5 +299,53 @@ mod tests {
             recipe_name: "protos".to_string(),
             accessor: Some("stem".to_string()),
         }));
+    }
+
+    // ── CS-0022 tests ────────────────────────────────────────────────
+
+    #[test]
+    fn cs_0022_in_and_out_are_not_dep_refs() {
+        let mut names = BTreeSet::new();
+        names.insert("libmath".to_string());
+
+        assert!(parse_dep_token("in.stem", &names).is_none(),
+            "in.stem is an own-input accessor, not a dep ref");
+        assert!(parse_dep_token("out.dir", &names).is_none(),
+            "out.dir is an output accessor, not a dep ref");
+        assert!(parse_dep_token("out_1.stem", &names).is_none(),
+            "out_1.stem is a multi-output accessor, not a dep ref");
+        assert_eq!(
+            parse_dep_token("libmath.stem", &names).map(|d| d.recipe_name),
+            Some("libmath".to_string()),
+            "libmath.stem is a genuine dep ref"
+        );
+    }
+
+    #[test]
+    fn cs_0022_shell_block_dep_ref_extraction() {
+        // §5.5 surface extension: {NAME} inside shell_block lines must be extracted.
+        let mut recipe_names = BTreeSet::new();
+        recipe_names.insert("libmath".to_string());
+
+        // Build the recipe manually (multi-line block to avoid single-line lexer issue).
+        let recipe = make_recipe(
+            "app",
+            vec![Step::Cook {
+                step: CookStep {
+                    outputs: vec!["build/app".to_string()],
+                    using_clause: Some(UsingClause::ShellBlock(vec![
+                        "gcc -o {out} main.c {libmath}".to_string(),
+                    ])),
+                },
+                line: 2,
+            }],
+        );
+
+        let refs = extract_dep_refs(&recipe, &recipe_names);
+        assert!(
+            refs.iter().any(|r| r.recipe_name == "libmath" && r.accessor.is_none()),
+            "shell block must contribute its {{libmath}} reference to the dep graph; got: {:?}",
+            refs
+        );
     }
 }

@@ -103,8 +103,48 @@ fn warn_empty_output_refs(
     warnings
 }
 
+/// Check that all output patterns of a multi-output cook step share the same
+/// iteration driver (all literal, all {in.X}, or all {recipe.X} for the same recipe).
+fn check_multi_output_coherence(
+    step: &CookStep,
+    recipe_names: &BTreeSet<String>,
+) -> Result<(), String> {
+    if step.outputs.len() < 2 {
+        return Ok(());
+    }
+
+    use crate::template::output_pattern_kind_with_recipes;
+    let first = output_pattern_kind_with_recipes(&step.outputs[0], recipe_names);
+    for (idx, out) in step.outputs.iter().enumerate().skip(1) {
+        let kind = output_pattern_kind_with_recipes(out, recipe_names);
+        if !drivers_match(&first, &kind) {
+            return Err(format!(
+                "CS-0022: cook step's output #1 ({:?}) and output #{} ({:?}) declare \
+                 different iteration drivers; all output patterns must share a driver",
+                step.outputs[0],
+                idx + 1,
+                out
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn drivers_match(
+    a: &crate::template::OutputPatternKind,
+    b: &crate::template::OutputPatternKind,
+) -> bool {
+    use crate::template::OutputPatternKind::*;
+    match (a, b) {
+        (Literal, Literal) => true,
+        (OwnInputAccessor, OwnInputAccessor) => true,
+        (DepDriven { dep_name: n1, .. }, DepDriven { dep_name: n2, .. }) => n1 == n2,
+        _ => false,
+    }
+}
+
 /// For each cook step, verify that every `{NAME.ACCESSOR}` placeholder in the
-/// using-string shares a driver with the output pattern. Reject any accessor
+/// using-block shares a driver with the output pattern. Reject any accessor
 /// placeholder that appears in plate / test / bare shell steps, which have no
 /// output pattern and thus cannot declare a driver.
 fn validate_accessor_placement(
@@ -115,16 +155,30 @@ fn validate_accessor_placement(
         for step in &recipe.steps {
             match step {
                 Step::Cook { step: cook_step, line } => {
+                    // Multi-output coherence check.
+                    if let Err(msg) = check_multi_output_coherence(cook_step, recipe_names) {
+                        return Err(CodegenError::AccessorWithoutDriver {
+                            referrer: recipe.name.clone(),
+                            referent: msg.clone(),
+                            accessor: String::new(),
+                            surface: "multi-output coherence",
+                            line: *line,
+                        });
+                    }
+
                     let drivers = collect_drivers(&cook_step.outputs, recipe_names);
-                    if let Some(UsingClause::Shell(cmd)) = &cook_step.using_clause {
-                        check_command(
-                            cmd,
-                            &drivers,
-                            recipe_names,
-                            &recipe.name,
-                            "using-string",
-                            *line,
-                        )?;
+                    // Check ShellBlock lines for accessor-without-driver.
+                    if let Some(UsingClause::ShellBlock(lines)) = &cook_step.using_clause {
+                        for shell_line in lines {
+                            check_command(
+                                shell_line,
+                                &drivers,
+                                recipe_names,
+                                &recipe.name,
+                                "shell-block",
+                                *line,
+                            )?;
+                        }
                     }
                 }
                 Step::InlineLua { .. } | Step::InlineLuaBlock { .. } => {
