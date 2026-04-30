@@ -205,11 +205,9 @@ fn validate_accessor_placement(
 
                     // Multi-output coherence check.
                     if let Err(msg) = check_multi_output_coherence(cook_step, recipe_names) {
-                        return Err(CodegenError::AccessorWithoutDriver {
-                            referrer: recipe.name.clone(),
-                            referent: msg.clone(),
-                            accessor: String::new(),
-                            surface: "multi-output coherence",
+                        return Err(CodegenError::PlaceholderViolation {
+                            recipe: recipe.name.clone(),
+                            message: msg,
                             line: *line,
                         });
                     }
