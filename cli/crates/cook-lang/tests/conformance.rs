@@ -63,7 +63,6 @@ fn repr_list(xs: &[String]) -> String {
 fn format_using(u: &Option<UsingClause>) -> String {
     match u {
         None => "None".to_string(),
-        Some(UsingClause::Shell(s))       => format!("Shell({})", repr(s)),
         Some(UsingClause::LuaBlock(s))    => format!("LuaBlock({})", repr(s)),
         Some(UsingClause::ShellBlock(xs)) => format!("ShellBlock({})", repr_list(xs)),
     }

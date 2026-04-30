@@ -188,7 +188,7 @@ fn test_duplicate_ingredients_error() {
 
 #[test]
 fn test_cook_step_shell() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" using \"gcc -c {in} -o {out}\"\n";
+    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/obj/{stem}.o\" using {\n        gcc -c {in} -o {out}\n    }\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.steps.len(), 1);
@@ -198,7 +198,7 @@ fn test_cook_step_shell() {
             assert_eq!(step.outputs[0], "build/obj/{stem}.o");
             assert_eq!(
                 step.using_clause,
-                Some(UsingClause::Shell("gcc -c {in} -o {out}".to_string()))
+                Some(UsingClause::ShellBlock(vec!["gcc -c {in} -o {out}".to_string()]))
             );
         }
         other => panic!("expected Cook step, got {:?}", other),
@@ -207,14 +207,14 @@ fn test_cook_step_shell() {
 
 #[test]
 fn test_cook_step_many_to_one() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/lib.a\" using \"ar rcs {out} {all}\"\n";
+    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\"\n    cook \"build/lib.a\" using {\n        ar rcs {out} {all}\n    }\n";
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::Cook { step, .. } => {
             assert_eq!(step.outputs[0], "build/lib.a");
             assert_eq!(
                 step.using_clause,
-                Some(UsingClause::Shell("ar rcs {out} {all}".to_string()))
+                Some(UsingClause::ShellBlock(vec!["ar rcs {out} {all}".to_string()]))
             );
         }
         other => panic!("expected Cook, got {:?}", other),
@@ -257,13 +257,13 @@ fn test_cook_step_lua_block() {
 
 #[test]
 fn test_plate_step() {
-    let source = "recipe \"test\"\n    ingredients \"tests/*.c\"\n    cook \"build/{stem}\" using \"cc {in} -o {out}\"\n    plate \"./{out}\"\n";
+    let source = "recipe \"test\"\n    ingredients \"tests/*.c\"\n    cook \"build/{stem}\" using {\n        cc {in} -o {out}\n    }\n    plate \"./{out}\"\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.steps.len(), 2);
     match &recipe.steps[1] {
         Step::Plate { step, line } => {
-            assert_eq!(*line, 4);
+            assert_eq!(*line, 6);
             assert_eq!(step.command, "./{out}");
         }
         other => panic!("expected Plate, got {:?}", other),
@@ -275,7 +275,16 @@ fn test_mixed_steps() {
     // Note 4.4.2 region rule: imperative-region steps (> shell @) must come
     // after all declarative-region steps. The middle step here uses `>>`
     // (register-phase InlineLua) so it can sit between two cook steps.
-    let source = "recipe \"lib\": \"setup\"\n    ingredients \"lib/*.c\" \"include/*.h\"\n    cook \"build/obj/{stem}.o\" using \"gcc -c {in} -o {out}\"\n    >> print(\"compiled\")\n    cook \"build/libmath.a\" using \"ar rcs {out} {all}\"\n";
+    let source = r#"recipe "lib": "setup"
+    ingredients "lib/*.c" "include/*.h"
+    cook "build/obj/{stem}.o" using {
+        gcc -c {in} -o {out}
+    }
+    >> print("compiled")
+    cook "build/libmath.a" using {
+        ar rcs {out} {all}
+    }
+"#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.deps, vec!["setup".to_string()]);
@@ -290,7 +299,15 @@ fn test_mixed_steps() {
 fn test_imperative_then_declarative_rejected() {
     // App. A.3 "Region ordering rule": once the imperative region begins,
     // no declarative-region step may follow.
-    let source = "recipe \"bad\"\n    cook \"a\" using \"echo a\"\n    > print(\"x\")\n    cook \"b\" using \"echo b\"\n";
+    let source = r#"recipe "bad"
+    cook "a" using {
+        echo a
+    }
+    > print("x")
+    cook "b" using {
+        echo b
+    }
+"#;
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
     assert!(msg.contains("imperative region"), "got: {}", msg);
@@ -542,16 +559,18 @@ fn test_empty_interactive_step_errors() {
 fn test_at_in_cook_using_is_not_interactive() {
     let source = r#"recipe "build"
     ingredients "src/*.c"
-    cook "build/{stem}.o" using "@gcc -c {in} -o {out}"
+    cook "build/{stem}.o" using {
+        @gcc -c {in} -o {out}
+    }
 "#;
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::Cook { step, .. } => {
             match &step.using_clause {
-                Some(UsingClause::Shell(cmd)) => {
-                    assert!(cmd.starts_with('@'), "@ should be preserved in using clause");
+                Some(UsingClause::ShellBlock(cmds)) => {
+                    assert!(cmds[0].starts_with('@'), "@ should be preserved in shell block");
                 }
-                other => panic!("expected Shell using clause, got {:?}", other),
+                other => panic!("expected ShellBlock using clause, got {:?}", other),
             }
         }
         other => panic!("expected Cook step, got {:?}", other),
@@ -590,7 +609,9 @@ fn test_parse_use_with_configs() {
 fn test_test_step_basic() {
     let source = r#"recipe "run-tests"
     ingredients "tests/*.c"
-    cook "build/{stem}" using "cc {in} -o {out}"
+    cook "build/{stem}" using {
+        cc {in} -o {out}
+    }
     test "./{out}"
 "#;
     let result = parse(source).unwrap();
@@ -598,7 +619,7 @@ fn test_test_step_basic() {
     assert_eq!(recipe.steps.len(), 2);
     match &recipe.steps[1] {
         Step::Test { step, line } => {
-            assert_eq!(*line, 4);
+            assert_eq!(*line, 6);
             assert_eq!(step.command, "./{out}");
             assert_eq!(step.timeout, None);
             assert!(!step.should_fail);
@@ -896,6 +917,21 @@ fn test_use_after_chore_rejected() {
 fn test_multi_output_string_form_rejected() {
     let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"a.js\" \"b.wasm\" using \"cmd\"\n";
     let err = crate::parse(source).expect_err("should reject");
-    let msg = format!("{:?}", err);
-    assert!(msg.contains("block body"), "expected error about block body, got: {}", msg);
+    let msg = format!("{}", err);
+    assert!(msg.contains("CS-0022"), "expected CS-0022 migration diagnostic, got: {}", msg);
+}
+
+#[test]
+fn test_using_string_form_rejected_with_migration_diagnostic() {
+    let src = r#"recipe build
+    cook "out" using "echo hi"
+"#;
+    let err = parse(src).expect_err("CS-0022: bare-string using form must be rejected");
+    match err {
+        ParseError::Parse { message, .. } => {
+            assert!(message.contains("CS-0022"), "diagnostic should name CS-0022, got: {message}");
+            assert!(message.contains("using {"), "diagnostic should name the new form, got: {message}");
+        }
+        e => panic!("expected ParseError::Parse, got {:?}", e),
+    }
 }
