@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.5** (planned) — CS-0022
+- **v0.5** (`cs-standard/v0.5`, 2026-04-30) — CS-0022, CS-0023
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
 - **v0.3** (`cs-standard/v0.3`, 2026-04-28) — CS-0015, CS-0016, CS-0017
 - **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013, CS-0014
@@ -285,10 +285,30 @@ The conformance corpus's `parse.txt` files change format in this cut: `format_co
 
 ## D.22. CS-0022 — Cook-step iteration unification: output-pattern as sole driver, `using "cmd"` removed, `{in.ACCESSOR}` family. [#changes.cs-0022]
 
-**Sections affected:** §{recipes.cook-single-output} (table reduced to three forms); new §{recipes.iteration-mode}; §{recipes.cook-multi-output} (multi-output rule simplified); §{xref.string-substitution} (surface list extended to `shell_block`); §{lua.shell-placeholders} (rewritten — placeholder vocabulary, no iteration logic); §{grammar-appendix.steps} ("`using` dispatch order", "Multi-output cook-step rule", "Iteration coherence"); App. B.6.1 (wording), B.6.5–B.6.8 (new rationale).
+**Date:** 2026-04-30
+**Version:** v0.5
+**Sections affected:** §{recipes.cook-single-output} (table reduced to three forms); new §{recipes.iteration-mode}; §{recipes.cook-multi-output} (multi-output rule simplified); §{xref.string-substitution} (surface list extended to `shell_block`); §{lua.shell-placeholders} (rewritten — placeholder vocabulary, no iteration logic); §{grammar-appendix.steps} ("`using` dispatch order", "Multi-output cook-step rule", "Iteration coherence"); App. B.6.1 (wording), B.6.5–B.6.8 (new rationale); App. E.2 and E.3 marked substantially / partially resolved with cross-links to this entry.
 
 **Summary:** The cook step's iteration mode (one-to-one over own inputs, one-to-one over dep outputs, or many-to-one) is decided exclusively by the output pattern list. The using-clause's body ceases to be an iteration trigger. The `using "cmd"` string form is removed; `using { cmd }` (a one-line `shell_block`) replaces it. The bare path-accessors `{stem}`, `{name}`, `{ext}`, `{dir}` are removed from the placeholder vocabulary in favour of the dotted family `{in.ACCESSOR}`, `{out.ACCESSOR}`, `{out_N.ACCESSOR}`. Multi-output indexing uses `{out_N}` (1-indexed). Cross-recipe references (§{xref.string-substitution}) extend to `shell_block` content; `using_lua_block` continues to use `cook.dep_output(NAME)` per B.6.1. The §{xref.dep-driven} firewall rejecting `{lib.ACCESSOR}` in non-driving using-clause bodies is preserved.
 
 **Why:** The pre-CS-0022 surface had two non-adjacent normative sources for iteration mode (one in §6.7, one in §5.4) that overlapped, with a silent footgun when an author put `{in}` in a using-string while the output pattern was literal — successive iterations clobbered the same output. The string form `using "cmd"` and the block form `using { cmd }` expressed the same idea through two surfaces, and the placeholder layer was specified for the former only. Bare path-accessors and dotted accessors meant the same thing in different positions. CS-0022 collapses the surface: one rule for iteration (the output pattern), one shell surface (the block), one accessor spelling (dotted).
 
-**Conformance impact.** `parse.txt` files in `standard/conformance/` change format only at the AST level: `Step::Cook` units with a using-clause now dump the inner shape as `ShellBlock([...])` or `LuaBlock(...)` exclusively (the former `Shell("...")` arm is gone). Per CONTRIBUTING.md's rule on parse-format-altering changes, the implementation lands lockstep with the corpus migration in this CS — the corpus and the parser agree at the merge commit.
+**Conformance impact.** `parse.txt` files in `standard/conformance/` change format only at the AST level: `Step::Cook` units with a using-clause now dump the inner shape as `ShellBlock([...])` or `LuaBlock(...)` exclusively (the former `Shell("...")` arm is gone). Per CONTRIBUTING.md's rule on parse-format-altering changes, the implementation lands lockstep with the corpus migration in this CS — the corpus and the parser agree at the merge commit. The `cs-standard/v0.5` tag is the merge commit where parser and corpus agree.
+
+**Implementation status.** Lockstep — Standard, parser (`cli/crates/cook-lang`), codegen (`cli/crates/cook-luagen`), tree-sitter grammar (`tree-sitter-cook/`), conformance corpus, and the project's own Cookfiles all moved together. Spans 25 commits across 8 phases (spec, parser AST, codegen, tree-sitter, conformance, repo migration, cleanup, plus an `examples/iteration_benchmarks` integration artifact and four codegen regressions surfaced + fixed during example development). Final test matrix green: `cargo test --workspace`, `pnpm test` in `standard/`, `npm test` + `node scripts/conformance.mjs` in `tree-sitter-cook/`.
+
+**Reference:** this commit (and the merge of branch `cs-0022-iteration-unification`).
+
+## D.23. CS-0023 — Standard cut: v0.5. [#changes.cs-0023]
+
+**Date:** 2026-04-30
+**Version:** v0.5
+**Sections affected:** `standard/VERSION` (`0.4` → `0.5`); App. D Versions index (new v0.5 entry); this entry. App. E entries E.2 and E.3 carry CS-0022 cross-references (already landed in the CS-0022 commit series).
+
+**Summary:** Cuts the Cook Standard at v0.5. Per the cut procedure in `CONTRIBUTING.md` (and §{intro.version}), this entry plus the v0.5 row in the Versions index plus a `cs-standard/v0.5` git tag at the merge commit constitute the published cut. v0.5 ships CS-0022 — the cook-step iteration unification — and this cut entry. CS-0022 is large enough on its own to warrant a minor bump: it removes the `using "cmd"` form, removes bare path-accessors, makes the cook step's output pattern the sole iteration driver, and changes load-time semantics for several surfaces that were silently buggy in v0.4 and earlier.
+
+The conformance corpus's `parse.txt` files change format in this cut: `Step::Cook` units with a using-clause dump the inner shape as `ShellBlock([...])` or `LuaBlock(...)` exclusively (the former `Shell("...")` arm is removed in CS-0022). Per CONTRIBUTING.md's rule on parse-format-altering cuts, the `cs-standard/v0.5` tag points at the merge commit where the parser and the corpus agree. `cs-standard/v0.4` and earlier tags are left in place as historical records; the backwards-conformance recipe (`cook --set VERSION=0.4 standard.against-tag`) is not expected to pass against v0.4 post-CS-0022.
+
+**Implementation status.** Authoring + tagging step. No prose changes beyond `standard/VERSION`, the Versions index, and this entry.
+
+**Reference:** this commit.

@@ -18,7 +18,7 @@ sidebar:
 
 ## E.2. `${...}` syntax in `using` strings [#pre-v1.template-vs-bash-expansion]
 
-**Status.** Substantially resolved in v0.4 by [CS-0022](D-changes#changes-cs-0022).
+**Status.** Substantially resolved in v0.5 by [CS-0022](D-changes#changes-cs-0022).
 
 **Original symptom.** Cook's templater inside `using "..."` strings interpreted `${VAR}` as its own env-lookup form, breaking Bash parameter-expansion forms like `${VAR:-default}`.
 
@@ -28,7 +28,7 @@ sidebar:
 
 ## E.3. Cook strings have no `"` escape [#pre-v1.no-string-escape]
 
-**Status.** Partially resolved in v0.4 by [CS-0022](D-changes#changes-cs-0022) for the `using` surface; open for other STRING positions.
+**Status.** Partially resolved in v0.5 by [CS-0022](D-changes#changes-cs-0022) for the `using` surface; open for other STRING positions.
 
 **Original symptom.** The string literal in `cook "..."`, `using "..."`, `plate "..."`, `recipe "..."`, etc. is parsed by a routine that finds the first `"` and stops — `\"` is not recognized as an escape. Embedding a literal `"` inside any cook string truncates the string at the first inner `"`, producing surprising and silent behaviour (the truncated command runs, the rest of the line is leftover content).
 
