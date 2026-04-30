@@ -9,6 +9,11 @@
 //! Fixtures shaped this way exist because the rejection lives at codegen
 //! time, not parse time. See `standard/conformance/negative/006-.../notes.md`
 //! for the first such fixture.
+//!
+//! Also walks `standard/conformance/positive/` and asserts that every fixture
+//! parses cleanly AND passes `generate_with_names_checked` without error. This
+//! catches semantic regressions that the parser-only harness misses (e.g. `{in}`
+//! in many-to-one mode, which parses fine but fails at codegen time).
 
 use std::fs;
 use std::path::PathBuf;
@@ -94,6 +99,54 @@ fn codegen_negative_conformance_corpus() {
     assert!(
         failures.is_empty(),
         "codegen-phase negative conformance failures ({} cases scanned):\n\n{}",
+        cases_seen,
+        failures.join("\n")
+    );
+}
+
+/// Sweep every positive fixture through `generate_with_names_checked` and
+/// assert `Ok`. This catches semantic regressions that the parser-only harness
+/// misses — for example, `{in}` appearing in a many-to-one (literal-output)
+/// step parses cleanly but is rejected at codegen time.
+#[test]
+fn codegen_positive_conformance_corpus() {
+    let mut failures: Vec<String> = Vec::new();
+    let mut cases_seen = 0usize;
+
+    for case in case_dirs("positive") {
+        let input_path = case.join("Cookfile");
+        if !input_path.exists() {
+            continue;
+        }
+        cases_seen += 1;
+
+        let name = case.file_name().unwrap().to_string_lossy().into_owned();
+        let input = fs::read_to_string(&input_path)
+            .unwrap_or_else(|e| panic!("read {}: {}", input_path.display(), e));
+
+        let cookfile = match cook_lang::parse(&input) {
+            Ok(c) => c,
+            Err(e) => {
+                failures.push(format!(
+                    "fixture {}: parse failed (positive fixture must parse cleanly): {}\n",
+                    name, e
+                ));
+                continue;
+            }
+        };
+
+        let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
+        if let Err(e) = cook_luagen::generate_with_names_checked(&cookfile, &recipe_names) {
+            failures.push(format!(
+                "fixture {}: codegen rejected a positive fixture — this is a semantic regression:\n  {}\n",
+                name, e
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "codegen-phase positive conformance failures ({} fixtures scanned):\n\n{}",
         cases_seen,
         failures.join("\n")
     );
