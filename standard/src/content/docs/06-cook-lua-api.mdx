@@ -270,52 +270,59 @@ Returns `p` with its extension replaced by `new_ext`. A leading `.` on `new_ext`
 
 Returns the path formed by joining `b` onto `a` with the host separator. If `b` is absolute, the result is `b`.
 
-## 6.7. Placeholder substitutions in shell strings [#lua.shell-placeholders]
-**Phase.** Substitution is performed by the code generator before the register phase runs; the resulting Lua expression is evaluated at register time.
+## 6.7. Placeholder substitutions in shell text [#lua.shell-placeholders]
+**Phase.** Substitution is performed by the code generator at register time; the resulting Lua expression is evaluated at register time when the unit is recorded.
 
-When a `cook` step uses a single-string `using` clause (`cook "out" using "cmd"`, §{recipes.cook-single-output}) the string `cmd` is a **shell using-string**. Before a conforming implementation records the unit, it MUST substitute the following placeholders in the shell using-string:
+A `cook` step's `using { ... }` shell-block body, every `plate` command, every `test` command, and every bare `shell_command` is a **shell text** for the purposes of this section. Before a conforming implementation records the resulting unit, it MUST substitute the placeholder set defined in this section. The set is closed: a `{TOKEN}` whose shape does not match any row of the placeholder table below resolves through §{xref.resolution}.
 
-| Placeholder | Meaning |
-|-------------|---------|
-| `{in}`      | The current input path. |
-| `{out}`     | The current output path. |
-| `{stem}`    | `path.stem(current input)` (§{lua.path-stem}). |
-| `{name}`    | `path.name(current input)` (§{lua.path-name}). |
-| `{ext}`     | `path.ext(current input)` (§{lua.path-ext}). |
-| `{dir}`     | `path.dir(current input)` (§{lua.path-dir}). |
-| `{all}`     | The space-joined concatenation of the full input list (see below). |
+| Placeholder | Valid in iteration mode | Meaning |
+|---|---|---|
+| `{in}` | one-to-one (own or dep-driven) | The current iteration item (path) |
+| `{in.ACCESSOR}` | one-to-one | `path.ACCESSOR(in)` per §{lua.path-helpers} |
+| `{out}` | any mode, single declared output | The unit's single output path |
+| `{out.ACCESSOR}` | any mode, single declared output | `path.ACCESSOR(out)` |
+| `{out_N}` (`N` ∈ 1..) | any mode, multi-output | The unit's `N`-th declared output, in declaration order |
+| `{out_N.ACCESSOR}` | any mode, multi-output | `path.ACCESSOR(out_N)` |
+| `{all}` | many-to-one only | The unit's input list, joined by single space characters |
 
-The substitution rules are:
+`ACCESSOR` is one of `stem`, `name`, `ext`, `dir`, with semantics defined by §{xref.path-accessors}.
 
-- **`{in}`** refers to the current input in the iteration driving the step. For a step whose `using`-string contains `{in}`, the step is a one-to-one step (§{recipes.cook-single-output}): it iterates over its inputs and records one unit per input (§{lua.add-unit}). In each iteration, `{in}` is the current input path.
-- **`{out}`** is the output pattern for the current iteration. Patterns in the cook-step's output strings (e.g., `"build/{stem}.o"`) are expanded using the same accessor names before `{out}` is substituted here.
-- **`{stem}`**, **`{name}`**, **`{ext}`**, **`{dir}`** expand to the corresponding accessor applied to the current input path.
-- **`{all}`** is only well-defined when the using-string does NOT contain `{in}`. In that case, the step is a many-to-one step (§{recipes.cook-single-output}) and `{all}` expands to the inputs joined by a single space character. A step using both `{in}` and `{all}` is implementation-defined.
-- **Non-builtin placeholders.** A `{TOKEN}` that is not one of the current-iteration builtins above is resolved as a name reference per §{xref.resolution}. The resolution rule falls through to `cook.env[TOKEN]` when `TOKEN` is neither a recipe name (whole or accessor-split) nor a current-iteration builtin.
+A conforming implementation MUST reject the following shapes with a load-time diagnostic:
+
+- `{in}` or `{in.ACCESSOR}` in a many-to-one step (no current iteration item exists).
+- `{all}` in a one-to-one step.
+- `{out}` in a multi-output step (ambiguous — use `{out_N}`).
+- `{out_N}` in a single-output step (use plain `{out}`).
+- `{out_N}` for `N` greater than the step's declared output count.
+- `{stem}`, `{name}`, `{ext}`, or `{dir}` as a bare token (i.e. with no `NAME.` prefix). These were the pre-CS-0022 spelling for the current-iteration accessors and are no longer admitted at the placeholder layer; the current spelling is `{in.stem}` etc. The diagnostic MUST name the new form. (A bare `{stem}` would otherwise resolve through §{xref.resolution} step 4 to `cook.env["stem"]`, which is a confusing failure mode for code being migrated forward from a v0.4 surface.)
 
 ### Example 6.7.1
 
-The surface step
-
 ```cook
-cook "build/{stem}.o" using "gcc -c {in} -o {out}"
+cook "build/{in.stem}.o" using { gcc -c {in} -o {out} }
 ```
 
-with ingredient `main.c` records one shell unit whose `command` field is `gcc -c main.c -o build/main.o`. The `{stem}` placeholder in the output pattern resolves to `main` before `{out}` in the using-string is substituted; the resulting `{out}` is `build/main.o`.
+with ingredient `main.c` records one shell unit per ingredient. For ingredient `main.c`, the unit's `command` field is `set -e\ngcc -c main.c -o build/main.o`. The output pattern's `{in.stem}` resolves to `main` before the body's `{out}` is substituted; the resulting `{out}` is `build/main.o`.
 
 ### Example 6.7.2
 
-The surface step
-
 ```cook
-cook "dist/app" using "gcc {all} -o {out}"
+cook "out.js" "out.wasm" using {
+    wasm-pack build
+    cp pkg/main.js {out_1}
+    cp pkg/main.wasm {out_2}
+}
 ```
 
-with ingredients `a.c` and `b.c` records one shell unit whose `command` field is `gcc a.c b.c -o dist/app`. Because the using-string does not contain `{in}`, the step is many-to-one (§{recipes.cook-single-output}).
+with any input list records one shell unit (many-to-one mode — outputs are literal). The body's `{out_1}` and `{out_2}` resolve to `out.js` and `out.wasm` respectively.
 
 ### Note 6.7.1
 
-Placeholder substitution is the terser surface for the common case; the `using >{ ... }` and `using { ... }` forms (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) expose the same iteration directly as Lua or shell text. The two surfaces are interchangeable for any step that fits the placeholder model.
+The block forms (`using { ... }` and `using >{ ... }`) and the placeholder layer compose differently. A `shell_block` is shell text and gets the substitution defined in this section. A `using_lua_block` is Lua text and does not get textual substitution; the same iteration data is exposed as Lua bindings per §{lua.using-block-globals}. The asymmetry is principled — see App. B.6.1 — and reflects that shell has no binding mechanism for "the current file" while Lua does.
+
+### Note 6.7.2
+
+Cross-recipe references inside a shell block follow §{xref.string-substitution}: a bare `{NAME}` substitutes to the named recipe's full output list, joined by space. The `{lib.ACCESSOR}` form is rejected inside any using-clause body, including a shell block, because it would smuggle a second iteration source past the output pattern's declaration. Authors who want a recipe's per-element accessors inside a step driven by something else use Lua (`path.stem(cook.dep_output_list("lib")[1])`).
 
 ## 6.8. The `use` declaration [#lua.use-env]
 > **Normative.** This section defines the `use` declaration, which brings a Lua module into the Cookfile's Lua environment. The grammar is given in App. A.2.
