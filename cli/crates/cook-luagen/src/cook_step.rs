@@ -10,12 +10,15 @@ use crate::template::{
 pub(crate) enum CookMode {
     /// Loop over inputs, producing one output per input.
     OneToOne,
+    /// Loop over inputs, producing N outputs per input (one-to-many).
+    /// Output patterns all contain `{in.ACCESSOR}` or `{dep.ACCESSOR}`.
+    OneToMany,
     /// Single invocation combining all inputs.
     ManyToOne,
     /// No using clause -- just declare outputs, emit no code.
     DeclarationOnly,
     /// Single invocation producing multiple declared outputs from a shell block
-    /// or from a Lua block whose cook step declares more than one output.
+    /// or from a Lua block whose cook step declares more than one literal output.
     BlockStep,
 }
 
@@ -29,11 +32,12 @@ fn format_ingredient_groups(n: usize) -> String {
 /// Determine the iteration mode for a cook step by inspecting its output pattern(s).
 ///
 /// CS-0022: the output pattern list is the sole iteration source.
-/// - No using_clause               → DeclarationOnly
-/// - Multiple outputs              → BlockStep (many-to-one with multi declared outputs)
-/// - Single output with {in.X}     → OneToOne (own-input accessor)
-/// - Single output with {dep.X}    → OneToOne (dep-driven, only detectable with recipe names)
-/// - Single literal output         → ManyToOne
+/// - No using_clause                         → DeclarationOnly
+/// - Multiple outputs, all with {in.X}       → OneToMany (loop per input, N outputs each)
+/// - Multiple outputs, all literal           → BlockStep (one unit, N literal outputs)
+/// - Single output with {in.X}               → OneToOne (own-input accessor)
+/// - Single output with {dep.X}              → OneToOne (dep-driven, only detectable with recipe names)
+/// - Single literal output                   → ManyToOne
 ///
 /// Without recipe-name context, dep-driven patterns (e.g. `{protos.stem}`) look like Literal.
 /// Use `cook_step_mode_with_names` when recipe names are available.
@@ -47,11 +51,19 @@ pub(crate) fn cook_step_mode(step: &CookStep) -> CookMode {
         return CookMode::DeclarationOnly;
     }
 
-    // Multi-output blocks always route through BlockStep — codegen for them
-    // emits a single cook.add_unit with the full inputs/outputs arrays, regardless
-    // of mode.  Iteration (when applicable) is implicit in the inputs list.
     if step.outputs.len() > 1 {
-        return CookMode::BlockStep;
+        // Multi-output: check whether ALL patterns iterate over own inputs.
+        // If any pattern contains {in.ACCESSOR}, treat as OneToMany (one-to-many
+        // per-input iteration). Otherwise BlockStep (single many-to-one unit).
+        let any_own_input = step
+            .outputs
+            .iter()
+            .any(|p| matches!(output_pattern_kind(p), OutputPatternKind::OwnInputAccessor));
+        return if any_own_input {
+            CookMode::OneToMany
+        } else {
+            CookMode::BlockStep
+        };
     }
 
     // Single-output: the output pattern decides iteration.
@@ -76,7 +88,19 @@ pub(crate) fn cook_step_mode_with_names(
     }
 
     if step.outputs.len() > 1 {
-        return CookMode::BlockStep;
+        // Multi-output: if any pattern has an own-input or dep-driven accessor,
+        // this is a OneToMany (one-to-many per-input) step. Otherwise BlockStep.
+        let any_iterating = step.outputs.iter().any(|p| {
+            matches!(
+                output_pattern_kind_with_recipes(p, recipe_names),
+                OutputPatternKind::OwnInputAccessor | OutputPatternKind::DepDriven { .. }
+            )
+        });
+        return if any_iterating {
+            CookMode::OneToMany
+        } else {
+            CookMode::BlockStep
+        };
     }
 
     match output_pattern_kind_with_recipes(&step.outputs[0], recipe_names) {
@@ -110,10 +134,14 @@ pub(crate) fn generate_cook_step(
     // Use recipe-name-aware mode selection so dep-driven patterns are correctly
     // identified as OneToOne (e.g. {protos.stem} is OneToOne when "protos" is known).
     let mode = cook_step_mode_with_names(cook_step, recipe_names);
+    // Input source: prior cook step's outputs, own ingredients, or empty table.
+    // Using `{}` when there are no ingredients avoids `nil` in table.concat/ipairs.
     let input_source = if let Some(prev) = prev_cook_index {
         format!("_cook_outputs_{}", prev)
-    } else {
+    } else if !ingredients.is_empty() {
         "recipe.ingredients[1]".to_string()
+    } else {
+        "{}".to_string()
     };
 
     let pattern_kind = analyze_output_pattern(&cook_step.outputs[0], recipe_names);
@@ -235,6 +263,59 @@ pub(crate) fn generate_cook_step(
                 index
             ));
         }
+        CookMode::OneToMany => {
+            // Multi-output one-to-one (one-to-many): loop over inputs, compute
+            // N outputs per iteration. Each output pattern contains {in.ACCESSOR}.
+            //
+            // Choose iteration source (dep-driven vs own inputs).
+            let iter_source = match &pattern_kind {
+                OutputPatternKind::DepDriven { dep_name, .. } => {
+                    format!("cook.dep_output_list(\"{}\")", crate::lua_string::escape_lua_string(dep_name))
+                }
+                _ => input_source.clone(),
+            };
+
+            out.push_str(&format!(
+                "    for _, _cook_in in ipairs({}) do\n",
+                iter_source
+            ));
+
+            // Compute per-iteration outputs for each pattern.
+            out.push_str("        local _cook_outs = {\n");
+            for pat in &cook_step.outputs {
+                let expr = crate::template::expand_output_pattern(pat);
+                out.push_str(&format!("            {},\n", expr));
+            }
+            out.push_str("        };\n");
+
+            match &cook_step.using_clause {
+                Some(UsingClause::ShellBlock(lines)) => {
+                    let combined = build_shell_block_command(lines, recipe_names);
+                    let lua_expr = expand_template_to_lua_with_deps(&combined, recipe_names);
+                    out.push_str(&format!(
+                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}}})\n",
+                        lua_expr
+                    ));
+                }
+                Some(UsingClause::LuaBlock(code)) => {
+                    let code_literal = crate::lua_string::wrap_lua_string(code);
+                    let ing_groups = format_ingredient_groups(ingredients.len());
+                    out.push_str(&format!(
+                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}}})\n",
+                        code_literal, ing_groups
+                    ));
+                }
+                None => unreachable!("OneToMany mode requires a using-clause"),
+            }
+
+            // Populate _cook_outputs_N with the first output of each unit
+            // (by convention, the first declared output drives downstream deps).
+            out.push_str(&format!(
+                "        table.insert(_cook_outputs_{}, _cook_outs[1])\n",
+                index
+            ));
+            out.push_str("    end\n");
+        }
         CookMode::BlockStep => {
             // Build the Lua table of declared outputs.
             let mut outs_lua = String::from("{");
@@ -250,6 +331,11 @@ pub(crate) fn generate_cook_step(
 
             out.push_str(&format!("    local _cook_outs = {};\n", outs_lua));
             out.push_str(&format!("    local _cook_ins = {};\n", input_source));
+            // {all} in a BlockStep shell body expands to _cook_all.
+            out.push_str(&format!(
+                "    local _cook_all = table.concat({}, \" \");\n",
+                input_source
+            ));
 
             match &cook_step.using_clause {
                 Some(UsingClause::ShellBlock(lines)) => {

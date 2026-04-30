@@ -451,10 +451,15 @@ pub fn generate_with_names(cookfile: &Cookfile, recipe_names: &BTreeSet<String>)
     if !cookfile.config_blocks.is_empty() {
         out.push_str("function __cook_run_config_blocks(selected_name)\n");
 
-        // Unnamed (base) block — always runs
+        // Unnamed (base) block — always runs.
+        // Comment lines (starting with '#') are skipped; they are Cookfile
+        // source comments and are not valid Lua syntax.
         for block in &cookfile.config_blocks {
             if block.name.is_none() {
                 for line in block.body.lines() {
+                    if line.trim_start().starts_with('#') {
+                        continue;
+                    }
                     out.push_str("    ");
                     out.push_str(line);
                     out.push('\n');
@@ -473,6 +478,9 @@ pub fn generate_with_names(cookfile: &Cookfile, recipe_names: &BTreeSet<String>)
                         escape_lua_string(name)
                     ));
                     for line in block.body.lines() {
+                        if line.trim_start().starts_with('#') {
+                            continue;
+                        }
                         out.push_str("            ");
                         out.push_str(line);
                         out.push('\n');

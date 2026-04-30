@@ -591,7 +591,7 @@ pub(crate) fn validate_placeholders(
 }
 
 fn is_iterating(m: &CookMode) -> bool {
-    matches!(m, CookMode::OneToOne)
+    matches!(m, CookMode::OneToOne | CookMode::OneToMany)
 }
 
 fn is_path_accessor(s: &str) -> bool {
