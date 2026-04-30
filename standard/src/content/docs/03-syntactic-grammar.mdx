@@ -146,7 +146,7 @@ config dev
     env.CXXFLAGS = "-O0 -g -DDEBUG"
 
 recipe build
-    cook "build/main" using "{CC} {CXXFLAGS} -o {out} main.c"
+    cook "build/main" using { {CC} {CXXFLAGS} -o {out} main.c }
 ```
 
 When no overlay is selected, the base alone executes and `{CXXFLAGS}` resolves to `-O0 -g`. When `release` is selected, the base runs first (`env.CXXFLAGS = "-O0 -g"`), then `release` runs (`env.CXXFLAGS = "-O3"`); `{CXXFLAGS}` resolves to `-O3`. Selecting a name that does not appear as a named `config_block` in the Cookfile is a load-time error.
@@ -206,7 +206,7 @@ A `recipe_body` MUST satisfy the **region ordering rule** (App. A.3, "Region ord
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "bin/app" using "cc {in} -o {out}"
+    cook "bin/{in.stem}" using { cc {in} -o {out} }
     test "./bin/app"
     cpp.link()
     @vim notes.txt

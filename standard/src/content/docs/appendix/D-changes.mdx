@@ -9,6 +9,7 @@ sidebar:
 
 ## Versions
 
+- **v0.5** (planned) — CS-0022
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
 - **v0.3** (`cs-standard/v0.3`, 2026-04-28) — CS-0015, CS-0016, CS-0017
 - **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013, CS-0014
@@ -281,3 +282,15 @@ The conformance corpus's `parse.txt` files change format in this cut: `format_co
 **Implementation status.** Authoring + tagging step. No prose changes beyond the Versions index, this entry, and the App. E resolution markers.
 
 **Reference:** this commit.
+
+## D.22. CS-0022 — Cook-step iteration unification: output pattern as sole iteration source; collapse `using_clause` to two block forms. [#changes.cs-0022]
+
+**Date:** 2026-04-30
+**Version:** v0.5 (planned)
+**Sections affected:** §{recipes.cook-single-output} (§4.5 — drop bare-string `using` row; new three-form table); §{recipes.iteration-mode} (new §4.5.1); §{recipes.cook-multi-output} (§4.6 — simplify second paragraph; update Example 4.6.1 to use `{out_1}`/`{out_2}`; update Note 4.6.1); §{grammar.step-dispatch} (§3.8 — Example 3.8.1 updated); App. A.4 (`using_clause` production — drop `STRING` arm; update normative prose); §{lua.shell-placeholders} (§6.7 — new dotted-accessor family; drop bare accessor forms); §{xref.dep-driven} (§5.5 — extend cross-recipe substitution to shell blocks).
+
+**Summary:** Makes the `cook_step`'s output pattern list the sole source of iteration mode. Removes the `using "cmd"` string form entirely — the only admitted `using_clause` bodies are `using_lua_block` (`>{ … }`) and `shell_block` (`{ … }`). Replaces bare path-accessors (`{stem}`, `{name}`, `{ext}`, `{dir}`) with the dotted family `{in.ACCESSOR}` / `{out.ACCESSOR}` / `{out_N.ACCESSOR}`. Adds §4.5.1 "Iteration mode" as the single normative source for how the number of work units is determined (one-to-one over own inputs; one-to-one over dep outputs; many-to-one). A conforming implementation MUST reject a `cook_step` whose output patterns mix iteration sources. Extends §5.5 cross-recipe substitution to shell blocks. Fixes the "single-output Lua blocks always iterate" wart so iteration follows the output pattern uniformly.
+
+**Implementation status.** In progress (Task 1 complete — spec-side edits to §4.5/§4.5.1/§4.6/§3.8; remaining tasks cover §6.7, App. A, §5.5, the Rust parser, conformance fixtures, and tree-sitter).
+
+**Reference:** this commit series.
