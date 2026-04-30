@@ -179,25 +179,17 @@ pub(crate) fn parse_cook_line(
             new_pos,
         ))
     } else if after_using.starts_with('"') {
-        if outputs.len() > 1 {
-            return Err(ParseError::Parse {
-                line,
-                message: "cook: multi-output steps require a block body (`using { … }` or `using >{ … }`), not a single-string command".to_string(),
-            });
-        }
-        let cmd = parse_single_quoted_string(after_using, line)?;
-        Ok((
-            CookStep {
-                outputs,
-                using_clause: Some(UsingClause::Shell(cmd)),
-            },
-            current_pos + 1,
-        ))
+        Err(ParseError::Parse {
+            line,
+            message: "cook using: the bare-string form `using \"cmd\"` was removed in CS-0022; \
+                      rewrite as `using { cmd }` (one-line shell block)"
+                .to_string(),
+        })
     } else {
         Err(ParseError::Parse {
             line,
             message: format!(
-                "cook using: expected quoted command, >{{ Lua block, or {{ shell block, found: {}",
+                "cook using: expected `>{{ Lua block }}` or `{{ shell block }}`, found: {}",
                 after_using
             ),
         })

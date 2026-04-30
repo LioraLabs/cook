@@ -47,9 +47,8 @@ pub struct Recipe {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UsingClause {
-    Shell(String),
-    LuaBlock(String),
     ShellBlock(Vec<String>),
+    LuaBlock(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -117,8 +116,8 @@ mod tests {
                 Step::Cook {
                     step: CookStep {
                         outputs: vec!["build/obj/{stem}.o".to_string()],
-                        using_clause: Some(UsingClause::Shell(
-                            "gcc -c {in} -o {out}".to_string(),
+                        using_clause: Some(UsingClause::ShellBlock(
+                            vec!["gcc -c {in} -o {out}".to_string()],
                         )),
                     },
                     line: 4,
