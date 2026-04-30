@@ -935,3 +935,56 @@ fn test_using_string_form_rejected_with_migration_diagnostic() {
         e => panic!("expected ParseError::Parse, got {:?}", e),
     }
 }
+
+// ── CS-0022 Phase G Item 5: one-line shell block ──────────────────
+
+#[test]
+fn cs_0022_one_line_shell_block_parses() {
+    // `using { cmd }` on one line must parse to a ShellBlock with one command.
+    let src = "recipe build\n    cook \"build/{in.stem}.o\" using { gcc -c {in} -o {out} }\n";
+    let cookfile = parse(src).expect("one-line shell block should parse");
+    match &cookfile.recipes[0].steps[0] {
+        Step::Cook { step, .. } => {
+            match &step.using_clause {
+                Some(UsingClause::ShellBlock(cmds)) => {
+                    assert_eq!(cmds.len(), 1, "expected 1 command, got {:?}", cmds);
+                    assert_eq!(cmds[0], "gcc -c {in} -o {out}");
+                }
+                other => panic!("expected ShellBlock, got {:?}", other),
+            }
+        }
+        other => panic!("expected Cook step, got {:?}", other),
+    }
+}
+
+#[test]
+fn cs_0022_one_line_shell_block_with_placeholder_braces() {
+    // Placeholders like {in} and {out} inside the one-line block must not
+    // confuse the brace-depth tracker.
+    let src = "recipe build\n    ingredients \"src/*.c\"\n    cook \"build/{in.stem}.o\" using { {CC} -c {in} -o {out} }\n";
+    let cookfile = parse(src).expect("one-line shell block with placeholders should parse");
+    match &cookfile.recipes[0].steps[0] {
+        Step::Cook { step, .. } => {
+            match &step.using_clause {
+                Some(UsingClause::ShellBlock(cmds)) => {
+                    assert_eq!(cmds.len(), 1);
+                    assert!(cmds[0].contains("{CC}"), "got: {:?}", cmds);
+                    assert!(cmds[0].contains("{in}"), "got: {:?}", cmds);
+                }
+                other => panic!("expected ShellBlock, got {:?}", other),
+            }
+        }
+        other => panic!("expected Cook step, got {:?}", other),
+    }
+}
+
+#[test]
+fn cs_0022_one_line_shell_block_followed_by_more_steps() {
+    // A one-line block must correctly advance the token position so that
+    // subsequent steps parse correctly.
+    let src = "recipe build\n    cook \"build/app\" using { gcc main.c -o {out} }\n    plate \"./{out}\"\n";
+    let cookfile = parse(src).expect("should parse");
+    assert_eq!(cookfile.recipes[0].steps.len(), 2, "should have cook + plate");
+    assert!(matches!(&cookfile.recipes[0].steps[0], Step::Cook { .. }));
+    assert!(matches!(&cookfile.recipes[0].steps[1], Step::Plate { .. }));
+}

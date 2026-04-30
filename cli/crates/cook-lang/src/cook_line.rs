@@ -165,19 +165,39 @@ pub(crate) fn parse_cook_line(
             new_pos,
         ))
     } else if after_using.starts_with('{') {
-        let (commands, new_pos) = crate::shell_block::collect_shell_block(
-            line,
-            tokens,
-            current_pos + 1,
-            source_lines,
-        )?;
-        Ok((
-            CookStep {
-                outputs,
-                using_clause: Some(UsingClause::ShellBlock(commands)),
-            },
-            new_pos,
-        ))
+        // CS-0022 §4.5: one-line shell block support.
+        // `after_using` is the text starting with `{` on the cook line.
+        // Check whether the rest of this span contains the matching `}`.
+        let after_open = &after_using[1..]; // text after the opening `{`
+        if let Some(commands) = crate::shell_block::try_inline_shell_block(after_open) {
+            // Inline block — skip all tokens on this line.
+            let mut new_pos = current_pos + 1;
+            while new_pos < tokens.len() && tokens[new_pos].line <= line {
+                new_pos += 1;
+            }
+            Ok((
+                CookStep {
+                    outputs,
+                    using_clause: Some(UsingClause::ShellBlock(commands)),
+                },
+                new_pos,
+            ))
+        } else {
+            // Multi-line block — delegate to collect_shell_block.
+            let (commands, new_pos) = crate::shell_block::collect_shell_block(
+                line,
+                tokens,
+                current_pos + 1,
+                source_lines,
+            )?;
+            Ok((
+                CookStep {
+                    outputs,
+                    using_clause: Some(UsingClause::ShellBlock(commands)),
+                },
+                new_pos,
+            ))
+        }
     } else if after_using.starts_with('"') {
         Err(ParseError::Parse {
             line,

@@ -2,10 +2,58 @@ use crate::lexer::{Located, Token};
 use crate::lua_block::count_brace_delta;
 use crate::ParseError;
 
+/// Try to extract an inline shell block from the text immediately following
+/// the opening `{`.  `after_open` is the slice of the source line that comes
+/// after the `{` that started the block.
+///
+/// Scans forward tracking brace depth (starting at 1 because the opening `{`
+/// has already been consumed).  If depth reaches 0 on the same span, returns
+/// the content between the opening `{` and the matching `}` (trimmed) as a
+/// one-element (or zero-element) command list.
+///
+/// Returns `None` if the line does not contain a complete balanced block.
+pub(crate) fn try_inline_shell_block(after_open: &str) -> Option<Vec<String>> {
+    let mut depth: i32 = 1;
+    let chars: Vec<char> = after_open.chars().collect();
+    let mut byte_pos: usize = 0;
+    let mut char_idx: usize = 0;
+
+    while char_idx < chars.len() {
+        let c = chars[char_idx];
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    // Found the matching close.
+                    let content = &after_open[..byte_pos];
+                    let trimmed = content.trim();
+                    let commands: Vec<String> = if trimmed.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![trimmed.to_string()]
+                    };
+                    return Some(commands);
+                }
+            }
+            _ => {}
+        }
+        byte_pos += c.len_utf8();
+        char_idx += 1;
+    }
+
+    None // no matching `}` on this span
+}
+
 /// Collects raw source lines for a plain-shell block, tracking brace depth.
 /// Starts after the `{` token (the opening brace is on `open_line`, 1-indexed).
 /// Returns the canonical list of commands: per-line trim, blank lines dropped.
 /// Returns how many tokens to skip past the closing brace line.
+///
+/// One-line form: the caller should detect and handle inline blocks using
+/// `try_inline_shell_block` before calling this function.  This function
+/// handles the multi-line case only (opening `{` on its own line or without
+/// a closing `}` on the same text span).
 pub(crate) fn collect_shell_block(
     open_line: usize,
     tokens: &[Located<Token>],
@@ -89,5 +137,33 @@ mod tests {
         let src = "{\n    echo \"hello { world }\"\n    line2\n}\n";
         let cmds = run(src).expect("ok");
         assert_eq!(cmds.len(), 2);
+    }
+
+    // ── CS-0022 Phase G Item 5: try_inline_shell_block unit tests ──
+
+    #[test]
+    fn cs_0022_inline_block_single_command() {
+        // `after_open` is the text after the opening `{`
+        let result = try_inline_shell_block(" wasm-pack build }");
+        assert_eq!(result, Some(vec!["wasm-pack build".to_string()]));
+    }
+
+    #[test]
+    fn cs_0022_inline_block_empty() {
+        let result = try_inline_shell_block(" }");
+        assert_eq!(result, Some(Vec::<String>::new()));
+    }
+
+    #[test]
+    fn cs_0022_inline_block_with_inner_braces() {
+        // gcc {in} -o {out} } — depth track must handle inner {}
+        let result = try_inline_shell_block(" gcc {in} -o {out} }");
+        assert_eq!(result, Some(vec!["gcc {in} -o {out}".to_string()]));
+    }
+
+    #[test]
+    fn cs_0022_inline_block_no_close_returns_none() {
+        let result = try_inline_shell_block(" wasm-pack build");
+        assert_eq!(result, None);
     }
 }
