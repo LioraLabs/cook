@@ -100,21 +100,21 @@ A `STRING` opens with `U+0022` (`"`), contains zero or more characters none of w
 
 The empty string `""` is a valid `STRING`. A double quote inside a `STRING` is not expressible in the current grammar; authors needing such content can use the inline-block forms of §{lexical.brace-blocks}, whose interior language (Lua or shell) has its own quoting rules.
 
-`STRING` appears in recipe and dependency names, in `ingredients`, `cook`, `plate`, and `test` steps, in the optional name of a `config_block` header, and as the single-string form of `using_clause`. In each of those roles, a conforming implementation parses the `STRING` inside the single line that produced the governing token.
+`STRING` appears in recipe and dependency names, in `ingredients`, `cook`, `plate`, and `test` steps, and in the optional name of a `config_block` header. In each of those roles, a conforming implementation parses the `STRING` inside the single line that produced the governing token. The `using_clause` (§{recipes.cook-single-output}) takes a brace-block form, not a `STRING`; the former single-string form of `using` was removed in CS-0022.
 
 ### Example 2.5.1
 
 ```cook
 recipe "build"
     ingredients "src/*.c" !"src/legacy.c"
-    cook "bin/app" using "gcc {all} -o {out}"
+    cook "bin/app" using { gcc {all} -o {out} }
 ```
 
-Each `"…"` is a `STRING`. The `!"src/legacy.c"` form is an `ingredient` exclusion, not a distinct string class (App. A.4): it is the literal `!` followed by an ordinary `STRING`.
+Each `"…"` is a `STRING`. The `!"src/legacy.c"` form is an `ingredient` exclusion, not a distinct string class (App. A.4): it is the literal `!` followed by an ordinary `STRING`. The `using { … }` clause is a shell block (§{lexical.brace-blocks}), not a `STRING`.
 
 ### Note 2.5.1
 
-The reference implementation of the single-quoted-string parser is in `cli/crates/cook-lang/src/cook_line.rs`, function `parse_single_quoted_string`. The lack of escape processing is observable: the test `test_cook_step_shell` asserts that a `STRING` value containing `{in}` and `{out}` is delivered verbatim to the step.
+The reference implementation of the string parser is in `cli/crates/cook-lang/src/cook_line.rs`, function `parse_single_quoted_string`. The lack of escape processing is observable: the test `test_cook_step_shell` asserts that a `STRING` value is delivered verbatim to the step.
 
 ## 2.6. Comments [#lexical.comments]
 A **comment** is a line whose first non-whitespace character is `#`. The comment extends to the end of the line. A conforming implementation MUST produce a `Comment` token for such a line and MUST NOT treat the `#` character as beginning a comment in any other lexical position.

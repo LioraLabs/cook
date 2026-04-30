@@ -82,7 +82,7 @@ cook.add_unit({
 })
 ```
 
-Records one shell unit with one input and one output. The same registration is produced by the surface form `cook "main.o" using "gcc -c {in} -o {out}"` in a single-output `cook` step (§{recipes.cook-single-output}, §{lua.shell-placeholders}).
+Records one shell unit with one input and one output. The same registration is produced by the surface form `cook "main.o" using { gcc -c {in} -o {out} }` in a single-output `cook` step (§{recipes.cook-single-output}, §{lua.shell-placeholders}).
 
 ### Example 6.2.2
 

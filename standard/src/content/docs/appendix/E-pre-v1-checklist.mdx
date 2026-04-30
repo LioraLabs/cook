@@ -16,21 +16,27 @@ sidebar:
 
 **Resolution path.** Either move `parse.txt` out of the normative corpus into impl-specific fixtures (each implementation owns its own dump checks), or define an impl-agnostic structured AST format (e.g., JSON of a normative shape) so historical tags stay verifiable.
 
-## E.2. `${...}` syntax in `using` and `plate` strings [#pre-v1.template-vs-bash-expansion]
+## E.2. `${...}` syntax in `using` strings [#pre-v1.template-vs-bash-expansion]
 
-**Symptom.** Cook's templater inside `using "..."` and `plate "..."` strings interprets `${VAR}` as its own env-lookup form. Bash's `${VAR:-default}` parameter-expansion form fails: the codegen treats `VAR:-default` as a literal env field name, gets `nil`, and errors during generation. Other parameter-expansion forms (`${VAR%suffix}`, `${VAR/find/replace}`) likely have the same issue.
+**Status.** Substantially resolved in v0.4 by [CS-0022](D-changes#changes-cs-0022).
 
-**Workaround.** Use bare `$VAR` (no braces) inside `using`/`plate` strings — passes through to the spawned shell unmodified. Set defaults in a `config` block: `cook.env.X = cook.env.X or "default"`. Plain shell command lines (raw `Token::Content` steps in a recipe body) are pass-through and accept `${...}` normally — that's why `${VERSION:-$(cat ...)}` works in a regular shell line but breaks in a `plate "..."` template.
+**Original symptom.** Cook's templater inside `using "..."` strings interpreted `${VAR}` as its own env-lookup form, breaking Bash parameter-expansion forms like `${VAR:-default}`.
 
-**Resolution path.** Either pass `${...}` through to shell unchanged in templates (give up the env-lookup form, since `$VAR` already does the same job), or introduce an explicit escape (e.g., `$${VAR:-default}` to mean "literal `${...}` for shell") so bash's full expansion vocabulary is reachable from cook strings.
+**Resolution.** CS-0022 removed the single-string `using "..."` form in favour of `using { … }` shell blocks. Inside a shell block, `{` and `}` are brace-balanced by the Cookfile lexer (§{lexical.brace-blocks}) and the block content is passed verbatim to the shell — Cook's templater never sees the interior. `${VAR:-default}`, `${VAR%suffix}`, and all other Bash parameter-expansion forms work inside a `using { … }` block without any workaround.
+
+**Residual scope.** The `plate "..."` string form is still a Cook-templated string and retains the original symptom. `plate` is not addressed by CS-0022. A future change may either drop `plate "..."` in favour of a block form or introduce explicit passthrough escaping for `${...}`.
 
 ## E.3. Cook strings have no `"` escape [#pre-v1.no-string-escape]
 
-**Symptom.** The string literal in `cook "..."`, `using "..."`, `plate "..."`, `recipe "..."`, etc. is parsed by a routine that finds the first `"` and stops — `\"` is not recognized as an escape. Embedding a literal `"` inside any cook string truncates the string at the first inner `"`, producing surprising and silent behaviour (the truncated command runs, the rest of the line is leftover content).
+**Status.** Partially resolved in v0.4 by [CS-0022](D-changes#changes-cs-0022) for the `using` surface; open for other STRING positions.
 
-**Workaround.** Avoid embedding double quotes in cook strings. Paths without spaces don't need shell-quoting. When shell-quoting is genuinely needed, move the step to a Lua-block `using >{ … }` form: Lua handles its own quoting and `cook.sh` accepts arbitrary strings.
+**Original symptom.** The string literal in `cook "..."`, `using "..."`, `plate "..."`, `recipe "..."`, etc. is parsed by a routine that finds the first `"` and stops — `\"` is not recognized as an escape. Embedding a literal `"` inside any cook string truncates the string at the first inner `"`, producing surprising and silent behaviour (the truncated command runs, the rest of the line is leftover content).
 
-**Resolution path.** Add an escape mechanism — `\"` and `\\` at minimum — to cook string literals. Spec the escape set in §{lexical.strings} and update the lexer's string-parsing routines accordingly.
+**Resolution (partial).** CS-0022 removed `using "..."`. Shell content that previously had to live in a Cook-string is now written inside a `using { … }` block, where the shell's own quoting rules apply and `"` is legal in any shell-valid position.
+
+**Residual scope.** Recipe names, ingredient paths, `cook` output patterns, `plate "..."`, and `test "..."` strings still use unescaped `STRING` (§{lexical.strings}). A `"` in any of those positions remains inexpressible. The resolution path — either an escape mechanism (`\"`, `\\`) or a block form for the affected surfaces — is unchanged from the original entry.
+
+**Workaround (unchanged).** Avoid embedding double quotes in cook strings. When shell-quoting is genuinely needed in a command, use the `using >{ … }` Lua-block form: Lua handles its own quoting and `cook.sh` accepts arbitrary strings.
 
 ## E.4. tree-sitter-cook is stale [#pre-v1.tree-sitter-stale]
 
