@@ -1,0 +1,18 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="libmath" line=1
+      deps: []
+      ingredients: ["src/math/add.c", "src/math/mul.c"]
+      excludes: []
+      steps:
+        Cook outputs=["build/libmath.a"] using=ShellBlock(["ar rcs {out} {in}"])
+    Recipe name="app" line=7
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["build/bin/app"] using=ShellBlock(["gcc -o {out} main.c {libmath}"])
+  chores:

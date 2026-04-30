@@ -1,0 +1,2 @@
+recipe "compile"
+    cook "build/main.o" using "gcc -c main.c -o {out}"

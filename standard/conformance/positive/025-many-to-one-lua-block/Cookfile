@@ -1,0 +1,7 @@
+recipe "bundle"
+    ingredients "src/*.js"
+    cook "dist/bundle.js" using >{
+        local f = io.open(outputs[1], "w")
+        for _, src in ipairs(inputs) do f:write(io.open(src):read("*a")) end
+        f:close()
+    }
