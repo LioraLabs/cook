@@ -46,11 +46,18 @@ A new subsection in §4.5 (or a renumber-creating §4.5.1 "Iteration mode") beco
 
 **Rule.** A cook step's **iteration mode** is determined entirely by its output pattern list, before the `using` clause is consulted:
 
-| Output pattern shape | Mode | Driver |
-|---|---|---|
-| At least one output contains `{in.ACCESSOR}` (own-input accessor) | **One-to-one over own inputs** | The step's resolved `ingredients` list (§4.4) |
-| At least one output contains `{lib.ACCESSOR}` (dep-driven accessor) | **One-to-one over dep outputs** | `lib`'s output list (§5.4.1) |
-| All outputs are literal (no accessor placeholders) | **Many-to-one** | None — one unit runs with the full input list visible |
+| Output pattern shape | Mode | Driver | Units produced |
+|---|---|---|---|
+| At least one output contains `{in.ACCESSOR}` (own-input accessor) | **One-to-one over own inputs** | The step's resolved `ingredients` list (§4.4) | One per input |
+| At least one output contains `{lib.ACCESSOR}` (dep-driven accessor) | **One-to-one over dep outputs** | `lib`'s output list (§5.4.1) | One per `lib` output |
+| All outputs are literal (no accessor placeholders) | **Many-to-one** (also called "non-iterating" — the "one" refers to *one unit*, not one output) | None — one unit runs with the full input list visible | Exactly one |
+
+The mode determines **how many work units the step produces**; it is orthogonal to the cook step's **declared output count**. Either iteration mode can declare 1 or N outputs:
+
+- Single-output one-to-one: `cook "{in.stem}.o"` — N inputs ⇒ N units, each producing 1 output.
+- Multi-output one-to-one ("one-to-many"): `cook "{in.stem}.js" "{in.stem}.wasm"` — N inputs ⇒ N units, each producing 2 outputs.
+- Single-output many-to-one: `cook "build/app"` — any number of inputs ⇒ 1 unit, producing 1 output.
+- Multi-output many-to-one: `cook "out.js" "out.wasm"` — any number of inputs ⇒ 1 unit, producing 2 outputs.
 
 A conforming implementation MUST report a load-time error for a step whose outputs mix iteration sources — e.g., one output bears `{in.stem}` and another bears `{libmath.stem}`, or one is `{in.stem}.o` and another is the literal `final.bin`. All output patterns of a single cook step share one driver.
 
@@ -110,7 +117,56 @@ recipe build
 
 The output pattern's `{in.stem}` simultaneously says "iterate over own ingredients" and "the per-iteration output filename is `build/<stem of input>.o`." There is no separate iteration-trigger keyword; the pattern's accessor placeholder is the trigger.
 
-Multi-output coherence (§3.1's last paragraph) follows naturally: all output patterns of one step must agree on the driver. `cook "{in.stem}.js" "{in.stem}.wasm" using {…}` is a one-to-many step (one input → two outputs); `cook "out.js" "out.wasm" using {…}` is a many-to-many literal-output step.
+Multi-output coherence (§3.1's last paragraph) follows naturally: all output patterns of one step must agree on the driver. `cook "{in.stem}.js" "{in.stem}.wasm" using {…}` is a one-to-many step (one input → two outputs per iteration); `cook "out.js" "out.wasm" using {…}` is a many-to-one step with two literal outputs.
+
+### 3.4.1. Worked examples — the four mode/output combinations
+
+The single iteration rule produces four legal cook-step shapes. The placeholder vocabulary in §3.3 covers each one:
+
+```cook
+# (1) Single-output one-to-one — N inputs ⇒ N units, each producing 1 output.
+recipe compile
+    ingredients "src/*.c"
+    cook "build/{in.stem}.o" using {
+        gcc -c {in} -o {out}
+    }
+
+# (2) Multi-output one-to-one ("one-to-many") — N inputs ⇒ N units, each producing 2 outputs.
+recipe wasm_each
+    ingredients "src/*.rs"
+    cook "build/{in.stem}.js" "build/{in.stem}.wasm" using {
+        wasm-pack build {in}
+        cp pkg/main.js {out_1}
+        cp pkg/main.wasm {out_2}
+    }
+
+# (3) Single-output many-to-one — any number of inputs ⇒ 1 unit, producing 1 output.
+recipe link
+    ingredients "build/*.o"
+    cook "build/app" using {
+        gcc {all} -o {out}
+    }
+
+# (4) Multi-output many-to-one — any number of inputs ⇒ 1 unit, producing 2 outputs.
+recipe gen
+    ingredients "src/*.rs"
+    cook "out.js" "out.wasm" using {
+        wasm-pack build
+        cp pkg/main.js {out_1}
+        cp pkg/main.wasm {out_2}
+    }
+```
+
+In (1) and (3), `{out}` (no index) names the unit's single declared output. In (2) and (4), the unit declares two outputs and `{out}` is rejected; the indexed forms `{out_1}` and `{out_2}` name them in declaration order. In (1) and (2), `{in}` and `{in.ACCESSOR}` are valid (iteration is happening); in (3) and (4), they are rejected and `{all}` is the canonical input-side handle. `{out_N.ACCESSOR}` works identically in any mode that admits `{out_N}` — e.g., `mkdir -p {out_1.dir}` in (4) creates the parent directory of the first declared output.
+
+The dep-driven case (§5.4) is the third one-to-one variant; it parallels (1) and (2) with `{lib.ACCESSOR}` driving the iteration in place of `{in.ACCESSOR}`. Inside the using-clause body, `{in}` still names each iteration item (now sourced from `lib`'s output list), so the body looks identical to the own-input form:
+
+```cook
+recipe install
+    cook "/usr/lib/{libmath.name}" using {
+        cp {in} {out}
+    }
+```
 
 ### 3.5. Lua block bindings (§6.4 unchanged in spirit, refined in scope)
 
