@@ -6,4 +6,3 @@ recipe "build"
     cook "{in.stem}.o" "{libmath.stem}.bin" using {
         do-stuff
     }
-end

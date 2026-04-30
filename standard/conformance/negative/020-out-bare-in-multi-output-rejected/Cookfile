@@ -2,4 +2,3 @@ recipe "build"
     cook "a.js" "a.wasm" using {
         gen --js {out}
     }
-end

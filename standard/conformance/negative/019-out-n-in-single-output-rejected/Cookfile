@@ -2,4 +2,3 @@ recipe "build"
     cook "build/app" using {
         gcc -o {out_1}
     }
-end

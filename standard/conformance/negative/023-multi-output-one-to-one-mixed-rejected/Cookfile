@@ -3,4 +3,3 @@ recipe "build"
     cook "{in.stem}.js" "out.wasm" using {
         gen
     }
-end

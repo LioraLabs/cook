@@ -3,4 +3,3 @@ recipe "build"
     cook "build/{stem}.o" using {
         gcc -c {in} -o {out}
     }
-end
