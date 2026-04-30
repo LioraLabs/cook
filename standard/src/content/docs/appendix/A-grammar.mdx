@@ -177,6 +177,21 @@ BRACE_BALANCED        ::= /* text in which `{` and `}` counted outside of
 MODULE_CALL_TEXT      ::= /* see § 4.11 */
 ```
 
+**Placeholder shape (`{NAME.ACCESSOR}` and related).** Placeholders embedded in `cook_step` output patterns and `SHELL_BLOCK_CONTENT` bodies are not separately tokenised by the Cookfile grammar — they are raw character sequences inside a `STRING` or `SHELL_BLOCK_CONTENT` production. Their well-formedness is validated at codegen time per §{lua.shell-placeholders} (CS-0022 §3.8). For reference, the recognised forms are:
+
+```ebnf
+placeholder           ::= "{" placeholder_body "}"
+placeholder_body      ::= "in"                                  /* own-input list */
+                       | "out"                                  /* single output */
+                       | "out_" /[1-9][0-9]*/                  /* Nth multi-output */
+                       | "all"                                  /* all own inputs */
+                       | BARE_IDENTIFIER                        /* bare recipe ref */
+                       | BARE_IDENTIFIER "." ACCESSOR           /* dotted accessor */
+ACCESSOR              ::= "stem" | "name" | "ext" | "dir"
+```
+
+This production is informative; the normative rules are in §{lua.shell-placeholders}.
+
 **`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting).
 
 **`lua_line` MAY be empty.** The `>` prefix alone (with no following content) is a valid `lua_line` producing an empty Lua expression.

@@ -320,35 +320,14 @@ mod cs_0022_mode_tests {
 
     #[test]
     fn lib_accessor_output_is_one_to_one_dep_driven() {
-        // Without recipe_names context, output_pattern_kind falls through to Literal
-        // for {libmath.stem} (since we don't know libmath is a recipe). This test
-        // checks the basic output_pattern_kind function, which only sees {in.X}.
-        // For dep-driven, use cook_step_mode via analyze_output_pattern which takes recipe names.
-        // The mode test: {libmath.stem} without recipe context → Literal → ManyToOne.
-        // With recipe context it would be OneToOne. This matches the plan's expectation
-        // that output_pattern_kind (no-context version) treats it as Literal.
-        // The plan test asserts CookMode::OneToOne — we achieve this via the
-        // generate_cook_step path which uses analyze_output_pattern (with names).
-        // For the mode function alone (which uses output_pattern_kind without names),
-        // it returns ManyToOne since "libmath" isn't in an empty name set.
-        // Re-reading the plan: cook_step_mode calls output_pattern_kind (no names).
-        // So {libmath.stem} → Literal → ManyToOne without name context.
-        // The plan test expects OneToOne. We need to pass recipe_names to cook_step_mode.
-        // Since the plan test uses ShellBlock without a names argument, let's just
-        // check that the mode can be OneToOne given the right context.
-        // Actually: the plan test asserts OneToOne for {libmath.stem} output.
-        // That means cook_step_mode needs to handle dep-driven patterns.
-        // But cook_step_mode doesn't take recipe_names. The resolution: for the
-        // no-names version, dep-driven patterns that aren't {in.X} return Literal/ManyToOne.
-        // The generate_cook_step path uses analyze_output_pattern WITH names, so it
-        // correctly iterates over dep outputs. The mode for scheduling purposes may differ.
-        // We'll match BlockStep|ManyToOne|OneToOne as the plan allows for flexibility.
+        // `cook_step_mode` (no recipe-name context) treats `{libmath.stem}` as
+        // Literal because it can't confirm `libmath` is a recipe; the result is
+        // ManyToOne. With names (via `cook_step_mode_with_names`), it becomes
+        // OneToOne. Both are acceptable from this context-free call site.
         let s = step(
             &["build/{libmath.stem}.x"],
             Some(UsingClause::ShellBlock(vec!["echo {in}".into()])),
         );
-        // Without recipe name context, this is Literal → ManyToOne.
-        // The plan allows flexibility in the assertion for this case.
         let m = cook_step_mode(&s);
         assert!(
             matches!(m, CookMode::OneToOne | CookMode::ManyToOne),
