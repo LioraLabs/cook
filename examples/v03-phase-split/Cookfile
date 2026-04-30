@@ -110,16 +110,18 @@ recipe interactive-breaks
 recipe full-mixed
     >> print("[register] preparing the build")
     ingredients "kind.tmpl"
-    cook "build/full.txt" using "mkdir -p build && echo done > {out}"
+    cook "build/full.txt" using {
+        mkdir -p build && echo done > {out}
+    }
     > print("[execute] cook step done; reading the output:")
     cat build/full.txt
 
 # ── REJECTED forms — uncomment ONE at a time to see the diagnostic.
 #
 # recipe bad-region
-#     cook "x" using "echo x"
+#     cook "x" using { echo x }
 #     > print("midway")
-#     cook "y" using "echo y"
+#     cook "y" using { echo y }
 # end
 #
 # recipe bad-using

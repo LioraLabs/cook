@@ -11,7 +11,9 @@ config
 
 recipe generate
     ingredients "grammar.js"
-    cook "src/parser.c" using "tree-sitter generate"
+    cook "src/parser.c" using {
+        tree-sitter generate
+    }
 
 chore test
     tree-sitter test
@@ -21,7 +23,9 @@ chore conformance
 
 recipe wasm: generate
     ingredients "grammar.js" "src/parser.c" "src/scanner.c"
-    cook "../standard/public/tree-sitter-cook.wasm" using "mkdir -p ../standard/public && tree-sitter build --wasm . -o {out}"
+    cook "../standard/public/tree-sitter-cook.wasm" using {
+        mkdir -p ../standard/public && tree-sitter build --wasm . -o {out}
+    }
 
 recipe nvim-install: generate
     ingredients "src/parser.c" "src/scanner.c"
