@@ -37,6 +37,20 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'recipe-body region rule (Note 4.4.2) — semantic, not syntactic'],
   ['010-triple-arrow-prefix',
    '>>> reservation (§{lexical.line-prefixes}) — tree-sitter accepts as `>>` + content `>...`'],
+  // CS-0022 Phase G: codegen-only rejections — Cookfile parses cleanly,
+  // rejection is enforced by cook-luagen::generate_with_names_checked.
+  ['017-bare-stem-rejected',
+   'CS-0022: bare {stem} in output pattern — codegen rejection, not syntactic'],
+  ['019-out-n-in-single-output-rejected',
+   'CS-0022: {out_N} in single-output step — codegen rejection, not syntactic'],
+  ['020-out-bare-in-multi-output-rejected',
+   'CS-0022: {out} in multi-output step — codegen rejection, not syntactic'],
+  ['021-mixed-driver-multi-output-rejected',
+   'CS-0022: mixed iteration drivers in multi-output — codegen rejection, not syntactic'],
+  ['022-lib-accessor-in-using-rejected',
+   'CS-0022: {lib.ACCESSOR} inside using-clause body — codegen rejection, not syntactic'],
+  ['023-multi-output-one-to-one-mixed-rejected',
+   'CS-0022: mixed one-to-one + literal output patterns — codegen rejection, not syntactic'],
 ]);
 
 function corpusRoot() {
