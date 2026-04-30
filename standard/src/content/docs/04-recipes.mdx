@@ -103,7 +103,7 @@ The glob language itself — which characters are wildcards, whether `**` matche
 ```cook
 recipe lib
     ingredients "src/*.c" "include/*.h" !"src/lua.c" !"src/luac.c"
-    cook "build/libmath.a" using "ar rcs {out} {all}"
+    cook "build/libmath.a" using { ar rcs {out} {all} }
 ```
 
 The ingredient set is every `.c` file in `src/` and every `.h` file in `include/`, minus `src/lua.c` and `src/luac.c`.
@@ -287,7 +287,7 @@ The command template is a `STRING` and MAY contain the same placeholder set perm
 ```cook
 recipe run-tests
     ingredients "tests/*.c"
-    cook "build/{stem}" using "cc {in} -o {out}"
+    cook "build/{in.stem}" using { cc {in} -o {out} }
     plate "./{out}"
 ```
 
@@ -320,7 +320,7 @@ The required `STRING` is a shell command template. The optional `timeout NUMBER`
 ```cook
 recipe run-tests
     ingredients "tests/*.c"
-    cook "build/{stem}" using "cc {in} -o {out}"
+    cook "build/{in.stem}" using { cc {in} -o {out} }
     test "./{out}" timeout 60 should_fail
 ```
 
@@ -444,7 +444,7 @@ The first two steps are interactive commands: the runtime inherits the user's te
 
 ### Note 4.10.1
 
-`@` embedded inside a `cook` step's `using "..."` template, or elsewhere inside a quoted string, is a literal `@` and does not trigger interactive-step dispatch. The `@` test runs only on the first non-whitespace character of a raw `Content` line. See parser test `test_at_in_cook_using_is_not_interactive`.
+`@` embedded inside a `cook` step's `using { ... }` shell block body, or elsewhere inside a quoted string, is a literal `@` and does not trigger interactive-step dispatch. The `@` test runs only on the first non-whitespace character of a raw `Content` line. See parser test `test_at_in_cook_using_is_not_interactive`.
 
 ### Note 4.10.2
 
