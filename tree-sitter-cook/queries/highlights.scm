@@ -64,9 +64,6 @@
 (cook_step
   outputs: (string) @string.special)
 
-(using_clause
-  command: (string) @string.special)
-
 (plate_step
   command: (string) @string.special)
 

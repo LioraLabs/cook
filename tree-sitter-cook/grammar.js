@@ -1,7 +1,7 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-// tree-sitter-cook claims conformance with Cook Standard v0.4
+// tree-sitter-cook claims conformance with Cook Standard v0.4 + CS-0022
 // (cs-standard/v0.4). See standard/src/content/docs/appendix/A-grammar.mdx
 // for the normative grammar this file mirrors.
 
@@ -167,7 +167,6 @@ module.exports = grammar({
       seq(
         "using",
         choice(
-          field("command", $.string),
           field("lua", $.using_lua_block),
           field("shell", $.shell_block),
         ),
