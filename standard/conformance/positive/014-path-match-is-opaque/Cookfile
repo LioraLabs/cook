@@ -1,11 +1,11 @@
 recipe "compile"
     ingredients "src/a.c"
     cook "build/lib.a" using {
-        ar rcs {out} {in}
+        ar rcs {out} {all}
     }
 
 recipe "link"
     ingredients "build/lib.a"
     cook "build/app" using {
-        cc -o {out} {in}
+        cc -o {out} {all}
     }

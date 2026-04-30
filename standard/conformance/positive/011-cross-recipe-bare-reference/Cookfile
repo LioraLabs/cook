@@ -1,7 +1,7 @@
 recipe "libmath"
     ingredients "src/math/a.c"
     cook "build/libmath.a" using {
-        ar rcs {out} {in}
+        ar rcs {out} {all}
     }
 
 recipe "app"

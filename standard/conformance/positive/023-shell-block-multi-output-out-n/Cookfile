@@ -1,5 +1,5 @@
 recipe "gen"
     ingredients "src/module.idl"
     cook "build/module.js" "build/module.wasm" using {
-        emcc {in} -o {out_1} --wasm {out_2}
+        emcc {all} -o {out_1} --wasm {out_2}
     }
