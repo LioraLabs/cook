@@ -1,0 +1,4 @@
+recipe outer
+    echo before
+    recipe inner
+    echo after

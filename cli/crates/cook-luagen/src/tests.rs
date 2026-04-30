@@ -1,5 +1,6 @@
 use cook_lang::ast::*;
 
+use crate::compile_chore;
 use crate::generate;
 use crate::lua_string::escape_lua_string;
 use crate::template::expand_template_to_lua;
@@ -8,6 +9,7 @@ fn make_cookfile(recipes: Vec<Recipe>) -> Cookfile {
     Cookfile {
         config_blocks: vec![],
         recipes,
+        chores: vec![],
         uses: vec![],
         imports: vec![],
     }
@@ -603,6 +605,7 @@ fn test_use_generates_load_module() {
         recipes: vec![make_recipe("build", vec![], vec![], vec![
             Step::Shell { command: "echo hi".to_string(), line: 2, interactive: false },
         ])],
+        chores: vec![],
         uses: vec![
             UseStatement { module_name: "cpp".to_string(), line: 1 },
         ],
@@ -693,6 +696,7 @@ fn test_multiple_uses_generate_in_order() {
     let cookfile = Cookfile {
         config_blocks: vec![],
         recipes: vec![],
+        chores: vec![],
         uses: vec![
             UseStatement { module_name: "cpp".to_string(), line: 1 },
             UseStatement { module_name: "proto".to_string(), line: 2 },
@@ -1069,6 +1073,7 @@ fn test_codegen_emits_unnamed_config_block() {
             line: 1,
         }],
         recipes: vec![],
+        chores: vec![],
         uses: vec![],
         imports: vec![],
     };
@@ -1086,6 +1091,7 @@ fn test_codegen_emits_named_config_block() {
             line: 1,
         }],
         recipes: vec![],
+        chores: vec![],
         uses: vec![],
         imports: vec![],
     };
@@ -1100,6 +1106,7 @@ fn test_codegen_skips_dispatcher_when_no_config_blocks() {
     let cookfile = Cookfile {
         config_blocks: vec![],
         recipes: vec![],
+        chores: vec![],
         uses: vec![],
         imports: vec![],
     };
@@ -1116,6 +1123,7 @@ fn test_codegen_emits_unnamed_and_named_in_order() {
             ConfigBlock { name: Some("release".to_string()),    body: "rel()".into(),  line: 7 },
         ],
         recipes: vec![],
+        chores: vec![],
         uses: vec![],
         imports: vec![],
     };
@@ -1522,5 +1530,178 @@ fn test_accessor_placeholder_with_driver_in_output_pattern_ok() {
         result.is_ok(),
         "accessor with matching driver should pass, got: {:?}",
         result.err()
+    );
+}
+
+// ── Chore codegen tests (CS-0020 / §4a) ──────────────────────────
+
+fn make_chore(name: &str, deps: Vec<&str>, steps: Vec<Step>) -> Chore {
+    Chore {
+        name: name.to_string(),
+        deps: deps.into_iter().map(String::from).collect(),
+        steps,
+        line: 1,
+    }
+}
+
+#[test]
+fn test_compile_chore_basic_shell_interactive_cache_false() {
+    // §{chores.no-caching}: every unit has cache = false.
+    // §{exec.interactive-drain}: every shell step is interactive.
+    let chore = make_chore(
+        "clean",
+        vec![],
+        vec![Step::Shell {
+            command: "rm -rf build".to_string(),
+            line: 2,
+            interactive: true,
+        }],
+    );
+    let lua = compile_chore(&chore, &[]);
+    assert!(
+        lua.contains("cook.recipe(\"clean\", {}, function()"),
+        "chore should register as recipe, got:\n{lua}"
+    );
+    assert!(
+        lua.contains("interactive = true"),
+        "chore shell step must be interactive, got:\n{lua}"
+    );
+    assert!(
+        lua.contains("cache = false"),
+        "chore unit must have cache = false, got:\n{lua}"
+    );
+    assert!(lua.contains("rm -rf build"), "command missing, got:\n{lua}");
+    // Each shell step is its own unit (no bundling across shells).
+    assert_eq!(
+        lua.matches("cook.add_unit").count(),
+        1,
+        "one shell step → one unit, got:\n{lua}"
+    );
+}
+
+#[test]
+fn test_compile_chore_multiple_shell_steps_not_bundled() {
+    // All shells are interactive, so each is its own draining unit (no coalescing).
+    let chore = make_chore(
+        "setup",
+        vec![],
+        vec![
+            Step::Shell { command: "mkdir -p dist".to_string(), line: 2, interactive: true },
+            Step::Shell { command: "cp -r src dist/".to_string(), line: 3, interactive: true },
+        ],
+    );
+    let lua = compile_chore(&chore, &[]);
+    assert_eq!(
+        lua.matches("cook.add_unit").count(),
+        2,
+        "two shell steps → two units (no coalescing for interactive steps), got:\n{lua}"
+    );
+    assert_eq!(
+        lua.matches("interactive = true").count(),
+        2,
+        "both units must be interactive, got:\n{lua}"
+    );
+    // Both must have cache = false.
+    assert_eq!(
+        lua.matches("cache = false").count(),
+        2,
+        "both units must have cache = false, got:\n{lua}"
+    );
+}
+
+#[test]
+fn test_compile_chore_with_lua_step_cache_false() {
+    // Execute-phase Lua steps in a chore compile to a body unit with cache = false.
+    let chore = make_chore(
+        "status",
+        vec![],
+        vec![Step::Lua {
+            code: r#"print("hello")"#.to_string(),
+            line: 2,
+        }],
+    );
+    let lua = compile_chore(&chore, &[]);
+    assert!(lua.contains(r#"print("hello")"#), "Lua code missing, got:\n{lua}");
+    assert!(
+        lua.contains("cache = false"),
+        "chore Lua body unit must have cache = false, got:\n{lua}"
+    );
+    // Emitted as a body unit, not an interactive command.
+    assert!(lua.contains("lua_code ="), "Lua step should emit lua_code =, got:\n{lua}");
+    assert!(
+        !lua.contains("interactive = true"),
+        "Lua-only step should not be interactive, got:\n{lua}"
+    );
+}
+
+#[test]
+fn test_compile_chore_with_deps() {
+    // Chore deps map to `requires` in the metadata table.
+    let chore = make_chore(
+        "play",
+        vec!["build"],
+        vec![Step::Shell {
+            command: "echo done".to_string(),
+            line: 2,
+            interactive: true,
+        }],
+    );
+    let lua = compile_chore(&chore, &[]);
+    assert!(
+        lua.contains(r#"requires = {"build"}"#),
+        "chore deps should become requires, got:\n{lua}"
+    );
+}
+
+#[test]
+fn test_compile_chore_wraps_with_enter_exit() {
+    // §{chores.no-caching}: codegen wraps body with _enter_chore/_exit_chore
+    // so the runtime can enforce the cache=true ban.
+    let chore = make_chore(
+        "clean",
+        vec![],
+        vec![Step::Shell {
+            command: "rm -rf .tmp".to_string(),
+            line: 2,
+            interactive: true,
+        }],
+    );
+    let lua = compile_chore(&chore, &[]);
+    assert!(lua.contains("cook._enter_chore()"), "missing _enter_chore, got:\n{lua}");
+    assert!(lua.contains("cook._exit_chore()"), "missing _exit_chore, got:\n{lua}");
+    // _enter_chore must appear before the add_unit call.
+    let enter_pos = lua.find("cook._enter_chore()").unwrap();
+    let unit_pos = lua.find("cook.add_unit(").unwrap();
+    let exit_pos = lua.find("cook._exit_chore()").unwrap();
+    assert!(enter_pos < unit_pos, "_enter_chore must come before add_unit");
+    assert!(unit_pos < exit_pos, "add_unit must come before _exit_chore");
+}
+
+#[test]
+fn test_generate_includes_chores() {
+    // generate() must emit register-phase Lua for both recipes and chores.
+    let cookfile = Cookfile {
+        config_blocks: vec![],
+        recipes: vec![make_recipe("build", vec![], vec![], vec![])],
+        chores: vec![make_chore(
+            "clean",
+            vec![],
+            vec![Step::Shell {
+                command: "rm -rf build".to_string(),
+                line: 2,
+                interactive: true,
+            }],
+        )],
+        uses: vec![],
+        imports: vec![],
+    };
+    let lua = generate(&cookfile);
+    assert!(lua.contains("cook.recipe(\"build\""), "recipe missing, got:\n{lua}");
+    assert!(lua.contains("cook.recipe(\"clean\""), "chore missing, got:\n{lua}");
+    // Chore section must have cache = false.
+    let chore_section = lua.split("cook.recipe(\"clean\"").nth(1).unwrap_or("");
+    assert!(
+        chore_section.contains("cache = false"),
+        "chore section must have cache = false, got section:\n{chore_section}"
     );
 }

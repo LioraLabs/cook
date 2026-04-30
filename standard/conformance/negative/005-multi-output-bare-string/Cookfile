@@ -1,3 +1,2 @@
 recipe "bad"
     cook "a.out" "b.out" using "echo no"
-end

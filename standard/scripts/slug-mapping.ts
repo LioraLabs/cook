@@ -54,6 +54,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   // ── Chapter 4 — Recipes and step kinds ────────────────────────────────────
   'sec-4':     'recipes',
   'sec-4-1':   'recipes.header-forms',
+  'sec-4-1-1': 'recipes.termination',
   'sec-4-2':   'recipes.dep-list',
   'sec-4-3':   'recipes.ingredients',
   'sec-4-4':   'recipes.step-kinds',
@@ -64,6 +65,14 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-4-9':   'recipes.lua-steps',
   'sec-4-10':  'recipes.shell-steps',
   'sec-4-11':  'recipes.module-call-steps',
+
+  // ── Chapter 4a — Chores ───────────────────────────────────────────────────
+  'sec-4a':       'chores',
+  'sec-4a-1':     'chores.header',
+  'sec-4a-2':     'chores.body',
+  'sec-4a-3':     'chores.default-interactive',
+  'sec-4a-4':     'chores.no-caching',
+  'sec-4a-5':     'chores.cross-form-deps',
 
   // ── Chapter 5 — Cross-recipe references ───────────────────────────────────
   'sec-5':       'xref',
@@ -128,11 +137,12 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-8-7':   'exec.diagnostic-ordering',
 
   // ── Appendix A — Grammar (normative) ──────────────────────────────────────
-  'sec-A-1':   'grammar-appendix.top-level',
-  'sec-A-2':   'grammar-appendix.declarations',
-  'sec-A-3':   'grammar-appendix.recipes',
-  'sec-A-4':   'grammar-appendix.steps',
-  'sec-A-5':   'grammar-appendix.primitives',
+  'sec-A-1':     'grammar-appendix.top-level',
+  'sec-A-2':     'grammar-appendix.declarations',
+  'sec-A-3':     'grammar-appendix.recipes',
+  'sec-A-3-1':   'grammar-appendix.chore',
+  'sec-A-4':     'grammar-appendix.steps',
+  'sec-A-5':     'grammar-appendix.primitives',
 
   // ── Appendix B — Rationale (informative) ──────────────────────────────────
   'sec-B-0':     'rationale.intro',
@@ -147,10 +157,14 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-B-3-2':   'rationale.ordered-prefix',
   'sec-B-3-7':   'rationale.implicit-header-col0',
   'sec-B-3-8':   'rationale.name-value-shell',
+  'sec-B-3-10':  'rationale.implicit-end',
   'sec-B-4':     'rationale.recipes',
   'sec-B-4-6':   'rationale.multi-output-using-error',
   'sec-B-4-7':   'rationale.plate-single-template',
   'sec-B-4-11':  'rationale.module-call-heuristic',
+  'sec-B-4-14':  'rationale.chore-form-not-flag',
+  'sec-B-4-15':  'rationale.chore-banned-steps',
+  'sec-B-4-16':  'rationale.chore-default-interactive',
   'sec-B-5':     'rationale.exec',
   'sec-B-5-1':   'rationale.register-phase-pure',
   'sec-B-5-2':   'rationale.interactive-drain',
@@ -175,4 +189,5 @@ export const SLUG_MAPPING: Record<string, string> = {
 
   // ── Appendix D — Changes (informative) ───────────────────────────────────
   'sec-D-10':  'changes.cs-0010',
+  'sec-D-20':  'changes.cs-0020',
 };

@@ -2,10 +2,10 @@
 
 [
   "recipe"
+  "chore"
   "config"
   "use"
   "import"
-  "end"
   "ingredients"
   "cook"
   "plate"
@@ -23,8 +23,13 @@
 (explicit_recipe_header
   name: (string) @function.builtin)
 
-(implicit_recipe_header
+; ── Chore headers ───────────────────────────────────────────────
+
+(chore_header
   name: (identifier) @function.builtin)
+
+(chore_header
+  name: (string) @function.builtin)
 
 ; ── Dependencies ────────────────────────────────────────────────
 

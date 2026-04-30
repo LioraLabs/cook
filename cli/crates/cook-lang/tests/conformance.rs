@@ -150,6 +150,21 @@ fn format_cookfile(c: &Cookfile) -> String {
             out.push_str(&format!("        {}\n", format_step(s)));
         }
     }
+
+    out.push_str("  chores:\n");
+    for ch in &c.chores {
+        out.push_str(&format!(
+            "    Chore name={} line={}\n",
+            repr(&ch.name),
+            ch.line,
+        ));
+        out.push_str(&format!("      deps: {}\n", repr_list(&ch.deps)));
+        out.push_str("      steps:\n");
+        for s in &ch.steps {
+            out.push_str(&format!("        {}\n", format_step(s)));
+        }
+    }
+
     out
 }
 

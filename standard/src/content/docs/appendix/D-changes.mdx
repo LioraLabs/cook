@@ -9,6 +9,7 @@ sidebar:
 
 ## Versions
 
+- **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
 - **v0.3** (`cs-standard/v0.3`, 2026-04-28) — CS-0015, CS-0016, CS-0017
 - **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013, CS-0014
 - **v0.1** (`cs-standard/v0.1`, 2026-04-22..2026-04-24) — CS-0001 through CS-0010
@@ -222,5 +223,61 @@ A module function loaded into the execute-phase VM that calls register-only API 
 **Why:** Before CS-0017, the only way to invoke a `use`-d module function from imperative-region Lua was to (a) re-resolve it manually via `cook.load_module(...)` on the worker VM (which wasn't even installed there) or (b) wrap it in a register-phase call that records a unit. Both were verbose and asymmetric. CS-0017 collapses the asymmetry: `use` means "bring this alias into scope," period. Whether a given function call lands in the declarative or imperative region is decided by the recipe-body region rule (§{recipes.step-kinds}, Note 4.4.2), and the alias is bound either way.
 
 **Implementation status.** Lockstep — codegen, worker VM, and spec land together. New positive conformance fixture (`017-use-from-execute`) pins the AST shape; the codegen-side and runtime-side checks are in `cook-luagen/tests/conformance.rs` and the runnable demo in `examples/v03-phase-split/Cookfile` (recipes `module-call-execute` and `module-via-require`).
+
+**Reference:** this commit.
+
+## D.18. CS-0018 — Drop the `name:` recipe header form. [#changes.cs-0018]
+
+**Date:** 2026-04-29
+**Version:** v0.4
+**Sections affected:** §{lexical.source-representation} (§2.1); §{lexical.line-classification} (test 12 deleted, test 13 renumbered to 12); §{grammar.recipe-syntax} (two-alternative `recipe_header` collapsed to one); §{recipes.header-forms} (§4.1 rewritten: table and two-form prose removed, Note 4.1.2 removed); §{recipes.dep-list} (Note 4.2.1 deleted); App. A.3 (EBNF: `explicit | bare-colon` alternatives collapsed to single production; "Implicit header constraint" deleted); App. B.3.7 (deleted — rationale for the column-0 anchor no longer applies); App. E.6 (resolved).
+
+**Summary:** Removes the `BARE_IDENTIFIER ":" dependency_list?` recipe header form (previously called the "implicit" form). The `recipe_header` production is now a single alternative: `"recipe" name (":" dependency_list)?`. The form had zero in-repo usage, created a silent typo vector (an accidental `name: value` line at column 0 silently parsed as a recipe named `name` with dep `value`), and the only published rationale (App. B.3.7) was defensive — it justified only the column-0 anchor that made the form less dangerous, not the form's existence. Removing the form eliminates the anchor rule, the "Implicit header constraint" in App. A.3, and the B.3.7 rationale subsection. The lexer's line-classification cascade loses the column-0 `BARE_IDENTIFIER ":"` test and renumbers.
+
+The parser-side change (delete the implicit-form lex branch and six pinned parser tests, add a negative conformance fixture under `standard/conformance/negative/`) lands as Task 2 of the same v0.4 plan.
+
+**Implementation status.** Spec-side only in this commit. Parser-side in Task 2 of the same plan.
+
+**Reference:** this commit.
+
+## D.19. CS-0019 — Drop `end`; implicit termination by next top-level keyword or EOF. [#changes.cs-0019]
+
+**Date:** 2026-04-29
+**Version:** v0.4
+**Sections affected:** §{lexical.tokens} (Token table — `RecipeEnd` removed); §{lexical.keywords} (column-0 enforcement on top-level keywords; `end` removed from the keyword list); §{lexical.line-classification} (cascade test for bare `end` removed); §{grammar.config-blocks} (closing `end` requirement removed; `config_block` form definition updated); §{grammar.recipe-syntax} (closing `end` requirement removed; `recipe` form definition updated); §{recipes.termination} (new §4.1.1; slug new); App. A.2 `config_block` production (drop `"end" NEWLINE`); App. A.3 `recipe` production (drop `"end" NEWLINE?`); App. A.5 `LUA_SOURCE` definition (rephrased); App. B.3.10 (new — implicit-termination rationale, slug new).
+
+**Summary:** A `recipe_body` and `config_body` extend from the line after the introducing header up to (but not including) the next column-0 line whose first whitespace-separated token is `recipe`, `config`, `use`, or `import`, or end-of-file (whichever comes first). The closing `end` keyword is removed entirely from the language. A bare `end` line is now a `Token::Content`: at top level it is rejected (§{grammar.overview}); inside a recipe body it dispatches as a `shell_command` running the literal command `end`. The lexer is tightened to require column 0 for the four top-level keywords; an indented `recipe foo` line inside a recipe body is no longer misclassified as a header.
+
+**Why:** `end` was ceremony — every author wrote it without thinking, and the parser had no need for it that the next top-level construct or EOF could not serve. App. B.3.10 records the full rationale.
+
+**Implementation status.** Spec-side only in this commit. The conformance-corpus migration (strip trailing `end` from every Cookfile fixture), the Rust parser change (drop `Token::RecipeEnd`, column-0 enforcement, body-by-implicit-termination), and the tree-sitter grammar update (drop `"end"` from `recipe` and `config_block` rules) are Tasks 5–8 of the v0.4 plan and land in subsequent commits.
+
+**Reference:** this commit.
+
+## D.20. CS-0020 — Add `chore` as a sibling of `recipe`. [#changes.cs-0020]
+
+**Date:** 2026-04-29
+**Version:** v0.4
+**Sections affected:** §{chores} (new chapter §4a, slug new); §{chores.header} / §{chores.body} / §{chores.default-interactive} / §{chores.no-caching} / §{chores.cross-form-deps} (new); §{lexical.keywords} (`chore` added to top-level keyword set, column-0 enforced); §{lexical.line-classification} (new cascade test for `chore` keyword, test count 11 → 12); §{grammar.overview} and §{grammar.top-level-ordering} (acknowledge `chore` as peer of `recipe`); App. A.1 `toplevel_item` alternation (gain `chore`); App. A.3.1 (new `chore` production with smaller body alternation, three normative paragraphs: step-kind ban, default-interactive, no-caching); App. B.4.14/15/16 (new — sibling-not-flag, why-the-four-bans, why-default-interactive).
+
+**Summary:** A `chore` is a top-level form parallel to `recipe` for command-runner-shaped bodies. A chore body MAY contain `inline_lua_line`, `inline_lua_block`, `lua_line`, `lua_block`, `module_call`, `interactive_command`, and `shell_command`, but MUST NOT contain `ingredients_step`, `cook_step`, `plate_step`, or `test_step`. Every `shell_command` in a chore body is treated as `interactive` (default-interactive); the `@` marker is preserved as a no-op for symmetry with recipe bodies. A unit registered from inside a chore body MUST set `cache = false`; the runtime raises if a register-phase call would record `cache = true` from a chore context.
+
+The chore-vs-recipe distinction is purely an authoring/static-checking layer over the existing engine. A chore compiles to register-phase Lua identical in shape to a recipe with no cook step and `interactive = true` on every shell unit. App. B.4.14–4.16 record the rationale: keyword-as-intent-carrier, naturally-grammatical step-kind ban, peer-keyword reflects peer-semantics.
+
+**Implementation status.** Spec-side only in this commit. The Rust parser (`Token::ChoreHeader`, `Chore` AST struct, `parse_chore`), codegen + runtime (chore-as-recipe-with-default-interactive + cache=false ban), tree-sitter grammar (chore rule with `_chore_item` alternation), and 6 conformance fixtures (3 positive, 3 negative) land in Tasks 10–13 of the v0.4 plan.
+
+**Reference:** this commit.
+
+## D.21. CS-0021 — Standard cut: v0.4. [#changes.cs-0021]
+
+**Date:** 2026-04-29
+**Version:** v0.4
+**Sections affected:** `standard/VERSION` (`0.3` → `0.4`); App. D Versions index (new v0.4 entry); this entry. App. E entries E.5, E.6, E.7 marked resolved with cross-links to CS-0019, CS-0018, CS-0020 respectively.
+
+**Summary:** Cuts the Cook Standard at v0.4. Per the cut procedure in `CONTRIBUTING.md` (and §{intro.version}), this entry plus the v0.4 row in the Versions index plus a `cs-standard/v0.4` git tag at the merge commit constitute the published cut. v0.4 batches CS-0018, CS-0019, and CS-0020 — the three pre-1.0 checklist items from App. E that compose into "recipe-form simplification + chore". E.5 (drop `end`), E.6 (drop implicit header), E.7 (chore as sibling) all close.
+
+The conformance corpus's `parse.txt` files change format in this cut: `format_cookfile` adds a `chores:` section per Cookfile, so every existing positive fixture's `parse.txt` gained a `chores:` line in CS-0020. Per CONTRIBUTING.md's rule on parse-format-altering cuts, the `cs-standard/v0.4` tag is force-moved to the merge commit where the parser and the corpus agree. `cs-standard/v0.3` and earlier tags are left in place as historical records.
+
+**Implementation status.** Authoring + tagging step. No prose changes beyond the Versions index, this entry, and the App. E resolution markers.
 
 **Reference:** this commit.

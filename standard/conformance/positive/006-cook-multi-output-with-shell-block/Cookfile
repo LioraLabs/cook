@@ -3,4 +3,3 @@ recipe "gen"
         echo one
         echo two
     }
-end

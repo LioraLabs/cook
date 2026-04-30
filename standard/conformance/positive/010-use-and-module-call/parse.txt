@@ -9,3 +9,4 @@ Cookfile
       excludes: []
       steps:
         InlineLua code="cpp.bin(\"colorize\", { sources = { \"src/colorize.c\" } })"
+  chores:

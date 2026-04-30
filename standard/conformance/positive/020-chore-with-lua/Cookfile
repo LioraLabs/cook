@@ -1,0 +1,4 @@
+chore status
+    >> local hostname = "localhost"
+    > print("status check: " .. cook.env.HOST)
+    @uname -a

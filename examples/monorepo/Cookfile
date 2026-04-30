@@ -2,19 +2,15 @@ use pnpm
 
 recipe install
     pnpm.install()
-end
 
 recipe build: install
     pnpm.run("build")
-end
 
 recipe check: build
     ingredients ""
     pnpm.run("test")
     cook "" using "packages/monorepo-a/Cookfile"
     serve ""
-end
 
-recipe clean
+chore clean
     rm -rf packages/*/dist packages/*/.cook .cook
-end

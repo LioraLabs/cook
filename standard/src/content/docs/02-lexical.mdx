@@ -11,7 +11,7 @@ A Cookfile is a sequence of Unicode characters encoded as UTF-8. A conforming im
 
 Lexical analysis is **line-oriented**: the source is divided into lines by the newline character `U+000A` (`\n`), and each line is classified independently as a single token (§{lexical.tokens}). A conforming implementation MUST accept `\r\n` as a line terminator by treating the carriage return as part of the preceding line's trailing whitespace, which is trimmed before classification (§{lexical.line-classification}). The final line of the source need not be terminated by `\n`.
 
-Leading and trailing whitespace on a line are not significant to token classification, with the following exceptions already stated in App. A: column-zero positioning distinguishes an `implicit_header` from a `shell_command` (App. A.3), and leading whitespace is preserved inside brace-balanced block bodies (§{lexical.brace-blocks}) because the body is reassembled from the raw source lines. In all other cases, a line is trimmed of leading and trailing whitespace before its prefix is tested (§{lexical.line-prefixes}, §{lexical.line-classification}).
+Leading and trailing whitespace on a line are not significant to token classification, with the following exception already stated in §{lexical.brace-blocks}: leading whitespace is preserved inside brace-balanced block bodies (§{lexical.brace-blocks}) because the body is reassembled from the raw source lines. In all other cases, a line is trimmed of leading and trailing whitespace before its prefix is tested (§{lexical.line-prefixes}, §{lexical.line-classification}).
 
 ### Note 2.1.1
 
@@ -25,11 +25,10 @@ The token classes produced by the lexer are:
 | Token class            | Produced for                                                                 | Defined in |
 |---|---|---|
 | `Comment`              | Line whose first non-whitespace character is `#`                              | §{lexical.comments}      |
-| `RecipeHeader`         | Explicit `recipe` line or column-zero `BARE_IDENTIFIER ":" …`                 | §{grammar.recipe-syntax}      |
+| `RecipeHeader`         | Line beginning with keyword `recipe` followed by a separator                  | §{grammar.recipe-syntax}      |
 | `ConfigHeader`         | Line `config` or `config` + name                                              | §{grammar.config-blocks}      |
 | `UseDecl`              | Line `use` + name                                                             | §{grammar.use-declarations}      |
 | `ImportDecl`           | Line `import` + `BARE_IDENTIFIER` + path                                      | §{grammar.import-declarations}      |
-| `RecipeEnd`            | Line whose only non-whitespace content is `end`                               | §{grammar.recipe-syntax}      |
 | `LuaLine`              | Line whose first non-whitespace characters are `>` (but not `>{`)             | §{lexical.line-prefixes}, §{recipes.lua-steps} |
 | `LuaBlockOpen`         | Line whose first non-whitespace characters are `>{`                           | §{lexical.line-prefixes}, §{lexical.brace-blocks} |
 | `Blank`                | Line containing only whitespace                                               | §{lexical.line-classification}     |
@@ -65,7 +64,6 @@ Where the grammar admits either a `BARE_IDENTIFIER` or a double-quoted `STRING` 
 ```cook
 recipe backend.build: lib setup
     gcc -o lib.o lib.c
-end
 ```
 
 `backend.build` is a valid `BARE_IDENTIFIER` (dot is an interior character). `lib` and `setup` are valid `BARE_IDENTIFIER` dependency names. The final segment `build` is not a reserved recipe segment (§{lexical.keywords}), so the header is accepted.
@@ -85,7 +83,7 @@ The Cookfile language reserves seven identifiers contextually, each in a single 
 
 A conforming implementation MUST reject a recipe whose name's final dot-separated segment is a reserved recipe segment (App. A.2). A reserved recipe segment MAY appear as a non-final segment — for example, `backend.build` is valid because `build` is the final segment, whereas `backend.stem` is rejected because `stem` is the final segment.
 
-The keywords that introduce other top-level or recipe-body productions — `recipe`, `config`, `end`, `ingredients`, `cook`, `plate`, `using`, `use`, `import`, `test` — are recognised as keywords only when followed by a keyword separator (space, tab, or `"`). A `Content` line whose first word is one of these keywords followed directly by other identifier characters (for example, `cooking`, `testify`) is a `shell_command`. The dispatch rule is normative in App. A.4.
+The keywords that introduce other top-level or recipe-body productions — `recipe`, `chore`, `config`, `ingredients`, `cook`, `plate`, `using`, `use`, `import`, `test` — are recognised as keywords only when followed by a keyword separator (space, tab, or `"`). Among these, the **top-level keywords** `recipe`, `chore`, `config`, `use`, and `import` are recognised as keywords only when their line begins at column 0 (no leading whitespace); an indented line whose first word is a top-level keyword is a `Content` token, dispatched per §{grammar.step-dispatch}. The recipe-body keywords (`ingredients`, `cook`, `plate`, `test`, `using`) are not subject to the column-0 rule.
 
 ### Note 2.4.1
 
@@ -110,7 +108,6 @@ The empty string `""` is a valid `STRING`. A double quote inside a `STRING` is n
 recipe "build"
     ingredients "src/*.c" !"src/legacy.c"
     cook "bin/app" using "gcc {all} -o {out}"
-end
 ```
 
 Each `"…"` is a `STRING`. The `!"src/legacy.c"` form is an `ingredient` exclusion, not a distinct string class (App. A.4): it is the literal `!` followed by an ordinary `STRING`.
@@ -134,7 +131,6 @@ A `Comment` token is accepted anywhere a `toplevel_item` (App. A.1) or a `recipe
 recipe "build"
     # indented comment: also a Comment token
     gcc -o main main.c   # not a comment — part of the shell command
-end
 ```
 
 The first two `#` lines produce `Comment` tokens. The `# not a comment` sequence on the third source line is part of the `Content` token for the `gcc` command; its treatment is up to the shell runtime (§{xref}).
@@ -171,7 +167,6 @@ recipe build
     }
     @vim .cook/notes.txt
     gcc -o main main.c
-end
 ```
 
 The `>>` line produces an `InlineLuaLine` token (register-phase). The `>>{` line produces an `InlineLuaBlockOpen` token (register-phase). The `>` line produces a `LuaLine` token (execute-phase). The `>{` line produces a `LuaBlockOpen` token (execute-phase). The `@vim …` and `gcc …` lines both produce `Content` tokens; the former dispatches to `interactive_command` in §{recipes.shell-steps}, the latter to `shell_command`.
@@ -196,7 +191,6 @@ No other step kind accepts a bare `NUMBER`; digits that appear inside a shell co
 ```cook
 recipe "run-tests"
     test "./{out}" timeout 30 should_fail
-end
 ```
 
 `30` is a `NUMBER` denoting a 30-second timeout.
@@ -236,7 +230,6 @@ recipe "build"
         wasm-pack build
         cp out/main.js out.js
     }
-end
 ```
 
 The `>{ … }` block's body includes the `if`/`end` structure and the nested table `{1, 2, 3}`; the braces inside the string `"a { brace in a string }"` and after the `--` comment are ignored by the brace counter. The `using { … }` block's body, after line normalisation, is the two-element command list `["wasm-pack build", "cp out/main.js out.js"]`.
@@ -248,7 +241,7 @@ The governing examples are the tests `test_lua_block_nested_braces`, `test_lua_b
 ## 2.10. Line classification cascade [#lexical.line-classification]
 For each source line, a conforming implementation MUST classify the line into exactly one token by applying the following tests in order, with the first matching test winning. The line's trimmed form (leading and trailing whitespace removed) is the subject of each test except where noted.
 
-A **keyword separator** in tests 6–8 below is a space (`U+0020`), a tab (`U+0009`), or a double quote (`U+0022`). The double quote is admitted so that authors can write `recipe "foo"` with no space between the keyword and the opening quote of a quoted name; the quote is not consumed by the keyword test and remains available to the `STRING` parser (§{lexical.strings}). Test 9 (`import`) admits only space or tab: no quoted form exists for the `import` alias (App. A.2).
+A **keyword separator** in tests 7–11 below is a space (`U+0020`), a tab (`U+0009`), or a double quote (`U+0022`). The double quote is admitted so that authors can write `recipe "foo"` with no space between the keyword and the opening quote of a quoted name; the quote is not consumed by the keyword test and remains available to the `STRING` parser (§{lexical.strings}). Test 11 (`import`) admits only space or tab: no quoted form exists for the `import` alias (App. A.2).
 
 1. If the trimmed line is empty, the token is `Blank`.
 2. If the trimmed line's first character is `#`, the token is `Comment` (§{lexical.comments}).
@@ -256,31 +249,29 @@ A **keyword separator** in tests 6–8 below is a space (`U+0020`), a tab (`U+00
 4. If the trimmed line begins with `>>` (but not `>>{`, by test 3), the token is `InlineLuaLine` (§{lexical.line-prefixes}, §{recipes.lua-steps}).
 5. If the trimmed line begins with `>{`, the token is `LuaBlockOpen` (§{lexical.line-prefixes}, §{lexical.brace-blocks}, §{recipes.lua-steps}).
 6. If the trimmed line begins with `>` (but not `>>` by test 4 or `>{` by test 5), the token is `LuaLine` (§{lexical.line-prefixes}, §{recipes.lua-steps}).
-7. If the trimmed line is exactly `end`, the token is `RecipeEnd` (§{grammar.recipe-syntax}).
-8. If the trimmed line begins with the keyword `recipe` followed by a keyword separator, the token is `RecipeHeader` (§{grammar.recipe-syntax}).
-9. If the trimmed line is exactly `config`, or begins with `config` followed by a keyword separator, the token is `ConfigHeader` (§{grammar.config-blocks}).
-10. If the trimmed line begins with `use` followed by a keyword separator, the token is `UseDecl` (§{grammar.use-declarations}).
-11. If the trimmed line begins with `import` followed by a whitespace separator (space or tab only; not `"`), the token is `ImportDecl` (§{grammar.import-declarations}).
-12. If the original (untrimmed) line has no leading whitespace — it starts at column 0 — and its trimmed form is `BARE_IDENTIFIER ":"` optionally followed by a dependency list, the token is `RecipeHeader` via the implicit-header form (App. A.3).
-13. Otherwise, the token is `Content`. Its further classification as `ingredients_step`, `cook_step`, `plate_step`, `test_step`, `module_call`, `interactive_command`, or `shell_command` is the concern of the step-dispatch cascade in App. A.4 and is made only inside a recipe body.
+7. If the line begins at column 0 and the trimmed content begins with the keyword `recipe` followed by a keyword separator, the token is `RecipeHeader` (§{grammar.recipe-syntax}). An indented line whose trimmed content begins with `recipe` falls through to test 12.
+8. If the line begins at column 0 and starts with `chore` followed by a separator (space, tab, or `"`), the token is `ChoreHeader`. The keyword separator rule of §{lexical.keywords} applies: `chores_cleanup` (no separator after `chore`) is not a `ChoreHeader`. (CS-0020 / v0.4.)
+9. If the line begins at column 0 and the trimmed content is exactly `config`, or begins with `config` followed by a keyword separator, the token is `ConfigHeader` (§{grammar.config-blocks}). An indented line falls through to test 12.
+10. If the line begins at column 0 and the trimmed content begins with `use` followed by a keyword separator, the token is `UseDecl` (§{grammar.use-declarations}). An indented line falls through to test 12.
+11. If the line begins at column 0 and the trimmed content begins with `import` followed by a whitespace separator (space or tab only; not `"`), the token is `ImportDecl` (§{grammar.import-declarations}). An indented line falls through to test 12.
+12. Otherwise, the token is `Content`. Its further classification as `ingredients_step`, `cook_step`, `plate_step`, `test_step`, `module_call`, `interactive_command`, or `shell_command` is the concern of the step-dispatch cascade in App. A.4 and is made only inside a recipe body.
 
-The ordering is significant. In particular, the four Lua-prefix tests (3–6) MUST appear in longest-prefix order — `>>{` before `>>` before `>{` before `>` — so that a longer prefix is never consumed as a shorter one followed by a literal character (§{lexical.line-prefixes}). Tests 8–11 MUST require a separator so that identifiers whose first word merely starts with a keyword (for example, `recipes_cleanup`, `configure`, `useful`, `important`) fall through to test 13 and are not misclassified as declarations.
+The ordering is significant. In particular, the four Lua-prefix tests (3–6) MUST appear in longest-prefix order — `>>{` before `>>` before `>{` before `>` — so that a longer prefix is never consumed as a shorter one followed by a literal character (§{lexical.line-prefixes}). Tests 7–11 apply only to lines beginning at column 0, and MUST require a separator so that identifiers whose first word merely starts with a keyword (for example, `recipes_cleanup`, `chores_cleanup`, `configure`, `useful`, `important`) fall through to test 12 and are not misclassified as declarations.
 
-A trimmed line beginning with three or more consecutive `>` characters (`>>>`, `>>>>`, etc.) does not match any of tests 3–6 and is reserved (§{lexical.line-prefixes}). A conforming implementation MUST reject such a line with a parse error rather than fall through to test 13.
+A trimmed line beginning with three or more consecutive `>` characters (`>>>`, `>>>>`, etc.) does not match any of tests 3–6 and is reserved (§{lexical.line-prefixes}). A conforming implementation MUST reject such a line with a parse error rather than fall through to test 12.
 
-Tests 1–11 and 13 apply to lines whether or not they are indented; only test 12 (implicit recipe header) is sensitive to column-0 positioning, by the constraint in App. A.3.
+Tests 1–6 and test 12 apply to lines whether or not they are indented. Tests 7–11 are sensitive to column-0 positioning: an indented line whose first non-whitespace content would otherwise match a top-level keyword test falls through to test 12 and is classified as `Content`.
 
 ### Example 2.10.1
 
 ```cook
-use "cpp"                 # test 10: UseDecl
-config debug              # test 9:  ConfigHeader
+use "cpp"                 # test 10: UseDecl (column 0)
+config debug              # test 9:  ConfigHeader (column 0)
     env.CC = "gcc"
-end
 
-build: lib setup          # test 12: implicit-header RecipeHeader
+recipe build: lib setup   # test 7:  RecipeHeader (column 0)
     # test 2: Comment
-    ingredients "src/*.c" # test 13: Content (step-dispatched to ingredients_step)
+    ingredients "src/*.c" # test 12: Content (step-dispatched to ingredients_step)
     >>{                   # test 3:  InlineLuaBlockOpen (register-phase)
         cook.env.CFLAGS = "-Wall"
     }
@@ -289,6 +280,5 @@ build: lib setup          # test 12: implicit-header RecipeHeader
         print("hi")
     }
     > os.exit(0)          # test 6:  LuaLine (execute-phase)
-    recipes_cleanup       # test 13: Content (falls through test 8 — no separator)
-end
+    recipes_cleanup       # test 12: Content (falls through test 7 — no separator)
 ```

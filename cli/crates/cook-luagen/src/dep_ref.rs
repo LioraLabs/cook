@@ -131,6 +131,7 @@ mod tests {
         Cookfile {
             config_blocks: vec![],
             recipes,
+            chores: vec![],
             uses: vec![],
             imports: vec![],
         }

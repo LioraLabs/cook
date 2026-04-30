@@ -1,0 +1,10 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+    Chore name="clean" line=1
+      deps: []
+      steps:
+        Shell interactive=true command="rm -rf build"

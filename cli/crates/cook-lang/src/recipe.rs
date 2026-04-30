@@ -80,31 +80,42 @@ pub(crate) fn parse_config_block_lua(
     open_line: usize,
     source_lines: &[&str],
 ) -> Result<(String, usize), ParseError> {
-    // Find the closing `end` token; collect source lines between the header and `end`.
+    // CS-0019: scan to the next column-0 top-level keyword or EOF.
+    // The terminating token is left in place for parse() to dispatch.
     let mut pos = start;
     while pos < tokens.len() {
-        if matches!(&tokens[pos].value, Token::RecipeEnd) {
-            let end_line = tokens[pos].line; // 1-indexed
-            // Source lines between open_line (exclusive) and end_line (exclusive).
-            // open_line is 1-indexed; source_lines is 0-indexed.
-            let start_idx = open_line; // line after the header
-            let end_idx = end_line.saturating_sub(1); // line of `end`, exclusive
-
-            let body = if start_idx < end_idx && end_idx <= source_lines.len() {
-                source_lines[start_idx..end_idx].join("\n")
-            } else {
-                String::new()
-            };
-
-            return Ok((body, pos + 1));
+        match &tokens[pos].value {
+            Token::RecipeHeader { .. }
+            | Token::ChoreHeader { .. }
+            | Token::ConfigHeader { .. }
+            | Token::UseDecl { .. }
+            | Token::ImportDecl { .. } => break,
+            _ => pos += 1,
         }
-        pos += 1;
     }
 
-    Err(ParseError::Parse {
-        line: open_line,
-        message: "config block was not closed with 'end'".to_string(),
-    })
+    let end_line = if pos < tokens.len() {
+        tokens[pos].line
+    } else {
+        source_lines.len() + 1
+    };
+
+    let start_idx = open_line; // 1-indexed line of header; body starts at the next line
+    let end_idx = end_line.saturating_sub(1);
+    let body = if start_idx < end_idx && end_idx <= source_lines.len() {
+        // Trim trailing blank lines so that a blank separator between the
+        // config block body and the next keyword does not become part of
+        // the body (consistent with v0.3 explicit-`end` behaviour).
+        let lines = &source_lines[start_idx..end_idx];
+        let trimmed_end = lines.iter().rposition(|l| !l.trim().is_empty())
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        lines[..trimmed_end].join("\n")
+    } else {
+        String::new()
+    };
+
+    Ok((body, pos))
 }
 
 pub(crate) fn parse_recipe(
@@ -137,8 +148,14 @@ pub(crate) fn parse_recipe(
     while pos < tokens.len() {
         let tok = &tokens[pos];
         match &tok.value {
-            Token::RecipeEnd => {
-                pos += 1;
+            // CS-0019: implicit termination — the next column-0 top-level
+            // keyword closes the body. The token is left in place so that
+            // parse() dispatches it as the next toplevel_item.
+            Token::RecipeHeader { .. }
+            | Token::ChoreHeader { .. }
+            | Token::ConfigHeader { .. }
+            | Token::UseDecl { .. }
+            | Token::ImportDecl { .. } => {
                 return Ok((
                     Recipe {
                         name,
@@ -299,35 +316,168 @@ pub(crate) fn parse_recipe(
                 });
                 pos = new_pos;
             }
-            Token::RecipeHeader { .. } => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: format!("recipe '{}' was not closed with 'end'", name),
-                });
+        }
+    }
+
+    // CS-0019: EOF terminates a body. No "missing end" error in v0.4.
+    Ok((
+        Recipe {
+            name,
+            deps,
+            ingredients,
+            excludes,
+            steps,
+            line: recipe_line,
+        },
+        pos,
+    ))
+}
+
+pub(crate) fn parse_chore(
+    name: String,
+    deps: Vec<String>,
+    chore_line: usize,
+    tokens: &[Located<Token>],
+    start: usize,
+    source_lines: &[&str],
+) -> Result<(Chore, usize), ParseError> {
+    let mut pos = start;
+    let mut steps: Vec<Step> = Vec::new();
+    let mut imperative_began: Option<usize> = None;
+
+    let region_violation = |kind: &str, step_line: usize, started_line: usize| ParseError::Parse {
+        line: step_line,
+        message: format!(
+            "{} step on line {} is not allowed after the imperative region began on line {}",
+            kind, step_line, started_line
+        ),
+    };
+
+    let chore_banned = |keyword: &str, line: usize| -> ParseError {
+        let kind_descriptor = match keyword {
+            "ingredients" => "inputs",
+            "cook"        => "outputs",
+            "plate"       => "plated outputs",
+            "test"        => "tested outputs",
+            _             => "targets",
+        };
+        ParseError::Parse {
+            line,
+            message: format!(
+                "'{}' is not allowed in a chore; use 'recipe' for build {}",
+                keyword, kind_descriptor
+            ),
+        }
+    };
+
+    while pos < tokens.len() {
+        let tok = &tokens[pos];
+        match &tok.value {
+            // CS-0019/0020 implicit termination: any column-0 top-level
+            // keyword closes the chore body. Token left in place for parse().
+            Token::RecipeHeader { .. }
+            | Token::ChoreHeader { .. }
+            | Token::ConfigHeader { .. }
+            | Token::UseDecl { .. }
+            | Token::ImportDecl { .. } => {
+                return Ok((
+                    Chore { name, deps, steps, line: chore_line },
+                    pos,
+                ));
             }
-            Token::ConfigHeader { .. } => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: "unexpected config declaration inside a recipe".to_string(),
-                });
+            Token::Comment(_) | Token::Blank => {
+                pos += 1;
             }
-            Token::UseDecl { .. } => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: "use statements must appear before recipes".to_string(),
-                });
+            Token::Content(text) => {
+                let text = text.clone();
+                if strip_keyword(&text, "ingredients").is_some() {
+                    return Err(chore_banned("ingredients", tok.line));
+                } else if strip_keyword(&text, "cook").is_some() {
+                    return Err(chore_banned("cook", tok.line));
+                } else if strip_keyword(&text, "plate").is_some() {
+                    return Err(chore_banned("plate", tok.line));
+                } else if strip_keyword(&text, "test").is_some() {
+                    return Err(chore_banned("test", tok.line));
+                } else if is_module_call(&text) {
+                    if let Some(started) = imperative_began {
+                        return Err(region_violation("module-call", tok.line, started));
+                    }
+                    let (code, new_pos) =
+                        collect_module_call(&text, tok.line, tokens, pos, source_lines)?;
+                    if code.contains('\n') {
+                        steps.push(Step::InlineLuaBlock { code, line: tok.line });
+                    } else {
+                        steps.push(Step::InlineLua { code, line: tok.line });
+                    }
+                    pos = new_pos;
+                    continue;
+                } else if let Some(cmd) = text.strip_prefix('@') {
+                    let cmd = cmd.to_string();
+                    if cmd.is_empty() {
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: "interactive '@' prefix requires a command".to_string(),
+                        });
+                    }
+                    if imperative_began.is_none() {
+                        imperative_began = Some(tok.line);
+                    }
+                    // Default-interactive — `@` marker is no-op (always interactive)
+                    steps.push(Step::Shell {
+                        command: cmd,
+                        line: tok.line,
+                        interactive: true,
+                    });
+                } else {
+                    if imperative_began.is_none() {
+                        imperative_began = Some(tok.line);
+                    }
+                    // Default-interactive — no `@` required
+                    steps.push(Step::Shell {
+                        command: text.clone(),
+                        line: tok.line,
+                        interactive: true,
+                    });
+                }
+                pos += 1;
             }
-            Token::ImportDecl { .. } => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: "import declarations must appear before recipes".to_string(),
-                });
+            Token::LuaLine(code) => {
+                if imperative_began.is_none() {
+                    imperative_began = Some(tok.line);
+                }
+                steps.push(Step::Lua { code: code.clone(), line: tok.line });
+                pos += 1;
+            }
+            Token::LuaBlockOpen => {
+                if imperative_began.is_none() {
+                    imperative_began = Some(tok.line);
+                }
+                let block_line = tok.line;
+                pos += 1;
+                let (code, new_pos) = collect_lua_block(block_line, tokens, pos, source_lines)?;
+                steps.push(Step::LuaBlock { code, line: block_line });
+                pos = new_pos;
+            }
+            Token::InlineLuaLine(code) => {
+                if let Some(started) = imperative_began {
+                    return Err(region_violation("inline-lua (`>>`)", tok.line, started));
+                }
+                steps.push(Step::InlineLua { code: code.clone(), line: tok.line });
+                pos += 1;
+            }
+            Token::InlineLuaBlockOpen => {
+                if let Some(started) = imperative_began {
+                    return Err(region_violation("inline-lua-block (`>>{`)", tok.line, started));
+                }
+                let block_line = tok.line;
+                pos += 1;
+                let (code, new_pos) = collect_lua_block(block_line, tokens, pos, source_lines)?;
+                steps.push(Step::InlineLuaBlock { code, line: block_line });
+                pos = new_pos;
             }
         }
     }
 
-    Err(ParseError::Parse {
-        line: recipe_line,
-        message: format!("recipe '{}' was not closed with 'end'", name),
-    })
+    // EOF terminates
+    Ok((Chore { name, deps, steps, line: chore_line }, pos))
 }

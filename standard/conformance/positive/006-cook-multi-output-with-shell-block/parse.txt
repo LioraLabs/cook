@@ -9,3 +9,4 @@ Cookfile
       excludes: []
       steps:
         Cook outputs=["out/a.js", "out/a.wasm"] using=ShellBlock(["echo one", "echo two"])
+  chores:

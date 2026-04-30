@@ -1,0 +1,2 @@
+build: lib setup
+    gcc -o main main.c

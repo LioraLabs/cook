@@ -1,0 +1,5 @@
+recipe build
+    cook "out/app"
+
+chore play: build
+    ./out/app

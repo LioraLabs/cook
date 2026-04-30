@@ -1,9 +1,7 @@
 recipe "compile"
     ingredients "src/a.c"
     cook "build/lib.a" using "ar rcs {out} {in}"
-end
 
 recipe "link"
     ingredients "build/lib.a"
     cook "build/app" using "cc -o {out} {in}"
-end

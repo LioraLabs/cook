@@ -75,12 +75,10 @@ A recipe's **output** is the output list of its last step, under the following r
 ```cook
 recipe protos
     ingredients "proto/*.proto"
-end
 
 recipe compile_protos
     cook "build/obj/{protos.stem}.pb.cc" using "protoc --cpp_out=build/obj {in}"
     cook "build/lib/libprotos.a" using "ar rcs {out} {all}"
-end
 ```
 
 The `compile_protos` recipe's first step is dep-driven by `protos`; for each `x` in `protos`'s output list (the resolved globs), one work unit is registered with `{in}` = `x` and `{out}` = `build/obj/STEM(x).pb.cc`. The second step chains on the first (§{recipes.cook-single-output}), not on `protos`.
@@ -97,11 +95,9 @@ recipe libmath
     ingredients "src/math/*.c"
     cook "build/obj/math/{stem}.o" using "gcc -c {in} -o {out}"
     cook "build/lib/libmath.a" using "ar rcs {out} {all}"
-end
 
 recipe app
     cook "build/bin/app" using "gcc -o {out} main.c {libmath}"
-end
 ```
 
 The `{libmath}` reference in `app`'s using-string expands at register time to `"build/lib/libmath.a"` (the single-element output of `libmath`).

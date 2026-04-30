@@ -7,7 +7,6 @@ recipe mathlib
         export_includes = { "include/" },
         standard = "c++17",
     })
-end
 
 recipe app: mathlib
     cpp.executable("app", {
@@ -15,7 +14,6 @@ recipe app: mathlib
         links = { "mathlib" },
         standard = "c++17",
     })
-end
 
 recipe test-vec: mathlib
     cpp.executable("test_vec", {
@@ -23,7 +21,6 @@ recipe test-vec: mathlib
         links = { "mathlib" },
         standard = "c++17",
     })
-end
 
 recipe test-util: mathlib
     cpp.executable("test_util", {
@@ -31,17 +28,13 @@ recipe test-util: mathlib
         links = { "mathlib" },
         standard = "c++17",
     })
-end
 
 recipe run-tests: test-vec test-util
     ingredients "build/bin/test_*"
     test "./{out}" timeout 30
-end
 
 recipe compile-commands: mathlib app test-vec test-util
     cpp.compile_commands()
-end
 
-recipe clean
+chore clean
     rm -rf build .cook
-end

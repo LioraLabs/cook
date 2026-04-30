@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+    Chore name="status" line=1
+      deps: []
+      steps:
+        InlineLua code="local hostname = \"localhost\""
+        Lua code="print(\"status check: \" .. cook.env.HOST)"
+        Shell interactive=true command="uname -a"

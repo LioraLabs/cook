@@ -6,7 +6,6 @@ recipe generate
         cp pkg/out.js staging/out.js
         cp pkg/out.wasm staging/out.wasm
     }
-end
 
 recipe build_lua
     ingredients "src/*.rs"
@@ -20,8 +19,6 @@ recipe build_lua
         wasm:write("BINARY\n")
         wasm:close()
     }
-end
 
-recipe clean
+chore clean
     rm -rf pkg staging staging-lua .cook
-end

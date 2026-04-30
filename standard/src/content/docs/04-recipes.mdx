@@ -6,45 +6,63 @@ sidebar:
 # 4. Recipes and step kinds [#recipes]
 > **Normative.** This chapter defines the structure of a recipe body and the meaning of each step kind. The productions referenced here are given formally in Appendix A §{grammar-appendix.recipes} and §{grammar-appendix.steps}; where this chapter's prose disagrees with Appendix A, Appendix A is authoritative (§{notation.grammar-precedence}).
 
-## 4.1. Recipe header forms [#recipes.header-forms]
-A recipe is introduced by a **recipe header** and closed by a bare `end` on its own line (§{grammar-appendix.recipes}, production `recipe`). The Cookfile language recognises two header forms:
+## 4.1. Recipe header [#recipes.header-forms]
+A recipe is introduced by a **recipe header** of the form `recipe name (":" dependency_list)?`, where `name` is either a `BARE_IDENTIFIER` or a double-quoted `STRING` (App. A.5, `name`). An optional `:` introduces a dependency list (§{recipes.dep-list}).
 
-| Form | Shape | Defined in |
-|---|---|---|
-| Explicit | `recipe` `name` (`:` `dependency_list`)? | §{grammar-appendix.recipes}, `explicit_header` |
-| Implicit | `BARE_IDENTIFIER` `:` `dependency_list`? | §{grammar-appendix.recipes}, `implicit_header` |
+The keyword `recipe` MUST be followed by a separator — whitespace, a tab, or a `"` character — before the name. An identifier whose first word merely begins with `recipe` (for example, `recipes_cleanup`) is a `Content` token, not a header (§{lexical.line-classification}).
 
-The **explicit header** begins with the keyword `recipe` followed by a `name` (§{grammar-appendix.primitives}), which is either a `BARE_IDENTIFIER` or a double-quoted `STRING`. An optional `:` introduces a dependency list (§{recipes.dep-list}). The explicit header is recognised whether or not the line has leading whitespace.
-
-The **implicit header** is a `BARE_IDENTIFIER` followed immediately by `:`, with an optional dependency list after the colon. A conforming implementation MUST only recognise the implicit header when the line starts at column 0, with no leading whitespace; an indented `BARE_IDENTIFIER:` line MUST instead be classified as a `shell_command` (§{recipes.shell-steps}). See §{grammar-appendix.recipes}, "Implicit header constraint".
-
-The reserved-segment rule of §{grammar-appendix.declarations} applies to both header forms: a conforming implementation MUST reject a recipe whose name's final dot-separated segment is one of `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`.
+The reserved-segment rule of §{grammar-appendix.declarations} applies: a conforming implementation MUST reject a recipe whose name's final dot-separated segment is one of `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`.
 
 ### Example 4.1.1
 
 ```cook
 recipe "build": "setup"
     gcc -o main main.c
-end
 
 recipe build: setup
     gcc -o main main.c
-end
-
-build: setup
-    gcc -o main main.c
-end
 ```
 
-All three recipes above are semantically identical. The first uses a quoted name in an explicit header; the second uses a bare name in an explicit header; the third uses the implicit form.
+Both recipes above are semantically identical; the first uses a quoted name, the second a bare name.
 
 ### Note 4.1.1
 
-The tokens `recipe` and `end` are only recognised as keywords when followed by a separator (space, tab, or, for `recipe`, a `"`). An identifier with `recipe` as a prefix — e.g. `recipes_cleanup` — is a `Content` token, not a header. See lexer test `test_recipe_prefix_is_shell_command`.
+The token `recipe` is recognised as a top-level keyword only when followed by a separator (space, tab, or `"`). An identifier whose first word merely begins with `recipe` (for example, `recipes_cleanup`) is a `Content` token, not a header. See lexer test `test_recipe_prefix_is_shell_command`.
 
-### Note 4.1.2
+## 4.1.1. Body termination [#recipes.termination]
+A `recipe_body` (§{grammar-appendix.recipes}) and a `config_body` (§{grammar-appendix.declarations}) both extend from the line following the introducing header up to, but not including, the next **terminating line** of the surrounding Cookfile. A line is a terminating line when it begins at column 0 (no leading whitespace) and its first whitespace-separated token is one of the top-level keywords `recipe`, `chore`, `config`, `use`, `import` (§{lexical.keywords}). End-of-file is also a terminating boundary.
 
-The implicit form's column-0 restriction is what disambiguates an indented `backend: build` inside a recipe body from a nested recipe. The Cookfile language has no nested recipes; an indented `ident:` line is therefore a shell command. See lexer test `test_implicit_recipe_indented_not_detected`.
+A conforming implementation MUST consume only the source lines strictly between the header and the next terminating line (or EOF) as the body. The terminating line itself is parsed independently as the next `toplevel_item`. There is no closing keyword.
+
+Comments and blank lines inside a body are part of the body (per the existing recipe-body and config-body conventions) and do not terminate it. An indented `recipe foo` or `chore foo` line inside a recipe body is not a terminating line — the column-0 requirement applies — and falls through to the body's step-dispatch cascade as a `shell_command` (§{recipes.shell-steps}).
+
+A bare `end` line is not a terminating line. It is a `Content` token: at top level it is rejected (§{grammar.overview}); inside a recipe body it dispatches as a `shell_command` whose body text is `end` (§{recipes.shell-steps}).
+
+### Example 4.1.1.1
+
+```cook
+recipe build
+    gcc -o main main.c
+
+recipe test
+    ./main --selftest
+```
+
+The `recipe build` body extends from the `gcc ...` line up to (but not including) the column-0 `recipe test` line. The `recipe test` body extends from `./main ...` to EOF. No `end` lines appear.
+
+### Example 4.1.1.2
+
+```cook
+recipe legacy
+    end
+    echo done
+```
+
+The bare `end` on line 2 is a `Content` token (§{lexical.line-classification}). The step-dispatch cascade (§{recipes.step-kinds}) classifies it as a `shell_command` whose body text is the literal command `end`. The recipe body has two shell steps; the recipe terminates at EOF.
+
+### Note 4.1.1.1
+
+The terminator-set is the column-0 top-level keyword set fixed by §{lexical.keywords}, plus end-of-file. The set is closed within a single Standard version; a future revision that adds a new top-level keyword extends this set in lockstep.
 
 ## 4.2. Dependency list [#recipes.dep-list]
 A **dependency list** is a sequence of one or more `name`s following the `:` in a recipe header (§{grammar-appendix.recipes}, `dependency_list`). Each name in a dependency list is a name reference; its resolution rules are given in §{xref.resolution} and its effect on execution ordering in §{xref.dep-implications} and §{exec.cross-recipe-ordering}.
@@ -60,17 +78,11 @@ The dependency list is purely syntactic at parse time. The Standard requires onl
 
 ```cook
 recipe tools: colorize wordcount reverse
-end
 
 recipe bundle: "backend.build" "frontend.build"
-end
 ```
 
 The first recipe lists three dependencies as bare identifiers. The second uses quoted strings for the same effect; it is semantically identical to `recipe bundle: backend.build frontend.build`.
-
-### Note 4.2.1
-
-A recipe with no dependencies MAY still use the implicit header form, yielding a bare `name:` line. The trailing colon is required by the implicit form's grammar even when the dependency list is empty. See parser test `test_implicit_recipe_parses`.
 
 ## 4.3. Ingredients [#recipes.ingredients]
 A recipe body MAY contain at most one `ingredients_step` (§{grammar-appendix.recipes}, "At-most-one-ingredients rule"). A second `ingredients` line within the same recipe body MUST be rejected.
@@ -92,7 +104,6 @@ The glob language itself — which characters are wildcards, whether `**` matche
 recipe lib
     ingredients "src/*.c" "include/*.h" !"src/lua.c" !"src/luac.c"
     cook "build/libmath.a" using "ar rcs {out} {all}"
-end
 ```
 
 The ingredient set is every `.c` file in `src/` and every `.h` file in `include/`, minus `src/lua.c` and `src/luac.c`.
@@ -173,7 +184,6 @@ recipe lib
     ingredients "lib/*.c"
     cook "build/obj/{stem}.o" using "gcc -c {in} -o {out}"
     cook "build/libmath.a" using "ar rcs {out} {all}"
-end
 ```
 
 The first `cook` is a one-to-one mapping from each ingredient to one object file. The second is a many-to-one mapping producing a single archive from the collected set. Both use the inline `STRING` form of `using`.
@@ -185,7 +195,6 @@ recipe build
     ingredients "src/*.c"
     cook "bin/app"
     gcc src/main.c -o bin/app
-end
 ```
 
 The `cook "bin/app"` step is declaration-only. The following `shell_command` supplies the actual build command; the execution model (§{exec}) is responsible for associating it with the declared output.
@@ -216,7 +225,6 @@ recipe generate
         cp pkg/out.js staging/out.js
         cp pkg/out.wasm staging/out.wasm
     }
-end
 ```
 
 One `cook` step declares two outputs produced together by a sequence of shell commands. The commands are the four non-blank lines of the shell block, in order (§{lexical.brace-blocks}).
@@ -236,7 +244,6 @@ recipe build_lua
         wasm:write("BINARY\n")
         wasm:close()
     }
-end
 ```
 
 The same two outputs are produced by a Lua block. The `inputs` and `outputs` names visible to the block are established by the execution model (§{exec}) and the Cook Lua API (§{lua.using-block-globals}); §{recipes} requires only that a block-form `using` clause be accepted as the body.
@@ -257,7 +264,6 @@ recipe run-tests
     ingredients "tests/*.c"
     cook "build/{stem}" using "cc {in} -o {out}"
     plate "./{out}"
-end
 ```
 
 The `plate` step runs `./<built-test>` once for each output produced by the preceding `cook` step.
@@ -291,7 +297,6 @@ recipe run-tests
     ingredients "tests/*.c"
     cook "build/{stem}" using "cc {in} -o {out}"
     test "./{out}" timeout 60 should_fail
-end
 ```
 
 Each test binary is run with a 60-second time bound, and the step expects each to exit with non-zero status.
@@ -355,7 +360,6 @@ recipe build
             cook.env.CXX or "g++", table.concat(inputs, " "), output))
     }
     > print("build complete")
-end
 ```
 
 The `>>` line and `>>{ }` block run at register, sharing scope with the `cook` step's `using >{ }` template-string formation. The `> print(...)` line runs at execute, after the cook step's unit completes. (The `using >{ }` block is execute-phase Lua-with-bindings; see §6.4.)
@@ -365,7 +369,6 @@ recipe smoke
     cd build
     ./app --selftest
     > if not fs.exists("build/.smoke.ok") then error("smoke failed") end
-end
 ```
 
 The recipe has only an imperative region: two shell lines and one `>` line. The two shell lines coalesce into one `cook.sh("set -e\ncd build\n./app --selftest")` call, so `cd build` persists into `./app --selftest`. The `>` line then runs in the same Lua VM as the coalesced shell call.
@@ -380,7 +383,6 @@ recipe legacy
         end
     }
     >
-end
 ```
 
 The first step is a single-line execute-phase Lua statement. The second is an execute-phase Lua block whose body contains a literal `{` that does not prematurely close the block. The third is an empty `lua_line`. All three coalesce into one body unit (no `@` interruption); the empty third line contributes nothing to the chunk.
@@ -411,7 +413,6 @@ recipe play
     @mkdir -p .cook/scratch
     @printf 'a\nb\nc\n' | fzf > .cook/scratch/pick
     echo "picked: $(cat .cook/scratch/pick)"
-end
 ```
 
 The first two steps are interactive commands: the runtime inherits the user's terminal so that `fzf` can draw a full-screen prompt. The third is a plain `shell_command` whose output is captured as the execution model dictates.
@@ -445,7 +446,6 @@ recipe build
         sources = "src/*.cpp",
         output_dir = "build/obj/",
     }
-end
 ```
 
 Both steps are module calls. The first is single-line and becomes a `lua_line`. The second spans four source lines because the opening `{` on the first line is not balanced until the closing `}` on the fourth; it becomes a `lua_block` whose body is those four lines joined by newlines.

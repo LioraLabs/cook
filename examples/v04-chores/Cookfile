@@ -1,0 +1,34 @@
+# Cook Standard v0.4 — chore demonstration.
+#
+# Chores are like recipes but:
+#   - Every shell step is interactive (runs on the main thread, sees the TTY).
+#   - No caching: chore units always run when invoked.
+#   - No cook steps (no build outputs to cache).
+#
+# Run from this directory:
+#
+#     cook clean   - remove .scratch directory
+#     cook status  - list .scratch contents (or report missing)
+#     cook build   - create a marker file in .scratch
+#     cook play    - run the marker and print "done" (depends on build)
+
+# A chore with no deps. Every line is interactive (@ is optional).
+chore clean
+    rm -rf .scratch
+    mkdir -p .scratch
+
+# A chore that lists the scratch directory.
+chore status
+    ls -la .scratch || echo "(no .scratch directory)"
+
+# A recipe that produces a cached artifact.
+# The cook step declares the output; the shell step below it produces the file.
+recipe build
+    cook ".scratch/marker"
+    mkdir -p .scratch
+    echo built > .scratch/marker
+
+# A chore that depends on a recipe. Runs the artifact interactively.
+chore play: build
+    cat .scratch/marker
+    echo done

@@ -68,13 +68,6 @@ The ordering is not necessary for parsing — a context-free grammar that accept
 
 The rule is trivially removable if it ever proves onerous; nothing downstream depends on it. But while it is in place, the diagnostic is actionable — the parser names the offending item's line — and authors get a clean separation between file-level configuration and recipe definitions.
 
-### B.3.7. Why the implicit header requires column 0 [#rationale.implicit-header-col0]
-The implicit recipe header `name:` shares its surface form with a class of legitimate shell commands and Makefile-style targets. A permissive reading of `identifier:` anywhere in the file would make indented shell commands of that shape (e.g., `build: lib setup` as a line of a shell script inside a `using` block or a recipe body) ambiguous with nested recipe declarations, which Cookfiles do not permit.
-
-Anchoring the implicit header to column 0 resolves the ambiguity at the lexical layer without requiring the parser to know whether it is inside a recipe body. The rule is easy to state, easy to diagnose, and matches the typographic expectation that top-level declarations hug the left margin while recipe bodies are indented.
-
-The cost is small: authors who want an implicit header simply do not indent it. Authors who want a shell command of the shape `name:` indent it, as they would any other body line.
-
 ### B.3.9. Config blocks as the sole variable surface [#rationale.config-only-variables]
 A previous revision of the Standard admitted a top-level `variable_declaration` form (`NAME "value"`) that fed values into `cook.env` independently of any `config_block`. This amendment removes that form. The remaining surface is the `config_block` Lua body, which writes `cook.env` (and any other Cook API state) through ordinary Lua assignment.
 
@@ -83,6 +76,18 @@ Three forces motivate the consolidation. First, named overlay configs cannot ove
 Layered single-select was chosen over multi-select for this revision: at most one overlay can be active at a time. Multi-select would force the Standard to specify ordering across multiple selected overlays and to define conflict resolution for keys written by more than one of them. Single-select avoids both questions and is non-breaking to relax in a future revision if real use cases warrant it.
 
 The selection mechanism for the active overlay is implementation-defined. Config selection is a CLI affordance, and the Standard's general posture (§{intro}) is to specify Cookfile-language behaviour rather than tool invocation surfaces. Implementations are free to expose a flag, an environment variable, a file-level default, or any combination; the validation rule for the selected name is normatively specified in §{grammar.config-composition}.
+
+### B.3.10. Implicit termination of recipe and config bodies [#rationale.implicit-end]
+
+Each `recipe` and `config` block in v0.3 closed with an explicit `end` line. The closing keyword was ceremony — every author wrote it without thinking, and the parser had no need for it that the next top-level construct or EOF could not serve. A Cookfile with ten recipes had ten lines that existed only to satisfy the grammar. CS-0019 / v0.4 drops the keyword and replaces it with the implicit-termination rule of §{recipes.termination}.
+
+Three forces motivate the change. First, the brace-block-as-opaque-source-lines model already cleanly separates Lua- and shell-block boundaries from recipe boundaries: a `recipe` keyword appearing inside a Lua block's source is never seen by the recipe-body parser, because the brace-counter skips the token stream over the block (§{lexical.brace-blocks}). Implicit termination by next top-level keyword does not interfere with embedded blocks. Second, the lexer's column-0 enforcement on top-level keywords (§{lexical.keywords}) prevents an indented `recipe foo` line inside a recipe body from silently terminating the outer recipe — the column-0 requirement is the exact discriminator the parser needs. Third, the diagnostic surface improves: the prior "you forgot to close this recipe" diagnostic is replaced by a more specific diagnostic when an embedded keyword token violates region rules, since there is no missing `end` to forget.
+
+The cost is that a deliberately empty recipe at the head of a Cookfile (no body, no immediately-following next-recipe header) is now indistinguishable from "header followed by the rest of the file as body until EOF" — but that ambiguity does not actually exist, because EOF is a valid terminator. The recipe `recipe empty\n` followed by EOF is a valid empty recipe.
+
+A bare `end` line is a `Content` token (§{lexical.line-classification}). At top level it is rejected by §{grammar.overview}. Inside a recipe body it dispatches as a `shell_command` running the literal command `end`, which the user's shell will interpret per its own rules. This is a deliberate non-special-case: there is no `end` keyword in the recipe-body cascade; the line gets the same treatment as any other Content line.
+
+Migration: in this commit, every spec example (chapters 2 through 8 and App. C) drops its trailing `end` lines so the spec consistently teaches v0.4 surface form. The conformance-corpus migration (every fixture under `standard/conformance/`) and the project-Cookfile migration (root, `cli/`, `standard/`, `tree-sitter-cook/`, `examples/`) follow in subsequent commits of the same v0.4 cut. The Standard cuts at v0.4 with `cs-standard/v0.4` tagged at the merge commit per the parse-format-altering rule in CONTRIBUTING.md.
 
 ## B.4. On §{recipes} Recipes and step kinds [#rationale.recipes]
 Chapter 4 defines the largest single surface area of the Cookfile language: the step kinds available inside a recipe body and the dispatch rules that separate them. The design is pragmatic rather than minimalist. The Cook authors had to balance three competing forces: (a) make the common cases (a shell command, a one-to-one build, an interactive prompt) trivially expressible; (b) keep the lexer and parser context-free and line-oriented so that editor tooling remains simple; (c) allow Lua to extend the language without requiring it to do so for basic use. The sections below record the non-obvious choices that follow from those forces.
@@ -150,6 +155,32 @@ A full Lua parse at dispatch time would couple the Cook parser to the Lua gramma
 The two-token heuristic is cheap, lexer-local, and has no false positives in practice. A line that looks like `identifier.identifier` and is not a valid Lua expression is virtually never a valid shell command either (hyphens in the first segment are excluded precisely to protect `cargo-build ...` and similar shell forms). When the heuristic matches, the Lua runtime is the right place to report a Lua syntax error: it has the full Lua grammar and a dedicated error reporter. When the heuristic does not match, the fall-through to `shell_command` is lossless — the line is passed verbatim to the shell, which will report its own error if the line is malformed there.
 
 The multi-line extension (continuing across source lines while braces are unbalanced) is the same brace-balance algorithm used for `lua_block` (§{lexical.brace-blocks}). Reusing it keeps the lexer consistent: the Cookfile parser has exactly one way to recognise a brace-balanced region, and that region's body is always handed to Lua untouched.
+
+### B.4.14. Why chore is a separate form rather than a flag on recipe [#rationale.chore-form-not-flag]
+
+The chore-vs-recipe distinction could have been spelled `recipe foo (chore)`, `recipe foo @chore`, `recipe! foo`, or any number of recipe-with-modifier shapes. CS-0020 instead introduces `chore` as a peer top-level keyword. Three forces drive the choice.
+
+First, the keyword is the carrier of intent. A reader who scans a Cookfile reads `recipe build` and `chore deploy` differently — the keyword tells the eye whether the body is a build target or a command runner. A modifier on `recipe` is read after the keyword, by which time the reader has already committed to "build target". The split keyword is a pure UX win for navigation.
+
+Second, the parse-time step-kind ban is naturally expressed at the production level. A chore production has a smaller `chore_body` alternation than a recipe production has for `recipe_body`, and the ban falls out of the grammar rather than being a separate rule the parser checks after the fact. The implementation is less code than a `recipe (chore)` modifier whose validation runs after step-kind dispatch.
+
+Third, the syntactic peerage models the semantic peerage. Chores and recipes are equally first-class — a recipe may depend on a chore, a chore on a recipe — and giving them peer keywords is an accurate model of that. A modifier shape would suggest one is a special case of the other.
+
+The cost is a new keyword to remember. Cook's keyword surface remains small (`recipe`, `chore`, `config`, `use`, `import`, `ingredients`, `cook`, `plate`, `test`, `using`); even with `chore` added, the set is well within "memorable in one sitting" range.
+
+### B.4.15. Why chore bans `ingredients`, `cook`, `plate`, `test` [#rationale.chore-banned-steps]
+
+The four banned step kinds — `ingredients`, `cook`, `plate`, `test` — share a common property: each declares part of a build-graph node (inputs, outputs, plating, validation). A chore is by definition a body that does NOT participate in the build graph: it always runs, it produces no cacheable output, and its outputs are not consumed by other recipes via the cross-recipe-reference mechanism (§{xref}).
+
+Allowing a `cook` step inside a chore body would be incoherent: either (a) the engine ignores the cook step's output declaration, in which case it serves no purpose, or (b) the engine treats it as a build target despite the chore's no-cache rule, in which case the rule is violated. The same argument applies to `ingredients` (declares inputs, but a chore has no cache to invalidate against), `plate` (one-template-per-cook-output, but no cook step), and `test` (validates a cook step's output, but no cook step).
+
+Banning module calls was considered and rejected. A module call typically expands into a sequence of register-phase declarative steps, some of which might be `cook` steps and would be caught by the recipe-body region rule's existing diagnostics. A flat ban would be over-strict — a module that exposes a `cleanup()` function returning no `cook.add_unit` calls is a perfectly valid chore body call. The conservative choice is therefore to allow `module_call` in chore bodies; module authors who emit `cook` units inside a chore-context call see a diagnostic at the `cook.add_unit` site (per §{chores.no-caching}) rather than at parse time.
+
+### B.4.16. Why default-interactive [#rationale.chore-default-interactive]
+
+A chore is by intent a thing the user runs at a terminal. The `@` marker (§{recipes.shell-steps}) on every shell line of a recipe-shaped command-runner is ceremony — the author already chose `chore` over `recipe` because the body is interactive. The default-interactive rule deletes the ceremony.
+
+The `@` marker is preserved as a no-op inside chore bodies for symmetry: a recipe body author migrating to `chore` does not need to strip every `@`, and a Cookfile that is moved between forms during refactoring continues to parse. The non-symmetric direction (chore → recipe) requires the author to add `@` markers where they want interactivity preserved; this is an authoring choice and is the expected path for "this used to be a chore but I want to add cook steps now".
 
 ## B.5. On §{exec} Execution model [#rationale.exec]
 The execution model in §{exec} is organised around a two-phase design: every recipe is evaluated once to discover its work (the register phase) and then arranged for execution (the execute phase). This split is not cosmetic. It is the mechanism by which the Standard turns a scripting-flavoured surface syntax — arbitrary Lua embedded in a recipe body — into a dependency graph that can be reasoned about, parallelised, and cached. The rationale subsections below record why several load-bearing decisions in §{exec} are the way they are.

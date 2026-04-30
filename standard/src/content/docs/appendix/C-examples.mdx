@@ -17,7 +17,6 @@ recipe generate
         cp pkg/out.js staging/out.js
         cp pkg/out.wasm staging/out.wasm
     }
-end
 ```
 
 Exercises: §{recipes.header-forms} (explicit header), §{recipes.ingredients} (ingredients), §{recipes.cook-multi-output} (multi-output cook with `using { ... }` shell block), App. A.3, App. A.4.
@@ -25,14 +24,12 @@ Exercises: §{recipes.header-forms} (explicit header), §{recipes.ingredients} (
 ## C.2. Recipe with cross-recipe dependency (from `examples/cross-recipe-deps/Cookfile`) [#examples.cross-recipe-dep]
 ```cook
 recipe tools: colorize wordcount reverse
-end
 
 recipe play: tools
     @mkdir -p .cook/scratch
     @printf 'colorize\nwordcount\nreverse\n' | fzf --prompt='tool> ' > .cook/scratch/tool
     @find data -type f | fzf --prompt='file> ' --preview='cat {}' > .cook/scratch/file
     @./build/bin/$(cat .cook/scratch/tool) < "$(cat .cook/scratch/file)"
-end
 ```
 
 Exercises: §{recipes.header-forms} (explicit header with deps), §{recipes.dep-list} (dependency list), §{recipes.shell-steps} (interactive `@` shell commands), App. A.3, App. A.4.
@@ -43,13 +40,11 @@ use cpp
 
 config
     env.CFLAGS = "-O2 -Wall"
-end
 
 recipe colorize
     cpp.bin("colorize", {
         sources = { "src/colorize.c" },
     })
-end
 ```
 
 Exercises: §{grammar.use-declarations} (`use` declaration), §{grammar.config-blocks} (config block with Lua body), §{grammar.step-dispatch} (step dispatch), §{recipes.module-call-steps} (module-call step), App. A.2, App. A.4.
@@ -68,7 +63,6 @@ recipe build_lua
         wasm:write("BINARY\n")
         wasm:close()
     }
-end
 ```
 
 Exercises: §{recipes.cook-multi-output} (multi-output cook with `using >{ ... }` Lua block), §{lua.using-block-globals} (using-block globals `inputs` / `outputs`), App. A.4.
@@ -82,11 +76,9 @@ recipe libmath
     ingredients "src/math/*.c"
     cook "build/obj/math/{stem}.o" using "gcc -c {in} -o {out}"
     cook "build/lib/libmath.a" using "ar rcs {out} {all}"
-end
 
 recipe app
     cook "build/bin/app" using "gcc -o {out} main.c {libmath}"
-end
 ```
 
 In `app`, the `{libmath}` placeholder is a bare name reference (§{xref.string-substitution}). It expands at register time to the single-element output list of `libmath`, i.e., `"build/lib/libmath.a"`. The resulting `app` step's command is `gcc -o build/bin/app main.c build/lib/libmath.a`.
@@ -96,11 +88,9 @@ In `app`, the `{libmath}` placeholder is a bare name reference (§{xref.string-s
 ```cook
 recipe protos
     ingredients "proto/*.proto"
-end
 
 recipe compile_protos
     cook "build/obj/{protos.stem}.pb.cc" using "protoc --cpp_out=build/obj {in}"
-end
 ```
 
 In `compile_protos`, the `{protos.stem}` placeholder in the output pattern (§{xref.dep-driven}) is an accessor placeholder. It names `protos` as the iteration driver. The step registers one work unit per item in `protos`'s output list — which, because `protos` has no cook step, is the resolved glob `proto/*.proto` passed through (§{xref.dep-recipe-output}). For each resolved path `x`, `{in}` = `x`, `{stem}` = `path.stem(x)`, and `{protos.stem}` = `path.stem(x)`.
@@ -110,11 +100,9 @@ In `compile_protos`, the `{protos.stem}` placeholder in the output pattern (§{x
 ```cook
 recipe headers
     ingredients "include/*.h"
-end
 
 recipe check: headers
     test "clang-tidy {headers}"
-end
 ```
 
 `headers` is a passthrough recipe with no cook step; its output is the resolved glob (§{xref.dep-recipe-output}). `{headers}` in `check`'s test command expands to the space-joined list. The `: headers` dep-list reference (§{xref.name-references} dep-list surface) creates a whole-recipe edge (§{xref.dep-implications}); `{headers}` in the test command is redundant as an edge but fine for string substitution.
@@ -124,15 +112,12 @@ end
 ```cook
 recipe core
     cook "build/lib/libcore.a" using "…"
-end
 
 recipe protos
     ingredients "proto/*.proto"
-end
 
 recipe server
     cook "build/obj/{protos.stem}.o" using "gcc -c {in} -I{core}/include -o {out}"
-end
 ```
 
 The `server` step is dep-driven by `protos` (output pattern contains `{protos.stem}`). The `{core}` in the using-string is a bare string-substitution reference (§{xref.string-substitution}) to `core`'s single output. The step thus depends on both `protos` (per-unit, driving iteration) and `core` (whole-recipe or refined per-unit, per §{xref.dep-implications}) — two distinct cross-recipe edges from a single step.

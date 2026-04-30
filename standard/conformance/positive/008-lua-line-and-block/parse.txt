@@ -10,3 +10,4 @@ Cookfile
       steps:
         Lua code="print(\"hello\")"
         LuaBlock code="        local x = 1\n        print(x + 1)"
+  chores:

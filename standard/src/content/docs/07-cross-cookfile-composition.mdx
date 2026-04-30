@@ -29,7 +29,6 @@ import backend ./services/backend
 import frontend ./apps/frontend
 
 recipe "bundle": "backend.build" "frontend.build"
-end
 ```
 
 Here `backend` and `frontend` are local aliases for the Cookfiles at `./services/backend/Cookfile` and `./apps/frontend/Cookfile`, respectively. The dependencies `"backend.build"` and `"frontend.build"` refer to recipes in those sibling Cookfiles; the first segment before the dot selects the import alias, and the remainder is the recipe name in the imported Cookfile.

@@ -1,0 +1,3 @@
+chore deploy
+    cook "out/marker"
+    rsync out/ user@host:/srv/

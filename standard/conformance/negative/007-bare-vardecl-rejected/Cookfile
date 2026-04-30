@@ -2,4 +2,3 @@ CC "gcc"
 
 recipe "build"
     @echo hello
-end
