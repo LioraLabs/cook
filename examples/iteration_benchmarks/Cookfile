@@ -1,0 +1,164 @@
+# CS-0022 Iteration Benchmarks
+#
+# Exercises every iteration mode defined by CS-0022 (§4.5.1).
+# Each recipe demonstrates one mode. Run them individually or via the
+# `benchmarks` orchestrator.
+#
+# Set SLEEP to control per-unit sleep duration (default: 0.5s).
+# Use -j to set parallelism.
+#
+#   cook benchmarks             # all modes, default parallelism
+#   cook -j 1 benchmarks        # serial — observe timing gap
+#   cook -j 8 benchmarks        # 8-way parallel
+#   cook one_to_one_shell       # single mode
+#   cook --set SLEEP=0.1 -j 4 benchmarks
+#
+# Wipe build/ between runs:
+#   cook clean
+
+config
+    env.SLEEP = "0.5"
+
+# Mode 1: One-to-one, shell block.
+# N inputs => N units, each producing 1 output.
+# {in.stem} in the output pattern drives own-input iteration.
+recipe one_to_one_shell
+    ingredients "src/inputs/*.txt"
+    cook "build/one_to_one_shell/{in.stem}.out" using {
+        mkdir -p build/one_to_one_shell
+        sleep {SLEEP}
+        echo "one_to_one_shell: {in} -> {out}" > {out}
+    }
+
+# Mode 2: One-to-one, Lua block.
+# Same iteration shape as mode 1 but the body is Lua.
+# `input` / `output` are the singleton per-iteration bindings (§6.4).
+recipe one_to_one_lua
+    ingredients "src/inputs/*.txt"
+    cook "build/one_to_one_lua/{in.stem}.out" using >{
+        os.execute("mkdir -p build/one_to_one_lua")
+        os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
+        local f = io.open(output, "w")
+        f:write("one_to_one_lua: " .. input .. " -> " .. output .. "\n")
+        f:close()
+    }
+
+# Mode 3: One-to-many, shell block.
+# N inputs => N units, each producing 2 outputs.
+# Both output patterns share {in.stem} — same driver, two outputs per unit.
+recipe one_to_many_shell
+    ingredients "src/inputs/*.txt"
+    cook "build/one_to_many_shell/{in.stem}.a.out" "build/one_to_many_shell/{in.stem}.b.out" using {
+        mkdir -p build/one_to_many_shell
+        sleep {SLEEP}
+        echo "one_to_many_shell: {in} -> {out_1}" > {out_1}
+        echo "one_to_many_shell: {in} -> {out_2}" > {out_2}
+    }
+
+# Mode 4: Many-to-one, shell block.
+# All inputs => 1 unit, 1 literal output.
+# {all} expands to the space-joined full input list.
+recipe many_to_one_shell
+    ingredients "src/inputs/*.txt"
+    cook "build/many_to_one_shell/all.out" using {
+        mkdir -p build/many_to_one_shell
+        sleep {SLEEP}
+        echo "many_to_one_shell: {all}" > {out}
+    }
+
+# Mode 5: Many-to-one, Lua block — THE CS-0022 WART-FIX.
+# Pre-CS-0022: a single-output Lua block iterated per input.
+# Post-CS-0022: iteration is owned by the output pattern.
+# A literal output pattern means exactly one unit; `inputs` in the
+# Lua body sees the FULL list. Read build/many_to_one_lua/all.out to verify.
+recipe many_to_one_lua
+    ingredients "src/inputs/*.txt"
+    cook "build/many_to_one_lua/all.out" using >{
+        os.execute("mkdir -p build/many_to_one_lua")
+        os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
+        local f = io.open(output, "w")
+        f:write("many_to_one_lua: " .. #inputs .. " inputs\n")
+        for i, p in ipairs(inputs) do
+            f:write("  inputs[" .. i .. "] = " .. p .. "\n")
+        end
+        f:close()
+    }
+
+# Mode 6: Many-to-one, multi-output, shell block.
+# 1 unit, 2 literal outputs. {out_1}/{out_2} name them in order.
+recipe many_to_one_multi_shell
+    ingredients "src/inputs/*.txt"
+    cook "build/many_to_one_multi_shell/all.a.out" "build/many_to_one_multi_shell/all.b.out" using {
+        mkdir -p build/many_to_one_multi_shell
+        sleep {SLEEP}
+        echo "many_to_one_multi_shell: side-a from {all}" > {out_1}
+        echo "many_to_one_multi_shell: side-b from {all}" > {out_2}
+    }
+
+# Mode 7: Many-to-one, multi-output, Lua block.
+# 1 unit, 2 literal outputs. outputs[1]/outputs[2] in Lua.
+recipe many_to_one_multi_lua
+    ingredients "src/inputs/*.txt"
+    cook "build/many_to_one_multi_lua/all.a.out" "build/many_to_one_multi_lua/all.b.out" using >{
+        os.execute("mkdir -p build/many_to_one_multi_lua")
+        os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
+        local fa = io.open(outputs[1], "w")
+        fa:write("many_to_one_multi_lua: side-a, " .. #inputs .. " inputs\n")
+        fa:close()
+        local fb = io.open(outputs[2], "w")
+        fb:write("many_to_one_multi_lua: side-b, " .. #inputs .. " inputs\n")
+        fb:close()
+    }
+
+# stage1 — driver for dep_driven.
+# One-to-one over own inputs. stage2 (dep_driven) will iterate over stage1's outputs.
+recipe stage1
+    ingredients "src/inputs/*.txt"
+    cook "build/stage1/{in.stem}.staged" using {
+        mkdir -p build/stage1
+        sleep {SLEEP}
+        echo "stage1: {in}" > {out}
+    }
+
+# Mode 8: Dep-driven (one-to-one over a dependency's outputs).
+# {stage1.stem} in the output pattern drives iteration over stage1's output list.
+# Inside the body, {in} names each stage1 output (the current iteration item).
+recipe dep_driven
+    cook "build/dep_driven/{stage1.stem}.final" using {
+        mkdir -p build/dep_driven
+        sleep {SLEEP}
+        echo "dep_driven: {in} -> {out}" > {out}
+    }
+
+# libfoo — many-to-one, single output.
+# Simulates archiving all inputs into one library.
+recipe libfoo
+    ingredients "src/inputs/*.txt"
+    cook "build/lib/libfoo.a" using {
+        mkdir -p build/lib
+        sleep {SLEEP}
+        echo "libfoo: {all}" > {out}
+    }
+
+# app_with_lib — cross-recipe reference inside a shell block (§5.5 / CS-0022 §3.6).
+# CS-0022 extends {NAME} substitution into using { } shell blocks.
+# {libfoo} expands to libfoo's full output list (space-joined).
+recipe app_with_lib
+    cook "build/bin/app_with_lib" using {
+        mkdir -p build/bin
+        sleep {SLEEP}
+        echo "app_with_lib: linked against {libfoo}" > {out}
+    }
+
+# benchmarks — orchestrator.
+# Lists every mode recipe as a dependency.
+recipe benchmarks: one_to_one_shell one_to_one_lua one_to_many_shell many_to_one_shell many_to_one_lua many_to_one_multi_shell many_to_one_multi_lua dep_driven app_with_lib
+    cook "build/benchmarks.txt" using {
+        mkdir -p build
+        date > {out}
+        echo "All iteration modes completed at $(date)" >> {out}
+    }
+
+# chore clean — wipe build/ and .cook cache for re-runs.
+chore clean
+    rm -rf build .cook
