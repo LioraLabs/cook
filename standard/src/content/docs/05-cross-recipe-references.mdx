@@ -20,7 +20,7 @@ All three surfaces share the resolution rules of §{xref.resolution} and the dep
 ## 5.2. Resolution [#xref.resolution]
 A conforming implementation MUST resolve a `{TOKEN}` appearing in a step template by applying the following steps in order, with the first matching step winning:
 
-1. If `TOKEN` is one of the current-iteration builtins (`in`, `out`, `stem`, `name`, `ext`, `dir`, `all`), substitute per §{lua.shell-placeholders}.
+1. If `TOKEN` is one of the current-iteration builtins (`in`, `out`, `all`) or a dotted accessor of the form `NAME.ACCESSOR` where `NAME` ∈ `{in, out, out_N}`, substitute per §{lua.shell-placeholders}.
 2. If `TOKEN` is exactly equal to a recipe name in scope, the reference names that recipe.
 3. If `TOKEN` contains `.`, split on the LAST `.` into `PREFIX.SUFFIX`. If `PREFIX` equals a recipe name in scope AND `SUFFIX` is a path accessor (§{xref.path-accessors}), the reference names that recipe with the named accessor.
 4. Otherwise, `TOKEN` resolves to `cook.env[TOKEN]` (§{lua.shell-placeholders}).
@@ -51,10 +51,10 @@ The set of path accessors is closed: an accessor not in this list is not a path 
 ## 5.4. Dep-driven iteration [#xref.dep-driven]
 Rule. When a `cook` step's output pattern list contains a `{NAME.ACCESSOR}` accessor placeholder naming recipe `lib`, the step's iteration driver is `lib`'s output list, not this recipe's own input list.
 
-- **Iteration shape.** The step is a **one-to-one step (§{recipes.cook-single-output})**. For each item `x` in `lib`'s output list (§{xref.dep-recipe-output}), one work unit is registered. Within that unit, the iteration item is `x`, and the bare-accessor placeholders (`{stem}`, `{name}`, `{ext}`, `{dir}`) and `{in}` refer to `x`. A placeholder `{lib.ACCESSOR}` in the same step refers to the same accessor of `x`.
+- **Iteration shape.** The step is a **one-to-one step (§{recipes.cook-single-output})**. For each item `x` in `lib`'s output list (§{xref.dep-recipe-output}), one work unit is registered. Within that unit, the iteration item is `x`, and the dotted-accessor placeholders `{in.ACCESSOR}` refer to `x`. A placeholder `{lib.ACCESSOR}` in the same step refers to the same accessor of `x`.
 - **One driver per step.** A step's output pattern list MAY contain accessor placeholders referring to AT MOST ONE distinct recipe. Multiple occurrences referring to the same `lib` (possibly with different accessors) are permitted and refer to the same driver. Accessor placeholders naming two or more distinct recipes in the same step MUST be rejected with a diagnostic.
 - **Bare `{lib}` in an output pattern.** A conforming implementation MUST reject a `cook` step whose output pattern list contains a bare `{lib}` (no accessor) naming a recipe. `{lib}` has no iteration semantics.
-- **Accessor placeholder in a using-string.** A `{lib.ACCESSOR}` appearing in a `using`-string, `plate` command, `test` command, or bare shell when the same step's output pattern list does not declare a matching driver MUST be rejected with a diagnostic.
+- **Accessor placeholder in a using-clause body.** A `{lib.ACCESSOR}` appearing in a `using` `shell_block` body, `plate` command, `test` command, or bare `shell_command` when the same step's output pattern list does not declare a matching driver MUST be rejected with a diagnostic.
 - **String-substitution references coexist.** A step MAY contain any number of `{libX}` bare references (§{xref.string-substitution}) to other recipes, orthogonally to whichever recipe (if any) drives iteration. Those references do not participate in the "one driver" rule.
 
 ### 5.4.1. A recipe's output [#xref.dep-recipe-output]
@@ -77,14 +77,14 @@ recipe protos
     ingredients "proto/*.proto"
 
 recipe compile_protos
-    cook "build/obj/{protos.stem}.pb.cc" using "protoc --cpp_out=build/obj {in}"
-    cook "build/lib/libprotos.a" using "ar rcs {out} {all}"
+    cook "build/obj/{protos.stem}.pb.cc" using { protoc --cpp_out=build/obj {in} }
+    cook "build/lib/libprotos.a" using { ar rcs {out} {all} }
 ```
 
 The `compile_protos` recipe's first step is dep-driven by `protos`; for each `x` in `protos`'s output list (the resolved globs), one work unit is registered with `{in}` = `x` and `{out}` = `build/obj/STEM(x).pb.cc`. The second step chains on the first (§{recipes.cook-single-output}), not on `protos`.
 
 ## 5.5. String-substitution references [#xref.string-substitution]
-Rule. A `{NAME}` bare reference in a `cook` `using`-string, `plate` command, `test` command, or bare shell MUST be substituted by the space-joined concatenation of the named recipe's output list (§{xref.dep-recipe-output}).
+Rule. A `{NAME}` bare reference in a `cook` `using` `shell_block` body, a `plate` command, a `test` command, or a bare `shell_command` MUST be substituted by the space-joined concatenation of the named recipe's output list (§{xref.dep-recipe-output}). A `{NAME}` reference inside a `using_lua_block` is parsed as Lua syntax (a single-element table containing the local variable `NAME`); cross-recipe references in Lua bodies use `cook.dep_output(NAME)` and `cook.dep_output_list(NAME)` per §{modules}.
 
 - **Empty output.** If the named recipe's output list is empty, the substitution is the empty string. A conforming implementation MUST emit a warning at register time, naming the referring recipe and the referent. The reference itself is not an error.
 - **Lua lowering.** A conforming implementation MAY lower a `{NAME}` reference to `cook.dep_output("NAME")` and a `{NAME.ACCESSOR}` iteration to a `cook.dep_output_list("NAME")`-driven form. The Standard specifies the observable behaviour; the Lua forms are one conforming lowering.
@@ -93,11 +93,11 @@ Rule. A `{NAME}` bare reference in a `cook` `using`-string, `plate` command, `te
 ```cook
 recipe libmath
     ingredients "src/math/*.c"
-    cook "build/obj/math/{stem}.o" using "gcc -c {in} -o {out}"
-    cook "build/lib/libmath.a" using "ar rcs {out} {all}"
+    cook "build/obj/math/{in.stem}.o" using { gcc -c {in} -o {out} }
+    cook "build/lib/libmath.a" using { ar rcs {out} {all} }
 
 recipe app
-    cook "build/bin/app" using "gcc -o {out} main.c {libmath}"
+    cook "build/bin/app" using { gcc -o {out} main.c {libmath} }
 ```
 
 The `{libmath}` reference in `app`'s using-string expands at register time to `"build/lib/libmath.a"` (the single-element output of `libmath`).
