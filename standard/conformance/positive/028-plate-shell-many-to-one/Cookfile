@@ -1,0 +1,4 @@
+recipe bundle
+    ingredients "src/*.o"
+    cook "dist/bundle.tgz" using { tar czf {out} {all} }
+    plate { tar czf bundle.tgz {all} }

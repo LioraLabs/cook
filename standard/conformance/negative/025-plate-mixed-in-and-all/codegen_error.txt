@@ -1,0 +1,1 @@
+body contains both per-item and batched references

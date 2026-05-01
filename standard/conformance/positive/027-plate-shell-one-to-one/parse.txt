@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="install" line=1
+      deps: []
+      ingredients: ["src/*.c"]
+      excludes: []
+      steps:
+        Cook outputs=["build/bin/{in.stem}"] using=ShellBlock(["cc {in} -o {out}"])
+        Plate body=ShellBlock(["install -d $PREFIX/bin", "install -m755 {in} $PREFIX/bin/{in.name}"])
+  chores:

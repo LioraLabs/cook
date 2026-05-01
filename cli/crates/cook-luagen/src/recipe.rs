@@ -585,6 +585,7 @@ pub fn generate_with_names(
                         plate_step,
                         *line,
                         prev_cook_index,
+                        !recipe.ingredients.is_empty(),
                         recipe_names,
                     )?;
                     out.push_str("    end)\n");

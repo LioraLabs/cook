@@ -1,0 +1,7 @@
+recipe r
+    ingredients "src/*.o"
+    cook "dist/bundle.tgz" using { tar czf {out} {all} }
+    plate >{
+        print(input)
+        print(inputs)
+    }

@@ -11,12 +11,19 @@ pub(crate) fn generate_plate_step(
     plate_step: &PlateStep,
     line: usize,
     last_cook_index: Option<usize>,
+    has_ingredients: bool,
     recipe_names: &BTreeSet<String>,
 ) -> Result<(), CodegenError> {
     let mode = detect_plate_test_mode(&plate_step.body)
         .map_err(|e| CodegenError::PlateTestMode { line, source: e })?;
     validate_plate_test_placeholders(&plate_step.body, mode, recipe_names)
         .map_err(|e| CodegenError::Placeholder { line, source: e })?;
+
+    // CS-0024 §3.5: a OneToOne plate step requires a non-empty source — either
+    // a preceding cook step or at least one declared ingredient glob.
+    if mode == PlateTestMode::OneToOne && last_cook_index.is_none() && !has_ingredients {
+        return Err(CodegenError::EmptySource { line });
+    }
 
     let source_expr = if let Some(idx) = last_cook_index {
         format!("_cook_outputs_{}", idx)
@@ -119,4 +126,9 @@ pub enum CodegenError {
         line: usize,
         source: crate::template::PlateTestPlaceholderError,
     },
+    #[error(
+        "plate step at line {line} is one-to-one but has no non-empty source — \
+         add an `ingredients` declaration or a preceding `cook` step (CS-0024 §3.5)"
+    )]
+    EmptySource { line: usize },
 }

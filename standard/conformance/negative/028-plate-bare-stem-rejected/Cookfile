@@ -1,0 +1,4 @@
+recipe r
+    ingredients "src/*.c"
+    cook "build/{in.stem}.o" using { cc -c {in} -o {out} }
+    plate { ./{stem}.out }

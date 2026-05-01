@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="check" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Test body=ShellBlock(["make integration"]) timeout=Some(30) should_fail=false
+  chores:

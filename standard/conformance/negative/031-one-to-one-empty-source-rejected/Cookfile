@@ -1,0 +1,2 @@
+recipe r
+    plate { ./{in} }

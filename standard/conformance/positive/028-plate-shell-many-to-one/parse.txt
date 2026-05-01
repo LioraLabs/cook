@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="bundle" line=1
+      deps: []
+      ingredients: ["src/*.o"]
+      excludes: []
+      steps:
+        Cook outputs=["dist/bundle.tgz"] using=ShellBlock(["tar czf {out} {all}"])
+        Plate body=ShellBlock(["tar czf bundle.tgz {all}"])
+  chores:
