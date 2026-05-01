@@ -202,7 +202,7 @@ A Lua block in a `plate_step` or `test_step` body (§{recipes.plate-step}, §{re
 | `input` | one-to-one | string | The current iteration item — one of the source items |
 | `inputs` | many-to-one | table (1-indexed) | The full source list |
 
-A conforming implementation MUST bind exactly one of `input` / `inputs` per unit, per the mode the body's content selected. The other is unbound (Lua `nil` on reference).
+A conforming implementation MUST bind exactly one of `input` / `inputs` per unit when the step is in one-to-one or many-to-one mode, per the mode the body's content selected. The other is unbound (Lua `nil` on reference). In **one-shot** mode (§{recipes.iteration-mode-plate-test}), neither `input` nor `inputs` is bound — both are `nil` on reference.
 
 A conforming implementation MUST NOT bind `output` / `outputs` for plate or test units; these have no meaning in a step that declares no outputs. A conforming implementation MUST NOT bind `input_N` (indexed input access) for plate or test units; the source list is exposed wholesale via `inputs` in many-to-one mode.
 
@@ -288,7 +288,7 @@ Returns the path formed by joining `b` onto `a` with the host separator. If `b` 
 ## 6.7. Placeholder substitutions in shell text [#lua.shell-placeholders]
 **Phase.** Substitution is performed by the code generator at register time; the resulting Lua expression is evaluated at register time when the unit is recorded.
 
-A `cook` step's `using { ... }` shell-block body, every `plate` command, every `test` command, and every bare `shell_command` is a **shell text** for the purposes of this section. Before a conforming implementation records the resulting unit, it MUST substitute the placeholder set defined in this section. The set is closed: a `{TOKEN}` whose shape does not match any row of the placeholder table below resolves through §{xref.resolution}.
+A `cook` step's `using { ... }` shell-block body, a `plate` shell-block body (§{recipes.plate-step}), a `test` shell-block body (§{recipes.test-step}), and every bare `shell_command` is a **shell text** for the purposes of this section. Before a conforming implementation records the resulting unit, it MUST substitute the placeholder set defined in this section. The set is closed: a `{TOKEN}` whose shape does not match any row of the placeholder table below resolves through §{xref.resolution}.
 
 | Placeholder | Valid in iteration mode | Meaning |
 |---|---|---|
@@ -354,7 +354,7 @@ A `plate_step` or `test_step` body that is a `shell_block` admits the following 
 A conforming implementation MUST reject:
 - `{in}` or `{in.ACCESSOR}` in a many-to-one or one-shot body (no current iteration);
 - `{all}` in a one-to-one or one-shot body (no batched input list);
-- Any `{out}` / `{out.ACCESSOR}` / `{out_N}` / `{out_N.ACCESSOR}` token in a plate or test body — the step declares no outputs. The diagnostic MUST point to `{in}` as the iteration item.
+- Any `{out}` / `{out.ACCESSOR}` / `{out_N}` / `{out_N.ACCESSOR}` token in a plate or test body — the step declares no outputs. The diagnostic MUST state that plate/test produce no declared outputs; for a body in one-to-one mode the diagnostic SHOULD additionally direct the author to `{in}` as the iteration item.
 - `{NAME.ACCESSOR}` for any recipe `NAME` in scope (preserves the §{xref.dep-driven} firewall).
 
 Bare path-accessors (`{stem}`, `{name}`, `{ext}`, `{dir}`) in a plate or test body fall through to `cook.env[TOKEN]` per §{xref.resolution} step 4. A conforming implementation MUST emit a specific diagnostic for these four names that points to `{in.ACCESSOR}` (same diagnostic CS-0022 introduced for cook bodies).
