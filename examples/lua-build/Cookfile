@@ -36,7 +36,7 @@ recipe luac: liblua
 recipe build: lua luac
 
 recipe test: lua
-    test "build/bin/lua -e 'print(\"hello from lua built by cook\")'"
+    test { build/bin/lua -e 'print("hello from lua built by cook")' }
 
 recipe compile-commands: liblua lua luac
     cpp.compile_commands()

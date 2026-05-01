@@ -33,5 +33,5 @@ recipe nvim-install: generate
         mkdir -p build/parser
         tree-sitter build . -o {out}
     }
-    plate "mkdir -p $NVIM_SITE/parser && cp {out} $NVIM_SITE/parser/cook.so"
+    plate { mkdir -p $NVIM_SITE/parser && cp {in} $NVIM_SITE/parser/cook.so }
     bash scripts/install-nvim-queries.sh

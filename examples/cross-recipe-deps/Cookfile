@@ -32,7 +32,7 @@ recipe app
     }
 
 recipe run: app
-    test "build/bin/app"
+    test { build/bin/app }
 
 chore clean
     rm -rf build .cook

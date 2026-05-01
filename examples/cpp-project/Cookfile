@@ -31,7 +31,7 @@ recipe test-util: mathlib
 
 recipe run-tests: test-vec test-util
     ingredients "build/bin/test_*"
-    test "./{out}" timeout 30
+    test { ./{in} } timeout 30
 
 recipe compile-commands: mathlib app test-vec test-util
     cpp.compile_commands()
