@@ -51,6 +51,21 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0022: {lib.ACCESSOR} inside using-clause body — codegen rejection, not syntactic'],
   ['023-multi-output-one-to-one-mixed-rejected',
    'CS-0022: mixed one-to-one + literal output patterns — codegen rejection, not syntactic'],
+  // CS-0024: plate/test mode-deduction and placeholder rejections.
+  // Cookfile parses cleanly; rejection is enforced by cook-luagen's
+  // validate_plate_test_placeholders and detect_plate_test_mode.
+  ['024-plate-out-rejected',
+   'CS-0024: {out} in plate body — codegen rejection, not syntactic'],
+  ['025-plate-mixed-in-and-all',
+   'CS-0024: mixed {in} and {all} in plate body — codegen rejection, not syntactic'],
+  ['026-plate-mixed-input-and-inputs',
+   'CS-0024: mixed input and inputs in Lua plate body — codegen rejection, not syntactic'],
+  ['027-plate-lib-accessor-rejected',
+   'CS-0024: {lib.ACCESSOR} in plate body — codegen rejection, not syntactic'],
+  ['028-plate-bare-stem-rejected',
+   'CS-0024: bare {stem} in plate body — codegen rejection, not syntactic'],
+  ['031-one-to-one-empty-source-rejected',
+   'CS-0024: plate one-to-one mode with no source — codegen rejection, not syntactic'],
 ]);
 
 function corpusRoot() {
