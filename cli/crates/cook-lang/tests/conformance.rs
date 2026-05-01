@@ -68,6 +68,19 @@ fn format_using(u: &Option<UsingClause>) -> String {
     }
 }
 
+fn repr_body(body: &Body) -> String {
+    match body {
+        Body::ShellBlock(lines) if lines.len() == 1 => {
+            format!("ShellBlock([{}])", repr(lines[0].trim()))
+        }
+        Body::ShellBlock(lines) => {
+            let inner: Vec<String> = lines.iter().map(|l| repr(l.trim())).collect();
+            format!("ShellBlock([{}])", inner.join(", "))
+        }
+        Body::LuaBlock(code) => format!("LuaBlock({})", repr(code)),
+    }
+}
+
 fn format_step(step: &Step) -> String {
     match step {
         Step::Shell { command, interactive, .. } => {
@@ -84,15 +97,15 @@ fn format_step(step: &Step) -> String {
                 format_using(&step.using_clause),
             )
         }
-        Step::Plate { step, .. } => format!("Plate command={}", repr(&step.command)),
+        Step::Plate { step, .. } => format!("Plate body={}", repr_body(&step.body)),
         Step::Test { step, .. } => {
             let timeout = match step.timeout {
                 None    => "None".to_string(),
                 Some(n) => format!("Some({})", n),
             };
             format!(
-                "Test command={} timeout={} should_fail={}",
-                repr(&step.command),
+                "Test body={} timeout={} should_fail={}",
+                repr_body(&step.body),
                 timeout,
                 step.should_fail,
             )

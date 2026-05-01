@@ -257,16 +257,19 @@ fn test_cook_step_lua_block() {
 
 #[test]
 fn test_plate_step() {
-    let source = "recipe \"test\"\n    ingredients \"tests/*.c\"\n    cook \"build/{stem}\" using {\n        cc {in} -o {out}\n    }\n    plate \"./{out}\"\n";
-    let result = parse(source).unwrap();
-    let recipe = &result.recipes[0];
+    let source = "recipe test_recipe\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" using {\n        cc {in} -o {out}\n    }\n    plate {\n        ./{in}\n    }\n";
+    let cookfile = parse(source).expect("should parse");
+    let recipe = &cookfile.recipes[0];
     assert_eq!(recipe.steps.len(), 2);
     match &recipe.steps[1] {
-        Step::Plate { step, line } => {
-            assert_eq!(*line, 6);
-            assert!(matches!(&step.body, Body::ShellBlock(cmds) if cmds == &["./{out}"]));
-        }
-        other => panic!("expected Plate, got {:?}", other),
+        Step::Plate { step, .. } => match &step.body {
+            Body::ShellBlock(lines) => {
+                assert_eq!(lines.len(), 1);
+                assert_eq!(lines[0].trim(), "./{in}");
+            }
+            other => panic!("expected ShellBlock, got {:?}", other),
+        },
+        other => panic!("expected Plate step, got {:?}", other),
     }
 }
 
@@ -607,22 +610,13 @@ fn test_parse_use_with_configs() {
 
 #[test]
 fn test_test_step_basic() {
-    let source = r#"recipe "run-tests"
-    ingredients "tests/*.c"
-    cook "build/{stem}" using {
-        cc {in} -o {out}
-    }
-    test "./{out}"
-"#;
-    let result = parse(source).unwrap();
-    let recipe = &result.recipes[0];
-    assert_eq!(recipe.steps.len(), 2);
-    match &recipe.steps[1] {
-        Step::Test { step, line } => {
-            assert_eq!(*line, 6);
-            assert!(matches!(&step.body, Body::ShellBlock(cmds) if cmds == &["./{out}"]));
-            assert_eq!(step.timeout, None);
+    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" using { cc {in} -o {out} }\n    test { ./{in} }\n";
+    let cookfile = parse(source).expect("should parse");
+    match &cookfile.recipes[0].steps[1] {
+        Step::Test { step, .. } => {
+            assert!(matches!(step.body, Body::ShellBlock(_)));
             assert!(!step.should_fail);
+            assert_eq!(step.timeout, None);
         }
         other => panic!("expected Test, got {:?}", other),
     }
@@ -630,16 +624,13 @@ fn test_test_step_basic() {
 
 #[test]
 fn test_test_step_with_timeout() {
-    let source = r#"recipe "run-tests"
-    test "./{out}" timeout 30
-"#;
-    let result = parse(source).unwrap();
-    let recipe = &result.recipes[0];
-    match &recipe.steps[0] {
+    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" using { cc {in} -o {out} }\n    test { ./{in} } timeout 60\n";
+    let cookfile = parse(source).expect("should parse");
+    match &cookfile.recipes[0].steps[1] {
         Step::Test { step, .. } => {
-            assert!(matches!(&step.body, Body::ShellBlock(cmds) if cmds == &["./{out}"]));
-            assert_eq!(step.timeout, Some(30));
+            assert!(matches!(step.body, Body::ShellBlock(_)));
             assert!(!step.should_fail);
+            assert_eq!(step.timeout, Some(60));
         }
         other => panic!("expected Test, got {:?}", other),
     }
@@ -647,16 +638,13 @@ fn test_test_step_with_timeout() {
 
 #[test]
 fn test_test_step_with_should_fail() {
-    let source = r#"recipe "run-tests"
-    test "./{out}" should_fail
-"#;
-    let result = parse(source).unwrap();
-    let recipe = &result.recipes[0];
-    match &recipe.steps[0] {
+    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" using { cc {in} -o {out} }\n    test { ./{in} } should_fail\n";
+    let cookfile = parse(source).expect("should parse");
+    match &cookfile.recipes[0].steps[1] {
         Step::Test { step, .. } => {
-            assert!(matches!(&step.body, Body::ShellBlock(cmds) if cmds == &["./{out}"]));
-            assert_eq!(step.timeout, None);
+            assert!(matches!(step.body, Body::ShellBlock(_)));
             assert!(step.should_fail);
+            assert_eq!(step.timeout, None);
         }
         other => panic!("expected Test, got {:?}", other),
     }
@@ -664,16 +652,13 @@ fn test_test_step_with_should_fail() {
 
 #[test]
 fn test_test_step_with_timeout_and_should_fail() {
-    let source = r#"recipe "run-tests"
-    test "./{out}" timeout 60 should_fail
-"#;
-    let result = parse(source).unwrap();
-    let recipe = &result.recipes[0];
-    match &recipe.steps[0] {
+    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" using { cc {in} -o {out} }\n    test { ./{in} } timeout 60 should_fail\n";
+    let cookfile = parse(source).expect("should parse");
+    match &cookfile.recipes[0].steps[1] {
         Step::Test { step, .. } => {
-            assert!(matches!(&step.body, Body::ShellBlock(cmds) if cmds == &["./{out}"]));
-            assert_eq!(step.timeout, Some(60));
+            assert!(matches!(step.body, Body::ShellBlock(_)));
             assert!(step.should_fail);
+            assert_eq!(step.timeout, Some(60));
         }
         other => panic!("expected Test, got {:?}", other),
     }
@@ -873,13 +858,13 @@ fn test_chore_with_cook_rejected() {
 
 #[test]
 fn test_chore_with_plate_rejected() {
-    let input = "chore deploy\n    plate \"./{out}\"\n";
+    let input = "chore deploy\n    plate { ./{in} }\n";
     assert!(parse(input).is_err());
 }
 
 #[test]
 fn test_chore_with_test_rejected() {
-    let input = "chore play\n    test \"./run\"\n";
+    let input = "chore play\n    test { ./run }\n";
     assert!(parse(input).is_err());
 }
 
@@ -918,7 +903,7 @@ fn test_multi_output_string_form_rejected() {
     let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"a.js\" \"b.wasm\" using \"cmd\"\n";
     let err = crate::parse(source).expect_err("should reject");
     let msg = format!("{}", err);
-    assert!(msg.contains("CS-0022"), "expected CS-0022 migration diagnostic, got: {}", msg);
+    assert!(msg.contains("CS-0024"), "expected CS-0024 migration diagnostic, got: {}", msg);
 }
 
 #[test]
@@ -926,11 +911,11 @@ fn test_using_string_form_rejected_with_migration_diagnostic() {
     let src = r#"recipe build
     cook "out" using "echo hi"
 "#;
-    let err = parse(src).expect_err("CS-0022: bare-string using form must be rejected");
+    let err = parse(src).expect_err("CS-0024: bare-string using form must be rejected");
     match err {
         ParseError::Parse { message, .. } => {
-            assert!(message.contains("CS-0022"), "diagnostic should name CS-0022, got: {message}");
-            assert!(message.contains("using {"), "diagnostic should name the new form, got: {message}");
+            assert!(message.contains("CS-0024"), "diagnostic should name CS-0024, got: {message}");
+            assert!(message.contains("{ cmd }"), "diagnostic should name the new form, got: {message}");
         }
         e => panic!("expected ParseError::Parse, got {:?}", e),
     }
@@ -982,9 +967,43 @@ fn cs_0022_one_line_shell_block_with_placeholder_braces() {
 fn cs_0022_one_line_shell_block_followed_by_more_steps() {
     // A one-line block must correctly advance the token position so that
     // subsequent steps parse correctly.
-    let src = "recipe build\n    cook \"build/app\" using { gcc main.c -o {out} }\n    plate \"./{out}\"\n";
+    let src = "recipe build\n    cook \"build/app\" using { gcc main.c -o {out} }\n    plate { ./{in} }\n";
     let cookfile = parse(src).expect("should parse");
     assert_eq!(cookfile.recipes[0].steps.len(), 2, "should have cook + plate");
     assert!(matches!(&cookfile.recipes[0].steps[0], Step::Cook { .. }));
-    assert!(matches!(&cookfile.recipes[0].steps[1], Step::Plate { .. }));
+    assert!(matches!(&cookfile.recipes[0].steps[1], Step::Plate { step, .. } if matches!(step.body, Body::ShellBlock(_))));
+}
+
+#[test]
+fn test_plate_string_form_rejected() {
+    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" using { cc {in} -o {out} }\n    plate \"./{out}\"\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("plate") && msg.contains("CS-0024") && msg.contains("{ cmd }"),
+        "expected migration diagnostic for plate string form, got: {}",
+        msg
+    );
+}
+
+#[test]
+fn test_test_string_form_rejected() {
+    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" using { cc {in} -o {out} }\n    test \"./{out}\" timeout 60\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("test") && msg.contains("CS-0024") && msg.contains("{ cmd }"),
+        "expected migration diagnostic for test string form, got: {}",
+        msg
+    );
+}
+
+#[test]
+fn test_plate_lua_block_parses() {
+    let source = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/{in.stem}\" using { cc {in} -o {out} }\n    plate >{\n        cook.sh(\"strip \" .. input)\n    }\n";
+    let cookfile = parse(source).expect("should parse");
+    match &cookfile.recipes[0].steps[1] {
+        Step::Plate { step, .. } => assert!(matches!(step.body, Body::LuaBlock(_))),
+        other => panic!("expected Plate Lua, got {:?}", other),
+    }
 }
