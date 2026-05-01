@@ -278,57 +278,119 @@ The same two outputs are produced by a Lua block. The `inputs` and `outputs` nam
 The shape `cook "a" "b" using "cmd"` was rejected pre-CS-0022 with a "block body" diagnostic; under CS-0022 the bare-string form is gone entirely, so the diagnostic at this position now reads "the `using "cmd"` form was removed in CS-0022; rewrite as `using { cmd }`." See parser test `test_string_form_rejected_in_using`.
 
 ## 4.7. `plate` step [#recipes.plate-step]
-A `plate_step` (§{grammar-appendix.steps}, `plate_step`) has the shape `plate STRING`. It holds a single shell command template that the execution model applies once per output of a preceding `cook` step in the same recipe body. The mapping from "preceding `cook`" to "which outputs" is defined by §{exec}; §{recipes} requires only that the syntactic shape `plate STRING` be accepted.
+A `plate_step` (§{grammar-appendix.steps}, `plate_step`) is **a `cook` step with no declared outputs**. It has a body — either a `shell_block` (§{grammar-appendix.steps}) or a `using_lua_block` (§{grammar-appendix.steps}) — and no output pattern. It registers work units that perform side-effecting actions whose results do not contribute to the recipe's output list (which remains passthrough per §{xref.dep-recipe-output}).
 
-The command template is a `STRING` and MAY contain the same placeholder set permitted in `cook` templates (e.g. `{out}`). Placeholder text is opaque at the syntactic layer.
+```ebnf
+plate_step ::= "plate" body NEWLINE
+body       ::= shell_block | using_lua_block
+```
+
+The body grammar is identical to the body grammar of a `cook_step`'s `using_clause` (§{recipes.cook-single-output}). The placeholder vocabulary inside a `plate_step` body is specified in §{lua.shell-placeholders} (shell-block bodies) and §{lua.using-block-globals} (Lua-block bodies), with the per-step-kind admission rules of §{recipes.iteration-mode-plate-test}.
+
+A `plate_step` admits no `using` keyword, no leading `STRING`, and no trailing modifiers. The body follows the keyword directly.
+
+### 4.7.1. Iteration mode [#recipes.iteration-mode-plate-test]
+
+A `plate_step` (and a `test_step`, §{recipes.test-step}) is in one of three iteration modes, determined entirely by its body's content:
+
+| Shell-block body contains | Lua-block body references | Mode |
+|---|---|---|
+| `{in}` or `{in.ACCESSOR}` (no `{all}`) | `input` (no `inputs`) | **one-to-one** over source |
+| `{all}` (no `{in}` / `{in.ACCESSOR}`) | `inputs` (no `input`) | **many-to-one** |
+| neither | neither | **one-shot** |
+| both | both | **error** (mixed iteration signal) |
+
+The **iteration source** for a `plate_step` (and `test_step`) is the preceding `cook_step`'s output list (flattened across all units it produces), falling back to the recipe's resolved ingredients (§{recipes.ingredients}) if no `cook_step` precedes it. A step in **one-to-one** or **many-to-one** mode MUST have a non-empty source; a step in **one-shot** mode does not consult the source.
+
+A conforming implementation MUST reject:
+- A body that contains both an iteration-item placeholder/binding (`{in}` / `{in.ACCESSOR}` / `input`) and a batched-source placeholder/binding (`{all}` / `inputs`).
+- A `plate_step` or `test_step` in one-to-one or many-to-one mode whose source is empty.
+
+The Lua identifier scan operates on the same lexical text the brace-balance lexer (§{lexical.brace-blocks}) operates on — strings, comments, and long strings are excluded; only free-identifier-position references count.
 
 ### Example 4.7.1
 
 ```cook
-recipe run-tests
-    ingredients "tests/*.c"
-    cook "build/{in.stem}" using { cc {in} -o {out} }
-    plate "./{out}"
+recipe install
+    ingredients "src/*.c"
+    cook "build/bin/{in.stem}" using { cc {in} -o {out} }
+    plate {
+        install -d $PREFIX/bin
+        install -m755 {in} $PREFIX/bin/{in.name}
+    }
 ```
 
-The `plate` step runs `./<built-test>` once for each output produced by the preceding `cook` step.
+The `plate` step iterates over the preceding `cook` step's output list (one unit per binary), installing each binary into `$PREFIX/bin`.
+
+### Example 4.7.2
+
+```cook
+recipe bundle
+    ingredients "src/*.c"
+    cook "build/bin/{in.stem}" using { cc {in} -o {out} }
+    plate {
+        tar -czf build/bundle.tgz {all}
+    }
+```
+
+The body uses `{all}` and no `{in}`; the step is many-to-one and registers exactly one unit, with `{all}` substituted as the space-joined preceding-cook output list.
 
 ### Note 4.7.1
 
-A `plate_step` takes exactly one `STRING`. A `plate` line with zero strings, two strings, or a `using` clause is a syntax error. The deliberate simplicity — one command template, no `using` — is rationalised in §{rationale.recipes}.
+A `plate_step`'s body grammar matches a `cook_step`'s `using` payload, but the keyword `using` is not used. A `plate_step` has no separate output declaration to separate from the body, so a separator keyword is not needed. See rationale §{rationale.plate-test-no-output-decl}.
 
 ## 4.8. `test` step [#recipes.test-step]
-A `test_step` (§{grammar-appendix.steps}, `test_step`) has the shape:
+A `test_step` (§{grammar-appendix.steps}, `test_step`) has the same body grammar as a `plate_step` (§{recipes.plate-step}) and additionally admits two trailing modifiers:
 
 ```ebnf
-test STRING ("timeout" NUMBER)? "should_fail"?
+test_step      ::= "test" body test_modifiers NEWLINE
+test_modifiers ::= ("timeout" NUMBER)? "should_fail"?
 ```
 
-The required `STRING` is a shell command template. The optional `timeout NUMBER` and `should_fail` modifiers MUST appear in that order when both are present. A conforming implementation MUST accept all four permutations:
+The body and iteration-mode rules of §{recipes.plate-step} apply verbatim. A `test_step` registers work units that report pass/fail rather than producing artifacts; iteration source, mode determination, placeholder vocabulary, and §{xref.string-substitution} cross-recipe substitution are identical to `plate_step`.
+
+The optional modifiers MUST appear in the order shown above. A conforming implementation MUST accept all four permutations:
 
 | Form | Behaviour |
 |---|---|
-| `test "cmd"`                              | Run `cmd`; expect exit status 0, no time bound. |
-| `test "cmd" timeout N`                    | Run `cmd`; expect exit status 0 within `N` seconds. |
-| `test "cmd" should_fail`                  | Run `cmd`; expect a non-zero exit status, no time bound. |
-| `test "cmd" timeout N should_fail`        | Run `cmd`; expect a non-zero exit status within `N` seconds. |
+| `test BODY` | Run the body unit; expect success (no Lua error, no non-zero `cook.sh`/`cook.exec`); no time bound. |
+| `test BODY timeout N` | Run the body unit; expect success within `N` seconds. |
+| `test BODY should_fail` | Run the body unit; expect failure (a Lua error or a non-zero `cook.sh`/`cook.exec` return); no time bound. |
+| `test BODY timeout N should_fail` | Run the body unit; expect failure within `N` seconds. |
 
-`NUMBER` is the `NUMBER` token class of §{lexical.numbers}: a sequence of one or more decimal digits, interpreted as an unsigned integer number of seconds. The upper bound on representable timeouts is implementation-defined.
+`NUMBER` is the `NUMBER` token class of §{lexical.numbers}. The upper bound on representable timeouts is implementation-defined.
 
 ### Example 4.8.1
 
 ```cook
-recipe run-tests
+recipe smoke
     ingredients "tests/*.c"
     cook "build/{in.stem}" using { cc {in} -o {out} }
-    test "./{out}" timeout 60 should_fail
+    test { ./{in} } timeout 60
 ```
 
-Each test binary is run with a 60-second time bound, and the step expects each to exit with non-zero status.
+Each test binary is run with a 60-second time bound, and the step expects each to exit zero (no `should_fail`).
+
+### Example 4.8.2
+
+```cook
+recipe coverage
+    ingredients "src/*.c"
+    cook "build/bin/{in.stem}.test" using { cc {in} -o {out} }
+    test >{
+        for _, bin in ipairs(inputs) do
+            cook.sh("./" .. bin .. " --check")
+        end
+    } timeout 300
+```
+
+The Lua body references `inputs` (no `input`); the step is many-to-one and runs once with all test binaries visible as `inputs`.
 
 ### Note 4.8.1
 
-`should_fail` is a bare word, not a quoted string. It is recognised only as the trailing modifier on a `test` line; elsewhere it has no syntactic meaning and is not a reserved word (§{lexical.keywords}). See parser tests `test_test_step_with_should_fail` and `test_test_step_with_timeout_and_should_fail`.
+`should_fail` is a bare word, not a quoted string. It is recognised only as the trailing modifier on a `test` line; elsewhere it has no syntactic meaning and is not a reserved word (§{lexical.keywords}). The same posture applies to `timeout`.
+
+A `test_step` in one-to-one mode that runs a Lua body where `cook.sh`/`cook.exec` returns non-zero fails by the same rule as a Lua error; `should_fail` inverts the pass/fail decision.
 
 ## 4.9. Lua steps — line and block forms [#recipes.lua-steps]
 
