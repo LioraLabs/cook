@@ -52,31 +52,34 @@ pub(crate) fn generate_plate_step(
                 cmd_expr
             ));
         }
-        // (4) Lua, OneToOne — loop, body sees `input` via a prepended local.
-        // Binding convention: prepend `local input = <item>` to the Lua chunk so
-        // the body can reference `input` as the current iteration item.  This
-        // matches cook_step.rs's pattern of injecting bindings via a Lua source
-        // wrapper rather than an out-of-band `_bind_*` field (cook.add_unit only
-        // accepts `inputs`/`outputs`/`lua_code`/`command`/`cache`/`interactive`).
+        // (4) Lua, OneToOne — loop, body sees `input` as a Lua local.
+        //
+        // Binding convention (plan §8.1 note): build the `lua_code` string at
+        // register time by prepending a header that sets `local input = <value>`
+        // using the actual loop-variable value.  We use `string.format("%q", …)`
+        // to produce a correctly-quoted Lua string literal, then concatenate with
+        // the body long-string.  This way the execute-phase chunk is self-contained
+        // and does not rely on any out-of-band `_bind_*` field on `cook.add_unit`.
         (Body::LuaBlock(code), PlateTestMode::OneToOne) => {
             out.push_str(&format!(
                 "    for _, _plate_in in ipairs({}) do\n",
                 source_expr
             ));
-            // Wrap: prepend `local input = _plate_in` so the body sees `input`.
-            let wrapped_code = format!("local input = _plate_in\n{}", code);
             out.push_str(&format!(
-                "        cook.add_unit({{cache = false, lua_code = {}}})\n",
-                lua_chunk_literal(&wrapped_code)
+                "        cook.add_unit({{cache = false, lua_code = (\"local input = \" .. string.format(\"%q\", _plate_in) .. \"\\n\") .. {}}})\n",
+                lua_chunk_literal(code)
             ));
             out.push_str("    end\n");
         }
-        // (5) Lua, ManyToOne — one unit, body sees `inputs` via a prepended local.
+        // (5) Lua, ManyToOne — one unit, body sees `inputs` as a Lua local.
+        //
+        // For many-to-one, the full source list must be available to the body as
+        // `inputs`.  We serialise the table at register time using a small Lua
+        // helper that quotes each element, producing a self-contained chunk.
         (Body::LuaBlock(code), PlateTestMode::ManyToOne) => {
-            let wrapped_code = format!("local inputs = {}\n{}", source_expr, code);
             out.push_str(&format!(
-                "    cook.add_unit({{cache = false, lua_code = {}}})\n",
-                lua_chunk_literal(&wrapped_code)
+                "    cook.add_unit({{cache = false, lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)()}})\n",
+                source_expr, lua_chunk_literal(code)
             ));
         }
         // (6) Lua, OneShot — one unit, no source binding.

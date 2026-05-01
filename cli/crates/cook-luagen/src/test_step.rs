@@ -57,19 +57,18 @@ pub(crate) fn generate_test_step(
                 "    for _, _test_in in ipairs({}) do\n",
                 source_expr
             ));
-            // Wrap: prepend `local input = _test_in` so the body sees `input`.
-            let wrapped_code = format!("local input = _test_in\n{}", code);
+            // Binding convention: build lua_code at register time with `local input = <value>`.
             out.push_str(&format!(
-                "        cook.add_test({{lua_code = {}, timeout = {}, should_fail = {}}})\n",
-                lua_chunk_literal(&wrapped_code), timeout, should_fail
+                "        cook.add_test({{lua_code = (\"local input = \" .. string.format(\"%q\", _test_in) .. \"\\n\") .. {}, timeout = {}, should_fail = {}}})\n",
+                lua_chunk_literal(code), timeout, should_fail
             ));
             out.push_str("    end\n");
         }
         (Body::LuaBlock(code), PlateTestMode::ManyToOne) => {
-            let wrapped_code = format!("local inputs = {}\n{}", source_expr, code);
+            // Serialise the inputs table at register time into the lua_code string.
             out.push_str(&format!(
-                "    cook.add_test({{lua_code = {}, timeout = {}, should_fail = {}}})\n",
-                lua_chunk_literal(&wrapped_code), timeout, should_fail
+                "    cook.add_test({{lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), timeout = {}, should_fail = {}}})\n",
+                source_expr, lua_chunk_literal(code), timeout, should_fail
             ));
         }
         (Body::LuaBlock(code), PlateTestMode::OneShot) => {
