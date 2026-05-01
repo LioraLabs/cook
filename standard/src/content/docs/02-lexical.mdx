@@ -190,14 +190,14 @@ No other step kind accepts a bare `NUMBER`; digits that appear inside a shell co
 
 ```cook
 recipe "run-tests"
-    test "./{out}" timeout 30 should_fail
+    test { ./{in} } timeout 30 should_fail
 ```
 
 `30` is a `NUMBER` denoting a 30-second timeout.
 
 ### Note 2.8.1
 
-The reference implementation is `parse_test_timeout` in `cli/crates/cook-lang/src/cook_line.rs`. The test `test_test_step_with_timeout_and_should_fail` demonstrates the admitted operand ordering: a `NUMBER` directly after `timeout`, followed by the optional `should_fail` marker.
+The reference implementation is `parse_test_modifier_tail` in `cli/crates/cook-lang/src/recipe.rs`. The test `test_test_step_with_timeout_and_should_fail` demonstrates the admitted operand ordering: a `NUMBER` directly after `timeout`, followed by the optional `should_fail` marker.
 
 ## 2.9. Brace-balanced blocks [#lexical.brace-blocks]
 A **brace-balanced block** is a span of source text delimited by `{` and a matching `}`, where matching is defined by a single-pass brace-counting algorithm that ignores braces appearing inside certain syntactic contexts. Both the `LUA_BLOCK_CONTENT` (inside `>{ … }`) and the `SHELL_BLOCK_CONTENT` (inside `{ … }` after `using`) are brace-balanced blocks; they differ only in how their collected body is normalised after the block closes.

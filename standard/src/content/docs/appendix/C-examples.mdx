@@ -102,7 +102,7 @@ recipe headers
     ingredients "include/*.h"
 
 recipe check: headers
-    test "clang-tidy {headers}"
+    test { clang-tidy {headers} }
 ```
 
 `headers` is a passthrough recipe with no cook step; its output is the resolved glob (§{xref.dep-recipe-output}). `{headers}` in `check`'s test command expands to the space-joined list. The `: headers` dep-list reference (§{xref.name-references} dep-list surface) creates a whole-recipe edge (§{xref.dep-implications}); `{headers}` in the test command is redundant as an edge but fine for string substitution.

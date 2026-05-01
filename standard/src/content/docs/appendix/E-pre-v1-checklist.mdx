@@ -24,7 +24,7 @@ sidebar:
 
 **Resolution.** CS-0022 removed the single-string `using "..."` form in favour of `using { … }` shell blocks. Inside a shell block, `{` and `}` are brace-balanced by the Cookfile lexer (§{lexical.brace-blocks}) and the block content is passed verbatim to the shell — Cook's templater never sees the interior. `${VAR:-default}`, `${VAR%suffix}`, and all other Bash parameter-expansion forms work inside a `using { … }` block without any workaround.
 
-**Residual scope.** The `plate "..."` string form is still a Cook-templated string and retains the original symptom. `plate` is not addressed by CS-0022. A future change may either drop `plate "..."` in favour of a block form or introduce explicit passthrough escaping for `${...}`.
+**Residual scope.** ~~The `plate "..."` string form is still a Cook-templated string and retains the original symptom.~~ Fully resolved in CS-0024: both `plate` and `test` now exclusively use the brace-block body form (`plate { … }`, `test { … }`); the Cook-templated string form has been removed from the language surface.
 
 ## E.3. Cook strings have no `"` escape [#pre-v1.no-string-escape]
 
@@ -34,7 +34,7 @@ sidebar:
 
 **Resolution (partial).** CS-0022 removed `using "..."`. Shell content that previously had to live in a Cook-string is now written inside a `using { … }` block, where the shell's own quoting rules apply and `"` is legal in any shell-valid position.
 
-**Residual scope.** Recipe names, ingredient paths, `cook` output patterns, `plate "..."`, and `test "..."` strings still use unescaped `STRING` (§{lexical.strings}). A `"` in any of those positions remains inexpressible. The resolution path — either an escape mechanism (`\"`, `\\`) or a block form for the affected surfaces — is unchanged from the original entry.
+**Residual scope.** Recipe names, ingredient paths, and `cook` output patterns still use unescaped `STRING` (§{lexical.strings}); a `"` in any of those positions remains inexpressible. The resolution path is unchanged. ~~`plate "..."` and `test "..."` strings still use unescaped `STRING`.~~ Fully resolved in CS-0024: `plate` and `test` now use the brace-block body form exclusively, removing them from the set of STRING surfaces with this limitation.
 
 **Workaround (unchanged).** Avoid embedding double quotes in cook strings. When shell-quoting is genuinely needed in a command, use the `using >{ … }` Lua-block form: Lua handles its own quoting and `cook.sh` accepts arbitrary strings.
 

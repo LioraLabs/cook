@@ -207,7 +207,7 @@ A `recipe_body` MUST satisfy the **region ordering rule** (App. A.3, "Region ord
 recipe build
     ingredients "src/*.c"
     cook "bin/{in.stem}" using { cc {in} -o {out} }
-    test "./bin/app"
+    test { ./bin/app }
     cpp.link()
     @vim notes.txt
     echo done
