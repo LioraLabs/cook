@@ -112,7 +112,7 @@ recipe test: lib
     cook "build/{in.stem}" using {
         cc {in} -o {out}
     }
-    plate "./{out}"
+    plate { ./{in} }
 
 ---
 
@@ -130,7 +130,8 @@ recipe test: lib
         shell: (shell_block
           (shell_content))))
     (plate_step
-      command: (string))))
+      body: (shell_block
+        (shell_content)))))
 
 ================
 Recipe with test step
@@ -138,7 +139,7 @@ Recipe with test step
 
 recipe run-tests: build
     ingredients "build/bin/test_*"
-    test "./{out}" timeout 30
+    test { ./{in} } timeout 30
 
 ---
 
@@ -151,7 +152,8 @@ recipe run-tests: build
     (ingredients_step
       (string))
     (test_step
-      command: (string)
+      body: (shell_block
+        (shell_content))
       timeout: (number))))
 
 ================
@@ -159,7 +161,7 @@ Recipe with test should_fail
 ================
 
 recipe check: build
-    test "./fail_test" should_fail
+    test { ./fail_test } should_fail
 
 ---
 
@@ -170,7 +172,8 @@ recipe check: build
       (dependency_list
         (identifier)))
     (test_step
-      command: (string))))
+      body: (shell_block
+        (shell_content)))))
 
 ================
 Interactive command

@@ -1,0 +1,234 @@
+================
+Plate one-to-one shell single-line
+================
+
+recipe run: build
+    ingredients "tests/*.c"
+    cook "build/{in.stem}" using {
+        cc {in} -o {out}
+    }
+    plate { ./{in} }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (ingredients_step
+      (string))
+    (cook_step
+      outputs: (string)
+      (using_clause
+        shell: (shell_block
+          (shell_content))))
+    (plate_step
+      body: (shell_block
+        (shell_content)))))
+
+================
+Plate one-to-one shell multi-line
+================
+
+recipe run: build
+    ingredients "tests/*.c"
+    plate {
+        ./{in}
+        echo done
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (ingredients_step
+      (string))
+    (plate_step
+      body: (shell_block
+        (shell_content)))))
+
+================
+Plate many-to-one shell with all
+================
+
+recipe run-all: build
+    ingredients "build/bin/test_*"
+    plate { ./{all} }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (ingredients_step
+      (string))
+    (plate_step
+      body: (shell_block
+        (shell_content)))))
+
+================
+Plate one-shot shell
+================
+
+recipe run: build
+    plate { ./run-all }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (plate_step
+      body: (shell_block
+        (shell_content)))))
+
+================
+Plate one-to-one Lua
+================
+
+recipe run: build
+    ingredients "tests/*.c"
+    plate >{
+        cook.sh("./" .. input)
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (ingredients_step
+      (string))
+    (plate_step
+      body: (using_lua_block
+        (lua_code)))))
+
+================
+Plate many-to-one Lua
+================
+
+recipe run-all: build
+    ingredients "tests/*.c"
+    plate >{
+        for _, f in ipairs(inputs) do
+            cook.sh("./" .. f)
+        end
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (ingredients_step
+      (string))
+    (plate_step
+      body: (using_lua_block
+        (lua_code)))))
+
+================
+Plate one-shot Lua
+================
+
+recipe run: build
+    plate >{
+        cook.sh("./run-all")
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (plate_step
+      body: (using_lua_block
+        (lua_code)))))
+
+================
+Test with timeout
+================
+
+recipe verify: build
+    ingredients "build/bin/test_*"
+    test { ./{in} } timeout 60
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (ingredients_step
+      (string))
+    (test_step
+      body: (shell_block
+        (shell_content))
+      timeout: (number))))
+
+================
+Test with should_fail and timeout
+================
+
+recipe check-negative: build
+    test { ./expect-fail } timeout 10 should_fail
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (test_step
+      body: (shell_block
+        (shell_content))
+      timeout: (number))))
+
+================
+Test Lua body with timeout
+================
+
+recipe verify-lua: build
+    ingredients "build/bin/test_*"
+    test >{
+        cook.sh("./" .. input)
+    } timeout 30
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)
+      (dependency_list
+        (identifier)))
+    (ingredients_step
+      (string))
+    (test_step
+      body: (using_lua_block
+        (lua_code))
+      timeout: (number))))
