@@ -193,6 +193,21 @@ the execute-phase worker binds `inputs` to the resolved ingredient paths, `outpu
 
 These globals are bindings on the worker VM, not on the register-phase VM. A register-phase Lua step (`> expr` or `>{ ... }` outside a `using` clause) MUST NOT observe them.
 
+### 6.4.1. Plate and test Lua-block bindings [#lua.using-block-globals-plate-test]
+
+A Lua block in a `plate_step` or `test_step` body (§{recipes.plate-step}, §{recipes.test-step}) is bound according to the step's mode (§{recipes.iteration-mode-plate-test}):
+
+| Binding | Mode | Type | Meaning |
+|---|---|---|---|
+| `input` | one-to-one | string | The current iteration item — one of the source items |
+| `inputs` | many-to-one | table (1-indexed) | The full source list |
+
+A conforming implementation MUST bind exactly one of `input` / `inputs` per unit, per the mode the body's content selected. The other is unbound (Lua `nil` on reference).
+
+A conforming implementation MUST NOT bind `output` / `outputs` for plate or test units; these have no meaning in a step that declares no outputs. A conforming implementation MUST NOT bind `input_N` (indexed input access) for plate or test units; the source list is exposed wholesale via `inputs` in many-to-one mode.
+
+Cross-recipe references inside a plate or test Lua body use `cook.dep_output()` / `cook.dep_output_list()`, identical to a `using >{ … }` Lua body (§{lua.using-block-globals}).
+
 ## 6.5. Filesystem helpers (`fs.*`) [#lua.fs-helpers]
 **Phase.** Both. The same surface is installed in register-phase and execute-phase VMs; semantics are identical.
 
@@ -323,6 +338,26 @@ The block forms (`using { ... }` and `using >{ ... }`) and the placeholder layer
 ### Note 6.7.2
 
 Cross-recipe references inside a shell block follow §{xref.string-substitution}: a bare `{NAME}` substitutes to the named recipe's full output list, joined by space. The `{lib.ACCESSOR}` form is rejected inside any using-clause body, including a shell block, because it would smuggle a second iteration source past the output pattern's declaration. Authors who want a recipe's per-element accessors inside a step driven by something else use Lua (`path.stem(cook.dep_output_list("lib")[1])`).
+
+### 6.7.1. Plate and test shell-block placeholders [#lua.shell-placeholders-plate-test]
+
+A `plate_step` or `test_step` body that is a `shell_block` admits the following placeholders:
+
+| Placeholder | Valid in mode | Meaning |
+|---|---|---|
+| `{in}` | one-to-one | The current iteration item (path) |
+| `{in.ACCESSOR}` | one-to-one | `path.ACCESSOR(in)` per §{lua.path-helpers} |
+| `{all}` | many-to-one | The source list, space-joined |
+| `{NAME}` (NAME is a recipe in scope) | any mode | `cook.dep_output(NAME)` per §{xref.string-substitution} |
+| `{TOKEN}` (none of the above) | any mode | `cook.env[TOKEN]` per §{xref.resolution} |
+
+A conforming implementation MUST reject:
+- `{in}` or `{in.ACCESSOR}` in a many-to-one or one-shot body (no current iteration);
+- `{all}` in a one-to-one or one-shot body (no batched input list);
+- Any `{out}` / `{out.ACCESSOR}` / `{out_N}` / `{out_N.ACCESSOR}` token in a plate or test body — the step declares no outputs. The diagnostic MUST point to `{in}` as the iteration item.
+- `{NAME.ACCESSOR}` for any recipe `NAME` in scope (preserves the §{xref.dep-driven} firewall).
+
+Bare path-accessors (`{stem}`, `{name}`, `{ext}`, `{dir}`) in a plate or test body fall through to `cook.env[TOKEN]` per §{xref.resolution} step 4. A conforming implementation MUST emit a specific diagnostic for these four names that points to `{in.ACCESSOR}` (same diagnostic CS-0022 introduced for cook bodies).
 
 ## 6.8. The `use` declaration [#lua.use-env]
 > **Normative.** This section defines the `use` declaration, which brings a Lua module into the Cookfile's Lua environment. The grammar is given in App. A.2.
