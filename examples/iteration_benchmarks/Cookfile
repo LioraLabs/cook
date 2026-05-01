@@ -150,9 +150,170 @@ recipe app_with_lib
         echo "app_with_lib: linked against {libfoo}" > {out}
     }
 
+# Plate mode 1: One-to-one, shell.
+# Body uses {in} => iterates over the preceding cook's outputs.
+recipe plate_one_to_one_shell
+    ingredients "src/inputs/*.txt"
+    cook "build/plate_one_to_one_shell/{in.stem}.out" using {
+        mkdir -p build/plate_one_to_one_shell
+        sleep {SLEEP}
+        echo "plated: {in}" > {out}
+    }
+    plate {
+        sleep {SLEEP}
+        echo "plate one-to-one: {in}" >> {in}
+    }
+
+# Plate mode 2: Many-to-one, shell.
+# Body uses {all} => one unit, full source visible.
+recipe plate_many_to_one_shell
+    ingredients "src/inputs/*.txt"
+    cook "build/plate_many_to_one_shell/{in.stem}.out" using {
+        mkdir -p build/plate_many_to_one_shell
+        sleep {SLEEP}
+        echo "plated: {in}" > {out}
+    }
+    plate {
+        sleep {SLEEP}
+        echo "plate many-to-one inputs: {all}" > build/plate_many_to_one_shell/all.report
+    }
+
+# Plate mode 3: One-shot, shell.
+# Body references neither {in} nor {all} => runs once.
+recipe plate_one_shot_shell
+    ingredients "src/inputs/*.txt"
+    cook "build/plate_one_shot_shell/{in.stem}.out" using {
+        mkdir -p build/plate_one_shot_shell
+        sleep {SLEEP}
+        echo "plated: {in}" > {out}
+    }
+    plate {
+        sleep {SLEEP}
+        echo "plate one-shot ran" > build/plate_one_shot_shell/.flag
+    }
+
+# Plate mode 4: One-to-one, Lua.
+# Body references `input` => iterates.
+recipe plate_one_to_one_lua
+    ingredients "src/inputs/*.txt"
+    cook "build/plate_one_to_one_lua/{in.stem}.out" using {
+        mkdir -p build/plate_one_to_one_lua
+        sleep {SLEEP}
+        echo "plated: {in}" > {out}
+    }
+    plate >{
+        os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
+        local f = io.open(input, "a")
+        f:write("plate one-to-one lua: " .. input .. "\n")
+        f:close()
+    }
+
+# Plate mode 5: Many-to-one, Lua.
+# Body references `inputs` => one unit.
+recipe plate_many_to_one_lua
+    ingredients "src/inputs/*.txt"
+    cook "build/plate_many_to_one_lua/{in.stem}.out" using {
+        mkdir -p build/plate_many_to_one_lua
+        sleep {SLEEP}
+        echo "plated: {in}" > {out}
+    }
+    plate >{
+        os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
+        local f = io.open("build/plate_many_to_one_lua/all.report", "w")
+        f:write("plate many-to-one lua: " .. #inputs .. " inputs\n")
+        f:close()
+    }
+
+# Plate mode 6: One-shot, Lua.
+recipe plate_one_shot_lua
+    ingredients "src/inputs/*.txt"
+    cook "build/plate_one_shot_lua/{in.stem}.out" using {
+        mkdir -p build/plate_one_shot_lua
+        sleep {SLEEP}
+        echo "plated: {in}" > {out}
+    }
+    plate >{
+        os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
+        os.execute("touch build/plate_one_shot_lua/.flag")
+    }
+
+# Test mode 1: One-to-one, shell.
+# {in} iterates over cook outputs; checks each output file exists.
+recipe test_one_to_one_shell
+    ingredients "src/inputs/*.txt"
+    cook "build/test_one_to_one_shell/{in.stem}.out" using {
+        mkdir -p build/test_one_to_one_shell
+        sleep {SLEEP}
+        echo "test input: {in}" > {out}
+    }
+    test { test -f {in} } timeout 5
+
+# Test mode 2: Many-to-one, shell.
+# {all} gives the full source list; counts to verify it's non-empty.
+recipe test_many_to_one_shell
+    ingredients "src/inputs/*.txt"
+    cook "build/test_many_to_one_shell/all.out" using {
+        mkdir -p build/test_many_to_one_shell
+        sleep {SLEEP}
+        echo "many-to-one: {all}" > {out}
+    }
+    test { count=$(echo {all} | wc -w); [ "$count" -gt 0 ] } timeout 5
+
+# Test mode 3: One-shot, shell.
+# Body references neither {in} nor {all}; runs once unconditionally.
+recipe test_one_shot_shell
+    ingredients "src/inputs/*.txt"
+    cook "build/test_one_shot_shell/all.out" using {
+        mkdir -p build/test_one_shot_shell
+        sleep {SLEEP}
+        echo "one-shot done" > {out}
+    }
+    test { true } timeout 5
+
+# Test mode 4: One-to-one, Lua.
+# `input` iterates over cook outputs; asserts each file is readable.
+recipe test_one_to_one_lua
+    ingredients "src/inputs/*.txt"
+    cook "build/test_one_to_one_lua/{in.stem}.out" using {
+        mkdir -p build/test_one_to_one_lua
+        sleep {SLEEP}
+        echo "test lua input: {in}" > {out}
+    }
+    test >{
+        local f = io.open(input, "r")
+        assert(f, "file not readable: " .. input)
+        f:close()
+    } timeout 5
+
+# Test mode 5: Many-to-one, Lua.
+# `inputs` gives the full list; asserts count is greater than zero.
+recipe test_many_to_one_lua
+    ingredients "src/inputs/*.txt"
+    cook "build/test_many_to_one_lua/all.out" using {
+        mkdir -p build/test_many_to_one_lua
+        sleep {SLEEP}
+        echo "many-to-one lua" > {out}
+    }
+    test >{
+        assert(#inputs > 0, "expected at least one input")
+    } timeout 5
+
+# Test mode 6: One-shot, Lua.
+# No source binding; runs once unconditionally.
+recipe test_one_shot_lua
+    ingredients "src/inputs/*.txt"
+    cook "build/test_one_shot_lua/all.out" using {
+        mkdir -p build/test_one_shot_lua
+        sleep {SLEEP}
+        echo "one-shot lua done" > {out}
+    }
+    test >{
+        assert(true)
+    } timeout 5
+
 # benchmarks — orchestrator.
 # Lists every mode recipe as a dependency.
-recipe benchmarks: one_to_one_shell one_to_one_lua one_to_many_shell many_to_one_shell many_to_one_lua many_to_one_multi_shell many_to_one_multi_lua dep_driven app_with_lib
+recipe benchmarks: one_to_one_shell one_to_one_lua one_to_many_shell many_to_one_shell many_to_one_lua many_to_one_multi_shell many_to_one_multi_lua dep_driven app_with_lib plate_one_to_one_shell plate_many_to_one_shell plate_one_shot_shell plate_one_to_one_lua plate_many_to_one_lua plate_one_shot_lua test_one_to_one_shell test_many_to_one_shell test_one_shot_shell test_one_to_one_lua test_many_to_one_lua test_one_shot_lua
     cook "build/benchmarks.txt" using {
         mkdir -p build
         date > {out}

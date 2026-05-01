@@ -146,6 +146,43 @@ many_to_one_lua: 8 inputs
 The canonical CS-0022 regression check: if `#inputs == 1` here, the wart is
 back. `#inputs == 8` confirms the fix is in effect.
 
+## Plate/test modes
+
+CS-0024 adds `plate` and `test` steps to recipes. These steps share the same
+iteration-mode detection rules as `cook`: the body content (not the output
+pattern) determines whether each step runs once per item, once for all items,
+or once unconditionally.
+
+### Mode detection for plate/test bodies
+
+| Body contains | Mode | Units |
+|---|---|---|
+| `{in}` or `{in.X}` (shell) / `input` (Lua) | One-to-one | One per cook output |
+| `{all}` (shell) / `inputs` (Lua) | Many-to-one | Exactly one |
+| Neither | One-shot | Exactly one |
+
+### Plate recipes (six modes)
+
+| Recipe | Body form | Plate mode | What it does |
+|---|---|---|---|
+| `plate_one_to_one_shell` | `{in}` in shell | One-to-one | Appends a line to each cook output |
+| `plate_many_to_one_shell` | `{all}` in shell | Many-to-one | Writes a report listing all cook outputs |
+| `plate_one_shot_shell` | no source ref | One-shot | Writes a `.flag` file once |
+| `plate_one_to_one_lua` | `input` in Lua | One-to-one | Appends a line to each cook output |
+| `plate_many_to_one_lua` | `inputs` in Lua | Many-to-one | Writes a report with the input count |
+| `plate_one_shot_lua` | no source ref | One-shot | Touches a `.flag` file once |
+
+### Test recipes (six modes)
+
+| Recipe | Body form | Test mode | Assertion |
+|---|---|---|---|
+| `test_one_to_one_shell` | `{in}` in shell | One-to-one | `test -f {in}` — each cook output exists |
+| `test_many_to_one_shell` | `{all}` in shell | Many-to-one | word-count of `{all}` > 0 |
+| `test_one_shot_shell` | no source ref | One-shot | `true` — always passes |
+| `test_one_to_one_lua` | `input` in Lua | One-to-one | `io.open(input)` succeeds |
+| `test_many_to_one_lua` | `inputs` in Lua | Many-to-one | `#inputs > 0` |
+| `test_one_shot_lua` | no source ref | One-shot | `assert(true)` |
+
 ## SLEEP tuning
 
 `SLEEP` defaults to `0.5` seconds (set in the `config` block). Override it
