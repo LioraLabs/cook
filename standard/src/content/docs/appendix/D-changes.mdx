@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.5** (`cs-standard/v0.5`, 2026-04-30) — CS-0022, CS-0023
+- **v0.5** (`cs-standard/v0.5`, 2026-05-01) — CS-0022, CS-0023, CS-0024
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
 - **v0.3** (`cs-standard/v0.3`, 2026-04-28) — CS-0015, CS-0016, CS-0017
 - **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013, CS-0014
@@ -301,28 +301,28 @@ The conformance corpus's `parse.txt` files change format in this cut: `format_co
 
 ## D.23. CS-0023 — Standard cut: v0.5. [#changes.cs-0023]
 
-**Date:** 2026-04-30
+**Date:** 2026-04-30 (originally cut); amended 2026-05-01 to fold CS-0024 into the v0.5 cut.
 **Version:** v0.5
-**Sections affected:** `standard/VERSION` (`0.4` → `0.5`); App. D Versions index (new v0.5 entry); this entry. App. E entries E.2 and E.3 carry CS-0022 cross-references (already landed in the CS-0022 commit series).
+**Sections affected:** `standard/VERSION` (`0.4` → `0.5`); App. D Versions index (new v0.5 entry); this entry. App. E entries E.2 and E.3 carry CS-0022 and CS-0024 cross-references (CS-0022 landed in the CS-0022 commit series; CS-0024 landed in the CS-0024 commit series and was folded into the v0.5 cut by this amendment).
 
-**Summary:** Cuts the Cook Standard at v0.5. Per the cut procedure in `CONTRIBUTING.md` (and §{intro.version}), this entry plus the v0.5 row in the Versions index plus a `cs-standard/v0.5` git tag at the merge commit constitute the published cut. v0.5 ships CS-0022 — the cook-step iteration unification — and this cut entry. CS-0022 is large enough on its own to warrant a minor bump: it removes the `using "cmd"` form, removes bare path-accessors, makes the cook step's output pattern the sole iteration driver, and changes load-time semantics for several surfaces that were silently buggy in v0.4 and earlier.
+**Summary:** Cuts the Cook Standard at v0.5. Per the cut procedure in `CONTRIBUTING.md` (and §{intro.version}), this entry plus the v0.5 row in the Versions index plus a `cs-standard/v0.5` git tag at the merge commit constitute the published cut. v0.5 ships CS-0022 (cook-step iteration unification) and CS-0024 (plate/test step unification — block bodies, three iteration modes, `{out}` / `{lib.ACCESSOR}` firewall). The two changes are paired: CS-0022 introduced the block-body surface and the placeholder vocabulary for cook; CS-0024 extended the same surface to the remaining declarative-region step kinds (plate, test). v0.5 was originally cut on 2026-04-30 with CS-0022 alone; the amendment on 2026-05-01 folded CS-0024 in and moved the `cs-standard/v0.5` tag forward to the merge commit of the CS-0024 series. Together these changes warrant a minor bump: they remove the `using "cmd"` form, remove the `plate "STRING"` / `test "STRING"` forms, remove bare path-accessors, make the cook step's output pattern the sole iteration driver for cook, deduce iteration mode from body content for plate/test, and change load-time semantics for several surfaces that were silently buggy in v0.4 and earlier.
 
-The conformance corpus's `parse.txt` files change format in this cut: `Step::Cook` units with a using-clause dump the inner shape as `ShellBlock([...])` or `LuaBlock(...)` exclusively (the former `Shell("...")` arm is removed in CS-0022). Per CONTRIBUTING.md's rule on parse-format-altering cuts, the `cs-standard/v0.5` tag points at the merge commit where the parser and the corpus agree. `cs-standard/v0.4` and earlier tags are left in place as historical records; the backwards-conformance recipe (`cook --set VERSION=0.4 standard.against-tag`) is not expected to pass against v0.4 post-CS-0022.
+The conformance corpus's `parse.txt` files change format in this cut: `Step::Cook` units with a using-clause dump the inner shape as `ShellBlock([...])` or `LuaBlock(...)` exclusively (the former `Shell("...")` arm is removed in CS-0022); `Step::Plate` and `Step::Test` carry a `body=ShellBlock(...)` or `body=LuaBlock(...)` field exclusively (the former `command=String` field is removed in CS-0024). Per CONTRIBUTING.md's rule on parse-format-altering cuts, the `cs-standard/v0.5` tag points at the merge commit where the parser and the corpus agree post-CS-0024. `cs-standard/v0.4` and earlier tags are left in place as historical records; the backwards-conformance recipe (`cook --set VERSION=0.4 standard.against-tag`) is not expected to pass against v0.4 post-CS-0022 or post-CS-0024.
 
-**Implementation status.** Authoring + tagging step. No prose changes beyond `standard/VERSION`, the Versions index, and this entry.
+**Implementation status.** Authoring + tagging step. No prose changes beyond `standard/VERSION`, the Versions index, this entry, and the metadata bump on D.24's `**Version:**` line. The amended cut moves the `cs-standard/v0.5` tag from the original CS-0023 commit to the amendment commit.
 
-**Reference:** this commit.
+**Reference:** this commit (amended cut).
 
 ## D.24. CS-0024 — Plate/test step unification: block bodies, three iteration modes, `{out}`/`{lib.ACCESSOR}` firewall. [#changes.cs-0024]
 
 **Date:** 2026-05-01
-**Version:** pre-release (post-v0.5)
+**Version:** v0.5 (folded into the v0.5 cut by the CS-0023 amendment of the same date — see D.23)
 **Sections affected:** §{recipes.plate-step} (§4.7 rewritten; §4.7.1 new — iteration-mode deduction); §{recipes.test-step} (§4.8 rewritten); §{recipes.iteration-mode-plate-test} (§4.7.1); §{lua.using-block-globals-plate-test} (§6.4.1 new — plate/test binding table); §{lua.shell-placeholders-plate-test} (§6.7.1 new — plate/test placeholder table); §{exec.phase-classification} (§8.1.2 new rows); §{xref.dep-driven} (§5.4 firewall extended to plate/test bodies); §{xref.string-substitution} (§5.5 extended to plate/test shell blocks); App. A.4 (productions for `plate_step`, `test_step`, `body`, `test_modifiers`; normative paragraphs "Plate/test mode coherence" and "Plate/test source presence"); App. B.4.7 (deleted); App. B.4.17–B.4.21 (new rationale subsections).
 
 **Summary:** Plate and test steps adopt the full block-body surface introduced for cook steps in CS-0022. The old `plate STRING` and `test STRING` forms (accepting only a literal command template) are replaced with `plate body` and `test body test_modifiers`, where `body ::= shell_block | using_lua_block`. Iteration mode for plate and test is deduced from the body's placeholder/identifier content at register time: `{in}` / `{in.ACCESSOR}` → one-to-one; `{all}` (shell) / `inputs` (Lua) → many-to-one (batched); neither → one-shot. The `{out}` placeholder is rejected in plate and test bodies (no declared output), as is `{lib.ACCESSOR}` (no dep-driven iteration for steps without output patterns). The static Lua scan distinguishes `input` (one-to-one) from `inputs` (many-to-one), ignoring the identifier in string/comment/long-string positions.
 
 **Why:** Before CS-0024, plate was restricted to a single command template and test to a single template plus modifiers. Any plate or test that needed more than one shell line required a workaround (a Lua block in a separate cook step, or a wrapper script). CS-0022 gave cook steps full block bodies; CS-0024 extends the same surface uniformly to plate and test. The motivating example — `plate >{ for _, f in ipairs(inputs) do … end }` — requires the using-lua-block surface and many-to-one mode, both of which were unavailable. The surface unification also closes a naming inconsistency: pre-CS-0024 plate used `{out}` to mean "the iteration item," while `{in}` means exactly that everywhere else.
 
-**Implementation status.** Spec-only. App. A and App. B updated in this commit; main-text §§4.7–4.9, §5.4, §5.5, §6.4.1, §6.7.1, §8.1.2 updated in preceding commits. Parser and codegen changes are a follow-up task.
+**Implementation status.** Spec + reference implementation + tree-sitter + conformance corpus + in-repo Cookfile migration + iteration_benchmarks coverage all landed in the CS-0024 commit series (`0f525f0` through `1127ba3`).
 
-**Reference:** this commit.
+**Reference:** the CS-0024 commit series, folded into the v0.5 cut by the CS-0023 amendment commit.
