@@ -474,7 +474,7 @@ fn is_lua_ident_cont(b: u8) -> bool {
 pub enum PlateTestPlaceholderError {
     #[error("`{token}` is not valid in {mode_name} mode (line text: `{line}`)")]
     BadPlaceholder { token: String, mode_name: String, line: String },
-    #[error("`{token}` is not valid in a plate or test body — the iteration item is `{{in}}`")]
+    #[error("`{token}` is not valid in a plate or test body — plate and test steps declare no outputs")]
     OutForbidden { token: String },
     #[error("bare path-accessor `{{{accessor}}}` is no longer valid; use `{{in.{accessor}}}` (CS-0022/CS-0024)")]
     BareAccessor { accessor: String },

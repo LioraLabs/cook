@@ -12,12 +12,23 @@ pub(crate) fn generate_test_step(
     test_step: &TestStep,
     line: usize,
     last_cook_index: Option<usize>,
+    has_ingredients: bool,
     recipe_names: &BTreeSet<String>,
 ) -> Result<(), CodegenError> {
     let mode = detect_plate_test_mode(&test_step.body)
         .map_err(|e| CodegenError::PlateTestMode { line, source: e })?;
     validate_plate_test_placeholders(&test_step.body, mode, recipe_names)
         .map_err(|e| CodegenError::Placeholder { line, source: e })?;
+
+    // CS-0024 §3.5: a OneToOne or ManyToOne test step requires a non-empty
+    // source — either a preceding cook step or at least one declared ingredient
+    // glob.  OneShot has no source at all, so the guard does not apply.
+    if matches!(mode, PlateTestMode::OneToOne | PlateTestMode::ManyToOne)
+        && last_cook_index.is_none()
+        && !has_ingredients
+    {
+        return Err(CodegenError::EmptySource { line });
+    }
 
     let source_expr = if let Some(idx) = last_cook_index {
         format!("_cook_outputs_{}", idx)

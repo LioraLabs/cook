@@ -601,6 +601,7 @@ pub fn generate_with_names(
                         test_step_val,
                         *line,
                         prev_cook_index,
+                        !recipe.ingredients.is_empty(),
                         recipe_names,
                     )?;
                     out.push_str("    end)\n");

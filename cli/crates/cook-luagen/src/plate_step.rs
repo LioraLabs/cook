@@ -19,9 +19,13 @@ pub(crate) fn generate_plate_step(
     validate_plate_test_placeholders(&plate_step.body, mode, recipe_names)
         .map_err(|e| CodegenError::Placeholder { line, source: e })?;
 
-    // CS-0024 §3.5: a OneToOne plate step requires a non-empty source — either
-    // a preceding cook step or at least one declared ingredient glob.
-    if mode == PlateTestMode::OneToOne && last_cook_index.is_none() && !has_ingredients {
+    // CS-0024 §3.5: a OneToOne or ManyToOne plate step requires a non-empty
+    // source — either a preceding cook step or at least one declared ingredient
+    // glob.  OneShot has no source at all, so the guard does not apply.
+    if matches!(mode, PlateTestMode::OneToOne | PlateTestMode::ManyToOne)
+        && last_cook_index.is_none()
+        && !has_ingredients
+    {
         return Err(CodegenError::EmptySource { line });
     }
 
@@ -127,8 +131,9 @@ pub enum CodegenError {
         source: crate::template::PlateTestPlaceholderError,
     },
     #[error(
-        "plate step at line {line} is one-to-one but has no non-empty source — \
-         add an `ingredients` declaration or a preceding `cook` step (CS-0024 §3.5)"
+        "plate/test step at line {line} requires a non-empty source (one-to-one or \
+         many-to-one mode) — add an `ingredients` declaration or a preceding `cook` \
+         step (CS-0024 §3.5)"
     )]
     EmptySource { line: usize },
 }

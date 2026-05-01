@@ -66,6 +66,10 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0024: bare {stem} in plate body — codegen rejection, not syntactic'],
   ['031-one-to-one-empty-source-rejected',
    'CS-0024: plate one-to-one mode with no source — codegen rejection, not syntactic'],
+  ['032-test-empty-source-rejected',
+   'CS-0024: test one-to-one mode with no source — codegen rejection, not syntactic'],
+  ['033-many-to-one-empty-source-rejected',
+   'CS-0024: plate many-to-one mode with no source — codegen rejection, not syntactic'],
 ]);
 
 function corpusRoot() {
