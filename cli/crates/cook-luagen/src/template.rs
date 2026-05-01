@@ -204,120 +204,6 @@ pub(crate) fn expand_template_to_lua_with_deps(
     expand_with_deps_fallback(template, recipe_names)
 }
 
-/// Expand a plate command template, checking recipe names before falling back to cook.env.
-pub(crate) fn expand_plate_cmd_with_deps(
-    template: &str,
-    recipe_names: &BTreeSet<String>,
-) -> String {
-    // Plate commands only use {out} → _plate_out; everything else goes through
-    // the standard dep/env fallback.
-    let mut parts: Vec<String> = Vec::new();
-    let mut remaining = template;
-
-    while !remaining.is_empty() {
-        let brace_pos = remaining.find('{');
-        match brace_pos {
-            None => {
-                parts.push(format!("\"{}\"", escape_lua_string(remaining)));
-                break;
-            }
-            Some(brace_start) => {
-                if brace_start > 0 {
-                    parts.push(format!("\"{}\"", escape_lua_string(&remaining[..brace_start])));
-                }
-                let after_brace = &remaining[brace_start..];
-                if let Some(close) = after_brace.find('}') {
-                    let inner = &after_brace[1..close];
-                    let lua = if inner == "out" {
-                        "_plate_out".to_string()
-                    } else if inner == "out.stem" || inner.starts_with("out.") {
-                        if let Some(acc) = inner.strip_prefix("out.") {
-                            if DEP_ACCESSORS.contains(&acc) {
-                                format!("path.{}(_plate_out)", acc)
-                            } else {
-                                format!("cook.env[\"{}\"]", escape_lua_string(inner))
-                            }
-                        } else {
-                            format!("cook.env[\"{}\"]", escape_lua_string(inner))
-                        }
-                    } else if recipe_names.contains(inner) {
-                        format!("cook.dep_output(\"{}\")", escape_lua_string(inner))
-                    } else {
-                        format!("cook.env[\"{}\"]", escape_lua_string(inner))
-                    };
-                    parts.push(lua);
-                    remaining = &remaining[brace_start + close + 1..];
-                } else {
-                    parts.push(format!("\"{}\"", escape_lua_string(&remaining[brace_start..])));
-                    break;
-                }
-            }
-        }
-    }
-
-    if parts.is_empty() {
-        "\"\"".to_string()
-    } else if parts.len() == 1 {
-        parts.into_iter().next().unwrap()
-    } else {
-        parts.join(" .. ")
-    }
-}
-
-/// Expand a test command template, checking recipe names before falling back to cook.env.
-pub(crate) fn expand_test_cmd_with_deps(
-    template: &str,
-    recipe_names: &BTreeSet<String>,
-) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    let mut remaining = template;
-
-    while !remaining.is_empty() {
-        let brace_pos = remaining.find('{');
-        match brace_pos {
-            None => {
-                parts.push(format!("\"{}\"", escape_lua_string(remaining)));
-                break;
-            }
-            Some(brace_start) => {
-                if brace_start > 0 {
-                    parts.push(format!("\"{}\"", escape_lua_string(&remaining[..brace_start])));
-                }
-                let after_brace = &remaining[brace_start..];
-                if let Some(close) = after_brace.find('}') {
-                    let inner = &after_brace[1..close];
-                    let lua = if inner == "out" {
-                        "_test_out".to_string()
-                    } else if let Some(acc) = inner.strip_prefix("out.") {
-                        if DEP_ACCESSORS.contains(&acc) {
-                            format!("path.{}(_test_out)", acc)
-                        } else {
-                            format!("cook.env[\"{}\"]", escape_lua_string(inner))
-                        }
-                    } else if recipe_names.contains(inner) {
-                        format!("cook.dep_output(\"{}\")", escape_lua_string(inner))
-                    } else {
-                        format!("cook.env[\"{}\"]", escape_lua_string(inner))
-                    };
-                    parts.push(lua);
-                    remaining = &remaining[brace_start + close + 1..];
-                } else {
-                    parts.push(format!("\"{}\"", escape_lua_string(&remaining[brace_start..])));
-                    break;
-                }
-            }
-        }
-    }
-
-    if parts.is_empty() {
-        "\"\"".to_string()
-    } else if parts.len() == 1 {
-        parts.into_iter().next().unwrap()
-    } else {
-        parts.join(" .. ")
-    }
-}
-
 /// The core expansion engine for shell-text bodies (using { ... }, plate, test, bare shell).
 ///
 /// Placeholder table (CS-0022 §6.7):
@@ -381,11 +267,9 @@ fn expand_with_deps_fallback(template: &str, recipe_names: &BTreeSet<String>) ->
 }
 
 // ─── CS-0024: plate/test mode detection, placeholder validation, body expansion ─
-// The items below are not yet called; Task 8 wires them up.
 
 /// CS-0024 §3.4: the iteration mode of a plate/test step body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum PlateTestMode {
     /// Body references {in}/{in.X} (shell) or `input` (Lua), and not the
     /// batched form. One unit per source item.
@@ -398,13 +282,11 @@ pub(crate) enum PlateTestMode {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[allow(dead_code)]
-pub(crate) enum PlateTestModeError {
+pub enum PlateTestModeError {
     #[error("body contains both per-item and batched references — `{0}` and `{1}` cannot both appear")]
     Mixed(&'static str, &'static str),
 }
 
-#[allow(dead_code)]
 pub(crate) fn detect_plate_test_mode(body: &Body) -> Result<PlateTestMode, PlateTestModeError> {
     match body {
         Body::ShellBlock(lines) => {
@@ -432,7 +314,6 @@ pub(crate) fn detect_plate_test_mode(body: &Body) -> Result<PlateTestMode, Plate
 }
 
 /// Scan a shell-body text for any `{in}` or `{in.ACCESSOR}` placeholder.
-#[allow(dead_code)]
 fn body_text_has_in_placeholder(text: &str) -> bool {
     let mut rest = text;
     while let Some(open) = rest.find('{') {
@@ -451,7 +332,6 @@ fn body_text_has_in_placeholder(text: &str) -> bool {
 }
 
 /// Scan a shell-body text for `{TOKEN}` literally equal to `token`.
-#[allow(dead_code)]
 fn body_text_has_token(text: &str, token: &str) -> bool {
     let mut rest = text;
     while let Some(open) = rest.find('{') {
@@ -487,7 +367,6 @@ fn body_text_has_token(text: &str, token: &str) -> bool {
 ///   rather than producing a false positive).
 /// - Non-ASCII bytes: treated as non-identifier bytes (Lua identifiers are ASCII).
 /// - The `.`/`:` field-access guard prevents `foo.input` from matching `input`.
-#[allow(dead_code)]
 fn lua_has_free_identifier(code: &str, name: &str) -> bool {
     let bytes = code.as_bytes();
     let mut i = 0;
@@ -569,7 +448,6 @@ fn lua_has_free_identifier(code: &str, name: &str) -> bool {
 /// Helper: at byte position `bytes[0]` we're past the leading `[`. If the
 /// next chars are `=*[`, we have a long-bracket open. Returns
 /// (equality count, byte offset just past the second `[`).
-#[allow(dead_code)]
 fn count_long_bracket_eqs(bytes: &[u8]) -> (usize, Option<usize>) {
     let mut eq = 0;
     while eq < bytes.len() && bytes[eq] == b'=' {
@@ -582,12 +460,10 @@ fn count_long_bracket_eqs(bytes: &[u8]) -> (usize, Option<usize>) {
     }
 }
 
-#[allow(dead_code)]
 fn is_lua_ident_start(b: u8) -> bool {
     b.is_ascii_alphabetic() || b == b'_'
 }
 
-#[allow(dead_code)]
 fn is_lua_ident_cont(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
@@ -595,8 +471,7 @@ fn is_lua_ident_cont(b: u8) -> bool {
 // ─── CS-0024: placeholder validator ─────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
-#[allow(dead_code)]
-pub(crate) enum PlateTestPlaceholderError {
+pub enum PlateTestPlaceholderError {
     #[error("`{token}` is not valid in {mode_name} mode (line text: `{line}`)")]
     BadPlaceholder { token: String, mode_name: String, line: String },
     #[error("`{token}` is not valid in a plate or test body — the iteration item is `{{in}}`")]
@@ -607,7 +482,6 @@ pub(crate) enum PlateTestPlaceholderError {
     LibAccessor { name: String, accessor: String },
 }
 
-#[allow(dead_code)]
 pub(crate) fn validate_plate_test_placeholders(
     body: &Body,
     mode: PlateTestMode,
@@ -636,7 +510,6 @@ pub(crate) fn validate_plate_test_placeholders(
     Ok(())
 }
 
-#[allow(dead_code)]
 fn validate_token(
     inner: &str,
     mode: PlateTestMode,
@@ -705,7 +578,6 @@ fn validate_token(
 /// and reject `{out}` / `{out_N}` (use `validate_plate_test_placeholders`
 /// before calling). `{NAME}` resolves to `cook.dep_output(NAME)` if `NAME`
 /// is a recipe; otherwise to `cook.env[NAME]` (matches cook-side rules).
-#[allow(dead_code)]
 pub(crate) fn expand_plate_test_body(
     template: &str,
     recipe_names: &BTreeSet<String>,

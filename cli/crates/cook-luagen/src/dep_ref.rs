@@ -43,21 +43,8 @@ pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTr
                 }
                 t
             }
-            // TODO(CS-0024/Task-8): use full Body scanning once Task 8 rewrites these
-            Step::Plate { step: plate_step, .. } => {
-                if let UsingClause::ShellBlock(lines) = &plate_step.body {
-                    lines.iter().flat_map(|l| extract_brace_tokens(l)).collect()
-                } else {
-                    vec![]
-                }
-            }
-            Step::Test { step: test_step, .. } => {
-                if let UsingClause::ShellBlock(lines) = &test_step.body {
-                    lines.iter().flat_map(|l| extract_brace_tokens(l)).collect()
-                } else {
-                    vec![]
-                }
-            }
+            Step::Plate { step: plate_step, .. } => extract_body_tokens(&plate_step.body),
+            Step::Test { step: test_step, .. } => extract_body_tokens(&test_step.body),
             Step::Shell { command, .. } => extract_brace_tokens(command),
             Step::Lua { .. }
             | Step::LuaBlock { .. }
@@ -101,6 +88,26 @@ pub fn extract_brace_tokens(template: &str) -> Vec<String> {
     }
 
     tokens
+}
+
+/// Extract brace-token dep refs from a `Body`, supporting both shell and Lua bodies.
+///
+/// For `ShellBlock` bodies, `{NAME}` tokens are scanned exactly as in cook-step
+/// shell lines.  For `LuaBlock` bodies, cross-recipe access goes via
+/// `cook.dep_output()` (a Lua API call), which is opaque to the static brace
+/// scanner — return an empty list.
+fn extract_body_tokens(body: &cook_lang::ast::Body) -> Vec<String> {
+    use cook_lang::ast::Body;
+    match body {
+        Body::ShellBlock(lines) => {
+            let joined = lines.join("\n");
+            extract_brace_tokens(&joined)
+        }
+        // Lua bodies do not participate in cross-recipe `{NAME}` substitution
+        // (Lua syntax owns the braces). Cross-recipe access in Lua bodies is
+        // via `cook.dep_output()` — not extracted here.
+        Body::LuaBlock(_) => Vec::new(),
+    }
 }
 
 /// Parse a single {FOO} token into a DepRef if it matches a recipe name.
