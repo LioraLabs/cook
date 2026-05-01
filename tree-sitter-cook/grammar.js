@@ -190,14 +190,19 @@ module.exports = grammar({
     shell_block: ($) =>
       seq("{", alias($._shell_block_content, $.shell_content), "}"),
 
-    plate_step: ($) => seq("plate", field("command", $.string), $._newline),
+    plate_step: ($) =>
+      seq(
+        "plate",
+        field("body", choice($.shell_block, $.using_lua_block)),
+        $._newline,
+      ),
 
     test_step: ($) =>
       seq(
         "test",
-        field("command", $.string),
+        field("body", choice($.shell_block, $.using_lua_block)),
         optional(seq("timeout", field("timeout", $.number))),
-        optional("should_fail"),
+        optional(field("should_fail", "should_fail")),
         $._newline,
       ),
 

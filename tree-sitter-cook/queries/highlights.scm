@@ -64,12 +64,6 @@
 (cook_step
   outputs: (string) @string.special)
 
-(plate_step
-  command: (string) @string.special)
-
-(test_step
-  command: (string) @string)
-
 (test_step
   timeout: (number) @number)
 
