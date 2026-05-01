@@ -47,10 +47,10 @@ Every Lua expression in a Cookfile is evaluated in exactly one of three timings.
 | `lua_block` (`>{ … }`)                       | §{recipes.lua-steps} | **execute** | yes — contributes to the body unit |
 | `cook STR using >{ … }` (using-clause Lua)   | §{recipes.cook-single-output}, §{recipes.cook-multi-output} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals} bindings |
 | `cook.add_unit({lua_code = "…"})` payload    | §{lua.add-unit} | **execute** | yes — runs on the worker VM that picks up the unit |
-| `plate { … }` (shell block) | §{recipes.plate-step} | register (substitution) → execute (shell) | declarative |
-| `plate >{ … }` (Lua block)  | §{recipes.plate-step} | register (binding setup) → execute (Lua)  | declarative |
-| `test { … }` (shell block)  | §{recipes.test-step}  | register (substitution) → execute (shell) | declarative |
-| `test >{ … }` (Lua block)   | §{recipes.test-step}  | register (binding setup) → execute (Lua)  | declarative |
+| `plate { … }` (shell block)                  | §{recipes.plate-step} | **execute** | yes — recorded with shell payload, with §{lua.shell-placeholders-plate-test} substitutions |
+| `plate >{ … }` (Lua block)                   | §{recipes.plate-step} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals-plate-test} bindings |
+| `test { … }` (shell block)                   | §{recipes.test-step}  | **execute** | yes — recorded with shell payload via `cook.add_test`, with §{lua.shell-placeholders-plate-test} substitutions |
+| `test >{ … }` (Lua block)                    | §{recipes.test-step}  | **execute** | yes — recorded with `lua_code` payload via `cook.add_test`, with §{lua.using-block-globals-plate-test} bindings |
 
 Three corollaries:
 
