@@ -3,6 +3,71 @@ use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
 use crate::ParseError;
 
+/// Parse a body payload — the `body` production from App. A.4 (CS-0024).
+///
+/// `after_kw` is the line text after the body's introducer keyword
+/// (`using` for cook, the empty string for plate/test). `kw_for_diag` is
+/// the keyword name used in error messages (`cook using`, `plate`, `test`).
+///
+/// Returns the parsed `Body` plus the new token-stream position.
+pub(crate) fn parse_body_payload(
+    after_kw: &str,
+    line: usize,
+    tokens: &[Located<Token>],
+    current_pos: usize,
+    source_lines: &[&str],
+    kw_for_diag: &str,
+) -> Result<(Body, usize), ParseError> {
+    let trimmed = after_kw.trim_start();
+
+    if trimmed.starts_with(">>{") {
+        return Err(ParseError::Parse {
+            line,
+            message: format!(
+                "{}: `>>{{ … }}` (register-phase Lua block) is not a valid body — use `>{{ … }}` for an execute-phase Lua block",
+                kw_for_diag
+            ),
+        });
+    }
+
+    if trimmed.starts_with(">{") {
+        let (code, new_pos) = collect_lua_block(line, tokens, current_pos + 1, source_lines)?;
+        return Ok((Body::LuaBlock(code), new_pos));
+    }
+
+    if trimmed.starts_with('{') {
+        let after_open = &trimmed[1..];
+        if let Some(commands) = crate::shell_block::try_inline_shell_block(after_open) {
+            let mut new_pos = current_pos + 1;
+            while new_pos < tokens.len() && tokens[new_pos].line <= line {
+                new_pos += 1;
+            }
+            return Ok((Body::ShellBlock(commands), new_pos));
+        }
+        let (commands, new_pos) =
+            crate::shell_block::collect_shell_block(line, tokens, current_pos + 1, source_lines)?;
+        return Ok((Body::ShellBlock(commands), new_pos));
+    }
+
+    if trimmed.starts_with('"') {
+        return Err(ParseError::Parse {
+            line,
+            message: format!(
+                "{}: the bare-string form `\"cmd\"` was removed in CS-0024; rewrite as `{{ cmd }}` (one-line shell block)",
+                kw_for_diag
+            ),
+        });
+    }
+
+    Err(ParseError::Parse {
+        line,
+        message: format!(
+            "{}: expected `>{{ Lua block }}` or `{{ shell block }}`, found: {}",
+            kw_for_diag, trimmed
+        ),
+    })
+}
+
 pub(crate) fn strip_keyword<'a>(text: &'a str, keyword: &str) -> Option<&'a str> {
     if text.starts_with(keyword) {
         let rest = &text[keyword.len()..];
@@ -49,53 +114,6 @@ pub(crate) fn parse_ingredients_line(text: &str, line: usize) -> Result<(Vec<Str
     Ok((includes, excludes))
 }
 
-pub(crate) fn parse_single_quoted_string(text: &str, line: usize) -> Result<String, ParseError> {
-    let text = text.trim();
-    if !text.starts_with('"') {
-        return Err(ParseError::Parse {
-            line,
-            message: format!("expected '\"', found: {}", text),
-        });
-    }
-    let rest = &text[1..];
-    let end = rest.find('"').ok_or(ParseError::Parse {
-        line,
-        message: "unterminated string".to_string(),
-    })?;
-    Ok(rest[..end].to_string())
-}
-
-pub(crate) fn parse_test_command<'a>(text: &'a str, line: usize) -> Result<(String, &'a str), ParseError> {
-    let text = text.trim();
-    if !text.starts_with('"') {
-        return Err(ParseError::Parse {
-            line,
-            message: format!("test: expected '\"', found: {}", text),
-        });
-    }
-    let rest = &text[1..];
-    let end = rest.find('"').ok_or(ParseError::Parse {
-        line,
-        message: "test: unterminated string".to_string(),
-    })?;
-    Ok((rest[..end].to_string(), rest[end + 1..].trim()))
-}
-
-pub(crate) fn parse_test_timeout(text: &str) -> (Option<u64>, &str) {
-    let text = text.trim();
-    if let Some(rest) = text.strip_prefix("timeout") {
-        let rest = rest.trim();
-        // Split on next whitespace or take all remaining
-        if let Some(space_pos) = rest.find(|c: char| c.is_whitespace()) {
-            if let Ok(n) = rest[..space_pos].parse::<u64>() {
-                return (Some(n), rest[space_pos..].trim());
-            }
-        } else if let Ok(n) = rest.parse::<u64>() {
-            return (Some(n), "");
-        }
-    }
-    (None, text)
-}
 
 pub(crate) fn parse_cook_line(
     rest: &str,
@@ -143,75 +161,15 @@ pub(crate) fn parse_cook_line(
         });
     }
 
-    let after_using = after_pattern["using".len()..].trim();
+    let after_using = after_pattern["using".len()..].trim_start();
 
-    // App. A.4 "`using >>{` is rejected": register-phase Lua block is incoherent
-    // as a using-clause payload (the using clause produces work for execute, not
-    // register-time orchestration). Diagnose sharply.
-    if after_using.starts_with(">>{") {
-        return Err(ParseError::Parse {
-            line,
-            message: "cook using: `>>{ … }` (register-phase Lua block) is not a valid using-clause payload — use `>{ … }` for an execute-phase Lua block".to_string(),
-        });
-    }
-
-    if after_using.starts_with(">{") {
-        let (code, new_pos) = collect_lua_block(line, tokens, current_pos + 1, source_lines)?;
-        Ok((
-            CookStep {
-                outputs,
-                using_clause: Some(UsingClause::LuaBlock(code)),
-            },
-            new_pos,
-        ))
-    } else if after_using.starts_with('{') {
-        // CS-0022 §4.5: one-line shell block support.
-        // `after_using` is the text starting with `{` on the cook line.
-        // Check whether the rest of this span contains the matching `}`.
-        let after_open = &after_using[1..]; // text after the opening `{`
-        if let Some(commands) = crate::shell_block::try_inline_shell_block(after_open) {
-            // Inline block — skip all tokens on this line.
-            let mut new_pos = current_pos + 1;
-            while new_pos < tokens.len() && tokens[new_pos].line <= line {
-                new_pos += 1;
-            }
-            Ok((
-                CookStep {
-                    outputs,
-                    using_clause: Some(UsingClause::ShellBlock(commands)),
-                },
-                new_pos,
-            ))
-        } else {
-            // Multi-line block — delegate to collect_shell_block.
-            let (commands, new_pos) = crate::shell_block::collect_shell_block(
-                line,
-                tokens,
-                current_pos + 1,
-                source_lines,
-            )?;
-            Ok((
-                CookStep {
-                    outputs,
-                    using_clause: Some(UsingClause::ShellBlock(commands)),
-                },
-                new_pos,
-            ))
-        }
-    } else if after_using.starts_with('"') {
-        Err(ParseError::Parse {
-            line,
-            message: "cook using: the bare-string form `using \"cmd\"` was removed in CS-0022; \
-                      rewrite as `using { cmd }` (one-line shell block)"
-                .to_string(),
-        })
-    } else {
-        Err(ParseError::Parse {
-            line,
-            message: format!(
-                "cook using: expected `>{{ Lua block }}` or `{{ shell block }}`, found: {}",
-                after_using
-            ),
-        })
-    }
+    let (body, new_pos) =
+        parse_body_payload(after_using, line, tokens, current_pos, source_lines, "cook using")?;
+    Ok((
+        CookStep {
+            outputs,
+            using_clause: Some(body),
+        },
+        new_pos,
+    ))
 }

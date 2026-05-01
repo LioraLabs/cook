@@ -118,6 +118,52 @@ pub(crate) fn parse_config_block_lua(
     Ok((body, pos))
 }
 
+struct TestModifierTail {
+    timeout: Option<u64>,
+    should_fail: bool,
+}
+
+/// Parse the trailing modifier suffix on a `test` line — the text that
+/// follows the closing brace of the body. Accepts:
+///     timeout N
+///     should_fail
+///     timeout N should_fail
+///     <empty>
+/// Only the four §4.8 forms are valid; anything else is rejected.
+fn parse_test_modifier_tail(line_text: &str, line: usize) -> Result<TestModifierTail, ParseError> {
+    let suffix = match line_text.rfind('}') {
+        Some(idx) => &line_text[idx + 1..],
+        None => "",
+    };
+    let trimmed = suffix.trim();
+
+    let mut timeout: Option<u64> = None;
+    let mut should_fail = false;
+    let mut tokens = trimmed.split_whitespace().peekable();
+
+    while let Some(tok) = tokens.next() {
+        if tok == "timeout" {
+            let n = tokens.next().ok_or_else(|| ParseError::Parse {
+                line,
+                message: "test: `timeout` requires a numeric argument".to_string(),
+            })?;
+            timeout = Some(n.parse().map_err(|_| ParseError::Parse {
+                line,
+                message: format!("test: invalid timeout value: {}", n),
+            })?);
+        } else if tok == "should_fail" {
+            should_fail = true;
+        } else {
+            return Err(ParseError::Parse {
+                line,
+                message: format!("test: unexpected modifier `{}`", tok),
+            });
+        }
+    }
+
+    Ok(TestModifierTail { timeout, should_fail })
+}
+
 pub(crate) fn parse_recipe(
     name: String,
     deps: Vec<String>,
@@ -201,26 +247,41 @@ pub(crate) fn parse_recipe(
                     if let Some(started) = imperative_began {
                         return Err(region_violation("plate", tok.line, started));
                     }
-                    let command = parse_single_quoted_string(rest, tok.line)?;
+                    let (body, new_pos) = crate::cook_line::parse_body_payload(
+                        rest, tok.line, tokens, pos, source_lines, "plate",
+                    )?;
                     steps.push(Step::Plate {
-                        step: PlateStep { body: Body::ShellBlock(vec![command]) },
+                        step: PlateStep { body },
                         line: tok.line,
                     });
+                    pos = new_pos;
+                    continue;
                 } else if let Some(rest) = strip_keyword(text, "test") {
                     if let Some(started) = imperative_began {
                         return Err(region_violation("test", tok.line, started));
                     }
-                    let (command, rest) = parse_test_command(rest, tok.line)?;
-                    let (timeout, rest) = parse_test_timeout(rest);
-                    let should_fail = rest.trim() == "should_fail";
+                    let (body, new_pos) = crate::cook_line::parse_body_payload(
+                        rest, tok.line, tokens, pos, source_lines, "test",
+                    )?;
+                    let modifier_line = if new_pos > 0 && new_pos <= tokens.len() {
+                        match tokens.get(new_pos - 1) {
+                            Some(t) => source_lines[t.line.saturating_sub(1)],
+                            None => "",
+                        }
+                    } else {
+                        ""
+                    };
+                    let modifier_tail = parse_test_modifier_tail(modifier_line, tok.line)?;
                     steps.push(Step::Test {
                         step: TestStep {
-                            body: Body::ShellBlock(vec![command]),
-                            timeout,
-                            should_fail,
+                            body,
+                            timeout: modifier_tail.timeout,
+                            should_fail: modifier_tail.should_fail,
                         },
                         line: tok.line,
                     });
+                    pos = new_pos;
+                    continue;
                 } else if is_module_call(text) {
                     if let Some(started) = imperative_began {
                         return Err(region_violation("module-call", tok.line, started));
