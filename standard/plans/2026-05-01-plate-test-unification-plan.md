@@ -412,7 +412,7 @@ In `standard/src/content/docs/appendix/B-rationale.mdx`:
 2. Add a new subsection. Insert after the deletion site:
 
 ```mdx
-### B.4.7. Why `plate` and `test` are cook steps with no declared outputs [#rationale.plate-test-cook-with-no-outputs]
+### B.4.7. Why `plate` and `test` are cook steps with no declared outputs [#rationale.plate-test-no-output-decl]
 Once cook gained block bodies and three iteration modes (CS-0022), the only structural difference between a cook step and a plate or test step was the presence of an output declaration. Modeling plate and test as "cook with no outputs" makes the body grammar uniform, the placeholder vocabulary uniform, the cross-recipe substitution rules uniform, and the substitution timing uniform. The author's mental model collapses from three step kinds with three surfaces to three step kinds with one surface.
 
 The two keywords survive because they signal author intent that a single keyword would lose: a reader scanning a recipe sees `test` and knows "this is a validation gate." `test` additionally carries genuine extra structure (`timeout` and `should_fail` modifiers) that a generic "cook with no outputs" form would not.
