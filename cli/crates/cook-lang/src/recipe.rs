@@ -203,7 +203,7 @@ pub(crate) fn parse_recipe(
                     }
                     let command = parse_single_quoted_string(rest, tok.line)?;
                     steps.push(Step::Plate {
-                        step: PlateStep { command },
+                        step: PlateStep { body: Body::ShellBlock(vec![command]) },
                         line: tok.line,
                     });
                 } else if let Some(rest) = strip_keyword(text, "test") {
@@ -215,7 +215,7 @@ pub(crate) fn parse_recipe(
                     let should_fail = rest.trim() == "should_fail";
                     steps.push(Step::Test {
                         step: TestStep {
-                            command,
+                            body: Body::ShellBlock(vec![command]),
                             timeout,
                             should_fail,
                         },

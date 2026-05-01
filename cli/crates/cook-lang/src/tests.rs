@@ -264,7 +264,7 @@ fn test_plate_step() {
     match &recipe.steps[1] {
         Step::Plate { step, line } => {
             assert_eq!(*line, 6);
-            assert_eq!(step.command, "./{out}");
+            assert!(matches!(&step.body, Body::ShellBlock(cmds) if cmds == &["./{out}"]));
         }
         other => panic!("expected Plate, got {:?}", other),
     }
@@ -620,7 +620,7 @@ fn test_test_step_basic() {
     match &recipe.steps[1] {
         Step::Test { step, line } => {
             assert_eq!(*line, 6);
-            assert_eq!(step.command, "./{out}");
+            assert!(matches!(&step.body, Body::ShellBlock(cmds) if cmds == &["./{out}"]));
             assert_eq!(step.timeout, None);
             assert!(!step.should_fail);
         }
@@ -637,7 +637,7 @@ fn test_test_step_with_timeout() {
     let recipe = &result.recipes[0];
     match &recipe.steps[0] {
         Step::Test { step, .. } => {
-            assert_eq!(step.command, "./{out}");
+            assert!(matches!(&step.body, Body::ShellBlock(cmds) if cmds == &["./{out}"]));
             assert_eq!(step.timeout, Some(30));
             assert!(!step.should_fail);
         }
@@ -654,7 +654,7 @@ fn test_test_step_with_should_fail() {
     let recipe = &result.recipes[0];
     match &recipe.steps[0] {
         Step::Test { step, .. } => {
-            assert_eq!(step.command, "./{out}");
+            assert!(matches!(&step.body, Body::ShellBlock(cmds) if cmds == &["./{out}"]));
             assert_eq!(step.timeout, None);
             assert!(step.should_fail);
         }
@@ -671,7 +671,7 @@ fn test_test_step_with_timeout_and_should_fail() {
     let recipe = &result.recipes[0];
     match &recipe.steps[0] {
         Step::Test { step, .. } => {
-            assert_eq!(step.command, "./{out}");
+            assert!(matches!(&step.body, Body::ShellBlock(cmds) if cmds == &["./{out}"]));
             assert_eq!(step.timeout, Some(60));
             assert!(step.should_fail);
         }

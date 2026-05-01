@@ -51,6 +51,12 @@ pub enum UsingClause {
     LuaBlock(String),
 }
 
+/// CS-0024: a step body — same grammar as `using_clause`'s payload.
+/// Used by `cook_step` (via `UsingClause`), `plate_step`, and `test_step`.
+/// Aliased to `UsingClause` so the codegen can share substitution / mode
+/// detection helpers without duplicating the enum.
+pub type Body = UsingClause;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CookStep {
     pub outputs: Vec<String>,
@@ -59,12 +65,12 @@ pub struct CookStep {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlateStep {
-    pub command: String,
+    pub body: Body,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestStep {
-    pub command: String,
+    pub body: Body,
     pub timeout: Option<u64>,
     pub should_fail: bool,
 }
@@ -170,10 +176,9 @@ mod tests {
 
     #[test]
     fn test_plate_step() {
-        let step = PlateStep {
-            command: "./{out}".to_string(),
+        let _step = PlateStep {
+            body: Body::ShellBlock(vec!["./{in}".to_string()]),
         };
-        assert_eq!(step.command, "./{out}");
     }
 
     #[test]
