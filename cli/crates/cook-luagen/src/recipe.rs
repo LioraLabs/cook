@@ -251,25 +251,34 @@ fn validate_accessor_placement(
                     // Inline Lua bodies are opaque to the accessor-placement
                     // check; the templater does not run on Lua source.
                 }
+                // TODO(CS-0024/Task-8): use validate_plate_test_placeholders once Task 8 lands
                 Step::Plate { step: plate_step, line } => {
-                    check_command(
-                        &plate_step.command,
-                        &BTreeSet::new(),
-                        recipe_names,
-                        &recipe.name,
-                        "plate command",
-                        *line,
-                    )?;
+                    if let UsingClause::ShellBlock(lines) = &plate_step.body {
+                        for shell_line in lines {
+                            check_command(
+                                shell_line,
+                                &BTreeSet::new(),
+                                recipe_names,
+                                &recipe.name,
+                                "plate command",
+                                *line,
+                            )?;
+                        }
+                    }
                 }
                 Step::Test { step: test_step, line } => {
-                    check_command(
-                        &test_step.command,
-                        &BTreeSet::new(),
-                        recipe_names,
-                        &recipe.name,
-                        "test command",
-                        *line,
-                    )?;
+                    if let UsingClause::ShellBlock(lines) = &test_step.body {
+                        for shell_line in lines {
+                            check_command(
+                                shell_line,
+                                &BTreeSet::new(),
+                                recipe_names,
+                                &recipe.name,
+                                "test command",
+                                *line,
+                            )?;
+                        }
+                    }
                 }
                 Step::Shell { command, line, .. } => {
                     check_command(

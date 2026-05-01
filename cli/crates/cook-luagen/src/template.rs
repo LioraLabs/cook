@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use cook_lang::ast::Body;
+
 use crate::cook_step::CookMode;
 use crate::lua_string::escape_lua_string;
 
@@ -377,6 +379,397 @@ fn expand_with_deps_fallback(template: &str, recipe_names: &BTreeSet<String>) ->
         parts.join(" .. ")
     }
 }
+
+// ─── CS-0024: plate/test mode detection, placeholder validation, body expansion ─
+// The items below are not yet called; Task 8 wires them up.
+
+/// CS-0024 §3.4: the iteration mode of a plate/test step body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum PlateTestMode {
+    /// Body references {in}/{in.X} (shell) or `input` (Lua), and not the
+    /// batched form. One unit per source item.
+    OneToOne,
+    /// Body references {all} (shell) or `inputs` (Lua), and not the
+    /// per-item form. Exactly one unit, full source visible.
+    ManyToOne,
+    /// Body references neither. Exactly one unit, source not consulted.
+    OneShot,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
+pub(crate) enum PlateTestModeError {
+    #[error("body contains both per-item and batched references — `{0}` and `{1}` cannot both appear")]
+    Mixed(&'static str, &'static str),
+}
+
+#[allow(dead_code)]
+pub(crate) fn detect_plate_test_mode(body: &Body) -> Result<PlateTestMode, PlateTestModeError> {
+    match body {
+        Body::ShellBlock(lines) => {
+            let joined: String = lines.join("\n");
+            let has_in = body_text_has_in_placeholder(&joined);
+            let has_all = body_text_has_token(&joined, "all");
+            match (has_in, has_all) {
+                (true, true) => Err(PlateTestModeError::Mixed("{in}", "{all}")),
+                (true, false) => Ok(PlateTestMode::OneToOne),
+                (false, true) => Ok(PlateTestMode::ManyToOne),
+                (false, false) => Ok(PlateTestMode::OneShot),
+            }
+        }
+        Body::LuaBlock(code) => {
+            let has_input = lua_has_free_identifier(code, "input");
+            let has_inputs = lua_has_free_identifier(code, "inputs");
+            match (has_input, has_inputs) {
+                (true, true) => Err(PlateTestModeError::Mixed("input", "inputs")),
+                (true, false) => Ok(PlateTestMode::OneToOne),
+                (false, true) => Ok(PlateTestMode::ManyToOne),
+                (false, false) => Ok(PlateTestMode::OneShot),
+            }
+        }
+    }
+}
+
+/// Scan a shell-body text for any `{in}` or `{in.ACCESSOR}` placeholder.
+#[allow(dead_code)]
+fn body_text_has_in_placeholder(text: &str) -> bool {
+    let mut rest = text;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        if let Some(close) = after.find('}') {
+            let inner = &after[..close];
+            if inner == "in" || inner.starts_with("in.") {
+                return true;
+            }
+            rest = &after[close + 1..];
+        } else {
+            break;
+        }
+    }
+    false
+}
+
+/// Scan a shell-body text for `{TOKEN}` literally equal to `token`.
+#[allow(dead_code)]
+fn body_text_has_token(text: &str, token: &str) -> bool {
+    let mut rest = text;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        if let Some(close) = after.find('}') {
+            let inner = &after[..close];
+            if inner == token {
+                return true;
+            }
+            rest = &after[close + 1..];
+        } else {
+            break;
+        }
+    }
+    false
+}
+
+/// Scan a Lua source text for a free-identifier reference to `name`.
+///
+/// Skips:
+/// - text inside `"…"` and `'…'` short strings (with `\` escape rules);
+/// - text inside `[[…]]` long strings (any `=` count between brackets);
+/// - text inside `--` line comments and `--[[…]]` block comments;
+/// - identifier-name positions immediately preceded by `.` or `:` (these
+///   are property/method accesses, not free identifiers).
+///
+/// The scan recognises `name` only as a whole-word identifier, bordered
+/// by Lua identifier-character boundaries.
+///
+/// # Boundary cases
+///
+/// - Unterminated long strings/comments: returns `false` (treats as unscannable
+///   rather than producing a false positive).
+/// - Non-ASCII bytes: treated as non-identifier bytes (Lua identifiers are ASCII).
+/// - The `.`/`:` field-access guard prevents `foo.input` from matching `input`.
+#[allow(dead_code)]
+fn lua_has_free_identifier(code: &str, name: &str) -> bool {
+    let bytes = code.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+
+        // Skip line comments: `-- … <newline>`.
+        if b == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            // Long comment: `--[[ … ]]` or `--[==[ … ]==]`.
+            if i + 2 < bytes.len() && bytes[i + 2] == b'[' {
+                let (eq_count, after_open) = count_long_bracket_eqs(&bytes[i + 3..]);
+                if let Some(after_open_pos) = after_open {
+                    let close_marker = format!("]{}]", "=".repeat(eq_count));
+                    if let Some(rel) = code[i + 3 + after_open_pos..].find(&close_marker) {
+                        i = i + 3 + after_open_pos + rel + close_marker.len();
+                        continue;
+                    } else {
+                        return false; // unterminated — treat as unscannable
+                    }
+                }
+            }
+            // Line comment.
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip short strings.
+        if b == b'"' || b == b'\'' {
+            let quote = b;
+            i += 1;
+            while i < bytes.len() && bytes[i] != quote {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            i += 1; // skip closing quote
+            continue;
+        }
+
+        // Skip long strings: `[[ … ]]` or `[==[ … ]==]`.
+        if b == b'[' {
+            let (eq_count, after_open) = count_long_bracket_eqs(&bytes[i + 1..]);
+            if let Some(after_open_pos) = after_open {
+                let close_marker = format!("]{}]", "=".repeat(eq_count));
+                if let Some(rel) = code[i + 1 + after_open_pos..].find(&close_marker) {
+                    i = i + 1 + after_open_pos + rel + close_marker.len();
+                    continue;
+                } else {
+                    return false;
+                }
+            }
+        }
+
+        // Identifier match.
+        if is_lua_ident_start(b) {
+            let ident_start = i;
+            while i < bytes.len() && is_lua_ident_cont(bytes[i]) {
+                i += 1;
+            }
+            // Check property-access suffix: was the char immediately before
+            // ident_start a `.` or `:`?
+            let before_is_field_access = ident_start > 0
+                && (bytes[ident_start - 1] == b'.' || bytes[ident_start - 1] == b':');
+            if !before_is_field_access && &code[ident_start..i] == name {
+                return true;
+            }
+            continue;
+        }
+
+        i += 1;
+    }
+    false
+}
+
+/// Helper: at byte position `bytes[0]` we're past the leading `[`. If the
+/// next chars are `=*[`, we have a long-bracket open. Returns
+/// (equality count, byte offset just past the second `[`).
+#[allow(dead_code)]
+fn count_long_bracket_eqs(bytes: &[u8]) -> (usize, Option<usize>) {
+    let mut eq = 0;
+    while eq < bytes.len() && bytes[eq] == b'=' {
+        eq += 1;
+    }
+    if eq < bytes.len() && bytes[eq] == b'[' {
+        (eq, Some(eq + 1))
+    } else {
+        (0, None)
+    }
+}
+
+#[allow(dead_code)]
+fn is_lua_ident_start(b: u8) -> bool {
+    b.is_ascii_alphabetic() || b == b'_'
+}
+
+#[allow(dead_code)]
+fn is_lua_ident_cont(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+// ─── CS-0024: placeholder validator ─────────────────────────────────────────
+
+#[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
+pub(crate) enum PlateTestPlaceholderError {
+    #[error("`{token}` is not valid in {mode_name} mode (line text: `{line}`)")]
+    BadPlaceholder { token: String, mode_name: String, line: String },
+    #[error("`{token}` is not valid in a plate or test body — the iteration item is `{{in}}`")]
+    OutForbidden { token: String },
+    #[error("bare path-accessor `{{{accessor}}}` is no longer valid; use `{{in.{accessor}}}` (CS-0022/CS-0024)")]
+    BareAccessor { accessor: String },
+    #[error("`{{{name}.{accessor}}}` is not valid in a plate or test body (the §5.4 firewall applies — plate/test have no output pattern)")]
+    LibAccessor { name: String, accessor: String },
+}
+
+#[allow(dead_code)]
+pub(crate) fn validate_plate_test_placeholders(
+    body: &Body,
+    mode: PlateTestMode,
+    recipe_names: &BTreeSet<String>,
+) -> Result<(), PlateTestPlaceholderError> {
+    if let Body::ShellBlock(lines) = body {
+        for line in lines {
+            let mut rest = line.as_str();
+            while let Some(open) = rest.find('{') {
+                let after = &rest[open + 1..];
+                if let Some(close) = after.find('}') {
+                    let inner = &after[..close];
+                    validate_token(inner, mode, line, recipe_names)?;
+                    rest = &after[close + 1..];
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    // Lua bodies validate per the binding rules of §6.4.x at runtime; the
+    // mode-deduction's mixed-binding check (Task 7.1) is sufficient for
+    // load-time rejection of contradictory bindings. Stray `output` /
+    // `outputs` references in a Lua body raise a Lua nil-error at execute,
+    // which is the natural Lua failure mode.
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn validate_token(
+    inner: &str,
+    mode: PlateTestMode,
+    line: &str,
+    recipe_names: &BTreeSet<String>,
+) -> Result<(), PlateTestPlaceholderError> {
+    // {out}, {out_N}, {out.X}, {out_N.X}: all rejected.
+    if inner == "out"
+        || inner.starts_with("out.")
+        || (inner.starts_with("out_") && inner[4..].chars().next().map_or(false, |c| c.is_ascii_digit()))
+    {
+        return Err(PlateTestPlaceholderError::OutForbidden {
+            token: format!("{{{}}}", inner),
+        });
+    }
+
+    // {in} or {in.X}: must be in OneToOne.
+    if inner == "in" || inner.starts_with("in.") {
+        if mode != PlateTestMode::OneToOne {
+            return Err(PlateTestPlaceholderError::BadPlaceholder {
+                token: format!("{{{}}}", inner),
+                mode_name: format!("{:?}", mode),
+                line: line.to_string(),
+            });
+        }
+        return Ok(());
+    }
+
+    // {all}: must be in ManyToOne.
+    if inner == "all" {
+        if mode != PlateTestMode::ManyToOne {
+            return Err(PlateTestPlaceholderError::BadPlaceholder {
+                token: "{all}".to_string(),
+                mode_name: format!("{:?}", mode),
+                line: line.to_string(),
+            });
+        }
+        return Ok(());
+    }
+
+    // Bare path-accessor: rejected.
+    if matches!(inner, "stem" | "name" | "ext" | "dir") {
+        return Err(PlateTestPlaceholderError::BareAccessor {
+            accessor: inner.to_string(),
+        });
+    }
+
+    // {NAME.ACCESSOR} where NAME is a recipe in scope: rejected (§5.4 firewall).
+    if let Some((prefix, suffix)) = inner.rsplit_once('.') {
+        if recipe_names.contains(prefix) && matches!(suffix, "stem" | "name" | "ext" | "dir") {
+            return Err(PlateTestPlaceholderError::LibAccessor {
+                name: prefix.to_string(),
+                accessor: suffix.to_string(),
+            });
+        }
+    }
+
+    // Anything else (including bare {NAME} cross-recipe ref and {TOKEN} env
+    // lookup) is admitted; substitution happens via the standard pipeline.
+    Ok(())
+}
+
+// ─── CS-0024: parametric plate/test body expander ───────────────────────────
+
+/// Plate/test variant: substitute `{in}` to `iter_var`, `{all}` to `all_var`,
+/// and reject `{out}` / `{out_N}` (use `validate_plate_test_placeholders`
+/// before calling). `{NAME}` resolves to `cook.dep_output(NAME)` if `NAME`
+/// is a recipe; otherwise to `cook.env[NAME]` (matches cook-side rules).
+#[allow(dead_code)]
+pub(crate) fn expand_plate_test_body(
+    template: &str,
+    recipe_names: &BTreeSet<String>,
+    iter_var: &str,
+    all_var: &str,
+) -> String {
+    // Implementation parallels `expand_with_deps_fallback`, but maps:
+    //   {in}          → iter_var
+    //   {in.ACCESSOR} → path.ACCESSOR(iter_var)
+    //   {all}         → all_var
+    //   {NAME}        → cook.dep_output("NAME")  (if NAME is a recipe)
+    //   {TOKEN}       → cook.env["TOKEN"]
+    //   anything else (already rejected by validate_plate_test_placeholders)
+    let mut parts: Vec<String> = Vec::new();
+    let mut remaining = template;
+    while !remaining.is_empty() {
+        match remaining.find('{') {
+            None => {
+                parts.push(format!("\"{}\"", escape_lua_string(remaining)));
+                break;
+            }
+            Some(brace_start) => {
+                if brace_start > 0 {
+                    parts.push(format!(
+                        "\"{}\"",
+                        escape_lua_string(&remaining[..brace_start])
+                    ));
+                }
+                let after = &remaining[brace_start..];
+                if let Some(close) = after.find('}') {
+                    let inner = &after[1..close];
+                    let lua = if inner == "in" {
+                        iter_var.to_string()
+                    } else if let Some(acc) = inner.strip_prefix("in.") {
+                        format!("path.{}({})", acc, iter_var)
+                    } else if inner == "all" {
+                        format!("table.concat({}, \" \")", all_var)
+                    } else if recipe_names.contains(inner) {
+                        format!("cook.dep_output(\"{}\")", escape_lua_string(inner))
+                    } else {
+                        format!("cook.env[\"{}\"]", escape_lua_string(inner))
+                    };
+                    parts.push(lua);
+                    remaining = &remaining[brace_start + close + 1..];
+                } else {
+                    parts.push(format!(
+                        "\"{}\"",
+                        escape_lua_string(&remaining[brace_start..])
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+    if parts.is_empty() {
+        "\"\"".to_string()
+    } else if parts.len() == 1 {
+        parts.into_iter().next().unwrap()
+    } else {
+        parts.join(" .. ")
+    }
+}
+
+// ─── existing single-token expansion (cook steps, not plate/test) ────────────
 
 /// Expand a single brace-token inside a shell-text body.
 fn expand_body_token(inner: &str, recipe_names: &BTreeSet<String>) -> String {

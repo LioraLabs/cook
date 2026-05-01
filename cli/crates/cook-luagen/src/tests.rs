@@ -258,7 +258,7 @@ fn test_plate_step() {
             },
             Step::Plate {
                 step: PlateStep {
-                    command: "./{out}".to_string(),
+                    body: UsingClause::ShellBlock(vec!["./{out}".to_string()]),
                 },
                 line: 3,
             },
@@ -460,7 +460,7 @@ fn test_plate_step_emits_step_group() {
             },
             Step::Plate {
                 step: PlateStep {
-                    command: "./{out}".to_string(),
+                    body: UsingClause::ShellBlock(vec!["./{out}".to_string()]),
                 },
                 line: 3,
             },
@@ -647,7 +647,7 @@ fn test_test_step_codegen() {
             },
             Step::Test {
                 step: TestStep {
-                    command: "./{out}".to_string(),
+                    body: UsingClause::ShellBlock(vec!["./{out}".to_string()]),
                     timeout: None,
                     should_fail: false,
                 },
@@ -684,7 +684,7 @@ fn test_test_step_codegen_with_options() {
         vec![],
         vec![Step::Test {
             step: TestStep {
-                command: "./{out}".to_string(),
+                body: UsingClause::ShellBlock(vec!["./{out}".to_string()]),
                 timeout: Some(30),
                 should_fail: true,
             },
@@ -739,7 +739,7 @@ fn test_no_hash_in_output() {
             },
             Step::Plate {
                 step: PlateStep {
-                    command: "./{out}".to_string(),
+                    body: UsingClause::ShellBlock(vec!["./{out}".to_string()]),
                 },
                 line: 4,
             },
@@ -783,7 +783,7 @@ fn test_test_step_wrapped_in_step_group() {
         vec![],
         vec![Step::Test {
             step: TestStep {
-                command: "./{out}".to_string(),
+                body: UsingClause::ShellBlock(vec!["./{out}".to_string()]),
                 timeout: None,
                 should_fail: false,
             },
@@ -971,7 +971,7 @@ fn test_dep_ref_in_plate_command() {
             },
             Step::Plate {
                 step: PlateStep {
-                    command: "./{out} {app}".to_string(),
+                    body: UsingClause::ShellBlock(vec!["./{out} {app}".to_string()]),
                 },
                 line: 3,
             },
@@ -1452,7 +1452,7 @@ fn test_accessor_placeholder_in_plate_command_rejected() {
                 },
                 Step::Plate {
                     step: PlateStep {
-                        command: "./{out} {protos.stem}".to_string(),
+                        body: UsingClause::ShellBlock(vec!["./{out} {protos.stem}".to_string()]),
                     },
                     line: 3,
                 },
@@ -1478,7 +1478,7 @@ fn test_accessor_placeholder_in_test_command_rejected() {
             vec![],
             vec![Step::Test {
                 step: TestStep {
-                    command: "echo {protos.stem}".to_string(),
+                    body: UsingClause::ShellBlock(vec!["echo {protos.stem}".to_string()]),
                     timeout: None,
                     should_fail: false,
                 },

@@ -43,8 +43,21 @@ pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTr
                 }
                 t
             }
-            Step::Plate { step: plate_step, .. } => extract_brace_tokens(&plate_step.command),
-            Step::Test { step: test_step, .. } => extract_brace_tokens(&test_step.command),
+            // TODO(CS-0024/Task-8): use full Body scanning once Task 8 rewrites these
+            Step::Plate { step: plate_step, .. } => {
+                if let UsingClause::ShellBlock(lines) = &plate_step.body {
+                    lines.iter().flat_map(|l| extract_brace_tokens(l)).collect()
+                } else {
+                    vec![]
+                }
+            }
+            Step::Test { step: test_step, .. } => {
+                if let UsingClause::ShellBlock(lines) = &test_step.body {
+                    lines.iter().flat_map(|l| extract_brace_tokens(l)).collect()
+                } else {
+                    vec![]
+                }
+            }
             Step::Shell { command, .. } => extract_brace_tokens(command),
             Step::Lua { .. }
             | Step::LuaBlock { .. }

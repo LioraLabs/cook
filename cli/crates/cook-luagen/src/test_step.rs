@@ -17,7 +17,12 @@ pub(crate) fn generate_test_step(
         "recipe.ingredients[1]".to_string()
     };
 
-    let cmd_expr = expand_test_cmd_with_deps(&test_step.command, recipe_names);
+    // TODO(CS-0024/Task-8): replace with expand_plate_test_body
+    let cmd_text = match &test_step.body {
+        cook_lang::ast::UsingClause::ShellBlock(lines) => lines.join("\n"),
+        cook_lang::ast::UsingClause::LuaBlock(code) => code.clone(),
+    };
+    let cmd_expr = expand_test_cmd_with_deps(&cmd_text, recipe_names);
     let timeout = test_step.timeout.unwrap_or(300);
     let should_fail = if test_step.should_fail { "true" } else { "false" };
 
