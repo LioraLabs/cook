@@ -106,9 +106,10 @@ using_clause          ::= "using" ( using_lua_block | shell_block )
 using_lua_block       ::= ">{" LUA_BLOCK_CONTENT "}"
 shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
 
-plate_step            ::= "plate" STRING NEWLINE
-
-test_step             ::= "test" STRING ("timeout" NUMBER)? "should_fail"? NEWLINE
+plate_step            ::= "plate" body NEWLINE
+test_step             ::= "test"  body test_modifiers NEWLINE
+body                  ::= shell_block | using_lua_block
+test_modifiers        ::= ("timeout" NUMBER)? "should_fail"?
 
 lua_line              ::= ">" LUA_LINE_CONTENT? NEWLINE
 lua_block             ::= ">{" LUA_BLOCK_CONTENT "}" NEWLINE
@@ -138,6 +139,10 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
 **Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before `using`, the `using_clause` resolves per the unrestricted production above — the bare-`STRING` arm having been removed in CS-0022, the form `cook "a" "b" using STRING` is rejected by the production itself rather than by a separate well-formedness rule.
 
 **Iteration coherence (CS-0022).** All `STRING` output patterns of a single `cook_step` MUST share an iteration source: every output is literal (no accessor placeholder), or every output bears `{in.ACCESSOR}` (own-input driver), or every output bears `{lib.ACCESSOR}` for the same recipe `lib` (dep-driven driver). A conforming implementation MUST reject a `cook_step` whose output patterns mix sources, with a diagnostic naming the offending outputs. See §{recipes.iteration-mode}.
+
+**Plate/test mode coherence (CS-0024).** A `plate_step` or `test_step` body MUST NOT contain both an iteration-item placeholder/binding and a batched-source placeholder/binding. For shell-block bodies, this means a body MUST NOT contain both `{in}` (or `{in.ACCESSOR}`) and `{all}`. For Lua-block bodies, the body MUST NOT reference both `input` and `inputs` (free-identifier scan, ignoring strings/comments/long-strings per §{lexical.brace-blocks}). A conforming implementation MUST reject a body that violates this rule with a diagnostic naming both tokens. See §{recipes.iteration-mode-plate-test}.
+
+**Plate/test source presence (CS-0024).** A `plate_step` or `test_step` in one-to-one or many-to-one mode MUST have a non-empty iteration source — that is, the recipe must contain a preceding `cook_step` whose output list is non-empty, or an `ingredients_step` whose resolved path list is non-empty. A conforming implementation MUST reject a `plate_step` or `test_step` whose mode requires source consultation but whose recipe provides none. A `plate_step` or `test_step` in one-shot mode does not consult the source and MAY appear in a recipe with neither.
 
 **`using >>{` is rejected.** A `using_clause` MUST NOT use the `>>{` (register-phase Lua block) prefix. The using clause produces work for execute, not register-phase orchestration; a register-phase Lua block in this position is incoherent. A conforming implementation MUST reject `cook STR using >>{ … }`.
 

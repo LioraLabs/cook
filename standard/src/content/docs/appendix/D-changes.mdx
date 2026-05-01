@@ -312,3 +312,17 @@ The conformance corpus's `parse.txt` files change format in this cut: `Step::Coo
 **Implementation status.** Authoring + tagging step. No prose changes beyond `standard/VERSION`, the Versions index, and this entry.
 
 **Reference:** this commit.
+
+## D.24. CS-0024 — Plate/test step unification: block bodies, three iteration modes, `{out}`/`{lib.ACCESSOR}` firewall. [#changes.cs-0024]
+
+**Date:** 2026-05-01
+**Version:** pre-release (post-v0.5)
+**Sections affected:** §{recipes.plate-step} (§4.7 rewritten; §4.7.1 new — iteration-mode deduction); §{recipes.test-step} (§4.8 rewritten); §{recipes.iteration-mode-plate-test} (§4.7.1); §{lua.using-block-globals-plate-test} (§6.4.1 new — plate/test binding table); §{lua.shell-placeholders-plate-test} (§6.7.1 new — plate/test placeholder table); §{exec.phase-classification} (§8.1.2 new rows); §{xref.dep-driven} (§5.4 firewall extended to plate/test bodies); §{xref.string-substitution} (§5.5 extended to plate/test shell blocks); App. A.4 (productions for `plate_step`, `test_step`, `body`, `test_modifiers`; normative paragraphs "Plate/test mode coherence" and "Plate/test source presence"); App. B.4.7 (deleted); App. B.4.17–B.4.21 (new rationale subsections).
+
+**Summary:** Plate and test steps adopt the full block-body surface introduced for cook steps in CS-0022. The old `plate STRING` and `test STRING` forms (accepting only a literal command template) are replaced with `plate body` and `test body test_modifiers`, where `body ::= shell_block | using_lua_block`. Iteration mode for plate and test is deduced from the body's placeholder/identifier content at register time: `{in}` / `{in.ACCESSOR}` → one-to-one; `{all}` (shell) / `inputs` (Lua) → many-to-one (batched); neither → one-shot. The `{out}` placeholder is rejected in plate and test bodies (no declared output), as is `{lib.ACCESSOR}` (no dep-driven iteration for steps without output patterns). The static Lua scan distinguishes `input` (one-to-one) from `inputs` (many-to-one), ignoring the identifier in string/comment/long-string positions.
+
+**Why:** Before CS-0024, plate was restricted to a single command template and test to a single template plus modifiers. Any plate or test that needed more than one shell line required a workaround (a Lua block in a separate cook step, or a wrapper script). CS-0022 gave cook steps full block bodies; CS-0024 extends the same surface uniformly to plate and test. The motivating example — `plate >{ for _, f in ipairs(inputs) do … end }` — requires the using-lua-block surface and many-to-one mode, both of which were unavailable. The surface unification also closes a naming inconsistency: pre-CS-0024 plate used `{out}` to mean "the iteration item," while `{in}` means exactly that everywhere else.
+
+**Implementation status.** Spec-only. App. A and App. B updated in this commit; main-text §§4.7–4.9, §5.4, §5.5, §6.4.1, §6.7.1, §8.1.2 updated in preceding commits. Parser and codegen changes are a follow-up task.
+
+**Reference:** this commit.

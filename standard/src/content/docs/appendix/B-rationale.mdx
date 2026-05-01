@@ -99,13 +99,6 @@ The Standard could have papered over this by, for example, running the same `"cm
 
 Requiring a block body — either `{ ... }` or `>{ ... }` — forces the author to state exactly how the outputs are produced: either as a literal sequence of shell commands (whose joint effect produces all outputs) or as a Lua block (which has full access to the `outputs` array and can write each entry deliberately). The parser's rejection of the ambiguous single-string form is therefore normative (§{grammar-appendix.steps}, "Multi-output cook-step rule") and produces a diagnostic that names the block-body remedy directly.
 
-### B.4.7. Why `plate` is one command template, not a list [#rationale.plate-single-template]
-A `plate` step holds exactly one `STRING` — a single command template — and has no `using` clause of its own. A natural generalisation would be `plate "cmd1" "cmd2" ...` or `plate using { ... }`, mirroring the `cook` step's surface.
-
-The Cook authors rejected that generalisation for two reasons. First, the intent of `plate` is narrow: given a set of outputs produced by a preceding `cook`, run one action per output. The generalised forms invite confusion about iteration order, fan-out semantics, and whether the block is run once or per output. Second, a user who wants richer iteration already has a better tool — a Lua block (`>{ ... }`) that loops over `outputs` explicitly. Keeping `plate` to a single template means its semantics are unambiguous: one command, parameterised by each output in turn.
-
-The cost is that multi-command `plate` cases require a Lua block. That is an acceptable trade because those cases are rare, and a Lua block with a `for _, out in ipairs(outputs) do ... end` loop reads more clearly than any implicit fan-out of a multi-command `plate` would.
-
 ### B.4.8. Why `>` is execute-phase and `>>` is register-phase [#rationale.lua-prefix-split]
 The Cookfile language has two Lua-prefix surfaces: the single-`>` family (`>`, `>{ … }`) is execute-phase, and the doubled-`>` family (`>>`, `>>{ … }`) is register-phase. The split exists because conflating them — running both at register, as an earlier draft did — pushed the design into an unresolvable corner.
 
@@ -181,6 +174,29 @@ Banning module calls was considered and rejected. A module call typically expand
 A chore is by intent a thing the user runs at a terminal. The `@` marker (§{recipes.shell-steps}) on every shell line of a recipe-shaped command-runner is ceremony — the author already chose `chore` over `recipe` because the body is interactive. The default-interactive rule deletes the ceremony.
 
 The `@` marker is preserved as a no-op inside chore bodies for symmetry: a recipe body author migrating to `chore` does not need to strip every `@`, and a Cookfile that is moved between forms during refactoring continues to parse. The non-symmetric direction (chore → recipe) requires the author to add `@` markers where they want interactivity preserved; this is an authoring choice and is the expected path for "this used to be a chore but I want to add cook steps now".
+
+### B.4.17. Why `plate` and `test` are cook steps with no declared outputs [#rationale.plate-test-no-output-decl]
+Once cook gained block bodies and three iteration modes (CS-0022), the only structural difference between a cook step and a plate or test step was the presence of an output declaration. Modeling plate and test as "cook with no outputs" makes the body grammar uniform, the placeholder vocabulary uniform, the cross-recipe substitution rules uniform, and the substitution timing uniform. The author's mental model collapses from three step kinds with three surfaces to three step kinds with one surface.
+
+The two keywords survive because they signal author intent that a single keyword would lose: a reader scanning a recipe sees `test` and knows "this is a validation gate." `test` additionally carries genuine extra structure (`timeout` and `should_fail` modifiers) that a generic "cook with no outputs" form would not.
+
+The `using` keyword does not appear on plate or test lines. Cook earns it because its line carries two things — output pattern list and body — that need a separator. Plate and test have only a body; a `using` keyword would be ceremony with no semantic load.
+
+### B.4.18. Why iteration mode is deduced from the body for plate and test [#rationale.plate-test-body-deduction]
+Cook owns iteration mode via the output pattern (CS-0022) because the output pattern is *declarative*: it states the unit's filenames and falls out the iteration shape. Plate and test have no outputs to declare, so the body's placeholder content is the only available signal. The CS-0022 footgun — an output-pattern signal contradicting a body signal — cannot occur in a step that has no output pattern. Deducing mode from body content is therefore sound for plate and test, even though it would be incoherent for cook.
+
+The deduction is purely syntactic: it scans the body's text (shell) or its free-identifier references (Lua) at register time. It does not require Lua evaluation. The alternative — letting the runtime decide which binding to populate based on which one was named — would require dynamic mode selection, breaking the static-shape DAG `cook.add_unit` produces.
+
+### B.4.19. Why `{out}` is rejected in plate and test bodies [#rationale.plate-test-out-rejected]
+CS-0022 fixed `{out}` to mean the unit's declared output. Plate and test declare no outputs, so `{out}` has no referent. The pre-CS-0024 plate surface used `{out}` to mean the iteration item — but that is what `{in}` means everywhere else in the language. A per-step-kind name for "the iteration item" would re-introduce the position-dependent rule that CS-0022 paid to remove.
+
+### B.4.20. Why `{lib.ACCESSOR}` is rejected in plate and test bodies [#rationale.plate-test-lib-accessor-rejected]
+Plate and test have no output pattern and therefore cannot declare a `lib`-driven iteration. §{xref.dep-driven}'s firewall — `{lib.ACCESSOR}` rejected in any using-clause body — applies trivially to plate and test bodies: there is never a position in such a body where `{lib.ACCESSOR}` could be valid. A bare `{lib}` reference is admitted and substitutes per §{xref.string-substitution}.
+
+### B.4.21. Why a static Lua identifier scan, not a runtime decision [#rationale.plate-test-lua-static-scan]
+A Lua body that references both `input` and `inputs` is making contradictory claims about iteration shape. Detecting that at register time produces a sharp diagnostic with a line number; deferring it to "the runtime decides which binding is bound based on which one was named" would either require dynamic mode selection (incompatible with the static-shape DAG) or two distinct mode-resolution passes (one syntactic for shell, one runtime for Lua). One pass, applied uniformly, is the better trade.
+
+The scan is whole-word, identifier-position. A property-name suffix (`cook.input`, `obj:input(...)`) is not a reference to the binding because the Lua grammar resolves the name as a field access. The scan respects the existing string/comment/long-string ignore rules of §{lexical.brace-blocks}.
 
 ## B.5. On §{exec} Execution model [#rationale.exec]
 The execution model in §{exec} is organised around a two-phase design: every recipe is evaluated once to discover its work (the register phase) and then arranged for execution (the execute phase). This split is not cosmetic. It is the mechanism by which the Standard turns a scripting-flavoured surface syntax — arbitrary Lua embedded in a recipe body — into a dependency graph that can be reasoned about, parallelised, and cached. The rationale subsections below record why several load-bearing decisions in §{exec} are the way they are.
