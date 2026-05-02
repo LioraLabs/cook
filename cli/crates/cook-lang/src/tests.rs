@@ -682,9 +682,9 @@ recipe "bundle": "backend.build" "frontend.build"
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.imports.len(), 2);
     assert_eq!(cookfile.imports[0].name, "backend");
-    assert_eq!(cookfile.imports[0].path.as_str(), "./services/backend");
+    assert_eq!(cookfile.imports[0].path.to_string(), "./services/backend");
     assert_eq!(cookfile.imports[1].name, "frontend");
-    assert_eq!(cookfile.imports[1].path.as_str(), "./apps/frontend");
+    assert_eq!(cookfile.imports[1].path.to_string(), "./apps/frontend");
 }
 
 #[test]
@@ -1027,6 +1027,11 @@ fn test_parse_import_rejects_embedded_dotdot() {
     let src = "import bad ./foo/../bar\nrecipe \"x\"\n";
     let result = crate::parse(src);
     assert!(result.is_err(), "expected parse error for embedded '..'");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("'..' segments are not permitted"),
+        "expected diagnostic about '..', got: {msg}"
+    );
 }
 
 #[test]

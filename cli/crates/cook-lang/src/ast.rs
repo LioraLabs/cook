@@ -16,12 +16,11 @@ pub enum ImportPath {
     Sigil(String),
 }
 
-impl ImportPath {
-    /// The raw string form (for diagnostics and round-trip).
-    pub fn as_str(&self) -> String {
+impl std::fmt::Display for ImportPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ImportPath::Tree(s) => s.clone(),
-            ImportPath::Sigil(s) => format!("//{s}"),
+            ImportPath::Tree(s) => f.write_str(s),
+            ImportPath::Sigil(s) => write!(f, "//{s}"),
         }
     }
 }
