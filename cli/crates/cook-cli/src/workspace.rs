@@ -228,6 +228,59 @@ fn cookfile_transitively_imports_via_tree(
     Ok(false)
 }
 
+/// With `candidate_root` treated as the workspace root, walk every Cookfile
+/// reachable from `candidate_root/Cookfile` (across both tree-relative and
+/// sigil-anchored imports) and verify that every sigil-anchored import target
+/// canonicalises to a directory at or below `candidate_root`.
+fn all_reachable_sigils_resolve_under(candidate_root: &Path) -> Result<bool, CookError> {
+    let root_canon = std::fs::canonicalize(candidate_root)
+        .unwrap_or_else(|_| candidate_root.to_path_buf());
+    let entry = root_canon.join("Cookfile");
+    if !entry.exists() {
+        return Ok(true);
+    }
+
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut stack: Vec<PathBuf> = vec![entry];
+
+    while let Some(cookfile_path) = stack.pop() {
+        let cf_canon = std::fs::canonicalize(&cookfile_path)
+            .unwrap_or_else(|_| cookfile_path.clone());
+        if !visited.insert(cf_canon.clone()) {
+            continue;
+        }
+        let cf_dir = cf_canon.parent().unwrap_or(Path::new("."));
+        let source = match std::fs::read_to_string(&cf_canon) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let parsed = match cook_lang::parse(&source) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        for imp in &parsed.imports {
+            let imp_dir = match &imp.path {
+                cook_lang::ast::ImportPath::Tree(s) => cf_dir.join(s),
+                cook_lang::ast::ImportPath::Sigil(s) => root_canon.join(s),
+            };
+            let imp_canon = match std::fs::canonicalize(&imp_dir) {
+                Ok(c) => c,
+                Err(_) => return Ok(false), // unresolvable target → candidate fails
+            };
+            if matches!(&imp.path, cook_lang::ast::ImportPath::Sigil(_))
+                && !imp_canon.starts_with(&root_canon)
+            {
+                return Ok(false);
+            }
+            let nested = imp_canon.join("Cookfile");
+            if nested.exists() {
+                stack.push(nested);
+            }
+        }
+    }
+    Ok(true)
+}
+
 /// Resolve the workspace root for an invocation per §7.6.
 pub fn resolve_workspace_root(
     invoked_cookfile: &Path,
@@ -277,6 +330,7 @@ pub fn resolve_workspace_root(
         let cookfile_at_d = d.join("Cookfile");
         if cookfile_at_d.exists()
             && cookfile_transitively_imports_via_tree(&cookfile_at_d, &invoked_dir_canon)?
+            && all_reachable_sigils_resolve_under(&d)?
         {
             highest = Some(d.clone());
         }
@@ -457,5 +511,31 @@ mod tests {
         let expected = std::fs::canonicalize(dir.path()).unwrap();
         let got = std::fs::canonicalize(root).unwrap();
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_resolve_workspace_root_skips_candidate_that_doesnt_anchor_sigils() {
+        let dir = TempDir::new().unwrap();
+        // Layout: dir/Cookfile imports inner/, inner/Cookfile uses //top/lib.
+        // dir/top/lib/ exists. dir/inner/top/ does NOT exist.
+        // Inference: dir/inner/ would be a candidate (transitively tree-imports
+        // dir/inner/leaf), but //top/lib doesn't resolve under dir/inner/, so
+        // dir/inner/ fails sigil validation. dir/ does anchor //top/lib (path
+        // dir/top/lib exists), so dir/ wins.
+        fs::create_dir_all(dir.path().join("top/lib")).unwrap();
+        fs::create_dir_all(dir.path().join("inner/leaf")).unwrap();
+        fs::write(dir.path().join("Cookfile"), "import inner ./inner\nrecipe \"x\"\n").unwrap();
+        fs::write(
+            dir.path().join("inner/Cookfile"),
+            "import lib //top/lib\nimport leaf ./leaf\nrecipe \"y\"\n",
+        ).unwrap();
+        fs::write(dir.path().join("inner/leaf/Cookfile"), "recipe \"build\"\n").unwrap();
+        fs::write(dir.path().join("top/lib/Cookfile"), "recipe \"q\"\n").unwrap();
+
+        let invoked = dir.path().join("inner/leaf/Cookfile");
+        let root = resolve_workspace_root(&invoked, None).unwrap();
+        let expected = std::fs::canonicalize(dir.path()).unwrap();
+        let got = std::fs::canonicalize(root).unwrap();
+        assert_eq!(got, expected, "expected dir/ as root (anchors //top/lib), got {got:?}");
     }
 }
