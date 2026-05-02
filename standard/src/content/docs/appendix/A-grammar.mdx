@@ -22,7 +22,7 @@ toplevel_item         ::= recipe
 ## A.2. Top-level declarations [#grammar-appendix.declarations]
 ```ebnf
 use_declaration       ::= "use" name NEWLINE
-import_declaration    ::= "import" BARE_IDENTIFIER path NEWLINE
+import_declaration    ::= "import" BARE_IDENTIFIER import_path NEWLINE
 config_block          ::= "config" name? NEWLINE config_body
 config_body           ::= LUA_SOURCE
 ```
@@ -166,7 +166,12 @@ name                  ::= BARE_IDENTIFIER | STRING
 BARE_IDENTIFIER       ::= /[A-Za-z_][A-Za-z0-9_.\\-]*/
 STRING                ::= /"[^"]*"/
 NUMBER                ::= /[0-9]+/
-path                  ::= /[^\s\n]+/
+import_path           ::= sigil_path | tree_path
+sigil_path            ::= "//" path_segments
+tree_path             ::= ( "./" | path_segment ) ( "/" path_segment )*
+path_segments         ::= path_segment ( "/" path_segment )*
+path_segment          ::= /[^\s\n\/]+/   /* path-safe characters; MUST NOT equal ".." */
+path                  ::= /[^\s\n]+/   /* legacy form; import_path is the canonical path */
 comment               ::= /#[^\n]*/ NEWLINE
 NEWLINE               ::= /\n/
 LUA_LINE_CONTENT      ::= /[^\n]*/   /* zero or more characters; may be empty */
