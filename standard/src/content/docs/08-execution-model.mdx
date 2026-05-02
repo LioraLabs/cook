@@ -157,7 +157,7 @@ The **observable inputs** of a work unit are those of its properties that are de
 3. The list of output paths declared for the unit.
 4. The recipe's resolved environment (§{lua}).
 
-A conforming implementation MAY additionally consider the content of the declared input files, the modification times of the declared output files, and the content of the recipe's ingredient set. It MUST NOT consider wall-clock time, process identifiers, or any state not derivable from the sources above.
+A conforming implementation MAY additionally consider the content of the declared input files, the modification times of the declared output files, the content of the recipe's ingredient set, the identity of the host machine on which the unit will execute (e.g., target triple, libc version, locale-affecting environment variables), and the resolved content of the binaries invoked by the unit's command text. It MUST NOT consider wall-clock time, process identifiers, or any state not derivable from the sources above. An implementation MAY exclude from the resolved-environment observable a set of environment variables whose values are known not to affect work-unit output (e.g., ambient session state, credentials unrelated to the build product); the specific set is implementation-defined.
 
 When the cache indicates that a unit is up-to-date, the implementation MAY skip executing the unit and MUST treat it as successfully completed for the purposes of the dependency graph. When the cache indicates that a unit is stale or absent, the implementation MUST execute the unit and, on success, MAY record the unit's completion in the cache for subsequent runs.
 

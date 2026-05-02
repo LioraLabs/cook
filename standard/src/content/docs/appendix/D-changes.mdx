@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.5** (`cs-standard/v0.5`, 2026-05-01) — CS-0022, CS-0023, CS-0024
+- **v0.5** (`cs-standard/v0.5`, 2026-05-01) — CS-0022, CS-0023, CS-0024, CS-0025
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
 - **v0.3** (`cs-standard/v0.3`, 2026-04-28) — CS-0015, CS-0016, CS-0017
 - **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013, CS-0014
@@ -326,3 +326,15 @@ The conformance corpus's `parse.txt` files change format in this cut: `Step::Coo
 **Implementation status.** Spec + reference implementation + tree-sitter + conformance corpus + in-repo Cookfile migration + iteration_benchmarks coverage all landed in the CS-0024 commit series (`0f525f0` through `1127ba3`).
 
 **Reference:** the CS-0024 commit series, folded into the v0.5 cut by the CS-0023 amendment commit.
+
+## D.25. CS-0025 — Cache observables: machine identity, tool-binary content, env denylist. [#changes.cs-0025]
+
+**Date:** 2026-05-01
+
+**Version:** v0.5
+
+**Sections affected:** §{exec.cache} ¶3 (additive); App. B (rationale paragraph after §B-225, "Cross-machine cache correctness").
+
+**Summary:** Extends the §{exec.cache} list of permissible cache observables with (i) host machine identity (target triple, libc version, locale-affecting environment), (ii) the resolved content of the binaries invoked by the unit's command text, and (iii) an implementation-defined denylist of environment variables excluded from the resolved-environment observable. All three are permissive (`MAY`); a single-machine implementation that elides them remains conforming.
+
+**Motivation.** The shared/team cache (Cook Cloud, Linear epic SHI-140) requires that an artifact produced on one machine be correct when served to another. Today's `command_hash = hash_str(command_text)` plus input-content hashing is insufficient: Alice's `gcc-13` `parser.o` would be served to Bob's `gcc-11` build under the same command text. The amendment authorizes implementations to capture the cross-machine variation without changing language semantics. The denylist clarifies that "the resolved environment" was never intended to include ambient session state or unrelated credentials.
