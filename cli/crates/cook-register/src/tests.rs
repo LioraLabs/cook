@@ -22,7 +22,7 @@ cook.recipe("hello", {}, function()
     cook.exec("echo hello", 1)
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "hello").unwrap();
+    let result = rt.register_recipe(lua_src, "hello", None).unwrap();
     assert_eq!(result.recipe_name, "hello");
     assert_eq!(result.units.len(), 1);
     match &result.units[0].payload {
@@ -45,7 +45,7 @@ cook.recipe("multi", {}, function()
     cook.exec("echo second", 2)
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "multi").unwrap();
+    let result = rt.register_recipe(lua_src, "multi", None).unwrap();
     assert_eq!(result.units.len(), 2);
     assert!(matches!(result.units[0].dep_kind, DepKind::Sequential));
     assert!(matches!(result.units[1].dep_kind, DepKind::Sequential));
@@ -75,7 +75,7 @@ cook.recipe("clean", {}, function()
     cook.exec("echo cleaning", 1)
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "build").unwrap();
+    let result = rt.register_recipe(lua_src, "build", None).unwrap();
     assert_eq!(result.deps, vec!["clean"]);
 }
 
@@ -91,7 +91,7 @@ cook.recipe("build", {}, function()
     end)
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "build").unwrap();
+    let result = rt.register_recipe(lua_src, "build", None).unwrap();
     assert_eq!(result.units.len(), 2);
     assert_eq!(result.step_groups.len(), 1);
     assert_eq!(result.step_groups[0].len(), 2);
@@ -134,7 +134,7 @@ cook.recipe("build", {}, function()
     test_mod.add_steps()
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "build").unwrap();
+    let result = rt.register_recipe(lua_src, "build", None).unwrap();
     assert_eq!(result.units.len(), 2);
     assert!(matches!(result.units[0].dep_kind, DepKind::StepGroup(0)));
     assert!(matches!(result.units[1].dep_kind, DepKind::StepGroup(0)));
@@ -176,11 +176,11 @@ end)
 "#;
 
     // Register "lib" first — it exports
-    let lib_result = rt.register_recipe(lua_src, "lib").unwrap();
+    let lib_result = rt.register_recipe(lua_src, "lib", None).unwrap();
     assert_eq!(lib_result.units.len(), 0);
 
     // Register "app" — it imports
-    let app_result = rt.register_recipe(lua_src, "app").unwrap();
+    let app_result = rt.register_recipe(lua_src, "app", None).unwrap();
     assert_eq!(app_result.units.len(), 1);
     match &app_result.units[0].payload {
         WorkPayload::Shell { cmd, .. } => {
@@ -208,7 +208,7 @@ cook.recipe("check", {}, function()
     cook.add_unit({ command = test_mod.detected_os, cache = false })
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "check").unwrap();
+    let result = rt.register_recipe(lua_src, "check", None).unwrap();
     match &result.units[0].payload {
         WorkPayload::Shell { cmd, .. } => {
             assert_eq!(cmd, std::env::consts::OS);
@@ -239,7 +239,7 @@ cook.recipe("tests", {}, function()
     end)
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "tests").unwrap();
+    let result = rt.register_recipe(lua_src, "tests", None).unwrap();
     assert_eq!(result.units.len(), 2);
     match &result.units[0].payload {
         WorkPayload::Test { cmd, timeout, should_fail, suite_name, test_name, .. } => {
@@ -316,7 +316,7 @@ cook.recipe("build", {}, function() end)
     let registry = Registry::new(tmp.path().to_path_buf(), initial_env)
         .with_selected_config(Some("release".to_string()));
 
-    let units = registry.register_recipe(lua_source, "build").unwrap();
+    let units = registry.register_recipe(lua_source, "build", None).unwrap();
 
     assert_eq!(units.env_vars.get("CC").map(|s| s.as_str()), Some("from_base"));
     assert_eq!(units.env_vars.get("CXXFLAGS").map(|s| s.as_str()), Some("-O3"));
@@ -340,7 +340,7 @@ cook.recipe("build", {}, function() end)
 
     let tmp = TempDir::new().unwrap();
     let registry = Registry::new(tmp.path().to_path_buf(), initial_env);
-    let units = registry.register_recipe(lua_source, "build").unwrap();
+    let units = registry.register_recipe(lua_source, "build", None).unwrap();
 
     assert_eq!(units.env_vars.get("BASE").map(|s| s.as_str()), Some("applied"));
     assert!(units.env_vars.get("SHOULD_NOT_APPEAR").is_none());
@@ -351,7 +351,7 @@ fn test_registry_no_dispatcher_no_op() {
     let lua_source = r#"cook.recipe("build", {}, function() end)"#;
     let tmp = TempDir::new().unwrap();
     let registry = Registry::new(tmp.path().to_path_buf(), HashMap::new());
-    let units = registry.register_recipe(lua_source, "build").unwrap();
+    let units = registry.register_recipe(lua_source, "build", None).unwrap();
     assert_eq!(units.recipe_name, "build");
 }
 
@@ -374,7 +374,7 @@ cook.recipe("clean", {}, function()
     cook._exit_chore()
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "clean").unwrap();
+    let result = rt.register_recipe(lua_src, "clean", None).unwrap();
     assert_eq!(result.units.len(), 1);
     // cache_meta must be None (cache = false).
     assert!(result.units[0].cache_meta.is_none(), "chore unit must have no cache_meta");
@@ -401,7 +401,7 @@ cook.recipe("evil", {}, function()
     cook._exit_chore()
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "evil");
+    let result = rt.register_recipe(lua_src, "evil", None);
     assert!(
         result.is_err(),
         "cache = true inside a chore must raise an error, but succeeded"
@@ -428,7 +428,7 @@ cook.recipe("chore_then_recipe", {}, function()
     cook.add_unit({command = "echo normal", cache = true})
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "chore_then_recipe");
+    let result = rt.register_recipe(lua_src, "chore_then_recipe", None);
     assert!(
         result.is_ok(),
         "cache = true after _exit_chore should be allowed, got: {:?}",
@@ -462,7 +462,7 @@ fn test_compile_chore_and_register_integration() {
         compile_chore(&cookfile.chores[0], &[])
     );
 
-    let result = rt.register_recipe(&lua, "clean");
+    let result = rt.register_recipe(&lua, "clean", None);
     assert!(
         result.is_ok(),
         "chore registration should succeed, got: {:?}",

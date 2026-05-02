@@ -467,13 +467,14 @@ fn run_with_progress(
     let project_root = std::env::current_dir()
         .map_err(|e| CookError::Other(e.to_string()))?;
     let (progress_tx, progress_rx) = mpsc::channel::<cook_progress::ProgressEvent>();
-    let render_thread = spawn_new_renderer(cli, project_root, progress_rx);
+    let render_thread = spawn_new_renderer(cli, project_root.clone(), progress_rx);
 
     let bridge_tx = progress_tx.clone();
     let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
     let bridge_thread = bridge_engine_to_progress_events(engine_rx, bridge_tx);
 
     let result = cook_engine::run::run(
+        &project_root,
         recipe_infos,
         targets,
         registries,
@@ -926,7 +927,7 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         }
 
         for name in &ready {
-            let units = registry.register_recipe(&lua_source, name).map_err(|e| {
+            let units = registry.register_recipe(&lua_source, name, None).map_err(|e| {
                 CookError::Other(format!("registration failed for '{name}': {e}"))
             })?;
 

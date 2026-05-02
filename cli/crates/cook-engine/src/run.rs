@@ -4,10 +4,14 @@
 //! recipes in wave-parallel order using the recipe DAG + work-unit DAG pipeline.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 use std::sync::mpsc;
 use std::sync::Arc;
 
-use cook_cache::ThreadSafeCacheManager;
+use cook_cache::{
+    backend::LocalBackend, cache_ctx::CacheContext, cloud_config::CloudConfig,
+    context::ExecutionContext, envkey::EnvDenylist, CacheBackend, ThreadSafeCacheManager,
+};
 
 use crate::analyzer::{self, GraphError};
 use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent};
@@ -38,6 +42,8 @@ fn split_recipe_name(name: &str) -> (String, String) {
 ///
 /// # Arguments
 ///
+/// * `project_root` - The project root directory. Used to probe execution context,
+///   load `.cook/cloud.toml`, and compute cookfile-relative paths.
 /// * `recipe_infos` - All known recipes and their dependency metadata.
 /// * `targets` - The target recipes to build.
 /// * `registries` - One `(Registry, lua_source)` per namespace prefix.
@@ -47,6 +53,7 @@ fn split_recipe_name(name: &str) -> (String, String) {
 ///   These cause same-wave merging rather than wave boundaries.
 /// * `on_event` - Callback invoked for each engine event (progress, errors, etc.).
 pub fn run(
+    project_root: &Path,
     recipe_infos: &BTreeMap<String, analyzer::RecipeInfo>,
     targets: &[String],
     registries: &BTreeMap<String, (cook_register::Registry, String)>,
@@ -56,6 +63,7 @@ pub fn run(
 ) -> Result<RunResult, EngineError> {
     let started = std::time::Instant::now();
     let result = run_inner(
+        project_root,
         recipe_infos,
         targets,
         registries,
@@ -71,6 +79,7 @@ pub fn run(
 }
 
 fn run_inner<F>(
+    project_root: &Path,
     recipe_infos: &BTreeMap<String, analyzer::RecipeInfo>,
     targets: &[String],
     registries: &BTreeMap<String, (cook_register::Registry, String)>,
@@ -81,6 +90,40 @@ fn run_inner<F>(
 where
     F: Fn(EngineEvent) + Send + Sync,
 {
+    // ── Cache bootstrap ──────────────────────────────────────────────────────
+    // Load .cook/cloud.toml (default if absent), build EnvDenylist, probe
+    // ExecutionContext (machine identity + tool-binary hashing), construct
+    // LocalBackend, and assemble CacheContext. Built once per build invocation.
+    let cloud_config = CloudConfig::load_or_default(project_root)
+        .map_err(|e| EngineError::CacheError(format!("invalid .cook/cloud.toml: {e}")))?;
+    let mut denylist = EnvDenylist::baseline();
+    denylist.extend_with(cloud_config.cache_ignore_env());
+    let denylist = Arc::new(denylist);
+    let exec_ctx = Arc::new(ExecutionContext::probe());
+    let cache_dir = cloud_config
+        .cache_dir()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::cache_dir()
+                .unwrap_or_else(std::env::temp_dir)
+                .join("cook")
+                .join("cloud")
+        });
+    let backend: Arc<dyn CacheBackend> = Arc::new(LocalBackend::new(cache_dir));
+    if let Err(e) = backend.health() {
+        tracing::warn!("cache backend unavailable: {e}; continuing with backend disabled");
+    }
+    let project_id = cloud_config.project_id_or_fallback(project_root);
+    let cache_ctx = Arc::new(CacheContext {
+        exec_ctx,
+        denylist,
+        backend,
+        cloud_config: Arc::new(cloud_config),
+        project_root: project_root.to_path_buf(),
+        project_id,
+    });
+    // ─────────────────────────────────────────────────────────────────────────
+
     // 1. Compute the full dependency graph for all targets.
     let edges = analyzer::dependency_edges_multi(recipe_infos, targets).map_err(|e| match e {
         GraphError::CycleDetected(s) => EngineError::CycleDetected(s),
@@ -139,12 +182,12 @@ where
                 }
             })?;
 
-            let mut units = registry.register_recipe(lua_source, &local_name).map_err(
-                |e| EngineError::RegistrationFailed {
+            let mut units = registry
+                .register_recipe(lua_source, &local_name, Some(cache_ctx.clone()))
+                .map_err(|e| EngineError::RegistrationFailed {
                     recipe: name.clone(),
                     message: e.to_string(),
-                },
-            )?;
+                })?;
 
             // Rewrite recipe_name to the fully namespaced form.
             units.recipe_name = name.clone();
@@ -254,12 +297,20 @@ mod tests {
         assert_eq!(local, "build");
     }
 
+    fn dummy_project_root() -> std::path::PathBuf {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().to_path_buf();
+        std::mem::forget(dir);
+        path
+    }
+
     #[test]
     fn test_run_unknown_target() {
         let recipes = BTreeMap::new();
         let registries = BTreeMap::new();
         let inferred = BTreeMap::new();
         let result = run(
+            &dummy_project_root(),
             &recipes,
             &["missing".to_string()],
             &registries,
@@ -288,7 +339,7 @@ mod tests {
         let registries = BTreeMap::new();
         let inferred = BTreeMap::new();
         // Empty targets means no edges, so the wave loop exits immediately.
-        let result = run(&recipes, &[], &registries, 1, &inferred, |_| {});
+        let result = run(&dummy_project_root(), &recipes, &[], &registries, 1, &inferred, |_| {});
         assert!(result.is_ok());
         assert!(result.unwrap().test_outputs.is_empty());
     }
@@ -314,7 +365,7 @@ mod tests {
         );
         let registries = BTreeMap::new();
         let inferred = BTreeMap::new();
-        let result = run(&recipes, &["a".to_string()], &registries, 1, &inferred, |_| {});
+        let result = run(&dummy_project_root(), &recipes, &["a".to_string()], &registries, 1, &inferred, |_| {});
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -337,7 +388,7 @@ mod tests {
         let inferred = BTreeMap::new();
 
         let events = std::sync::Mutex::new(Vec::new());
-        let result = run(&recipes, &[], &registries, 1, &inferred, |event| {
+        let result = run(&dummy_project_root(), &recipes, &[], &registries, 1, &inferred, |event| {
             events.lock().unwrap().push(event)
         });
         assert!(result.is_ok());
@@ -362,6 +413,7 @@ mod tests {
 
         let events = std::sync::Mutex::new(Vec::new());
         let result = run(
+            &dummy_project_root(),
             &recipes,
             &["missing".to_string()],
             &registries,
@@ -397,7 +449,7 @@ mod tests {
         let registries = BTreeMap::new();
         let inferred = BTreeMap::new();
         // This will fail because no registry for "" prefix, but it shouldn't panic
-        let result = run(&recipes, &["build".to_string()], &registries, 1, &inferred, |_| {});
+        let result = run(&dummy_project_root(), &recipes, &["build".to_string()], &registries, 1, &inferred, |_| {});
         assert!(result.is_err());
         match result.unwrap_err() {
             EngineError::RegistrationFailed { recipe, .. } => assert_eq!(recipe, "build"),

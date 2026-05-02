@@ -1,8 +1,9 @@
 use mlua::prelude::*;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use cook_contracts::RecipeUnits;
 
@@ -44,13 +45,29 @@ impl Registry {
     /// Run a recipe in "registration mode": execute the Lua recipe body with
     /// capture-mode APIs so that work units are recorded instead of executed.
     /// Returns a `RecipeUnits` describing what the recipe wants to do.
+    ///
+    /// `cache_ctx` is `None` during tests and legacy call sites that don't yet
+    /// have a `CacheContext` available. When `Some`, it is set as app_data on
+    /// the Lua VM so that `cook.add_unit` can access machine identity and the
+    /// env denylist to populate real `CacheMeta` values.
     pub fn register_recipe(
         &self,
         lua_source: &str,
         recipe_name: &str,
+        cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
     ) -> Result<RecipeUnits, RegisterError> {
         let lua = Lua::new();
         let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+
+        // Thread CacheContext into the Lua VM so cook.add_unit can compute
+        // real context_hash and env_contribution values.
+        if let Some(ref ctx) = cache_ctx {
+            lua.set_app_data(ctx.clone());
+            let cookfile_rel =
+                cookfile_path_relative_to(&ctx.project_root, &self.working_dir.join("Cookfile"));
+            lua.set_named_registry_value("__cook_cookfile_path", cookfile_rel)
+                .map_err(RegisterError::Lua)?;
+        }
 
         let recipes = register_cook_api_capture(
             &lua,
@@ -152,4 +169,17 @@ impl Registry {
             dep_edges: cap.dep_edges.clone(),
         })
     }
+}
+
+/// Compute a forward-slash, project-relative path for the Cookfile being
+/// registered.  Falls back to the file name (or "Cookfile") on any failure.
+fn cookfile_path_relative_to(project_root: &Path, abs: &Path) -> String {
+    abs.strip_prefix(project_root)
+        .ok()
+        .map(|p| p.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"))
+        .unwrap_or_else(|| {
+            abs.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Cookfile".to_string())
+        })
 }

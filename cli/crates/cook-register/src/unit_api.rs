@@ -27,7 +27,7 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
     // cook.add_unit(table)
     let cs = capture_state.clone();
     let rname = recipe_name.to_string();
-    let add_unit_fn = lua.create_function(move |_, tbl: LuaTable| {
+    let add_unit_fn = lua.create_function(move |lua, tbl: LuaTable| {
         let command: String = tbl.get::<String>("command").unwrap_or_default();
         let lua_code: Option<String> = tbl.get::<String>("lua_code").ok();
         let interactive: bool = tbl.get::<Option<bool>>("interactive").unwrap_or(None).unwrap_or(false);
@@ -82,29 +82,69 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
         };
         let outputs_for_tracking = output_paths.clone();
 
+        // Read consulted_env_keys from the table.
+        // Supports: list of strings ({"FOO", "BAR"}) or the sentinel "*" for all env.
+        let mut consulted_env: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        match tbl.get::<LuaValue>("consulted_env_keys") {
+            Ok(LuaValue::Table(list)) => {
+                for v in list.sequence_values::<String>().flatten() {
+                    if let Ok(val) = std::env::var(&v) {
+                        consulted_env.insert(v, val);
+                    }
+                }
+            }
+            Ok(LuaValue::String(s)) if s.to_str().ok().as_deref() == Some("*") => {
+                for (k, v) in std::env::vars() {
+                    consulted_env.insert(k, v);
+                }
+            }
+            _ => {}
+        }
+
         let command_hash = if let Some(code) = &lua_code {
             hash_str(code)
         } else {
             hash_str(&command)
         };
-        let cache_meta = if cache_enabled {
-            let cache_key = if let Some(first) = output_paths.first() {
-                first.clone()
+
+        // Retrieve the CacheContext if it was threaded in from cook-engine.
+        // If absent (tests, legacy call sites), fall back to zero values.
+        let cache_ctx = lua
+            .app_data_ref::<std::sync::Arc<cook_cache::cache_ctx::CacheContext>>();
+
+        let (context_hash, env_contribution_val, project_id, cookfile_path) =
+            if let Some(ctx) = cache_ctx {
+                let ch = ctx.exec_ctx.step_context_hash(&command);
+                let ec = cook_cache::envkey::env_contribution(&consulted_env, &ctx.denylist);
+                let pid = ctx.project_id.clone();
+                let cfp = cookfile_relative_path(lua);
+                (ch, ec, pid, cfp)
             } else {
-                format!("{}@{:x}", inputs.first().map(|s| s.as_str()).unwrap_or(""), command_hash)
+                (0, 0, String::new(), cookfile_relative_path(lua))
             };
+
+        let cache_meta = if cache_enabled {
+            let cache_key = build_local_cache_key(
+                &cookfile_path,
+                &rname,
+                &output_paths,
+                &inputs,
+                command_hash,
+                context_hash,
+                env_contribution_val,
+            );
             Some(CacheMeta {
                 recipe_name: rname.clone(),
-                // Placeholders — real values come in Phases 3, 5, 6.
-                project_id: String::new(),
-                cookfile_path: String::new(),
+                project_id,
+                cookfile_path,
                 cache_key,
                 input_paths: inputs.clone(),
                 output_paths: output_paths.clone(),
                 command_hash,
-                context_hash: 0,
-                env_contribution: 0,
-                consulted_env: std::collections::BTreeMap::new(),
+                context_hash,
+                env_contribution: env_contribution_val,
+                consulted_env,
             })
         } else {
             None
@@ -177,6 +217,50 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
     Ok(())
 }
 
+/// Build a local cache key that encodes context_hash and env_contribution
+/// so simultaneous variant builds (debug↔release, gcc↔clang) coexist
+/// without overwriting each other.
+fn build_local_cache_key(
+    _cookfile_path: &str,
+    _recipe: &str,
+    output_paths: &[String],
+    inputs: &[String],
+    command_hash: u64,
+    context_hash: u64,
+    env_contribution: u64,
+) -> String {
+    if let Some(first) = output_paths.first() {
+        // When context or env differ from zero (real values), embed them to
+        // avoid cross-variant collisions.
+        if context_hash != 0 || env_contribution != 0 {
+            format!(
+                "{first}@{:x}:{:x}",
+                context_hash, env_contribution
+            )
+        } else {
+            first.clone()
+        }
+    } else {
+        let base = inputs.first().map(|s| s.as_str()).unwrap_or("");
+        if context_hash != 0 || env_contribution != 0 {
+            format!(
+                "{}@{:x}:{:x}:{:x}",
+                base, command_hash, context_hash, env_contribution
+            )
+        } else {
+            format!("{}@{:x}", base, command_hash)
+        }
+    }
+}
+
+/// Retrieve the cookfile-relative path stored in the Lua named registry value
+/// `__cook_cookfile_path`. Falls back to "Cookfile" when absent (legacy / test
+/// call sites that don't thread a `CacheContext` through).
+fn cookfile_relative_path(lua: &Lua) -> String {
+    lua.named_registry_value::<String>("__cook_cookfile_path")
+        .unwrap_or_else(|_| "Cookfile".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,9 +276,25 @@ mod tests {
         (lua, capture_state)
     }
 
+    fn fake_cache_ctx() -> std::sync::Arc<cook_cache::cache_ctx::CacheContext> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir_path = dir.path().to_path_buf();
+        std::mem::forget(dir); // tests are short-lived; let the OS clean up
+        std::sync::Arc::new(cook_cache::cache_ctx::CacheContext {
+            exec_ctx: std::sync::Arc::new(cook_cache::context::ExecutionContext::probe()),
+            denylist: std::sync::Arc::new(cook_cache::envkey::EnvDenylist::baseline()),
+            backend: std::sync::Arc::new(cook_cache::backend::LocalBackend::new(dir_path.clone())),
+            cloud_config: std::sync::Arc::new(cook_cache::cloud_config::CloudConfig::default()),
+            project_root: dir_path,
+            project_id: "test-project".to_string(),
+        })
+    }
+
     #[test]
     fn test_add_unit_basic() {
         let (lua, capture_state) = make_lua_with_unit_api("my_recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(r#"
             cook.add_unit({
                 command = "gcc -o main main.c",
@@ -217,7 +317,6 @@ mod tests {
 
         let meta = unit.cache_meta.as_ref().expect("expected cache_meta");
         assert_eq!(meta.recipe_name, "my_recipe");
-        assert_eq!(meta.cache_key, "main");
         assert_eq!(meta.input_paths, vec!["main.c"]);
         assert_eq!(meta.output_paths, vec!["main".to_string()]);
         assert_eq!(meta.command_hash, hash_str("gcc -o main main.c"));
@@ -228,6 +327,8 @@ mod tests {
     #[test]
     fn test_add_unit_no_cache() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(r#"
             cook.add_unit({
                 command = "echo hello",
@@ -243,6 +344,8 @@ mod tests {
     #[test]
     fn test_add_unit_interactive_flag() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(r#"
             cook.add_unit({
                 command = "build/bin/lua -e 'print(1)'",
@@ -264,6 +367,8 @@ mod tests {
     #[test]
     fn test_add_unit_sequential_by_default() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(r#"
             cook.add_unit({ command = "step1" })
             cook.add_unit({ command = "step2" })
@@ -278,6 +383,8 @@ mod tests {
     #[test]
     fn test_step_group_makes_parallel() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(r#"
             cook.step_group(function()
                 cook.add_unit({ command = "unit_a" })
@@ -296,6 +403,8 @@ mod tests {
     #[test]
     fn test_step_group_sequential_after() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(r#"
             cook.step_group(function()
                 cook.add_unit({ command = "parallel_unit" })
@@ -312,6 +421,8 @@ mod tests {
     #[test]
     fn test_last_cook_step_outputs_tracked() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(r#"
             -- First cook step (OneToOne, 2 outputs)
             cook.step_group(function()
@@ -332,6 +443,8 @@ mod tests {
     #[test]
     fn test_plate_step_group_does_not_overwrite_terminal() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(r#"
             -- Cook step produces output
             cook.step_group(function()
@@ -350,6 +463,8 @@ mod tests {
     #[test]
     fn test_add_unit_outputs_plural() {
         let (lua, capture_state) = make_lua_with_unit_api("my_recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(r#"
             cook.add_unit({
                 command = "split a.c",
@@ -366,13 +481,15 @@ mod tests {
             meta.output_paths,
             vec!["a.o".to_string(), "a.d".to_string()]
         );
-        // cache_key should be derived from the first output when outputs is used
-        assert_eq!(meta.cache_key, "a.o");
+        // cache_key should embed context+env when they are non-zero
+        assert!(meta.cache_key.starts_with("a.o"), "cache_key starts with first output");
     }
 
     #[test]
     fn test_add_unit_outputs_and_output_conflict_errors() {
         let (lua, _capture_state) = make_lua_with_unit_api("my_recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         let result = lua.load(r#"
             cook.add_unit({
                 command = "split a.c",
@@ -390,6 +507,8 @@ mod tests {
     #[test]
     fn test_add_unit_lua_code_one_to_one() {
         let (lua, capture_state) = make_lua_with_unit_api("my_recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(
             r#"
             cook.add_unit({
@@ -428,6 +547,8 @@ mod tests {
     #[test]
     fn test_add_unit_lua_code_multi_output_block_step() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(
             r#"
             cook.add_unit({
@@ -465,6 +586,8 @@ mod tests {
     #[test]
     fn test_single_step_terminal_outputs() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
         lua.load(r#"
             cook.step_group(function()
                 cook.add_unit({ command = "gcc -o app main.c", inputs = {"main.c"}, output = "app" })
@@ -473,5 +596,40 @@ mod tests {
 
         let state = capture_state.borrow();
         assert_eq!(state.last_cook_step_outputs, vec!["app"]);
+    }
+
+    #[test]
+    fn add_unit_populates_consulted_env_from_keys_list() {
+        std::env::set_var("FOO_TEST_VAR_X", "the-value");
+
+        let lua = Lua::new();
+        lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        register_unit_api(&lua, capture_state.clone(), "my_recipe").unwrap();
+
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                command = "make all",
+                inputs = {"main.c"},
+                output = "main",
+                consulted_env_keys = {"FOO_TEST_VAR_X"},
+            })
+        "#).exec().unwrap();
+
+        let state = capture_state.borrow();
+        assert_eq!(state.units.len(), 1);
+        let meta = state.units[0].cache_meta.as_ref().expect("cache_meta");
+        assert_eq!(
+            meta.consulted_env.get("FOO_TEST_VAR_X").map(|s| s.as_str()),
+            Some("the-value"),
+            "consulted_env must contain FOO_TEST_VAR_X=the-value"
+        );
+        // env_contribution must be non-zero because a non-denylisted var was consulted
+        assert_ne!(meta.env_contribution, 0, "env_contribution must be non-zero");
+
+        std::env::remove_var("FOO_TEST_VAR_X");
     }
 }
