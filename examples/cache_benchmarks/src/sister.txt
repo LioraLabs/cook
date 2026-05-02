@@ -1,0 +1,2 @@
+sister recipe input — does NOT consume CFLAGS, used to verify env-key
+isolation between steps that consult an env var and steps that don't.

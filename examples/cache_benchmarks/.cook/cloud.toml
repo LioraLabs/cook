@@ -1,0 +1,20 @@
+# Cook Cloud project config for the cache_benchmarks example.
+#
+# `enabled = false` keeps the cloud upload path off — the LocalBackend at
+# ~/.cache/cook/cloud/ still receives `put`s on every cacheable step, but
+# nothing crosses the network. Flip to `true` once a CloudBackend exists.
+#
+# `project` is required when cloud.enabled = true and contributes to the
+# recipe namespace component of cloud_key (spec §5.2). Listed even when
+# disabled so the namespace is stable for any LocalBackend artifacts.
+#
+# `cache.ignore_env` extends the D1 baseline denylist (§4.3). Names listed
+# here will be filtered out of env_contribution even when consulted by a
+# step's command.
+
+[cloud]
+enabled = false
+project = "cache_benchmarks"
+
+[cache]
+ignore_env = ["MY_PERSONAL_TOKEN"]

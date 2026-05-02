@@ -5,9 +5,12 @@ target/
 node_modules/
 dist/
 
-# Cook artifacts
-**/*.cook/
-.cook/
+# Cook artifacts: ignore everything inside .cook/ EXCEPT the checked-in
+# cloud config (.cook/cloud.toml carries project_id and cache.ignore_env
+# per spec §9 and is meant to be tracked).
+.cook/**
+!**/.cook/
+!**/.cook/cloud.toml
 build/
 bin/
 
