@@ -1,11 +1,17 @@
 use mlua::prelude::*;
 use cook_contracts::{CacheMeta, CapturedUnit, DepKind, WorkPayload};
 
+use crate::dep_output_api::SharedTerminalOutputs;
 use crate::{hash_str, SharedCaptureState};
 
 /// Register `cook.add_unit(table)`, `cook.step_group(fn)`, `cook._enter_chore()`,
 /// and `cook._exit_chore()` on the cook table.
-pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_name: &str) -> LuaResult<()> {
+pub fn register_unit_api(
+    lua: &Lua,
+    capture_state: SharedCaptureState,
+    recipe_name: &str,
+    terminal_outputs: SharedTerminalOutputs,
+) -> LuaResult<()> {
     let cook: LuaTable = lua.globals().get("cook")?;
 
     // cook._enter_chore() — called by chore-generated Lua before the body runs.
@@ -27,6 +33,7 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
     // cook.add_unit(table)
     let cs = capture_state.clone();
     let rname = recipe_name.to_string();
+    let to = terminal_outputs.clone();
     let add_unit_fn = lua.create_function(move |lua, tbl: LuaTable| {
         let command: String = tbl.get::<String>("command").unwrap_or_default();
         let lua_code: Option<String> = tbl.get::<String>("lua_code").ok();
@@ -81,6 +88,28 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
             Vec::new()
         };
         let outputs_for_tracking = output_paths.clone();
+
+        // 2026-05-02 addendum spec §4.3: cross-recipe dep refs accumulated by
+        // cook.dep_output / cook.dep_output_list calls within this step_group
+        // produce paths the command consumed via {NAME} substitution. Append
+        // those paths to cache_meta.input_paths so cache invalidation tracks
+        // dep-output content drift. Keep them out of WorkPayload inputs (which
+        // drive _cook_in iteration / Lua-visible inputs).
+        let dep_input_paths: Vec<String> = {
+            let state = cs.borrow();
+            let store = to.borrow();
+            state
+                .step_group_dep_refs
+                .iter()
+                .filter_map(|name| store.get(name))
+                .flat_map(|paths| paths.iter().cloned())
+                .collect()
+        };
+        let cache_input_paths: Vec<String> = inputs
+            .iter()
+            .cloned()
+            .chain(dep_input_paths.into_iter())
+            .collect();
 
         // Read consulted_env_keys from the table and look up values in cook.env
         // (the merged Cookfile-config + process env that the command actually
@@ -143,7 +172,7 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
                 &cookfile_path,
                 &rname,
                 &output_paths,
-                &inputs,
+                &cache_input_paths,
                 command_hash,
                 context_hash,
                 env_contribution_val,
@@ -153,7 +182,7 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
                 project_id,
                 cookfile_path,
                 cache_key,
-                input_paths: inputs.clone(),
+                input_paths: cache_input_paths,
                 output_paths: output_paths.clone(),
                 command_hash,
                 context_hash,
@@ -281,12 +310,15 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
     use crate::CaptureState;
+    use std::collections::BTreeMap;
 
     fn make_lua_with_unit_api(recipe_name: &str) -> (Lua, SharedCaptureState) {
         let lua = Lua::new();
         lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
         let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
-        register_unit_api(&lua, capture_state.clone(), recipe_name).unwrap();
+        let terminal_outputs: SharedTerminalOutputs =
+            Rc::new(RefCell::new(BTreeMap::new()));
+        register_unit_api(&lua, capture_state.clone(), recipe_name, terminal_outputs).unwrap();
         (lua, capture_state)
     }
 
@@ -627,7 +659,9 @@ mod tests {
         lua.globals().set("cook", cook_table).unwrap();
 
         let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
-        register_unit_api(&lua, capture_state.clone(), "my_recipe").unwrap();
+        let terminal_outputs: SharedTerminalOutputs =
+            Rc::new(RefCell::new(BTreeMap::new()));
+        register_unit_api(&lua, capture_state.clone(), "my_recipe", terminal_outputs).unwrap();
 
         lua.set_app_data(fake_cache_ctx());
         lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
@@ -651,5 +685,79 @@ mod tests {
         );
         // env_contribution must be non-zero because a non-denylisted var was consulted
         assert_ne!(meta.env_contribution, 0, "env_contribution must be non-zero");
+    }
+
+    #[test]
+    fn add_unit_appends_resolved_dep_paths_to_input_paths() {
+        // Spec §4.3: cross-recipe dep refs accumulated by cook.dep_output(name)
+        // resolve to terminal output paths and land in cache_meta.input_paths
+        // (only — never in WorkPayload.inputs).
+        let lua = Lua::new();
+        let cook_table = lua.create_table().unwrap();
+        cook_table.set("env", lua.create_table().unwrap()).unwrap();
+        lua.globals().set("cook", cook_table).unwrap();
+
+        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        let terminal_outputs: SharedTerminalOutputs = Rc::new(RefCell::new(BTreeMap::new()));
+        terminal_outputs
+            .borrow_mut()
+            .insert("greet".into(), vec!["build/greet.o".into()]);
+        terminal_outputs
+            .borrow_mut()
+            .insert("util".into(), vec!["build/util.o".into()]);
+
+        register_unit_api(
+            &lua,
+            capture_state.clone(),
+            "demo",
+            terminal_outputs.clone(),
+        )
+        .unwrap();
+        crate::dep_output_api::register_dep_output_api(
+            &lua,
+            terminal_outputs,
+            capture_state.clone(),
+        )
+        .unwrap();
+
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string())
+            .expect("set");
+
+        // Codegen sequence: cook.dep_output() called inside command construction
+        // accumulates dep refs; add_unit then picks them up.
+        lua.load(
+            r#"
+            local _ = cook.dep_output("greet")
+            local _ = cook.dep_output("util")
+            cook.add_unit({
+                command = "gcc build/greet.o build/util.o -o build/demo",
+                inputs = {},
+                output = "build/demo",
+            })
+        "#,
+        )
+        .exec()
+        .unwrap();
+
+        let state = capture_state.borrow();
+        assert_eq!(state.units.len(), 1);
+        let meta = state.units[0]
+            .cache_meta
+            .as_ref()
+            .expect("cache_meta present");
+        assert_eq!(
+            meta.input_paths,
+            vec!["build/greet.o".to_string(), "build/util.o".to_string()],
+            "cross-recipe dep paths must land in cache_meta.input_paths"
+        );
+
+        // WorkPayload inputs MUST remain empty — those drive iteration vars.
+        match &state.units[0].payload {
+            WorkPayload::Shell { cmd, .. } => {
+                assert!(cmd.contains("gcc"));
+            }
+            other => panic!("expected Shell, got {other:?}"),
+        }
     }
 }

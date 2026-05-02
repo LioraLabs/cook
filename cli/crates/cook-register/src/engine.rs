@@ -87,7 +87,12 @@ impl Registry {
         ));
         crate::module_loader::register_module_loader(&lua, module_state.clone())?;
         crate::module_loader::register_cache_api(&lua, module_state.clone())?;
-        crate::unit_api::register_unit_api(&lua, capture_state.clone(), recipe_name)?;
+        crate::unit_api::register_unit_api(
+            &lua,
+            capture_state.clone(),
+            recipe_name,
+            self.terminal_outputs.clone(),
+        )?;
         crate::export_api::register_export_api(&lua, self.export_store.clone())?;
         crate::test_api::register_test_api(&lua, capture_state.clone())?;
         crate::dep_output_api::register_dep_output_api(
