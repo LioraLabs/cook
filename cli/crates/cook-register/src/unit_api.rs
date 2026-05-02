@@ -95,10 +95,16 @@ pub fn register_unit_api(lua: &Lua, capture_state: SharedCaptureState, recipe_na
             };
             Some(CacheMeta {
                 recipe_name: rname.clone(),
+                // Placeholders — real values come in Phases 3, 5, 6.
+                project_id: String::new(),
+                cookfile_path: String::new(),
                 cache_key,
                 input_paths: inputs.clone(),
                 output_paths: output_paths.clone(),
                 command_hash,
+                context_hash: 0,
+                env_contribution: 0,
+                consulted_env: std::collections::BTreeMap::new(),
             })
         } else {
             None

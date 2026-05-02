@@ -53,13 +53,24 @@ impl WorkPayload {
 
 /// Metadata used by the caching subsystem to determine whether a unit can be
 /// skipped.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CacheMeta {
     pub recipe_name: String,
+    /// NEW: from .cook/cloud.toml `project = "..."` (Phase 3 wires real values).
+    pub project_id: String,
+    /// NEW: relative path of the source Cookfile from the project root, forward-slashed.
+    pub cookfile_path: String,
     pub cache_key: String,
     pub input_paths: Vec<String>,
     pub output_paths: Vec<String>,
     pub command_hash: u64,
+    /// NEW: machine + tool identity. Phase 6 wires real values; zero until then.
+    pub context_hash: u64,
+    /// NEW: post-denylist env contribution. Phase 5 wires real values; zero until then.
+    pub env_contribution: u64,
+    /// NEW: the (key, value) pairs the command consulted post-denylist.
+    /// Phase 5 wires real values; empty BTreeMap until then.
+    pub consulted_env: std::collections::BTreeMap<String, String>,
 }
 
 /// A single captured unit of work within a recipe.
@@ -155,10 +166,15 @@ mod tests {
     fn cache_meta_construction() {
         let m = CacheMeta {
             recipe_name: "build".into(),
+            project_id: String::new(),
+            cookfile_path: String::new(),
             cache_key: "abc123".into(),
             input_paths: vec!["src/main.rs".into()],
             output_paths: vec!["target/debug/app".into()],
             command_hash: 42,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: std::collections::BTreeMap::new(),
         };
         assert_eq!(m.recipe_name, "build");
         assert_eq!(m.command_hash, 42);
@@ -170,10 +186,15 @@ mod tests {
     fn cache_meta_no_output() {
         let m = CacheMeta {
             recipe_name: "lint".into(),
+            project_id: String::new(),
+            cookfile_path: String::new(),
             cache_key: "def456".into(),
             input_paths: vec![],
             output_paths: vec![],
             command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: std::collections::BTreeMap::new(),
         };
         assert!(m.output_paths.is_empty());
     }
@@ -268,10 +289,15 @@ mod tests {
             payload: WorkPayload::Shell { cmd: "gcc -o app main.c".into(), line: 5 },
             cache_meta: Some(CacheMeta {
                 recipe_name: "compile".into(),
+                project_id: String::new(),
+                cookfile_path: String::new(),
                 cache_key: "key123".into(),
                 input_paths: vec!["main.c".into()],
                 output_paths: vec!["app".into()],
                 command_hash: 9999,
+                context_hash: 0,
+                env_contribution: 0,
+                consulted_env: std::collections::BTreeMap::new(),
             }),
             dep_kind: DepKind::StepGroup(0),
         };
