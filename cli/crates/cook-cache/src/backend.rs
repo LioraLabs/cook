@@ -147,6 +147,39 @@ impl CacheBackend for LocalBackend {
     }
 }
 
+use sha2::{Digest, Sha256};
+
+/// Inputs to `cloud_key()`. The struct is `Copy` so callers can build it once
+/// and pass it around; lifetimes track the borrowed namespace and inputs slice.
+#[derive(Clone, Copy)]
+pub struct CloudKeyInputs<'a> {
+    pub schema_version: u32,
+    pub recipe_namespace: &'a str,
+    pub command_hash: u64,
+    pub context_hash: u64,
+    pub env_contribution: u64,
+    /// Caller MUST sort by path before passing. The slice is hashed in given
+    /// order; sorting is the caller's responsibility (cf. spec §5.3).
+    pub sorted_input_content_hashes: &'a [u64],
+}
+
+/// Compose the SHA-256 cloud key for an artifact.
+/// See spec §5.3 for the composition; the 0x00 delimiter prevents
+/// string-injection collisions between the namespace and hash bytes.
+pub fn cloud_key(inputs: &CloudKeyInputs<'_>) -> CloudKey {
+    let mut h = Sha256::new();
+    h.update(inputs.schema_version.to_le_bytes());
+    h.update(inputs.recipe_namespace.as_bytes());
+    h.update([0x00]); // delimiter
+    h.update(inputs.command_hash.to_le_bytes());
+    h.update(inputs.context_hash.to_le_bytes());
+    h.update(inputs.env_contribution.to_le_bytes());
+    for hash in inputs.sorted_input_content_hashes {
+        h.update(hash.to_le_bytes());
+    }
+    h.finalize().into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +296,94 @@ mod tests {
         assert_eq!(parent, "ab");
         let file_name = path.file_name().unwrap().to_string_lossy();
         assert_eq!(file_name.len(), 62);
+    }
+
+    // ─── cloud_key composition tests ────────────────────────────────────────
+
+    fn make_key_inputs() -> CloudKeyInputs<'static> {
+        CloudKeyInputs {
+            schema_version: 3,
+            recipe_namespace: "cook/Cookfile::build",
+            command_hash: 0xAAAA,
+            context_hash: 0xBBBB,
+            env_contribution: 0xCCCC,
+            sorted_input_content_hashes: &[0x1111, 0x2222, 0x3333],
+        }
+    }
+
+    #[test]
+    fn cloud_key_deterministic() {
+        let inputs = make_key_inputs();
+        let k1 = cloud_key(&inputs);
+        let k2 = cloud_key(&inputs);
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn cloud_key_changes_on_command_hash_change() {
+        let a = make_key_inputs();
+        let mut b = a;
+        b.command_hash = 0xFFFF;
+        assert_ne!(cloud_key(&a), cloud_key(&b));
+    }
+
+    #[test]
+    fn cloud_key_changes_on_context_hash_change() {
+        let a = make_key_inputs();
+        let mut b = a;
+        b.context_hash = 0xFFFF;
+        assert_ne!(cloud_key(&a), cloud_key(&b));
+    }
+
+    #[test]
+    fn cloud_key_changes_on_env_contribution_change() {
+        let a = make_key_inputs();
+        let mut b = a;
+        b.env_contribution = 0xFFFF;
+        assert_ne!(cloud_key(&a), cloud_key(&b));
+    }
+
+    #[test]
+    fn cloud_key_changes_on_schema_version_change() {
+        let a = make_key_inputs();
+        let mut b = a;
+        b.schema_version = 4;
+        assert_ne!(cloud_key(&a), cloud_key(&b));
+    }
+
+    #[test]
+    fn cloud_key_changes_on_namespace_change() {
+        let a = make_key_inputs();
+        let mut b = a;
+        b.recipe_namespace = "cook/Cookfile::test";
+        assert_ne!(cloud_key(&a), cloud_key(&b));
+    }
+
+    #[test]
+    fn cloud_key_changes_on_input_content_change() {
+        let a = make_key_inputs();
+        let alt_inputs = [0x1111, 0x2222, 0x9999]; // last hash differs
+        let b = CloudKeyInputs { sorted_input_content_hashes: &alt_inputs, ..a };
+        assert_ne!(cloud_key(&a), cloud_key(&b));
+    }
+
+    #[test]
+    fn cloud_key_caller_must_sort_inputs() {
+        // The function trusts its caller's sort. A caller-sorted slice produces
+        // a stable hash; an unsorted slice produces a different (but stable) one.
+        // This test documents that the sort is the caller's responsibility.
+        let sorted = [0x1111u64, 0x2222, 0x3333];
+        let unsorted = [0x3333u64, 0x1111, 0x2222];
+        let a = make_key_inputs();
+        let b = CloudKeyInputs { sorted_input_content_hashes: &sorted, ..a };
+        let c = CloudKeyInputs { sorted_input_content_hashes: &unsorted, ..a };
+        assert_ne!(cloud_key(&b), cloud_key(&c),
+            "the function does not internally sort; caller responsibility");
+    }
+
+    #[test]
+    fn cloud_key_returns_32_bytes() {
+        let k = cloud_key(&make_key_inputs());
+        assert_eq!(k.len(), 32);
     }
 }
