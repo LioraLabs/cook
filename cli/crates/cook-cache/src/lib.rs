@@ -21,7 +21,7 @@ pub use check::{
 };
 pub use manager::{CacheState, RecordError, SharedCacheState, ThreadSafeCacheManager};
 pub use store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};
-pub use backend::{ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey, LocalBackend};
+pub use backend::{artifact_key, ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey, LocalBackend};
 pub use cache_ctx::CacheContext;
 pub use cloud_config::{CloudConfig, CloudConfigError};
 pub use context::{ExecutionContext, MachineIdentity, ToolHash};

@@ -59,6 +59,8 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
         size_bytes: artifact_bytes.len() as u64,
         tags: Default::default(),
         consulted_env_keys: Default::default(),
+        output_index: 0,
+        output_path: "build/main.o".into(),
     };
     backend.put(&key, &artifact_bytes, &meta).expect("put");
 

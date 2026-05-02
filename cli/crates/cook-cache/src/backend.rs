@@ -48,6 +48,10 @@ pub struct ArtifactMeta {
     pub size_bytes: u64,
     pub tags: BTreeSet<String>,
     pub consulted_env_keys: BTreeSet<String>,
+    /// Which output index this artifact represents (0-based).
+    pub output_index: u32,
+    /// Workspace-relative output path. Diagnostic only; not part of equality.
+    pub output_path: String,
 }
 
 pub trait CacheBackend: Send + Sync {
@@ -163,6 +167,24 @@ pub struct CloudKeyInputs<'a> {
     pub sorted_input_content_hashes: &'a [u64],
 }
 
+/// Derive an output-scoped artifact key from a cache entry's cloud_key.
+///
+/// One logical cache entry can produce multiple output artifacts. Each
+/// artifact is independently addressable in the backend via
+/// `SHA-256(cloud_key || u32_le(output_index) || output_path_bytes)`.
+/// See 2026-05-02 addendum spec §4.1.
+pub fn artifact_key(
+    cloud_key: &CloudKey,
+    output_index: u32,
+    output_path: &str,
+) -> CloudKey {
+    let mut h = Sha256::new();
+    h.update(cloud_key);
+    h.update(output_index.to_le_bytes());
+    h.update(output_path.as_bytes());
+    h.finalize().into()
+}
+
 /// Compose the SHA-256 cloud key for an artifact.
 /// See spec §5.3 for the composition; the 0x00 delimiter prevents
 /// string-injection collisions between the namespace and hash bytes.
@@ -194,7 +216,40 @@ mod tests {
             size_bytes: 5,
             tags: BTreeSet::new(),
             consulted_env_keys: BTreeSet::new(),
+            output_index: 0,
+            output_path: "build/foo.o".into(),
         }
+    }
+
+    #[test]
+    fn artifact_key_deterministic() {
+        let cloud_k = key(0xAB);
+        let a = artifact_key(&cloud_k, 0, "build/foo.o");
+        let b = artifact_key(&cloud_k, 0, "build/foo.o");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn artifact_key_differs_on_index() {
+        let cloud_k = key(0xAB);
+        let a = artifact_key(&cloud_k, 0, "build/foo.o");
+        let b = artifact_key(&cloud_k, 1, "build/foo.o");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn artifact_key_differs_on_path() {
+        let cloud_k = key(0xAB);
+        let a = artifact_key(&cloud_k, 0, "build/foo.o");
+        let b = artifact_key(&cloud_k, 0, "build/bar.o");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn artifact_key_differs_on_cloud_key() {
+        let a = artifact_key(&key(0x01), 0, "build/foo.o");
+        let b = artifact_key(&key(0x02), 0, "build/foo.o");
+        assert_ne!(a, b);
     }
 
     fn key(byte: u8) -> CloudKey {

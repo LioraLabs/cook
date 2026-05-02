@@ -510,25 +510,35 @@ pub fn execute_dag(
                                     };
                                     let cloud_k = cook_cache::backend::cloud_key(&key_inputs);
 
-                                    // v3 limitation: multi-output steps upload only the first output
-                                    // bytes. SHI-NNN (future) will produce a manifest-style artifact
-                                    // covering all outputs.
-                                    if let Some(first_output) = meta.output_paths.first() {
-                                        let abs_output = dag.node(id).payload.working_dir.join(first_output);
-                                        if let Ok(bytes) = std::fs::read(&abs_output) {
-                                            let artifact_meta = cook_cache::backend::ArtifactMeta {
-                                                recipe_namespace: recipe_namespace.clone(),
-                                                command_hash: meta.command_hash,
-                                                context_hash: meta.context_hash,
-                                                env_contribution: meta.env_contribution,
-                                                schema_version: cook_cache::store::CACHE_VERSION,
-                                                size_bytes: bytes.len() as u64,
-                                                tags: std::collections::BTreeSet::new(),
-                                                consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-                                            };
-                                            if let Err(e) = cache_ctx.backend.put(&cloud_k, &bytes, &artifact_meta) {
-                                                tracing::warn!("cache backend put failed for {}: {}", first_output, e);
-                                            }
+                                    // Upload one artifact per declared output (2026-05-02 addendum
+                                    // spec §5.1). Each artifact is keyed by
+                                    // artifact_key(cloud_key, idx, path) so a future cache hit can
+                                    // restore them all independently.
+                                    for (out_idx, output_path) in meta.output_paths.iter().enumerate() {
+                                        let abs_output = dag.node(id).payload.working_dir.join(output_path);
+                                        let bytes = match std::fs::read(&abs_output) {
+                                            Ok(b) => b,
+                                            Err(_) => continue,
+                                        };
+                                        let artifact_k = cook_cache::backend::artifact_key(
+                                            &cloud_k,
+                                            out_idx as u32,
+                                            output_path,
+                                        );
+                                        let artifact_meta = cook_cache::backend::ArtifactMeta {
+                                            recipe_namespace: recipe_namespace.clone(),
+                                            command_hash: meta.command_hash,
+                                            context_hash: meta.context_hash,
+                                            env_contribution: meta.env_contribution,
+                                            schema_version: cook_cache::store::CACHE_VERSION,
+                                            size_bytes: bytes.len() as u64,
+                                            tags: std::collections::BTreeSet::new(),
+                                            consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                                            output_index: out_idx as u32,
+                                            output_path: output_path.clone(),
+                                        };
+                                        if let Err(e) = cache_ctx.backend.put(&artifact_k, &bytes, &artifact_meta) {
+                                            tracing::warn!("cache backend put failed for {}: {}", output_path, e);
                                         }
                                     }
                                 }
@@ -653,25 +663,33 @@ pub fn execute_dag(
                             };
                             let cloud_k = cook_cache::backend::cloud_key(&key_inputs);
 
-                            // v3 limitation: multi-output steps upload only the first output
-                            // bytes. SHI-NNN (future) will produce a manifest-style artifact
-                            // covering all outputs.
-                            if let Some(first_output) = meta.output_paths.first() {
-                                let abs_output = dag.node(result.id).payload.working_dir.join(first_output);
-                                if let Ok(bytes) = std::fs::read(&abs_output) {
-                                    let artifact_meta = cook_cache::backend::ArtifactMeta {
-                                        recipe_namespace: recipe_namespace.clone(),
-                                        command_hash: meta.command_hash,
-                                        context_hash: meta.context_hash,
-                                        env_contribution: meta.env_contribution,
-                                        schema_version: cook_cache::store::CACHE_VERSION,
-                                        size_bytes: bytes.len() as u64,
-                                        tags: std::collections::BTreeSet::new(),
-                                        consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-                                    };
-                                    if let Err(e) = cache_ctx.backend.put(&cloud_k, &bytes, &artifact_meta) {
-                                        tracing::warn!("cache backend put failed for {}: {}", first_output, e);
-                                    }
+                            // Upload one artifact per declared output (2026-05-02 addendum
+                            // spec §5.1).
+                            for (out_idx, output_path) in meta.output_paths.iter().enumerate() {
+                                let abs_output = dag.node(result.id).payload.working_dir.join(output_path);
+                                let bytes = match std::fs::read(&abs_output) {
+                                    Ok(b) => b,
+                                    Err(_) => continue,
+                                };
+                                let artifact_k = cook_cache::backend::artifact_key(
+                                    &cloud_k,
+                                    out_idx as u32,
+                                    output_path,
+                                );
+                                let artifact_meta = cook_cache::backend::ArtifactMeta {
+                                    recipe_namespace: recipe_namespace.clone(),
+                                    command_hash: meta.command_hash,
+                                    context_hash: meta.context_hash,
+                                    env_contribution: meta.env_contribution,
+                                    schema_version: cook_cache::store::CACHE_VERSION,
+                                    size_bytes: bytes.len() as u64,
+                                    tags: std::collections::BTreeSet::new(),
+                                    consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                                    output_index: out_idx as u32,
+                                    output_path: output_path.clone(),
+                                };
+                                if let Err(e) = cache_ctx.backend.put(&artifact_k, &bytes, &artifact_meta) {
+                                    tracing::warn!("cache backend put failed for {}: {}", output_path, e);
                                 }
                             }
                         }
