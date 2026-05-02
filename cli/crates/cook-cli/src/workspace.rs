@@ -86,7 +86,7 @@ impl Workspace {
             .unwrap_or_else(|_| cookfile_dir.to_path_buf());
 
         for import_decl in &cookfile.imports {
-            let import_dir = cookfile_dir.join(&import_decl.path);
+            let import_dir = cookfile_dir.join(import_decl.path.to_string());
             if !import_dir.exists() {
                 return Err(CookError::Other(format!(
                     "Import '{}': directory '{}' not found",
