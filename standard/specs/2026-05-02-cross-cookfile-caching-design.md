@@ -65,16 +65,22 @@ When `cook` is invoked, the workspace root is determined by the following ordere
 
 1. **Explicit override.** If `cook --root <path>` was passed, the workspace root is `<path>` (canonicalised). The invoked Cookfile MUST be at or below `<path>`.
 2. **Marker file.** Walk up from the invoked Cookfile's directory. If any ancestor directory contains a `.cookroot` file (zero-content sentinel, name normative), the **first** such ancestor is the workspace root.
-3. **Tree-import inference.** Walk up from the invoked Cookfile's directory. At each ancestor that contains a `Cookfile`, parse it. If the ancestor's Cookfile transitively imports the invoked Cookfile's directory through **tree-relative imports only**, mark the ancestor as a candidate. Continue walking; the **highest** such candidate is the workspace root.
-4. **Default.** If no ancestor satisfies (1)–(3), the invoked Cookfile's own directory is the workspace root.
+3. **Tree-import inference.** Walk up from the invoked Cookfile's directory. At each ancestor that contains a `Cookfile`, parse it. The ancestor is a **candidate** when both:
+   1. It transitively imports the invoked Cookfile's directory through **tree-relative imports only**, AND
+   2. With the candidate treated as the workspace root, every sigil-anchored import in any Cookfile reachable from the candidate (across both tree-relative and sigil-anchored edges) resolves to a directory at or below the candidate after canonicalisation.
+   Continue walking; the **highest** candidate is the workspace root.
+4. **Self-root.** If no ancestor satisfies (1)–(3) AND neither the invoked Cookfile nor any Cookfile transitively reachable from it (through tree-relative imports) declares any sigil-anchored import, the invoked Cookfile's own directory is the workspace root.
+5. **Reject.** If no ancestor satisfies (1)–(3) AND any reachable Cookfile declares a sigil-anchored import, workspace load fails with a diagnostic naming the invoked Cookfile, the offending sigil import, and the inability to identify a workspace root that anchors it.
 
-> **Definition (transitively imports).** Cookfile X *directly imports* directory D when X has an `import <name> <path>` declaration whose canonicalised resolved directory equals D. X *transitively imports* D when there is a chain X = X₀ → X₁ → … → Xₙ = D where each Xᵢ → Xᵢ₊₁ is a direct import. For workspace-root inference (rule 3), each link in the chain MUST be tree-relative; sigil-anchored imports are ineligible because their resolution presupposes a workspace root.
+> **Definition (transitively imports).** Cookfile X *directly imports* directory D when X has an `import <name> <path>` declaration whose canonicalised resolved directory equals D. X *transitively imports* D when there is a chain X = X₀ → X₁ → … → Xₙ = D where each Xᵢ → Xᵢ₊₁ is a direct import. For workspace-root inference (rule 3.1), each link in the chain MUST be tree-relative; sigil-anchored imports are ineligible at that stage because their resolution presupposes a workspace root.
+
+> **Note on rule 5.** A workspace root's defining property is that it anchors sigil paths. A Cookfile that declares (or transitively reaches) sigil imports therefore cannot itself be a workspace root in the absence of an enclosing anchor — sigil resolution would have nothing above it to bind against. The rejection in (5) makes this contract explicit and surfaces a clear authoring error rather than silently rebinding sigils to a degenerate "self-root."
 
 The procedure terminates because each step walks to a strict parent directory; the filesystem root is the upper bound. Once the workspace root is determined, it is fixed for the remainder of the invocation.
 
 #### 3.1.3. Standalone-subtree behaviour
 
-When the workspace-root determination procedure picks an ancestor that does not contain `.cookroot`, but the invoked Cookfile (or any Cookfile transitively imported under it) uses sigil imports whose targets do not exist under the inferred root, the workspace fails to load with a diagnostic naming the offending sigil and the inferred root. Authors using sigil imports SHOULD drop a `.cookroot` marker at the intended workspace root to make the contract explicit.
+A subtree without sigil imports is freely cookable on its own (rule 4 of §3.1.2 applies). A subtree that contains sigil imports MUST find an enclosing workspace root via rule 1, 2, or 3 of §3.1.2; if none satisfies, workspace load fails with the diagnostic of rule 5. Authors using sigil imports SHOULD drop a `.cookroot` marker at the intended workspace root so the contract is robust to the inference walk encountering ancestors that don't transitively import the invoked Cookfile.
 
 #### 3.1.4. Diagnostic surface
 
@@ -200,28 +206,42 @@ fn infer_workspace_root(invoked_cookfile_dir: &Path) -> Result<PathBuf, CookErro
             None => break,
         }
     }
-    // Rule 3 (tree-import inference): walk up, parse each ancestor Cookfile,
-    // check whether it transitively (via tree-relative imports only) imports
-    // the invoked directory. Track the highest match.
+    // Rule 3 (tree-import inference + sigil validation):
     let mut highest: Option<PathBuf> = None;
     let mut cur = invoked_cookfile_dir.parent().map(|p| p.to_path_buf());
     while let Some(d) = cur {
-        if d.join("Cookfile").exists() {
-            if cookfile_transitively_imports_via_tree(
-                &d.join("Cookfile"),
-                invoked_cookfile_dir,
-            )? {
-                highest = Some(d.clone());
-            }
+        if d.join("Cookfile").exists()
+            && cookfile_transitively_imports_via_tree(
+                   &d.join("Cookfile"),
+                   invoked_cookfile_dir,
+               )?
+            && all_reachable_sigils_resolve_under(&d)?
+        {
+            highest = Some(d.clone());
         }
         cur = d.parent().map(|p| p.to_path_buf());
     }
-    // Rule 4 (default):
-    Ok(highest.unwrap_or_else(|| invoked_cookfile_dir.to_path_buf()))
+    if let Some(root) = highest {
+        return Ok(root);
+    }
+    // Rule 4 (self-root) and Rule 5 (reject):
+    if any_reachable_sigil_imports(invoked_cookfile_dir)? {
+        return Err(CookError::Other(format!(
+            "Cookfile {} declares sigil imports but no enclosing workspace root \
+             could be identified. Drop a .cookroot marker at the workspace root \
+             or pass --root.",
+            invoked_cookfile_dir.display(),
+        )));
+    }
+    Ok(invoked_cookfile_dir.to_path_buf())
 }
 ```
 
-`cookfile_transitively_imports_via_tree` parses the candidate Cookfile, walks its tree-relative `import` declarations, and recursively checks whether any reaches the invoked directory. Sigil imports are skipped during this walk (they require a workspace root, which is what we are computing). The recursion terminates because the import graph is finite (the workspace is bounded by the filesystem) and the canonicalised-path visited set prevents revisits.
+`cookfile_transitively_imports_via_tree` parses the candidate Cookfile, walks its tree-relative `import` declarations, and recursively checks whether any reaches the invoked directory. Sigil imports are skipped during this walk (they require a workspace root, which is what we are computing). The recursion terminates because the import graph is finite (bounded by the filesystem) and the canonicalised-path visited set prevents revisits.
+
+`all_reachable_sigils_resolve_under(d)` constructs the workspace as if `d` were the root, walks every Cookfile reachable from `d`'s Cookfile through both tree-relative and sigil-anchored imports, and verifies that every sigil import's canonicalised target lies at or below `d`. A failure to resolve disqualifies the candidate; the inference walk continues looking for a higher ancestor that does resolve all sigils.
+
+`any_reachable_sigil_imports(invoked_cookfile_dir)` walks the invoked Cookfile and its tree-relative-reachable closure, returning true if any declared `import` path begins with `//`. This determines whether rule 4 (self-root) or rule 5 (reject) applies.
 
 ### 4.3. Substitution-time path rewriting
 
@@ -279,7 +299,7 @@ Cycle detection across the full import graph (tree ∪ sigil) is unchanged — b
 
 ### 5.4. New §7.6 — Workspace root determination
 
-Add a new section specifying the procedure of §3.1.2 of this design: explicit override via `--root`, marker file `.cookroot`, tree-import inference, default. Specify that the workspace root is fixed for the duration of an invocation.
+Add a new section specifying the procedure of §3.1.2 of this design: explicit override via `--root`, marker file `.cookroot`, tree-import inference with sigil-validation, self-root for sigil-free subtrees, reject when sigils are present without an anchoring ancestor. Specify that the workspace root is fixed for the duration of an invocation. Add normative diagnostic text for the reject path.
 
 ### 5.5. New §7.7 — Cache portability invariants
 
@@ -328,7 +348,9 @@ A new conformance test suite exercises:
 
 - Marker file at intermediate ancestor → root = that ancestor.
 - No marker; tree-import chain reaches invoked dir from grandparent; intermediate parent has no Cookfile → root = grandparent.
-- No marker; no Cookfile above invoked dir transitively imports it → root = invoked dir's own directory.
+- No marker; no Cookfile above invoked dir transitively imports it; invoked subtree has no sigils → root = invoked dir's own directory (self-root).
+- No marker; no Cookfile above invoked dir transitively imports it; invoked subtree contains a sigil import → workspace load fails with the rule-5 diagnostic.
+- Candidate ancestor transitively imports invoked dir but a sigil deeper in the workspace would escape that ancestor → candidate is rejected; inference continues higher.
 - `--root` flag overrides both marker and inference.
 
 ### 7.3. Cross-Cookfile substitution and caching
