@@ -524,7 +524,11 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
 
     if !cookfile.imports.is_empty() {
         // Workspace build — workspace {dep} support is future work
-        let workspace = Workspace::load(&cli.file, &cli.set)?;
+        let workspace_root = crate::workspace::resolve_workspace_root(
+            &cli.file,
+            cli.root.clone(),
+        )?;
+        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)?;
         let recipe_infos = build_workspace_recipe_info(&workspace)?;
         let registries = build_workspace_registries(&workspace, config, &cli.set)?;
 
@@ -614,7 +618,11 @@ pub fn cmd_test(
 
     if !cookfile.imports.is_empty() {
         // Workspace test
-        let workspace = Workspace::load(&cli.file, &cli.set)?;
+        let workspace_root = crate::workspace::resolve_workspace_root(
+            &cli.file,
+            cli.root.clone(),
+        )?;
+        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)?;
 
         // Discover test recipes across ALL Cookfiles (root + imports)
         let mut test_recipe_names: Vec<String> = Vec::new();
@@ -732,7 +740,11 @@ pub fn cmd_menu(cli: &Cli) -> Result<(), CookError> {
     }
 
     if !cookfile.imports.is_empty() {
-        let workspace = Workspace::load(&cli.file, &cli.set)?;
+        let workspace_root = crate::workspace::resolve_workspace_root(
+            &cli.file,
+            cli.root.clone(),
+        )?;
+        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)?;
         for (canonical_path, loaded) in &workspace.imports {
             let prefix = find_full_prefix(&workspace, canonical_path);
             for recipe in &loaded.cookfile.recipes {
@@ -819,7 +831,11 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
 
     // If imports exist, collect all imported Cookfile paths for watching
     if !cookfile.imports.is_empty() {
-        let workspace = Workspace::load(&cli.file, &cli.set)?;
+        let workspace_root = crate::workspace::resolve_workspace_root(
+            &cli.file,
+            cli.root.clone(),
+        )?;
+        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)?;
         for (_canonical_path, loaded) in &workspace.imports {
             let import_cookfile = loaded.dir.join("Cookfile");
             if let Ok(canonical) = std::fs::canonicalize(&import_cookfile) {

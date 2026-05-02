@@ -22,10 +22,16 @@ pub struct Workspace {
     pub imports: BTreeMap<PathBuf, LoadedCookfile>,
     /// (parent_canonical_path, import_name, imported_canonical_path)
     pub namespace_map: Vec<(PathBuf, String, PathBuf)>,
+    /// Resolved workspace root (anchors sigil imports).
+    pub workspace_root: PathBuf,
 }
 
 impl Workspace {
-    pub fn load(cookfile_path: &Path, _cli_sets: &[String]) -> Result<Self, CookError> {
+    pub fn load(
+        cookfile_path: &Path,
+        workspace_root: &Path,
+        _cli_sets: &[String],
+    ) -> Result<Self, CookError> {
         let cookfile_path = std::fs::canonicalize(cookfile_path).map_err(|e| {
             CookError::Other(format!(
                 "cannot resolve {}: {e}",
@@ -36,6 +42,13 @@ impl Workspace {
             .parent()
             .unwrap_or(Path::new("."))
             .to_path_buf();
+
+        let workspace_root = std::fs::canonicalize(workspace_root).map_err(|e| {
+            CookError::Other(format!(
+                "cannot resolve workspace root {}: {e}",
+                workspace_root.display()
+            ))
+        })?;
 
         let source = std::fs::read_to_string(&cookfile_path).map_err(|e| {
             CookError::Other(format!(
@@ -59,6 +72,7 @@ impl Workspace {
         Self::load_imports(
             &cookfile,
             &root_dir,
+            &workspace_root,
             &mut imports,
             &mut namespace_map,
             &mut visited,
@@ -72,12 +86,14 @@ impl Workspace {
             },
             imports,
             namespace_map,
+            workspace_root,
         })
     }
 
     fn load_imports(
         cookfile: &Cookfile,
         cookfile_dir: &Path,
+        workspace_root: &Path,
         imports: &mut BTreeMap<PathBuf, LoadedCookfile>,
         namespace_map: &mut Vec<(PathBuf, String, PathBuf)>,
         visited: &mut HashSet<PathBuf>,
@@ -86,7 +102,11 @@ impl Workspace {
             .unwrap_or_else(|_| cookfile_dir.to_path_buf());
 
         for import_decl in &cookfile.imports {
-            let import_dir = cookfile_dir.join(import_decl.path.to_string());
+            let import_dir = match &import_decl.path {
+                cook_lang::ast::ImportPath::Tree(p) => cookfile_dir.join(p),
+                cook_lang::ast::ImportPath::Sigil(p) => workspace_root.join(p),
+            };
+
             if !import_dir.exists() {
                 return Err(CookError::Other(format!(
                     "Import '{}': directory '{}' not found",
@@ -100,6 +120,17 @@ impl Workspace {
                     import_decl.name, import_decl.path
                 ))
             })?;
+
+            // Validate sigil targets resolve under workspace root.
+            if matches!(&import_decl.path, cook_lang::ast::ImportPath::Sigil(_))
+                && !canonical.starts_with(workspace_root)
+            {
+                return Err(CookError::Other(format!(
+                    "Import '{}': sigil path resolves outside workspace root '{}'",
+                    import_decl.name,
+                    workspace_root.display()
+                )));
+            }
 
             namespace_map.push((
                 parent_canonical.clone(),
@@ -140,6 +171,7 @@ impl Workspace {
             Self::load_imports(
                 &sub_cookfile,
                 &canonical,
+                workspace_root,
                 imports,
                 namespace_map,
                 visited,
@@ -407,7 +439,9 @@ mod tests {
     fn test_no_imports_loads_root_only() {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join("Cookfile"), "recipe \"build\"\n").unwrap();
-        let ws = Workspace::load(&dir.path().join("Cookfile"), &[]).unwrap();
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let ws = Workspace::load(&entry, &root, &[]).unwrap();
         assert!(ws.imports.is_empty());
         assert!(ws.namespace_map.is_empty());
     }
@@ -426,7 +460,9 @@ mod tests {
             "import lib ./lib\nrecipe \"bundle\": \"lib.build\"\n",
         )
         .unwrap();
-        let ws = Workspace::load(&dir.path().join("Cookfile"), &[]).unwrap();
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let ws = Workspace::load(&entry, &root, &[]).unwrap();
         assert_eq!(ws.imports.len(), 1);
         assert_eq!(ws.namespace_map.len(), 1);
     }
@@ -449,7 +485,9 @@ mod tests {
             "import a ./a\nrecipe \"z\"\n",
         )
         .unwrap();
-        let result = Workspace::load(&dir.path().join("Cookfile"), &[]);
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let result = Workspace::load(&entry, &root, &[]);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -474,7 +512,9 @@ mod tests {
             "import a ./a\nimport b ./b\nrecipe \"bundle\"\n",
         )
         .unwrap();
-        let ws = Workspace::load(&dir.path().join("Cookfile"), &[]).unwrap();
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let ws = Workspace::load(&entry, &root, &[]).unwrap();
         assert_eq!(ws.imports.len(), 2, "expected exactly 2 imports (a, b)");
     }
 
@@ -486,7 +526,9 @@ mod tests {
             "import missing ./nonexistent\nrecipe \"x\"\n",
         )
         .unwrap();
-        let result = Workspace::load(&dir.path().join("Cookfile"), &[]);
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let result = Workspace::load(&entry, &root, &[]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
@@ -500,7 +542,9 @@ mod tests {
             "import empty ./empty\nrecipe \"x\"\n",
         )
         .unwrap();
-        let result = Workspace::load(&dir.path().join("Cookfile"), &[]);
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let result = Workspace::load(&entry, &root, &[]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("no Cookfile"));
     }
