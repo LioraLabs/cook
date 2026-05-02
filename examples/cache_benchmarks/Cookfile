@@ -9,8 +9,9 @@
 #   touch src/greet.c && cook demo  — only `greet` and `demo` rebuild; `util` stays cached
 #   CFLAGS=-O3 cook demo  — `greet` and `util` rebuild (both consume {CFLAGS}); `sister` stays cached
 #   HOME=/elsewhere cook sister     — no rebuild (HOME is denylisted)
-#   cook pair             — multi-output recipe; v3 uploads only the first output
-#                            (documented limitation, will be fixed in a follow-up)
+#   cook pair             — multi-output recipe; each output uploads as its
+#                            own artifact (addendum §5.1)
+#   cook mono             — exercises the imported lib/ Cookfile (addendum §6)
 #   cook clean            — wipe build/
 
 config
@@ -24,6 +25,10 @@ config debug
 
 config release
     env.CFLAGS = "-O3"
+
+# Imported sub-cookfile for SHI-140 addendum monorepo cache verification.
+# `lib.lib_build` is referenced from the demo recipe.
+import lib ./lib
 
 # greet.c — consumes {CFLAGS} via Layer 2 inference
 recipe greet
@@ -44,10 +49,15 @@ recipe util
 # Link step — does NOT consume {CFLAGS} via inference
 # but DOES invoke the gcc binary directly. Its context_hash captures
 # the linker's binary identity through the same tool-content hash.
-recipe demo
+recipe demo: greet util
     cook "build/demo" using {
         {CC} {greet} {util} -o {out}
     }
+
+# `mono` exercises the imported lib alongside demo. Used by the SHI-140
+# addendum verify.sh scenarios 10-11 to assert cross-cookfile cache
+# behavior (DAG ordering + per-recipe caching across cookfile boundaries).
+recipe mono: demo lib.lib_build
 
 # Sister recipe — does NOT consume {CFLAGS}. Used to verify env-key
 # isolation: when the user toggles CFLAGS, this step's cache survives
@@ -59,21 +69,10 @@ recipe sister
         cat {all} > {out}
     }
 
-# Multi-output recipe — DOCUMENTED v3 LIMITATION.
-#
-# The executor's cloud_key + Backend::put logic uploads only the FIRST
-# output's bytes (spec §2 non-goals: "v3 limitation: multi-output steps
-# upload only the first output bytes; manifest-style multi-output upload
-# is a follow-up").
-#
-# Local cache works correctly — both foo.txt and bar.txt are tracked in
-# the StepEntry's `outputs` list, and a local rebuild check sees both.
-# But if a teammate cache-hits this entry from a future CloudBackend,
-# they receive bytes for foo.txt only; bar.txt would be missing on disk
-# and any downstream step consuming it would break.
-#
-# A follow-up will introduce a manifest-style upload that captures all
-# outputs; until then, this recipe is the canonical reproducer.
+# Multi-output recipe — every output uploads as its own artifact via the
+# 2026-05-02 addendum's per-output artifact_key (spec §5.1). Both foo.txt
+# and bar.txt are independently addressable in the LocalBackend store and
+# can be restored on cache hit (verify.sh scenarios 13-14, 19).
 recipe pair
     ingredients "tools/genpair.sh"
     cook "build/pair/foo.txt" "build/pair/bar.txt" using {
@@ -82,4 +81,4 @@ recipe pair
     }
 
 chore clean
-    rm -rf build .cook/cache
+    rm -rf build .cook/cache lib/build lib/.cook/cache

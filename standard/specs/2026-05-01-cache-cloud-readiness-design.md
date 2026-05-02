@@ -76,15 +76,18 @@ Touched but not rewritten: `cook-engine/src/run.rs` (drop `invalidate_if_env_cha
 6. Compute cloud_keys for all units
 7. Backend::batch_query(all_keys)         single round trip for cloud backend
 8. For each unit:
-     a. local hit (RecipeCache)?           skip
-     b. else, cloud hit?                   Backend::get + extract artifact bytes; skip
-     c. else execute, then:
-          i.   record_completion()           local index update
-          ii.  Backend::put()                upload, fire-and-forget (errors logged, not raised)
+     a. local hit (RecipeCache + on-disk outputs match)?      skip
+     b. local entry matches but on-disk drift OR missing?     try Backend::get for each output;
+                                                              if all hit, write to disk; skip
+     c. else, cloud hit?                                       try Backend::get for each output;
+                                                              if all hit, write to disk; skip
+     d. else execute, then:
+          i.   record_completion()                             local index update
+          ii.  for each output, Backend::put()                 upload, fire-and-forget (errors logged)
 9. ThreadSafeCacheManager::flush_all()    write recipe .bin index files
 ```
 
-Steps 7 and 8c-ii are no-ops when `LocalBackend` is the only backend; they become real round-trips for `CloudBackend`.
+Steps 7, 8c, and 8d-ii are no-ops when `LocalBackend` is the only backend; they become real round-trips for `CloudBackend`. Step 8b is the local restore-on-hit path added by the [2026-05-02 addendum](./2026-05-02-cache-restore-and-dep-inputs-design.md). Step 8d-ii loops over all outputs (was: first output only) — see addendum §5.1 for the per-output `artifact_key` derivation.
 
 ## 4. Data structures
 

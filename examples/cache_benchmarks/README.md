@@ -27,11 +27,15 @@ README.md             this file
 | 2 | No-op rebuild | `cook demo debug` again | All 3 recipes hit (no rebuild) |
 | 3 | Source touch | `touch src/greet.c && cook demo debug` | All 3 still hit (mtime fast-path detects content unchanged) |
 | 4 | Source content change | `echo " " >> src/greet.c && cook demo debug` | greet rebuilds; util hits; demo rebuilds (input content changed) |
-| 5 | Config CFLAGS toggle | `cook demo release` after a debug build | greet+util rebuild (env_contribution differs); demo rebuilds (input content differs) |
-| 6 | Toggle back to prior variant | `cook demo debug` after release | greet+util **re-hit prior cache entries** (variant-keyed local cache); demo also rebuilds-then-hits |
+| 5 | Config CFLAGS toggle | `cook demo release` after a debug build | greet+util rebuild (env_contribution differs); demo rebuilds (its inputs — greet.o/util.o — drifted, addendum §4.3) |
+| 6 | Toggle back to prior variant | `cook demo debug` after release | greet+util **restore from artifact store** (addendum §5.2); demo rebuilds (its single cache entry tracks the most-recent inputs only) |
 | 7 | Sister recipe insulation | `cook sister` with various configs | sister hits across all configs (no CFLAGS in its consulted_env) |
 | 8 | Denylisted env (HOME) | `HOME=/elsewhere cook demo debug` | All 3 hit (HOME is in D1 baseline denylist) |
-| 9 | Multi-output pair | `cook pair` then `cook pair` | First execute, second hit; `~/.cache/cook/cloud/` shows **only the first output's bytes** uploaded — documented v3 limitation |
+| 9 | Multi-output pair | `cook pair` then `cook pair` | First execute, second hit; `~/.cache/cook/cloud/` now contains **both** outputs as separate artifacts (addendum §5.1) |
+| 10 | Imported lib round-trip | `cook clean && cook mono` then `cook mono` | First run executes 5 recipes (greet, util, lib.lib_build, demo, mono); second run hits the 4 cacheable ones |
+| 11 | Cross-cookfile dep drift | `echo // > lib/src/lib.c && cook mono` | lib.lib_build invalidates; demo still hits (cross-cookfile body refs are future work — see pipeline.rs:526) |
+| 12 | Variant-toggle restore | debug → release → debug | Final greet.o bytes match the original debug bytes (restore-on-hit, addendum §5.2) |
+| 13 | Multi-output restore | `cook pair && rm -rf build/pair && cook pair` | Both `foo.txt` and `bar.txt` restored from artifact store with no command execution (addendum §5.1) |
 
 ## Recipes
 
@@ -100,36 +104,43 @@ command actually consulted). Caught while authoring this benchmark — fixed
 in commit `2a2a4b3`. Scenarios 5–7 now correctly observe `env_contribution`
 changes when config overlays change `CFLAGS`.
 
-### Documented limitations (out of SHI-140 scope; follow-ups)
+**Cross-recipe dep outputs land in `cache_meta.input_paths` (addendum §4.3).**
+Originally, `demo` referencing `{greet}` and `{util}` recorded a DAG edge but
+left `cache_meta.input_paths` empty, so demo silently hit even when
+`build/greet.o` content drifted. After the addendum, `cook.dep_output(name)`
+accumulates the dep ref into `step_group_dep_refs`, and `add_unit` resolves
+those refs against `SharedTerminalOutputs` to append the resolved paths to
+`cache_meta.input_paths` (and the cache key composition). `WorkPayload.inputs`
+remains scoped to the recipe's own iteration source.
 
-**Cross-recipe dependency outputs aren't recorded in the consuming recipe's
-local `inputs[]`.** The `demo` recipe references `{greet}` and `{util}` (the
-output paths of those recipes) in its using-string, but the resulting
-`StepEntry.inputs` doesn't include `build/greet.o` and `build/util.o`. This
-means demo's cache check has no way to detect when greet/util's outputs
-have changed content. demo "hits" whenever its declared inputs (empty) +
-its output file (`build/demo` left over from a prior run) match the cached
-record. Sister recipes consuming via cross-recipe references will see the
-same behavior.
+**Multi-output upload writes one artifact per output (addendum §5.1).**
+Each output gets its own `artifact_key = SHA-256(cloud_key || u32_le(idx) ||
+path_bytes)`, so a recipe with N outputs uploads N artifacts. The `pair`
+recipe now produces both `foo.txt` and `bar.txt` artifacts in the
+LocalBackend store, both restorable on cache hit. Verify scenario [14]
+confirms both meta sidecars are present with sizes matching the on-disk
+files.
 
-This is a Cook DAG/cache integration issue separate from the SHI-140 cache
-cloud-readiness work. The verify.sh expectations account for it. Follow-up:
-have `cook.add_unit` (or its caller in cook-luagen) include cross-recipe
-referenced outputs in the unit's inputs[] array.
+**Output drift triggers restore-on-hit, not rebuild (addendum §5.2).** When
+a cache entry's command/context/env hashes still match but the on-disk
+output content has drifted (e.g., a variant toggle stomped the file), the
+local cache check now consults `Backend::get` to restore the original
+bytes from the LocalBackend store before falling back to `OutputChanged`
+rebuild. Scenario [18] verifies that a debug → release → debug toggle
+returns greet.o to its original debug bytes via restore.
 
-**Multi-output cloud upload uploads only the first output's bytes.** The
-`pair` recipe is the canonical reproducer. See spec §2 non-goals — a
-manifest-style multi-output upload format is the right solution; left as a
-follow-up. Verify scenario [14] confirms the bytes uploaded equal `foo.txt`
-size, not `foo.txt + bar.txt`.
+### Monorepo / `import` keyword cache verification (addendum §6)
 
-**Output stomping on variant toggle.** When two configs share an output
-path (e.g., `build/greet.o` for both debug and release), toggling causes
-on-disk content drift, which triggers `OutputChanged` rebuild on the next
-toggle. The local cache *entries* coexist (per spec §5.1), but the on-disk
-output can hold only one variant at a time. For true variant-isolation
-without rebuild churn, use config-driven output paths
-(e.g., `build/{config_name}/greet.o`).
+Scenarios 10–11 exercise the imported `lib/Cookfile`:
+- `lib.lib_build` registers under the namespaced name and is reachable from
+  the parent's `mono` recipe via `: lib.lib_build`.
+- Touching `lib/src/lib.c` invalidates `lib.lib_build` correctly across
+  the cookfile boundary.
+
+Cross-cookfile body refs (`{lib.lib_build}` inside a parent body template)
+are not currently supported by the language — they degrade to `cook.env[]`
+lookups. Same-Cookfile body refs in a workspace context now work after
+fixing `workspace.rs` to thread `recipe_names` through the codegen call.
 
 ## Running
 

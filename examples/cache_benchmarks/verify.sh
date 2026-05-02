@@ -1,5 +1,6 @@
 #!/bin/bash
-# verify.sh — exercise the SHI-140 cache cloud-readiness scenarios.
+# verify.sh — exercise the SHI-140 cache cloud-readiness scenarios + the
+# 2026-05-02 addendum (per-output artifacts, restore-on-hit, monorepo).
 #
 # Each scenario asserts on cook's "(N nodes, X cached, Y done)" tail line.
 # Prints PASS / FAIL per scenario. Exits non-zero on any failure.
@@ -60,17 +61,21 @@ sleep 0.05  # ensure mtime resolution boundary
 run_assert "Touch-only change still hits all 3"       "3 cached recipes, 3 done"  "$COOK" demo debug
 
 echo
-echo "--- Scenario 5-6: config CFLAGS toggle (variant coexistence) ---"
-# NOTE on demo: cross-recipe dep outputs don't appear in its local inputs[]
-# (a separate Cook DAG/cache issue, not SHI-140 scope). demo therefore "hits"
-# whenever its declared inputs[] is empty AND build/demo exists on disk —
-# producing 1 cached even when greet+util rebuilt. Counts below reflect this.
+echo "--- Scenario 5-6: config CFLAGS toggle (variant coexistence + restore) ---"
+# With the 2026-05-02 addendum:
+# - greet+util have CFLAGS in their consulted env, so toggling produces
+#   distinct cache entries per variant.
+# - demo has NO CFLAGS dep, so its cache_key is the SAME across variants.
+#   But its cache_meta.input_paths now includes greet.o/util.o (addendum §4.3),
+#   so InputChanged fires when greet/util produce different bytes — demo rebuilds.
+# - Toggling back to a prior variant: greet+util restore from artifact store
+#   (addendum §5.2). demo still rebuilds because its single entry tracks
+#   only the most-recent inputs.
 clean_state
 run_assert "Build under debug: all execute"           "0 cached recipes, 3 done"  "$COOK" demo debug
-run_assert "Switch to release: greet+util execute"    "1 cached recipes, 3 done"  "$COOK" demo release
-run_assert "Toggle back to debug: output drift triggers re-exec" \
-                                                       "1 cached recipes, 3 done"  "$COOK" demo debug
-run_assert "Toggle to release: same drift behavior"   "1 cached recipes, 3 done"  "$COOK" demo release
+run_assert "Switch to release: all rebuild"           "0 cached recipes, 3 done"  "$COOK" demo release
+run_assert "Toggle back to debug: greet+util restore" "2 cached recipes, 3 done"  "$COOK" demo debug
+run_assert "Toggle to release: greet+util restore"    "2 cached recipes, 3 done"  "$COOK" demo release
 
 echo
 echo "--- Scenario 7: sister recipe insulation ---"
@@ -85,31 +90,106 @@ echo "--- Scenario 8: denylisted env (HOME) ---"
 run_assert "HOME change does not invalidate"          "3 cached recipes, 3 done"  env HOME=/some/other/path "$COOK" demo debug
 
 echo
-echo "--- Scenario 9: multi-output pair (documented limitation) ---"
+echo "--- Scenario 9: multi-output pair ---"
 clean_state
 run_assert "Multi-output pair: fresh execute"         "0 cached recipes, 1 done"  "$COOK" pair
 run_assert "Multi-output pair: re-hit"                "1 cached recipes, 1 done"  "$COOK" pair
 
-# Verify the cloud-upload limitation: only foo.txt's bytes are in the
-# LocalBackend artifact store, even though the recipe has 2 outputs.
+# 2026-05-02 addendum: every output uploads as its own artifact (per-output
+# artifact_key). Verify both foo.txt and bar.txt have meta sidecars in the
+# LocalBackend store.
 echo
-echo "--- Multi-output upload limitation (Phase 6 / spec §2 non-goals) ---"
-pair_meta=$(find "$HOME/.cache/cook/cloud" -name "*.meta.json" -exec grep -l '"recipe_namespace":"cache_benchmarks/Cookfile::pair"' {} \; 2>/dev/null | head -1)
-if [ -n "$pair_meta" ]; then
-    pair_size=$(grep -oE '"size_bytes":[0-9]+' "$pair_meta" | grep -oE '[0-9]+')
-    foo_size=$(stat -c %s build/pair/foo.txt 2>/dev/null || stat -f %z build/pair/foo.txt 2>/dev/null)
-    bar_size=$(stat -c %s build/pair/bar.txt 2>/dev/null || stat -f %z build/pair/bar.txt 2>/dev/null)
-    scenario=$((scenario + 1))
-    printf "  [%2d] %-55s " "$scenario" "Pair upload size matches foo.txt only"
-    if [ "$pair_size" = "$foo_size" ]; then
-        echo "PASS  (uploaded $pair_size bytes; foo=$foo_size, bar=$bar_size)"
+echo "--- Multi-output uploads N artifacts (addendum §5.1) ---"
+foo_meta=$(find "$HOME/.cache/cook/cloud" -name "*.meta.json" 2>/dev/null \
+    -exec grep -l '"output_path":"build/pair/foo.txt"' {} \; | head -1)
+bar_meta=$(find "$HOME/.cache/cook/cloud" -name "*.meta.json" 2>/dev/null \
+    -exec grep -l '"output_path":"build/pair/bar.txt"' {} \; | head -1)
+scenario=$((scenario + 1))
+printf "  [%2d] %-55s " "$scenario" "Both pair outputs uploaded as artifacts"
+if [ -n "$foo_meta" ] && [ -n "$bar_meta" ]; then
+    foo_size=$(grep -oE '"size_bytes":[0-9]+' "$foo_meta" | grep -oE '[0-9]+')
+    bar_size=$(grep -oE '"size_bytes":[0-9]+' "$bar_meta" | grep -oE '[0-9]+')
+    foo_disk=$(stat -c %s build/pair/foo.txt 2>/dev/null || stat -f %z build/pair/foo.txt)
+    bar_disk=$(stat -c %s build/pair/bar.txt 2>/dev/null || stat -f %z build/pair/bar.txt)
+    if [ "$foo_size" = "$foo_disk" ] && [ "$bar_size" = "$bar_disk" ]; then
+        echo "PASS  (foo=$foo_size, bar=$bar_size)"
         pass=$((pass + 1))
     else
-        echo "FAIL  (uploaded $pair_size bytes; foo=$foo_size, bar=$bar_size)"
+        echo "FAIL  (foo meta=$foo_size disk=$foo_disk, bar meta=$bar_size disk=$bar_disk)"
         fail=$((fail + 1))
     fi
 else
-    echo "  [??] Pair meta not found at expected location — skipped"
+    echo "FAIL  (foo_meta=$foo_meta bar_meta=$bar_meta)"
+    fail=$((fail + 1))
+fi
+
+echo
+echo "--- Scenario 10: imported lib round-trip (monorepo, addendum §6) ---"
+clean_state
+run_assert "Mono fresh build (imports lib)"           "0 cached recipes, 5 done"  "$COOK" mono
+run_assert "Mono no-op rebuild (4 cacheable hit)"     "4 cached recipes, 5 done"  "$COOK" mono
+
+echo
+echo "--- Scenario 11: cross-cookfile dep input drift ---"
+# Touch lib/src/lib.c content to change its hash; lib_build invalidates.
+# demo doesn't currently consume lib.lib_build's output (cross-cookfile
+# body refs are a future work item per pipeline.rs:526), so demo still hits.
+echo "// drift" >> lib/src/lib.c
+out=$("$COOK" mono 2>&1)
+scenario=$((scenario + 1))
+printf "  [%2d] %-55s " "$scenario" "lib drift invalidates lib_build only"
+if echo "$out" | grep -q '3 cached recipes, 5 done'; then
+    echo "PASS"
+    pass=$((pass + 1))
+else
+    echo "FAIL"
+    echo "       got: $(echo "$out" | grep -oE 'cook build done.*\)')"
+    fail=$((fail + 1))
+fi
+# Restore lib.c
+git checkout -- lib/src/lib.c 2>/dev/null || true
+
+echo
+echo "--- Scenario 12: variant-toggle restore-on-hit (addendum §5.2) ---"
+# Capture greet.o bytes after a debug build; toggle to release; toggle back to
+# debug; restored greet.o bytes must match the original debug bytes.
+clean_state
+"$COOK" demo debug >/dev/null 2>&1
+debug_o=$(sha256sum build/greet.o | awk '{print $1}')
+"$COOK" demo release >/dev/null 2>&1
+release_o=$(sha256sum build/greet.o | awk '{print $1}')
+"$COOK" demo debug >/dev/null 2>&1
+restored_o=$(sha256sum build/greet.o | awk '{print $1}')
+scenario=$((scenario + 1))
+printf "  [%2d] %-55s " "$scenario" "Restored greet.o == original debug bytes"
+if [ "$restored_o" = "$debug_o" ] && [ "$debug_o" != "$release_o" ]; then
+    echo "PASS  (debug=${debug_o:0:8}, release=${release_o:0:8})"
+    pass=$((pass + 1))
+else
+    echo "FAIL  (debug=${debug_o:0:8}, release=${release_o:0:8}, restored=${restored_o:0:8})"
+    fail=$((fail + 1))
+fi
+
+echo
+echo "--- Scenario 13: multi-output round-trip restore (addendum §5.1) ---"
+clean_state
+"$COOK" pair >/dev/null 2>&1
+foo_orig=$(sha256sum build/pair/foo.txt | awk '{print $1}')
+bar_orig=$(sha256sum build/pair/bar.txt | awk '{print $1}')
+# Wipe build/pair on disk; the cache entry remains and the artifacts are in
+# the LocalBackend store. Re-running pair should restore both files.
+rm -rf build/pair
+"$COOK" pair >/dev/null 2>&1
+foo_restored=$(sha256sum build/pair/foo.txt 2>/dev/null | awk '{print $1}')
+bar_restored=$(sha256sum build/pair/bar.txt 2>/dev/null | awk '{print $1}')
+scenario=$((scenario + 1))
+printf "  [%2d] %-55s " "$scenario" "Pair restores both outputs after wipe"
+if [ "$foo_orig" = "$foo_restored" ] && [ "$bar_orig" = "$bar_restored" ]; then
+    echo "PASS"
+    pass=$((pass + 1))
+else
+    echo "FAIL  (foo $foo_orig→$foo_restored, bar $bar_orig→$bar_restored)"
+    fail=$((fail + 1))
 fi
 
 echo

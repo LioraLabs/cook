@@ -45,7 +45,9 @@ impl Workspace {
         })?;
         let cookfile =
             cook_lang::parse(&source).map_err(|e| CookError::ParseError(e.to_string()))?;
-        let lua_source = cook_luagen::generate(&cookfile);
+        let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
+        let lua_source = cook_luagen::generate_with_names_checked(&cookfile, &recipe_names)
+            .map_err(|e| CookError::Other(e.to_string()))?;
 
         let mut imports = BTreeMap::new();
         let mut namespace_map = Vec::new();
@@ -131,7 +133,9 @@ impl Workspace {
             })?;
             let sub_cookfile = cook_lang::parse(&source)
                 .map_err(|e| CookError::ParseError(format!("Import '{}': {e}", import_decl.name)))?;
-            let sub_lua = cook_luagen::generate(&sub_cookfile);
+            let sub_recipe_names = cook_luagen::dep_ref::extract_recipe_names(&sub_cookfile);
+            let sub_lua = cook_luagen::generate_with_names_checked(&sub_cookfile, &sub_recipe_names)
+                .map_err(|e| CookError::Other(format!("Import '{}': {e}", import_decl.name)))?;
 
             Self::load_imports(
                 &sub_cookfile,

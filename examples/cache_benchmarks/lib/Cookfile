@@ -1,0 +1,24 @@
+# Imported by the parent Cookfile via `import lib ./lib`. Recipes here are
+# referenced from the parent as `lib.RECIPE_NAME`.
+#
+# Used to verify the SHI-140 addendum cross-cookfile cache pathways:
+# - dep input recording (lib.lib_build's output lands in demo's cache_meta.input_paths)
+# - restore-on-hit across cookfile boundaries
+
+config
+    env.CFLAGS = "-O0 -g"
+    env.CC = "gcc"
+
+config debug
+    env.CFLAGS = "-O0 -g"
+
+config release
+    env.CFLAGS = "-O3"
+
+# lib_build — produces the imported library object file.
+recipe lib_build
+    ingredients "src/lib.c"
+    cook "build/lib.o" using {
+        mkdir -p build
+        {CC} {CFLAGS} -c {all} -o {out}
+    }
