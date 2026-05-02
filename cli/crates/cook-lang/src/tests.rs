@@ -1007,3 +1007,24 @@ fn test_plate_lua_block_parses() {
         other => panic!("expected Plate Lua, got {:?}", other),
     }
 }
+
+// ── §7.2 import path validation ────────────────────────────────────
+
+#[test]
+fn test_parse_import_rejects_dotdot_segment() {
+    let src = "import bad ../sibling\nrecipe \"x\"\n";
+    let result = crate::parse(src);
+    assert!(result.is_err(), "expected parse error for '..' import path");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("'..' segments are not permitted"),
+        "expected diagnostic about '..', got: {msg}"
+    );
+}
+
+#[test]
+fn test_parse_import_rejects_embedded_dotdot() {
+    let src = "import bad ./foo/../bar\nrecipe \"x\"\n";
+    let result = crate::parse(src);
+    assert!(result.is_err(), "expected parse error for embedded '..'");
+}

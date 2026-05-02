@@ -28,6 +28,57 @@ pub enum ParseError {
     Parse { line: usize, message: String },
 }
 
+/// Validate an import path token and classify it as tree-relative or sigil-anchored.
+/// Per §7.2, returns Err for paths containing `..`, absolute paths (other than `//` sigils),
+/// and sigil paths with `..` after the sigil.
+fn validate_and_classify_import_path(raw: &str, line: usize) -> Result<ast::ImportPath, ParseError> {
+    if let Some(after_sigil) = raw.strip_prefix("//") {
+        // Sigil-anchored. Reject `..` segments after the sigil and leading `/`.
+        if after_sigil.starts_with('/') {
+            return Err(ParseError::Parse {
+                line,
+                message: format!(
+                    "import path '{raw}': '/' immediately after '//' is not permitted"
+                ),
+            });
+        }
+        if path_contains_dotdot_segment(after_sigil) {
+            return Err(ParseError::Parse {
+                line,
+                message: format!(
+                    "import path '{raw}': '..' segments are not permitted after '//'"
+                ),
+            });
+        }
+        return Ok(ast::ImportPath::Sigil(after_sigil.to_string()));
+    }
+    // Tree-relative. Reject absolute paths (anything starting with '/' that is not '//').
+    if raw.starts_with('/') {
+        return Err(ParseError::Parse {
+            line,
+            message: format!(
+                "import path '{raw}': absolute paths are not permitted; use a tree-relative path or '//' sigil"
+            ),
+        });
+    }
+    if path_contains_dotdot_segment(raw) {
+        return Err(ParseError::Parse {
+            line,
+            message: format!(
+                "import path '{raw}': '..' segments are not permitted; use the workspace-root sigil '//path' for cross-cutting imports"
+            ),
+        });
+    }
+    Ok(ast::ImportPath::Tree(raw.to_string()))
+}
+
+/// Returns true if `path` contains a `..` segment (a `..` between path separators
+/// or as the entire path or a trailing/leading segment). Does NOT match `..` inside
+/// a longer segment like `..foo`.
+fn path_contains_dotdot_segment(path: &str) -> bool {
+    path.split('/').any(|seg| seg == "..")
+}
+
 pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
     let tokens = tokenize(source)?;
     let source_lines: Vec<&str> = source.lines().collect();
@@ -145,9 +196,10 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                         message: format!("duplicate import name '{}'", name),
                     });
                 }
+                let parsed_path = validate_and_classify_import_path(path, tok.line)?;
                 imports.push(ast::ImportDecl {
                     name: name.clone(),
-                    path: ast::ImportPath::Tree(path.clone()),
+                    path: parsed_path,
                     line: tok.line,
                 });
                 pos += 1;

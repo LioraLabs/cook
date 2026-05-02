@@ -338,3 +338,15 @@ The conformance corpus's `parse.txt` files change format in this cut: `Step::Coo
 **Summary:** Extends the §{exec.cache} list of permissible cache observables with (i) host machine identity (target triple, libc version, locale-affecting environment), (ii) the resolved content of the binaries invoked by the unit's command text, and (iii) an implementation-defined denylist of environment variables excluded from the resolved-environment observable. All three are permissive (`MAY`); a single-machine implementation that elides them remains conforming.
 
 **Motivation.** The shared/team cache (Cook Cloud, Linear epic SHI-140) requires that an artifact produced on one machine be correct when served to another. Today's `command_hash = hash_str(command_text)` plus input-content hashing is insufficient: Alice's `gcc-13` `parser.o` would be served to Bob's `gcc-11` build under the same command text. The amendment authorizes implementations to capture the cross-machine variation without changing language semantics. The denylist clarifies that "the resolved environment" was never intended to include ambient session state or unrelated credentials.
+
+## D.26. CS-0026 — Parse-time enforcement of §7.2 import path shapes. [#changes.cs-0026]
+
+**Date:** 2026-05-02
+
+**Version:** v0.5 (implementation catch-up for the §7.2 prose already present since the cross-Cookfile composition chapter)
+
+**Sections affected:** §{modules.import-declaration} (§7.2 — normative rules on tree-relative and sigil-anchored path shapes were already present; this entry records the reference implementation catching up to those rules).
+
+**Summary:** The `cook-lang` parser now enforces the three path-shape constraints from §7.2 at parse time, in addition to the lexer accepting any non-whitespace token as an import path. Specifically: (1) a tree-relative path containing a `..` segment MUST be rejected with the normative diagnostic `import path '<path>': '..' segments are not permitted; use the workspace-root sigil '//path' for cross-cutting imports`; (2) an absolute path that does not begin with `//` MUST be rejected with `import path '<path>': absolute paths are not permitted; use a tree-relative path or '//' sigil`; (3) a sigil-anchored path (`//`-prefixed) with a `..` segment after the sigil MUST be rejected with `import path '<path>': '..' segments are not permitted after '//'`. Internally, the parser now classifies valid paths into `ImportPath::Tree(String)` or `ImportPath::Sigil(String)` (the stored string for `Sigil` is the path after the `//` prefix). The lexer continues to accept any non-whitespace token for the path field; rejection is a parser-level concern.
+
+**Reference:** the Phase 1 commit of the cross-Cookfile caching implementation plan (`standard/plans/2026-05-02-cross-cookfile-caching-plan.md`, Tasks 1.1–1.3).
