@@ -24,6 +24,14 @@ A `<path>` matching neither shape MUST be rejected at parse time. Specifically:
 - `<path>` beginning with `//` and containing a `..` segment after the sigil MUST be rejected. Diagnostic: `import path '<path>': '..' segments are not permitted after '//'`.
 - A sigil-anchored path that resolves to a directory outside the workspace root after symlink canonicalisation MUST be rejected at workspace load (§{modules.workspace-root}). Diagnostic: `import '<name>': sigil path resolves outside workspace root '<root>'`.
 
+A conforming implementation MUST resolve `<path>` per the shape rules above (tree-relative against the enclosing Cookfile's directory; sigil-anchored against the workspace root, §{modules.workspace-root}) and MUST load the Cookfile at the resolved-path's `Cookfile` as a sibling Cookfile bound to the local alias `<name>`.
+
+A conforming implementation MUST reject an `import` declaration for which:
+
+- the resolved directory does not exist;
+- the resolved directory's `Cookfile` does not exist;
+- the resolved directory's `Cookfile` fails to parse.
+
 A conforming implementation MUST treat tree-relative and sigil-anchored imports uniformly for the purposes of qualified name references (§{modules.qualified-refs}), dependency implications (§{xref.dep-implications}), and duplicate-alias detection (§{modules.duplicates-and-cycles}). The two shapes differ only in their resolution rule.
 
 An `import` declaration does NOT bring a Lua value into scope under `<name>`. The alias `<name>` is reserved for cross-Cookfile recipe references of the form `<name>.<recipe>` that appear in dependency lists (§{recipes.ingredients}), not for Lua expressions. A Cookfile loaded by `import` is parsed independently; its own `use` and `import` declarations are resolved relative to its own directory, not the importer's directory.
@@ -141,7 +149,7 @@ The procedure terminates because each step walks to a strict parent directory; t
 
 ### Definition: transitively imports
 
-Cookfile *X* **directly imports** directory *D* when *X* has an `import <name> <path>` declaration whose canonicalised resolved directory equals *D*. *X* **transitively imports** *D* when there is a chain *X = X₀ → X₁ → … → Xₙ = D* where each *Xᵢ → Xᵢ₊₁* is a direct import.
+Cookfile *X* **directly imports** directory *D* when *X* has an `import <name> <path>` declaration whose canonicalised resolved directory equals *D*. *X* **transitively imports** *D* when there is a chain *X = X₀ → X₁ → … → Xₙ = D* where each *Xᵢ → Xᵢ₊₁* is a direct import. For workspace-root inference (rule 3.1 above), each link in the chain MUST be tree-relative; sigil-anchored imports are ineligible at that stage because their resolution presupposes a workspace root.
 
 ## 7.7. Cache portability invariants [#modules.cache-invariants]
 

@@ -170,8 +170,10 @@ import_path           ::= sigil_path | tree_path
 sigil_path            ::= "//" path_segments
 tree_path             ::= ( "./" | path_segment ) ( "/" path_segment )*
 path_segments         ::= path_segment ( "/" path_segment )*
-path_segment          ::= /[^\s\n\/]+/   /* path-safe characters; MUST NOT equal ".." */
+path_segment          ::= /[^\s\n\/]+/
 path                  ::= /[^\s\n]+/   /* legacy form; import_path is the canonical path */
+
+**No '..' segment (normative).** A `path_segment` MUST NOT consist solely of two dot characters (`..`). The grammar's regex permits `..` syntactically; this rule eliminates it normatively. See §{modules.import-declaration}.
 comment               ::= /#[^\n]*/ NEWLINE
 NEWLINE               ::= /\n/
 LUA_LINE_CONTENT      ::= /[^\n]*/   /* zero or more characters; may be empty */
