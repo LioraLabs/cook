@@ -99,8 +99,29 @@ fn check_inputs(
     Ok(updated)
 }
 
+/// Context for restore-on-hit attempts (2026-05-02 addendum spec §5.2).
+///
+/// When `Some(&RestoreCtx)` is passed to `needs_rebuild_cook`, a cache entry
+/// whose command/context/env hashes match but whose on-disk output content
+/// has drifted (or whose outputs are missing) will first attempt to fetch
+/// each output's bytes from the backend and write them to disk. Only if the
+/// restore fails does the function fall back to the rebuild path.
+///
+/// `recipe_namespace` is the same string formed at upload time:
+/// `format!("{project_id}/{cookfile_path}::{recipe_name}")`. Both sides MUST
+/// agree on this format or the recomposed `cloud_key` will differ.
+pub struct RestoreCtx<'a> {
+    pub backend: &'a dyn crate::backend::CacheBackend,
+    pub recipe_namespace: &'a str,
+}
+
 /// Check if a cook layer (with output) needs to rebuild.
 /// INVARIANT: cook.layer() calls must NOT be nested.
+///
+/// When `restore_ctx` is `Some`, an entry whose command/context/env hashes
+/// match but whose on-disk outputs have drifted (or are missing) will attempt
+/// to restore each output's bytes from the backend before falling back to
+/// `OutputChanged`/`OutputMissing` rebuild. See spec §5.2.
 pub fn needs_rebuild_cook(
     entry: Option<&StepEntry>,
     current_inputs: &[&str],
@@ -109,6 +130,7 @@ pub fn needs_rebuild_cook(
     context_hash: u64,
     env_contribution: u64,
     working_dir: &Path,
+    restore_ctx: Option<&RestoreCtx>,
 ) -> (RebuildResult, Option<StepEntry>) {
     let entry = match entry {
         None => return (RebuildResult::Rebuild(RebuildReason::NoCacheEntry), None),
@@ -124,40 +146,123 @@ pub fn needs_rebuild_cook(
         return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
     }
 
-    // Check output count matches.
+    // Inputs first (spec §5.3): we need the input content hashes to recompose
+    // cloud_key for the restore attempt below. InputChanged/InputSetChanged
+    // still short-circuits to rebuild before any restore work happens.
+    let updated_inputs = match check_inputs(&entry.inputs, current_inputs, working_dir) {
+        Err(reason) => return (RebuildResult::Rebuild(reason), None),
+        Ok(u) => u,
+    };
+
+    // Output count must match.
     if entry.outputs.len() != current_outputs.len() {
         return (RebuildResult::Rebuild(RebuildReason::OutputMissing), None);
     }
 
-    for (cached_out, rel_path) in entry.outputs.iter().zip(current_outputs.iter()) {
-        let abs_output = working_dir.join(rel_path);
-        if !abs_output.exists() {
-            return (RebuildResult::Rebuild(RebuildReason::OutputMissing), None);
+    // Walk outputs; collect indices that need restore.
+    let mut needs_restore: Vec<usize> = Vec::new();
+    let mut output_missing_seen = false;
+    for (i, (cached_out, rel_path)) in entry
+        .outputs
+        .iter()
+        .zip(current_outputs.iter())
+        .enumerate()
+    {
+        let abs = working_dir.join(rel_path);
+        if !abs.exists() {
+            needs_restore.push(i);
+            output_missing_seen = true;
+            continue;
         }
-        if let Some(disk_mtime) = stat_mtime(&abs_output) {
+        if let Some(disk_mtime) = stat_mtime(&abs) {
             if disk_mtime != cached_out.mtime {
-                if let Some(disk_hash) = hash_file(&abs_output) {
+                if let Some(disk_hash) = hash_file(&abs) {
                     if disk_hash != cached_out.hash {
-                        return (RebuildResult::Rebuild(RebuildReason::OutputChanged), None);
+                        needs_restore.push(i);
                     }
                 }
             }
         }
     }
 
-    match check_inputs(&entry.inputs, current_inputs, working_dir) {
-        Err(reason) => (RebuildResult::Rebuild(reason), None),
-        Ok(updated_inputs) => {
-            let updated = StepEntry {
-                inputs: updated_inputs,
-                outputs: entry.outputs.clone(),
-                command_hash: entry.command_hash,
-                context_hash: entry.context_hash,
-                env_contribution: entry.env_contribution,
+    if !needs_restore.is_empty() {
+        let restored = match restore_ctx {
+            Some(ctx) => try_restore(
+                ctx,
+                entry,
+                current_outputs,
+                &needs_restore,
+                &updated_inputs,
+                working_dir,
+            ),
+            None => false,
+        };
+        if !restored {
+            let reason = if output_missing_seen {
+                RebuildReason::OutputMissing
+            } else {
+                RebuildReason::OutputChanged
             };
-            (RebuildResult::Skip, Some(updated))
+            return (RebuildResult::Rebuild(reason), None);
         }
     }
+
+    let updated = StepEntry {
+        inputs: updated_inputs,
+        outputs: entry.outputs.clone(),
+        command_hash: entry.command_hash,
+        context_hash: entry.context_hash,
+        env_contribution: entry.env_contribution,
+    };
+    (RebuildResult::Skip, Some(updated))
+}
+
+/// Attempt to restore output bytes from the backend. Returns true if every
+/// index in `needs_restore` was fetched and written to disk; any miss aborts
+/// the attempt and the caller falls back to rebuild.
+fn try_restore(
+    ctx: &RestoreCtx,
+    entry: &StepEntry,
+    current_outputs: &[&str],
+    needs_restore: &[usize],
+    updated_inputs: &[crate::store::FileRecord],
+    working_dir: &Path,
+) -> bool {
+    let mut sorted: Vec<u64> = updated_inputs.iter().map(|r| r.hash).collect();
+    sorted.sort();
+    let key_inputs = crate::backend::CloudKeyInputs {
+        schema_version: crate::store::CACHE_VERSION,
+        recipe_namespace: ctx.recipe_namespace,
+        command_hash: entry.command_hash,
+        context_hash: entry.context_hash,
+        env_contribution: entry.env_contribution,
+        sorted_input_content_hashes: &sorted,
+    };
+    let cloud_k = crate::backend::cloud_key(&key_inputs);
+
+    for &idx in needs_restore {
+        let path = current_outputs[idx];
+        let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
+        let bytes = match ctx.backend.get(&artifact_k) {
+            Ok(Some(b)) => b,
+            _ => return false,
+        };
+        let abs = working_dir.join(path);
+        if let Some(parent) = abs.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                return false;
+            }
+        }
+        // Atomic write via tmp + rename.
+        let tmp = abs.with_extension("cook.tmp");
+        if std::fs::write(&tmp, &bytes).is_err() {
+            return false;
+        }
+        if std::fs::rename(&tmp, &abs).is_err() {
+            return false;
+        }
+    }
+    true
 }
 
 /// Check if a plate layer (no output) needs to re-run.
@@ -285,7 +390,7 @@ mod tests {
     fn test_no_cache_entry_rebuilds() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (result, updated) =
-            needs_rebuild_cook(None, &["in.c"], &["out.o"], 0xdead, 0, 0, dir.path());
+            needs_rebuild_cook(None, &["in.c"], &["out.o"], 0xdead, 0, 0, dir.path(), None);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::NoCacheEntry));
         assert!(updated.is_none());
     }
@@ -309,7 +414,7 @@ mod tests {
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0x2222, 0, 0, wd);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0x2222, 0, 0, wd, None);
         assert_eq!(
             result,
             RebuildResult::Rebuild(RebuildReason::CommandHashChanged)
@@ -335,7 +440,7 @@ mod tests {
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::OutputMissing));
         assert!(updated.is_none());
     }
@@ -359,7 +464,7 @@ mod tests {
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None);
         assert_eq!(result, RebuildResult::Skip);
         assert!(updated.is_some());
     }
@@ -396,7 +501,7 @@ mod tests {
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None);
         assert_eq!(
             result,
             RebuildResult::Rebuild(RebuildReason::InputChanged("in.c".to_string()))
@@ -495,7 +600,7 @@ mod tests {
             env_contribution: 0,
         };
 
-        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0x9999, 0, wd);
+        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0x9999, 0, wd, None);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::ContextChanged));
         assert!(updated.is_none());
     }
@@ -518,7 +623,7 @@ mod tests {
             env_contribution: 0x1111,
         };
 
-        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0x9999, wd);
+        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0x9999, wd, None);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::EnvChanged));
         assert!(updated.is_none());
     }

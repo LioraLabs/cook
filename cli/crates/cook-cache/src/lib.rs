@@ -17,7 +17,7 @@ use std::path::Path;
 
 pub use check::{
     hash_env, hash_file, needs_rebuild_cook, needs_rebuild_plate,
-    stat_mtime, RebuildReason, RebuildResult,
+    stat_mtime, RebuildReason, RebuildResult, RestoreCtx,
 };
 pub use manager::{CacheState, RecordError, SharedCacheState, ThreadSafeCacheManager};
 pub use store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};

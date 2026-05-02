@@ -234,6 +234,7 @@ fn build_wave(
                         meta.input_paths.iter().map(|s| s.as_str()).collect();
                     let current_outputs: Vec<&str> =
                         meta.output_paths.iter().map(|s| s.as_str()).collect();
+                    // Viewer query — no restore side-effects.
                     let (result, _) = needs_rebuild_cook(
                         entry,
                         &input_refs,
@@ -242,6 +243,7 @@ fn build_wave(
                         meta.context_hash,
                         meta.env_contribution,
                         &ru.working_dir,
+                        None,
                     );
                     Some(matches!(result, RebuildResult::Skip))
                 }

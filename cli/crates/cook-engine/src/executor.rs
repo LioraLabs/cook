@@ -235,10 +235,13 @@ pub fn execute_dag(
     }
 
     // ----- helper: check cache for a work node -----
-    // Returns true if the node can be skipped (cache hit).
+    // Returns true if the node can be skipped (cache hit). When `cache_ctx`
+    // exposes a backend, a hit-but-drifted entry is restored from the
+    // artifact store rather than rebuilt (2026-05-02 addendum spec §5.2).
     fn check_node_cache(
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+        cache_ctx: &CacheContext,
     ) -> bool {
         let meta = match &work_node.cache_meta {
             Some(m) => m,
@@ -255,6 +258,14 @@ pub fn execute_dag(
         let entry = cache.steps.get(&meta.cache_key);
         let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
         let current_outputs: Vec<&str> = meta.output_paths.iter().map(|s| s.as_str()).collect();
+        let recipe_namespace = format!(
+            "{}/{}::{}",
+            meta.project_id, meta.cookfile_path, meta.recipe_name
+        );
+        let restore_ctx = cook_cache::RestoreCtx {
+            backend: cache_ctx.backend.as_ref(),
+            recipe_namespace: &recipe_namespace,
+        };
         let (result, updated) = cook_cache::needs_rebuild_cook(
             entry,
             &input_refs,
@@ -263,9 +274,9 @@ pub fn execute_dag(
             meta.context_hash,
             meta.env_contribution,
             &work_node.working_dir,
+            Some(&restore_ctx),
         );
         if matches!(result, cook_cache::RebuildResult::Skip) {
-            // Update mtime-only changes in cache
             if let Some(updated_entry) = updated {
                 cm.update_step(&meta.recipe_name, &meta.cache_key, updated_entry);
             }
@@ -287,6 +298,7 @@ pub fn execute_dag(
         event_tx: &Option<mpsc::Sender<EngineEvent>>,
         trackers: &mut BTreeMap<String, RecipeTracker>,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+        cache_ctx: &CacheContext,
     ) -> usize {
         if cancelled[id] {
             *finished += 1;
@@ -325,6 +337,7 @@ pub fn execute_dag(
                         event_tx,
                         trackers,
                         cache_managers,
+                        cache_ctx,
                     );
                 }
                 submitted
@@ -336,7 +349,7 @@ pub fn execute_dag(
             }
             Some(payload) => {
                 // Check cache before executing
-                if check_node_cache(work_node, cache_managers) {
+                if check_node_cache(work_node, cache_managers, cache_ctx) {
                     ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                     emit(
                         event_tx,
@@ -363,6 +376,7 @@ pub fn execute_dag(
                             event_tx,
                             trackers,
                             cache_managers,
+                            cache_ctx,
                         );
                     }
                     return submitted;
@@ -412,6 +426,7 @@ pub fn execute_dag(
             &event_tx,
             &mut recipe_trackers,
             &cache_managers,
+            &cache_ctx,
         );
     }
 
@@ -569,6 +584,7 @@ pub fn execute_dag(
                             &event_tx,
                             &mut recipe_trackers,
                             &cache_managers,
+                            &cache_ctx,
                         );
                     }
                 } else {
@@ -714,6 +730,7 @@ pub fn execute_dag(
                     &event_tx,
                     &mut recipe_trackers,
                     &cache_managers,
+                    &cache_ctx,
                 );
             }
         } else {
