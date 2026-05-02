@@ -281,6 +281,43 @@ fn all_reachable_sigils_resolve_under(candidate_root: &Path) -> Result<bool, Coo
     Ok(true)
 }
 
+/// Returns true if `invoked_cookfile` or any Cookfile transitively reachable
+/// from it via tree-relative imports declares any sigil-anchored import.
+fn any_reachable_sigil_imports(invoked_cookfile: &Path) -> Result<bool, CookError> {
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut stack: Vec<PathBuf> = vec![invoked_cookfile.to_path_buf()];
+
+    while let Some(cookfile_path) = stack.pop() {
+        let cf_canon = std::fs::canonicalize(&cookfile_path)
+            .unwrap_or_else(|_| cookfile_path.clone());
+        if !visited.insert(cf_canon.clone()) {
+            continue;
+        }
+        let cf_dir = cf_canon.parent().unwrap_or(Path::new("."));
+        let source = match std::fs::read_to_string(&cf_canon) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let parsed = match cook_lang::parse(&source) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        for imp in &parsed.imports {
+            if matches!(&imp.path, cook_lang::ast::ImportPath::Sigil(_)) {
+                return Ok(true);
+            }
+            if let cook_lang::ast::ImportPath::Tree(s) = &imp.path {
+                let imp_dir = cf_dir.join(s);
+                let nested = imp_dir.join("Cookfile");
+                if nested.exists() {
+                    stack.push(nested);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Resolve the workspace root for an invocation per §7.6.
 pub fn resolve_workspace_root(
     invoked_cookfile: &Path,
@@ -340,7 +377,16 @@ pub fn resolve_workspace_root(
         return Ok(root);
     }
 
-    // Fall-through: self-root (Task 2.5 will add the sigil-presence gate).
+    // Rules 4 and 5: no ancestor satisfied. Self-root if no sigils anywhere
+    // reachable; reject otherwise.
+    if any_reachable_sigil_imports(invoked_cookfile)? {
+        return Err(CookError::Other(format!(
+            "Cookfile {} declares sigil imports but no enclosing workspace root \
+             could be identified. Drop a .cookroot marker at the workspace root \
+             or pass --root.",
+            invoked_cookfile.display(),
+        )));
+    }
     Ok(invoked_dir_canon)
 }
 
@@ -537,5 +583,35 @@ mod tests {
         let expected = std::fs::canonicalize(dir.path()).unwrap();
         let got = std::fs::canonicalize(root).unwrap();
         assert_eq!(got, expected, "expected dir/ as root (anchors //top/lib), got {got:?}");
+    }
+
+    #[test]
+    fn test_resolve_workspace_root_rejects_self_root_with_sigils() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import top //top/lib\nrecipe \"x\"\n",
+        ).unwrap();
+
+        let invoked = dir.path().join("Cookfile");
+        let result = resolve_workspace_root(&invoked, None);
+        assert!(result.is_err(), "expected reject for sigil import without anchor");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("workspace root") || msg.contains("anchor"),
+            "expected reject diagnostic, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_workspace_root_self_root_no_sigils() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("Cookfile"), "recipe \"x\"\n").unwrap();
+
+        let invoked = dir.path().join("Cookfile");
+        let root = resolve_workspace_root(&invoked, None).unwrap();
+        let expected = std::fs::canonicalize(dir.path()).unwrap();
+        let got = std::fs::canonicalize(root).unwrap();
+        assert_eq!(got, expected);
     }
 }
