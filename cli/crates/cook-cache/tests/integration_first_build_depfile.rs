@@ -5,12 +5,8 @@
 //! The cache hit is correct because input *content* matches; B's
 //! subsequent builds generate a depfile and pick up header changes.
 
-use std::collections::BTreeMap;
-
 use cook_cache::backend::{cloud_key, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend};
-use cook_cache::context::ExecutionContext;
-use cook_cache::envkey::EnvDenylist;
-use cook_cache::store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};
+use cook_cache::store::{FileRecord, StepEntry, CACHE_VERSION};
 
 fn make_step_with_thin_inputs(source_path: &str, source_hash: u64) -> StepEntry {
     StepEntry {
