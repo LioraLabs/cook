@@ -190,6 +190,27 @@ impl Workspace {
         Ok(())
     }
 
+    /// For a given importer Cookfile directory `importer_dir` (canonical),
+    /// return a map from each of its import aliases to the syntactic relative
+    /// path from `importer_dir` to the alias's target directory.
+    ///
+    /// This map is what `cook.dep_output` uses at substitution time to rewrite
+    /// importee-relative paths into importer-relative paths.
+    pub fn alias_dirs_for(&self, importer_dir: &Path) -> BTreeMap<String, PathBuf> {
+        let mut out = BTreeMap::new();
+        let importer_canon = std::fs::canonicalize(importer_dir)
+            .unwrap_or_else(|_| importer_dir.to_path_buf());
+        for (parent_canon, alias, target_canon) in &self.namespace_map {
+            if parent_canon != &importer_canon {
+                continue;
+            }
+            let rel = pathdiff::diff_paths(target_canon, &importer_canon)
+                .unwrap_or_else(|| target_canon.clone());
+            out.insert(alias.clone(), rel);
+        }
+        out
+    }
+
     /// Resolve "backend.build" from a parent dir to (canonical_import_dir, recipe_name).
     #[allow(dead_code)]
     pub fn resolve_namespaced_dep(
@@ -434,6 +455,50 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_alias_dirs_for_root_tree_import() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("lib")).unwrap();
+        fs::write(dir.path().join("lib/Cookfile"), "recipe \"build\"\n").unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import lib ./lib\nrecipe \"top\"\n",
+        ).unwrap();
+        fs::write(dir.path().join(".cookroot"), "").unwrap();
+
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let ws = Workspace::load(&entry, &root, &[]).unwrap();
+        let root_canon = std::fs::canonicalize(&ws.root.dir).unwrap();
+        let alias_dirs = ws.alias_dirs_for(&root_canon);
+        assert_eq!(alias_dirs.len(), 1);
+        assert_eq!(alias_dirs.get("lib"), Some(&PathBuf::from("lib")));
+    }
+
+    #[test]
+    fn test_alias_dirs_for_sigil_import_with_dotdot() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("core/lib")).unwrap();
+        fs::create_dir_all(dir.path().join("apps/web")).unwrap();
+        fs::write(dir.path().join("core/lib/Cookfile"), "recipe \"core\"\n").unwrap();
+        fs::write(
+            dir.path().join("apps/web/Cookfile"),
+            "import core //core/lib\nrecipe \"app\"\n",
+        ).unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import web ./apps/web\nrecipe \"top\"\n",
+        ).unwrap();
+        fs::write(dir.path().join(".cookroot"), "").unwrap();
+
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let ws = Workspace::load(&entry, &root, &[]).unwrap();
+        let web_dir = std::fs::canonicalize(dir.path().join("apps/web")).unwrap();
+        let alias_dirs = ws.alias_dirs_for(&web_dir);
+        assert_eq!(alias_dirs.get("core"), Some(&PathBuf::from("../../core/lib")));
+    }
 
     #[test]
     fn test_no_imports_loads_root_only() {
