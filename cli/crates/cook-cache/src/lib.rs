@@ -5,6 +5,7 @@
 
 pub mod check;
 pub mod context;
+pub mod envkey;
 pub mod manager;
 pub mod store;
 
@@ -18,6 +19,7 @@ pub use check::{
 pub use manager::{CacheState, SharedCacheState, ThreadSafeCacheManager};
 pub use store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};
 pub use context::{ExecutionContext, MachineIdentity, ToolHash};
+pub use envkey::{env_contribution, EnvDenylist};
 
 /// Hash a string (for command templates, env vars, etc.)
 pub fn hash_str(s: &str) -> u64 {
