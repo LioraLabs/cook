@@ -78,7 +78,7 @@ impl Workspace {
             &mut visited,
         )?;
 
-        Ok(Workspace {
+        let mut workspace = Workspace {
             root: LoadedCookfile {
                 cookfile,
                 lua_source,
@@ -87,7 +87,9 @@ impl Workspace {
             imports,
             namespace_map,
             workspace_root,
-        })
+        };
+        regenerate_lua_sources_with_unions(&mut workspace)?;
+        Ok(workspace)
     }
 
     fn load_imports(
@@ -232,6 +234,69 @@ impl Workspace {
         }
         None
     }
+}
+
+/// Per §7.3, regenerate the lua_source for every Cookfile in the workspace
+/// using the union recipe-name set (local names + `alias.recipe` names from
+/// direct imports).  This is a second pass after `load_imports` completes so
+/// that every Cookfile's imported recipe list is already present.
+fn regenerate_lua_sources_with_unions(workspace: &mut Workspace) -> Result<(), CookError> {
+    // Build a snapshot of canonical-path → Cookfile for cross-reference.
+    let root_canon = std::fs::canonicalize(&workspace.root.dir)
+        .unwrap_or_else(|_| workspace.root.dir.clone());
+    let mut canon_to_cookfile: BTreeMap<PathBuf, cook_lang::ast::Cookfile> = workspace
+        .imports
+        .iter()
+        .map(|(p, l)| (p.clone(), l.cookfile.clone()))
+        .collect();
+    canon_to_cookfile.insert(root_canon.clone(), workspace.root.cookfile.clone());
+
+    let workspace_root = workspace.workspace_root.clone();
+
+    // Build the union recipe-name set for `cookfile` located at `cookfile_dir`,
+    // then regenerate its Lua source.
+    let regen = |cookfile_dir: &Path,
+                 cookfile: &cook_lang::ast::Cookfile|
+     -> Result<String, CookError> {
+        let cookfile_dir_canon = std::fs::canonicalize(cookfile_dir)
+            .unwrap_or_else(|_| cookfile_dir.to_path_buf());
+        let mut imports_by_alias: BTreeMap<String, &cook_lang::ast::Cookfile> = BTreeMap::new();
+        for imp_decl in &cookfile.imports {
+            let imp_dir = match &imp_decl.path {
+                cook_lang::ast::ImportPath::Tree(p) => cookfile_dir_canon.join(p),
+                cook_lang::ast::ImportPath::Sigil(p) => workspace_root.join(p),
+            };
+            let imp_canon = std::fs::canonicalize(&imp_dir).unwrap_or(imp_dir);
+            if let Some(c) = canon_to_cookfile.get(&imp_canon) {
+                imports_by_alias.insert(imp_decl.name.clone(), c);
+            }
+        }
+        let union = cook_luagen::dep_ref::extract_recipe_names_with_imports(
+            cookfile,
+            &imports_by_alias,
+        );
+        cook_luagen::generate_with_names_checked(cookfile, &union)
+            .map_err(|e| CookError::Other(e.to_string()))
+    };
+
+    // Regenerate root.
+    let root_cookfile = workspace.root.cookfile.clone();
+    let root_dir = workspace.root.dir.clone();
+    let new_root_lua = regen(&root_dir, &root_cookfile)?;
+    workspace.root.lua_source = new_root_lua;
+
+    // Regenerate imports: collect first, then update (avoids borrow conflict).
+    let mut new_lua_per_canon: BTreeMap<PathBuf, String> = BTreeMap::new();
+    for (canon_path, loaded) in &workspace.imports {
+        let new_lua = regen(canon_path, &loaded.cookfile)?;
+        new_lua_per_canon.insert(canon_path.clone(), new_lua);
+    }
+    for (canon_path, loaded) in workspace.imports.iter_mut() {
+        if let Some(new_lua) = new_lua_per_canon.remove(canon_path) {
+            loaded.lua_source = new_lua;
+        }
+    }
+    Ok(())
 }
 
 /// Returns true if `candidate_cookfile` transitively imports `target_dir` via
@@ -855,6 +920,32 @@ mod tests {
             .filter(|p| p.to_string_lossy().contains("shared/lib"))
             .count();
         assert_eq!(shared_count, 1, "shared/lib must dedup across diamond imports");
+    }
+
+    #[test]
+    fn test_workspace_codegen_emits_dep_output_for_alias_recipe() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("lib")).unwrap();
+        fs::write(
+            dir.path().join("lib/Cookfile"),
+            "recipe lib_build\n    cook \"build/lib.o\" using { echo {out} }\n",
+        ).unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import lib ./lib\nrecipe demo\n    cook \"build/demo\" using { echo {lib.lib_build} }\n",
+        ).unwrap();
+        fs::write(dir.path().join(".cookroot"), "").unwrap();
+
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let ws = Workspace::load(&entry, &root, &[]).unwrap();
+
+        // The root cookfile's lua_source should now contain `cook.dep_output("lib.lib_build")`.
+        assert!(
+            ws.root.lua_source.contains("cook.dep_output(\"lib.lib_build\")"),
+            "expected dep_output(lib.lib_build) emission, got:\n{}",
+            ws.root.lua_source
+        );
     }
 
     #[test]
