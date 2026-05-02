@@ -1039,6 +1039,10 @@ fn test_parse_import_rejects_absolute_path() {
         msg.contains("absolute paths are not permitted"),
         "expected diagnostic about absolute paths, got: {msg}"
     );
+    assert!(
+        msg.contains("tree-relative or '//' sigil"),
+        "expected verbatim spec suffix, got: {msg}"
+    );
 }
 
 #[test]

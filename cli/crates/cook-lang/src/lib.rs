@@ -57,7 +57,7 @@ fn validate_and_classify_import_path(raw: &str, line: usize) -> Result<ast::Impo
         return Err(ParseError::Parse {
             line,
             message: format!(
-                "import path '{raw}': absolute paths are not permitted; use a tree-relative path or '//' sigil"
+                "import path '{raw}': absolute paths are not permitted; tree-relative or '//' sigil"
             ),
         });
     }
