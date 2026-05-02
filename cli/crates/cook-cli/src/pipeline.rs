@@ -447,7 +447,8 @@ fn build_workspace_registries(
     let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env)
         .with_selected_config(config.map(|s| s.to_string()))
         .with_shared_terminal_outputs(shared_outputs.clone())
-        .with_qualified_prefix(String::new());
+        .with_qualified_prefix(String::new())
+        .with_alias_dirs(root_alias_dirs.clone());
     registries.insert(
         String::new(),
         cook_engine::RegistryEntry {
@@ -468,7 +469,8 @@ fn build_workspace_registries(
         let registry = cook_register::Registry::new(loaded.dir.clone(), import_env)
             .with_selected_config(config.map(|s| s.to_string()))
             .with_shared_terminal_outputs(shared_outputs.clone())
-            .with_qualified_prefix(prefix.clone());
+            .with_qualified_prefix(prefix.clone())
+            .with_alias_dirs(alias_dirs.clone());
         registries.insert(
             prefix,
             cook_engine::RegistryEntry {

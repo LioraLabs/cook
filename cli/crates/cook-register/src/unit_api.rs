@@ -718,6 +718,7 @@ mod tests {
             &lua,
             terminal_outputs,
             capture_state.clone(),
+            std::collections::BTreeMap::new(),
         )
         .unwrap();
 

@@ -21,6 +21,7 @@ pub struct Registry {
     terminal_outputs: SharedTerminalOutputs,
     selected_config: Option<String>,
     qualified_prefix: String,
+    alias_dirs: BTreeMap<String, PathBuf>,
 }
 
 impl Registry {
@@ -32,6 +33,7 @@ impl Registry {
             terminal_outputs: Arc::new(Mutex::new(BTreeMap::new())),
             selected_config: None,
             qualified_prefix: String::new(),
+            alias_dirs: BTreeMap::new(),
         }
     }
 
@@ -47,6 +49,11 @@ impl Registry {
 
     pub fn with_qualified_prefix(mut self, prefix: String) -> Self {
         self.qualified_prefix = prefix;
+        self
+    }
+
+    pub fn with_alias_dirs(mut self, alias_dirs: BTreeMap<String, PathBuf>) -> Self {
+        self.alias_dirs = alias_dirs;
         self
     }
 
@@ -111,6 +118,7 @@ impl Registry {
             &lua,
             self.terminal_outputs.clone(),
             capture_state.clone(),
+            self.alias_dirs.clone(),
         )?;
         crate::context::register_resolve_ingredients(&lua, &self.working_dir)?;
         crate::codec_api::register_codec_api(&lua)?;
