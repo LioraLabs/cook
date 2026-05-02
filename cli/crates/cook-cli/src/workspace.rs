@@ -465,10 +465,14 @@ pub fn resolve_workspace_root(
     }
 
     // Rule 2: .cookroot marker walk-up.
-    let invoked_dir = invoked_cookfile
-        .parent()
-        .unwrap_or(Path::new("."))
-        .to_path_buf();
+    let invoked_dir = {
+        let p = invoked_cookfile
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        // An empty path (parent of a bare "Cookfile") is treated as ".".
+        if p.as_os_str().is_empty() { PathBuf::from(".") } else { p }
+    };
     let mut cur = std::fs::canonicalize(&invoked_dir).unwrap_or(invoked_dir.clone());
     loop {
         if cur.join(".cookroot").exists() {
@@ -481,7 +485,9 @@ pub fn resolve_workspace_root(
     }
 
     // Rule 3: tree-import inference walk.
-    let invoked_dir_canon = std::fs::canonicalize(&invoked_dir).unwrap_or(invoked_dir.clone());
+    let invoked_dir_canon = std::fs::canonicalize(&invoked_dir)
+        .or_else(|_| std::fs::canonicalize("."))
+        .unwrap_or(invoked_dir.clone());
     let mut highest: Option<PathBuf> = None;
     let mut walk_cur = invoked_dir_canon.parent().map(|p| p.to_path_buf());
     while let Some(d) = walk_cur {
