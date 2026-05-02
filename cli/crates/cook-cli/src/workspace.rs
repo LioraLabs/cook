@@ -181,6 +181,53 @@ impl Workspace {
     }
 }
 
+/// Returns true if `candidate_cookfile` transitively imports `target_dir` via
+/// tree-relative imports only. Sigil-anchored imports are skipped (their
+/// resolution presupposes a workspace root, which is what we are computing).
+fn cookfile_transitively_imports_via_tree(
+    candidate_cookfile: &Path,
+    target_dir: &Path,
+) -> Result<bool, CookError> {
+    let target_canon = std::fs::canonicalize(target_dir)
+        .unwrap_or_else(|_| target_dir.to_path_buf());
+
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut stack: Vec<PathBuf> = vec![candidate_cookfile.to_path_buf()];
+
+    while let Some(cookfile_path) = stack.pop() {
+        let cookfile_canon = std::fs::canonicalize(&cookfile_path)
+            .unwrap_or_else(|_| cookfile_path.clone());
+        if !visited.insert(cookfile_canon.clone()) {
+            continue;
+        }
+        let cookfile_dir = cookfile_canon.parent().unwrap_or(Path::new("."));
+        let source = match std::fs::read_to_string(&cookfile_canon) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let parsed = match cook_lang::parse(&source) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        for imp in &parsed.imports {
+            let tree_path = match &imp.path {
+                cook_lang::ast::ImportPath::Tree(s) => s,
+                cook_lang::ast::ImportPath::Sigil(_) => continue,
+            };
+            let imp_dir = cookfile_dir.join(tree_path);
+            let imp_canon = std::fs::canonicalize(&imp_dir).unwrap_or(imp_dir.clone());
+            if imp_canon == target_canon {
+                return Ok(true);
+            }
+            let nested = imp_canon.join("Cookfile");
+            if nested.exists() {
+                stack.push(nested);
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Resolve the workspace root for an invocation per §7.6.
 pub fn resolve_workspace_root(
     invoked_cookfile: &Path,
@@ -222,8 +269,24 @@ pub fn resolve_workspace_root(
         }
     }
 
-    // Fall-through: self-root (subsequent tasks add rules 3-5).
-    let invoked_dir_canon = std::fs::canonicalize(&invoked_dir).unwrap_or(invoked_dir);
+    // Rule 3: tree-import inference walk.
+    let invoked_dir_canon = std::fs::canonicalize(&invoked_dir).unwrap_or(invoked_dir.clone());
+    let mut highest: Option<PathBuf> = None;
+    let mut walk_cur = invoked_dir_canon.parent().map(|p| p.to_path_buf());
+    while let Some(d) = walk_cur {
+        let cookfile_at_d = d.join("Cookfile");
+        if cookfile_at_d.exists()
+            && cookfile_transitively_imports_via_tree(&cookfile_at_d, &invoked_dir_canon)?
+        {
+            highest = Some(d.clone());
+        }
+        walk_cur = d.parent().map(|p| p.to_path_buf());
+    }
+    if let Some(root) = highest {
+        return Ok(root);
+    }
+
+    // Fall-through: self-root (Task 2.5 will add the sigil-presence gate).
     Ok(invoked_dir_canon)
 }
 
@@ -360,6 +423,37 @@ mod tests {
 
         let invoked = dir.path().join("lib/Cookfile");
         let root = resolve_workspace_root(&invoked, Some(dir.path().to_path_buf())).unwrap();
+        let expected = std::fs::canonicalize(dir.path()).unwrap();
+        let got = std::fs::canonicalize(root).unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_resolve_workspace_root_tree_inference() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("apps/web")).unwrap();
+        fs::write(dir.path().join("Cookfile"), "import web ./apps/web\nrecipe \"x\"\n").unwrap();
+        fs::write(dir.path().join("apps/web/Cookfile"), "recipe \"build\"\n").unwrap();
+
+        let invoked = dir.path().join("apps/web/Cookfile");
+        let root = resolve_workspace_root(&invoked, None).unwrap();
+        let expected = std::fs::canonicalize(dir.path()).unwrap();
+        let got = std::fs::canonicalize(root).unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_resolve_workspace_root_tree_inference_skip_no_cookfile_ancestor() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("intermediate/leaf")).unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import leaf ./intermediate/leaf\nrecipe \"x\"\n",
+        ).unwrap();
+        fs::write(dir.path().join("intermediate/leaf/Cookfile"), "recipe \"build\"\n").unwrap();
+
+        let invoked = dir.path().join("intermediate/leaf/Cookfile");
+        let root = resolve_workspace_root(&invoked, None).unwrap();
         let expected = std::fs::canonicalize(dir.path()).unwrap();
         let got = std::fs::canonicalize(root).unwrap();
         assert_eq!(got, expected);
