@@ -529,6 +529,30 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_workspace_root_explicit_override_outside_invoked_rejects() {
+        // Rule 1: --root that does NOT contain the invoked Cookfile must be rejected.
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("sibling/a")).unwrap();
+        fs::create_dir_all(dir.path().join("sibling/b")).unwrap();
+        fs::write(dir.path().join("sibling/a/Cookfile"), "recipe \"x\"\n").unwrap();
+        fs::write(dir.path().join("sibling/b/Cookfile"), "recipe \"y\"\n").unwrap();
+
+        // Invoke a/Cookfile but pass --root pointing at b/ (disjoint subtree).
+        let invoked = dir.path().join("sibling/a/Cookfile");
+        let wrong_root = dir.path().join("sibling/b");
+        let result = resolve_workspace_root(&invoked, Some(wrong_root));
+        assert!(
+            result.is_err(),
+            "expected rejection because invoked file is not under --root"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("not at or below") || msg.contains("--root"),
+            "expected diagnostic mentioning '--root' constraint, got: {msg}"
+        );
+    }
+
+    #[test]
     fn test_resolve_workspace_root_tree_inference() {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("apps/web")).unwrap();
@@ -583,6 +607,72 @@ mod tests {
         let expected = std::fs::canonicalize(dir.path()).unwrap();
         let got = std::fs::canonicalize(root).unwrap();
         assert_eq!(got, expected, "expected dir/ as root (anchors //top/lib), got {got:?}");
+    }
+
+    /// Tighter gate test: the sigil-validation gate must be observable.
+    ///
+    /// Layout
+    /// ------
+    /// dir/
+    ///   shared/lib/Cookfile    (target of the sigil import)
+    ///   inner/
+    ///     Cookfile             imports ./leaf  AND  //shared/lib
+    ///     leaf/
+    ///       Cookfile           [invoked] — has its OWN sigil import //shared/lib
+    ///                          (so any_reachable_sigil_imports returns true)
+    ///
+    /// There is NO Cookfile directly in dir/ itself.
+    ///
+    /// Walk-up from dir/inner/leaf/ (invoked dir):
+    ///   d = dir/inner/: has Cookfile
+    ///     - cookfile_transitively_imports_via_tree: YES (./leaf)
+    ///     - all_reachable_sigils_resolve_under(dir/inner/): tries to resolve
+    ///       //shared/lib → dir/inner/shared/lib, which does NOT exist → Ok(false)
+    ///       → gate rejects dir/inner/ as a candidate
+    ///   d = dir/: no Cookfile → skipped
+    ///
+    /// No candidate found.  any_reachable_sigil_imports(invoked) → true
+    /// (the invoked Cookfile itself declares //shared/lib) → Rule 5 fires → Err.
+    ///
+    /// Without the gate (sigil-validation removed), dir/inner/ WOULD become the
+    /// only candidate (tree-import check passes) → resolve_workspace_root returns
+    /// Ok(dir/inner/) instead of Err, so the test would fail.  The gate is the
+    /// sole mechanism that eliminates the candidate and forces rule 5.
+    #[test]
+    fn test_resolve_workspace_root_gate_eliminates_only_candidate_falls_to_rule5() {
+        let dir = TempDir::new().unwrap();
+        // dir/shared/lib/ — sigil target that resolves at dir/ level but NOT under inner/
+        fs::create_dir_all(dir.path().join("shared/lib")).unwrap();
+        fs::write(dir.path().join("shared/lib/Cookfile"), "recipe \"lib\"\n").unwrap();
+        // dir/inner/leaf/ — the invoked Cookfile, also has a sigil import
+        fs::create_dir_all(dir.path().join("inner/leaf")).unwrap();
+        fs::write(
+            dir.path().join("inner/leaf/Cookfile"),
+            "import shared //shared/lib\nrecipe \"leaf\"\n",
+        ).unwrap();
+        // dir/inner/Cookfile — tree-imports ./leaf AND uses //shared/lib
+        // (no dir/inner/shared/ directory, so the sigil fails the gate at this level)
+        fs::write(
+            dir.path().join("inner/Cookfile"),
+            "import leaf ./leaf\nimport shared //shared/lib\nrecipe \"inner\"\n",
+        ).unwrap();
+        // Deliberately NO Cookfile at dir/ itself.
+
+        let invoked = dir.path().join("inner/leaf/Cookfile");
+        let result = resolve_workspace_root(&invoked, None);
+
+        assert!(
+            result.is_err(),
+            "expected rule-5 rejection because the only tree-import candidate (inner/) \
+             failed the sigil-validation gate and no higher candidate exists; \
+             got Ok({:?})",
+            result.ok()
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("workspace root") || msg.contains("anchor"),
+            "expected diagnostic mentioning 'workspace root' or 'anchor', got: {msg}"
+        );
     }
 
     #[test]
