@@ -3,6 +3,7 @@
 //! This crate handles hash computation, file-based cache storage, and
 //! cache hit/miss logic for incremental builds.
 
+pub mod backend;
 pub mod check;
 pub mod context;
 pub mod envkey;
@@ -18,6 +19,7 @@ pub use check::{
 };
 pub use manager::{CacheState, SharedCacheState, ThreadSafeCacheManager};
 pub use store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};
+pub use backend::{ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey};
 pub use context::{ExecutionContext, MachineIdentity, ToolHash};
 pub use envkey::{env_contribution, EnvDenylist};
 
