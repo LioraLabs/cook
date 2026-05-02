@@ -1028,3 +1028,38 @@ fn test_parse_import_rejects_embedded_dotdot() {
     let result = crate::parse(src);
     assert!(result.is_err(), "expected parse error for embedded '..'");
 }
+
+#[test]
+fn test_parse_import_rejects_absolute_path() {
+    let src = "import bad /tmp/x\nrecipe \"x\"\n";
+    let result = crate::parse(src);
+    assert!(result.is_err(), "expected parse error for absolute import path");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("absolute paths are not permitted"),
+        "expected diagnostic about absolute paths, got: {msg}"
+    );
+}
+
+#[test]
+fn test_parse_import_accepts_sigil() {
+    let src = "import core //core/lib\nrecipe \"x\"\n";
+    let cookfile = crate::parse(src).expect("sigil import should parse");
+    assert_eq!(cookfile.imports.len(), 1);
+    match &cookfile.imports[0].path {
+        ast::ImportPath::Sigil(s) => assert_eq!(s, "core/lib"),
+        other => panic!("expected Sigil, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_parse_import_rejects_sigil_with_dotdot() {
+    let src = "import bad //../escape\nrecipe \"x\"\n";
+    let result = crate::parse(src);
+    assert!(result.is_err(), "expected parse error for '..' after sigil");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("'..' segments are not permitted after '//'"),
+        "expected sigil-dotdot diagnostic, got: {msg}"
+    );
+}
