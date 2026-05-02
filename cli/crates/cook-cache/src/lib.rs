@@ -14,10 +14,10 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 pub use check::{
-    hash_env, hash_file, hash_secondary_inputs, needs_rebuild_cook, needs_rebuild_plate,
+    hash_env, hash_file, needs_rebuild_cook, needs_rebuild_plate,
     stat_mtime, RebuildReason, RebuildResult,
 };
-pub use manager::{CacheState, SharedCacheState, ThreadSafeCacheManager};
+pub use manager::{CacheState, RecordError, SharedCacheState, ThreadSafeCacheManager};
 pub use store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};
 pub use backend::{ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey};
 pub use context::{ExecutionContext, MachineIdentity, ToolHash};

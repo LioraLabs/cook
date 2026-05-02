@@ -239,6 +239,8 @@ fn build_wave(
                         &input_refs,
                         &current_outputs,
                         meta.command_hash,
+                        meta.context_hash,
+                        meta.env_contribution,
                         &ru.working_dir,
                     );
                     Some(matches!(result, RebuildResult::Skip))

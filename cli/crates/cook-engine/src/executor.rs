@@ -259,6 +259,8 @@ pub fn execute_dag(
             &input_refs,
             &current_outputs,
             meta.command_hash,
+            meta.context_hash,
+            meta.env_contribution,
             &work_node.working_dir,
         );
         if matches!(result, cook_cache::RebuildResult::Skip) {
@@ -486,14 +488,9 @@ pub fn execute_dag(
                     // Update cache if needed
                     if let Some(meta) = &dag.node(id).payload.cache_meta {
                         if let Some(cm) = cache_managers.get(&dag.node(id).payload.recipe_name) {
-                            cm.record_completion(
-                                &meta.recipe_name,
-                                &meta.cache_key,
-                                meta.command_hash,
-                                &meta.input_paths,
-                                &meta.output_paths,
-                                &dag.node(id).payload.working_dir,
-                            );
+                            if let Err(e) = cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(id).payload.working_dir) {
+                                tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
+                            }
                         }
                     }
 
@@ -590,14 +587,9 @@ pub fn execute_dag(
             // Update cache entry if this node has cache metadata
             if let Some(meta) = &dag.node(result.id).payload.cache_meta {
                 if let Some(cm) = cache_managers.get(&dag.node(result.id).payload.recipe_name) {
-                    cm.record_completion(
-                        &meta.recipe_name,
-                        &meta.cache_key,
-                        meta.command_hash,
-                        &meta.input_paths,
-                        &meta.output_paths,
-                        &dag.node(result.id).payload.working_dir,
-                    );
+                    if let Err(e) = cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(result.id).payload.working_dir) {
+                        tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
+                    }
                 }
             }
 

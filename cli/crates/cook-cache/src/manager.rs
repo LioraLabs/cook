@@ -4,9 +4,32 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Mutex;
 
+use cook_contracts::CacheMeta;
+
 use crate::check::{hash_file, stat_mtime};
-use crate::resolve_glob;
 use crate::store::{FileRecord, RecipeCache, StepEntry};
+
+/// Build FileRecord vec for a list of relative paths. Bails on the first
+/// path whose mtime or content cannot be read. Returning Err from here
+/// causes record_completion to skip the cache write entirely.
+fn collect_records(paths: &[String], working_dir: &Path) -> Result<Vec<FileRecord>, String> {
+    let mut out = Vec::with_capacity(paths.len());
+    for rel in paths {
+        let abs = working_dir.join(rel);
+        let mtime = stat_mtime(&abs).ok_or_else(|| rel.clone())?;
+        let hash = hash_file(&abs).ok_or_else(|| rel.clone())?;
+        out.push(FileRecord { path: rel.clone(), mtime, hash });
+    }
+    Ok(out)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RecordError {
+    #[error("cache record skipped: input file missing or unreadable: {0}")]
+    MissingFile(String),
+    #[error("cache record skipped: output file missing or unreadable: {0}")]
+    UnreadableFile(String),
+}
 
 pub struct CacheState {
     pub cache: RecipeCache,
@@ -34,44 +57,6 @@ impl CacheState {
     }
 
     // Returns the resolved files per glob pattern
-    pub fn invalidate_recipe(
-        &mut self,
-        env_hash: u64,
-        secondary_inputs_hash: u64,
-        ingredient_patterns: &[String],
-        working_dir: &Path,
-    ) {
-        // 1. Update the env and secondary inputs hashes
-        // set the dirty flag if the hashes have changed
-        self.dirty = self.cache.env_hash != env_hash
-            || self.cache.secondary_inputs_hash != secondary_inputs_hash;
-        self.cache.env_hash = env_hash;
-        self.cache.secondary_inputs_hash = secondary_inputs_hash;
-
-        // 2. Process each glob pattern
-        for pattern in ingredient_patterns {
-            let current_files = resolve_glob(working_dir, pattern);
-
-            // Only proceed if the files for this pattern have actually changed
-            if self.cache.globs.get(pattern) != Some(&current_files) {
-                // If we have old data, find what was removed and invalidate those steps
-                if let Some(old_files) = self.cache.globs.get(pattern) {
-                    let removed: BTreeSet<_> = old_files.difference(&current_files).collect();
-
-                    if !removed.is_empty() {
-                        self.cache.steps.retain(|_, entry| {
-                            !entry.inputs.iter().any(|f| removed.contains(&f.path))
-                        });
-                    }
-                }
-
-                // Update the cache with the new file list
-                self.cache.globs.insert(pattern.clone(), current_files);
-                self.dirty = true;
-            }
-        }
-    }
-
     pub fn files_per_glob(&self) -> &BTreeMap<String, BTreeSet<String>> {
         &self.cache.globs
     }
@@ -140,55 +125,17 @@ impl ThreadSafeCacheManager {
         cache
     }
 
-    /// Check if the environment has changed since the last build. If so,
-    /// clear all cached steps for this recipe (forcing a full rebuild).
-    pub fn invalidate_if_env_changed(&self, recipe_name: &str, env_hash: u64) {
-        let mut caches = self.caches.lock().unwrap();
-        let cache = caches
-            .entry(recipe_name.to_string())
-            .or_insert_with(|| RecipeCache::load(&self.cache_dir, recipe_name).unwrap_or_default());
-
-        if cache.env_hash != env_hash {
-            cache.steps.clear();
-            cache.env_hash = env_hash;
-            drop(caches);
-            let mut dirty = self.dirty.lock().unwrap();
-            dirty.insert(recipe_name.to_string());
-        }
-    }
-
     pub fn record_completion(
         &self,
         recipe_name: &str,
         cache_key: &str,
-        command_hash: u64,
-        input_paths: &[String],
-        output_paths: &[String],
+        meta: &CacheMeta,
         working_dir: &Path,
-    ) {
-        let new_inputs: Vec<FileRecord> = input_paths
-            .iter()
-            .map(|rel| {
-                let abs = working_dir.join(rel);
-                FileRecord {
-                    path: rel.clone(),
-                    mtime: stat_mtime(&abs).unwrap_or(0),
-                    hash: hash_file(&abs).unwrap_or(0),
-                }
-            })
-            .collect();
-
-        let new_outputs: Vec<FileRecord> = output_paths
-            .iter()
-            .map(|rel| {
-                let abs = working_dir.join(rel);
-                FileRecord {
-                    path: rel.clone(),
-                    mtime: stat_mtime(&abs).unwrap_or(0),
-                    hash: hash_file(&abs).unwrap_or(0),
-                }
-            })
-            .collect();
+    ) -> Result<(), RecordError> {
+        let new_inputs = collect_records(&meta.input_paths, working_dir)
+            .map_err(|p| RecordError::MissingFile(p))?;
+        let new_outputs = collect_records(&meta.output_paths, working_dir)
+            .map_err(|p| RecordError::UnreadableFile(p))?;
 
         self.update_step(
             recipe_name,
@@ -196,9 +143,12 @@ impl ThreadSafeCacheManager {
             StepEntry {
                 inputs: new_inputs,
                 outputs: new_outputs,
-                command_hash,
+                command_hash: meta.command_hash,
+                context_hash: meta.context_hash,
+                env_contribution: meta.env_contribution,
             },
         );
+        Ok(())
     }
 }
 
@@ -220,6 +170,23 @@ mod tests {
                 hash: 0x11223344,
             }],
             command_hash,
+            context_hash: 0,
+            env_contribution: 0,
+        }
+    }
+
+    fn make_cache_meta(input_paths: Vec<String>, output_paths: Vec<String>) -> cook_contracts::CacheMeta {
+        cook_contracts::CacheMeta {
+            recipe_name: "test_recipe".into(),
+            project_id: String::new(),
+            cookfile_path: String::new(),
+            cache_key: "step_one".into(),
+            input_paths,
+            output_paths,
+            command_hash: 0xdeadbeef,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: std::collections::BTreeMap::new(),
         }
     }
 
@@ -293,46 +260,72 @@ mod tests {
     }
 
     #[test]
-    fn test_invalidate_if_env_changed_clears_steps() {
-        let dir = tempfile::tempdir().unwrap();
-        let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    fn record_completion_writes_full_step_entry() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        std::fs::write(wd.join("out.o"), b"binary").expect("write");
 
-        // Establish env_hash before populating steps
-        cm.invalidate_if_env_changed("build", 100);
+        let cache_dir = dir.path().join("cache");
+        std::fs::create_dir_all(&cache_dir).expect("mkdir cache");
+        let cm = ThreadSafeCacheManager::new(cache_dir.clone());
 
-        // Populate cache with a step
-        cm.update_step("build", "main.o", make_step_entry(0x1234));
+        let meta = make_cache_meta(vec!["in.c".into()], vec!["out.o".into()]);
+        cm.record_completion("rec", "step_one", &meta, wd).expect("record ok");
+        cm.flush_all().expect("flush");
 
-        // Same env hash — steps should survive
-        cm.invalidate_if_env_changed("build", 100);
-        let cache = cm.get_or_load("build");
-        assert!(cache.steps.contains_key("main.o"), "step should survive same env hash");
-
-        // Different env hash — steps should be cleared
-        cm.invalidate_if_env_changed("build", 999);
-        let cache = cm.get_or_load("build");
-        assert!(cache.steps.is_empty(), "steps should be cleared on env hash change");
-        assert_eq!(cache.env_hash, 999);
+        let loaded = store::RecipeCache::load(&cache_dir, "rec").expect("load");
+        let entry = loaded.steps.get("step_one").expect("step");
+        assert_eq!(entry.command_hash, 0xdeadbeef);
+        assert_eq!(entry.inputs.len(), 1);
+        assert_eq!(entry.outputs.len(), 1);
     }
 
     #[test]
-    fn test_invalidate_if_env_changed_no_op_on_match() {
-        let dir = tempfile::tempdir().unwrap();
-        let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+    fn record_completion_skips_on_missing_input() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        // Do NOT create "in.c" — record_completion should skip.
+        std::fs::write(wd.join("out.o"), b"binary").expect("write");
 
-        // Establish env_hash before populating steps
-        cm.invalidate_if_env_changed("build", 42);
+        let cache_dir = dir.path().join("cache");
+        std::fs::create_dir_all(&cache_dir).expect("mkdir");
+        let cm = ThreadSafeCacheManager::new(cache_dir.clone());
 
-        cm.update_step("build", "main.o", make_step_entry(0x1234));
+        let meta = make_cache_meta(vec!["in.c".into()], vec!["out.o".into()]);
+        let err = cm.record_completion("rec", "step_one", &meta, wd).unwrap_err();
+        assert!(matches!(err, RecordError::MissingFile(_)));
 
-        // Same env hash — steps should survive
-        cm.invalidate_if_env_changed("build", 42);
-        let cache = cm.get_or_load("build");
-        assert_eq!(cache.steps.len(), 1, "steps should survive when env hash matches");
+        // Verify nothing was written.
+        cm.flush_all().expect("flush");
+        let loaded = store::RecipeCache::load(&cache_dir, "rec");
+        assert!(loaded.is_none() || loaded.unwrap().steps.is_empty());
+    }
 
-        // Same hash again — still a no-op
-        cm.invalidate_if_env_changed("build", 42);
-        let cache = cm.get_or_load("build");
-        assert_eq!(cache.steps.len(), 1);
+    #[test]
+    fn record_completion_preserves_prior_entry_on_skip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        std::fs::write(wd.join("out.o"), b"binary").expect("write");
+
+        let cache_dir = dir.path().join("cache");
+        std::fs::create_dir_all(&cache_dir).expect("mkdir");
+        let cm = ThreadSafeCacheManager::new(cache_dir.clone());
+
+        // First successful record.
+        let meta = make_cache_meta(vec!["in.c".into()], vec!["out.o".into()]);
+        cm.record_completion("rec", "step_one", &meta, wd).expect("record 1");
+        cm.flush_all().expect("flush 1");
+
+        // Now remove the input and try again — must err and leave prior entry intact.
+        std::fs::remove_file(wd.join("in.c")).expect("rm");
+        let err = cm.record_completion("rec", "step_one", &meta, wd).unwrap_err();
+        assert!(matches!(err, RecordError::MissingFile(_)));
+        cm.flush_all().expect("flush 2");
+
+        let loaded = store::RecipeCache::load(&cache_dir, "rec").expect("load");
+        let entry = loaded.steps.get("step_one").expect("prior entry survives");
+        assert_eq!(entry.command_hash, 0xdeadbeef);
     }
 }

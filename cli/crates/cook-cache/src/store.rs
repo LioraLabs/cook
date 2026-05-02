@@ -2,15 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const CACHE_VERSION: u32 = 2;
+pub const CACHE_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecipeCache {
     pub version: u32,
     pub globs: BTreeMap<String, BTreeSet<String>>,
-    pub secondary_inputs_hash: u64,
-    pub env_hash: u64,
     pub steps: BTreeMap<String, StepEntry>,
+    // REMOVED: secondary_inputs_hash (SHI-145) — dead code path.
+    // REMOVED: env_hash (SHI-142) — folded into per-step env_contribution.
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -18,6 +18,8 @@ pub struct StepEntry {
     pub inputs: Vec<FileRecord>,
     pub outputs: Vec<FileRecord>,
     pub command_hash: u64,
+    pub context_hash: u64,        // NEW (SHI-141)
+    pub env_contribution: u64,    // NEW (SHI-142)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -38,8 +40,6 @@ impl RecipeCache {
         Self {
             version: CACHE_VERSION,
             globs: BTreeMap::new(),
-            secondary_inputs_hash: 0,
-            env_hash: 0,
             steps: BTreeMap::new(),
         }
     }
@@ -72,8 +72,6 @@ mod tests {
 
     fn make_populated_cache() -> RecipeCache {
         let mut cache = RecipeCache::new();
-        cache.secondary_inputs_hash = 0xdeadbeef;
-        cache.env_hash = 0xcafebabe;
 
         let mut globs = BTreeMap::new();
         globs.insert(
@@ -101,6 +99,8 @@ mod tests {
                 hash: 0xabcdef1234567890,
             }],
             command_hash: 0x0102030405060708,
+            context_hash: 0x1111111111111111,
+            env_contribution: 0x2222222222222222,
         };
         cache.steps.insert("compile_main".to_string(), step);
 
@@ -108,37 +108,33 @@ mod tests {
     }
 
     #[test]
-    fn test_recipe_cache_round_trip() {
+    fn version_is_three() {
+        assert_eq!(CACHE_VERSION, 3);
+    }
+
+    #[test]
+    fn round_trip_with_new_fields() {
         let original = make_populated_cache();
-        let bytes = bincode::serialize(&original).expect("serialization failed");
-        let restored: RecipeCache = bincode::deserialize(&bytes).expect("deserialization failed");
+        let bytes = bincode::serialize(&original).expect("serialize");
+        let restored: RecipeCache = bincode::deserialize(&bytes).expect("deserialize");
         assert_eq!(original, restored);
         assert_eq!(restored.version, CACHE_VERSION);
-        assert_eq!(restored.secondary_inputs_hash, 0xdeadbeef);
-        assert_eq!(restored.env_hash, 0xcafebabe);
-        assert_eq!(restored.globs.len(), 1);
-        assert_eq!(restored.steps.len(), 1);
         let step = restored.steps.get("compile_main").unwrap();
-        assert_eq!(step.inputs.len(), 2);
-        assert!(!step.outputs.is_empty());
         assert_eq!(step.command_hash, 0x0102030405060708);
+        assert_eq!(step.context_hash, 0x1111111111111111);
+        assert_eq!(step.env_contribution, 0x2222222222222222);
     }
 
     #[test]
-    fn test_empty_cache_round_trip() {
+    fn empty_cache_round_trip() {
         let original = RecipeCache::new();
-        let bytes = bincode::serialize(&original).expect("serialization failed");
-        let restored: RecipeCache = bincode::deserialize(&bytes).expect("deserialization failed");
+        let bytes = bincode::serialize(&original).expect("serialize");
+        let restored: RecipeCache = bincode::deserialize(&bytes).expect("deserialize");
         assert_eq!(original, restored);
-        assert_eq!(restored.version, CACHE_VERSION);
-        assert_eq!(restored.secondary_inputs_hash, 0);
-        assert_eq!(restored.env_hash, 0);
-        assert!(restored.globs.is_empty());
-        assert!(restored.steps.is_empty());
     }
 
     #[test]
-    fn test_plate_step_no_output() {
+    fn plate_step_no_output() {
         let step = StepEntry {
             inputs: vec![FileRecord {
                 path: "src/main.c".to_string(),
@@ -147,55 +143,47 @@ mod tests {
             }],
             outputs: vec![],
             command_hash: 0xdeadbeefcafe,
+            context_hash: 0xc0c0c0c0,
+            env_contribution: 0xe0e0e0e0,
         };
-        let bytes = bincode::serialize(&step).expect("serialization failed");
-        let restored: StepEntry = bincode::deserialize(&bytes).expect("deserialization failed");
+        let bytes = bincode::serialize(&step).expect("serialize");
+        let restored: StepEntry = bincode::deserialize(&bytes).expect("deserialize");
         assert_eq!(step, restored);
-        assert!(restored.outputs.is_empty());
-        assert_eq!(restored.inputs.len(), 1);
     }
 
     #[test]
-    fn test_save_and_load() {
-        let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let cache_dir = dir.path();
+    fn save_and_load() {
+        let dir = tempfile::tempdir().expect("tempdir");
         let original = make_populated_cache();
-        original
-            .save(cache_dir, "my_recipe")
-            .expect("save failed");
-        let loaded = RecipeCache::load(cache_dir, "my_recipe").expect("load returned None");
+        original.save(dir.path(), "my_recipe").expect("save");
+        let loaded = RecipeCache::load(dir.path(), "my_recipe").expect("load");
         assert_eq!(original, loaded);
     }
 
     #[test]
-    fn test_load_missing_returns_none() {
-        let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let result = RecipeCache::load(dir.path(), "nonexistent_recipe");
-        assert!(result.is_none());
+    fn load_missing_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(RecipeCache::load(dir.path(), "nonexistent").is_none());
     }
 
     #[test]
-    fn test_load_corrupted_returns_none() {
-        let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let cache_dir = dir.path();
-        let path = cache_dir.join("bad_recipe.bin");
-        std::fs::write(&path, b"this is not valid bincode data at all!!!")
-            .expect("write failed");
-        let result = RecipeCache::load(cache_dir, "bad_recipe");
-        assert!(result.is_none());
+    fn load_corrupted_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("bad.bin"), b"not bincode").expect("write");
+        assert!(RecipeCache::load(dir.path(), "bad").is_none());
     }
 
     #[test]
-    fn test_load_wrong_version_returns_none() {
-        let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let cache_dir = dir.path();
-        // Construct a cache with a different version number
-        let mut cache = make_populated_cache();
-        cache.version = CACHE_VERSION + 1;
-        let bytes = bincode::serialize(&cache).expect("serialization failed");
-        let path = cache_dir.join("versioned_recipe.bin");
-        std::fs::write(&path, &bytes).expect("write failed");
-        let result = RecipeCache::load(cache_dir, "versioned_recipe");
-        assert!(result.is_none());
+    fn load_v2_returns_none_via_version_check() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Hand-craft a "v2" cache: just write a struct with version=2.
+        // We use a minimal serde value that bincode would accept as the v3 layout
+        // but with version=2 — the version check rejects it before any field
+        // mismatch matters.
+        let mut wrong_version = RecipeCache::new();
+        wrong_version.version = 2;
+        let bytes = bincode::serialize(&wrong_version).expect("serialize");
+        std::fs::write(dir.path().join("old.bin"), &bytes).expect("write");
+        assert!(RecipeCache::load(dir.path(), "old").is_none());
     }
 }
