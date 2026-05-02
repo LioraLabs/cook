@@ -1,13 +1,15 @@
-use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use mlua::prelude::*;
 
 use crate::SharedCaptureState;
 
-/// Shared storage for terminal outputs of registered recipes.
-pub type SharedTerminalOutputs = Rc<RefCell<BTreeMap<String, Vec<String>>>>;
+/// Shared storage for terminal outputs of registered recipes, keyed by
+/// **fully-qualified** recipe name (e.g., `"lib.lib_build"` or just
+/// `"build"` for root-Cookfile recipes). Hoisted to workspace scope so all
+/// Registries write to and read from the same map.
+pub type SharedTerminalOutputs = Arc<Mutex<BTreeMap<String, Vec<String>>>>;
 
 /// Register `cook.dep_output(name)` and `cook.dep_output_list(name)` on the cook table.
 ///
@@ -28,7 +30,7 @@ pub fn register_dep_output_api(
     let to = terminal_outputs.clone();
     let cs = capture_state.clone();
     let dep_output_fn = lua.create_function(move |_, name: String| {
-        let store = to.borrow();
+        let store = to.lock().expect("terminal_outputs mutex poisoned");
         let outputs = store.get(&name).ok_or_else(|| {
             mlua::Error::RuntimeError(format!(
                 "recipe '{}' has no terminal output (not registered or has no cook steps)",
@@ -51,7 +53,7 @@ pub fn register_dep_output_api(
     let to2 = terminal_outputs.clone();
     let cs2 = capture_state.clone();
     let dep_output_list_fn = lua.create_function(move |lua, name: String| {
-        let store = to2.borrow();
+        let store = to2.lock().expect("terminal_outputs mutex poisoned");
         let outputs = store.get(&name).ok_or_else(|| {
             mlua::Error::RuntimeError(format!(
                 "recipe '{}' has no terminal output (not registered or has no cook steps)",
@@ -80,11 +82,13 @@ pub fn register_dep_output_api(
 mod tests {
     use super::*;
     use crate::CaptureState;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     fn setup_lua() -> (Lua, SharedTerminalOutputs, SharedCaptureState) {
         let lua = Lua::new();
         lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
-        let terminal_outputs: SharedTerminalOutputs = Rc::new(RefCell::new(BTreeMap::new()));
+        let terminal_outputs: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
         let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
         (lua, terminal_outputs, capture_state)
     }
@@ -92,7 +96,7 @@ mod tests {
     #[test]
     fn test_dep_output_returns_space_joined() {
         let (lua, outputs, cs) = setup_lua();
-        outputs.borrow_mut().insert(
+        outputs.lock().unwrap().insert(
             "protos".into(),
             vec!["gen/foo.pb.o".into(), "gen/bar.pb.o".into()],
         );
@@ -108,7 +112,7 @@ mod tests {
     fn test_dep_output_list_returns_table() {
         let (lua, outputs, cs) = setup_lua();
         outputs
-            .borrow_mut()
+            .lock().unwrap()
             .insert("libmath".into(), vec!["build/lib/libmath.a".into()]);
         register_dep_output_api(&lua, outputs, cs).unwrap();
         let result: Vec<String> = lua
@@ -132,7 +136,7 @@ mod tests {
     fn test_dep_output_accumulates_dep_ref() {
         let (lua, outputs, cs) = setup_lua();
         outputs
-            .borrow_mut()
+            .lock().unwrap()
             .insert("libmath".into(), vec!["libmath.a".into()]);
         register_dep_output_api(&lua, outputs, cs.clone()).unwrap();
         lua.load(r#"cook.dep_output("libmath")"#).exec().unwrap();
@@ -148,7 +152,7 @@ mod tests {
     fn test_dep_output_deduplicates_refs() {
         let (lua, outputs, cs) = setup_lua();
         outputs
-            .borrow_mut()
+            .lock().unwrap()
             .insert("libmath".into(), vec!["libmath.a".into()]);
         register_dep_output_api(&lua, outputs, cs.clone()).unwrap();
         lua.load(r#"

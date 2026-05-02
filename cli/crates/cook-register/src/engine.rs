@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use cook_contracts::RecipeUnits;
 
@@ -28,7 +28,7 @@ impl Registry {
             working_dir,
             env_vars: Rc::new(RefCell::new(env_vars)),
             export_store: Rc::new(RefCell::new(BTreeMap::new())),
-            terminal_outputs: Rc::new(RefCell::new(BTreeMap::new())),
+            terminal_outputs: Arc::new(Mutex::new(BTreeMap::new())),
             selected_config: None,
         }
     }
@@ -155,7 +155,8 @@ impl Registry {
 
         // Store terminal outputs so downstream recipes can call cook.dep_output()
         self.terminal_outputs
-            .borrow_mut()
+            .lock()
+            .expect("terminal_outputs mutex poisoned")
             .insert(recipe_name.to_string(), terminal_outputs_list.clone());
 
         // Convert HashMap env_vars to BTreeMap for RecipeUnits

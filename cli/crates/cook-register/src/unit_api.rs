@@ -97,7 +97,7 @@ pub fn register_unit_api(
         // drive _cook_in iteration / Lua-visible inputs).
         let dep_input_paths: Vec<String> = {
             let state = cs.borrow();
-            let store = to.borrow();
+            let store = to.lock().expect("terminal_outputs mutex poisoned");
             state
                 .step_group_dep_refs
                 .iter()
@@ -313,11 +313,12 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn make_lua_with_unit_api(recipe_name: &str) -> (Lua, SharedCaptureState) {
+        use std::sync::{Arc, Mutex};
         let lua = Lua::new();
         lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
         let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
         let terminal_outputs: SharedTerminalOutputs =
-            Rc::new(RefCell::new(BTreeMap::new()));
+            Arc::new(Mutex::new(BTreeMap::new()));
         register_unit_api(&lua, capture_state.clone(), recipe_name, terminal_outputs).unwrap();
         (lua, capture_state)
     }
@@ -660,7 +661,7 @@ mod tests {
 
         let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
         let terminal_outputs: SharedTerminalOutputs =
-            Rc::new(RefCell::new(BTreeMap::new()));
+            std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
         register_unit_api(&lua, capture_state.clone(), "my_recipe", terminal_outputs).unwrap();
 
         lua.set_app_data(fake_cache_ctx());
@@ -698,12 +699,12 @@ mod tests {
         lua.globals().set("cook", cook_table).unwrap();
 
         let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
-        let terminal_outputs: SharedTerminalOutputs = Rc::new(RefCell::new(BTreeMap::new()));
+        let terminal_outputs: SharedTerminalOutputs = std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
         terminal_outputs
-            .borrow_mut()
+            .lock().unwrap()
             .insert("greet".into(), vec!["build/greet.o".into()]);
         terminal_outputs
-            .borrow_mut()
+            .lock().unwrap()
             .insert("util".into(), vec!["build/util.o".into()]);
 
         register_unit_api(
