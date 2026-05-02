@@ -1,0 +1,3 @@
+import bad //../sibling
+recipe "x"
+    echo ok
