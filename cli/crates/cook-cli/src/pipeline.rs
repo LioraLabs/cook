@@ -446,7 +446,8 @@ fn build_workspace_registries(
     // Root has empty prefix (already the default; explicit for clarity).
     let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env)
         .with_selected_config(config.map(|s| s.to_string()))
-        .with_shared_terminal_outputs(shared_outputs.clone());
+        .with_shared_terminal_outputs(shared_outputs.clone())
+        .with_qualified_prefix(String::new());
     registries.insert(
         String::new(),
         cook_engine::RegistryEntry {
@@ -466,7 +467,8 @@ fn build_workspace_registries(
         let alias_dirs = workspace.alias_dirs_for(&loaded.dir);
         let registry = cook_register::Registry::new(loaded.dir.clone(), import_env)
             .with_selected_config(config.map(|s| s.to_string()))
-            .with_shared_terminal_outputs(shared_outputs.clone());
+            .with_shared_terminal_outputs(shared_outputs.clone())
+            .with_qualified_prefix(prefix.clone());
         registries.insert(
             prefix,
             cook_engine::RegistryEntry {

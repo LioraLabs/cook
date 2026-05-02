@@ -484,3 +484,77 @@ fn test_compile_chore_and_register_integration() {
         );
     }
 }
+
+// -----------------------------------------------------------------------
+// qualified_prefix tests (Phase 6)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_register_recipe_inserts_with_qualified_prefix() {
+    use crate::dep_output_api::SharedTerminalOutputs;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    let tmp = tempfile::TempDir::new().unwrap();
+
+    let shared: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.step_group(function()
+        cook.add_unit({ command = "echo foo", output = "build/foo.o" })
+    end)
+end)
+"#;
+    let registry = Registry::new(tmp.path().to_path_buf(), HashMap::new())
+        .with_shared_terminal_outputs(shared.clone())
+        .with_qualified_prefix("lib".to_string());
+
+    registry.register_recipe(lua_src, "build", None).unwrap();
+
+    let map = shared.lock().unwrap();
+    assert!(
+        map.contains_key("lib.build"),
+        "expected 'lib.build', got: {:?}",
+        map.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !map.contains_key("build"),
+        "should NOT contain bare 'build', got: {:?}",
+        map.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_register_recipe_empty_prefix_uses_bare_name() {
+    use crate::dep_output_api::SharedTerminalOutputs;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    let tmp = tempfile::TempDir::new().unwrap();
+
+    let shared: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.step_group(function()
+        cook.add_unit({ command = "echo foo", output = "build/foo.o" })
+    end)
+end)
+"#;
+    let registry = Registry::new(tmp.path().to_path_buf(), HashMap::new())
+        .with_shared_terminal_outputs(shared.clone())
+        .with_qualified_prefix(String::new());
+
+    registry.register_recipe(lua_src, "build", None).unwrap();
+
+    let map = shared.lock().unwrap();
+    assert!(
+        map.contains_key("build"),
+        "expected bare 'build' for root registry, got: {:?}",
+        map.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !map.contains_key(".build"),
+        "should NOT contain '.build' (dot-prefixed empty prefix), got: {:?}",
+        map.keys().collect::<Vec<_>>()
+    );
+}

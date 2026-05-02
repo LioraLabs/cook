@@ -20,6 +20,7 @@ pub struct Registry {
     export_store: SharedExportStore,
     terminal_outputs: SharedTerminalOutputs,
     selected_config: Option<String>,
+    qualified_prefix: String,
 }
 
 impl Registry {
@@ -30,6 +31,7 @@ impl Registry {
             export_store: Rc::new(RefCell::new(BTreeMap::new())),
             terminal_outputs: Arc::new(Mutex::new(BTreeMap::new())),
             selected_config: None,
+            qualified_prefix: String::new(),
         }
     }
 
@@ -40,6 +42,11 @@ impl Registry {
 
     pub fn with_shared_terminal_outputs(mut self, shared: SharedTerminalOutputs) -> Self {
         self.terminal_outputs = shared;
+        self
+    }
+
+    pub fn with_qualified_prefix(mut self, prefix: String) -> Self {
+        self.qualified_prefix = prefix;
         self
     }
 
@@ -158,11 +165,18 @@ impl Registry {
 
         let terminal_outputs_list = cap.last_cook_step_outputs.clone();
 
-        // Store terminal outputs so downstream recipes can call cook.dep_output()
+        // Store terminal outputs so downstream recipes can call cook.dep_output().
+        // Key is the fully-qualified name so cross-Cookfile lookups succeed
+        // (e.g. "lib.lib_build" for a recipe in the "lib" Registry).
+        let qualified_name = if self.qualified_prefix.is_empty() {
+            recipe_name.to_string()
+        } else {
+            format!("{}.{}", self.qualified_prefix, recipe_name)
+        };
         self.terminal_outputs
             .lock()
             .expect("terminal_outputs mutex poisoned")
-            .insert(recipe_name.to_string(), terminal_outputs_list.clone());
+            .insert(qualified_name, terminal_outputs_list.clone());
 
         // Convert HashMap env_vars to BTreeMap for RecipeUnits
         let env_btree: BTreeMap<String, String> = self.env_vars.borrow().iter()
