@@ -2,8 +2,7 @@
 # Demonstrates: sigil resolution, cross-Cookfile dep body refs, and
 # subdir invocation with an explicit .cookroot.
 #
-# core is imported via the // sigil (workspace-root-anchored).
-# web is imported via a tree-relative path.
+# core & web are imported via a tree-relative path.
 # The top recipe links them together via cross-Cookfile body references.
 
 import core //core/lib
@@ -12,7 +11,7 @@ import web ./apps/web
 # top links the core library object with the web object file.
 # {core.core_lib} is a cross-Cookfile body ref — lowers to
 # cook.dep_output("core.core_lib") after Phase 7 workspace codegen.
-recipe top: core.core_lib web.web_obj
+recipe top
     cook "build/top" using {
         mkdir -p build
         gcc -o {out} {core.core_lib} {web.web_obj}
