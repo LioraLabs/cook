@@ -434,11 +434,19 @@ fn build_workspace_registries(
     let dotenv_vars = load_env(&workspace.root.dir);
     let root_env = resolve_env(config, dotenv_vars, cli_sets)?;
 
+    // One shared terminal-outputs map for the entire workspace invocation.
+    // All Registries write to and read from the same map, keyed by
+    // fully-qualified recipe name (e.g. "lib.lib_build" or "build").
+    let shared_outputs: cook_register::SharedTerminalOutputs =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+
     let mut registries: BTreeMap<String, cook_engine::RegistryEntry> = BTreeMap::new();
 
     let root_alias_dirs = workspace.alias_dirs_for(&workspace.root.dir);
+    // Root has empty prefix (already the default; explicit for clarity).
     let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env)
-        .with_selected_config(config.map(|s| s.to_string()));
+        .with_selected_config(config.map(|s| s.to_string()))
+        .with_shared_terminal_outputs(shared_outputs.clone());
     registries.insert(
         String::new(),
         cook_engine::RegistryEntry {
@@ -457,7 +465,8 @@ fn build_workspace_registries(
         )?;
         let alias_dirs = workspace.alias_dirs_for(&loaded.dir);
         let registry = cook_register::Registry::new(loaded.dir.clone(), import_env)
-            .with_selected_config(config.map(|s| s.to_string()));
+            .with_selected_config(config.map(|s| s.to_string()))
+            .with_shared_terminal_outputs(shared_outputs.clone());
         registries.insert(
             prefix,
             cook_engine::RegistryEntry {

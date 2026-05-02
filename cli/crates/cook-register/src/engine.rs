@@ -38,6 +38,11 @@ impl Registry {
         self
     }
 
+    pub fn with_shared_terminal_outputs(mut self, shared: SharedTerminalOutputs) -> Self {
+        self.terminal_outputs = shared;
+        self
+    }
+
     pub fn working_dir(&self) -> &PathBuf {
         &self.working_dir
     }
