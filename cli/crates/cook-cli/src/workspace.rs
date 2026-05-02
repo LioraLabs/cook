@@ -791,4 +791,28 @@ mod tests {
             .count();
         assert_eq!(shared_count, 1, "shared/lib must dedup across diamond imports");
     }
+
+    #[test]
+    fn test_cycle_via_sigil_rejected() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("a")).unwrap();
+        fs::create_dir_all(dir.path().join("b")).unwrap();
+        fs::write(dir.path().join("a/Cookfile"), "import b //b\nrecipe \"x\"\n").unwrap();
+        fs::write(dir.path().join("b/Cookfile"), "import a //a\nrecipe \"y\"\n").unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import a ./a\nimport b ./b\nrecipe \"top\"\n",
+        ).unwrap();
+        fs::write(dir.path().join(".cookroot"), "").unwrap();
+
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let result = Workspace::load(&entry, &root, &[]);
+        assert!(result.is_err(), "expected cycle detection to reject");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.to_lowercase().contains("cycle") || msg.to_lowercase().contains("circular"),
+            "expected cycle diagnostic, got: {msg}"
+        );
+    }
 }
