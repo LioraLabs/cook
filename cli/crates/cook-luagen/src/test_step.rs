@@ -4,7 +4,8 @@ use cook_lang::ast::*;
 
 use crate::plate_step::CodegenError;
 use crate::template::{
-    detect_plate_test_mode, expand_plate_test_body, validate_plate_test_placeholders, PlateTestMode,
+    detect_plate_test_mode, expand_plate_test_body, validate_plate_test_placeholders,
+    ConsultedEnv, PlateTestMode,
 };
 
 pub(crate) fn generate_test_step(
@@ -41,7 +42,7 @@ pub(crate) fn generate_test_step(
     match (&test_step.body, mode) {
         (Body::ShellBlock(lines), PlateTestMode::OneToOne) => {
             let cmd_text = build_shell_block_command(lines);
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_test_in", "{}");
+            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_test_in", "{}", &mut ConsultedEnv::new());
             out.push_str(&format!(
                 "    for _, _test_in in ipairs({}) do\n        cook.add_test({{command = {}, timeout = {}, should_fail = {}}})\n    end\n",
                 source_expr, cmd_expr, timeout, should_fail
@@ -49,7 +50,7 @@ pub(crate) fn generate_test_step(
         }
         (Body::ShellBlock(lines), PlateTestMode::ManyToOne) => {
             let cmd_text = build_shell_block_command(lines);
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &source_expr);
+            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &source_expr, &mut ConsultedEnv::new());
             out.push_str(&format!(
                 "    cook.add_test({{command = {}, timeout = {}, should_fail = {}}})\n",
                 cmd_expr, timeout, should_fail
@@ -57,7 +58,7 @@ pub(crate) fn generate_test_step(
         }
         (Body::ShellBlock(lines), PlateTestMode::OneShot) => {
             let cmd_text = build_shell_block_command(lines);
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", "{}");
+            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", "{}", &mut ConsultedEnv::new());
             out.push_str(&format!(
                 "    cook.add_test({{command = {}, timeout = {}, should_fail = {}}})\n",
                 cmd_expr, timeout, should_fail

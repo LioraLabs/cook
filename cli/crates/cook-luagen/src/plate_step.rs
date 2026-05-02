@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use cook_lang::ast::*;
 
 use crate::template::{
-    detect_plate_test_mode, expand_plate_test_body, validate_plate_test_placeholders, PlateTestMode,
+    detect_plate_test_mode, expand_plate_test_body, validate_plate_test_placeholders,
+    ConsultedEnv, PlateTestMode,
 };
 
 pub(crate) fn generate_plate_step(
@@ -39,7 +40,7 @@ pub(crate) fn generate_plate_step(
         // (1) Shell, OneToOne — loop over source, one unit per item.
         (Body::ShellBlock(lines), PlateTestMode::OneToOne) => {
             let cmd_text = build_shell_block_command(lines);
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_plate_in", "{}");
+            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_plate_in", "{}", &mut ConsultedEnv::new());
             out.push_str(&format!(
                 "    for _, _plate_in in ipairs({}) do\n        cook.add_unit({{command = {}, cache = false}})\n    end\n",
                 source_expr, cmd_expr
@@ -48,7 +49,7 @@ pub(crate) fn generate_plate_step(
         // (2) Shell, ManyToOne — one unit, source visible as {all}.
         (Body::ShellBlock(lines), PlateTestMode::ManyToOne) => {
             let cmd_text = build_shell_block_command(lines);
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &source_expr);
+            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &source_expr, &mut ConsultedEnv::new());
             out.push_str(&format!(
                 "    cook.add_unit({{command = {}, cache = false}})\n",
                 cmd_expr
@@ -57,7 +58,7 @@ pub(crate) fn generate_plate_step(
         // (3) Shell, OneShot — one unit, no source.
         (Body::ShellBlock(lines), PlateTestMode::OneShot) => {
             let cmd_text = build_shell_block_command(lines);
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", "{}");
+            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", "{}", &mut ConsultedEnv::new());
             out.push_str(&format!(
                 "    cook.add_unit({{command = {}, cache = false}})\n",
                 cmd_expr

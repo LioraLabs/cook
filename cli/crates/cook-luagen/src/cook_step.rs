@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use cook_lang::ast::*;
 
 use crate::template::{
-    analyze_output_pattern, expand_template_to_lua_with_deps, OutputPatternKind,
+    analyze_output_pattern, expand_template_to_lua_with_deps, ConsultedEnv, OutputPatternKind,
 };
 
 /// Modes for cook step code generation.
@@ -179,7 +179,7 @@ pub(crate) fn generate_cook_step(
             let out_expr = match &pattern_kind {
                 OutputPatternKind::DepDriven { lua_expr, .. } => lua_expr.clone(),
                 OutputPatternKind::OwnInputAccessor => {
-                    crate::template::expand_output_pattern(&cook_step.outputs[0])
+                    crate::template::expand_output_pattern(&cook_step.outputs[0], &mut ConsultedEnv::new())
                 }
                 OutputPatternKind::Literal => {
                     format!("\"{}\"", crate::lua_string::escape_lua_string(&cook_step.outputs[0]))
@@ -227,7 +227,7 @@ pub(crate) fn generate_cook_step(
             let out_expr = match &pattern_kind {
                 OutputPatternKind::DepDriven { lua_expr, .. } => lua_expr.clone(),
                 OutputPatternKind::OwnInputAccessor => {
-                    crate::template::expand_output_pattern(&cook_step.outputs[0])
+                    crate::template::expand_output_pattern(&cook_step.outputs[0], &mut ConsultedEnv::new())
                 }
                 OutputPatternKind::Literal => {
                     format!("\"{}\"", crate::lua_string::escape_lua_string(&cook_step.outputs[0]))
@@ -283,7 +283,7 @@ pub(crate) fn generate_cook_step(
             // Compute per-iteration outputs for each pattern.
             out.push_str("        local _cook_outs = {\n");
             for pat in &cook_step.outputs {
-                let expr = crate::template::expand_output_pattern(pat);
+                let expr = crate::template::expand_output_pattern(pat, &mut ConsultedEnv::new());
                 out.push_str(&format!("            {},\n", expr));
             }
             out.push_str("        };\n");

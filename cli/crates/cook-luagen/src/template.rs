@@ -5,6 +5,39 @@ use cook_lang::ast::Body;
 use crate::cook_step::CookMode;
 use crate::lua_string::escape_lua_string;
 
+/// Accumulator for env keys that fall through to `cook.env[KEY]` during
+/// template expansion. Populated by every expansion path that reaches the
+/// "fallback to env" branch. The set is sorted (BTreeSet) so the resulting
+/// emitted Lua table is deterministic.
+#[derive(Debug, Default, Clone)]
+pub struct ConsultedEnv {
+    pub keys: BTreeSet<String>,
+}
+
+impl ConsultedEnv {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record(&mut self, key: &str) {
+        self.keys.insert(key.to_string());
+    }
+
+    /// Render as a Lua table literal: `{"A", "B", "C"}`.
+    /// Returns `"{}"` for an empty set.
+    pub fn to_lua_table(&self) -> String {
+        if self.keys.is_empty() {
+            return "{}".to_string();
+        }
+        let parts: Vec<String> = self
+            .keys
+            .iter()
+            .map(|k| format!("\"{}\"", escape_lua_string(k)))
+            .collect();
+        format!("{{{}}}", parts.join(", "))
+    }
+}
+
 /// Known accessor suffixes for dep-driven iteration patterns.
 const DEP_ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 
@@ -46,7 +79,10 @@ pub(crate) fn output_pattern_kind_with_recipes(
         return OutputPatternKind::OwnInputAccessor;
     }
     if let Some((dep, accessor)) = first_dep_accessor(pattern, recipe_names) {
-        let lua_expr = expand_output_pattern_with_recipe(&dep, &accessor, pattern, recipe_names);
+        // Use a throwaway ConsultedEnv for the pattern-kind analysis step;
+        // the real accumulation happens during generate_cook_step.
+        let mut _discard = ConsultedEnv::new();
+        let lua_expr = expand_output_pattern_with_recipe(&dep, &accessor, pattern, recipe_names, &mut _discard);
         return OutputPatternKind::DepDriven { dep_name: dep, accessor, lua_expr };
     }
     OutputPatternKind::Literal
@@ -90,14 +126,14 @@ pub(crate) fn analyze_output_pattern(
 ///   {in}                                           → _cook_in
 ///   {dep.stem} / {dep.name} / ...                 → path.ACCESSOR(_cook_in)  (dep-driven, normalized)
 ///   everything else                               → cook.env["TOKEN"]
-pub(crate) fn expand_output_pattern(pattern: &str) -> String {
+pub(crate) fn expand_output_pattern(pattern: &str, out: &mut ConsultedEnv) -> String {
     // For OwnInputAccessor patterns and normalised dep patterns, the {in.X} and
     // bare {in} placeholders map to the loop variable.  Unknown tokens fall
     // back to cook.env.
-    expand_output_pattern_inner(pattern)
+    expand_output_pattern_inner(pattern, out)
 }
 
-fn expand_output_pattern_inner(pattern: &str) -> String {
+fn expand_output_pattern_inner(pattern: &str, out: &mut ConsultedEnv) -> String {
     let mut parts: Vec<String> = Vec::new();
     let mut remaining = pattern;
 
@@ -115,7 +151,7 @@ fn expand_output_pattern_inner(pattern: &str) -> String {
                 let after_brace = &remaining[brace_start..];
                 if let Some(close) = after_brace.find('}') {
                     let inner = &after_brace[1..close];
-                    let lua = expand_output_token(inner);
+                    let lua = expand_output_token(inner, out);
                     parts.push(lua);
                     remaining = &remaining[brace_start + close + 1..];
                 } else {
@@ -136,7 +172,7 @@ fn expand_output_pattern_inner(pattern: &str) -> String {
 }
 
 /// Expand a single brace-token inside an output pattern.
-fn expand_output_token(inner: &str) -> String {
+fn expand_output_token(inner: &str, out: &mut ConsultedEnv) -> String {
     // {in} → _cook_in
     if inner == "in" {
         return "_cook_in".to_string();
@@ -165,6 +201,7 @@ fn expand_output_token(inner: &str) -> String {
         return format!("path.{}(_cook_in)", inner);
     }
     // Anything else: cook.env fallback
+    out.record(inner);
     format!("cook.env[\"{}\"]", escape_lua_string(inner))
 }
 
@@ -175,6 +212,7 @@ fn expand_output_pattern_with_recipe(
     _accessor: &str,
     pattern: &str,
     _recipe_names: &BTreeSet<String>,
+    out: &mut ConsultedEnv,
 ) -> String {
     // Normalise: replace every `{dep.X}` with `{X}` so expand_output_pattern_inner handles it.
     // We look for all `{dep.ACCESSOR}` tokens and replace them.
@@ -185,7 +223,7 @@ fn expand_output_pattern_with_recipe(
             &format!("{{{}}}", acc),
         );
     }
-    expand_output_pattern_inner(&normalized)
+    expand_output_pattern_inner(&normalized, out)
 }
 
 /// Expand a shell command template into a Lua expression (no dep-ref awareness).
@@ -193,7 +231,8 @@ fn expand_output_pattern_with_recipe(
 /// Used in tests to verify individual placeholder expansion.
 #[allow(dead_code)]
 pub(crate) fn expand_template_to_lua(template: &str) -> String {
-    expand_with_deps_fallback(template, &BTreeSet::new())
+    let mut _discard = ConsultedEnv::new();
+    expand_with_deps_fallback(template, &BTreeSet::new(), &mut _discard)
 }
 
 /// Expand a shell command template, checking recipe names before falling back to cook.env.
@@ -201,7 +240,17 @@ pub(crate) fn expand_template_to_lua_with_deps(
     template: &str,
     recipe_names: &BTreeSet<String>,
 ) -> String {
-    expand_with_deps_fallback(template, recipe_names)
+    let mut _discard = ConsultedEnv::new();
+    expand_with_deps_fallback(template, recipe_names, &mut _discard)
+}
+
+/// Expand a shell command template, recording consulted env keys into `out`.
+pub(crate) fn expand_template_to_lua_with_deps_tracked(
+    template: &str,
+    recipe_names: &BTreeSet<String>,
+    out: &mut ConsultedEnv,
+) -> String {
+    expand_with_deps_fallback(template, recipe_names, out)
 }
 
 /// The core expansion engine for shell-text bodies (using { ... }, plate, test, bare shell).
@@ -220,7 +269,11 @@ pub(crate) fn expand_template_to_lua_with_deps(
 /// | `{NAME}`       | `cook.dep_output("NAME")` if NAME is a recipe, else `cook.env["NAME"]` |
 ///
 /// Bare `{stem}`, `{name}`, `{ext}`, `{dir}` fall through to cook.env (no special treatment).
-fn expand_with_deps_fallback(template: &str, recipe_names: &BTreeSet<String>) -> String {
+fn expand_with_deps_fallback(
+    template: &str,
+    recipe_names: &BTreeSet<String>,
+    out: &mut ConsultedEnv,
+) -> String {
     let mut parts: Vec<String> = Vec::new();
     let mut remaining = template;
 
@@ -243,7 +296,7 @@ fn expand_with_deps_fallback(template: &str, recipe_names: &BTreeSet<String>) ->
                 let after_brace = &remaining[brace_start..];
                 if let Some(close) = after_brace.find('}') {
                     let inner = &after_brace[1..close];
-                    let lua = expand_body_token(inner, recipe_names);
+                    let lua = expand_body_token(inner, recipe_names, out);
                     parts.push(lua);
                     remaining = &remaining[brace_start + close + 1..];
                 } else {
@@ -583,6 +636,7 @@ pub(crate) fn expand_plate_test_body(
     recipe_names: &BTreeSet<String>,
     iter_var: &str,
     all_var: &str,
+    out: &mut ConsultedEnv,
 ) -> String {
     // Implementation parallels `expand_with_deps_fallback`, but maps:
     //   {in}          → iter_var
@@ -618,6 +672,7 @@ pub(crate) fn expand_plate_test_body(
                     } else if recipe_names.contains(inner) {
                         format!("cook.dep_output(\"{}\")", escape_lua_string(inner))
                     } else {
+                        out.record(inner);
                         format!("cook.env[\"{}\"]", escape_lua_string(inner))
                     };
                     parts.push(lua);
@@ -644,7 +699,7 @@ pub(crate) fn expand_plate_test_body(
 // ─── existing single-token expansion (cook steps, not plate/test) ────────────
 
 /// Expand a single brace-token inside a shell-text body.
-fn expand_body_token(inner: &str, recipe_names: &BTreeSet<String>) -> String {
+fn expand_body_token(inner: &str, recipe_names: &BTreeSet<String>, out: &mut ConsultedEnv) -> String {
     // {in} → _cook_in
     if inner == "in" {
         return "_cook_in".to_string();
@@ -696,6 +751,7 @@ fn expand_body_token(inner: &str, recipe_names: &BTreeSet<String>) -> String {
         return format!("cook.dep_output(\"{}\")", escape_lua_string(inner));
     }
     // Fallback: cook.env["TOKEN"]
+    out.record(inner);
     format!("cook.env[\"{}\"]", escape_lua_string(inner))
 }
 
@@ -861,4 +917,41 @@ fn is_iterating(m: &CookMode) -> bool {
 
 fn is_path_accessor(s: &str) -> bool {
     matches!(s, "stem" | "name" | "ext" | "dir")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn consulted_env_to_lua_table_empty() {
+        let c = ConsultedEnv::new();
+        assert_eq!(c.to_lua_table(), "{}");
+    }
+
+    #[test]
+    fn consulted_env_to_lua_table_sorted() {
+        let mut c = ConsultedEnv::new();
+        c.record("Z");
+        c.record("A");
+        c.record("M");
+        assert_eq!(c.to_lua_table(), "{\"A\", \"M\", \"Z\"}");
+    }
+
+    #[test]
+    fn consulted_env_record_dedups() {
+        let mut c = ConsultedEnv::new();
+        c.record("CFLAGS");
+        c.record("CFLAGS");
+        c.record("CFLAGS");
+        assert_eq!(c.keys.len(), 1);
+    }
+
+    #[test]
+    fn consulted_env_to_lua_table_escapes_quotes() {
+        let mut c = ConsultedEnv::new();
+        c.record("KEY\"WITH\"QUOTES");
+        // The escape function should escape the embedded quotes.
+        assert!(c.to_lua_table().contains("\\\""));
+    }
 }
