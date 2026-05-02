@@ -93,3 +93,74 @@ The keyword choice is a deliberate departure from Cook's culinary metaphor (reci
 **Migration.** Purely additive — no existing Cookfile breaks. This project's top-level `Cookfile` would convert ~12 recipes to chores in a single pass; example Cookfiles would convert their `clean` and similar recipes opportunistically; conformance fixtures would stay as recipes (they exercise recipe-specific semantics).
 
 **Composability.** Stacks cleanly with E.5 (chores adopt the same implicit termination rule) and is orthogonal to E.6. Bundling all three into a single "recipe-form simplification" cut is reasonable; staging them across cuts is also fine.
+
+## E.8. Chore-body shell commands skip `{TOKEN}` substitution [#pre-v1.chore-shell-substitution]
+
+**Symptom.** §{lua.shell-placeholders} normatively asserts that "every bare `shell_command` is a **shell text**" subject to the chapter's placeholder substitution. Inside a `recipe` body, a `plate` shell-block body, or a `cook using { … }` body the substitution fires correctly. Inside a `chore` body it does not — a `{TOKEN}` placeholder is emitted into the recorded unit's `command` payload verbatim, and the unit fails at execute time when the shell tries to resolve a literal `{TOKEN}` as a command word.
+
+**Repro.** With cook-lang 0.1.0 (claiming Cook Standard v0.5):
+
+```cook
+config
+    env.ADB = "adb"
+
+chore devices
+    {ADB} devices -l
+```
+
+`cook --emit-lua` emits:
+
+```lua
+cook.recipe("devices", {}, function()
+    cook._enter_chore()
+    cook.add_unit({command = [[{ADB} devices -l]], interactive = true, line = 4, cache = false})
+    cook._exit_chore()
+end)
+```
+
+`cook devices` fails with `/bin/sh: line 1: {ADB}: command not found`. The same `{ADB}` token in a `plate` shell-block body of an otherwise-identical recipe is substituted correctly to `adb`.
+
+**Status quo.** Codegen for `chore`-body `shell_command` steps appears to bypass the §{lua.shell-placeholders} substitution path that fires for `recipe`-body shell steps and for `plate`-body shell blocks. Spec and implementation disagree.
+
+**Workaround.** Route chore-body env access through Lua. Replace the bare shell line with a `> lua_line` calling either `cook.sh()` directly or a module helper:
+
+```cook
+chore devices
+    > cook.sh(cook.env.ADB .. " devices -l")
+```
+
+This works because Lua sees `cook.env` directly and the substitution layer is not on the path.
+
+**Resolution path.** Two options, listed in order of preference:
+
+1. **Fix the implementation.** Extend the chore-body codegen to apply the same §{lua.shell-placeholders} substitution pass that fires for recipe-body and plate-body shell strings. The §4a.3 default-interactive transform already touches each `shell_command` in a chore body; adding the placeholder pass to the same site is a localized change. Add a positive conformance fixture under `standard/conformance/positive/` of the form `chore + config-env + {TOKEN} bare shell command + expected substituted invocation` so the harness pins the behaviour.
+2. **Narrow the spec.** If chore shell commands are deliberately exempt from substitution (e.g., to keep them "raw shell" for predictability), update §{lua.shell-placeholders}'s "every bare `shell_command`" wording to explicitly exclude chore-body bare shell commands, and add a negative conformance fixture asserting non-substitution. This option is weaker — it removes a reasonable expectation rather than meeting it — but it is consistent with the existing chore-as-command-runner framing.
+
+Either resolution is a single CS entry; option 1 needs a parser/codegen change and a positive fixture, option 2 needs only a spec wording change and a negative fixture.
+
+**Found in.** Real-world Cookfile for the `glovemap` Android key-mapper project (`~/dotfiles/android/glovemap/Cookfile`), which exercises plate's three iteration modes for adb-deploy and tripped on this when it tried to use `{ADB}` and `{PACKAGE}` env placeholders in chore bodies for `devices` / `logs` / `uninstall`. The project routes through `> android.adb_devices(cook.env.DEVICE)` etc. as the workaround.
+
+## E.9. No multi-line continuation for `ingredients` lists [#pre-v1.multi-line-ingredients]
+
+**Tension.** §{recipes.ingredients} requires every ingredient on a single `ingredients` line: a recipe body MAY contain at most one `ingredients_step`, and the line itself accepts a sequence of space-separated quoted items but no escape for line continuation. There is no whitespace-tolerant alternative shape.
+
+**Symptom.** Recipes whose input set spans many globs grow horizontally without bound. A real Cookfile that builds an Android APK depends on Kotlin sources, the manifest, the resource tree, and three build-script files — seven globs producing a 200+ character `ingredients` line:
+
+```cook
+recipe debug-apk
+    ingredients "app/src/**/*.kt" "app/src/main/AndroidManifest.xml" "app/src/main/res/**/*" "app/build.gradle.kts" "build.gradle.kts" "settings.gradle.kts" "gradle.properties"
+```
+
+The natural reflex is `\`-continuation, which the lexer rejects (the trailing `\` is consumed as part of the preceding STRING or as a `Token::Content` byte). The natural fallback is two `ingredients` lines, which §{recipes.ingredients}'s at-most-one rule rejects with a diagnostic that points at the second line.
+
+**Status quo.** Authors either accept long lines or split the recipe (which is wrong, since the multiple recipes share an output). The line-length friction makes diffs noisier than they need to be — a one-glob-added change re-wraps the entire line in editor displays and shows up as a whole-line replacement in `git diff`.
+
+**Possible resolutions.** Three options, increasing in scope:
+
+1. **Accept `\` line continuation on `ingredients` lines.** Smallest change. Lexer rule: when an `ingredients_step` line ends with `\` and a newline, fold the next line into the current line for purposes of step parsing. Diagnostic for `\`-then-non-newline is unchanged. Conformance impact: one positive fixture exercising a multi-line continuation. App. A grammar gains a footnote on the `ingredients_step` production. This option matches widespread shell convention and is unsurprising.
+2. **Accept a bracketed list form.** `ingredients [ "a" "b" "c" ]` with whitespace (including newlines) freely admitted between items inside the brackets. Cleaner than `\`-continuation and consistent with "every block-shaped surface in cook uses delimiters" (`{}` for shell/Lua bodies). Spec impact is larger: a new ingredient-list shape in App. A.5, two new conformance fixtures (positive: bracketed list; negative: bracketed list mixed with the bare-string form on the same line), and §{recipes.ingredients} grows a paragraph.
+3. **Lift the at-most-one-ingredients rule.** Allow a recipe body to contain multiple `ingredients` lines whose effects union (with the existing exclude semantics applying across all of them). Smallest *spec* change in word count, but contradicts the existing rule's intent (the at-most-one rule was presumably chosen for diagnostic clarity — "the input set lives on this one line"). This option is the least preferred of the three.
+
+Option 1 is the least disruptive to existing Cookfiles and matches the muscle memory of every author who has used Make, shell, or Python. Option 2 is the most consistent with cook's overall "blocks have delimiters" aesthetic. Option 3 should be skipped unless options 1 and 2 are both rejected for other reasons.
+
+**Found in.** Same `glovemap` project as E.8.
