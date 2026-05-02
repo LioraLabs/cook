@@ -1,0 +1,188 @@
+//! Parse `.cook/cloud.toml` — the project-level cloud config.
+//!
+//! Spec §9. The file is optional; if missing or empty, defaults apply.
+
+use std::path::Path;
+
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CloudConfig {
+    #[serde(default)]
+    pub cloud: CloudSection,
+    #[serde(default)]
+    pub cache: CacheSection,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CloudSection {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CacheSection {
+    #[serde(default)]
+    pub ignore_env: Vec<String>,
+    #[serde(default)]
+    pub cache_dir: Option<String>,
+}
+
+#[derive(Debug)]
+pub enum CloudConfigError {
+    Io(std::io::Error),
+    Parse(toml::de::Error),
+    MissingProject,
+}
+
+impl std::fmt::Display for CloudConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "reading .cook/cloud.toml: {e}"),
+            Self::Parse(e) => write!(f, "parsing .cook/cloud.toml: {e}"),
+            Self::MissingProject => write!(
+                f,
+                "[cloud] enabled=true but [cloud] project is missing — \
+                 set `project = \"...\"` in .cook/cloud.toml or set `enabled = false`"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CloudConfigError {}
+
+impl CloudConfig {
+    /// Load `.cook/cloud.toml` from `project_root`. Returns `Default` if absent.
+    /// Validates that `project` is set when `cloud.enabled = true`.
+    pub fn load_or_default(project_root: &Path) -> Result<Self, CloudConfigError> {
+        let path = project_root.join(".cook").join("cloud.toml");
+        let cfg = if !path.exists() {
+            Self::default()
+        } else {
+            let bytes = std::fs::read_to_string(&path).map_err(CloudConfigError::Io)?;
+            toml::from_str::<Self>(&bytes).map_err(CloudConfigError::Parse)?
+        };
+
+        if cfg.cloud.enabled && cfg.cloud.project.is_none() {
+            return Err(CloudConfigError::MissingProject);
+        }
+        Ok(cfg)
+    }
+
+    /// Returns the configured project_id, or the project root directory name
+    /// as a fallback (only valid when cloud is disabled).
+    pub fn project_id_or_fallback(&self, project_root: &Path) -> String {
+        if let Some(p) = &self.cloud.project {
+            return p.clone();
+        }
+        project_root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    pub fn cache_ignore_env(&self) -> &[String] {
+        &self.cache.ignore_env
+    }
+
+    pub fn cache_dir(&self) -> Option<&str> {
+        self.cache.cache_dir.as_deref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    fn write_toml(dir: &Path, contents: &str) -> PathBuf {
+        let cook_dir = dir.join(".cook");
+        std::fs::create_dir_all(&cook_dir).expect("mkdir");
+        let path = cook_dir.join("cloud.toml");
+        let mut f = std::fs::File::create(&path).expect("create");
+        f.write_all(contents.as_bytes()).expect("write");
+        path
+    }
+
+    #[test]
+    fn missing_file_returns_default() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        assert!(!cfg.cloud.enabled);
+        assert_eq!(cfg.project_id_or_fallback(dir.path()), dir.path().file_name().unwrap().to_string_lossy());
+        assert!(cfg.cache_ignore_env().is_empty());
+    }
+
+    #[test]
+    fn cloud_disabled_no_project_required() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+enabled = false
+"#);
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        assert!(!cfg.cloud.enabled);
+        // No project required when disabled.
+    }
+
+    #[test]
+    fn cloud_enabled_requires_project() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+enabled = true
+endpoint = "https://api.cook.dev"
+"#);
+        let result = CloudConfig::load_or_default(dir.path());
+        assert!(result.is_err(), "missing project must error when cloud.enabled=true");
+    }
+
+    #[test]
+    fn cloud_enabled_with_project_ok() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+enabled = true
+endpoint = "https://api.cook.dev"
+project = "cook"
+"#);
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        assert!(cfg.cloud.enabled);
+        assert_eq!(cfg.cloud.project.as_deref(), Some("cook"));
+    }
+
+    #[test]
+    fn cache_ignore_env_parsed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cache]
+ignore_env = ["GITHUB_TOKEN", "MY_API_KEY"]
+"#);
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        let ignore = cfg.cache_ignore_env();
+        assert_eq!(ignore.len(), 2);
+        assert!(ignore.contains(&"GITHUB_TOKEN".to_string()));
+        assert!(ignore.contains(&"MY_API_KEY".to_string()));
+    }
+
+    #[test]
+    fn malformed_toml_errors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), "this is not valid toml === ");
+        assert!(CloudConfig::load_or_default(dir.path()).is_err());
+    }
+
+    #[test]
+    fn project_id_or_fallback_uses_dir_name_when_no_project() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let project_dir = dir.path().join("my-cool-project");
+        std::fs::create_dir_all(&project_dir).expect("mkdir");
+        let cfg = CloudConfig::load_or_default(&project_dir).expect("load");
+        assert_eq!(cfg.project_id_or_fallback(&project_dir), "my-cool-project");
+    }
+}

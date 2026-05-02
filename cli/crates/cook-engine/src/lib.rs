@@ -4,6 +4,7 @@
 //! builds work-unit DAGs, and feeds ready nodes to cook-luaotp.
 
 pub mod analyzer;
+pub mod cloud_config;
 pub mod dag_builder;
 pub mod executor;
 pub mod recipe_dag;
