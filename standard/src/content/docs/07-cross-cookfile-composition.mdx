@@ -10,13 +10,21 @@ sidebar:
 This chapter specifies cross-Cookfile composition. The `import` declaration (§{modules.import-declaration}) binds a sibling Cookfile to a local alias. A qualified name reference (`alias.recipe`) resolves under the rules of §{xref.resolution}, with the lookup set replaced by the recipe names of the imported Cookfile instead of the current one. All other name-reference rules of §{xref} — accessors (§{xref.path-accessors}), iteration (§{xref.dep-driven}), string-substitution (§{xref.string-substitution}), dependency implications (§{xref.dep-implications}) — apply unchanged.
 
 ## 7.2. `import <name> <path>` declarations [#modules.import-declaration]
-An `import` declaration has the form `import <name> <path>`, where `<name>` is a `BARE_IDENTIFIER` and `<path>` is a non-whitespace path token (App. A.5). A conforming implementation MUST treat `<path>` as a directory path resolved relative to the directory of the enclosing Cookfile, and MUST load the Cookfile at `<path>/Cookfile` as a sibling Cookfile bound to the local alias `<name>`.
+An `import` declaration has the form `import <name> <path>`, where `<name>` is a `BARE_IDENTIFIER` and `<path>` is a non-whitespace path token (App. A.5).
 
-A conforming implementation MUST reject an `import` declaration for which:
+A conforming implementation MUST validate the `<path>` token at parse time according to one of two shapes:
 
-- the directory `<path>` does not exist;
-- `<path>/Cookfile` does not exist;
-- `<path>/Cookfile` fails to parse.
+- **Tree-relative.** `<path>` begins with `./` or with a bare segment, contains no `..` segments, and is not absolute. The path resolves relative to the directory of the enclosing Cookfile.
+- **Sigil-anchored.** `<path>` begins with `//` (the **workspace-root sigil**). The remainder of `<path>` after the sigil is forward-only (no `..`, no leading `/`). The path resolves relative to the workspace root (§{modules.workspace-root}).
+
+A `<path>` matching neither shape MUST be rejected at parse time. Specifically:
+
+- `<path>` containing a `..` segment (in the tree-relative form) MUST be rejected. Diagnostic: `import path '<path>': '..' segments are not permitted; use the workspace-root sigil '//path' for cross-cutting imports`.
+- `<path>` that is absolute and does not begin with `//` MUST be rejected. Diagnostic: `import path '<path>': absolute paths are not permitted; tree-relative or '//' sigil`.
+- `<path>` beginning with `//` and containing a `..` segment after the sigil MUST be rejected. Diagnostic: `import path '<path>': '..' segments are not permitted after '//'`.
+- A sigil-anchored path that resolves to a directory outside the workspace root after symlink canonicalisation MUST be rejected at workspace load (§{modules.workspace-root}). Diagnostic: `import '<name>': sigil path resolves outside workspace root '<root>'`.
+
+A conforming implementation MUST treat tree-relative and sigil-anchored imports uniformly for the purposes of qualified name references (§{modules.qualified-refs}), dependency implications (§{xref.dep-implications}), and duplicate-alias detection (§{modules.duplicates-and-cycles}). The two shapes differ only in their resolution rule.
 
 An `import` declaration does NOT bring a Lua value into scope under `<name>`. The alias `<name>` is reserved for cross-Cookfile recipe references of the form `<name>.<recipe>` that appear in dependency lists (§{recipes.ingredients}), not for Lua expressions. A Cookfile loaded by `import` is parsed independently; its own `use` and `import` declarations are resolved relative to its own directory, not the importer's directory.
 
@@ -25,13 +33,14 @@ A conforming implementation MUST reject a Cookfile in which two `import` declara
 ### Example 7.2.1
 
 ```cook
-import backend ./services/backend
-import frontend ./apps/frontend
+import backend ./services/backend       # tree-relative
+import frontend ./apps/frontend         # tree-relative
+import core //core/lib                  # sigil-anchored to workspace root
 
-recipe "bundle": "backend.build" "frontend.build"
+recipe "bundle": "backend.build" "frontend.build" "core.core_lib"
 ```
 
-Here `backend` and `frontend` are local aliases for the Cookfiles at `./services/backend/Cookfile` and `./apps/frontend/Cookfile`, respectively. The dependencies `"backend.build"` and `"frontend.build"` refer to recipes in those sibling Cookfiles; the first segment before the dot selects the import alias, and the remainder is the recipe name in the imported Cookfile.
+Here `backend` and `frontend` are tree-relative aliases for sibling Cookfiles below the importer's directory; `core` is anchored at the workspace root via the `//` sigil and may resolve to any directory at or below the workspace root, regardless of where the importing Cookfile sits in the tree. The dependencies `"backend.build"`, `"frontend.build"`, and `"core.core_lib"` refer to recipes in those Cookfiles uniformly; the first segment before the dot selects the import alias, and the remainder is the recipe name in the imported Cookfile.
 
 ### Note 7.2.1
 
