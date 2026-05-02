@@ -760,4 +760,35 @@ mod tests {
         let got = std::fs::canonicalize(root).unwrap();
         assert_eq!(got, expected);
     }
+
+    #[test]
+    fn test_diamond_via_sigil_dedups() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("shared/lib")).unwrap();
+        fs::create_dir_all(dir.path().join("apps/a")).unwrap();
+        fs::create_dir_all(dir.path().join("apps/b")).unwrap();
+        fs::write(dir.path().join("shared/lib/Cookfile"), "recipe \"shared\"\n").unwrap();
+        fs::write(
+            dir.path().join("apps/a/Cookfile"),
+            "import shared //shared/lib\nrecipe \"a\"\n",
+        ).unwrap();
+        fs::write(
+            dir.path().join("apps/b/Cookfile"),
+            "import shared //shared/lib\nrecipe \"b\"\n",
+        ).unwrap();
+        fs::write(
+            dir.path().join("Cookfile"),
+            "import a ./apps/a\nimport b ./apps/b\nrecipe \"top\"\n",
+        ).unwrap();
+
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let ws = Workspace::load(&entry, &root, &[]).unwrap();
+        let shared_count = ws
+            .imports
+            .keys()
+            .filter(|p| p.to_string_lossy().contains("shared/lib"))
+            .count();
+        assert_eq!(shared_count, 1, "shared/lib must dedup across diamond imports");
+    }
 }
