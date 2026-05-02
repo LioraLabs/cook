@@ -181,6 +181,52 @@ impl Workspace {
     }
 }
 
+/// Resolve the workspace root for an invocation per §7.6.
+pub fn resolve_workspace_root(
+    invoked_cookfile: &Path,
+    override_root: Option<PathBuf>,
+) -> Result<PathBuf, CookError> {
+    // Rule 1: explicit override.
+    if let Some(root) = override_root {
+        let root = std::fs::canonicalize(&root).map_err(|e| {
+            CookError::Other(format!("--root '{}': {e}", root.display()))
+        })?;
+        let invoked_canon = std::fs::canonicalize(invoked_cookfile).map_err(|e| {
+            CookError::Other(format!(
+                "cannot resolve {}: {e}", invoked_cookfile.display()
+            ))
+        })?;
+        if !invoked_canon.starts_with(&root) {
+            return Err(CookError::Other(format!(
+                "invoked Cookfile {} is not at or below --root {}",
+                invoked_canon.display(),
+                root.display()
+            )));
+        }
+        return Ok(root);
+    }
+
+    // Rule 2: .cookroot marker walk-up.
+    let invoked_dir = invoked_cookfile
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    let mut cur = std::fs::canonicalize(&invoked_dir).unwrap_or(invoked_dir.clone());
+    loop {
+        if cur.join(".cookroot").exists() {
+            return Ok(cur);
+        }
+        match cur.parent() {
+            Some(p) => cur = p.to_path_buf(),
+            None => break,
+        }
+    }
+
+    // Fall-through: self-root (subsequent tasks add rules 3-5).
+    let invoked_dir_canon = std::fs::canonicalize(&invoked_dir).unwrap_or(invoked_dir);
+    Ok(invoked_dir_canon)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +333,35 @@ mod tests {
         let result = Workspace::load(&dir.path().join("Cookfile"), &[]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("no Cookfile"));
+    }
+
+    #[test]
+    fn test_resolve_workspace_root_marker_file_takes_precedence() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("a/b/c")).unwrap();
+        fs::write(dir.path().join("a/.cookroot"), "").unwrap();
+        fs::write(dir.path().join("a/Cookfile"), "import b ./b\n").unwrap();
+        fs::write(dir.path().join("a/b/Cookfile"), "import c ./c\n").unwrap();
+        fs::write(dir.path().join("a/b/c/Cookfile"), "recipe \"x\"\n").unwrap();
+
+        let invoked = dir.path().join("a/b/c/Cookfile");
+        let root = resolve_workspace_root(&invoked, None).unwrap();
+        let expected = std::fs::canonicalize(dir.path().join("a")).unwrap();
+        let got = std::fs::canonicalize(root).unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_resolve_workspace_root_explicit_override() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("lib")).unwrap();
+        fs::write(dir.path().join("lib/Cookfile"), "recipe \"x\"\n").unwrap();
+        fs::write(dir.path().join("Cookfile"), "import lib ./lib\n").unwrap();
+
+        let invoked = dir.path().join("lib/Cookfile");
+        let root = resolve_workspace_root(&invoked, Some(dir.path().to_path_buf())).unwrap();
+        let expected = std::fs::canonicalize(dir.path()).unwrap();
+        let got = std::fs::canonicalize(root).unwrap();
+        assert_eq!(got, expected);
     }
 }
