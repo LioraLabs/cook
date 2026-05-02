@@ -236,6 +236,8 @@ pub(crate) fn expand_template_to_lua(template: &str) -> String {
 }
 
 /// Expand a shell command template, checking recipe names before falling back to cook.env.
+/// (Consulted env keys are discarded; use `expand_template_to_lua_with_deps_tracked` when tracking is needed.)
+#[allow(dead_code)]
 pub(crate) fn expand_template_to_lua_with_deps(
     template: &str,
     recipe_names: &BTreeSet<String>,

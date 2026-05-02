@@ -2149,3 +2149,44 @@ fn test_plate_lib_accessor_rejected() {
         "expected lib-accessor firewall rejection, got: {msg}"
     );
 }
+
+// ─── Task 4.2: consulted_env_keys emission tests ─────────────────────────────
+
+fn generate_lua_for_test(cookfile_text: &str) -> String {
+    let cookfile = cook_lang::parse(cookfile_text).expect("parse");
+    crate::generate(&cookfile)
+}
+
+#[test]
+fn cook_step_with_env_tokens_emits_consulted_env_keys() {
+    // Recipe with `using { gcc {CFLAGS} -c {in} -o {out} }` should emit
+    // consulted_env_keys = {"CFLAGS"} (in/out are placeholders, not env).
+    let cookfile_text = r#"
+recipe build
+    ingredients "src/*.c"
+    cook "build/{in.stem}.o" using { gcc {CFLAGS} -c {in} -o {out} }
+end
+"#;
+    let lua = generate_lua_for_test(cookfile_text);
+    assert!(
+        lua.contains("consulted_env_keys = {\"CFLAGS\"}"),
+        "expected consulted_env_keys with CFLAGS, got:\n{lua}"
+    );
+}
+
+#[test]
+fn lua_block_step_emits_star_sentinel() {
+    let cookfile_text = r#"
+recipe build
+    ingredients "src/*.c"
+    cook "build/{in.stem}.o" using >{
+        os.execute("gcc -c " .. input .. " -o " .. output)
+    }
+end
+"#;
+    let lua = generate_lua_for_test(cookfile_text);
+    assert!(
+        lua.contains("consulted_env_keys = \"*\""),
+        "lua_block payload should emit star sentinel, got:\n{lua}"
+    );
+}

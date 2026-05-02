@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use cook_lang::ast::*;
 
 use crate::template::{
-    analyze_output_pattern, expand_template_to_lua_with_deps, ConsultedEnv, OutputPatternKind,
+    analyze_output_pattern, expand_output_pattern, expand_template_to_lua_with_deps_tracked,
+    ConsultedEnv, OutputPatternKind,
 };
 
 /// Modes for cook step code generation.
@@ -175,11 +176,12 @@ pub(crate) fn generate_cook_step(
                 iter_source
             ));
 
-            // Generate output expression (already expanded by analyze_output_pattern).
+            // Generate output expression — also captures any env tokens in the output pattern.
+            let mut consulted = ConsultedEnv::new();
             let out_expr = match &pattern_kind {
                 OutputPatternKind::DepDriven { lua_expr, .. } => lua_expr.clone(),
                 OutputPatternKind::OwnInputAccessor => {
-                    crate::template::expand_output_pattern(&cook_step.outputs[0], &mut ConsultedEnv::new())
+                    expand_output_pattern(&cook_step.outputs[0], &mut consulted)
                 }
                 OutputPatternKind::Literal => {
                     format!("\"{}\"", crate::lua_string::escape_lua_string(&cook_step.outputs[0]))
@@ -191,17 +193,17 @@ pub(crate) fn generate_cook_step(
                 Some(UsingClause::ShellBlock(lines)) => {
                     // Per CS-0022, shell-block contents go through expand_template_to_lua_with_deps.
                     let combined = build_shell_block_command(lines, recipe_names);
-                    let lua_expr = expand_template_to_lua_with_deps(&combined, recipe_names);
+                    let lua_expr = expand_template_to_lua_with_deps_tracked(&combined, recipe_names, &mut consulted);
                     out.push_str(&format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}}})\n",
-                        lua_expr
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, consulted_env_keys = {}}})\n",
+                        lua_expr, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     out.push_str(&format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}}})\n",
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = \"*\"}})\n",
                         code_literal, ing_groups
                     ));
                 }
@@ -224,10 +226,11 @@ pub(crate) fn generate_cook_step(
                 input_source
             ));
 
+            let mut consulted = ConsultedEnv::new();
             let out_expr = match &pattern_kind {
                 OutputPatternKind::DepDriven { lua_expr, .. } => lua_expr.clone(),
                 OutputPatternKind::OwnInputAccessor => {
-                    crate::template::expand_output_pattern(&cook_step.outputs[0], &mut ConsultedEnv::new())
+                    expand_output_pattern(&cook_step.outputs[0], &mut consulted)
                 }
                 OutputPatternKind::Literal => {
                     format!("\"{}\"", crate::lua_string::escape_lua_string(&cook_step.outputs[0]))
@@ -238,10 +241,10 @@ pub(crate) fn generate_cook_step(
             match &cook_step.using_clause {
                 Some(UsingClause::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
-                    let lua_expr = expand_template_to_lua_with_deps(&combined, recipe_names);
+                    let lua_expr = expand_template_to_lua_with_deps_tracked(&combined, recipe_names, &mut consulted);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = {}, output = _cook_out, command = {}}})\n",
-                        input_source, lua_expr
+                        "    cook.add_unit({{inputs = {}, output = _cook_out, command = {}, consulted_env_keys = {}}})\n",
+                        input_source, lua_expr, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
@@ -251,7 +254,7 @@ pub(crate) fn generate_cook_step(
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = {}, output = _cook_out, lua_code = {}, ingredient_groups = {}}})\n",
+                        "    cook.add_unit({{inputs = {}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = \"*\"}})\n",
                         input_source, code_literal, ing_groups
                     ));
                 }
@@ -281,9 +284,11 @@ pub(crate) fn generate_cook_step(
             ));
 
             // Compute per-iteration outputs for each pattern.
+            // The output pattern accumulator captures env tokens in output patterns.
+            let mut consulted = ConsultedEnv::new();
             out.push_str("        local _cook_outs = {\n");
             for pat in &cook_step.outputs {
-                let expr = crate::template::expand_output_pattern(pat, &mut ConsultedEnv::new());
+                let expr = expand_output_pattern(pat, &mut consulted);
                 out.push_str(&format!("            {},\n", expr));
             }
             out.push_str("        };\n");
@@ -291,17 +296,17 @@ pub(crate) fn generate_cook_step(
             match &cook_step.using_clause {
                 Some(UsingClause::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
-                    let lua_expr = expand_template_to_lua_with_deps(&combined, recipe_names);
+                    let lua_expr = expand_template_to_lua_with_deps_tracked(&combined, recipe_names, &mut consulted);
                     out.push_str(&format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}}})\n",
-                        lua_expr
+                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}, consulted_env_keys = {}}})\n",
+                        lua_expr, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     out.push_str(&format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}}})\n",
+                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = \"*\"}})\n",
                         code_literal, ing_groups
                     ));
                 }
@@ -342,17 +347,18 @@ pub(crate) fn generate_cook_step(
                     // Shell-block content now goes through expand_template_to_lua_with_deps
                     // (Task 11 — previously emitted verbatim).
                     let combined = build_shell_block_command(lines, recipe_names);
-                    let lua_expr = expand_template_to_lua_with_deps(&combined, recipe_names);
+                    let mut consulted = ConsultedEnv::new();
+                    let lua_expr = expand_template_to_lua_with_deps_tracked(&combined, recipe_names, &mut consulted);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, command = {}}})\n",
-                        lua_expr
+                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, command = {}, consulted_env_keys = {}}})\n",
+                        lua_expr, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}}})\n",
+                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = \"*\"}})\n",
                         code_literal, ing_groups
                     ));
                 }
