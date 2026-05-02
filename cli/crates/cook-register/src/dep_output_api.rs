@@ -46,14 +46,21 @@ pub fn register_dep_output_api(
                 name
             ))
         })?;
-        // Accumulate dep ref for the step_group — add_unit will pick it up
+        let rewritten = rewrite_paths_for_importer(&name, outputs, &ad);
+        // Accumulate dep ref and importer-relative paths for add_unit to pick up.
+        // step_group_dep_refs holds the recipe name (for DAG edge wiring);
+        // step_group_dep_input_paths holds the rewritten paths (for cache_meta).
         {
             let mut state = cs.borrow_mut();
             if !state.step_group_dep_refs.contains(&name) {
                 state.step_group_dep_refs.push(name.clone());
             }
+            for p in &rewritten {
+                if !state.step_group_dep_input_paths.contains(p) {
+                    state.step_group_dep_input_paths.push(p.clone());
+                }
+            }
         }
-        let rewritten = rewrite_paths_for_importer(&name, outputs, &ad);
         Ok(rewritten.join(" "))
     })?;
     cook.set("dep_output", dep_output_fn)?;
@@ -71,14 +78,19 @@ pub fn register_dep_output_api(
                 name
             ))
         })?;
-        // Accumulate dep ref
+        let rewritten = rewrite_paths_for_importer(&name, outputs, &ad2);
+        // Accumulate dep ref and importer-relative paths.
         {
             let mut state = cs2.borrow_mut();
             if !state.step_group_dep_refs.contains(&name) {
                 state.step_group_dep_refs.push(name.clone());
             }
+            for p in &rewritten {
+                if !state.step_group_dep_input_paths.contains(p) {
+                    state.step_group_dep_input_paths.push(p.clone());
+                }
+            }
         }
-        let rewritten = rewrite_paths_for_importer(&name, outputs, &ad2);
         let table = lua.create_table()?;
         for (i, path) in rewritten.iter().enumerate() {
             table.set(i + 1, path.as_str())?;

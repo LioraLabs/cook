@@ -33,7 +33,11 @@ pub fn register_unit_api(
     // cook.add_unit(table)
     let cs = capture_state.clone();
     let rname = recipe_name.to_string();
-    let to = terminal_outputs.clone();
+    // terminal_outputs is no longer consulted in add_unit; dep_output_api.rs
+    // now accumulates importer-relative rewritten paths in
+    // capture_state.step_group_dep_input_paths so that cache_meta.input_paths
+    // contains stat-able paths from the importer's working directory.
+    let _ = terminal_outputs;
     let add_unit_fn = lua.create_function(move |lua, tbl: LuaTable| {
         let command: String = tbl.get::<String>("command").unwrap_or_default();
         let lua_code: Option<String> = tbl.get::<String>("lua_code").ok();
@@ -95,15 +99,15 @@ pub fn register_unit_api(
         // those paths to cache_meta.input_paths so cache invalidation tracks
         // dep-output content drift. Keep them out of WorkPayload inputs (which
         // drive _cook_in iteration / Lua-visible inputs).
+        //
+        // Use step_group_dep_input_paths (the importer-relative rewritten paths
+        // accumulated by dep_output_api) rather than reading raw paths from
+        // terminal_outputs. The raw paths are importee-relative and cannot be
+        // stat'd from the importer's working directory — using them would cause
+        // MissingFile errors in record_completion, silently dropping demo.bin.
         let dep_input_paths: Vec<String> = {
             let state = cs.borrow();
-            let store = to.lock().expect("terminal_outputs mutex poisoned");
-            state
-                .step_group_dep_refs
-                .iter()
-                .filter_map(|name| store.get(name))
-                .flat_map(|paths| paths.iter().cloned())
-                .collect()
+            state.step_group_dep_input_paths.clone()
         };
         let cache_input_paths: Vec<String> = inputs
             .iter()
@@ -252,6 +256,7 @@ pub fn register_unit_api(
                 state.last_cook_step_outputs = outputs;
             }
             state.step_group_dep_refs.clear();
+            state.step_group_dep_input_paths.clear();
         }
         result
     })?;
