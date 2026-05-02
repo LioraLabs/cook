@@ -310,6 +310,11 @@ function cpp.compile(source, opts)
         inputs = inputs,
         output = obj_out,
         command = cmd,
+        consulted_env_keys = {
+            "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
+            "LIBRARY_PATH", "LD_LIBRARY_PATH", "PKG_CONFIG_PATH",
+            "SDKROOT",
+        },
     })
 
     return obj_out
@@ -384,6 +389,10 @@ function cpp.link(objects, output, opts)
         inputs = all_inputs,
         output = output,
         command = table.concat(parts, " "),
+        consulted_env_keys = {
+            "LIBRARY_PATH", "LD_LIBRARY_PATH", "PKG_CONFIG_PATH",
+            "SDKROOT",
+        },
     })
 end
 
