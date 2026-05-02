@@ -147,7 +147,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 }
                 imports.push(ast::ImportDecl {
                     name: name.clone(),
-                    path: path.clone(),
+                    path: ast::ImportPath::Tree(path.clone()),
                     line: tok.line,
                 });
                 pos += 1;

@@ -682,9 +682,9 @@ recipe "bundle": "backend.build" "frontend.build"
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.imports.len(), 2);
     assert_eq!(cookfile.imports[0].name, "backend");
-    assert_eq!(cookfile.imports[0].path, "./services/backend");
+    assert_eq!(cookfile.imports[0].path.as_str(), "./services/backend");
     assert_eq!(cookfile.imports[1].name, "frontend");
-    assert_eq!(cookfile.imports[1].path, "./apps/frontend");
+    assert_eq!(cookfile.imports[1].path.as_str(), "./apps/frontend");
 }
 
 #[test]

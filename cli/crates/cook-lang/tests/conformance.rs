@@ -121,7 +121,7 @@ fn format_import(i: &ImportDecl) -> String {
     format!(
         "ImportDecl name={} path={} line={}",
         repr(&i.name),
-        repr(&i.path),
+        repr(&i.path.as_str()),
         i.line,
     )
 }
