@@ -4,7 +4,9 @@
 //! cache hit/miss logic for incremental builds.
 
 pub mod backend;
+pub mod cache_ctx;
 pub mod check;
+pub mod cloud_config;
 pub mod context;
 pub mod envkey;
 pub mod manager;
@@ -19,7 +21,9 @@ pub use check::{
 };
 pub use manager::{CacheState, RecordError, SharedCacheState, ThreadSafeCacheManager};
 pub use store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};
-pub use backend::{ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey};
+pub use backend::{ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey, LocalBackend};
+pub use cache_ctx::CacheContext;
+pub use cloud_config::{CloudConfig, CloudConfigError};
 pub use context::{ExecutionContext, MachineIdentity, ToolHash};
 pub use envkey::{env_contribution, EnvDenylist};
 
