@@ -252,6 +252,7 @@ where
                         num_jobs,
                         wave_cache_managers,
                         Some(event_tx),
+                        cache_ctx.clone(),
                     );
 
                     // Drop the sender end is handled by execute_dag returning

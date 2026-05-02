@@ -131,24 +131,21 @@ impl ThreadSafeCacheManager {
         cache_key: &str,
         meta: &CacheMeta,
         working_dir: &Path,
-    ) -> Result<(), RecordError> {
+    ) -> Result<StepEntry, RecordError> {
         let new_inputs = collect_records(&meta.input_paths, working_dir)
             .map_err(|p| RecordError::MissingFile(p))?;
         let new_outputs = collect_records(&meta.output_paths, working_dir)
             .map_err(|p| RecordError::UnreadableFile(p))?;
 
-        self.update_step(
-            recipe_name,
-            cache_key,
-            StepEntry {
-                inputs: new_inputs,
-                outputs: new_outputs,
-                command_hash: meta.command_hash,
-                context_hash: meta.context_hash,
-                env_contribution: meta.env_contribution,
-            },
-        );
-        Ok(())
+        let entry = StepEntry {
+            inputs: new_inputs,
+            outputs: new_outputs,
+            command_hash: meta.command_hash,
+            context_hash: meta.context_hash,
+            env_contribution: meta.env_contribution,
+        };
+        self.update_step(recipe_name, cache_key, entry.clone());
+        Ok(entry)
     }
 }
 

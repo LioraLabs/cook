@@ -10,7 +10,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cook_cache::ThreadSafeCacheManager;
+use cook_cache::{CacheContext, ThreadSafeCacheManager};
 use cook_contracts::WorkPayload;
 use cook_dag::Dag;
 use cook_luaotp::{WorkItem, WorkerPool};
@@ -102,6 +102,7 @@ pub fn execute_dag(
     num_workers: usize,
     cache_managers: BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     event_tx: Option<mpsc::Sender<EngineEvent>>,
+    cache_ctx: Arc<CacheContext>,
 ) -> Result<(), EngineError> {
     // Empty DAG — nothing to do.
     if dag.is_empty() {
@@ -488,8 +489,52 @@ pub fn execute_dag(
                     // Update cache if needed
                     if let Some(meta) = &dag.node(id).payload.cache_meta {
                         if let Some(cm) = cache_managers.get(&dag.node(id).payload.recipe_name) {
-                            if let Err(e) = cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(id).payload.working_dir) {
-                                tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
+                            match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(id).payload.working_dir) {
+                                Ok(step_entry) => {
+                                    // Compute cloud_key for this unit (spec §5.3).
+                                    let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
+                                    sorted_hashes.sort();
+
+                                    let recipe_namespace = format!(
+                                        "{}/{}::{}",
+                                        meta.project_id, meta.cookfile_path, meta.recipe_name
+                                    );
+
+                                    let key_inputs = cook_cache::backend::CloudKeyInputs {
+                                        schema_version: cook_cache::store::CACHE_VERSION,
+                                        recipe_namespace: &recipe_namespace,
+                                        command_hash: meta.command_hash,
+                                        context_hash: meta.context_hash,
+                                        env_contribution: meta.env_contribution,
+                                        sorted_input_content_hashes: &sorted_hashes,
+                                    };
+                                    let cloud_k = cook_cache::backend::cloud_key(&key_inputs);
+
+                                    // v3 limitation: multi-output steps upload only the first output
+                                    // bytes. SHI-NNN (future) will produce a manifest-style artifact
+                                    // covering all outputs.
+                                    if let Some(first_output) = meta.output_paths.first() {
+                                        let abs_output = dag.node(id).payload.working_dir.join(first_output);
+                                        if let Ok(bytes) = std::fs::read(&abs_output) {
+                                            let artifact_meta = cook_cache::backend::ArtifactMeta {
+                                                recipe_namespace: recipe_namespace.clone(),
+                                                command_hash: meta.command_hash,
+                                                context_hash: meta.context_hash,
+                                                env_contribution: meta.env_contribution,
+                                                schema_version: cook_cache::store::CACHE_VERSION,
+                                                size_bytes: bytes.len() as u64,
+                                                tags: std::collections::BTreeSet::new(),
+                                                consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                                            };
+                                            if let Err(e) = cache_ctx.backend.put(&cloud_k, &bytes, &artifact_meta) {
+                                                tracing::warn!("cache backend put failed for {}: {}", first_output, e);
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
+                                }
                             }
                         }
                     }
@@ -587,8 +632,52 @@ pub fn execute_dag(
             // Update cache entry if this node has cache metadata
             if let Some(meta) = &dag.node(result.id).payload.cache_meta {
                 if let Some(cm) = cache_managers.get(&dag.node(result.id).payload.recipe_name) {
-                    if let Err(e) = cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(result.id).payload.working_dir) {
-                        tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
+                    match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(result.id).payload.working_dir) {
+                        Ok(step_entry) => {
+                            // Compute cloud_key for this unit (spec §5.3).
+                            let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
+                            sorted_hashes.sort();
+
+                            let recipe_namespace = format!(
+                                "{}/{}::{}",
+                                meta.project_id, meta.cookfile_path, meta.recipe_name
+                            );
+
+                            let key_inputs = cook_cache::backend::CloudKeyInputs {
+                                schema_version: cook_cache::store::CACHE_VERSION,
+                                recipe_namespace: &recipe_namespace,
+                                command_hash: meta.command_hash,
+                                context_hash: meta.context_hash,
+                                env_contribution: meta.env_contribution,
+                                sorted_input_content_hashes: &sorted_hashes,
+                            };
+                            let cloud_k = cook_cache::backend::cloud_key(&key_inputs);
+
+                            // v3 limitation: multi-output steps upload only the first output
+                            // bytes. SHI-NNN (future) will produce a manifest-style artifact
+                            // covering all outputs.
+                            if let Some(first_output) = meta.output_paths.first() {
+                                let abs_output = dag.node(result.id).payload.working_dir.join(first_output);
+                                if let Ok(bytes) = std::fs::read(&abs_output) {
+                                    let artifact_meta = cook_cache::backend::ArtifactMeta {
+                                        recipe_namespace: recipe_namespace.clone(),
+                                        command_hash: meta.command_hash,
+                                        context_hash: meta.context_hash,
+                                        env_contribution: meta.env_contribution,
+                                        schema_version: cook_cache::store::CACHE_VERSION,
+                                        size_bytes: bytes.len() as u64,
+                                        tags: std::collections::BTreeSet::new(),
+                                        consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                                    };
+                                    if let Err(e) = cache_ctx.backend.put(&cloud_k, &bytes, &artifact_meta) {
+                                        tracing::warn!("cache backend put failed for {}: {}", first_output, e);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
+                        }
                     }
                 }
             }
@@ -710,14 +799,32 @@ mod tests {
         }
     }
 
+    /// Build a minimal CacheContext backed by a temp-dir LocalBackend.
+    /// Suitable for executor tests that don't exercise the cache path.
+    fn make_cache_ctx(tmp: &TempDir) -> Arc<CacheContext> {
+        use cook_cache::{
+            backend::LocalBackend, cache_ctx::CacheContext, cloud_config::CloudConfig,
+            context::ExecutionContext, envkey::EnvDenylist,
+        };
+        Arc::new(CacheContext {
+            exec_ctx: Arc::new(ExecutionContext::probe()),
+            denylist: Arc::new(EnvDenylist::baseline()),
+            backend: Arc::new(LocalBackend::new(tmp.path().join("cloud"))),
+            cloud_config: Arc::new(CloudConfig::default()),
+            project_root: tmp.path().to_path_buf(),
+            project_id: "test".to_string(),
+        })
+    }
+
     // 1. Single node succeeds
     #[test]
     fn test_executor_runs_single_node() {
         let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
         let mut dag = Dag::new();
         dag.add_node(work_node(shell("true"), "single", wd), &[]);
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -725,6 +832,7 @@ mod tests {
     #[test]
     fn test_executor_respects_dependencies() {
         let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
 
         let mut dag = Dag::new();
         let a = dag.add_node(
@@ -736,7 +844,7 @@ mod tests {
             &[a],
         );
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -744,6 +852,7 @@ mod tests {
     #[test]
     fn test_executor_failure_cancels_downstream() {
         let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
 
         let mut dag = Dag::new();
         let a = dag.add_node(work_node(shell("false"), "fail_a", wd.clone()), &[]);
@@ -757,7 +866,7 @@ mod tests {
             &[a],
         );
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_err());
         match result.unwrap_err() {
             EngineError::TaskFailures { failures, .. } => {
@@ -772,6 +881,7 @@ mod tests {
     #[test]
     fn test_executor_parallel_independent_nodes() {
         let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
 
         let mut dag = Dag::new();
         for i in 0..4 {
@@ -782,7 +892,7 @@ mod tests {
         }
 
         let start = std::time::Instant::now();
-        let result = execute_dag(dag, 4, BTreeMap::new(), None);
+        let result = execute_dag(dag, 4, BTreeMap::new(), None, cache_ctx);
         let elapsed = start.elapsed();
 
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -797,8 +907,10 @@ mod tests {
     // 5. Empty DAG
     #[test]
     fn test_executor_empty_dag() {
+        let (_wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
         let dag: Dag<WorkNode> = Dag::new();
-        let result = execute_dag(dag, 2, BTreeMap::new(), None);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_ok());
     }
 
@@ -806,13 +918,14 @@ mod tests {
     #[test]
     fn test_executor_presatisfied_chain() {
         let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
 
         let mut dag = Dag::new();
         let a = dag.add_node(presatisfied_node("cached_a", wd.clone()), &[]);
         let b = dag.add_node(presatisfied_node("cached_b", wd.clone()), &[a]);
         dag.add_node(work_node(shell("true"), "real_work", wd), &[b]);
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -820,6 +933,7 @@ mod tests {
     #[test]
     fn test_executor_failure_does_not_cancel_independent() {
         let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
 
         let mut dag = Dag::new();
         // A will fail
@@ -827,7 +941,7 @@ mod tests {
         // B is independent, should succeed
         dag.add_node(work_node(shell("true"), "ok_b", wd), &[]);
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_err());
         match result.unwrap_err() {
             EngineError::TaskFailures { failures, .. } => {
@@ -843,6 +957,7 @@ mod tests {
     #[test]
     fn test_executor_interactive_node() {
         let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
 
         let mut dag = Dag::new();
         let a = dag.add_node(work_node(shell("echo setup"), "setup", wd.clone()), &[]);
@@ -858,7 +973,7 @@ mod tests {
             &[a],
         );
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 }
