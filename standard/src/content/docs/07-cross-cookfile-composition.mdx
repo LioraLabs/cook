@@ -88,7 +88,7 @@ A conforming implementation MUST reject a Cookfile in which two `import` declara
 
 **Import cycles.** A conforming implementation MUST detect cycles in the `import` graph when loading the workspace and MUST reject a workspace whose `import` edges form a cycle. A cycle is defined as a sequence of canonicalised directory paths `D_1, D_2, ..., D_k, D_1` such that each `D_i/Cookfile` contains an `import` declaration whose path resolves to `D_{i+1}` (and the last edge resolves back to `D_1`). Detection MUST use canonicalised paths so that two syntactically different `<path>` strings that refer to the same directory are recognised as the same node.
 
-A conforming implementation MUST NOT reject the diamond case: if two distinct imports both resolve to the same canonicalised `D`, the implementation MUST load `D` once and reuse it. Diamond deduplication is not a cycle.
+A conforming implementation MUST NOT reject the diamond case for **sigil-anchored imports**: if two distinct sigil-anchored imports both resolve to the same canonicalised directory, the implementation MUST load that directory once and reuse it. Tree-relative imports cannot form a diamond under §7.2 — two distinct tree-relative paths from sibling subtrees cannot canonicalise to the same directory without `..` traversal, which the §7.2 grammar forbids. Diamond deduplication for sigil imports is not a cycle.
 
 The duplicate check and the cycle check operate on different graphs and are independent. A Cookfile MAY violate either without violating the other.
 
