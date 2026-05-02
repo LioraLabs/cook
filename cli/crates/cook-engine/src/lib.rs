@@ -7,8 +7,11 @@ pub mod analyzer;
 pub mod dag_builder;
 pub mod executor;
 pub mod recipe_dag;
+pub mod registry_entry;
 pub mod run;
 pub mod wave_grouper;
+
+pub use registry_entry::RegistryEntry;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

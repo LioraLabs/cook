@@ -414,11 +414,14 @@ fn build_single_registries(
     env_vars: std::collections::HashMap<String, String>,
     lua_source: String,
     selected_config: Option<&str>,
-) -> BTreeMap<String, (cook_register::Registry, String)> {
+) -> BTreeMap<String, cook_engine::RegistryEntry> {
     let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars)
         .with_selected_config(selected_config.map(|s| s.to_string()));
     let mut registries = BTreeMap::new();
-    registries.insert(String::new(), (registry, lua_source));
+    registries.insert(
+        String::new(),
+        cook_engine::RegistryEntry { registry, lua_source, alias_dirs: BTreeMap::new() },
+    );
     registries
 }
 
@@ -427,17 +430,22 @@ fn build_workspace_registries(
     workspace: &Workspace,
     config: Option<&str>,
     cli_sets: &[String],
-) -> Result<BTreeMap<String, (cook_register::Registry, String)>, CookError> {
+) -> Result<BTreeMap<String, cook_engine::RegistryEntry>, CookError> {
     let dotenv_vars = load_env(&workspace.root.dir);
     let root_env = resolve_env(config, dotenv_vars, cli_sets)?;
 
-    let mut registries: BTreeMap<String, (cook_register::Registry, String)> = BTreeMap::new();
+    let mut registries: BTreeMap<String, cook_engine::RegistryEntry> = BTreeMap::new();
 
+    let root_alias_dirs = workspace.alias_dirs_for(&workspace.root.dir);
     let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env)
         .with_selected_config(config.map(|s| s.to_string()));
     registries.insert(
         String::new(),
-        (root_registry, workspace.root.lua_source.clone()),
+        cook_engine::RegistryEntry {
+            registry: root_registry,
+            lua_source: workspace.root.lua_source.clone(),
+            alias_dirs: root_alias_dirs,
+        },
     );
 
     for (canonical_path, loaded) in &workspace.imports {
@@ -447,9 +455,17 @@ fn build_workspace_registries(
             std::collections::HashMap::new(),
             cli_sets,
         )?;
+        let alias_dirs = workspace.alias_dirs_for(&loaded.dir);
         let registry = cook_register::Registry::new(loaded.dir.clone(), import_env)
             .with_selected_config(config.map(|s| s.to_string()));
-        registries.insert(prefix, (registry, loaded.lua_source.clone()));
+        registries.insert(
+            prefix,
+            cook_engine::RegistryEntry {
+                registry,
+                lua_source: loaded.lua_source.clone(),
+                alias_dirs,
+            },
+        );
     }
 
     Ok(registries)
@@ -460,7 +476,7 @@ fn run_with_progress(
     cli: &Cli,
     recipe_infos: &BTreeMap<String, cook_engine::analyzer::RecipeInfo>,
     targets: &[String],
-    registries: &BTreeMap<String, (cook_register::Registry, String)>,
+    registries: &BTreeMap<String, cook_engine::RegistryEntry>,
     num_jobs: usize,
     inferred_deps: &BTreeMap<String, Vec<String>>,
 ) -> Result<cook_engine::run::RunResult, CookError> {
