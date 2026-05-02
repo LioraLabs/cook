@@ -281,9 +281,12 @@ fn all_reachable_sigils_resolve_under(candidate_root: &Path) -> Result<bool, Coo
     Ok(true)
 }
 
-/// Returns true if `invoked_cookfile` or any Cookfile transitively reachable
-/// from it via tree-relative imports declares any sigil-anchored import.
-fn any_reachable_sigil_imports(invoked_cookfile: &Path) -> Result<bool, CookError> {
+/// Returns the first sigil-anchored import found reachable from `invoked_cookfile`
+/// (via tree-relative traversal only). Returns `Some((declaring_cookfile, alias,
+/// sigil_path_string))` if one is found, `None` if none exist.
+fn first_reachable_sigil_import(
+    invoked_cookfile: &Path,
+) -> Result<Option<(PathBuf, String, String)>, CookError> {
     let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut stack: Vec<PathBuf> = vec![invoked_cookfile.to_path_buf()];
 
@@ -303,8 +306,8 @@ fn any_reachable_sigil_imports(invoked_cookfile: &Path) -> Result<bool, CookErro
             Err(_) => continue,
         };
         for imp in &parsed.imports {
-            if matches!(&imp.path, cook_lang::ast::ImportPath::Sigil(_)) {
-                return Ok(true);
+            if let cook_lang::ast::ImportPath::Sigil(s) = &imp.path {
+                return Ok(Some((cf_canon.clone(), imp.name.clone(), s.clone())));
             }
             if let cook_lang::ast::ImportPath::Tree(s) = &imp.path {
                 let imp_dir = cf_dir.join(s);
@@ -315,7 +318,7 @@ fn any_reachable_sigil_imports(invoked_cookfile: &Path) -> Result<bool, CookErro
             }
         }
     }
-    Ok(false)
+    Ok(None)
 }
 
 /// Resolve the workspace root for an invocation per §7.6.
@@ -379,12 +382,16 @@ pub fn resolve_workspace_root(
 
     // Rules 4 and 5: no ancestor satisfied. Self-root if no sigils anywhere
     // reachable; reject otherwise.
-    if any_reachable_sigil_imports(invoked_cookfile)? {
+    if let Some((cf, alias, path)) = first_reachable_sigil_import(invoked_cookfile)? {
         return Err(CookError::Other(format!(
-            "Cookfile {} declares sigil imports but no enclosing workspace root \
-             could be identified. Drop a .cookroot marker at the workspace root \
-             or pass --root.",
+            "Cookfile {} (or a Cookfile reachable from it) declares sigil import \
+             '{}' (alias '{}', in {}), but no enclosing workspace root could be \
+             identified to anchor it. Drop a .cookroot marker at the workspace \
+             root, or pass --root.",
             invoked_cookfile.display(),
+            path,
+            alias,
+            cf.display(),
         )));
     }
     Ok(invoked_dir_canon)
@@ -687,9 +694,14 @@ mod tests {
         let result = resolve_workspace_root(&invoked, None);
         assert!(result.is_err(), "expected reject for sigil import without anchor");
         let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("workspace root"), "diagnostic missing 'workspace root'");
         assert!(
-            msg.contains("workspace root") || msg.contains("anchor"),
-            "expected reject diagnostic, got: {msg}"
+            msg.contains("top/lib") || msg.contains("//top/lib"),
+            "diagnostic should name offending sigil path, got: {msg}"
+        );
+        assert!(
+            msg.contains("'top'") || msg.contains("alias 'top'") || msg.contains("(alias 'top'"),
+            "diagnostic should name offending alias, got: {msg}"
         );
     }
 
