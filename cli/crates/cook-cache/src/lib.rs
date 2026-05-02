@@ -4,6 +4,7 @@
 //! cache hit/miss logic for incremental builds.
 
 pub mod check;
+pub mod context;
 pub mod manager;
 pub mod store;
 
@@ -16,6 +17,7 @@ pub use check::{
 };
 pub use manager::{CacheState, SharedCacheState, ThreadSafeCacheManager};
 pub use store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};
+pub use context::{ExecutionContext, MachineIdentity, ToolHash};
 
 /// Hash a string (for command templates, env vars, etc.)
 pub fn hash_str(s: &str) -> u64 {
