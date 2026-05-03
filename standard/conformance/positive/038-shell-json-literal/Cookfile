@@ -1,0 +1,4 @@
+recipe emit
+    cook "out.json" using {
+        echo '{"key": "value"}' > $<out>
+    }
