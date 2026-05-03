@@ -9,7 +9,8 @@ sidebar:
 
 ## Versions
 
-- **v0.5** (`cs-standard/v0.5`, 2026-05-01) — CS-0022, CS-0023, CS-0024, CS-0025
+- **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031
+- **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
 - **v0.3** (`cs-standard/v0.3`, 2026-04-28) — CS-0015, CS-0016, CS-0017
 - **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013, CS-0014
@@ -432,3 +433,19 @@ The map is computed once per Cookfile by `Workspace::alias_qualified_prefixes_fo
 **Conformance impact.** None at the parser/luagen layer (no AST or dump-format changes; no language surface change). The Standard's §{xref.dep-implications} and §7.3 wording was already correct; this catches the `add_test` code path up to the contract.
 
 **Reference:** the CS-0030 commit on the `feature/cross-cookfile-caching` branch.
+
+## D.31. CS-0031 — Standard cut: v0.6. [#changes.cs-0031]
+
+**Date:** 2026-05-03
+
+**Version:** v0.6
+
+**Sections affected:** `standard/VERSION` (`0.5` → `0.6`); App. D Versions index (new v0.6 entry; v0.5 entry widened from `2026-05-01` to `2026-05-01..2026-05-03` and its CS list extended with CS-0026..CS-0030); this entry. Reference-implementation version mirrors bumped: `cli/crates/cook-lang/src/lib.rs` (`COOK_STANDARD_VERSION`), `cli/crates/cook-lang/README.md`, `cli/crates/cook-lang/CONFORMANCE.md`, project root `README.md`.
+
+**Summary.** Cuts the Cook Standard at v0.6. Per the cut procedure in `CONTRIBUTING.md` (and §{intro.version}), this entry plus the v0.6 row in the Versions index plus a `cs-standard/v0.6` git tag at the merge commit constitute the published cut. v0.6 batches the cross-Cookfile caching work that landed during the v0.5-in-progress era: CS-0026 (parse-time enforcement of §7.2 import path shapes), CS-0027 (inferred-deps unification across CLI commands; `cmd_dag` workspace mode; closes App. E.10), CS-0028 (`cook.dep_output` qualifies lookups by the calling registry's prefix for transitive sigil imports), CS-0029 (`cook.dep_output` resolves cross-Cookfile refs via per-alias canonical importee prefix for diamond imports), and CS-0030 (`cook.add_test` propagates step-group dep refs into unit-DAG dep edges, closing CS-0027's residual scope).
+
+**Why a cut.** None of the batched CSes change the language surface — they are all reference-implementation catch-up to existing normative prose (§7.2 import path shapes, §7.3 cross-Cookfile body refs, §7.5 diamond dedup, §7.6 workspace root determination, §{xref.dep-implications}). The cut nevertheless warrants a minor bump because (a) the implementation surface is materially different, with cross-Cookfile workflows that previously failed at register time or raced at scheduling time now working uniformly, and (b) the CS series is large enough (5 CSes over three days) that a fresh tag gives downstream consumers a clean reference for "the branch where cross-Cookfile caching is done." The conformance corpus is unchanged from v0.5 — no parse-format-altering cuts in this range — so `cs-standard/v0.5` and `cs-standard/v0.6` carry corpus-equivalent content; the bump is purely about the implementation contract.
+
+**Cut commit content.** This commit performs all five cut actions in one go: bump `standard/VERSION` from `0.5` to `0.6`; bump `COOK_STANDARD_VERSION` in `cli/crates/cook-lang/src/lib.rs` to `"0.6"`; mirror the claim in `cli/crates/cook-lang/README.md`, `cli/crates/cook-lang/CONFORMANCE.md`, and the project root `README.md`; add the v0.6 entry to the App. D Versions index; widen the v0.5 entry's date and extend its CS list; and add this CS-0031 body. The conformance harness (`cargo test -p cook-lang --test conformance`) passes against the working tree at this commit.
+
+**Reference:** this commit on `main` (post-merge of `feature/cross-cookfile-caching`).
