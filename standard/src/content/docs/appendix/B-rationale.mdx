@@ -330,6 +330,19 @@ The reserved recipe segments of §{lexical.keywords} (`stem`, `name`, `ext`, `di
 
 The Standard declines to extend the reservation to module names because the two namespaces are independently diagnosable: a recipe body that writes `out.foo()` is a `module_call` only if `out` has been bound by a prior `use` declaration in the same Cookfile (§{recipes.module-call-steps}). Without the `use`, the same line is a `shell_command`, and the dispatch cascade of App. A.4 will classify it so. Reserving the name globally would not prevent any bug the dispatch already handles, and would remove an axis of expressiveness from module authors.
 
+## B.8. `out_0` rejection at resolution rather than fall-through [#rationale.out-zero]
+
+The CS-0033 closed-set resolver rejects `$<out_0>` as a `MalformedOutIndex` error rather than letting it fall through to the recipe-then-env-lookup steps. Lexically, `out_0` matches the `out_indexed` production (`"out_" DIGIT+` admits `0`); the rejection happens at resolution, not lexing.
+
+The choice between "reject at resolution" and "fall through to env" was decided in favor of the former because the diagnostic surface is meaningfully better:
+
+- **Reject path:** "placeholder `$<out_0>`: malformed out_N (N must be ≥ 1)" — names the exact problem.
+- **Fall-through path:** "placeholder `$<out_0>`: env var 'out_0' was not declared" — misleading; suggests the author meant an env var when they actually mistyped a builtin.
+
+Authors who type `$<out_0>` are virtually always misremembering that `out_N` is 1-indexed; the diagnostic should help them notice that, not redirect them to the env-var declaration system.
+
+The `BuiltinMatch::Malformed` variant in the resolver makes the hard-stop explicit in code: `match_builtin` returns three outcomes — `Yes` (valid builtin), `Malformed` (builtin shape, structurally invalid), and `No` (not a builtin shape at all). Only `No` falls through; `Malformed` short-circuits to an error without consulting the recipe or env namespaces.
+
 ## B.A. On Appendix A
 
 _To be filled in._
