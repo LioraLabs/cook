@@ -18,12 +18,17 @@ A **name reference** is the sole mechanism by which a recipe refers to another r
 All three surfaces share the resolution rules of §{xref.resolution} and the dependency implications of §{xref.dep-implications}. Expansion behaviour differs by surface: dep-list references have no template expansion; bare placeholders expand per §{xref.string-substitution}; accessor placeholders drive iteration per §{xref.dep-driven}.
 
 ## 5.2. Resolution [#xref.resolution]
-A conforming implementation MUST resolve a `{TOKEN}` appearing in a step template by applying the following steps in order, with the first matching step winning:
+A conforming implementation MUST resolve a placeholder `$<TOKEN>` (defined in §{lexical.placeholders}) by applying these steps in order; first match wins:
 
-1. If `TOKEN` is one of the current-iteration builtins (`in`, `out`, `all`) or a dotted accessor of the form `NAME.ACCESSOR` where `NAME` ∈ `{in, out, out_N}`, substitute per §{lua.shell-placeholders}.
-2. If `TOKEN` is exactly equal to a recipe name in scope, the reference names that recipe.
-3. If `TOKEN` contains `.`, split on the LAST `.` into `PREFIX.SUFFIX`. If `PREFIX` equals a recipe name in scope AND `SUFFIX` is a path accessor (§{xref.path-accessors}), the reference names that recipe with the named accessor.
-4. Otherwise, `TOKEN` resolves to `cook.env[TOKEN]` (§{lua.shell-placeholders}).
+1. **Builtin.** If `TOKEN` matches one of the builtin shapes from §{lua.shell-placeholders}, the placeholder substitutes per the builtin's row. Builtin validity is also checked against the step's iteration mode and declared output count; mismatches MUST produce a load-time diagnostic. The number `N` in `out_N` MUST be in the range 1..=K where K is the step's declared output count; `out_0` and `out_N` for N > K MUST produce a load-time diagnostic.
+
+2. **Recipe in scope.** If `TOKEN` is the name of a recipe reachable from the current Cookfile (own recipes, recipes imported via `use`, or recipes reachable through sigil-imported Cookfiles per §7), the placeholder substitutes to that recipe's terminal output(s) per §{xref.string-substitution}. If `TOKEN` has the shape `RECIPE.ACCESSOR` where `ACCESSOR ∈ {stem, name, ext, dir}`, the accessor applies to the recipe's single output via §{xref.path-accessors}. Multi-output recipes accessed via accessor MUST produce a load-time diagnostic.
+
+3. **Declared env var.** If `TOKEN` (or `env.TOKEN` per the explicit form defined in §{xref.env-namespace}) appears as `env.TOKEN = ...` in a config block reachable from this Cookfile's config-block scope, the placeholder substitutes to `cook.env["TOKEN"]`. The implementation MUST capture the consulted key in the unit's `consulted_env_keys` for cache invalidation. The "declared" check MAY be implemented at register time (i.e., after config-block evaluation captures the keyset).
+
+4. **Hard error.** A conforming implementation MUST emit a load-time diagnostic for any placeholder that fails to resolve under steps 1–3. The diagnostic MUST name the unresolved TOKEN and SHOULD enumerate declared env vars and recipes in scope. Lexically valid IDENT shapes that no resolution rule handles (e.g., `$<foo.>` with trailing dot, `$<A.B.C>` with multiple unrecognized dotted segments) fall under this step.
+
+This is a closed function: every well-lexed placeholder either resolves to a known thing or fails loudly. There is no silent fallthrough — `$<UNKNOWN>` against an undeclared env var MUST NOT produce an empty-string substitution.
 
 A name reference appearing in a dep-list is resolved against the recipe names in scope with no accessor split: the whole string is the recipe name. Qualified cross-Cookfile dep-list references (`alias.recipe`) follow the resolution rule of §{modules}.
 
@@ -107,3 +112,11 @@ The `{libmath}` reference in `app`'s using-string expands at register time to `"
 - **Granularity.** A dep-list reference (`recipe A: B`) MUST be interpreted at whole-recipe granularity: every unit of `A` waits for every unit of `B`. A placeholder reference (`{B}` or `{B.ACCESSOR}`) in a specific step of `A` MAY be refined by the implementation to a per-unit edge from that step's unit(s) to the unit(s) of `B` that produced the referenced output items. Coarse edges are always conformant; fine-grained refinement is an optimisation available to placeholder-sourced edges only.
 - **Validation and cycles.** An implementation MUST validate that the named recipe is defined in scope before the execute phase begins, and MUST reject the Cookfile with a cycle diagnostic if the transitive closure of all cross-recipe edges contains a cycle, before executing any work unit.
 - **Only name references create edges.** A string equal to another recipe's output path, appearing as a literal in an `ingredients` line, does NOT establish a cross-recipe edge. An implementation MUST NOT infer an edge from path-string equality. Authors who want "run this after that" without a name reference MUST use an explicit `: dep`. See rationale B.5.N.
+
+## 5.7. The `env.` placeholder namespace [#xref.env-namespace]
+
+> **Normative.**
+
+A placeholder `$<TOKEN>` whose `TOKEN` begins with `env.` is reserved as the explicit env-var-lookup form. For such a placeholder, the implementation MUST resolve `TOKEN` by stripping the `env.` prefix and looking up the remaining identifier as a declared env var per §{xref.resolution} step 3, regardless of whether a recipe of the same name exists in scope.
+
+The reserved namespace prevents resolution ambiguity. A Cookfile that declares both a recipe named `foo` and an env var `env.foo` will see bare `$<foo>` resolve to the recipe (per the rule order) and `$<env.foo>` resolve to the env var. The recipe-naming rules of §{lexical.keywords} forbid `env` as either the first or last dotted segment of a recipe name, so a recipe cannot be reached via `$<env.X>` form by construction.
