@@ -1355,14 +1355,14 @@ mod tests {
         (dir, ws)
     }
 
-    /// Tree-relative case: root has `recipe top` referencing `{lib.lib_build}` in
+    /// Tree-relative case: root has `recipe top` referencing `$<lib.lib_build>` in
     /// its body, lib has `recipe lib_build`.
     /// Expected: `{"top" -> ["lib.lib_build"]}`.
     #[test]
     fn workspace_inferred_deps_tree_relative() {
         let (_dir, ws) = make_workspace(
-            "import lib ./lib\nrecipe top\n    cook \"build/top\" using { echo {lib.lib_build} }\n",
-            &[("lib", "recipe lib_build\n    cook \"lib.o\" using { echo {out} }\n")],
+            "import lib ./lib\nrecipe top\n    cook \"build/top\" using { echo $<lib.lib_build> }\n",
+            &[("lib", "recipe lib_build\n    cook \"lib.o\" using { echo $<out> }\n")],
         );
         let deps = compute_workspace_inferred_deps(&ws);
         assert_eq!(
@@ -1379,7 +1379,7 @@ mod tests {
     /// sigil.  This is a diamond: `core/lib` appears once in workspace.imports but
     /// is reachable from both root (as `core`) and web (as `core`).
     ///
-    /// `web`'s `web_app` recipe references `{core.core_lib}`.  Because root
+    /// `web`'s `web_app` recipe references `$<core.core_lib>`.  Because root
     /// directly imports core/lib with alias `core`, `find_full_prefix` walks up:
     /// core/lib → root → prefix = `"core"`.  So the dep should qualify as
     /// `core.core_lib`, not `web.core.core_lib`.
@@ -1390,14 +1390,14 @@ mod tests {
         fs::create_dir_all(dir.path().join("core/lib")).unwrap();
         fs::write(
             dir.path().join("core/lib/Cookfile"),
-            "recipe core_lib\n    cook \"core.o\" using { echo {out} }\n",
+            "recipe core_lib\n    cook \"core.o\" using { echo $<out> }\n",
         )
         .unwrap();
-        // apps/web Cookfile — imports core via sigil, refs {core.core_lib}
+        // apps/web Cookfile — imports core via sigil, refs $<core.core_lib>
         fs::create_dir_all(dir.path().join("apps/web")).unwrap();
         fs::write(
             dir.path().join("apps/web/Cookfile"),
-            "import core //core/lib\nrecipe web_app\n    cook \"web.o\" using { echo {core.core_lib} }\n",
+            "import core //core/lib\nrecipe web_app\n    cook \"web.o\" using { echo $<core.core_lib> }\n",
         )
         .unwrap();
         // root Cookfile: imports BOTH web (tree) AND core (sigil) directly.
@@ -1405,7 +1405,7 @@ mod tests {
         // root→web→core.  The workspace-level prefix is "core" (shortest root path).
         fs::write(
             dir.path().join("Cookfile"),
-            "import web ./apps/web\nimport core //core/lib\nrecipe top\n    cook \"build/top\" using { echo {web.web_app} {core.core_lib} }\n",
+            "import web ./apps/web\nimport core //core/lib\nrecipe top\n    cook \"build/top\" using { echo $<web.web_app> $<core.core_lib> }\n",
         )
         .unwrap();
         fs::write(dir.path().join(".cookroot"), "").unwrap();
@@ -1415,14 +1415,14 @@ mod tests {
         let ws = Workspace::load(&entry, &root, &[]).unwrap();
         let deps = compute_workspace_inferred_deps(&ws);
 
-        // web_app's {core.core_lib}: the local alias "core" in apps/web maps to the
+        // web_app's $<core.core_lib>: the local alias "core" in apps/web maps to the
         // workspace-level prefix "core" (core/lib is directly imported by root).
         assert_eq!(
             deps.get("web.web_app"),
             Some(&vec!["core.core_lib".to_string()]),
             "web_app should have dep on core.core_lib (importee workspace prefix), got: {deps:?}"
         );
-        // top's body refs: {web.web_app} → "web.web_app" and {core.core_lib} → "core.core_lib".
+        // top's body refs: $<web.web_app> → "web.web_app" and $<core.core_lib> → "core.core_lib".
         assert_eq!(
             deps.get("top"),
             Some(&vec!["core.core_lib".to_string(), "web.web_app".to_string()]),
@@ -1449,7 +1449,7 @@ mod tests {
     /// cmd_test single-Cookfile path (App. E.10).
     #[test]
     fn single_inferred_deps_body_ref_produces_edge() {
-        let src = "recipe prepare\n    cook \"prepare.out\" using { echo {out} }\nrecipe verify\n    test { echo {prepare} }\n";
+        let src = "recipe prepare\n    cook \"prepare.out\" using { echo $<out> }\nrecipe verify\n    test { echo $<prepare> }\n";
         let cf = cook_lang::parse(src).unwrap();
         let deps = compute_single_inferred_deps(&cf);
         assert_eq!(
