@@ -350,3 +350,23 @@ The conformance corpus's `parse.txt` files change format in this cut: `Step::Coo
 **Summary:** The `cook-lang` parser now enforces the three path-shape constraints from §7.2 at parse time, in addition to the lexer accepting any non-whitespace token as an import path. Specifically: (1) a tree-relative path containing a `..` segment MUST be rejected with the normative diagnostic `import path '<path>': '..' segments are not permitted; use the workspace-root sigil '//path' for cross-cutting imports`; (2) an absolute path that does not begin with `//` MUST be rejected with `import path '<path>': absolute paths are not permitted; tree-relative or '//' sigil`; (3) a sigil-anchored path (`//`-prefixed) with a `..` segment after the sigil MUST be rejected with `import path '<path>': '..' segments are not permitted after '//'`. Internally, the parser now classifies valid paths into `ImportPath::Tree(String)` or `ImportPath::Sigil(String)` (the stored string for `Sigil` is the path after the `//` prefix). The lexer continues to accept any non-whitespace token for the path field; rejection is a parser-level concern.
 
 **Reference:** the Phase 1 commit of the cross-Cookfile caching implementation plan (`standard/plans/2026-05-02-cross-cookfile-caching-plan.md`, Tasks 1.1–1.3).
+
+## D.28. CS-0028 — `cook.dep_output` translates local→global names via Registry qualified prefix. [#changes.cs-0028]
+
+**Date:** 2026-05-02
+
+**Version:** v0.5 (implementation-only catch-up; the §7.3 contract on cross-Cookfile body refs was already in the Standard).
+
+**Sections affected:** none in the Standard surface. Closes a gap in the §7.3 reference implementation surfaced by transitive sigil-import scenarios.
+
+**Summary.** Pre-CS-0028, `cook.dep_output(name)` and `cook.dep_output_list(name)` looked up `name` directly in the workspace-scope `terminal_outputs` map. After `eed8287` (`Registry.qualified_prefix`; insert under fully-qualified key after register_recipe), recipes were stored under their **globally-qualified** keys (e.g., `"queue.proto.proto_lib"` when the entry-point Cookfile is `apps/server` and the chain is `server → //libs/queue → //libs/proto`), but a transitively-imported Cookfile's regenerated Lua still references its cousins by their **local** alias (e.g., `cook.dep_output("proto.proto_lib")` inside `libs/queue`'s Lua). The lookup therefore failed at register time with `recipe 'proto.proto_lib' has no terminal output` whenever the entry-point Cookfile was a deep importer of an importer.
+
+CS-0028 threads `Registry.qualified_prefix` into `register_dep_output_api` and qualifies the local name at lookup: `global_key = if prefix.is_empty() { name } else { format!("{}.{}", prefix, name) }`. The dep ref recorded into `step_group_dep_refs` is the global key, so DAG edge wiring against `recipe_leaves` (which uses globally-qualified names) lines up. Path rewriting via `alias_dirs` continues to use the **local** name unchanged — the alias is the local name's first dot-component.
+
+**Why:** Surfaced by `examples/monorepo_codegen/`: `cook server_bin` from `apps/server/` failed because the chain `server → //libs/queue → //libs/proto` has `libs/queue` running under `qualified_prefix = "queue"`, and queue's Lua body `cat {proto.proto_lib} queue.tmpl` lowers to `cook.dep_output("proto.proto_lib")`. The recipe is stored under `queue.proto.proto_lib`. The Standard's §7.3 contract — "a name reference to recipe B in an imported Cookfile resolves to that recipe's terminal output" — implicitly requires this translation; it was simply never exercised by the existing `cache_benchmarks_sigil` fixture, which only goes one import-hop deep.
+
+**Implementation notes.** Single fix site: `cli/crates/cook-register/src/dep_output_api.rs` gains a `qualified_prefix: String` parameter on `register_dep_output_api` and applies it to both `cook.dep_output` and `cook.dep_output_list` lookup paths. The two production callers (`engine.rs` and the `unit_api.rs` test) and the eight in-file unit tests are updated. `test_dep_output_translates_local_to_global_via_qualified_prefix` and `test_dep_output_empty_qualified_prefix_no_translation` are the in-crate regression pins; the runtime fixture lives in `examples/monorepo_codegen/` (transitive sigil + deep-subdir entry).
+
+**Conformance impact.** None at the parser/luagen layer (no AST or dump-format changes; no language surface change). The Standard's §7.3 wording was already correct; this is a reference-implementation fix.
+
+**Reference:** the CS-0028 commit on the `feature/cross-cookfile-caching` branch.

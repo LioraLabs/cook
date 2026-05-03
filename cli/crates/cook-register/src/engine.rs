@@ -119,6 +119,7 @@ impl Registry {
             self.terminal_outputs.clone(),
             capture_state.clone(),
             self.alias_dirs.clone(),
+            self.qualified_prefix.clone(),
         )?;
         crate::context::register_resolve_ingredients(&lua, &self.working_dir)?;
         crate::codec_api::register_codec_api(&lua)?;

@@ -724,6 +724,7 @@ mod tests {
             terminal_outputs,
             capture_state.clone(),
             std::collections::BTreeMap::new(),
+            String::new(),
         )
         .unwrap();
 
