@@ -290,7 +290,7 @@ Returns the path formed by joining `b` onto `a` with the host separator. If `b` 
 
 A `cook` step's `using { ... }` shell-block body, a `plate` shell-block body (§{recipes.plate-step}), a `test` shell-block body (§{recipes.test-step}), and every bare `shell_command` is a **shell text** for the purposes of this section. Shell text MAY contain **sigil placeholders** of the form `$<IDENT>` where `IDENT` is a dot-free or single-dotted identifier (e.g. `$<in>`, `$<in.stem>`, `$<out_2.dir>`). Before a conforming implementation records the resulting unit, it MUST substitute every `$<IDENT>` according to the closed resolution table in this section. A `$<IDENT>` whose shape does not match any row of the placeholder table resolves as an environment variable through §{xref.resolution}.
 
-The sigil syntax `$<IDENT>` is the sole placeholder surface for shell text as of v0.6. Shell brace constructs (`${HOME:-x}`, `${}`, `{a,b,c}`) are not sigil placeholders and MUST be passed through verbatim.
+The sigil syntax `$<IDENT>` is the sole placeholder surface for shell text as of v0.7. Shell brace constructs (`${HOME:-x}`, `${}`, `{a,b,c}`) are not sigil placeholders and MUST be passed through verbatim.
 
 | Placeholder | Valid in iteration mode | Meaning |
 |---|---|---|
