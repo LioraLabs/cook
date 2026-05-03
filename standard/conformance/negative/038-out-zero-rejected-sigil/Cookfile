@@ -1,0 +1,5 @@
+recipe "build"
+    ingredients "src.txt"
+    cook "out.bin" using {
+        cat src.txt > $<out_0>
+    }
