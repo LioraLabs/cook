@@ -13,5 +13,5 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["build/{headers.stem}.listed"] using=ShellBlock(["echo {in} > {out}"])
+        Cook outputs=["build/$<headers.stem>.listed"] using=ShellBlock(["echo $<in> > $<out>"])
   chores:

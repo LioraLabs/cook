@@ -8,6 +8,6 @@ Cookfile
       ingredients: ["src/*.o"]
       excludes: []
       steps:
-        Cook outputs=["dist/bundle.tgz"] using=ShellBlock(["tar czf {out} {all}"])
-        Plate body=ShellBlock(["tar czf bundle.tgz {all}"])
+        Cook outputs=["dist/bundle.tgz"] using=ShellBlock(["tar czf $<out> $<all>"])
+        Plate body=ShellBlock(["tar czf bundle.tgz $<all>"])
   chores:

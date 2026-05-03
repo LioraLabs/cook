@@ -13,5 +13,5 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["build/obj/{protos.stem}.pb.cc"] using=ShellBlock(["protoc --cpp_out=build/obj {in}"])
+        Cook outputs=["build/obj/$<protos.stem>.pb.cc"] using=ShellBlock(["protoc --cpp_out=build/obj $<in>"])
   chores:
