@@ -1,0 +1,11 @@
+import cli ./apps/cli
+import server ./apps/server
+
+recipe top
+    cook "build/release.bin" using {
+        mkdir -p build
+        cat {cli.cli_bin} {server.server_bin} > {out}
+    }
+
+chore clean
+    rm -rf build apps/*/build libs/*/build .cook apps/*/.cook libs/*/.cook
