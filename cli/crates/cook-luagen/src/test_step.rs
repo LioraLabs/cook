@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use cook_lang::ast::*;
 
+use crate::lua_string::lua_chunk_literal;
 use crate::plate_step::CodegenError;
 use crate::template::{
     detect_plate_test_mode, expand_plate_test_body, validate_plate_test_placeholders,
@@ -106,6 +107,3 @@ fn build_shell_block_command(lines: &[String]) -> String {
     s
 }
 
-fn lua_chunk_literal(code: &str) -> String {
-    format!("[==[\n{}\n]==]", code)
-}
