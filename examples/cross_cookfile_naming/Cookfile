@@ -1,0 +1,18 @@
+import cli ./apps/cli
+import server ./apps/server
+
+# Both apps define a recipe named `build` — qualified names must keep them
+# separate (cli.build vs server.build).
+
+# Explicit `:` cross-Cookfile deps — different code path than body-ref deps.
+recipe assemble: cli.build server.build
+    cook "build/release.bin" using {
+        mkdir -p build
+        cat {cli.build} {server.build} > {out}
+    }
+
+# Chore with cross-Cookfile explicit deps.
+chore deploy: cli.build server.build
+    @echo "deploying..."
+    @echo "cli artifact: {cli.build}"
+    @echo "server artifact: {server.build}"

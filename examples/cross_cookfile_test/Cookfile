@@ -1,0 +1,10 @@
+import lib ./lib
+
+# A test recipe whose body refs an imported recipe via {lib.gen}.
+# Exercises the CS-0027 residual-scope concern: add_test must propagate
+# step_group_dep_refs into unit-DAG dep_edges so that lib.gen builds
+# before verify_gen runs (especially under --jobs > 1).
+recipe verify_gen
+    test {
+        grep -q '\[gen\]' {lib.gen}
+    }

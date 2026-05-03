@@ -1,0 +1,6 @@
+recipe build
+    ingredients "src.txt"
+    cook "build/cli.bin" using {
+        mkdir -p build
+        sed 's/^/[cli] /' src.txt > {out}
+    }

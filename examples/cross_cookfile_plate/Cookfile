@@ -1,0 +1,10 @@
+import lib ./lib
+
+# Symmetric to cross_cookfile_test/, but the body-refing step is a `plate`
+# instead of a `test`. plate lowers to cook.add_unit (per plate_step.rs)
+# whereas test lowers to cook.add_test. add_unit reads step_group_dep_refs;
+# add_test drops them. So plate should NOT race lib.gen.
+recipe consume_gen
+    plate {
+        grep -q '\[gen\]' {lib.gen}
+    }

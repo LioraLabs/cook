@@ -1,0 +1,6 @@
+recipe build
+    ingredients "src.txt"
+    cook "build/server.bin" using {
+        mkdir -p build
+        sed 's/^/[server] /' src.txt > {out}
+    }
