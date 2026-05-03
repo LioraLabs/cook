@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
+use cook_contracts::ACCESSORS;
 use cook_lang::ast::Body;
 
-use crate::cook_step::CookMode;
+use crate::cook_step::{cook_mode_to_iter_mode, count_to_output_shape, CookMode};
 use crate::lua_string::escape_lua_string;
 use crate::resolver::{
     BuiltinKind, IterMode, OutputShape, ResolveCtx, ResolveError, Resolved,
@@ -41,9 +42,6 @@ impl ConsultedEnv {
         format!("{{{}}}", parts.join(", "))
     }
 }
-
-/// Known accessor suffixes for dep-driven iteration patterns.
-const DEP_ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 
 // ─── New sigil-based substitution engine ────────────────────────────────────
 
@@ -216,7 +214,7 @@ fn first_dep_accessor_sigil(
         if let Some(dot_pos) = ident.rfind('.') {
             let prefix = &ident[..dot_pos];
             let suffix = &ident[dot_pos + 1..];
-            if DEP_ACCESSORS.contains(&suffix) && recipe_names.contains(prefix) {
+            if ACCESSORS.contains(&suffix) && recipe_names.contains(prefix) {
                 return Some((prefix.to_string(), suffix.to_string()));
             }
         }
@@ -316,7 +314,7 @@ fn output_pattern_ident_to_lua(
     if let Some(dot_pos) = ident.rfind('.') {
         let prefix = &ident[..dot_pos];
         let suffix = &ident[dot_pos + 1..];
-        if DEP_ACCESSORS.contains(&suffix) && ctx.recipes_in_scope.contains(prefix) {
+        if ACCESSORS.contains(&suffix) && ctx.recipes_in_scope.contains(prefix) {
             // dep.accessor → path.accessor(_cook_in) (dep-driven normalization)
             return format!("path.{}(_cook_in)", suffix);
         }
@@ -713,7 +711,7 @@ pub(crate) fn validate_placeholders(
     ctx: &PlaceholderValidationContext,
 ) -> Result<(), String> {
     let resolver_mode = cook_mode_to_iter_mode(ctx.mode);
-    let output_shape = count_to_shape(ctx.declared_output_count);
+    let output_shape = count_to_output_shape(ctx.declared_output_count);
     let rctx = ResolveCtx {
         mode: resolver_mode,
         outputs: output_shape,
@@ -729,7 +727,7 @@ pub(crate) fn validate_placeholders(
         if let Some(dot) = span.ident.rfind('.') {
             let prefix = &span.ident[..dot];
             let suffix = &span.ident[dot + 1..];
-            if DEP_ACCESSORS.contains(&suffix) && ctx.recipe_names.contains(prefix) {
+            if ACCESSORS.contains(&suffix) && ctx.recipe_names.contains(prefix) {
                 return Err(format!(
                     "CS-0022: $<{}.{}> is rejected inside using-clause body; \
                      use $<in.{}> if `{}` is the driver, or reach for Lua otherwise",
@@ -739,22 +737,6 @@ pub(crate) fn validate_placeholders(
         }
     }
     Ok(())
-}
-
-fn cook_mode_to_iter_mode(mode: &CookMode) -> IterMode {
-    match mode {
-        CookMode::OneToOne | CookMode::OneToMany => IterMode::OneToOne,
-        CookMode::ManyToOne | CookMode::BlockStep => IterMode::ManyToOne,
-        CookMode::DeclarationOnly => IterMode::OneShot,
-    }
-}
-
-fn count_to_shape(n: usize) -> OutputShape {
-    match n {
-        0 => OutputShape::None,
-        1 => OutputShape::Single,
-        n => OutputShape::Multi(n),
-    }
 }
 
 #[cfg(test)]
