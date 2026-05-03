@@ -215,7 +215,7 @@ where
         // sees these recipes, so without this they stay stuck in Waiting.
         {
             let recipes_in_dag: BTreeSet<&str> = (0..dag.len())
-                .map(|i| dag.node(i).payload.recipe_name.as_str())
+                .map(|i| dag.node(i).payload().recipe_name.as_str())
                 .collect();
             for name in &wave.recipes {
                 if !recipes_in_dag.contains(name.as_str()) {

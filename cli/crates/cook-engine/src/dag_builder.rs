@@ -102,7 +102,12 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Dag<WorkNode> {
                 }
             };
 
-            let dag_id = dag.add_node(work_node, &all_deps);
+            // Builder invariant: every id in `all_deps` originated from a
+            // prior `add_node` call (cross-recipe leaves and within-recipe
+            // barriers), so the call cannot fail with `DependencyOutOfRange`.
+            let dag_id = dag
+                .add_node(work_node, &all_deps)
+                .expect("dag_builder produced an out-of-range dep id (bug)");
 
             // Update barrier / group tracking.
             match &unit.dep_kind {
@@ -158,7 +163,6 @@ fn is_presatisfied(unit: &CapturedUnit) -> bool {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::sync::atomic::Ordering;
 
     fn shell(cmd: &str) -> WorkPayload {
         WorkPayload::Shell {
@@ -201,8 +205,8 @@ mod tests {
         let dag = build_dag(vec![units]);
         assert_eq!(dag.len(), 2);
         // Second node should depend on first
-        assert_eq!(dag.node(0).remaining_deps.load(Ordering::Relaxed), 0);
-        assert_eq!(dag.node(1).remaining_deps.load(Ordering::Relaxed), 1);
+        assert_eq!(dag.node(0).remaining_deps(), 0);
+        assert_eq!(dag.node(1).remaining_deps(), 1);
     }
 
     #[test]
@@ -237,10 +241,10 @@ mod tests {
         let dag = build_dag(vec![units]);
         assert_eq!(dag.len(), 3);
         // Step group units have 0 deps (first in recipe)
-        assert_eq!(dag.node(0).remaining_deps.load(Ordering::Relaxed), 0);
-        assert_eq!(dag.node(1).remaining_deps.load(Ordering::Relaxed), 0);
+        assert_eq!(dag.node(0).remaining_deps(), 0);
+        assert_eq!(dag.node(1).remaining_deps(), 0);
         // Sequential unit after group depends on both group members
-        assert_eq!(dag.node(2).remaining_deps.load(Ordering::Relaxed), 2);
+        assert_eq!(dag.node(2).remaining_deps(), 2);
     }
 
     #[test]
@@ -276,7 +280,7 @@ mod tests {
         let dag = build_dag(vec![setup, build]);
         assert_eq!(dag.len(), 2);
         // build's unit should depend on setup's unit
-        assert_eq!(dag.node(1).remaining_deps.load(Ordering::Relaxed), 1);
+        assert_eq!(dag.node(1).remaining_deps(), 1);
     }
 
     #[test]
@@ -345,7 +349,7 @@ mod tests {
 
         // app's compile (node 3) should have 0 deps — can run in parallel with libmath
         assert_eq!(
-            dag.node(3).remaining_deps.load(Ordering::Relaxed),
+            dag.node(3).remaining_deps(),
             0,
             "app compile should start immediately (no cross-recipe dep)"
         );
@@ -355,7 +359,7 @@ mod tests {
         // - node 2 (fine-grained: libmath's terminal node = archive)
         // Total: 2 deps
         assert_eq!(
-            dag.node(4).remaining_deps.load(Ordering::Relaxed),
+            dag.node(4).remaining_deps(),
             2,
             "app link should depend on app compile + libmath archive"
         );
@@ -395,7 +399,7 @@ mod tests {
         let dag = build_dag(vec![setup, build]);
         assert_eq!(dag.len(), 2);
         // build's unit depends on setup's unit via coarse deps
-        assert_eq!(dag.node(1).remaining_deps.load(Ordering::Relaxed), 1);
+        assert_eq!(dag.node(1).remaining_deps(), 1);
     }
 
     #[test]
@@ -427,8 +431,8 @@ mod tests {
         let dag = build_dag(vec![units]);
         assert_eq!(dag.len(), 2);
         // First node is presatisfied (no payload)
-        assert!(dag.node(0).payload.payload.is_none());
+        assert!(dag.node(0).payload().payload.is_none());
         // Second node has payload
-        assert!(dag.node(1).payload.payload.is_some());
+        assert!(dag.node(1).payload().payload.is_some());
     }
 }

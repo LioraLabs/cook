@@ -47,7 +47,7 @@ fn emit(tx: &Option<mpsc::Sender<EngineEvent>>, event: EngineEvent) {
 fn recipe_node_counts(dag: &Dag<WorkNode>) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for i in 0..dag.len() {
-        let name = &dag.node(i).payload.recipe_name;
+        let name = &dag.node(i).payload().recipe_name;
         *counts.entry(name.clone()).or_insert(0) += 1;
     }
     counts
@@ -107,6 +107,14 @@ pub fn execute_dag(
     // Empty DAG — nothing to do.
     if dag.is_empty() {
         return Ok(());
+    }
+
+    // Defensive cycle check before spawning any workers. The work-DAG
+    // builder cannot introduce cycles by construction (deps only point to
+    // already-emitted ids), but if a future builder change does, fail
+    // fast with a path-bearing diagnostic instead of deadlocking the pool.
+    if let Err(cycle) = dag.validate() {
+        return Err(EngineError::CycleDetected(cycle.to_string()));
     }
 
     let total = dag.len();
@@ -213,23 +221,23 @@ pub fn execute_dag(
         emit(
             event_tx,
             EngineEvent::NodeSkipped {
-                recipe: node.payload.recipe_name.clone(),
+                recipe: node.payload().recipe_name.clone(),
                 node_name: node
-                    .payload
+                    .payload()
                     .payload
                     .as_ref()
                     .map(|p| p.display_name())
-                    .unwrap_or_else(|| node.payload.recipe_name.clone()),
+                    .unwrap_or_else(|| node.payload().recipe_name.clone()),
             },
         );
         finish_recipe_node(
             trackers,
-            &node.payload.recipe_name,
+            &node.payload().recipe_name,
             false,
             false,
             event_tx,
         );
-        for &dep_id in &dag.node(node_id).dependents {
+        for &dep_id in dag.node(node_id).dependents() {
             cancel_subtree(dag, dep_id, cancelled, event_tx, trackers);
         }
     }
@@ -306,7 +314,7 @@ pub fn execute_dag(
         }
 
         let node = dag.node(id);
-        let work_node = &node.payload;
+        let work_node = node.payload();
 
         match &work_node.payload {
             None => {
@@ -441,7 +449,7 @@ pub fn execute_dag(
             }
 
             let node = dag.node(id);
-            let work_node = &node.payload;
+            let work_node = node.payload();
             if let Some(payload @ WorkPayload::Interactive { cmd, line }) = &work_node.payload {
                 let recipe_name = work_node.recipe_name.clone();
                 let node_name = payload.display_name();
@@ -477,7 +485,7 @@ pub fn execute_dag(
                 // Terminal = no more queued interactives and this node has no
                 // (live) dependents, so after it completes the build will end.
                 let is_terminal = interactive_queue.is_empty()
-                    && dag.node(id).dependents.iter().all(|&d| cancelled[d]);
+                    && dag.node(id).dependents().iter().all(|&d| cancelled[d]);
 
                 let success = result.is_ok();
                 emit(
@@ -502,9 +510,9 @@ pub fn execute_dag(
                     );
 
                     // Update cache if needed
-                    if let Some(meta) = &dag.node(id).payload.cache_meta {
-                        if let Some(cm) = cache_managers.get(&dag.node(id).payload.recipe_name) {
-                            match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(id).payload.working_dir) {
+                    if let Some(meta) = &dag.node(id).payload().cache_meta {
+                        if let Some(cm) = cache_managers.get(&dag.node(id).payload().recipe_name) {
+                            match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(id).payload().working_dir) {
                                 Ok(step_entry) => {
                                     // Compute cloud_key for this unit (spec §5.3).
                                     let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
@@ -530,7 +538,7 @@ pub fn execute_dag(
                                     // artifact_key(cloud_key, idx, path) so a future cache hit can
                                     // restore them all independently.
                                     for (out_idx, output_path) in meta.output_paths.iter().enumerate() {
-                                        let abs_output = dag.node(id).payload.working_dir.join(output_path);
+                                        let abs_output = dag.node(id).payload().working_dir.join(output_path);
                                         let bytes = match std::fs::read(&abs_output) {
                                             Ok(b) => b,
                                             Err(_) => continue,
@@ -606,7 +614,7 @@ pub fn execute_dag(
                         true,
                         &event_tx,
                     );
-                    for &dep_id in &dag.node(id).dependents {
+                    for &dep_id in dag.node(id).dependents() {
                         cancel_subtree(
                             &dag,
                             dep_id,
@@ -630,7 +638,7 @@ pub fn execute_dag(
         finished += 1;
 
         let node = dag.node(result.id);
-        let work_node = &node.payload;
+        let work_node = node.payload();
         let recipe_name = work_node.recipe_name.clone();
 
         if result.success {
@@ -656,9 +664,9 @@ pub fn execute_dag(
             );
 
             // Update cache entry if this node has cache metadata
-            if let Some(meta) = &dag.node(result.id).payload.cache_meta {
-                if let Some(cm) = cache_managers.get(&dag.node(result.id).payload.recipe_name) {
-                    match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(result.id).payload.working_dir) {
+            if let Some(meta) = &dag.node(result.id).payload().cache_meta {
+                if let Some(cm) = cache_managers.get(&dag.node(result.id).payload().recipe_name) {
+                    match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(result.id).payload().working_dir) {
                         Ok(step_entry) => {
                             // Compute cloud_key for this unit (spec §5.3).
                             let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
@@ -682,7 +690,7 @@ pub fn execute_dag(
                             // Upload one artifact per declared output (2026-05-02 addendum
                             // spec §5.1).
                             for (out_idx, output_path) in meta.output_paths.iter().enumerate() {
-                                let abs_output = dag.node(result.id).payload.working_dir.join(output_path);
+                                let abs_output = dag.node(result.id).payload().working_dir.join(output_path);
                                 let bytes = match std::fs::read(&abs_output) {
                                     Ok(b) => b,
                                     Err(_) => continue,
@@ -763,7 +771,7 @@ pub fn execute_dag(
             failures.push((result.id, recipe_name.clone(), err_msg));
             finish_recipe_node(&mut recipe_trackers, &recipe_name, false, true, &event_tx);
 
-            for &dep_id in &dag.node(result.id).dependents {
+            for &dep_id in dag.node(result.id).dependents() {
                 cancel_subtree(
                     &dag,
                     dep_id,
@@ -857,7 +865,7 @@ mod tests {
         let (wd, _tmp) = tmp_dir();
         let cache_ctx = make_cache_ctx(&_tmp);
         let mut dag = Dag::new();
-        dag.add_node(work_node(shell("true"), "single", wd), &[]);
+        dag.add_node(work_node(shell("true"), "single", wd), &[]).unwrap();
 
         let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -873,11 +881,11 @@ mod tests {
         let a = dag.add_node(
             work_node(shell("echo hello > output.txt"), "writer", wd.clone()),
             &[],
-        );
+        ).unwrap();
         dag.add_node(
             work_node(shell("cat output.txt"), "reader", wd),
             &[a],
-        );
+        ).unwrap();
 
         let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -890,7 +898,7 @@ mod tests {
         let cache_ctx = make_cache_ctx(&_tmp);
 
         let mut dag = Dag::new();
-        let a = dag.add_node(work_node(shell("false"), "fail_a", wd.clone()), &[]);
+        let a = dag.add_node(work_node(shell("false"), "fail_a", wd.clone()), &[]).unwrap();
         // B depends on A — should never run.
         dag.add_node(
             work_node(
@@ -899,7 +907,7 @@ mod tests {
                 wd,
             ),
             &[a],
-        );
+        ).unwrap();
 
         let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_err());
@@ -923,7 +931,7 @@ mod tests {
             dag.add_node(
                 work_node(shell("sleep 0.2"), &format!("sleep_{i}"), wd.clone()),
                 &[],
-            );
+            ).unwrap();
         }
 
         let start = std::time::Instant::now();
@@ -956,9 +964,9 @@ mod tests {
         let cache_ctx = make_cache_ctx(&_tmp);
 
         let mut dag = Dag::new();
-        let a = dag.add_node(presatisfied_node("cached_a", wd.clone()), &[]);
-        let b = dag.add_node(presatisfied_node("cached_b", wd.clone()), &[a]);
-        dag.add_node(work_node(shell("true"), "real_work", wd), &[b]);
+        let a = dag.add_node(presatisfied_node("cached_a", wd.clone()), &[]).unwrap();
+        let b = dag.add_node(presatisfied_node("cached_b", wd.clone()), &[a]).unwrap();
+        dag.add_node(work_node(shell("true"), "real_work", wd), &[b]).unwrap();
 
         let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -972,9 +980,9 @@ mod tests {
 
         let mut dag = Dag::new();
         // A will fail
-        dag.add_node(work_node(shell("false"), "fail_a", wd.clone()), &[]);
+        dag.add_node(work_node(shell("false"), "fail_a", wd.clone()), &[]).unwrap();
         // B is independent, should succeed
-        dag.add_node(work_node(shell("true"), "ok_b", wd), &[]);
+        dag.add_node(work_node(shell("true"), "ok_b", wd), &[]).unwrap();
 
         let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_err());
@@ -995,7 +1003,7 @@ mod tests {
         let cache_ctx = make_cache_ctx(&_tmp);
 
         let mut dag = Dag::new();
-        let a = dag.add_node(work_node(shell("echo setup"), "setup", wd.clone()), &[]);
+        let a = dag.add_node(work_node(shell("echo setup"), "setup", wd.clone()), &[]).unwrap();
         dag.add_node(
             work_node(
                 WorkPayload::Interactive {
@@ -1006,7 +1014,7 @@ mod tests {
                 wd,
             ),
             &[a],
-        );
+        ).unwrap();
 
         let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
