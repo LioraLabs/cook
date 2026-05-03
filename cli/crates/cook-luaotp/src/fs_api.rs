@@ -1,43 +1,60 @@
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
 use mlua::prelude::*;
 
-pub fn register_fs_api(lua: &Lua, working_dir: &std::path::Path) -> LuaResult<()> {
+/// Register the `fs` table once per worker VM.
+///
+/// Each closure reads from a shared `Arc<Mutex<PathBuf>>` so paths resolve
+/// against the *current* work item's working_dir, not the one in effect
+/// when the table was first registered. This matters for CS-0017
+/// multi-Cookfile imports, where the same worker VM may receive items
+/// from different Cookfiles with different cwds.
+pub fn register_fs_api(
+    lua: &Lua,
+    current_working_dir: &Arc<Mutex<PathBuf>>,
+) -> LuaResult<()> {
     let fs = lua.create_table()?;
 
-    let wd = working_dir.to_path_buf();
+    fn cwd(slot: &Mutex<PathBuf>) -> PathBuf {
+        slot.lock().expect("working_dir lock").clone()
+    }
+
+    let wd = Arc::clone(current_working_dir);
     fs.set(
         "exists",
         lua.create_function(move |_, path: String| {
-            Ok(wd.join(&path).exists())
+            Ok(cwd(&wd).join(&path).exists())
         })?,
     )?;
 
-    let wd = working_dir.to_path_buf();
+    let wd = Arc::clone(current_working_dir);
     fs.set(
         "size",
         lua.create_function(move |_, path: String| {
-            let full = wd.join(&path);
+            let full = cwd(&wd).join(&path);
             let meta = std::fs::metadata(&full)
                 .map_err(|e| mlua::Error::runtime(format!("fs.size: {e}")))?;
             Ok(meta.len())
         })?,
     )?;
 
-    let wd = working_dir.to_path_buf();
+    let wd = Arc::clone(current_working_dir);
     fs.set(
         "read",
         lua.create_function(move |_, path: String| {
-            let full = wd.join(&path);
+            let full = cwd(&wd).join(&path);
             let content = std::fs::read_to_string(&full)
                 .map_err(|e| mlua::Error::runtime(format!("fs.read: {e}")))?;
             Ok(content)
         })?,
     )?;
 
-    let wd = working_dir.to_path_buf();
+    let wd = Arc::clone(current_working_dir);
     fs.set(
         "glob",
         lua.create_function(move |lua, pattern: String| {
-            let full_pattern = wd.join(&pattern).to_string_lossy().to_string();
+            let full_pattern = cwd(&wd).join(&pattern).to_string_lossy().to_string();
             let paths: Vec<String> = glob::glob(&full_pattern)
                 .map_err(|e| mlua::Error::runtime(format!("fs.glob: {e}")))?
                 .filter_map(|p| p.ok())
@@ -51,11 +68,11 @@ pub fn register_fs_api(lua: &Lua, working_dir: &std::path::Path) -> LuaResult<()
         })?,
     )?;
 
-    let wd = working_dir.to_path_buf();
+    let wd = Arc::clone(current_working_dir);
     fs.set(
         "mtime",
         lua.create_function(move |_, path: String| {
-            let full = wd.join(&path);
+            let full = cwd(&wd).join(&path);
             let meta = std::fs::metadata(&full)
                 .map_err(|e| mlua::Error::runtime(format!("fs.mtime: {e}")))?;
             let mtime = meta
@@ -68,11 +85,11 @@ pub fn register_fs_api(lua: &Lua, working_dir: &std::path::Path) -> LuaResult<()
         })?,
     )?;
 
-    let wd = working_dir.to_path_buf();
+    let wd = Arc::clone(current_working_dir);
     fs.set(
         "write",
         lua.create_function(move |_, (path, content): (String, String)| {
-            let full = wd.join(&path);
+            let full = cwd(&wd).join(&path);
             if let Some(parent) = full.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| mlua::Error::runtime(format!("fs.write: {e}")))?;
@@ -83,11 +100,11 @@ pub fn register_fs_api(lua: &Lua, working_dir: &std::path::Path) -> LuaResult<()
         })?,
     )?;
 
-    let wd = working_dir.to_path_buf();
+    let wd = Arc::clone(current_working_dir);
     fs.set(
         "mkdir_p",
         lua.create_function(move |_, path: String| {
-            let full = wd.join(&path);
+            let full = cwd(&wd).join(&path);
             std::fs::create_dir_all(&full)
                 .map_err(|e| mlua::Error::runtime(format!("fs.mkdir_p: {e}")))?;
             Ok(())

@@ -97,17 +97,40 @@ impl WorkerPool {
     }
 
     /// Send a shutdown sentinel for every worker and join all threads.
-    pub fn shutdown(self) {
+    pub fn shutdown(mut self) {
+        self.signal_and_join();
+    }
+
+    /// Idempotent shutdown used by both explicit `shutdown()` and `Drop`.
+    /// Recovers a poisoned queue mutex so a panicking worker can't strand
+    /// the rest of the pool.
+    fn signal_and_join(&mut self) {
+        if self.threads.is_empty() {
+            return;
+        }
         {
-            let mut q = self.queue.queue.lock().expect("queue lock poisoned");
+            let mut q = match self.queue.queue.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             for _ in &self.threads {
                 q.push_back(QueueItem::Shutdown);
             }
             self.queue.condvar.notify_all();
         }
-        for handle in self.threads {
+        for handle in self.threads.drain(..) {
             let _ = handle.join();
         }
+    }
+}
+
+impl Drop for WorkerPool {
+    /// Implicit shutdown: if a `WorkerPool` is dropped without an explicit
+    /// `shutdown()` call, signal the workers and join them. Without this,
+    /// the workers' `Arc<SharedQueue>` clones keep the queue alive forever
+    /// and the threads leak, blocked on the condvar.
+    fn drop(&mut self) {
+        self.signal_and_join();
     }
 }
 
@@ -134,17 +157,26 @@ fn worker_loop(
     register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_recipe)
         .expect("failed to register cook table");
 
-    // Defer fs API registration to first work item (needs a working_dir).
-    let mut fs_api_registered = false;
+    // Register the `fs` table once at startup. Closures read the cwd
+    // through `Arc<Mutex<PathBuf>>` so each call sees the *current* work
+    // item's working_dir, not the one in effect at registration time.
+    crate::fs_api::register_fs_api(&lua, &current_working_dir)
+        .expect("failed to register fs API");
 
     loop {
         let item = {
-            let mut q = queue.queue.lock().expect("queue lock poisoned");
+            let mut q = match queue.queue.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
             loop {
                 if let Some(front) = q.pop_front() {
                     break front;
                 }
-                q = queue.condvar.wait(q).expect("condvar wait poisoned");
+                q = match queue.condvar.wait(q) {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
             }
         };
 
@@ -165,21 +197,55 @@ fn worker_loop(
                     *env = work.env_vars.clone();
                 }
 
-                // Register fs API on first work item
-                if !fs_api_registered {
-                    crate::fs_api::register_fs_api(&lua, &work.working_dir)
-                        .expect("failed to register fs API");
-                    fs_api_registered = true;
-                }
-
                 // Refresh package.path so `require` resolves cook_modules/
                 // relative to this unit's source Cookfile (CS-0017).
                 let _ = refresh_package_path(&lua, &work.working_dir);
 
-                let result = execute_work_item(&lua, &work, &work.working_dir, &work.env_vars);
+                // Run the work item under `catch_unwind`. A Rust panic
+                // anywhere in execute_work_item (e.g. an unexpected
+                // upstream invariant violation) is converted into a
+                // failure `WorkResult` so the engine never hangs on
+                // `rx.recv()`. The Lua VM is reused — mlua wraps panics
+                // raised from inside Lua callbacks and converts them to
+                // Lua errors, so the VM state stays sane.
+                let work_id = work.id;
+                let recipe_name = work.recipe_name.clone();
+                let node_name = work.payload.display_name();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    execute_work_item(&lua, &work, &work.working_dir, &work.env_vars)
+                }));
+                let result = match result {
+                    Ok(r) => r,
+                    Err(panic_payload) => {
+                        let msg = panic_payload_to_string(&panic_payload);
+                        WorkResult {
+                            id: work_id,
+                            success: false,
+                            error: Some(format!(
+                                "[{recipe_name}] worker panic: {msg}"
+                            )),
+                            test_output: None,
+                            node_name,
+                            output_lines: Vec::new(),
+                        }
+                    }
+                };
                 let _ = tx.send(result);
             }
         }
+    }
+}
+
+/// Best-effort extraction of a panic payload's message. Panics raised via
+/// `panic!("…")` carry either a `&'static str` or `String`; anything else
+/// gets a generic placeholder.
+fn panic_payload_to_string(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        s.to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic payload".to_string()
     }
 }
 
@@ -376,6 +442,16 @@ fn execute_work_item(
     working_dir: &PathBuf,
     env_vars: &HashMap<String, String>,
 ) -> WorkResult {
+    // Test-only panic injection: lets `test_pool_recovers_from_worker_panic`
+    // exercise the `catch_unwind` boundary in worker_loop without depending
+    // on a panic path that's hard to trigger from the public API. mlua
+    // catches panics raised from inside Lua callbacks, so a Lua-side
+    // trigger would never reach `catch_unwind`.
+    #[cfg(test)]
+    if work.recipe_name == "__cook_test_panic__" {
+        panic!("forced test panic");
+    }
+
     let node_name = work.payload.display_name();
 
     match &work.payload {
@@ -906,5 +982,139 @@ mod tests {
         assert!(result.success, "expected success, got error: {:?}", result.error);
 
         pool.shutdown();
+    }
+
+    /// CS-0017 multi-Cookfile imports route work items with different
+    /// `working_dir`s through the same worker. `fs.*` must resolve relative
+    /// paths against each item's cwd, not the cwd of the first item the
+    /// worker happened to see.
+    #[test]
+    fn test_pool_fs_api_uses_per_item_working_dir() {
+        let dir1 = TempDir::new().unwrap();
+        let dir2 = TempDir::new().unwrap();
+        fs::write(dir1.path().join("data.txt"), "from-dir1").unwrap();
+        fs::write(dir2.path().join("data.txt"), "from-dir2").unwrap();
+
+        let out1 = dir1.path().join("out.txt");
+        let out2 = dir2.path().join("out.txt");
+
+        // Single worker so both items hit the same VM and exercise refresh.
+        let (pool, rx) = WorkerPool::spawn(1);
+
+        let code = r#"
+            local content = fs.read("data.txt")
+            local f = io.open(output, "w")
+            f:write(content)
+            f:close()
+        "#;
+
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::LuaChunk {
+                code: code.to_string(),
+                inputs: vec![],
+                outputs: vec![out1.to_string_lossy().into_owned()],
+                ingredient_groups: vec![],
+            },
+            recipe_name: "r".to_string(),
+            working_dir: dir1.path().to_path_buf(),
+            env_vars: HashMap::new(),
+        });
+        let r1 = rx.recv().unwrap();
+        assert!(r1.success, "first item failed: {:?}", r1.error);
+        assert_eq!(fs::read_to_string(&out1).unwrap(), "from-dir1");
+
+        pool.submit(WorkItem {
+            id: 1,
+            payload: WorkPayload::LuaChunk {
+                code: code.to_string(),
+                inputs: vec![],
+                outputs: vec![out2.to_string_lossy().into_owned()],
+                ingredient_groups: vec![],
+            },
+            recipe_name: "r".to_string(),
+            working_dir: dir2.path().to_path_buf(),
+            env_vars: HashMap::new(),
+        });
+        let r2 = rx.recv().unwrap();
+        assert!(r2.success, "second item failed: {:?}", r2.error);
+        assert_eq!(
+            fs::read_to_string(&out2).unwrap(),
+            "from-dir2",
+            "fs.read must resolve against item 2's working_dir, \
+             not the first item's"
+        );
+
+        pool.shutdown();
+    }
+
+    /// A Rust panic inside work-item processing must not hang the engine.
+    /// The worker should surface a failure `WorkResult` and keep processing
+    /// subsequent items. The magic recipe name `"__cook_test_panic__"` is
+    /// recognized by `execute_work_item` under `#[cfg(test)]` and panics
+    /// before the work payload runs — this exercises the panic boundary
+    /// directly (mlua catches panics raised from inside Lua callbacks, so
+    /// a Lua-side trigger wouldn't reach `catch_unwind`).
+    #[test]
+    fn test_pool_recovers_from_worker_panic() {
+        let dir = TempDir::new().unwrap();
+        let (pool, rx) = WorkerPool::spawn(1);
+
+        // First item: triggers a panic in execute_work_item.
+        pool.submit(WorkItem {
+            id: 7,
+            payload: WorkPayload::Shell {
+                cmd: "true".to_string(),
+                line: 1,
+            },
+            recipe_name: "__cook_test_panic__".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+        });
+        let r1 = rx.recv().unwrap();
+        assert_eq!(r1.id, 7);
+        assert!(!r1.success, "expected failure result, got success");
+        let err = r1.error.as_ref().expect("expected error message");
+        assert!(
+            err.to_lowercase().contains("panic"),
+            "error should mention the panic: {err}"
+        );
+
+        // Second item: same worker pool should still process this.
+        pool.submit(WorkItem {
+            id: 8,
+            payload: WorkPayload::Shell {
+                cmd: "echo recovered".to_string(),
+                line: 1,
+            },
+            recipe_name: "recovery".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+        });
+        let r2 = rx.recv().unwrap();
+        assert_eq!(r2.id, 8);
+        assert!(r2.success, "post-panic item failed: {:?}", r2.error);
+
+        pool.shutdown();
+    }
+
+    /// Dropping `WorkerPool` without an explicit `shutdown()` must signal
+    /// the workers and join them. Otherwise the queue `Arc` outlives the
+    /// pool — the workers leak, blocked on the condvar forever.
+    #[test]
+    fn test_pool_drop_cleans_up_workers() {
+        let weak;
+        {
+            let (pool, _rx) = WorkerPool::spawn(2);
+            weak = Arc::downgrade(&pool.queue);
+        } // pool dropped here without shutdown()
+
+        // After Drop, all worker threads should have exited and released
+        // their `Arc<SharedQueue>` clones, so the only remaining strong
+        // ref (the pool's) is also gone.
+        assert!(
+            weak.upgrade().is_none(),
+            "queue Arc still alive after pool drop — workers were not joined"
+        );
     }
 }
