@@ -1,0 +1,5 @@
+recipe extract
+    ingredients "data.txt"
+    cook "out.txt" using {
+        awk '{print $1}' $<in> > $<out>
+    }

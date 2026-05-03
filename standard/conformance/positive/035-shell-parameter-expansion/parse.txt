@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="greet" line=1
+      deps: []
+      ingredients: ["src.txt"]
+      excludes: []
+      steps:
+        Cook outputs=["out.txt"] using=ShellBlock(["echo ${HOME:-fallback} >> $<out>", "echo ${USER%suffix} >> $<out>"])
+  chores:
