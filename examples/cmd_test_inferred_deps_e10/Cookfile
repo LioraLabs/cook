@@ -1,6 +1,6 @@
 # Cmd-test inferred-deps fixture for App. E.10.
 #
-# `verify_prepare`'s test body references `{prepare}`. Pre-fix, `cook --test`
+# `verify_prepare`'s test body references `$<prepare>`. Pre-fix, `cook --test`
 # passed `&BTreeMap::new()` to the wave grouper, which registered verify_prepare
 # alone and errored at codegen-resolve time with "recipe 'prepare' has no
 # terminal output (not registered or has no cook steps)". Post-fix, cmd_test
@@ -14,12 +14,12 @@
 recipe prepare
     ingredients "src/data.txt"
     cook "build/prepare.out" using {
-        mkdir -p build && cp {all} {out}
+        mkdir -p build && cp $<all> $<out>
     }
 
 recipe verify_prepare
     test {
-        test -f {prepare}
+        test -f $<prepare>
     }
 
 chore clean

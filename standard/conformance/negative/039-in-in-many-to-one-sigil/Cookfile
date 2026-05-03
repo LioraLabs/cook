@@ -1,0 +1,5 @@
+recipe "build"
+    ingredients "src1.txt" "src2.txt"
+    cook "out.txt" using {
+        cat $<all> > $<in>
+    }

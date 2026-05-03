@@ -4,5 +4,5 @@ recipe queue_lib
     ingredients "queue.tmpl"
     cook "build/queue.bin" using {
         mkdir -p build
-        cat {proto.proto_lib} queue.tmpl > {out}
+        cat $<proto.proto_lib> queue.tmpl > $<out>
     }

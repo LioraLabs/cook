@@ -1,5 +1,5 @@
 recipe "compile"
     ingredients "src/main.c"
-    cook "build/{in.stem}.o" using {
-        gcc -c {in} -o {out}
+    cook "build/$<in.stem>.o" using {
+        gcc -c $<in> -o $<out>
     }

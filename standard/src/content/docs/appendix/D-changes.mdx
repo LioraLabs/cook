@@ -9,6 +9,7 @@ sidebar:
 
 ## Versions
 
+- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
@@ -456,7 +457,7 @@ The map is computed once per Cookfile by `Workspace::alias_qualified_prefixes_fo
 
 **Version:** v0.6
 
-**Sections affected:** §{modules.import-declaration} (§7.2 — adds the `//path` sigil grammar production and the normative rejections for `..`-bearing tree-relative paths, absolute paths, and `..`-bearing sigil paths); §{modules.composition} (§7.3 — qualified transitive-imports definition); §{modules.diamond-dedup} (§7.5 — scopes diamond dedup to sigil-anchored imports); §{modules.workspace-root} (§7.6 — workspace-root determination via `--root` / `.cookroot` walk-up / tree-import inference / self-root / sigil-anchor rejection, Rules 1–5); §{modules.cache-portability} (§7.7 — content-addressed cache invariants under workspace path moves); App. A.7 (`import_path` grammar production for tree vs sigil shapes; `path_segment` normalization).
+**Sections affected:** §{modules.import-declaration} (§7.2 — adds the `//path` sigil grammar production and the normative rejections for `..`-bearing tree-relative paths, absolute paths, and `..`-bearing sigil paths); §{modules.qualified-refs} (§7.3 — qualified transitive-imports definition); §{modules.duplicates-and-cycles} (§7.5 — scopes diamond dedup to sigil-anchored imports); §{modules.workspace-root} (§7.6 — workspace-root determination via `--root` / `.cookroot` walk-up / tree-import inference / self-root / sigil-anchor rejection, Rules 1–5); §{modules.cache-invariants} (§7.7 — content-addressed cache invariants under workspace path moves); App. A.7 (`import_path` grammar production for tree vs sigil shapes; `path_segment` normalization).
 
 **Summary.** Establishes the **sigil import** as a first-class language construct distinct from tree-relative imports. An `import alias //path` declaration whose path begins with `//` resolves the importee against the **workspace root**, regardless of where the importing Cookfile sits in the directory tree. Tree-relative imports (`./path`, `../path` — the latter rejected per the §7.2 normative diagnostics) continue to resolve relative to the importer's directory. The two forms compose: a workspace can mix tree-relative and sigil edges in the same Cookfile.
 
@@ -471,3 +472,41 @@ App. A.7 adds the `import_path = tree_path | sigil_path` production with the nor
 **Implementation status.** Lockstep — the spec, parser AST (`ImportPath::Tree | ::Sigil`), parser path-shape rejection, codegen for cross-Cookfile body refs, register-side `qualified_prefix` machinery, workspace-root walk-up, and the runtime fixtures (`examples/cache_benchmarks_sigil/`, `examples/monorepo_codegen/`, the four bug-hunt fixtures) all landed across the `feature/cross-cookfile-caching` branch and merged together. CS-0026..CS-0030 are the implementation series that catches up to this entry's normative prose.
 
 **Reference.** The `feature/cross-cookfile-caching` branch merge commit on `main` (the same commit `cs-standard/v0.6` is moved forward to by the CS-0031 amendment).
+
+## D.33. CS-0033 — `$<IDENT>` sigil-disambiguated placeholder syntax with closed-set resolution. [#changes.cs-0033]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7
+
+**Sections affected:** §{lexical.placeholders} (new §2.11), §{xref.resolution} (rewrite), §{xref.env-namespace} (new §5.7), §{lua.shell-placeholders} (§6.7 + §6.7.1 rewrite), App. A `placeholder` / `sigil_placeholder` productions, App. B.8 (`out_0` rejection rationale), App. B.9 (`cook.require_env` runtime mechanism rationale), App. E.8 (fully resolved). Reference-implementation: `cli/crates/cook-{lang,luagen,register,contracts}` (lexer reservation, scanner, resolver, substitution, runtime helper, shared accessor constant), 5 new positive conformance fixtures (`034-shell-brace-expansion` through `038-shell-json-literal`), 3 new negative conformance fixtures (`037-reserved-env-recipe-rejected`, `038-out-zero-rejected-sigil`, `039-in-in-many-to-one-sigil`). 24 in-tree Cookfiles (examples + tree-sitter-cook) migrated from `{IDENT}` to `$<IDENT>`.
+
+**Summary.** Replaces Cook's placeholder syntax `{IDENT}` with the strict sigil shape `$<IDENT>` and tightens the substitution layer's resolution rule from open (silent fallthrough to `cook.env[TOKEN]` for any unrecognized token) to closed (every placeholder MUST resolve to a builtin, an in-scope recipe, or a declared env var; otherwise a load-time diagnostic). The motivation is the structural collision between the legacy `{...}` shape and shell idioms that use `{` and `}` — Bash brace expansion, parameter expansion, awk inline scripts, `find -exec rm {} \;`, JSON literals; under the new shape these idioms pass through to the shell verbatim because the strict-bail rule (§{lexical.placeholders}) treats any byte sequence not matching `$<IDENT>` exactly as literal.
+
+The substitution layer is wired uniformly across all four shell-text contexts: `cook` step output patterns, `cook ... using { ... }` shell-block bodies, `plate` and `test` shell-block bodies, and bare `shell_command` steps in both recipe and chore bodies. The chore-body wiring closes App. E.8 — pre-CS-0033, the chore codegen path skipped substitution entirely, surfacing as a shell error for any chore using a placeholder. App. E.2 (the original `${VAR:-default}` collision symptom) is structurally eliminated: `${VAR:-default}` does not begin with `$<` so it is unambiguously literal under the new lexer rule.
+
+The closed-set resolver lives in `cook-luagen/src/resolver.rs` and produces one of three outcomes per IDENT: builtin (inlined), recipe in scope (lowered to `cook.dep_output("name")` or accessor variant), or env-runtime (lowered to `cook.require_env("name")`). The runtime side, `cook.require_env`, captures the `cook.env` keyset at the end of config-block evaluation and rejects any subsequent lookup whose key is not in the captured set. The "declared" check is enforced at register time, after config-block evaluation completes; subsequent recipe-time writes to `cook.env` do not retroactively satisfy the contract.
+
+**Why a flag-day cut.** Pre-1.0, the alternative — dual-grammar transition admitting both `{IDENT}` and `$<IDENT>` for one version, then dropping `{IDENT}` — was considered and rejected. Two valid spellings invite reading-friction, the lexer disambiguation surface area grows when it should be shrinking, and every doc and example would have to choose a spelling then update again at deprecation. The migration tooling that would have justified dual-grammar (a CLI subcommand for downstream Cookfile rewriting) was not built — there is no installed base to migrate, and a one-off `re.sub(r'\{([a-zA-Z_][a-zA-Z0-9_.]*)\}', r'$<\1>', src)` pass handles the in-tree corpus.
+
+**Implementation notes.** The scanner (`cook-luagen/src/sigil.rs`) is byte-level and bails on the first non-IDENT byte after `$<` rather than searching forward for a `>` — this is the property that makes shell idioms like `${HOME}` or `$<HOME bar>` (with embedded space) literal rather than producing a misleading "unclosed placeholder" diagnostic. The resolver distinguishes "not a builtin shape" (`BuiltinMatch::No` → fall through to recipe/env) from "malformed builtin shape" (`BuiltinMatch::Malformed` → hard error, e.g., `$<out_0>` per App. B.8). The reserved-recipe-segment rule was tightened in this change to reject `env` as either the first or last dotted segment, ensuring `$<env.X>` is unambiguously an env-var lookup and cannot collide with a recipe whose segment is named `env`.
+
+**Conformance impact.** The corpus migrated wholesale to `$<IDENT>` syntax. Five new positive fixtures (`034-shell-brace-expansion` through `038-shell-json-literal`) pin the strict-bail rule against shell `{}`-idioms: Bash brace expansion, parameter expansion, awk script, `find -exec`, and JSON literal. Three new negative fixtures (`037-reserved-env-recipe-rejected`, `038-out-zero-rejected-sigil`, `039-in-in-many-to-one-sigil`) pin the closed-set rejection cases. The conformance harness was disabled during the parser-rewrite phase and re-enabled at corpus-migration time; both `cook-lang` and `cook-luagen` conformance test bundles pass against the cut commit.
+
+**Reference:** the CS-0033 commit series on `feature/sigil-placeholder-syntax`.
+
+## D.34. CS-0034 — Standard cut: v0.7. [#changes.cs-0034]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7
+
+**Sections affected:** `standard/VERSION` (`0.6` → `0.7`); App. D Versions index (new v0.7 entry); this entry. Reference-implementation version mirrors: `cli/crates/cook-lang/src/lib.rs` (`COOK_STANDARD_VERSION`), `cli/crates/cook-lang/README.md`, `cli/crates/cook-lang/CONFORMANCE.md`, project root `README.md`.
+
+**Summary.** Cuts the Cook Standard at v0.7. Per the cut procedure in `CONTRIBUTING.md` (and §{intro.version}), this entry plus the v0.7 row in the Versions index plus a `cs-standard/v0.7` git tag at the merge commit constitute the published cut. v0.7 ships **CS-0033**, the sigil-disambiguated placeholder syntax with closed-set resolution. The `tree-sitter-cook/grammar.js` banner is bumped to claim staleness against `cs-standard/v0.7` (the grammar itself remains pinned at v0.4 + CS-0022, tracked by CS-0002). The `cs-standard/v0.7` git tag is placed at the cut commit on `feature/sigil-placeholder-syntax` after merge to `main`.
+
+**Why a minor bump.** v0.7 changes the placeholder syntax itself — every Cookfile that uses placeholders is breaking-source-incompatible with v0.6 (the shape changes from `{IDENT}` to `$<IDENT>`). Pre-1.0, this is documented and tooling-supported (one-shot regex migration); post-1.0 it would warrant a major bump. The closed-set resolution change also tightens authored contracts — a typo in an env var name now produces a hard error rather than silent empty-string substitution — which is observable to any Cookfile that relied on the silent fallthrough.
+
+**Cut commit content.** Bump `standard/VERSION` from `0.6` to `0.7`; bump `COOK_STANDARD_VERSION` to `"0.7"` in the cook-lang lib.rs; mirror the claim in the README files; add the v0.7 entry to the App. D Versions index; add this body. The conformance harness passes against the cut commit.
+
+**Reference:** the v0.7 cut commit on the `feature/sigil-placeholder-syntax` branch (post-merge, on `main`).

@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="emit" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["out.json"] using=ShellBlock(["echo '{\"key\": \"value\"}' > $<out>"])
+  chores:

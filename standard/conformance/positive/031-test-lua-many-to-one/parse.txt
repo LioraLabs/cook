@@ -8,6 +8,6 @@ Cookfile
       ingredients: ["tests/*.lua"]
       excludes: []
       steps:
-        Cook outputs=["build/tests/{in.stem}"] using=ShellBlock(["luac {in} -o {out}"])
+        Cook outputs=["build/tests/$<in.stem>"] using=ShellBlock(["luac $<in> -o $<out>"])
         Test body=LuaBlock("        for _, b in ipairs(inputs) do cook.sh(\"./\" .. b) end") timeout=Some(300) should_fail=false
   chores:

@@ -1,9 +1,12 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-// tree-sitter-cook claims conformance with Cook Standard v0.4 + CS-0022
-// (cs-standard/v0.4). See standard/src/content/docs/appendix/A-grammar.mdx
-// for the normative grammar this file mirrors.
+// tree-sitter-cook claims conformance with Cook Standard v0.4 + CS-0022.
+// The grammar is STALE relative to v0.7 (cs-standard/v0.7); it does not
+// implement CS-0023 onward (plate/test block bodies, `//`-anchored sigil
+// imports, `$<IDENT>` placeholder syntax). See standard/src/content/docs/
+// appendix/A-grammar.mdx for the normative grammar; the catch-up is
+// tracked by CS-0002 (planned tree-sitter-cook conformance audit).
 
 module.exports = grammar({
   name: "cook",

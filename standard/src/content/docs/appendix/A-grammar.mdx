@@ -35,7 +35,7 @@ config_body           ::= LUA_SOURCE
 
 **Duplicate `import_declaration` rule.** The `BARE_IDENTIFIER` (local alias) of each `import_declaration` MUST be unique within a Cookfile. A conforming implementation MUST reject duplicate import names.
 
-**Reserved recipe name segments.** The identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `all` are reserved and MUST NOT appear as the final dot-separated segment of any recipe name. A conforming implementation MUST reject a recipe whose name ends with one of these segments (e.g., `backend.stem` is rejected; `backend.build` is accepted).
+**Reserved recipe name segments.** The identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env` are reserved and MUST NOT appear as the final dot-separated segment of any recipe name. A conforming implementation MUST reject a recipe whose name ends with one of these segments (e.g., `backend.stem` is rejected; `backend.build` is accepted). Additionally, `env` MUST NOT appear as the **first** dot-separated segment of a recipe name (e.g., `recipe env.foo` is rejected). This reserves the `env.` prefix for the explicit env-var-lookup form.
 
 ## A.3. Recipes [#grammar-appendix.recipes]
 ```ebnf
@@ -203,6 +203,20 @@ ACCESSOR              ::= "stem" | "name" | "ext" | "dir"
 ```
 
 This production is informative; the normative rules are in §{lua.shell-placeholders}.
+
+**Sigil placeholder shape (`$<IDENT>`).** The strict sigil placeholder form is normatively defined in §{lexical.placeholders}. Its production is reproduced here for reference in the context of surrounding grammar productions:
+
+```ebnf
+sigil_placeholder       ::= "$<" placeholder_ident ">"
+placeholder_ident       ::= bare_ident | out_indexed | out_indexed_acc
+bare_ident              ::= ALPHA (ALPHA | DIGIT | "_" | ".")*
+out_indexed             ::= "out_" DIGIT+
+out_indexed_acc         ::= "out_" DIGIT+ "." ACCESSOR
+ALPHA                   ::= "a"…"z" | "A"…"Z" | "_"
+DIGIT                   ::= "0"…"9"
+```
+
+The `ACCESSOR` production is defined above. The `sigil_placeholder` production may appear inside `output_pattern`, `SHELL_BLOCK_CONTENT`, `SHELL_LINE_CONTENT`, and `plate_test_shell_block_body` text. Resolution is defined by §{xref.resolution} and §{lua.shell-placeholders}; an implementation MAY record byte ranges of placeholder positions in its parse tree to support migration tooling such as `cook --migrate-sigil`.
 
 **`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting).
 

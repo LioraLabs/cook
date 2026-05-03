@@ -111,7 +111,7 @@ recipe full-mixed
     >> print("[register] preparing the build")
     ingredients "kind.tmpl"
     cook "build/full.txt" using {
-        mkdir -p build && echo done > {out}
+        mkdir -p build && echo done > $<out>
     }
     > print("[execute] cook step done; reading the output:")
     cat build/full.txt

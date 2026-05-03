@@ -149,7 +149,7 @@ recipe build
     cook "build/main" using { {CC} {CXXFLAGS} -o {out} main.c }
 ```
 
-When no overlay is selected, the base alone executes and `{CXXFLAGS}` resolves to `-O0 -g`. When `release` is selected, the base runs first (`env.CXXFLAGS = "-O0 -g"`), then `release` runs (`env.CXXFLAGS = "-O3"`); `{CXXFLAGS}` resolves to `-O3`. Selecting a name that does not appear as a named `config_block` in the Cookfile is a load-time error.
+When no overlay is selected, the base alone executes and `$<CXXFLAGS>` resolves to `-O0 -g`. When `release` is selected, the base runs first (`env.CXXFLAGS = "-O0 -g"`), then `release` runs (`env.CXXFLAGS = "-O3"`); `$<CXXFLAGS>` resolves to `-O3`. Selecting a name that does not appear as a named `config_block` in the Cookfile is a load-time error.
 
 #### Note 3.6.1.1
 

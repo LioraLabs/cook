@@ -4,5 +4,5 @@ recipe cli_bin
     ingredients "config.txt"
     cook "build/cli.bin" using {
         mkdir -p build
-        cat {proto.proto_lib} config.txt > {out}
+        cat $<proto.proto_lib> config.txt > $<out>
     }

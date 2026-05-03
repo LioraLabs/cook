@@ -28,20 +28,27 @@ pub enum LexError {
     UnterminatedString { line: usize },
     #[error("line {line}: expected quoted name after keyword")]
     MissingRecipeName { line: usize },
-    #[error("line {line}: '{segment}' is a reserved word and cannot be used as a recipe name (or final segment of a dotted recipe name)")]
+    #[error("line {line}: '{segment}' is a reserved word and cannot be used in this position in a dotted recipe name")]
     ReservedRecipeName { line: usize, segment: String },
     #[error("line {line}: a run of three or more `>` characters at line start is reserved (§{{lexical.line-prefixes}})")]
     ReservedTripleArrow { line: usize },
 }
 
-const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "all"];
+const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "all", "env"];
 
 fn check_reserved_recipe_name(name: &str, line: usize) -> Result<(), LexError> {
-    let segment = name.rsplit('.').next().unwrap_or(name);
-    if RESERVED_RECIPE_SEGMENTS.contains(&segment) {
+    let first_segment = name.split('.').next().unwrap_or(name);
+    if first_segment == "env" {
         return Err(LexError::ReservedRecipeName {
             line,
-            segment: segment.to_string(),
+            segment: "env".to_string(),
+        });
+    }
+    let last_segment = name.rsplit('.').next().unwrap_or(name);
+    if RESERVED_RECIPE_SEGMENTS.contains(&last_segment) {
+        return Err(LexError::ReservedRecipeName {
+            line,
+            segment: last_segment.to_string(),
         });
     }
     Ok(())

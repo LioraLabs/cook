@@ -1,2 +1,2 @@
 recipe r
-    plate { link {all} -o app }
+    plate { link $<all> -o app }

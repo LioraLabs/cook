@@ -8,5 +8,5 @@ Cookfile
       ingredients: ["src/*.c"]
       excludes: []
       steps:
-        Cook outputs=["build/{in.stem}.o"] using=ShellBlock(["gcc -c {in} -o {out}"])
+        Cook outputs=["build/$<in.stem>.o"] using=ShellBlock(["gcc -c $<in> -o $<out>"])
   chores:

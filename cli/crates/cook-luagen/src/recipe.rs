@@ -1,30 +1,30 @@
 use std::collections::BTreeSet;
 
+use cook_contracts::ACCESSORS;
 use cook_lang::ast::*;
 
 use crate::cook_step::generate_cook_step;
-use crate::dep_ref::{extract_brace_tokens, extract_dep_refs};
+use crate::dep_ref::{extract_dep_refs, extract_sigil_tokens};
 use crate::lua_string::{escape_lua_string, wrap_lua_string};
 use crate::plate_step::generate_plate_step;
+use crate::resolver::{IterMode, OutputShape, ResolveCtx};
+use crate::sigil;
+use crate::template::ConsultedEnv;
 use crate::test_step;
-
-/// Known accessor suffixes for `{dep.accessor}` syntax.
-/// Keep in lockstep with `dep_ref::ACCESSORS`.
-const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 
 /// Error raised by `generate_with_names_checked` when codegen-phase
 /// validation rejects a Cookfile.
 ///
-/// Per Cook Standard § 5.4, `{lib.ACCESSOR}` is only valid in a step whose
+/// Per Cook Standard § 5.4, `$<lib.ACCESSOR>` is only valid in a step whose
 /// output pattern declares `lib` as an iteration driver. Appearing in a
 /// using-string, plate command, test command, or bare shell without a
 /// matching driver is an error.
 ///
-/// Per CS-0022 §6.7, placeholder rules also cover:
-/// - bare `{stem}` / `{name}` / `{ext}` / `{dir}` in output patterns (rejected)
-/// - `{out_N}` in single-output steps (rejected)
-/// - `{out}` in multi-output steps (rejected)
-/// - `{lib.ACCESSOR}` inside using-clause body (rejected)
+/// Per CS-0033 §6.7, placeholder rules also cover:
+/// - bare `$<stem>` / `$<name>` / `$<ext>` / `$<dir>` in output patterns (rejected)
+/// - `$<out_N>` in single-output steps (rejected)
+/// - `$<out>` in multi-output steps (rejected)
+/// - `$<lib.ACCESSOR>` inside using-clause body (rejected)
 #[derive(Debug, thiserror::Error)]
 pub enum CodegenError {
     #[error(
@@ -162,22 +162,22 @@ fn drivers_match(
 }
 
 /// Validate that an output pattern contains no bare path accessors.
-/// Bare `{stem}`, `{name}`, `{ext}`, `{dir}` are rejected per CS-0022 §6.7;
-/// the canonical form is `{in.stem}` etc.
+/// Bare `$<stem>`, `$<name>`, `$<ext>`, `$<dir>` are rejected per CS-0033 §6.7;
+/// the canonical form is `$<in.stem>` etc.
 fn check_output_pattern_no_bare_accessors(
     pattern: &str,
     recipe: &str,
     line: usize,
 ) -> Result<(), CodegenError> {
-    use crate::template::iter_placeholders;
-    for inner in iter_placeholders(pattern) {
+    for span in sigil::scan(pattern) {
+        let inner = span.ident.as_str();
         match inner {
             "stem" | "name" | "ext" | "dir" => {
                 return Err(CodegenError::PlaceholderViolation {
                     recipe: recipe.to_string(),
                     message: format!(
-                        "CS-0022: bare {{{inner}}} in output pattern was removed; \
-                         use {{in.{inner}}} (or {{dep.{inner}}} for a dep-driven pattern)"
+                        "CS-0022: bare $<{inner}> in output pattern was removed; \
+                         use $<in.{inner}> (or $<dep.{inner}> for a dep-driven pattern)"
                     ),
                     line,
                 });
@@ -322,14 +322,23 @@ fn is_bundleable(step: &Step) -> bool {
 /// payload, with `set -e` prepended so per-line halt-on-failure matches
 /// the historical per-shell-unit semantic.
 ///
+/// Shell commands undergo sigil substitution (CS-0033): any `$<IDENT>`
+/// placeholder in a command is expanded at codegen time. Commands with no
+/// sigil placeholders are coalesced into a raw shell-text `cook.sh` call;
+/// commands with sigil placeholders are emitted as Lua expression `cook.sh`
+/// calls with the resolved values substituted in.
+///
 /// The chunk is prefixed with `local <alias> = cook.load_module("<name>")`
 /// per `use` declaration in the source Cookfile (CS-0017,
-/// §{lua.cook-load-module}). This makes the same alias visible to
-/// imperative-region Lua as is visible to declarative-region Lua, so
-/// `> compile.assemble(target)` reads identically to
-/// `compile.plan(target)` without a `cook.` prefix.
-fn emit_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]) {
+/// §{lua.cook-load-module}).
+fn emit_body_unit_with_names(
+    out: &mut String,
+    bundle: &[Step],
+    uses: &[UseStatement],
+    recipe_names: &BTreeSet<String>,
+) {
     let mut chunk = String::new();
+    // Raw shell lines (no sigils) coalesced for cook.sh(long-string).
     let mut shell_run: Vec<String> = Vec::new();
 
     for use_stmt in uses {
@@ -341,7 +350,7 @@ fn emit_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]) {
         ));
     }
 
-    fn flush(chunk: &mut String, run: &mut Vec<String>) {
+    fn flush_raw(chunk: &mut String, run: &mut Vec<String>) {
         if run.is_empty() {
             return;
         }
@@ -353,28 +362,50 @@ fn emit_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]) {
             joined.push_str(line);
         }
         let wrapped = wrap_lua_string(&joined);
-        // io.write echoes the captured stdout to the worker's stdout so the
-        // user sees `pwd`-style output the way they would in a Make `.ONESHELL`
-        // recipe. The cook.sh return value is still discarded; callers who
-        // need to consume it should call cook.sh from a `>` line directly.
         chunk.push_str(&format!("io.write(cook.sh({}))\n", wrapped));
         run.clear();
+    }
+
+    fn flush_sigil_cmd(chunk: &mut String, lua_expr: &str) {
+        // A sigil-expanded command: emit as cook.sh(lua_expr) inline.
+        // Prepend "set -e\n" so fail-fast semantics hold.
+        let sh_arg = format!("\"set -e\\n\" .. {}", lua_expr);
+        chunk.push_str(&format!("io.write(cook.sh({}))\n", sh_arg));
     }
 
     for step in bundle {
         match step {
             Step::Shell { command, interactive: false, .. } => {
-                shell_run.push(command.clone());
+                let has_sigils = !crate::sigil::scan(command).is_empty();
+                if has_sigils {
+                    // Flush any accumulated raw lines before this sigil command.
+                    flush_raw(&mut chunk, &mut shell_run);
+                    // Expand sigil template and emit as a Lua expression.
+                    let ctx = ResolveCtx {
+                        mode: IterMode::OneShot,
+                        outputs: OutputShape::None,
+                        recipes_in_scope: recipe_names,
+                    };
+                    let mut consulted = ConsultedEnv::new();
+                    let lua_expr = match crate::template::expand_sigil_template(command, &ctx, &mut consulted) {
+                        Ok(e) => e,
+                        Err(e) => format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string())),
+                    };
+                    flush_sigil_cmd(&mut chunk, &lua_expr);
+                } else {
+                    // No sigils — accumulate as raw shell text (old behavior).
+                    shell_run.push(command.clone());
+                }
             }
             Step::Lua { code, .. } => {
-                flush(&mut chunk, &mut shell_run);
+                flush_raw(&mut chunk, &mut shell_run);
                 chunk.push_str(code);
                 if !code.ends_with('\n') {
                     chunk.push('\n');
                 }
             }
             Step::LuaBlock { code, .. } => {
-                flush(&mut chunk, &mut shell_run);
+                flush_raw(&mut chunk, &mut shell_run);
                 chunk.push_str(code);
                 if !code.ends_with('\n') {
                     chunk.push('\n');
@@ -383,13 +414,16 @@ fn emit_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]) {
             _ => unreachable!("emit_body_unit called with non-bundleable step"),
         }
     }
-    flush(&mut chunk, &mut shell_run);
+    flush_raw(&mut chunk, &mut shell_run);
 
     if chunk.is_empty() {
         return;
     }
 
     let wrapped = wrap_lua_string(&chunk);
+    // cache = false: consulted_env_keys is a cache-keying hint, omitted for
+    // units that are never cached. The cacheable cook-step path in
+    // cook_step.rs is the only emission site that includes it.
     out.push_str(&format!(
         "    cook.add_unit({{lua_code = {}, cache = false}})\n",
         wrapped
@@ -402,7 +436,7 @@ fn collect_drivers(
 ) -> BTreeSet<String> {
     let mut drivers = BTreeSet::new();
     for pat in output_patterns {
-        for token in extract_brace_tokens(pat) {
+        for token in extract_sigil_tokens(pat) {
             if let Some(dot) = token.rfind('.') {
                 let prefix = &token[..dot];
                 let suffix = &token[dot + 1..];
@@ -423,7 +457,7 @@ fn check_command(
     surface: &'static str,
     line: usize,
 ) -> Result<(), CodegenError> {
-    for token in extract_brace_tokens(command) {
+    for token in extract_sigil_tokens(command) {
         if let Some(dot) = token.rfind('.') {
             let prefix = &token[..dot];
             let suffix = &token[dot + 1..];
@@ -611,10 +645,14 @@ pub fn generate_with_names(
                     // §{exec.interactive-drain}: own draining unit, breaks
                     // body-bundling (the next imperative step starts a fresh
                     // body unit).
-                    let wrapped = wrap_lua_string(command);
+                    // Apply sigil substitution to the command (CS-0033).
+                    let cmd_expr = expand_shell_command_sigil(command, recipe_names);
+                    // cache = false: consulted_env_keys is a cache-keying hint, omitted for
+                    // units that are never cached. The cacheable cook-step path in
+                    // cook_step.rs is the only emission site that includes it.
                     out.push_str(&format!(
                         "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
-                        wrapped, line
+                        cmd_expr, line
                     ));
                     i += 1;
                 }
@@ -627,10 +665,11 @@ pub fn generate_with_names(
                     while i < recipe.steps.len() && is_bundleable(&recipe.steps[i]) {
                         i += 1;
                     }
-                    emit_body_unit(
+                    emit_body_unit_with_names(
                         &mut out,
                         &recipe.steps[bundle_start..i],
                         &cookfile.uses,
+                        recipe_names,
                     );
                 }
             }
@@ -647,6 +686,26 @@ pub fn generate_with_names(
     }
 
     Ok(out)
+}
+
+/// Expand a single shell command through sigil substitution (CS-0033).
+/// Returns a Lua expression suitable for the `command =` field of `cook.add_unit`.
+/// Commands with no sigil placeholders are emitted as Lua long-string literals.
+fn expand_shell_command_sigil(command: &str, recipe_names: &BTreeSet<String>) -> String {
+    let has_sigils = !crate::sigil::scan(command).is_empty();
+    if !has_sigils {
+        return wrap_lua_string(command);
+    }
+    let ctx = ResolveCtx {
+        mode: IterMode::OneShot,
+        outputs: OutputShape::None,
+        recipes_in_scope: recipe_names,
+    };
+    let mut consulted = ConsultedEnv::new();
+    match crate::template::expand_sigil_template(command, &ctx, &mut consulted) {
+        Ok(e) => e,
+        Err(e) => format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string())),
+    }
 }
 
 /// Compile a `Chore` to register-phase Lua.
@@ -694,22 +753,28 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
     while i < chore.steps.len() {
         match &chore.steps[i] {
             Step::Shell { command, line, interactive: true } => {
-                let wrapped = wrap_lua_string(command);
+                // Apply sigil substitution (CS-0033 closes App. E.8).
+                let cmd_expr = expand_shell_command_sigil(command, &BTreeSet::new());
+                // cache = false: consulted_env_keys is a cache-keying hint, omitted for
+                // units that are never cached. The cacheable cook-step path in
+                // cook_step.rs is the only emission site that includes it.
                 out.push_str(&format!(
                     "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
-                    wrapped, line
+                    cmd_expr, line
                 ));
                 i += 1;
             }
             Step::Shell { interactive: false, .. } => {
                 // Parser enforces all chore shells are interactive; this arm
                 // is unreachable in a well-formed AST, but emit defensively.
-                // Treat as interactive to match the chore contract.
                 if let Step::Shell { command, line, .. } = &chore.steps[i] {
-                    let wrapped = wrap_lua_string(command);
+                    let cmd_expr = expand_shell_command_sigil(command, &BTreeSet::new());
+                    // cache = false: consulted_env_keys is a cache-keying hint, omitted for
+                    // units that are never cached. The cacheable cook-step path in
+                    // cook_step.rs is the only emission site that includes it.
                     out.push_str(&format!(
                         "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
-                        wrapped, line
+                        cmd_expr, line
                     ));
                 }
                 i += 1;

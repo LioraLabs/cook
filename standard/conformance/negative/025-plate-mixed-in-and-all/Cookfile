@@ -1,4 +1,4 @@
 recipe r
     ingredients "src/*.o"
-    cook "dist/bundle.tgz" using { tar czf {out} {all} }
-    plate { echo {in} {all} }
+    cook "dist/bundle.tgz" using { tar czf $<out> $<all> }
+    plate { echo $<in> $<all> }

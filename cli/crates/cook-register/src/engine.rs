@@ -10,6 +10,7 @@ use cook_contracts::RecipeUnits;
 use crate::capture::register_cook_api_capture;
 use crate::context::setup_recipe_context;
 use crate::dep_output_api::SharedTerminalOutputs;
+use crate::env_api::{install_require_env, EnvKeyset};
 use crate::export_api::SharedExportStore;
 use crate::module_loader::{ModuleLoaderState, SharedModuleLoaderState};
 use crate::{CaptureState, RegisterError, SharedCaptureState};
@@ -30,6 +31,10 @@ pub struct Registry {
     /// every importer's local alias must resolve to that same canonical
     /// prefix at lookup time.
     alias_qualified_prefixes: BTreeMap<String, String>,
+    /// Frozen keyset of env-var names declared via config blocks.
+    /// Shared between the Lua-env-construction call and the config-block
+    /// evaluation call so both sides see the same Rc-backed set.
+    env_keyset: EnvKeyset,
 }
 
 impl Registry {
@@ -43,6 +48,7 @@ impl Registry {
             qualified_prefix: String::new(),
             alias_dirs: BTreeMap::new(),
             alias_qualified_prefixes: BTreeMap::new(),
+            env_keyset: EnvKeyset::new(),
         }
     }
 
@@ -112,6 +118,13 @@ impl Registry {
             capture_state.clone(),
             recipe_name,
         )?;
+        // Install cook.require_env immediately after the cook table is built.
+        // The function closes over the env_table reference and the keyset;
+        // the keyset is frozen after config-block evaluation completes.
+        {
+            let cook_tbl: LuaTable = lua.globals().get("cook")?;
+            install_require_env(&lua, &cook_tbl, self.env_keyset.clone())?;
+        }
         crate::fs_api::register_fs_api(&lua, &self.working_dir)?;
         crate::path_api::register_path_api(&lua)?;
 
@@ -155,6 +168,11 @@ impl Registry {
 
             let name_arg: Option<String> = self.selected_config.clone();
             dispatch.call::<()>(name_arg)?;
+
+            // Capture the post-evaluation env keyset as the declared set.
+            // Must happen before the env global is removed so the table is
+            // still accessible. freeze() is idempotent under union.
+            self.env_keyset.freeze(&env_tbl)?;
 
             // Snapshot mutations from cook.env back into shared env_vars.
             {

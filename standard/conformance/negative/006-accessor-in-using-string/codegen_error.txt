@@ -1,1 +1,1 @@
-CS-0022: {protos.stem} is rejected inside using-clause body
+CS-0022: $<protos.stem> is rejected inside using-clause body

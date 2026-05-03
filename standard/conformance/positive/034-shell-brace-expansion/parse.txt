@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      ingredients: ["src.txt"]
+      excludes: []
+      steps:
+        Cook outputs=["out.txt"] using=ShellBlock(["for i in {1..3}; do echo \"iter $i\" >> $<out>; done", "cp file.{c,h} dest/ 2>/dev/null || true"])
+  chores:

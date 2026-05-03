@@ -4,5 +4,5 @@ recipe server_bin
     ingredients "server.conf"
     cook "build/server.bin" using {
         mkdir -p build
-        cat {queue.queue_lib} server.conf > {out}
+        cat $<queue.queue_lib> server.conf > $<out>
     }

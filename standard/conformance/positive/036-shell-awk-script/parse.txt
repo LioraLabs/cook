@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="extract" line=1
+      deps: []
+      ingredients: ["data.txt"]
+      excludes: []
+      steps:
+        Cook outputs=["$<in.stem>.col1"] using=ShellBlock(["awk '{print $1}' $<in> > $<out>"])
+  chores:

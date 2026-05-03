@@ -5,6 +5,7 @@ edition = "2021"
 description = "Lua code generation from Cookfile AST"
 
 [dependencies]
+cook-contracts = { path = "../cook-contracts" }
 cook-lang = { path = "../cook-lang" }
 thiserror = "2"
 

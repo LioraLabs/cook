@@ -40,7 +40,7 @@ sidebar:
 
 ## E.4. tree-sitter-cook is stale [#pre-v1.tree-sitter-stale]
 
-**Symptom.** `tree-sitter-cook/grammar.js` lags the Cook Standard. The grammar header currently claims `cs-standard/v0.4 + CS-0022`; the Standard is at v0.6, so the grammar is missing every change cut after CS-0022 — notably CS-0024 (plate/test block-body unification), CS-0026 (parse-time §7.2 import-path enforcement), CS-0027 onward (cross-Cookfile / cache-cloud-readiness work), and CS-0032 (`//`-anchored sigil imports). Earlier closure of CS-0011 (top-level `NAME "value"` rejection), CS-0018 (`name:` recipe header dropped), CS-0019 (implicit termination), and CS-0020 (`chore`) is in tree, so the v0.2/v0.3 gap that originally motivated this entry is closed; the live gap is v0.4 → v0.6.
+**Symptom.** `tree-sitter-cook/grammar.js` lags the Cook Standard. The grammar header currently claims `cs-standard/v0.4 + CS-0022`; the Standard is at v0.7, so the grammar is missing every change cut after CS-0022 — notably CS-0024 (plate/test block-body unification), CS-0026 (parse-time §7.2 import-path enforcement), CS-0027 onward (cross-Cookfile / cache-cloud-readiness work), CS-0032 (`//`-anchored sigil imports), and CS-0033 (`$<IDENT>` placeholder syntax). Earlier closure of CS-0011 (top-level `NAME "value"` rejection), CS-0018 (`name:` recipe header dropped), CS-0019 (implicit termination), and CS-0020 (`chore`) is in tree, so the v0.2/v0.3 gap that originally motivated this entry is closed; the live gap is v0.4 → v0.7.
 
 **Workaround.** The grammar's `tree-sitter test` corpus passes against its own (stale) view of the language. The Standard does not require tree-sitter conformance pre-1.0; the cook-lang Rust parser is the reference implementation.
 
@@ -94,51 +94,35 @@ The keyword choice is a deliberate departure from Cook's culinary metaphor (reci
 
 **Composability.** Stacks cleanly with E.5 (chores adopt the same implicit termination rule) and is orthogonal to E.6. Bundling all three into a single "recipe-form simplification" cut is reasonable; staging them across cuts is also fine.
 
-## E.8. Chore-body shell commands skip `{TOKEN}` substitution [#pre-v1.chore-shell-substitution]
+## E.8. Chore-body shell commands skip sigil-placeholder substitution [#pre-v1.chore-shell-substitution]
 
-**Symptom.** §{lua.shell-placeholders} normatively asserts that "every bare `shell_command` is a **shell text**" subject to the chapter's placeholder substitution. Inside a `recipe` body, a `plate` shell-block body, or a `cook using { … }` body the substitution fires correctly. Inside a `chore` body it does not — a `{TOKEN}` placeholder is emitted into the recorded unit's `command` payload verbatim, and the unit fails at execute time when the shell tries to resolve a literal `{TOKEN}` as a command word.
+**Status.** Fully resolved in v0.7 by [CS-0033](D-changes#changes-cs-0033) alongside the migration to `$<TOKEN>` sigil syntax.
 
-**Repro.** With cook-lang 0.1.0 (claiming Cook Standard v0.5):
+**Original symptom.** §{lua.shell-placeholders} normatively asserts that "every bare `shell_command` is a **shell text**" subject to the chapter's placeholder substitution. Inside a `recipe` body, a `plate` shell-block body, or a `cook using { … }` body the substitution fired correctly. Inside a `chore` body it did not — a `{TOKEN}` placeholder was emitted into the recorded unit's `command` payload verbatim, and the unit failed at execute time when the shell tried to resolve a literal `{TOKEN}` as a command word.
+
+**Repro (historical).** With cook-lang 0.1.0 (claiming Cook Standard v0.5):
 
 ```cook
 config
     env.ADB = "adb"
 
 chore devices
-    {ADB} devices -l
+    $<ADB> devices -l
 ```
 
-`cook --emit-lua` emits:
+`cook --emit-lua` formerly emitted:
 
 ```lua
 cook.recipe("devices", {}, function()
     cook._enter_chore()
-    cook.add_unit({command = [[{ADB} devices -l]], interactive = true, line = 4, cache = false})
+    cook.add_unit({command = [[$<ADB> devices -l]], interactive = true, line = 4, cache = false})
     cook._exit_chore()
 end)
 ```
 
-`cook devices` fails with `/bin/sh: line 1: {ADB}: command not found`. The same `{ADB}` token in a `plate` shell-block body of an otherwise-identical recipe is substituted correctly to `adb`.
+**Resolution.** The v0.7 sigil-placeholder change ([CS-0033](D-changes#changes-cs-0033)) replaced the `{TOKEN}` template layer with a strict `$<IDENT>` sigil scanner (§{lua.shell-placeholders}) applied uniformly across all four shell-text contexts: `cook using { … }` bodies, `plate` bodies, `test` bodies, and bare `shell_command` steps in both recipe and chore bodies. The chore-body codegen now applies the same sigil-expansion pass on every shell line, emitting `cook.require_env("ADB")` for `$<ADB>` rather than passing the literal through. Spec and implementation now agree.
 
-**Status quo.** Codegen for `chore`-body `shell_command` steps appears to bypass the §{lua.shell-placeholders} substitution path that fires for `recipe`-body shell steps and for `plate`-body shell blocks. Spec and implementation disagree.
-
-**Workaround.** Route chore-body env access through Lua. Replace the bare shell line with a `> lua_line` calling either `cook.sh()` directly or a module helper:
-
-```cook
-chore devices
-    > cook.sh(cook.env.ADB .. " devices -l")
-```
-
-This works because Lua sees `cook.env` directly and the substitution layer is not on the path.
-
-**Resolution path.** Two options, listed in order of preference:
-
-1. **Fix the implementation.** Extend the chore-body codegen to apply the same §{lua.shell-placeholders} substitution pass that fires for recipe-body and plate-body shell strings. The §4a.3 default-interactive transform already touches each `shell_command` in a chore body; adding the placeholder pass to the same site is a localized change. Add a positive conformance fixture under `standard/conformance/positive/` of the form `chore + config-env + {TOKEN} bare shell command + expected substituted invocation` so the harness pins the behaviour.
-2. **Narrow the spec.** If chore shell commands are deliberately exempt from substitution (e.g., to keep them "raw shell" for predictability), update §{lua.shell-placeholders}'s "every bare `shell_command`" wording to explicitly exclude chore-body bare shell commands, and add a negative conformance fixture asserting non-substitution. This option is weaker — it removes a reasonable expectation rather than meeting it — but it is consistent with the existing chore-as-command-runner framing.
-
-Either resolution is a single CS entry; option 1 needs a parser/codegen change and a positive fixture, option 2 needs only a spec wording change and a negative fixture.
-
-**Found in.** Real-world Cookfile for the `glovemap` Android key-mapper project (`~/dotfiles/android/glovemap/Cookfile`), which exercises plate's three iteration modes for adb-deploy and tripped on this when it tried to use `{ADB}` and `{PACKAGE}` env placeholders in chore bodies for `devices` / `logs` / `uninstall`. The project routes through `> android.adb_devices(cook.env.DEVICE)` etc. as the workaround.
+**Found in.** Real-world Cookfile for the `glovemap` Android key-mapper project (`~/dotfiles/android/glovemap/Cookfile`), which exercises plate's three iteration modes for adb-deploy and tripped on this when it tried to use `$<ADB>` and `$<PACKAGE>` env placeholders in chore bodies for `devices` / `logs` / `uninstall`.
 
 ## E.9. No multi-line continuation for `ingredients` lists [#pre-v1.multi-line-ingredients]
 

@@ -7,7 +7,7 @@
 #   cook demo             — fresh build, all steps execute
 #   cook demo             — second invocation, all hits (no-op rebuild)
 #   touch src/greet.c && cook demo  — only `greet` and `demo` rebuild; `util` stays cached
-#   CFLAGS=-O3 cook demo  — `greet` and `util` rebuild (both consume {CFLAGS}); `sister` stays cached
+#   CFLAGS=-O3 cook demo  — `greet` and `util` rebuild (both consume $<CFLAGS>); `sister` stays cached
 #   HOME=/elsewhere cook sister     — no rebuild (HOME is denylisted)
 #   cook pair             — multi-output recipe; each output uploads as its
 #                            own artifact (addendum §5.1)
@@ -30,30 +30,30 @@ config release
 # `lib.lib_build` is referenced from the demo recipe.
 import lib ./lib
 
-# greet.c — consumes {CFLAGS} via Layer 2 inference
+# greet.c — consumes $<CFLAGS> via Layer 2 inference
 recipe greet
     ingredients "src/greet.c"
     cook "build/greet.o" using {
         mkdir -p build
-        {CC} {CFLAGS} -c {all} -o {out}
+        $<CC> $<CFLAGS> -c $<all> -o $<out>
     }
 
-# util.c — also consumes {CFLAGS}; provides main()
+# util.c — also consumes $<CFLAGS>; provides main()
 recipe util
     ingredients "src/util.c"
     cook "build/util.o" using {
         mkdir -p build
-        {CC} {CFLAGS} -c {all} -o {out}
+        $<CC> $<CFLAGS> -c $<all> -o $<out>
     }
 
-# Link step — does NOT consume {CFLAGS} via inference
+# Link step — does NOT consume $<CFLAGS> via inference
 # but DOES invoke the gcc binary directly. Its context_hash captures
 # the linker's binary identity through the same tool-content hash.
-# `{lib.lib_build}` is a cross-Cookfile body reference (§7.3): codegen
+# `$<lib.lib_build>` is a cross-Cookfile body reference (§7.3): codegen
 # lowers it to cook.dep_output("lib.lib_build") after Phase 7.
 recipe demo:
     cook "build/demo" using {
-        {CC} {greet} {util} {lib.lib_build} -o {out}
+        $<CC> $<greet> $<util> $<lib.lib_build> -o $<out>
     }
 
 # `mono` exercises the imported lib alongside demo. Used by the SHI-140
@@ -62,14 +62,14 @@ recipe demo:
 # lib.lib_build is now a transitive dep of demo, so mono just aliases demo.
 recipe mono: demo
 
-# Sister recipe — does NOT consume {CFLAGS}. Used to verify env-key
+# Sister recipe — does NOT consume $<CFLAGS>. Used to verify env-key
 # isolation: when the user toggles CFLAGS, this step's cache survives
-# because {CFLAGS} is not in its consulted_env_keys set.
+# because $<CFLAGS> is not in its consulted_env_keys set.
 recipe sister
     ingredients "src/sister.txt"
     cook "build/sister.out" using {
         mkdir -p build
-        cat {all} > {out}
+        cat $<all> > $<out>
     }
 
 # Multi-output recipe — every output uploads as its own artifact via the
