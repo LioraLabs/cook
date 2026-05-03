@@ -34,7 +34,7 @@ pub struct Registry {
     /// Frozen keyset of env-var names declared via config blocks.
     /// Shared between the Lua-env-construction call and the config-block
     /// evaluation call so both sides see the same Rc-backed set.
-    pub env_keyset: EnvKeyset,
+    env_keyset: EnvKeyset,
 }
 
 impl Registry {

@@ -166,4 +166,22 @@ mod tests {
             "expected 'not declared in any config block' in: {msg}"
         );
     }
+
+    #[test]
+    fn post_freeze_write_does_not_make_key_declared() {
+        let (lua, cook, ks) = setup();
+        let env: LuaTable = cook.get("env").unwrap();
+        // Freeze with empty env (no config-block declarations)
+        ks.freeze(&env).unwrap();
+        // Simulate a recipe-time write to the live env table after the freeze
+        env.set("LATE", "value").unwrap();
+        // The post-freeze write makes cook.env["LATE"] visible, but require_env
+        // must still error — LATE was not in scope at freeze time, so it does
+        // not satisfy the "declared" contract from §xref.resolution step 3.
+        let res: mlua::Result<String> = lua.load(r#"return cook.require_env("LATE")"#).eval();
+        assert!(res.is_err(), "post-freeze write must not declare key");
+        let msg = format!("{}", res.unwrap_err());
+        assert!(msg.contains("LATE") && msg.contains("not declared"),
+            "diagnostic must name LATE and mention it is not declared; got: {}", msg);
+    }
 }

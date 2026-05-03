@@ -349,6 +349,8 @@ The `BuiltinMatch::Malformed` variant in the resolver makes the hard-stop explic
 
 The function checks `name` against a frozen keyset captured immediately after the config-block phase completes. A missing key produces a `RuntimeError` with a diagnostic that names the consulted token, the declared keys in scope, and the recommended `env.NAME = ...` declaration form. The keyset is frozen — additional `cook.env.NAME = "..."` writes during recipe registration are visible to `cook.env[name]` but do not retroactively make the key "declared" for `cook.require_env` purposes; the contract is fixed at the end of config-block evaluation.
 
+The "frozen" property is enforced against env-table writes — keys added to `cook.env` after the freeze point are visible to `cook.env[name]` but are not in the declared set. The implementation's `EnvKeyset::freeze` is itself additive (multiple calls union their captured keys); the reference engine invokes `freeze` exactly once, immediately after config-block dispatch returns, so the additive property is unobservable in production code.
+
 Two design alternatives were considered and rejected:
 
 - **Codegen-time check.** The codegen could parse config-block source for `env.NAME = ...` patterns and reject undeclared references at register-time emission. This requires the codegen to understand Lua syntax, including conditional assignments and dynamic key construction (`env[some_var] = ...`). The runtime check is simpler, more accurate, and produces the same author-facing diagnostic at virtually the same time (register time vs. codegen time).
