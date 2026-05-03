@@ -3,7 +3,7 @@
 //! `MachineIdentity` is build-wide (probed once per `cook build`).
 //! `ToolHash` is per-binary, cached by canonical realpath for the build's lifetime.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -150,17 +150,41 @@ impl ExecutionContext {
         }
     }
 
+    /// Compute the per-step context hash from machine identity plus the
+    /// content-hash of every tool binary the command's first executable on
+    /// each newline-separated statement resolves to.
+    ///
+    /// **Tokenization model.** The command text is split on newlines into
+    /// statements. For each statement, leading `VAR=value` env-prefix tokens
+    /// are skipped, and the next token is treated as an executable name and
+    /// resolved via `which`. Each unique resolved realpath is fingerprinted
+    /// once and folded into the hash in deterministic (`BTreeSet`-sorted)
+    /// order.
+    ///
+    /// **Coverage limit.** Only the first executable on each newline-separated
+    /// statement is fingerprinted. Tools invoked downstream of a `;`, `&&`,
+    /// `||`, pipe (`|`), command substitution (`$(…)`, backticks), subshell
+    /// (`(…)`), or `xargs`/`find -exec` are NOT fingerprinted. To pin the
+    /// fingerprint for those tools, place each invocation on its own line,
+    /// or declare them explicitly via `cache.tools = { ... }` (planned cache
+    /// configuration mechanism — see CS-0035).
     pub fn step_context_hash(&self, command: &str) -> u64 {
-        let primary_tool = first_argv_token(command);
-        let realpath = primary_tool
-            .and_then(|t| which::which(t).ok())
-            .and_then(|p| std::fs::canonicalize(p).ok());
-        let tool_hash = self.tool_hash_for(realpath.as_deref());
-
+        let realpaths = resolved_tool_realpaths(command);
         let machine_bytes = self.machine.encode();
         let mut hasher = xxhash_rust::xxh3::Xxh3::new();
         hasher.update(&machine_bytes);
-        hasher.update(&tool_hash.content_sha256);
+        if realpaths.is_empty() {
+            // Preserve prior behavior for commands that resolve no executable
+            // (e.g., empty string, builtins-only): fold in the empty ToolHash
+            // so the hash still incorporates a tool component.
+            let tool_hash = ToolHash::empty();
+            hasher.update(&tool_hash.content_sha256);
+        } else {
+            for rp in &realpaths {
+                let tool_hash = self.tool_hash_for(Some(rp.as_path()));
+                hasher.update(&tool_hash.content_sha256);
+            }
+        }
         hasher.digest()
     }
 
@@ -179,8 +203,52 @@ impl ExecutionContext {
     }
 }
 
-fn first_argv_token(command: &str) -> Option<&str> {
-    command.split_whitespace().next()
+/// Tokenize `command` and resolve every executable token reachable via
+/// `which`, returning a deterministic, deduplicated set of canonical
+/// realpaths (sorted via `BTreeSet`).
+///
+/// Strategy: split on newlines; for each line, skip leading `VAR=value`
+/// env-prefix tokens (a token containing `=` whose name part is a valid
+/// shell variable identifier); take the next remaining token as the
+/// executable; resolve via `which` and `canonicalize`. Returns paths in
+/// deterministic order.
+///
+/// See `step_context_hash` for the documented coverage limit.
+fn resolved_tool_realpaths(command: &str) -> BTreeSet<PathBuf> {
+    let mut out = BTreeSet::new();
+    for line in command.split('\n') {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let exe = trimmed
+            .split_whitespace()
+            .find(|tok| !is_env_prefix_token(tok));
+        let Some(exe) = exe else { continue };
+        let Ok(p) = which::which(exe) else { continue };
+        let Ok(rp) = std::fs::canonicalize(p) else { continue };
+        out.insert(rp);
+    }
+    out
+}
+
+/// Returns true if `tok` looks like a leading `VAR=value` env assignment
+/// (POSIX-style command-prefix env var, e.g. `LC_ALL=C make`). The name
+/// must be a valid shell-style identifier (letters/digits/underscore, not
+/// starting with a digit) to avoid mistaking arguments like `--flag=val`
+/// for env prefixes.
+fn is_env_prefix_token(tok: &str) -> bool {
+    let Some(eq) = tok.find('=') else { return false };
+    let name = &tok[..eq];
+    if name.is_empty() {
+        return false;
+    }
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]
@@ -247,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn step_context_hash_differs_on_first_token() {
+    fn step_context_hash_differs_on_executable() {
         let ctx = ExecutionContext::probe();
         let (Some(sh), Some(tr)) = (which::which("sh").ok(), which::which("true").ok()) else {
             eprintln!("skipping: sh or true not on PATH");
@@ -268,5 +336,90 @@ mod tests {
         if let Some(rp) = bin_sh_realpath {
             assert_eq!(cache.get(&rp).is_some(), true, "tool_cache should contain /bin/sh's realpath");
         }
+    }
+
+    #[test]
+    fn step_context_hash_fingerprints_tools_on_later_lines() {
+        // Multi-line shell scripts: the dominant Cookfile pattern. Pre-fix,
+        // only the first line's first token was hashed, so a script whose
+        // first line was `mkdir -p build` collapsed every subsequent
+        // toolchain (gcc/clang/ld) to the `mkdir`-only fingerprint.
+        let ctx = ExecutionContext::probe();
+        let (Some(_), Some(_), Some(_)) = (
+            which::which("mkdir").ok(),
+            which::which("sh").ok(),
+            which::which("true").ok(),
+        ) else {
+            eprintln!("skipping: required tools not on PATH");
+            return;
+        };
+        let h_mkdir_only = ctx.step_context_hash("mkdir -p build");
+        let h_mkdir_then_sh = ctx.step_context_hash("mkdir -p build\nsh -c true");
+        let h_mkdir_then_true = ctx.step_context_hash("mkdir -p build\ntrue");
+        assert_ne!(h_mkdir_only, h_mkdir_then_sh,
+            "second line's tool MUST contribute to the fingerprint");
+        assert_ne!(h_mkdir_then_sh, h_mkdir_then_true,
+            "different second-line tool MUST yield different fingerprint");
+    }
+
+    #[test]
+    fn step_context_hash_skips_env_prefix() {
+        // `LC_ALL=C make foo` should fingerprint `make`, not collapse to the
+        // `LC_ALL=C`-as-tool sentinel that the pre-fix code produced.
+        let ctx = ExecutionContext::probe();
+        let (Some(_), Some(_)) = (which::which("sh").ok(), which::which("true").ok()) else {
+            eprintln!("skipping: sh or true not on PATH");
+            return;
+        };
+        let h_sh = ctx.step_context_hash("sh -c true");
+        let h_env_sh = ctx.step_context_hash("LC_ALL=C sh -c true");
+        let h_env_true = ctx.step_context_hash("LC_ALL=C true");
+        assert_eq!(h_sh, h_env_sh,
+            "leading env-prefix MUST be skipped; tool component identical");
+        assert_ne!(h_env_sh, h_env_true,
+            "env-prefix bug fix: different tools after env prefix MUST differ");
+    }
+
+    #[test]
+    fn step_context_hash_deterministic_across_line_order() {
+        // The implementation deduplicates and folds tool hashes in BTreeSet
+        // order (canonical realpath), so two scripts that resolve the same
+        // set of tools — regardless of textual order — produce the same
+        // fingerprint. This is intentional and documented.
+        let ctx = ExecutionContext::probe();
+        let (Some(_), Some(_)) = (which::which("sh").ok(), which::which("true").ok()) else {
+            eprintln!("skipping: sh or true not on PATH");
+            return;
+        };
+        let h_a = ctx.step_context_hash("sh -c true\ntrue");
+        let h_b = ctx.step_context_hash("true\nsh -c true");
+        assert_eq!(h_a, h_b,
+            "fold order is BTreeSet-deterministic on canonical realpath");
+    }
+
+    #[test]
+    fn step_context_hash_ignores_blank_and_comment_lines() {
+        let ctx = ExecutionContext::probe();
+        let Some(_) = which::which("sh").ok() else {
+            eprintln!("skipping: sh not on PATH");
+            return;
+        };
+        let h_a = ctx.step_context_hash("sh -c true");
+        let h_b = ctx.step_context_hash("\n# leading comment\nsh -c true\n\n");
+        assert_eq!(h_a, h_b);
+    }
+
+    #[test]
+    fn is_env_prefix_token_recognises_assignments() {
+        assert!(is_env_prefix_token("LC_ALL=C"));
+        assert!(is_env_prefix_token("CFLAGS=-O2"));
+        assert!(is_env_prefix_token("_PRIV=x"));
+        assert!(is_env_prefix_token("FOO="));
+        // Not env prefixes:
+        assert!(!is_env_prefix_token("--flag=val"), "long-flag is not an env prefix");
+        assert!(!is_env_prefix_token("=oops"), "missing name");
+        assert!(!is_env_prefix_token("1FOO=x"), "name starts with digit");
+        assert!(!is_env_prefix_token("foo.bar=x"), "name has invalid char");
+        assert!(!is_env_prefix_token("plainword"), "no equals");
     }
 }

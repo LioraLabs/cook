@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035
+- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
@@ -526,3 +526,23 @@ The closed-set resolver lives in `cook-luagen/src/resolver.rs` and produces one 
 **Path chosen.** Of the two paths considered for the key-order issue — Path A (commit to lex order, fix the lying comment) and Path B (enable `serde_json/preserve_order`, paying an `indexmap` dependency for insertion-order keys) — Path A was selected. Lex order is deterministic without coordinating across writer call sites, well-formed JSON consumers are agnostic to key order, and `indexmap` is a non-trivial transitive dep for a write-only audit format.
 
 **Reference:** the CS-0035 commit on the `worktree-agent-ac9dd34b7ab47a405` branch.
+
+## D.36. CS-0036 — Tool-binary fingerprinting recognises every newline-separated statement, not just the first token. [#changes.cs-0036]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7 (post-cut amendment; reference-implementation fix that aligns the §{exec.cache} observable-inputs prose with what the cache actually fingerprints).
+
+**Sections affected:** §{exec.cache} (Note 8.6.2 added — informative coverage statement for tool-binary fingerprinting); App. D (this entry).
+
+**Summary.** Pre-CS-0036, `cook-cache::context::step_context_hash` fingerprinted only the first whitespace-delimited token of the unit's command text. For any multi-line shell script — the dominant Cookfile pattern — only the first line's first token contributed to the per-step context hash; every tool invoked on subsequent lines (`gcc`, `clang`, the linker, `python`, `awk`, …) was silently ignored. A second symptom: a leading POSIX env-prefix (`LC_ALL=C make foo`) was passed to `which("LC_ALL=C")`, resolved to `None`, and collapsed every such command to a single empty-tool fingerprint. The result was that toolchain swaps did not invalidate the cache for any but the most trivial single-line recipes — exactly the case the cache_benchmarks fixture's link recipe relies on.
+
+CS-0036 reworks `step_context_hash` to (a) split the command text on newlines, (b) per line, skip leading `VAR=value` env-prefix tokens (a token whose name part is a valid shell-style identifier), (c) take the next remaining token as the executable, (d) resolve via `which` + `canonicalize`, (e) deduplicate via `BTreeSet<PathBuf>` so the fold order is deterministic, and (f) fold each unique resolved binary's content hash into the per-step fingerprint. The recognised-subset policy is documented in the new informative Note 8.6.2 in §{exec.cache}: only the first executable on each newline-separated statement is recognised; tools chained via `;`, `&&`, `||`, pipes, command substitution, subshells, or invoked indirectly through scripts are NOT recognised by this pass.
+
+**Why §{exec.cache} gains an informative note rather than tightened normative prose.** §{exec.cache}'s normative wording is correct as written: it permits ("MAY consider") the resolved content of invoked binaries without prescribing a recognition algorithm. Recognition is undecidable in general (Rice's theorem on shell text), so the Standard cannot reasonably normatively require any particular subset. The new Note 8.6.2 is informative: it tells authors what the reference implementation fingerprints today, and it advertises the expected escape hatches (one-statement-per-line, planned `cache.tools = { ... }` declaration). Other implementations are free to recognise more or less.
+
+**Implementation notes.** Touches `cli/crates/cook-cache/src/context.rs` only. Five new in-crate tests pin the behavior: `step_context_hash_fingerprints_tools_on_later_lines` (the headline regression), `step_context_hash_skips_env_prefix` (the `VAR=value` collapse fix), `step_context_hash_deterministic_across_line_order` (BTreeSet fold ordering), `step_context_hash_ignores_blank_and_comment_lines`, and `is_env_prefix_token_recognises_assignments` (env-prefix predicate unit-tests). The `examples/cache_audit_first_token/` fixture pins the contract end-to-end through the cook binary: a multi-line recipe whose tool changes between runs MUST invalidate the cache.
+
+**Conformance impact.** None at the parser or codegen layer. No language surface change. The conformance corpus is unchanged. The change is observable only via cache hit/miss behavior, which is implementation-defined per §{intro.non-scope} and §{exec.cache}.
+
+**Reference:** the CS-0036 commit on `worktree-agent-a012ebda236e76f35` (cache-fingerprint multi-line fix).

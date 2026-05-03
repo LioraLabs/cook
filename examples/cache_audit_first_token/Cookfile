@@ -1,0 +1,18 @@
+# cache_audit_first_token — pin the multi-line tool-fingerprint contract.
+#
+# The recipe runs a stable first line (`mkdir -p build`) followed by a
+# call to `./build_tool.sh` — a path-relative wrapper that the test
+# script swaps between two implementations. Pre-fix, only `mkdir`'s
+# fingerprint contributed to the context hash, so the swap was invisible
+# and the cache erroneously reported a hit. Post-fix, `build_tool.sh`'s
+# realpath is folded into the fingerprint and the swap forces a rebuild.
+
+config
+    env.STAMP = "default"
+
+recipe build
+    ingredients "src/in.txt"
+    cook "build/out.txt" using {
+        mkdir -p build
+        ./build_tool.sh $<all> $<out>
+    }

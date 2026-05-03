@@ -1,0 +1,5 @@
+# Runtime-only artifacts produced by walkthrough.sh; the canonical
+# variants live in tools_a/ and tools_b/.
+/build_tool.sh
+/build/
+/.cook/
