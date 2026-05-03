@@ -306,3 +306,5 @@ A byte sequence beginning with `$<` that does not match this production in full 
 The strict-bail rule eliminates ambiguity between Cook placeholders and shell idioms that use `{`/`}` (`{a,b,c}` brace expansion, `${VAR}` parameter expansion, `awk '{print $1}'`, JSON literals, etc.). None of those forms begin with `$<` followed by an `IDENT` and a `>`, so they are unambiguously literal under this rule.
 
 Resolution of a successfully-lexed placeholder is governed by §{xref.resolution}. The closed set of valid `IDENT` resolutions and per-iteration-mode validity rules are stated normatively in §{lua.shell-placeholders}.
+
+> **Implementation note (informative).** Implementations of the sigil placeholder substitution typically share a single helper for the four shell-text contexts (cook output patterns, `using { ... }` bodies, plate/test bodies, bare shell commands), with per-context configuration of iteration mode and declared output count. The accessor set (`stem`, `name`, `ext`, `dir`) is constant across all positions where placeholders may appear; sharing a single definition across the resolver and the migration tooling is a sound implementation practice.

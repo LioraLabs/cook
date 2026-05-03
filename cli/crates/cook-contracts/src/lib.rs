@@ -6,6 +6,14 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+/// Path accessor names admitted by `path.X(...)` and by placeholder
+/// dotted-suffix forms (`{NAME.ACCESSOR}`, `$<NAME.ACCESSOR>`).
+///
+/// This constant is the single authoritative definition; every module that
+/// validates accessor suffixes (resolver, dep_ref, recipe, template) MUST
+/// import it from here rather than defining its own copy.
+pub const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
+
 /// What kind of work a captured unit represents.
 #[derive(Debug, Clone)]
 pub enum WorkPayload {

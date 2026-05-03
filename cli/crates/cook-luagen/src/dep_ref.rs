@@ -1,11 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use cook_contracts::ACCESSORS;
 use cook_lang::ast::*;
 
 use crate::sigil;
-
-/// Known accessor suffixes for `$<dep.accessor>` syntax.
-const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 
 /// Built-in placeholders that are never recipe references.
 /// Note: "out_N" forms are handled structurally in parse_dep_token.

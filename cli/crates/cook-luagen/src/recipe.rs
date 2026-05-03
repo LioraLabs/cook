@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use cook_contracts::ACCESSORS;
 use cook_lang::ast::*;
 
 use crate::cook_step::generate_cook_step;
@@ -10,10 +11,6 @@ use crate::resolver::{IterMode, OutputShape, ResolveCtx};
 use crate::sigil;
 use crate::template::ConsultedEnv;
 use crate::test_step;
-
-/// Known accessor suffixes for `$<dep.accessor>` syntax.
-/// Keep in lockstep with `dep_ref::ACCESSORS`.
-const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 
 /// Error raised by `generate_with_names_checked` when codegen-phase
 /// validation rejects a Cookfile.
@@ -424,6 +421,9 @@ fn emit_body_unit_with_names(
     }
 
     let wrapped = wrap_lua_string(&chunk);
+    // cache = false: consulted_env_keys is a cache-keying hint, omitted for
+    // units that are never cached. The cacheable cook-step path in
+    // cook_step.rs is the only emission site that includes it.
     out.push_str(&format!(
         "    cook.add_unit({{lua_code = {}, cache = false}})\n",
         wrapped
@@ -647,6 +647,9 @@ pub fn generate_with_names(
                     // body unit).
                     // Apply sigil substitution to the command (CS-0033).
                     let cmd_expr = expand_shell_command_sigil(command, recipe_names);
+                    // cache = false: consulted_env_keys is a cache-keying hint, omitted for
+                    // units that are never cached. The cacheable cook-step path in
+                    // cook_step.rs is the only emission site that includes it.
                     out.push_str(&format!(
                         "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
                         cmd_expr, line
@@ -752,6 +755,9 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
             Step::Shell { command, line, interactive: true } => {
                 // Apply sigil substitution (CS-0033 closes App. E.8).
                 let cmd_expr = expand_shell_command_sigil(command, &BTreeSet::new());
+                // cache = false: consulted_env_keys is a cache-keying hint, omitted for
+                // units that are never cached. The cacheable cook-step path in
+                // cook_step.rs is the only emission site that includes it.
                 out.push_str(&format!(
                     "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
                     cmd_expr, line
@@ -763,6 +769,9 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
                 // is unreachable in a well-formed AST, but emit defensively.
                 if let Step::Shell { command, line, .. } = &chore.steps[i] {
                     let cmd_expr = expand_shell_command_sigil(command, &BTreeSet::new());
+                    // cache = false: consulted_env_keys is a cache-keying hint, omitted for
+                    // units that are never cached. The cacheable cook-step path in
+                    // cook_step.rs is the only emission site that includes it.
                     out.push_str(&format!(
                         "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
                         cmd_expr, line

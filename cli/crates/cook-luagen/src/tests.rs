@@ -2220,3 +2220,50 @@ end
         "lua_block payload should emit star sentinel, got:\n{lua}"
     );
 }
+
+// ─── Task 4 review: chore-body sigil regression tests (E.8 motivating case) ──
+
+#[test]
+fn chore_body_sigil_lowers_to_require_env() {
+    // CS-0033 App. E.8: $<ADB> in a chore bare shell command must lower to
+    // cook.require_env("ADB") and must not survive verbatim into the emitted Lua.
+    let cookfile_text = r#"config
+    env.ADB = "adb"
+
+chore devices
+    $<ADB> devices
+"#;
+    let lua = generate_lua_for_test(cookfile_text);
+    assert!(
+        lua.contains(r#"cook.require_env("ADB")"#),
+        "expected cook.require_env(\"ADB\") in emitted lua; got:\n{}",
+        lua
+    );
+    assert!(
+        !lua.contains(r#"[[$<ADB>"#),
+        "raw $<ADB> must not survive into command field; got:\n{}",
+        lua
+    );
+}
+
+#[test]
+fn chore_body_passes_literal_braces_through() {
+    // Brace-expansion forms and awk scripts that contain $1 / {print} must not
+    // be misidentified as sigil placeholders (strict-bail rule: $< is the only
+    // sigil prefix recognised by the lexer).
+    let cookfile_text = r#"chore demo
+    for i in {1..3}; do echo "$i"; done
+    awk '{print $1}' file.txt
+"#;
+    let lua = generate_lua_for_test(cookfile_text);
+    assert!(
+        lua.contains("for i in {1..3}"),
+        "literal {{1..3}} must survive; got:\n{}",
+        lua
+    );
+    assert!(
+        lua.contains("awk '{print $1}'"),
+        "awk script must survive; got:\n{}",
+        lua
+    );
+}

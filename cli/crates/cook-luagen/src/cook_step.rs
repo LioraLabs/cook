@@ -117,7 +117,7 @@ fn build_shell_block_command(lines: &[String], _recipe_names: &BTreeSet<String>)
 }
 
 /// Convert a `CookMode` to the resolver `IterMode`.
-fn cook_mode_to_iter_mode(mode: &CookMode) -> IterMode {
+pub(crate) fn cook_mode_to_iter_mode(mode: &CookMode) -> IterMode {
     match mode {
         CookMode::OneToOne | CookMode::OneToMany => IterMode::OneToOne,
         CookMode::ManyToOne | CookMode::BlockStep => IterMode::ManyToOne,
@@ -126,7 +126,7 @@ fn cook_mode_to_iter_mode(mode: &CookMode) -> IterMode {
 }
 
 /// Convert a declared-output count to `OutputShape`.
-fn count_to_output_shape(n: usize) -> OutputShape {
+pub(crate) fn count_to_output_shape(n: usize) -> OutputShape {
     match n {
         0 => OutputShape::None,
         1 => OutputShape::Single,

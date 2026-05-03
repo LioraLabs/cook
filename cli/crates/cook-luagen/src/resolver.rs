@@ -8,6 +8,8 @@
 
 use std::collections::BTreeSet;
 
+use cook_contracts::ACCESSORS;
+
 /// Iteration mode of the enclosing step (for builtin validity).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IterMode {
@@ -62,8 +64,6 @@ pub enum ResolveError {
     #[error("placeholder $<{ident}>: malformed out_N (N must be ≥ 1)")]
     MalformedOutIndex { ident: String },
 }
-
-const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 
 /// Three-way outcome of `match_builtin`:
 /// - `Yes(b)` — ident is a well-formed builtin; mode/count validation still pending.
