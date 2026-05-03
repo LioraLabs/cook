@@ -65,10 +65,23 @@ pub enum ResolveError {
 
 const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 
+/// Three-way outcome of `match_builtin`:
+/// - `Yes(b)` — ident is a well-formed builtin; mode/count validation still pending.
+/// - `Malformed(e)` — ident has builtin shape but is structurally invalid (e.g. `out_0`);
+///   MUST produce a load-time diagnostic, MUST NOT fall through to recipe/env lookup.
+/// - `No` — ident does not look like a builtin at all; try recipe/env next.
+enum BuiltinMatch {
+    Yes(BuiltinKind),
+    Malformed(ResolveError),
+    No,
+}
+
 pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
     // Try builtin first.
-    if let Some(b) = match_builtin(ident) {
-        return validate_builtin(ident, b, ctx);
+    match match_builtin(ident) {
+        BuiltinMatch::Yes(b) => return validate_builtin(ident, b, ctx),
+        BuiltinMatch::Malformed(e) => return Resolved::Error(e),
+        BuiltinMatch::No => {}
     }
     // Try recipe (own-name or recipe.accessor).
     if ctx.recipes_in_scope.contains(ident) {
@@ -89,40 +102,48 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
     Resolved::EnvRuntime(env_key.to_string())
 }
 
-fn match_builtin(ident: &str) -> Option<BuiltinKind> {
+fn match_builtin(ident: &str) -> BuiltinMatch {
     match ident {
-        "in" => Some(BuiltinKind::In),
-        "out" => Some(BuiltinKind::Out),
-        "all" => Some(BuiltinKind::All),
+        "in" => BuiltinMatch::Yes(BuiltinKind::In),
+        "out" => BuiltinMatch::Yes(BuiltinKind::Out),
+        "all" => BuiltinMatch::Yes(BuiltinKind::All),
         _ => {
             if let Some(rest) = ident.strip_prefix("in.") {
                 if ACCESSORS.contains(&rest) {
-                    return Some(BuiltinKind::InAccessor(rest.to_string()));
+                    return BuiltinMatch::Yes(BuiltinKind::InAccessor(rest.to_string()));
                 }
-                None
+                BuiltinMatch::No
             } else if let Some(rest) = ident.strip_prefix("out.") {
                 if ACCESSORS.contains(&rest) {
-                    return Some(BuiltinKind::OutAccessor(rest.to_string()));
+                    return BuiltinMatch::Yes(BuiltinKind::OutAccessor(rest.to_string()));
                 }
-                None
+                BuiltinMatch::No
             } else if let Some(rest) = ident.strip_prefix("out_") {
                 let (num_str, acc) = match rest.find('.') {
                     Some(dot) => (&rest[..dot], Some(&rest[dot + 1..])),
                     None => (rest, None),
                 };
-                let n: usize = num_str.parse().ok()?;
+                let n: usize = match num_str.parse() {
+                    Ok(v) => v,
+                    Err(_) => return BuiltinMatch::No,
+                };
                 if n == 0 {
-                    return None; // caller emits MalformedOutIndex
+                    // §xref.resolution step 1: out_0 is a malformed builtin shape —
+                    // N MUST be ≥ 1. Return a hard error rather than falling through to
+                    // recipe/env so the diagnostic names the exact problem.
+                    return BuiltinMatch::Malformed(ResolveError::MalformedOutIndex {
+                        ident: ident.to_string(),
+                    });
                 }
                 match acc {
-                    None => Some(BuiltinKind::OutIndexed(n)),
+                    None => BuiltinMatch::Yes(BuiltinKind::OutIndexed(n)),
                     Some(a) if ACCESSORS.contains(&a) => {
-                        Some(BuiltinKind::OutIndexedAccessor(n, a.to_string()))
+                        BuiltinMatch::Yes(BuiltinKind::OutIndexedAccessor(n, a.to_string()))
                     }
-                    _ => None,
+                    _ => BuiltinMatch::No,
                 }
             } else {
-                None
+                BuiltinMatch::No
             }
         }
     }
@@ -304,20 +325,33 @@ mod tests {
     #[test]
     fn out_zero_is_lexically_valid_but_semantically_rejected() {
         // The lexer accepts `$<out_0>` (matches `out_` DIGIT+); the resolver
-        // rejects N=0 as malformed. Pinned by carry-forward review item from
-        // Task 2.
+        // rejects N=0 as MalformedOutIndex per §xref.resolution step 1
+        // (out_N MUST have N in 1..=K). The error is a hard stop — it does
+        // NOT fall through to recipe-then-env lookup.
         let r = empty();
         let ctx = ResolveCtx {
             mode: IterMode::ManyToOne,
             outputs: OutputShape::Multi(2),
             recipes_in_scope: &r,
         };
-        assert!(matches!(resolve("out_0", &ctx), Resolved::EnvRuntime(_)));
-        // out_0 falls through to env because match_builtin returned None
-        // (the n==0 rejection). This is the documented rule: lexically
-        // valid identifier shapes that fail to resolve as builtins fall
-        // through to recipe-then-env. The resolver does not emit
-        // MalformedOutIndex for out_0 — match_builtin's None means
-        // "not a builtin", and resolution continues.
+        assert!(matches!(
+            resolve("out_0", &ctx),
+            Resolved::Error(ResolveError::MalformedOutIndex { .. })
+        ));
+    }
+
+    #[test]
+    fn out_zero_with_accessor_is_also_malformed() {
+        // `$<out_0.stem>` similarly hits N=0 before the accessor is examined.
+        let r = empty();
+        let ctx = ResolveCtx {
+            mode: IterMode::ManyToOne,
+            outputs: OutputShape::Multi(2),
+            recipes_in_scope: &r,
+        };
+        assert!(matches!(
+            resolve("out_0.stem", &ctx),
+            Resolved::Error(ResolveError::MalformedOutIndex { .. })
+        ));
     }
 }
