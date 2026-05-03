@@ -32,6 +32,8 @@ pub enum LexError {
     ReservedRecipeName { line: usize, segment: String },
     #[error("line {line}: a run of three or more `>` characters at line start is reserved (§{{lexical.line-prefixes}})")]
     ReservedTripleArrow { line: usize },
+    #[error("line {line}: 'use' name '{name}' is not a valid Lua identifier (must match /^[A-Za-z_][A-Za-z0-9_]*$/; '-' and '.' are not permitted)")]
+    InvalidUseName { name: String, line: usize },
 }
 
 const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "all", "env"];
@@ -60,6 +62,22 @@ fn is_ident_start(c: char) -> bool {
 
 fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
+}
+
+/// Validate that a `use NAME` argument is a Lua identifier — `^[A-Za-z_][A-Za-z0-9_]*$`.
+/// Per CS-0035, `use` names are dropped verbatim into a `local NAME = ...` Lua binding
+/// by the codegen layer, so they MUST be syntactically valid Lua identifiers; otherwise
+/// the generated Lua is malformed and the failure surfaces far from the source. Hyphens
+/// and dots are rejected outright; in particular, hyphen rejection eliminates the
+/// `foo-bar` / `foo_bar` collision under the codegen's `replace('-', "_")` workaround.
+fn check_use_name(name: &str, line: usize) -> Result<(), LexError> {
+    let mut chars = name.chars();
+    let ok_start = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_');
+    let ok_rest = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !ok_start || !ok_rest || name.is_empty() {
+        return Err(LexError::InvalidUseName { name: name.to_string(), line });
+    }
+    Ok(())
 }
 
 /// Parse either a quoted name (`"foo"`) or a bare identifier (`foo`, `backend.build`).
@@ -180,6 +198,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
         {
             let rest = trimmed["use".len()..].trim();
             let (name, _) = parse_name(rest, line_num)?;
+            check_use_name(&name, line_num)?;
             Token::UseDecl { name }
         } else if !line.starts_with(|c: char| c.is_whitespace())
             && trimmed.starts_with("import")
@@ -541,6 +560,69 @@ recipe "build"
         let tokens = tokenize("use cpp").unwrap();
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].value, Token::UseDecl { name: "cpp".to_string() });
+    }
+
+    #[test]
+    fn test_use_name_with_space_rejected() {
+        // CS-0035: `use NAME` becomes `local NAME = cook.load_module(...)`.
+        // A name with whitespace is not a valid Lua identifier.
+        let result = tokenize(r#"use "has spaces""#);
+        assert!(result.is_err(), "expected error for use name with spaces");
+        assert!(matches!(
+            result.unwrap_err(),
+            LexError::InvalidUseName { line: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn test_use_name_with_dash_rejected() {
+        // CS-0035: hyphens are rejected — `foo-bar` is not a Lua identifier
+        // and avoids the silent `foo-bar` ↔ `foo_bar` collision in codegen.
+        let result = tokenize("use foo-bar");
+        assert!(result.is_err(), "expected error for use name with dash");
+        assert!(matches!(
+            result.unwrap_err(),
+            LexError::InvalidUseName { line: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn test_use_name_with_dots_rejected() {
+        // CS-0035: dotted names like `cpp.bad` are not valid Lua identifiers.
+        let result = tokenize("use cpp.bad");
+        assert!(result.is_err(), "expected error for dotted use name");
+        assert!(matches!(
+            result.unwrap_err(),
+            LexError::InvalidUseName { line: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn test_use_name_starting_with_digit_rejected() {
+        let result = tokenize(r#"use "9lives""#);
+        assert!(result.is_err(), "expected error for digit-leading use name");
+        assert!(matches!(
+            result.unwrap_err(),
+            LexError::InvalidUseName { line: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn test_use_name_underscore_accepted() {
+        let tokens = tokenize("use my_module").unwrap();
+        assert_eq!(
+            tokens[0].value,
+            Token::UseDecl { name: "my_module".to_string() }
+        );
+    }
+
+    #[test]
+    fn test_use_name_leading_underscore_accepted() {
+        let tokens = tokenize("use _private").unwrap();
+        assert_eq!(
+            tokens[0].value,
+            Token::UseDecl { name: "_private".to_string() }
+        );
     }
 
     #[test]

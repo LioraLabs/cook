@@ -1,0 +1,4 @@
+use "has spaces"
+
+recipe build
+    echo unreachable

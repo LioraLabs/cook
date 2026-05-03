@@ -1,0 +1,4 @@
+use cpp.bad
+
+recipe build
+    echo unreachable

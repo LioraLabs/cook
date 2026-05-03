@@ -49,11 +49,13 @@ Each of the three ordered forms (`use_declaration`, `import_declaration`, `confi
 The `cook-lang` parser test `test_parse_use_after_recipe_fails` (and companion tests for `import` and `config`) pin this ordering rule.
 
 ## 3.4. `use` declarations [#grammar.use-declarations]
-A `use_declaration` is the top-level form `"use" name NEWLINE` (App. A.2), where `name` is either a `BARE_IDENTIFIER` or a `STRING` (App. A.5). It requests that the named built-in or user-authored module be made available to the Cookfile's recipes and config blocks. Module resolution is governed by §{lua.use-env}.
+A `use_declaration` is the top-level form `"use" use_name NEWLINE` (App. A.2), where `use_name` is a `LUA_IDENT` (App. A.5) optionally written either as a bare identifier or as a double-quoted `STRING` whose contents lex as a `LUA_IDENT`. It requests that the named built-in or user-authored module be made available to the Cookfile's recipes and config blocks. Module resolution is governed by §{lua.use-env}.
 
 The keyword `use` MUST be followed by whitespace, a tab, or a `"` character before the name; otherwise the line is not a `use_declaration`. A bare word such as `useful` MUST be classified as a `Content` token rather than a `use_declaration`.
 
 A conforming implementation MUST accept both the quoted form (`use "cpp"`) and the bare form (`use cpp`) and treat them as equivalent.
+
+A conforming implementation MUST reject a `use_declaration` whose `use_name` does not match the `LUA_IDENT` production (App. A.5) — that is, any name containing a character outside `[A-Za-z0-9_]`, any name not starting with `[A-Za-z_]`, or the empty string. In particular, names containing whitespace, hyphens, or dots are rejected. The diagnostic MUST identify the offending name and source line. The restriction reflects the load-time binding (§{lua.use-env}): the `use_name` is bound as a Lua local under the same spelling, and a non-identifier name would yield malformed Lua at codegen time. Hyphens are rejected to avoid silent collisions when codegen rewriters fold `-` to `_` (e.g. `foo-bar` and `foo_bar` would otherwise resolve to the same Lua local).
 
 ### Example 3.4.1
 
@@ -64,9 +66,17 @@ use "proto"
 
 Both forms are accepted; the module names are `cpp` and `proto` respectively.
 
+### Example 3.4.2
+
+```cook
+use foo-bar
+```
+
+Rejected: `foo-bar` is not a `LUA_IDENT` (hyphen is not permitted). The same rule rejects `use cpp.bad`, `use "has spaces"`, and `use "9lives"`.
+
 ### Note 3.4.1
 
-The `cook-lang` parser tests `test_use_prefix_is_content` and `test_use_bare_name` pin the distinction between `use` as a keyword and `use…` as the beginning of a `Content` token.
+The `cook-lang` parser tests `test_use_prefix_is_content` and `test_use_bare_name` pin the distinction between `use` as a keyword and `use…` as the beginning of a `Content` token. The tests `test_use_name_with_dash_rejected`, `test_use_name_with_dots_rejected`, `test_use_name_with_space_rejected`, and `test_use_name_starting_with_digit_rejected` pin the `LUA_IDENT` constraint introduced by CS-0035.
 
 ## 3.5. `import` declarations [#grammar.import-declarations]
 An `import_declaration` is the top-level form `"import" BARE_IDENTIFIER path NEWLINE` (App. A.2), where `path` is a non-empty run of non-whitespace characters (App. A.5). The `BARE_IDENTIFIER` is the local alias under which the imported Cookfile's recipes become addressable; the `path` is the filesystem location of the imported Cookfile. Import resolution is governed by §{modules}.

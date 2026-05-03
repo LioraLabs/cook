@@ -21,11 +21,14 @@ toplevel_item         ::= recipe
 
 ## A.2. Top-level declarations [#grammar-appendix.declarations]
 ```ebnf
-use_declaration       ::= "use" name NEWLINE
+use_declaration       ::= "use" use_name NEWLINE
+use_name              ::= LUA_IDENT | ( '"' LUA_IDENT '"' )
 import_declaration    ::= "import" BARE_IDENTIFIER import_path NEWLINE
 config_block          ::= "config" name? NEWLINE config_body
 config_body           ::= LUA_SOURCE
 ```
+
+**`use_name` constraint (normative; CS-0035).** The `use_name` MUST match the `LUA_IDENT` production (§ A.5), regardless of whether it is written bare or inside double quotes. A conforming implementation MUST reject any `use_declaration` whose name contains characters outside `[A-Za-z0-9_]`, does not start with `[A-Za-z_]`, or is empty — including names containing whitespace, hyphens (`-`), or dots (`.`). The diagnostic MUST identify the offending name and source line. The restriction follows from the use-env binding (§{lua.use-env}): the name is bound at load time as a Lua local under the same spelling, and any non-identifier spelling would yield malformed generated Lua. Hyphens are rejected outright (rather than rewritten to underscores) to eliminate silent collisions between names like `foo-bar` and `foo_bar`.
 
 **Ordering (normative).** `use_declaration`, `import_declaration`, and `config_block` MUST appear before the first `recipe` or `chore`. A conforming implementation MUST reject a Cookfile that places any of these after a `recipe` or `chore`.
 
@@ -164,6 +167,7 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
 ```ebnf
 name                  ::= BARE_IDENTIFIER | STRING
 BARE_IDENTIFIER       ::= /[A-Za-z_][A-Za-z0-9_.\\-]*/
+LUA_IDENT             ::= /[A-Za-z_][A-Za-z0-9_]*/
 STRING                ::= /"[^"]*"/
 NUMBER                ::= /[0-9]+/
 import_path           ::= sigil_path | tree_path
@@ -219,6 +223,8 @@ DIGIT                   ::= "0"…"9"
 The `ACCESSOR` production is defined above. The `sigil_placeholder` production may appear inside `output_pattern`, `SHELL_BLOCK_CONTENT`, `SHELL_LINE_CONTENT`, and `plate_test_shell_block_body` text. Resolution is defined by §{xref.resolution} and §{lua.shell-placeholders}; an implementation MAY record byte ranges of placeholder positions in its parse tree to support migration tooling such as `cook --migrate-sigil`.
 
 **`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting).
+
+**`LUA_IDENT` vs `BARE_IDENTIFIER` (CS-0035).** A `LUA_IDENT` is the strict Lua identifier shape `/[A-Za-z_][A-Za-z0-9_]*/` — narrower than `BARE_IDENTIFIER`, which additionally admits internal dots and hyphens. The `LUA_IDENT` production is used wherever the matched text is bound as a Lua local at load time and therefore must round-trip through the Lua identifier grammar; the `use_declaration`'s `use_name` (§ A.2) is currently the sole site.
 
 **`lua_line` MAY be empty.** The `>` prefix alone (with no following content) is a valid `lua_line` producing an empty Lua expression.
 

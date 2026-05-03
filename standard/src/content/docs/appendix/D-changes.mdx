@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037
+- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
@@ -564,3 +564,23 @@ CS-0036 reworks `step_context_hash` to (a) split the command text on newlines, (
 **Implementation status.** Lockstep — the §8.6.1 normative subsection, the `try_restore` fix, and the regression test land in the same commit on the `worktree-agent-aad1d5af628d364f9` branch. Implementation uses the same `xxhash_rust::xxh3::xxh3_64` function the cache already uses for `FileRecord.hash` (`hash_file` in `cli/crates/cook-cache/src/check.rs`); both sides of the comparison are derived from the same function so the check is exact, not heuristic.
 
 **Reference:** the CS-0037 commit on the `worktree-agent-aad1d5af628d364f9` branch.
+
+## D.38. CS-0038 — `use_name` constrained to `LUA_IDENT` at parse time. [#changes.cs-0038]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7
+
+**Sections affected:** §{grammar.use-declarations} (rewritten — adds the `use_name` `LUA_IDENT` constraint, new Example 3.4.2, augmented Note 3.4.1); App. A.2 (`use_declaration` production rewritten with `use_name` nonterminal; new normative paragraph "`use_name` constraint"); App. A.5 (new `LUA_IDENT` primitive production; new "`LUA_IDENT` vs `BARE_IDENTIFIER`" paragraph). Reference-implementation: `cli/crates/cook-lang/src/lexer.rs` (new `LexError::InvalidUseName` variant, new `check_use_name` helper, six new unit tests). Conformance: three new negative fixtures (`040-use-name-with-spaces-rejected`, `041-use-name-with-dash-rejected`, `042-use-name-with-dot-rejected`).
+
+**Summary.** Tightens the `use NAME` declaration to require `NAME` to match `/^[A-Za-z_][A-Za-z0-9_]*$/` — the Lua identifier shape — independent of whether it is written bare or inside double quotes. Pre-CS-0038, the lexer accepted any `BARE_IDENTIFIER` or `STRING` after `use`, including pathological forms such as `use "has spaces"`, `use cpp.bad`, and `use foo-bar`. The codegen layer (`cook-luagen/src/recipe.rs`) then dropped the verbatim text into a `local NAME = cook.load_module(...)` binding, producing malformed Lua that surfaced as a runtime parse error far from the source line. Post-CS-0038 the lexer rejects these at parse time with `InvalidUseName { name, line }`, citing the offending name and source line directly.
+
+**Why hyphens are rejected outright.** A subtle pre-CS-0038 misfeature: `cook-luagen/src/recipe.rs` rewrote `-` to `_` inside the generated Lua local binding (`module_name.replace('-', "_")`) so that hyphenated module names would tokenise as a Lua identifier. The rewrite was a workaround for the lax parser admitting hyphens, but it silently collapsed `foo-bar` and `foo_bar` to the same Lua local — an unobservable shadowing whose only symptom was the wrong module being bound under one of the two names. Rejecting hyphens at parse time eliminates the rewrite's reason to exist; the codegen layer needs no change because the parser now guarantees the name is already a Lua identifier.
+
+**Why `LUA_IDENT` is its own production.** App. A's existing `BARE_IDENTIFIER` production admits internal dots and hyphens (it is the same production used for recipe names, dependency names, and import aliases, all of which legitimately want dotted forms). The `use_name` constraint is narrower: the matched text is bound at load time as a Lua local under the same spelling and therefore must round-trip through Lua's identifier grammar. The new `LUA_IDENT` primitive captures the narrower shape, making the constraint expressible as a grammar production rather than as out-of-band prose. The `use_name` is currently the sole site of `LUA_IDENT` in App. A; future productions that bind text as Lua locals (none planned at v0.7) would reuse it.
+
+**Implementation notes.** The lexer change is a four-line addition in `cli/crates/cook-lang/src/lexer.rs`: a new `LexError::InvalidUseName { name, line }` variant, a `check_use_name` helper that performs the regex validation by hand (no regex dependency), and a single call site in the `Token::UseDecl` branch of `tokenize`. Six new unit tests pin the rejection cases (spaces, hyphen, dot, leading digit) and the accepted cases (underscore-internal, leading underscore). The codegen layer (`cook-luagen/src/recipe.rs:488-495`) is left untouched; the obsolete `module_name.replace('-', "_")` rewrite is now provably dead code (the parser rejects any name containing `-` before it ever reaches codegen), but removing it is a separate cleanup tracked outside this CS.
+
+**Conformance impact.** Three new negative fixtures land alongside this entry: `040-use-name-with-spaces-rejected/` pins the quoted-with-spaces case, `041-use-name-with-dash-rejected/` pins the bare-with-dash case, and `042-use-name-with-dot-rejected/` pins the bare-with-dot case. Each fixture's `error.txt` asserts a substring of the new diagnostic ("`'use' name 'X' is not a valid Lua identifier`"). All existing positive fixtures that exercise `use` (`010-use-and-module-call/`, `017-use-from-execute/`) already satisfy the `LUA_IDENT` rule and continue to parse cleanly. The conformance harness passes against the CS-0038 commit.
+
+**Reference:** the CS-0038 commit on `worktree-agent-a2d8a370be4c0889a` (the lang-audit branch).
