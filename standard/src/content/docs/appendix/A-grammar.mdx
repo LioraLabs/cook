@@ -35,7 +35,7 @@ config_body           ::= LUA_SOURCE
 
 **Duplicate `import_declaration` rule.** The `BARE_IDENTIFIER` (local alias) of each `import_declaration` MUST be unique within a Cookfile. A conforming implementation MUST reject duplicate import names.
 
-**Reserved recipe name segments.** The identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env` are reserved and MUST NOT appear as the final dot-separated segment of any recipe name. A conforming implementation MUST reject a recipe whose name ends with one of these segments (e.g., `backend.stem` is rejected; `backend.build` is accepted). Additionally, `env` MUST NOT appear as the **first** dot-separated segment of a recipe name (e.g., `recipe env.foo` is rejected). This reserves the `env.` prefix for sigil-placeholder env-var lookup (CS-0033).
+**Reserved recipe name segments.** The identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env` are reserved and MUST NOT appear as the final dot-separated segment of any recipe name. A conforming implementation MUST reject a recipe whose name ends with one of these segments (e.g., `backend.stem` is rejected; `backend.build` is accepted). Additionally, `env` MUST NOT appear as the **first** dot-separated segment of a recipe name (e.g., `recipe env.foo` is rejected). This reserves the `env.` prefix for the explicit env-var-lookup form.
 
 ## A.3. Recipes [#grammar-appendix.recipes]
 ```ebnf

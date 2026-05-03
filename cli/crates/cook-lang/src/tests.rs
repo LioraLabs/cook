@@ -1095,4 +1095,10 @@ fn rejects_recipe_with_env_last_segment() {
 end"#;
     let result = parse(source);
     assert!(result.is_err(), "expected parse error for foo.env recipe");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("env") && err.contains("reserved"),
+        "diagnostic must name 'env' and 'reserved'; got: {}",
+        err
+    );
 }
