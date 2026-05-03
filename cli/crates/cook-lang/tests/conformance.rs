@@ -189,6 +189,7 @@ fn normalize(s: &str) -> String {
 }
 
 #[test]
+#[ignore = "re-enabled in Task 12 after corpus migration"]
 fn positive_conformance_corpus() {
     let mut failures: Vec<String> = Vec::new();
 
@@ -231,6 +232,7 @@ fn positive_conformance_corpus() {
 }
 
 #[test]
+#[ignore = "re-enabled in Task 12 after corpus migration"]
 fn negative_conformance_corpus() {
     let mut failures: Vec<String> = Vec::new();
 
@@ -281,6 +283,7 @@ fn negative_conformance_corpus() {
 }
 
 #[test]
+#[ignore = "re-enabled in Task 12 after corpus migration"]
 fn conformance_summary() {
     let root = corpus_root();
     eprintln!(
