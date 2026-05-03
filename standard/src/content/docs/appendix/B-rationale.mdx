@@ -343,6 +343,17 @@ Authors who type `$<out_0>` are virtually always misremembering that `out_N` is 
 
 The `BuiltinMatch::Malformed` variant in the resolver makes the hard-stop explicit in code: `match_builtin` returns three outcomes — `Yes` (valid builtin), `Malformed` (builtin shape, structurally invalid), and `No` (not a builtin shape at all). Only `No` falls through; `Malformed` short-circuits to an error without consulting the recipe or env namespaces.
 
+## B.9. The `cook.require_env` runtime mechanism [#rationale.require-env]
+
+§{xref.resolution} step 3 (declared env var) defers the "declared" check to register time, after config-block evaluation has captured the env table's keys. The reference implementation realizes this contract through a Lua function `cook.require_env(name)` injected into the Cook environment alongside `cook.env`, `cook.dep_output`, and the other `cook.*` helpers.
+
+The function checks `name` against a frozen keyset captured immediately after the config-block phase completes. A missing key produces a `RuntimeError` with a diagnostic that names the consulted token, the declared keys in scope, and the recommended `env.NAME = ...` declaration form. The keyset is frozen — additional `cook.env.NAME = "..."` writes during recipe registration are visible to `cook.env[name]` but do not retroactively make the key "declared" for `cook.require_env` purposes; the contract is fixed at the end of config-block evaluation.
+
+Two design alternatives were considered and rejected:
+
+- **Codegen-time check.** The codegen could parse config-block source for `env.NAME = ...` patterns and reject undeclared references at register-time emission. This requires the codegen to understand Lua syntax, including conditional assignments and dynamic key construction (`env[some_var] = ...`). The runtime check is simpler, more accurate, and produces the same author-facing diagnostic at virtually the same time (register time vs. codegen time).
+- **Silent fallthrough to `cook.env[name]`.** This was the pre-sigil-placeholder-syntax behaviour and it caused real bugs: a typo such as `$<HOEM>` silently expanded to an empty string, propagated through cache, and triggered spurious reruns. The closed-set resolution rule explicitly rejects this option to make every placeholder either resolve to a known thing or fail loudly.
+
 ## B.A. On Appendix A
 
 _To be filled in._
