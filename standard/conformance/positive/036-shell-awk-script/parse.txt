@@ -8,5 +8,5 @@ Cookfile
       ingredients: ["data.txt"]
       excludes: []
       steps:
-        Cook outputs=["out.txt"] using=ShellBlock(["awk '{print $1}' $<in> > $<out>"])
+        Cook outputs=["$<in.stem>.col1"] using=ShellBlock(["awk '{print $1}' $<in> > $<out>"])
   chores:
