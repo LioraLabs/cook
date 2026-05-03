@@ -1072,3 +1072,27 @@ fn test_parse_import_rejects_sigil_with_dotdot() {
         "expected sigil-dotdot diagnostic, got: {msg}"
     );
 }
+
+// ── CS-0033: 'env' reserved as recipe-name segment ────────────────
+
+#[test]
+fn rejects_recipe_with_env_first_segment() {
+    let source = r#"recipe "env.foo"
+end"#;
+    let result = parse(source);
+    assert!(result.is_err(), "expected parse error for env.foo recipe");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("env") && err.contains("reserved"),
+        "diagnostic must name 'env' and 'reserved'; got: {}",
+        err
+    );
+}
+
+#[test]
+fn rejects_recipe_with_env_last_segment() {
+    let source = r#"recipe "foo.env"
+end"#;
+    let result = parse(source);
+    assert!(result.is_err(), "expected parse error for foo.env recipe");
+}

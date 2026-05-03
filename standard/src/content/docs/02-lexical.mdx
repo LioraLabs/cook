@@ -80,8 +80,11 @@ The Cookfile language reserves seven identifiers contextually, each in a single 
 | `in`                   | Final segment of a recipe name   |
 | `out`                  | Final segment of a recipe name   |
 | `all`                  | Final segment of a recipe name   |
+| `env`                  | Final **or first** segment of a recipe name |
 
-A conforming implementation MUST reject a recipe whose name's final dot-separated segment is a reserved recipe segment (App. A.2). A reserved recipe segment MAY appear as a non-final segment — for example, `backend.build` is valid because `build` is the final segment, whereas `backend.stem` is rejected because `stem` is the final segment.
+A conforming implementation MUST reject a recipe whose name's final dot-separated segment is a reserved recipe segment (App. A.2). A reserved recipe segment MAY appear as a non-final, non-first segment — for example, `backend.build` is valid because `build` is the final segment, whereas `backend.stem` is rejected because `stem` is the final segment.
+
+The identifier `env` carries an additional restriction: a conforming implementation MUST also reject a recipe whose name's **first** dot-separated segment is `env` (e.g., `recipe env.foo` is rejected). This restriction reserves the `env.` prefix for explicit env-var lookups (§{placeholders.env-prefix}, CS-0033) and eliminates the resolution ambiguity that would otherwise arise between `$<env.X>` (env-var lookup) and an accessor on a recipe named `env`.
 
 The keywords that introduce other top-level or recipe-body productions — `recipe`, `chore`, `config`, `ingredients`, `cook`, `plate`, `using`, `use`, `import`, `test` — are recognised as keywords only when followed by a keyword separator (space, tab, or `"`). Among these, the **top-level keywords** `recipe`, `chore`, `config`, `use`, and `import` are recognised as keywords only when their line begins at column 0 (no leading whitespace); an indented line whose first word is a top-level keyword is a `Content` token, dispatched per §{grammar.step-dispatch}. The recipe-body keywords (`ingredients`, `cook`, `plate`, `test`, `using`) are not subject to the column-0 rule.
 
