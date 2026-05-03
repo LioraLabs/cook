@@ -414,3 +414,21 @@ The map is computed once per Cookfile by `Workspace::alias_qualified_prefixes_fo
 **Conformance impact.** None at the parser/luagen layer (no AST or dump-format changes; no language surface change). The Standard's §7.3 (cross-Cookfile body refs) and §7.5 (diamond dedup) wording was already correct; this is a reference-implementation fix that closes the gap CS-0028 missed.
 
 **Reference:** the CS-0029 commit on the `feature/cross-cookfile-caching` branch.
+
+## D.30. CS-0030 — `cook.add_test` propagates step-group dep refs into unit-DAG dep edges. [#changes.cs-0030]
+
+**Date:** 2026-05-03
+
+**Version:** v0.5 (implementation-only catch-up; closes the residual scope CS-0027 explicitly tracked).
+
+**Sections affected:** none in the Standard surface. Closes the residual-scope item recorded in D.27 (CS-0027): "The `add_test` API does not yet propagate `step_group_dep_refs` into unit-DAG `dep_edges`, so a test recipe whose body refs a sibling recipe will race that sibling under `--jobs > 1`."
+
+**Summary.** Pre-CS-0030, `cook.add_test` (`cli/crates/cook-register/src/test_api.rs`) created a `CapturedUnit` with `DepKind::TestSibling`/`Sequential` but did not read `state.step_group_dep_refs`. As a result, a `{X}` body ref inside a test step lowered to `cook.dep_output("X")` (which correctly recorded `"X"` in `step_group_dep_refs`) was then dropped by `add_test`'s capture logic. The wave grouper saw no edge from the test recipe to `X`, scheduled them in the same wave, and the test raced its upstream under `--jobs > 1`. CS-0030 mirrors `cook.add_unit`'s pattern in `add_test`: after pushing the test unit, copy `step_group_dep_refs` into `dep_edges` so each ref becomes a `(test_unit_idx, dep_name)` pair. The wave grouper then schedules the upstream recipe before the test.
+
+**Why:** Surfaced by `examples/cross_cookfile_test/`, which mirrors `examples/cross_cookfile_plate/` exactly except the body-ref-bearing step is a `test` instead of a `plate`. Pre-CS-0030, plate (which lowers to `cook.add_unit`) succeeded 10/10 trials at `--jobs 4` while test (which lowers to `cook.add_test`) failed 10/10 with `grep: lib/build/gen.bin: No such file or directory` — a clean A/B isolation of the bug to the `add_test` code path. Post-CS-0030, both succeed 10/10. The §{xref.dep-implications} contract — "a name reference to recipe B in recipe A's body establishes a dep edge from A to B" — now holds uniformly across cook, plate, and test step kinds, instead of plate/cook only.
+
+**Implementation notes.** Single fix site, ~5 lines added at `test_api.rs:46-50` mirroring `unit_api.rs:233-236`. New in-crate regression test `test_add_test_propagates_step_group_dep_refs_to_dep_edges` seeds a synthetic `step_group_dep_refs` entry, runs `cook.add_test`, and asserts the resulting `dep_edges` contains the synthetic ref. The runtime fixture is `examples/cross_cookfile_test/walkthrough.sh`, which 3/3-passes post-fix; its sibling `examples/cross_cookfile_plate/` provides the reference plate-side behavior for diff-based regression checking.
+
+**Conformance impact.** None at the parser/luagen layer (no AST or dump-format changes; no language surface change). The Standard's §{xref.dep-implications} and §7.3 wording was already correct; this catches the `add_test` code path up to the contract.
+
+**Reference:** the CS-0030 commit on the `feature/cross-cookfile-caching` branch.
