@@ -332,7 +332,7 @@ The Standard declines to extend the reservation to module names because the two 
 
 ## B.8. `out_0` rejection at resolution rather than fall-through [#rationale.out-zero]
 
-The CS-0033 closed-set resolver rejects `$<out_0>` as a `MalformedOutIndex` error rather than letting it fall through to the recipe-then-env-lookup steps. Lexically, `out_0` matches the `out_indexed` production (`"out_" DIGIT+` admits `0`); the rejection happens at resolution, not lexing.
+The closed-set resolver introduced with the sigil placeholder syntax rejects `$<out_0>` as a `MalformedOutIndex` error rather than letting it fall through to the recipe-then-env-lookup steps. Lexically, `out_0` matches the `out_indexed` production (`"out_" DIGIT+` admits `0`); the rejection happens at resolution, not lexing.
 
 The choice between "reject at resolution" and "fall through to env" was decided in favor of the former because the diagnostic surface is meaningfully better:
 
