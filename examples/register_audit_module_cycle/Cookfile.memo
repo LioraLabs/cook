@@ -1,0 +1,9 @@
+chore audit_memo
+    >> _G.once_top_level_calls = 0
+    >> _G.once_init_calls = 0
+    >> cook.load_module("once")
+    >> cook.load_module("once")
+    >> cook.load_module("once")
+    >> assert(_G.once_top_level_calls == 1, "memoization broken: top-level ran " .. tostring(_G.once_top_level_calls) .. " times, expected 1")
+    >> assert(_G.once_init_calls == 1, "memoization broken: init() ran " .. tostring(_G.once_init_calls) .. " times, expected 1")
+    >> print("memoization OK: top-level=" .. tostring(_G.once_top_level_calls) .. " init=" .. tostring(_G.once_init_calls))

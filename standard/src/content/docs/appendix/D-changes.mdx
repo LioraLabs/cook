@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039
+- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
@@ -615,4 +615,11 @@ Companion unit tests: the `cs_0035_*` family in `tests.rs`, `shell_block.rs`, an
 **Implementation status.** Lockstep — the spec rewrite, the new `brace_scan` module, the three call-site rewrites (`lua_block.rs`, `shell_block.rs`, `recipe.rs`), the unit tests, and the five conformance fixtures land in the same commit. Walkthrough fixtures live under `examples/lang_audit_lua_multiline_string/`, `examples/lang_audit_lua_block_comment/`, and `examples/lang_audit_shell_heredoc_brace/`.
 
 **Reference:** the CS-0039 commit on `main` (this commit).
+
+## D.40. CS-0040 — `cook.load_module` MUST memoize per VM and MUST raise on cycles. [#changes.cs-0040]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7
+
 

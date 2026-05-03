@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -90,6 +91,18 @@ pub struct ModuleLoaderState {
     /// can still access the cache after `load_module` has returned.
     pub last_module: Option<String>,
     pub caches: std::collections::HashMap<String, ModuleCache>,
+    /// Modules whose load is in flight on this VM. Used to detect
+    /// `cook.load_module` cycles (§6.3.4): if a re-entrant call names a module
+    /// already in this set, the loader raises a diagnostic naming the cycle.
+    pub currently_loading: BTreeSet<String>,
+    /// Ordered stack of in-flight module names, parallel to `currently_loading`.
+    /// Used to render the cycle path `a -> b -> a` in the diagnostic.
+    pub loading_stack: Vec<String>,
+    /// Memoization table for successful module loads (§6.3.4): a second
+    /// `cook.load_module(name)` MUST return the same Lua value without
+    /// re-reading or re-evaluating the module file. Keyed by module name;
+    /// values are registry keys held by the parent VM.
+    pub loaded: BTreeMap<String, LuaRegistryKey>,
 }
 
 pub type SharedModuleLoaderState = Rc<RefCell<ModuleLoaderState>>;
@@ -103,6 +116,9 @@ impl ModuleLoaderState {
             current_module: None,
             last_module: None,
             caches: std::collections::HashMap::new(),
+            currently_loading: BTreeSet::new(),
+            loading_stack: Vec::new(),
+            loaded: BTreeMap::new(),
         }
     }
 
@@ -130,6 +146,38 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
 
     let s = state.clone();
     let load_module_fn = lua.create_function(move |lua, name: String| {
+        // 0. Memoization (§6.3.4): a second cook.load_module("name") on this VM
+        // returns the same value without re-reading or re-evaluating the file.
+        let cached_value: Option<LuaValue> = {
+            let st = s.borrow();
+            if let Some(key) = st.loaded.get(&name) {
+                Some(lua.registry_value(key)?)
+            } else {
+                None
+            }
+        };
+        if let Some(cached) = cached_value {
+            // Refresh last_module so post-load cache calls keep resolving.
+            s.borrow_mut().last_module = Some(name.clone());
+            return Ok(cached);
+        }
+
+        // 0a. Cycle detection (§6.3.4): if `name` is already in the in-flight
+        // set, raise a diagnostic naming the cycle path so authors can locate
+        // the offending edge.
+        {
+            let st = s.borrow();
+            if st.currently_loading.contains(&name) {
+                let mut path = st.loading_stack.clone();
+                path.push(name.clone());
+                let rendered = path.join(" -> ");
+                return Err(LuaError::runtime(format!(
+                    "module cycle detected: {}",
+                    rendered
+                )));
+            }
+        }
+
         // 1. Resolve path: working_dir/cook_modules/name.lua or name/init.lua
         let working_dir = s.borrow().working_dir.clone();
         let modules_dir = working_dir.join("cook_modules");
@@ -168,21 +216,49 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
             }
         }
 
-        // 4. Set current_module to the module name (for cook.cache scoping)
-        s.borrow_mut().current_module = Some(name.clone());
+        // 4. Mark as in-flight (for cycle detection) and set current_module
+        // (for cook.cache scoping).
+        {
+            let mut state = s.borrow_mut();
+            state.currently_loading.insert(name.clone());
+            state.loading_stack.push(name.clone());
+            state.current_module = Some(name.clone());
+        }
+
+        // Helper: drop in-flight marker on every exit path (success or error)
+        // so cycle detection survives recoverable errors.
+        let pop_inflight = |s: &SharedModuleLoaderState, name: &str| {
+            let mut state = s.borrow_mut();
+            state.currently_loading.remove(name);
+            if let Some(top) = state.loading_stack.last() {
+                if top == name {
+                    state.loading_stack.pop();
+                }
+            }
+            state.current_module = None;
+        };
 
         // 5. Execute the module file
         let chunk_name = format!("@{}", module_path.display());
-        let result: LuaValue = lua.load(&source).set_name(&chunk_name).eval()?;
+        let result: LuaValue = match lua.load(&source).set_name(&chunk_name).eval() {
+            Ok(v) => v,
+            Err(e) => {
+                pop_inflight(&s, &name);
+                return Err(e);
+            }
+        };
 
         // 6. If the returned table has an init() function, call it
         if let LuaValue::Table(ref tbl) = result {
             if let Ok(LuaValue::Function(init_fn)) = tbl.get::<LuaValue>("init") {
-                init_fn.call::<()>(())?;
+                if let Err(e) = init_fn.call::<()>(()) {
+                    pop_inflight(&s, &name);
+                    return Err(e);
+                }
             }
         }
 
-        // 7. Flush cache, clear current_module (but remember as last_module)
+        // 7. Flush cache, clear in-flight marker (but remember as last_module)
         {
             let state = s.borrow();
             if let Some(cache) = state.caches.get(&name) {
@@ -191,9 +267,20 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
         }
         {
             let mut state = s.borrow_mut();
+            state.currently_loading.remove(&name);
+            if let Some(top) = state.loading_stack.last() {
+                if top == &name {
+                    state.loading_stack.pop();
+                }
+            }
             state.last_module = Some(name.clone());
             state.current_module = None;
         }
+
+        // 7a. Memoize successful load so subsequent cook.load_module(name)
+        // calls return the same Lua value (§6.3.4).
+        let key = lua.create_registry_value(result.clone())?;
+        s.borrow_mut().loaded.insert(name.clone(), key);
 
         // 8. Return the module table
         Ok(result)
@@ -359,6 +446,154 @@ mod tests {
             .eval()
             .unwrap();
         assert!(result);
+    }
+
+    #[test]
+    fn test_load_module_memoized_returns_same_table() {
+        // §6.3.4: a second cook.load_module(name) MUST return the same Lua
+        // value without re-evaluating the module file. We verify by mutating
+        // the table after first load and observing the mutation on the second
+        // load (which would be reset if the file were re-evaluated).
+        let (lua, _dir, _) = setup_with_module(
+            "test_mod",
+            "local m = {} m.value = 1 return m",
+        );
+        let result: i32 = lua
+            .load(
+                r#"local a = cook.load_module("test_mod")
+                a.value = 99
+                local b = cook.load_module("test_mod")
+                return b.value"#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(result, 99, "memoization must return the same table instance");
+    }
+
+    #[test]
+    fn test_load_module_init_runs_once_when_memoized() {
+        // §6.3.4 corollary: if the module table is reused, init() must not
+        // run again either. We track invocation count via a global counter.
+        let (lua, _dir, _) = setup_with_module(
+            "test_mod",
+            r#"local m = {}
+            function m.init()
+                _G.init_calls = (_G.init_calls or 0) + 1
+            end
+            return m"#,
+        );
+        let calls: i32 = lua
+            .load(
+                r#"cook.load_module("test_mod")
+                cook.load_module("test_mod")
+                cook.load_module("test_mod")
+                return _G.init_calls"#,
+            )
+            .eval()
+            .unwrap();
+        assert_eq!(calls, 1, "init must run exactly once across repeated loads");
+    }
+
+    #[test]
+    fn test_load_module_cycle_two_modules_raises() {
+        // §6.3.4 cycle detection: a cycle a -> b -> a MUST raise a diagnostic
+        // naming the cycle, not stack-overflow.
+        let dir = TempDir::new().unwrap();
+        let modules_dir = dir.path().join("cook_modules");
+        std::fs::create_dir_all(&modules_dir).unwrap();
+        std::fs::write(
+            modules_dir.join("a.lua"),
+            r#"local m = {}
+            cook.load_module("b")
+            return m"#,
+        )
+        .unwrap();
+        std::fs::write(
+            modules_dir.join("b.lua"),
+            r#"local m = {}
+            cook.load_module("a")
+            return m"#,
+        )
+        .unwrap();
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("cook", lua.create_table().unwrap())
+            .unwrap();
+        let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+        register_module_loader(&lua, state).unwrap();
+
+        let err = lua
+            .load(r#"cook.load_module("a")"#)
+            .exec()
+            .expect_err("cycle must raise");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("module cycle detected"),
+            "diagnostic must say `module cycle detected`, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("a -> b -> a"),
+            "diagnostic must render the cycle path, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_load_module_self_cycle_raises() {
+        // A module that loads itself must surface the same diagnostic.
+        let dir = TempDir::new().unwrap();
+        let modules_dir = dir.path().join("cook_modules");
+        std::fs::create_dir_all(&modules_dir).unwrap();
+        std::fs::write(
+            modules_dir.join("solo.lua"),
+            r#"local m = {}
+            cook.load_module("solo")
+            return m"#,
+        )
+        .unwrap();
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("cook", lua.create_table().unwrap())
+            .unwrap();
+        let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+        register_module_loader(&lua, state).unwrap();
+
+        let err = lua
+            .load(r#"cook.load_module("solo")"#)
+            .exec()
+            .expect_err("self-cycle must raise");
+        let msg = format!("{}", err);
+        assert!(msg.contains("solo -> solo"), "got: {}", msg);
+    }
+
+    #[test]
+    fn test_load_module_recovers_after_error() {
+        // After a module load fails, the in-flight set must be cleaned up so
+        // a subsequent retry can proceed (cycle detection survives recoverable
+        // errors).
+        let dir = TempDir::new().unwrap();
+        let modules_dir = dir.path().join("cook_modules");
+        std::fs::create_dir_all(&modules_dir).unwrap();
+        std::fs::write(
+            modules_dir.join("boom.lua"),
+            r#"error("intentional")"#,
+        )
+        .unwrap();
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("cook", lua.create_table().unwrap())
+            .unwrap();
+        let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+        register_module_loader(&lua, state.clone()).unwrap();
+
+        let _ = lua.load(r#"cook.load_module("boom")"#).exec();
+        // After the failure the in-flight set must be empty.
+        assert!(state.borrow().currently_loading.is_empty());
+        assert!(state.borrow().loading_stack.is_empty());
     }
 
     #[test]

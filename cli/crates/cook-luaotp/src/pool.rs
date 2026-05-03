@@ -300,7 +300,7 @@ fn register_worker_cook_table(
     crate::platform_api::register_platform_api(lua, &cook)?;
 
     // cook.load_module(name) — execute-phase counterpart of the register-phase
-    // resolver in cook-register/src/module_loader.rs (CS-0017,
+    // resolver in cook-register/src/module_loader.rs (CS-0017, CS-0035,
     // §{lua.cook-load-module}). Lookup uses the unit's current_working_dir,
     // so an imported Cookfile's body unit resolves against its own
     // cook_modules/ directory (lexical per Cookfile, §{modules.use-scope}).
@@ -309,17 +309,47 @@ fn register_worker_cook_table(
     // by `<cwd>::<name>`) so repeated calls within one body unit don't
     // re-read the file. Module top-level and `init()` run once per
     // (cwd, name, worker VM).
+    //
+    // CS-0035: cycle detection. Tracks an in-flight set in
+    // `_cook_module_loading` keyed the same way as the cache. If a
+    // re-entrant `cook.load_module(name)` would try to evaluate a module
+    // already in flight, we raise a diagnostic naming the cycle path so
+    // module authors can locate the offending edge.
     let wd_load = Arc::clone(current_working_dir);
     lua.globals().set("_cook_module_cache", lua.create_table()?)?;
+    lua.globals().set("_cook_module_loading", lua.create_table()?)?;
+    lua.globals().set("_cook_module_loading_stack", lua.create_table()?)?;
     let load_module_fn = lua.create_function(move |lua, name: String| {
         let cwd = wd_load.lock().expect("working_dir lock").clone();
         let cache_key = format!("{}::{}", cwd.display(), name);
 
-        // Cache hit?
+        // Memoization (§6.3.4): a second cook.load_module(name) returns the
+        // cached value without re-reading or re-evaluating the module file.
         let cache: mlua::Table = lua.globals().get("_cook_module_cache")?;
         if let Ok(cached) = cache.get::<mlua::Value>(cache_key.clone()) {
             if !matches!(cached, mlua::Value::Nil) {
                 return Ok(cached);
+            }
+        }
+
+        // Cycle detection (CS-0035): if `name` (under this cwd) is already in
+        // flight, raise a diagnostic that lists the cycle path.
+        let loading: mlua::Table = lua.globals().get("_cook_module_loading")?;
+        let stack: mlua::Table = lua.globals().get("_cook_module_loading_stack")?;
+        if let Ok(in_flight) = loading.get::<bool>(cache_key.clone()) {
+            if in_flight {
+                let mut path: Vec<String> = Vec::new();
+                let len = stack.raw_len();
+                for i in 1..=len {
+                    if let Ok(s) = stack.get::<String>(i) {
+                        path.push(s);
+                    }
+                }
+                path.push(name.clone());
+                return Err(mlua::Error::runtime(format!(
+                    "module cycle detected: {}",
+                    path.join(" -> ")
+                )));
             }
         }
 
@@ -347,16 +377,36 @@ fn register_worker_cook_table(
             ))
         })?;
 
+        // Mark this (cwd, name) as in-flight before eval so a re-entrant call
+        // can detect the cycle. Cleanup on every exit path keeps detection
+        // sane after recoverable errors.
+        loading.set(cache_key.clone(), true)?;
+        let stack_idx = stack.raw_len() + 1;
+        stack.set(stack_idx, name.clone())?;
+
         let chunk_name = format!("@{}", module_path.display());
-        let result: mlua::Value = lua.load(&source).set_name(&chunk_name).eval()?;
+        let result: mlua::Value = match lua.load(&source).set_name(&chunk_name).eval() {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = loading.set(cache_key, mlua::Value::Nil);
+                let _ = stack.set(stack_idx, mlua::Value::Nil);
+                return Err(e);
+            }
+        };
 
         // Run init() if the returned table has one (§7.5).
         if let mlua::Value::Table(ref tbl) = result {
             if let Ok(mlua::Value::Function(init_fn)) = tbl.get::<mlua::Value>("init") {
-                init_fn.call::<()>(())?;
+                if let Err(e) = init_fn.call::<()>(()) {
+                    let _ = loading.set(cache_key, mlua::Value::Nil);
+                    let _ = stack.set(stack_idx, mlua::Value::Nil);
+                    return Err(e);
+                }
             }
         }
 
+        loading.set(cache_key.clone(), mlua::Value::Nil)?;
+        stack.set(stack_idx, mlua::Value::Nil)?;
         cache.set(cache_key, result.clone())?;
         Ok(result)
     })?;
