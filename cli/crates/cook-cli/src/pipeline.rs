@@ -565,43 +565,7 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         let registries = build_workspace_registries(&workspace, config, &cli.set)?;
 
         let inferred_deps = compute_workspace_inferred_deps(&workspace);
-
-        // Emit warning for conflicting dep types (mirrors single-Cookfile path).
-        // Iterate root recipes — qualify names with empty prefix.
-        for recipe in &workspace.root.cookfile.recipes {
-            for (qualified_consumer, dep_list) in &inferred_deps {
-                if qualified_consumer == &recipe.name {
-                    for inferred_dep in dep_list {
-                        if recipe.deps.contains(inferred_dep) {
-                            eprintln!(
-                                "cook: warning: recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
-                                recipe.name, inferred_dep, inferred_dep
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        // Iterate imported recipes — qualify names with their prefix.
-        for (canonical_path, loaded) in &workspace.imports {
-            let prefix = find_full_prefix(&workspace, canonical_path);
-            for recipe in &loaded.cookfile.recipes {
-                let qualified_consumer = format!("{prefix}.{}", recipe.name);
-                if let Some(dep_list) = inferred_deps.get(&qualified_consumer) {
-                    for inferred_dep in dep_list {
-                        // recipe.deps may be written as unqualified ("x") or qualified
-                        // ("alias.x"). Normalize by checking both the raw dep string and
-                        // the qualified form against each recipe.deps entry.
-                        if recipe.deps.contains(inferred_dep) {
-                            eprintln!(
-                                "cook: warning: recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
-                                qualified_consumer, inferred_dep, inferred_dep
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        warn_workspace_dep_conflicts(&workspace, &inferred_deps);
 
         run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
     } else {
@@ -616,35 +580,8 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         let env_vars = resolve_env(config, dotenv_vars, &cli.set)?;
 
         let recipe_infos = build_single_recipe_infos(&cookfile);
-
-        // Extract inferred deps from {dep} references in recipe steps
-        let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
-        let mut inferred_deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for recipe in &cookfile.recipes {
-            let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
-            let dep_names: Vec<String> = refs
-                .iter()
-                .map(|r| r.recipe_name.clone())
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            if !dep_names.is_empty() {
-                inferred_deps.insert(recipe.name.clone(), dep_names);
-            }
-        }
-
-        // Emit warning for conflicting dep types
-        for recipe in &cookfile.recipes {
-            let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
-            for dep_ref in &refs {
-                if recipe.deps.contains(&dep_ref.recipe_name) {
-                    eprintln!(
-                        "cook: warning: recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
-                        recipe.name, dep_ref.recipe_name, dep_ref.recipe_name
-                    );
-                }
-            }
-        }
+        let inferred_deps = compute_single_inferred_deps(&cookfile);
+        warn_single_dep_conflicts(&cookfile);
 
         let registries = build_single_registries(cookfile_dir, env_vars, lua_source, config);
 
@@ -731,8 +668,15 @@ pub fn cmd_test(
         let recipe_infos = build_workspace_recipe_info(&workspace)?;
         let registries = build_workspace_registries(&workspace, None, &cli.set)?;
 
+        // App. E.10: cmd_test must compute inferred_deps from `{NAME}` body
+        // refs the same way cmd_run does, otherwise the wave grouper sees no
+        // edge from a `test`-bearing recipe to a `cook`-step recipe it consumes
+        // and registers them out of order.
+        let inferred_deps = compute_workspace_inferred_deps(&workspace);
+        warn_workspace_dep_conflicts(&workspace, &inferred_deps);
+
         let _result =
-            run_with_progress(cli, &recipe_infos, &test_recipe_names, &registries, num_jobs, &BTreeMap::new());
+            run_with_progress(cli, &recipe_infos, &test_recipe_names, &registries, num_jobs, &inferred_deps);
     } else {
         // Single Cookfile test
         let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
@@ -764,8 +708,12 @@ pub fn cmd_test(
         let recipe_infos = build_single_recipe_infos(&cookfile);
         let registries = build_single_registries(cookfile_dir, env_vars, lua_source, None);
 
+        // App. E.10: see workspace branch above.
+        let inferred_deps = compute_single_inferred_deps(&cookfile);
+        warn_single_dep_conflicts(&cookfile);
+
         let _result =
-            run_with_progress(cli, &recipe_infos, &test_recipes, &registries, num_jobs, &BTreeMap::new());
+            run_with_progress(cli, &recipe_infos, &test_recipes, &registries, num_jobs, &inferred_deps);
     }
 
     // TODO: Once cook-engine supports test output collection, convert
@@ -942,94 +890,54 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
     let (cookfile, lua_source) = read_and_parse(cli)?;
     validate_selected_config(&cookfile, config)?;
 
-    let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
-    let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        cookfile_dir
-    };
-    let dotenv_vars = load_env(cookfile_dir);
-    let env_vars = resolve_env(config, dotenv_vars, &cli.set)?;
-
-    let recipe_infos = build_single_recipe_infos(&cookfile);
     let targets = vec![recipe_name.to_string()];
 
-    let mut edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets)
-        .map_err(|e| match e {
-            cook_engine::analyzer::GraphError::CycleDetected(s) => {
-                CookError::Other(format!("dependency cycle involving: {s}"))
-            }
-            cook_engine::analyzer::GraphError::UnknownRecipe(s) => CookError::RecipeNotFound(s),
-        })?;
+    // Workspace branch — App. E.10 closes the previous "cmd_dag has no
+    // workspace mode at all" gap by mirroring cmd_run's workspace setup and
+    // routing each ready recipe through its prefix's registry (the same
+    // dispatch cook_engine::run::run does internally).
+    let (all_units, explicit_edges, inferred_deps, cache_managers) =
+        if !cookfile.imports.is_empty() {
+            let workspace_root = crate::workspace::resolve_workspace_root(
+                &cli.file,
+                cli.root.clone(),
+            )?;
+            let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)?;
 
-    // Save explicit edges before merging inferred deps (needed for wave grouping).
-    let explicit_edges = edges.clone();
+            let recipe_infos = build_workspace_recipe_info(&workspace)?;
+            let registries = build_workspace_registries(&workspace, config, &cli.set)?;
+            let inferred_deps = compute_workspace_inferred_deps(&workspace);
+            warn_workspace_dep_conflicts(&workspace, &inferred_deps);
 
-    // Extract inferred deps from {dep} references in recipe steps.
-    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
-    let mut inferred_deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for recipe in &cookfile.recipes {
-        let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
-        let dep_names: Vec<String> = refs
-            .iter()
-            .map(|r| r.recipe_name.clone())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        if !dep_names.is_empty() {
-            inferred_deps.insert(recipe.name.clone(), dep_names);
-        }
-    }
+            collect_dag_units(
+                &recipe_infos,
+                &targets,
+                &registries,
+                &inferred_deps,
+            )?
+        } else {
+            // Single-Cookfile branch.
+            let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
+            let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                cookfile_dir
+            };
+            let dotenv_vars = load_env(cookfile_dir);
+            let env_vars = resolve_env(config, dotenv_vars, &cli.set)?;
 
-    // Merge inferred deps into the edge map so the RecipeDag registers
-    // recipes in the correct order.
-    for (recipe_name, deps) in &inferred_deps {
-        for dep_name in deps {
-            edges.entry(dep_name.clone()).or_insert_with(Vec::new);
-            let entry = edges.entry(recipe_name.clone()).or_insert_with(Vec::new);
-            if !entry.contains(dep_name) {
-                entry.push(dep_name.clone());
-            }
-        }
-    }
-    // Re-sort deps for deterministic output
-    for deps in edges.values_mut() {
-        deps.sort();
-    }
+            let recipe_infos = build_single_recipe_infos(&cookfile);
+            let registries = build_single_registries(cookfile_dir, env_vars, lua_source, config);
+            let inferred_deps = compute_single_inferred_deps(&cookfile);
+            warn_single_dep_conflicts(&cookfile);
 
-    let mut recipe_dag = cook_engine::recipe_dag::RecipeDag::new(&edges);
-    let mut all_units: Vec<(String, cook_contracts::RecipeUnits)> = Vec::new();
-    let mut cache_managers: std::collections::BTreeMap<
-        String,
-        std::sync::Arc<cook_cache::ThreadSafeCacheManager>,
-    > = std::collections::BTreeMap::new();
-
-    let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars)
-        .with_selected_config(config.map(|s| s.to_string()));
-
-    loop {
-        let ready = recipe_dag.pop_ready();
-        if ready.is_empty() {
-            break;
-        }
-
-        for name in &ready {
-            let units = registry.register_recipe(&lua_source, name, None).map_err(|e| {
-                CookError::Other(format!("registration failed for '{name}': {e}"))
-            })?;
-
-            let cache_dir = cookfile_dir.join(".cook").join("cache");
-            cache_managers
-                .entry(name.clone())
-                .or_insert_with(|| {
-                    std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(cache_dir))
-                });
-
-            all_units.push((name.clone(), units));
-        }
-
-        recipe_dag.mark_done(&ready);
-    }
+            collect_dag_units(
+                &recipe_infos,
+                &targets,
+                &registries,
+                &inferred_deps,
+            )?
+        };
 
     let dag_data = crate::dag_data::build_wave_dag_data(
         recipe_name,
@@ -1043,6 +951,105 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         .map_err(|e| CookError::Other(format!("failed to serialize DAG: {e}")))?;
 
     crate::dag_server::serve_dag(&json)
+}
+
+/// Drive the recipe DAG to register every recipe reachable from `targets` and
+/// collect their `RecipeUnits` for `build_wave_dag_data`.
+///
+/// Mirrors the per-wave dispatch loop in `cook_engine::run::run` (`run.rs:170+`)
+/// but stops short of work-unit DAG construction and execution — the dag
+/// visualizer only needs the registered units, the explicit edge map, and the
+/// inferred-deps map. Works for both single-Cookfile (one registry under the
+/// `""` prefix) and workspace (one registry per dotted prefix) inputs.
+#[allow(clippy::type_complexity)]
+fn collect_dag_units(
+    recipe_infos: &BTreeMap<String, cook_engine::analyzer::RecipeInfo>,
+    targets: &[String],
+    registries: &BTreeMap<String, cook_engine::RegistryEntry>,
+    inferred_deps: &BTreeMap<String, Vec<String>>,
+) -> Result<
+    (
+        Vec<(String, cook_contracts::RecipeUnits)>,
+        BTreeMap<String, Vec<String>>,
+        BTreeMap<String, Vec<String>>,
+        BTreeMap<String, std::sync::Arc<cook_cache::ThreadSafeCacheManager>>,
+    ),
+    CookError,
+> {
+    let mut edges =
+        cook_engine::analyzer::dependency_edges_multi(recipe_infos, targets).map_err(|e| match e {
+            cook_engine::analyzer::GraphError::CycleDetected(s) => {
+                CookError::Other(format!("dependency cycle involving: {s}"))
+            }
+            cook_engine::analyzer::GraphError::UnknownRecipe(s) => CookError::RecipeNotFound(s),
+        })?;
+
+    // Save explicit edges before merging inferred deps (needed for wave grouping).
+    let explicit_edges = edges.clone();
+
+    // Merge inferred deps into the edge map so the RecipeDag registers
+    // recipes in the correct order.
+    for (recipe_name, deps) in inferred_deps {
+        for dep_name in deps {
+            edges.entry(dep_name.clone()).or_insert_with(Vec::new);
+            let entry = edges.entry(recipe_name.clone()).or_insert_with(Vec::new);
+            if !entry.contains(dep_name) {
+                entry.push(dep_name.clone());
+            }
+        }
+    }
+    for deps in edges.values_mut() {
+        deps.sort();
+    }
+
+    let mut recipe_dag = cook_engine::recipe_dag::RecipeDag::new(&edges);
+    let mut all_units: Vec<(String, cook_contracts::RecipeUnits)> = Vec::new();
+    let mut cache_managers: BTreeMap<String, std::sync::Arc<cook_cache::ThreadSafeCacheManager>> =
+        BTreeMap::new();
+
+    loop {
+        let ready = recipe_dag.pop_ready();
+        if ready.is_empty() {
+            break;
+        }
+
+        for qualified_name in &ready {
+            // Split off the namespace prefix so the right registry handles
+            // registration. Single-Cookfile recipes always live under the "" prefix.
+            let (prefix, local_name) = match qualified_name.rfind('.') {
+                Some(pos) => (&qualified_name[..pos], &qualified_name[pos + 1..]),
+                None => ("", qualified_name.as_str()),
+            };
+            let entry = registries.get(prefix).ok_or_else(|| {
+                CookError::Other(format!(
+                    "no registry for prefix '{prefix}' (recipe '{qualified_name}')"
+                ))
+            })?;
+
+            let mut units = entry
+                .registry
+                .register_recipe(&entry.lua_source, local_name, None)
+                .map_err(|e| {
+                    CookError::Other(format!("registration failed for '{qualified_name}': {e}"))
+                })?;
+            // Rewrite to the fully qualified form so build_wave_dag_data
+            // sees the same names everywhere.
+            units.recipe_name = qualified_name.clone();
+
+            let cache_dir = entry.registry.working_dir().join(".cook").join("cache");
+            cache_managers
+                .entry(qualified_name.clone())
+                .or_insert_with(|| {
+                    std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(cache_dir))
+                });
+
+            all_units.push((qualified_name.clone(), units));
+        }
+
+        recipe_dag.mark_done(&ready);
+    }
+
+    Ok((all_units, explicit_edges, inferred_deps.clone(), cache_managers))
 }
 
 // ---------------------------------------------------------------------------
@@ -1126,6 +1133,89 @@ pub fn find_full_prefix(workspace: &Workspace, canonical_path: &std::path::Path)
     )
 }
 
+/// Compute inferred dependencies from `{NAME}` body refs in a single Cookfile.
+///
+/// Returns a `BTreeMap` keyed by recipe name, valued by a sorted-deduplicated
+/// vector of dep recipe names (no namespace prefixes — this is the single-file
+/// case). The companion to `compute_workspace_inferred_deps`; both functions
+/// produce the shape `cook_engine::run::run` consumes via its `inferred_deps`
+/// parameter, and every CLI command path that invokes `run_with_progress`
+/// MUST pass an inferred_deps map computed by one of the two helpers — passing
+/// `&BTreeMap::new()` silently drops the §{xref.dep-implications} contract
+/// (App. E.10).
+fn compute_single_inferred_deps(
+    cookfile: &cook_lang::ast::Cookfile,
+) -> BTreeMap<String, Vec<String>> {
+    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(cookfile);
+    let mut inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for recipe in &cookfile.recipes {
+        let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
+        let dep_names: Vec<String> = refs
+            .iter()
+            .map(|r| r.recipe_name.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if !dep_names.is_empty() {
+            inferred.insert(recipe.name.clone(), dep_names);
+        }
+    }
+    inferred
+}
+
+/// Emit "explicit + inferred dep on the same name" warnings for a single Cookfile.
+fn warn_single_dep_conflicts(cookfile: &cook_lang::ast::Cookfile) {
+    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(cookfile);
+    for recipe in &cookfile.recipes {
+        let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
+        for dep_ref in &refs {
+            if recipe.deps.contains(&dep_ref.recipe_name) {
+                eprintln!(
+                    "cook: warning: recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
+                    recipe.name, dep_ref.recipe_name, dep_ref.recipe_name
+                );
+            }
+        }
+    }
+}
+
+/// Emit "explicit + inferred dep on the same name" warnings for a workspace.
+/// Mirrors `warn_single_dep_conflicts` but iterates root + imported recipes
+/// using the qualified-consumer keys produced by `compute_workspace_inferred_deps`.
+fn warn_workspace_dep_conflicts(
+    workspace: &Workspace,
+    inferred_deps: &BTreeMap<String, Vec<String>>,
+) {
+    for recipe in &workspace.root.cookfile.recipes {
+        if let Some(dep_list) = inferred_deps.get(&recipe.name) {
+            for inferred_dep in dep_list {
+                if recipe.deps.contains(inferred_dep) {
+                    eprintln!(
+                        "cook: warning: recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
+                        recipe.name, inferred_dep, inferred_dep
+                    );
+                }
+            }
+        }
+    }
+    for (canonical_path, loaded) in &workspace.imports {
+        let prefix = find_full_prefix(workspace, canonical_path);
+        for recipe in &loaded.cookfile.recipes {
+            let qualified_consumer = format!("{prefix}.{}", recipe.name);
+            if let Some(dep_list) = inferred_deps.get(&qualified_consumer) {
+                for inferred_dep in dep_list {
+                    if recipe.deps.contains(inferred_dep) {
+                        eprintln!(
+                            "cook: warning: recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
+                            qualified_consumer, inferred_dep, inferred_dep
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Compute inferred dependencies from `{alias.recipe}` body refs across the
 /// entire workspace (§7.3 union).
 ///
@@ -1135,9 +1225,9 @@ pub fn find_full_prefix(workspace: &Workspace, canonical_path: &std::path::Path)
 /// shape that `cook_engine::run::run` already consumes via the `inferred_deps`
 /// parameter.
 ///
-/// The single-Cookfile path (see `cmd_run`) already computes this for the trivial
-/// case; this function handles the workspace case where deps span Cookfile
-/// boundaries and alias names must be resolved to canonical qualified prefixes.
+/// The single-Cookfile case is handled by `compute_single_inferred_deps`;
+/// every CLI command path that invokes `run_with_progress` for a workspace
+/// MUST call this function (App. E.10).
 fn compute_workspace_inferred_deps(workspace: &Workspace) -> BTreeMap<String, Vec<String>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
@@ -1352,5 +1442,29 @@ mod tests {
             deps.is_empty(),
             "expected empty inferred_deps when no body refs, got: {deps:?}"
         );
+    }
+
+    /// Single-Cookfile case: a recipe whose body references `{prepare}` should
+    /// produce `{"verify" -> ["prepare"]}`. This pins the helper that backs the
+    /// cmd_test single-Cookfile path (App. E.10).
+    #[test]
+    fn single_inferred_deps_body_ref_produces_edge() {
+        let src = "recipe prepare\n    cook \"prepare.out\" using { echo {out} }\nrecipe verify\n    test { echo {prepare} }\n";
+        let cf = cook_lang::parse(src).unwrap();
+        let deps = compute_single_inferred_deps(&cf);
+        assert_eq!(
+            deps.get("verify"),
+            Some(&vec!["prepare".to_string()]),
+            "expected verify -> [prepare], got: {deps:?}"
+        );
+        assert!(deps.get("prepare").is_none());
+    }
+
+    /// Empty case: a single Cookfile with no body refs returns an empty map.
+    #[test]
+    fn single_inferred_deps_empty_when_no_body_refs() {
+        let cf = cook_lang::parse("recipe a\n    echo hi\nrecipe b\n    echo bye\n").unwrap();
+        let deps = compute_single_inferred_deps(&cf);
+        assert!(deps.is_empty(), "expected empty, got: {deps:?}");
     }
 }

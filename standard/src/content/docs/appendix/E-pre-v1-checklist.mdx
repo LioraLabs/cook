@@ -167,7 +167,9 @@ Option 1 is the least disruptive to existing Cookfiles and matches the muscle me
 
 ## E.10. `{NAME}` body-ref → wave-edge inference is not uniform across CLI commands [#pre-v1.inferred-deps-asymmetry]
 
-**Symptom.** §{xref.dep-implications} normatively asserts that "a name reference to recipe B appearing in any step or dep-list of recipe A establishes a cross-recipe dependency from A to B." The reference implementation realizes this contract through the `inferred_deps` map that the engine's wave grouper consumes. The map is computed correctly in some CLI command paths and not at all in others, so a Cookfile that holds the spec contract in one command (`cook recipe`) violates it in another (`cook --test`).
+**Status.** Resolved in v0.5 by [CS-0027](D-changes#changes-cs-0027). The single-Cookfile `{NAME}` body-ref-extraction loop was hoisted into `compute_single_inferred_deps`, the workspace counterpart was already in place, and both are now invoked at every CLI entry that hands recipes off to `cook_engine::run::run` (`cmd_run`, `cmd_test`, and the new `cmd_dag` workspace branch). The `examples/cmd_test_inferred_deps_e10/verify.sh` harness pins the runtime contract.
+
+**Original symptom.** §{xref.dep-implications} normatively asserts that "a name reference to recipe B appearing in any step or dep-list of recipe A establishes a cross-recipe dependency from A to B." The reference implementation realizes this contract through the `inferred_deps` map that the engine's wave grouper consumes. The map is computed correctly in some CLI command paths and not at all in others, so a Cookfile that holds the spec contract in one command (`cook recipe`) violates it in another (`cook --test`).
 
 Concretely:
 

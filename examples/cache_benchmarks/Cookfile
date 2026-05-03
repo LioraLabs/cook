@@ -51,7 +51,7 @@ recipe util
 # the linker's binary identity through the same tool-content hash.
 # `{lib.lib_build}` is a cross-Cookfile body reference (§7.3): codegen
 # lowers it to cook.dep_output("lib.lib_build") after Phase 7.
-recipe demo: greet util lib.lib_build
+recipe demo:
     cook "build/demo" using {
         {CC} {greet} {util} {lib.lib_build} -o {out}
     }

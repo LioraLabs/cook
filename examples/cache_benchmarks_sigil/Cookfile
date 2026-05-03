@@ -16,3 +16,6 @@ recipe top
         mkdir -p build
         gcc -o {out} {core.core_lib} {web.web_obj}
     }
+
+chore run: top
+    ./build/top
