@@ -40,11 +40,11 @@ sidebar:
 
 ## E.4. tree-sitter-cook is stale [#pre-v1.tree-sitter-stale]
 
-**Symptom.** `tree-sitter-cook/grammar.js` does not implement Cook Standard v0.2. Notably, it still produces `variable_declaration` for top-level `NAME "value"` (rejected by the Standard since CS-0011); other gaps are enumerated in [CS-0002](D-changes#cs-0002-planned-tree-sitter-cook-conformance-audit).
+**Symptom.** `tree-sitter-cook/grammar.js` lags the Cook Standard. The grammar header currently claims `cs-standard/v0.4 + CS-0022`; the Standard is at v0.6, so the grammar is missing every change cut after CS-0022 — notably CS-0024 (plate/test block-body unification), CS-0026 (parse-time §7.2 import-path enforcement), CS-0027 onward (cross-Cookfile / cache-cloud-readiness work), and CS-0032 (`//`-anchored sigil imports). Earlier closure of CS-0011 (top-level `NAME "value"` rejection), CS-0018 (`name:` recipe header dropped), CS-0019 (implicit termination), and CS-0020 (`chore`) is in tree, so the v0.2/v0.3 gap that originally motivated this entry is closed; the live gap is v0.4 → v0.6.
 
 **Workaround.** The grammar's `tree-sitter test` corpus passes against its own (stale) view of the language. The Standard does not require tree-sitter conformance pre-1.0; the cook-lang Rust parser is the reference implementation.
 
-**Resolution path.** The follow-up plan referenced by CS-0002 will: enumerate divergences, update `grammar.js` and externals, wire a tree-sitter conformance harness against `standard/conformance/`, and verify both implementations agree on the corpus.
+**Resolution path.** The follow-up plan referenced by CS-0002 will: enumerate divergences, update `grammar.js` and externals, wire a tree-sitter conformance harness against `standard/conformance/`, and verify both implementations agree on the corpus. Each subsequent Standard cut should re-open the gap measurement against the latest version banner in `grammar.js`.
 
 ## E.5. Implicit termination of recipe and config bodies [#pre-v1.implicit-end]
 
@@ -168,6 +168,8 @@ Option 1 is the least disruptive to existing Cookfiles and matches the muscle me
 ## E.10. `{NAME}` body-ref → wave-edge inference is not uniform across CLI commands [#pre-v1.inferred-deps-asymmetry]
 
 **Status.** Resolved in v0.5 by [CS-0027](D-changes#changes-cs-0027). The single-Cookfile `{NAME}` body-ref-extraction loop was hoisted into `compute_single_inferred_deps`, the workspace counterpart was already in place, and both are now invoked at every CLI entry that hands recipes off to `cook_engine::run::run` (`cmd_run`, `cmd_test`, and the new `cmd_dag` workspace branch). The `examples/cmd_test_inferred_deps_e10/verify.sh` harness pins the runtime contract.
+
+**Residual scope (post-CS-0027).** CS-0027 explicitly tracked two follow-on engine concerns out of scope. The `cook.add_test` propagation gap ("a test recipe whose body refs a sibling recipe will race that sibling under `--jobs > 1`") was closed in [CS-0030](D-changes#changes-cs-0030); `examples/cross_cookfile_test/walkthrough.sh` is the runtime pin. The wave-grouper bidirectional-BFS concern in `build_inferred_groups` (a reverse-inferred-edge recipe such as `verify_X` whose test body refs `{X}` is pulled into a `cook X` build) is still present in `cli/crates/cook-engine/src/wave_grouper.rs` (the BFS adds edges in both directions); it falls outside §{xref.dep-implications}'s "A → B" wording and is tracked as a separate engine concern rather than a pre-1.0 Standard item.
 
 **Original symptom.** §{xref.dep-implications} normatively asserts that "a name reference to recipe B appearing in any step or dep-list of recipe A establishes a cross-recipe dependency from A to B." The reference implementation realizes this contract through the `inferred_deps` map that the engine's wave grouper consumes. The map is computed correctly in some CLI command paths and not at all in others, so a Cookfile that holds the spec contract in one command (`cook recipe`) violates it in another (`cook --test`).
 
