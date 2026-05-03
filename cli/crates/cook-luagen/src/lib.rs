@@ -2,6 +2,7 @@ mod cook_step;
 mod lua_string;
 mod plate_step;
 mod recipe;
+pub(crate) mod sigil;
 mod template;
 mod test_step;
 

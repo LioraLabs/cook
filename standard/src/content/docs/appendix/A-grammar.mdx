@@ -204,6 +204,20 @@ ACCESSOR              ::= "stem" | "name" | "ext" | "dir"
 
 This production is informative; the normative rules are in §{lua.shell-placeholders}.
 
+**Sigil placeholder shape (`$<IDENT>`).** The strict sigil placeholder form is normatively defined in §{lexical.placeholders}. Its production is reproduced here for reference in the context of surrounding grammar productions:
+
+```ebnf
+sigil_placeholder       ::= "$<" placeholder_ident ">"
+placeholder_ident       ::= bare_ident | out_indexed | out_indexed_acc
+bare_ident              ::= ALPHA (ALPHA | DIGIT | "_" | ".")*
+out_indexed             ::= "out_" DIGIT+
+out_indexed_acc         ::= "out_" DIGIT+ "." ACCESSOR
+ALPHA                   ::= "a"…"z" | "A"…"Z" | "_"
+DIGIT                   ::= "0"…"9"
+```
+
+The `ACCESSOR` production is defined above. The `sigil_placeholder` production may appear inside `output_pattern`, `SHELL_BLOCK_CONTENT`, `SHELL_LINE_CONTENT`, and `plate_test_shell_block_body` text. Resolution is defined by §{xref.resolution} and §{lua.shell-placeholders}; an implementation MAY record byte ranges of placeholder positions in its parse tree to support migration tooling such as `cook --migrate-sigil`.
+
 **`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting).
 
 **`lua_line` MAY be empty.** The `>` prefix alone (with no following content) is a valid `lua_line` producing an empty Lua expression.
