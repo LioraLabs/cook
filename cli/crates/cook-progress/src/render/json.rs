@@ -82,10 +82,10 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "completed": completed,
             "total": total,
         }),
-        ProgressEvent::NodeStarted { recipe, node: _, name, artifact, fallback_label } => json!({
+        ProgressEvent::NodeStarted { recipe, node, name: _, artifact, fallback_label } => json!({
             "type": "node-started",
             "recipe": recipe_name(state, *recipe),
-            "node": name,
+            "node": node_name(state, *recipe, *node),
             "artifact": artifact.as_ref().map(|p| p.display().to_string()),
             "fallback_label": fallback_label,
         }),
@@ -102,16 +102,16 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "elapsed_ms": duration_ms(*elapsed),
             "error": error,
         }),
-        ProgressEvent::NodeCacheHit { recipe, node: _, name, artifact } => json!({
+        ProgressEvent::NodeCacheHit { recipe, node, name: _, artifact } => json!({
             "type": "node-cache-hit",
             "recipe": recipe_name(state, *recipe),
-            "node": name,
+            "node": node_name(state, *recipe, *node),
             "artifact": artifact.as_ref().map(|p| p.display().to_string()),
         }),
-        ProgressEvent::NodeSkipped { recipe, node: _, name, reason } => json!({
+        ProgressEvent::NodeSkipped { recipe, node, name: _, reason } => json!({
             "type": "node-skipped",
             "recipe": recipe_name(state, *recipe),
-            "node": name,
+            "node": node_name(state, *recipe, *node),
             "reason": reason.as_str(),
         }),
         ProgressEvent::NodeOutput { recipe, node, line, stream } => json!({
@@ -121,15 +121,15 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "stream": stream_str(*stream),
             "line": line,
         }),
-        ProgressEvent::InteractiveStart { recipe, name, .. } => json!({
+        ProgressEvent::InteractiveStart { recipe, node, name: _ } => json!({
             "type": "interactive-start",
             "recipe": recipe_name(state, *recipe),
-            "node": name,
+            "node": node_name(state, *recipe, *node),
         }),
-        ProgressEvent::InteractiveEnd { recipe, name, elapsed, success, .. } => json!({
+        ProgressEvent::InteractiveEnd { recipe, node, name: _, elapsed, success, .. } => json!({
             "type": "interactive-end",
             "recipe": recipe_name(state, *recipe),
-            "node": name,
+            "node": node_name(state, *recipe, *node),
             "elapsed_ms": duration_ms(*elapsed),
             "success": success,
         }),
@@ -143,7 +143,14 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
 impl<W: Write + Send> Renderer for JsonWriter<W> {
     fn handle(&mut self, state: &BuildState, event: &ProgressEvent) -> io::Result<()> {
         let mut payload = event_to_value(state, event);
-        // Insert ts and v at the front by rebuilding.
+        // `events.jsonl` keys are emitted in **lexicographic (alphabetical)**
+        // order, not insertion order. `serde_json::Map` is `BTreeMap`-backed
+        // (no `preserve_order` feature in this crate), so a `build-started`
+        // line surfaces as `{"recipes":…,"total_nodes":…,"ts":…,"type":…,"v":…}`,
+        // and every other event interleaves `ts`/`type`/`v` with its payload
+        // fields in lex order. This is intentional: keys are sorted so the
+        // schema is stable for downstream consumers (diff-friendly, no churn
+        // from event-shape edits).
         let mut obj = serde_json::Map::new();
         obj.insert("ts".into(), Value::String(Self::now_rfc3339()));
         obj.insert("v".into(), Value::from(self.schema_version));
@@ -230,6 +237,71 @@ mod tests {
         assert!(s.contains("\"recipe\":\"deps\""), "got: {s}");
         assert!(s.contains("\"node\":\"lvm.c\""), "got: {s}");
         assert!(s.contains("\"stream\":\"stderr\""), "got: {s}");
+    }
+
+    #[test]
+    fn keys_are_emitted_in_lexicographic_order() {
+        // Pins the wire-format guarantee documented on `JsonWriter::handle`:
+        // keys are emitted in alphabetical order, not insertion order.
+        let state = make_state_with_one_recipe();
+        let s = write_event(&state, &ProgressEvent::BuildStarted {
+            recipes: vec![RecipeTopo {
+                id: RecipeId::new(0), name: "deps".into(),
+                deps: vec![], expected_nodes: 3,
+            }],
+            total_nodes: 3,
+        });
+        let key_order: Vec<&str> = ["recipes", "total_nodes", "ts", "type", "v"]
+            .iter()
+            .map(|k| *k)
+            .collect();
+        let positions: Vec<(usize, &str)> = key_order
+            .iter()
+            .map(|k| {
+                let needle = format!("\"{k}\":");
+                (s.find(&needle).unwrap_or_else(|| panic!("missing key {k}; got: {s}")), *k)
+            })
+            .collect();
+        let mut sorted = positions.clone();
+        sorted.sort_by_key(|p| p.0);
+        assert_eq!(positions, sorted, "keys must appear in lex order; got: {s}");
+    }
+
+    #[test]
+    fn node_event_node_field_resolves_via_state() {
+        // CS-0035: every event with a `node` field resolves it through the
+        // BuildState lookup, not the inline `name` carried by some variants.
+        let mut state = make_state_with_one_recipe();
+        state.apply(&ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
+        });
+        let s_started = write_event(&state, &ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "ignored-inline-name".into(), artifact: None, fallback_label: "x".into(),
+        });
+        assert!(s_started.contains("\"node\":\"lvm.c\""),
+            "node-started must read state, not inline name; got: {s_started}");
+        let s_skipped = write_event(&state, &ProgressEvent::NodeSkipped {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "ignored-inline-name".into(), reason: crate::event::SkipReason::Disabled,
+        });
+        assert!(s_skipped.contains("\"node\":\"lvm.c\""),
+            "node-skipped must read state, not inline name; got: {s_skipped}");
+    }
+
+    #[test]
+    fn node_field_falls_back_to_synthesized_id_when_unknown() {
+        // Out-of-order arrivals (a NodeCompleted before its NodeStarted, e.g.
+        // a renderer wired into a replay) get a stable synthesized label
+        // rather than a missing field.
+        let state = make_state_with_one_recipe();
+        let s = write_event(&state, &ProgressEvent::NodeCompleted {
+            recipe: RecipeId::new(0), node: NodeId::new(7),
+            elapsed: Duration::from_millis(1),
+        });
+        assert!(s.contains("\"node\":\"node#7\""),
+            "expected synthesized fallback; got: {s}");
     }
 
     #[test]

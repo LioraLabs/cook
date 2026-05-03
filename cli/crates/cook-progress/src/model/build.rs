@@ -159,8 +159,42 @@ impl BuildState {
                 }
             }
             ProgressEvent::NodeOutput { .. } => { /* log store handles this */ }
-            ProgressEvent::InteractiveStart { .. } => {}
-            ProgressEvent::InteractiveEnd { .. } => {}
+            ProgressEvent::InteractiveStart { recipe, node, name } => {
+                // Register the interactive node so downstream renderers
+                // (notably the JSON writer) can resolve its name from
+                // BuildState rather than re-reading the inline `name` field.
+                if let Some(r) = self.recipes.get_mut(recipe) {
+                    use std::collections::btree_map::Entry;
+                    if let Entry::Vacant(e) = r.nodes.entry(*node) {
+                        let mut ns = NodeState::new(*node, name.clone(), None, name.clone());
+                        ns.status = NodeStatus::Running;
+                        ns.started_at = Some(Instant::now());
+                        e.insert(ns);
+                    }
+                }
+            }
+            ProgressEvent::InteractiveEnd { recipe, node, name, .. } => {
+                if let Some(r) = self.recipes.get_mut(recipe) {
+                    use std::collections::btree_map::Entry;
+                    match r.nodes.entry(*node) {
+                        Entry::Occupied(mut e) => {
+                            let n = e.get_mut();
+                            if n.status == NodeStatus::Running {
+                                n.status = NodeStatus::Completed;
+                                n.completed_at = Some(Instant::now());
+                            }
+                        }
+                        Entry::Vacant(e) => {
+                            // Late InteractiveEnd without a matching Start —
+                            // keep the name available for renderers anyway.
+                            let mut ns = NodeState::new(*node, name.clone(), None, name.clone());
+                            ns.status = NodeStatus::Completed;
+                            ns.completed_at = Some(Instant::now());
+                            e.insert(ns);
+                        }
+                    }
+                }
+            }
             ProgressEvent::Finished { success } => {
                 self.finished = Some(*success);
             }

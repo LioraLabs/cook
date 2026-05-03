@@ -72,6 +72,9 @@ impl LogStore {
 
     pub fn record(&mut self, state: &BuildState, event: &ProgressEvent) -> io::Result<()> {
         if let Some(w) = self.events_writer.as_mut() {
+            // Keys are written in lex order, not insertion order — see
+            // `JsonWriter::handle` for the contract. `serde_json::Map` is
+            // `BTreeMap`-backed in this build (no `preserve_order` feature).
             let mut payload = event_to_value(state, event);
             let mut obj = serde_json::Map::new();
             obj.insert("ts".into(), serde_json::Value::String(current_rfc3339()));

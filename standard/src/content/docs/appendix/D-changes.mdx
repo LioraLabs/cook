@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034
+- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
@@ -510,3 +510,19 @@ The closed-set resolver lives in `cook-luagen/src/resolver.rs` and produces one 
 **Cut commit content.** Bump `standard/VERSION` from `0.6` to `0.7`; bump `COOK_STANDARD_VERSION` to `"0.7"` in the cook-lang lib.rs; mirror the claim in the README files; add the v0.7 entry to the App. D Versions index; add this body. The conformance harness passes against the cut commit.
 
 **Reference:** the v0.7 cut commit on the `feature/sigil-placeholder-syntax` branch (post-merge, on `main`).
+
+## D.35. CS-0035 — `events.jsonl` wire-format invariants: lexicographic key order and `node`-field source of truth. [#changes.cs-0035]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7
+
+**Sections affected:** none normative (this entry is informative; no chapter prose changes). Reference-implementation: `cli/crates/cook-progress/src/render/json.rs` (corrected misleading insertion-order comment; standardised `node`-field on `BuildState` lookup across all event variants), `cli/crates/cook-progress/src/log_store.rs` (matching comment correction; same code path), `cli/crates/cook-progress/src/model/build.rs` (`InteractiveStart`/`InteractiveEnd` now register the interactive node into `BuildState` so the JSON renderer's `node_name(state, recipe, node)` lookup returns the inline name rather than the synthesized `node#N` fallback).
+
+**Summary.** Pins two invariants of the `events.jsonl` wire format that were previously undocumented and mis-implemented in two ways. (1) **Key order is lexicographic, not insertion order.** The JSON writer's prior comment claimed it inserted `ts` and `v` "at the front" by rebuilding the JSON object, but `serde_json::Map` is `BTreeMap`-backed in the cook-progress build (the `preserve_order` feature is not enabled), so keys are sorted alphabetically on serialization. A `build-started` line surfaces as `{"recipes":…,"total_nodes":…,"ts":…,"type":…,"v":…}`, not as the comment advertised. CS-0035 commits to lex order as the v1.0 contract — it is deterministic, requires no new dependency (`indexmap`), and is friendly to diff-based consumers. The comment is corrected to describe what the code actually does. A unit test (`keys_are_emitted_in_lexicographic_order`) pins the invariant. (2) **The `node` field in every event resolves through `BuildState`, not through the inline `name` carried by some event variants.** Before CS-0035, `node-started`, `node-skipped`, `node-cache-hit`, `interactive-start`, and `interactive-end` wrote the inline `name` field carried by the `ProgressEvent` variant directly, while `node-completed`, `node-failed`, and `node-output` looked the name up via `node_name(state, recipe, node)`. The two paths produce the same string in the happy path but differ if the inline name and the `BuildState`-registered name ever drift. CS-0035 standardises on the `BuildState` lookup everywhere with a stable `node#N` fallback for out-of-order arrivals. To preserve the happy-path contract, `BuildState::apply` now registers interactive nodes (the only variants whose nodes were previously not entered into `r.nodes`).
+
+**Why informative-only.** The `events.jsonl` schema is a v1.0 stability surface but is not yet covered by chapter-level prose in the Standard (it is implementation-side, in `cli/crates/cook-progress/`). CS-0035 is the audit entry that pins the invariants in the changelog ahead of the v1.0 cut; a future entry will lift the schema into a normative appendix once the event surface stabilises across the v0.x series.
+
+**Path chosen.** Of the two paths considered for the key-order issue — Path A (commit to lex order, fix the lying comment) and Path B (enable `serde_json/preserve_order`, paying an `indexmap` dependency for insertion-order keys) — Path A was selected. Lex order is deterministic without coordinating across writer call sites, well-formed JSON consumers are agnostic to key order, and `indexmap` is a non-trivial transitive dep for a write-only audit format.
+
+**Reference:** the CS-0035 commit on the `worktree-agent-ac9dd34b7ab47a405` branch.
