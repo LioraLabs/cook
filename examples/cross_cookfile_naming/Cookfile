@@ -8,11 +8,11 @@ import server ./apps/server
 recipe assemble: cli.build server.build
     cook "build/release.bin" using {
         mkdir -p build
-        cat {cli.build} {server.build} > {out}
+        cat $<cli.build> $<server.build> > $<out>
     }
 
 # Chore with cross-Cookfile explicit deps.
 chore deploy: cli.build server.build
     @echo "deploying..."
-    @echo "cli artifact: {cli.build}"
-    @echo "server artifact: {server.build}"
+    @echo "cli artifact: $<cli.build>"
+    @echo "server artifact: $<server.build>"
