@@ -1,6 +1,6 @@
 recipe integration
     ingredients "tests/*.lua"
-    cook "build/tests/{in.stem}" using { luac {in} -o {out} }
+    cook "build/tests/$<in.stem>" using { luac $<in> -o $<out> }
     test >{
         for _, b in ipairs(inputs) do cook.sh("./" .. b) end
     } timeout 300

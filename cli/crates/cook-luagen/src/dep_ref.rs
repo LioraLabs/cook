@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use cook_lang::ast::*;
 
-/// Known accessor suffixes for `{dep.accessor}` syntax.
+use crate::sigil;
+
+/// Known accessor suffixes for `$<dep.accessor>` syntax.
 const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 
 /// Built-in placeholders that are never recipe references.
@@ -14,7 +16,7 @@ const BUILTINS: &[&str] = &["in", "out", "all"];
 pub struct DepRef {
     /// The recipe being referenced (e.g., "libmath", "backend.proto").
     pub recipe_name: String,
-    /// If present, the accessor (e.g., "stem" from `{libmath.stem}`).
+    /// If present, the accessor (e.g., "stem" from `$<libmath.stem>`).
     pub accessor: Option<String>,
 }
 
@@ -44,7 +46,7 @@ pub fn extract_recipe_names_with_imports(
     set
 }
 
-/// Extract all {dep} and {dep.accessor} references from a recipe's steps,
+/// Extract all $<dep> and $<dep.accessor> references from a recipe's steps,
 /// given the set of known recipe names.
 pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTreeSet<DepRef> {
     let mut refs = BTreeSet::new();
@@ -54,19 +56,19 @@ pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTr
             Step::Cook { step: cook_step, .. } => {
                 let mut t: Vec<String> = Vec::new();
                 for pat in &cook_step.outputs {
-                    t.extend(extract_brace_tokens(pat));
+                    t.extend(extract_sigil_tokens(pat));
                 }
-                // CS-0022: walk ShellBlock lines for {NAME} tokens (§5.5 surface extension).
+                // Walk ShellBlock lines for $<NAME> tokens.
                 if let Some(UsingClause::ShellBlock(lines)) = &cook_step.using_clause {
                     for line in lines {
-                        t.extend(extract_brace_tokens(line));
+                        t.extend(extract_sigil_tokens(line));
                     }
                 }
                 t
             }
             Step::Plate { step: plate_step, .. } => extract_body_tokens(&plate_step.body),
             Step::Test { step: test_step, .. } => extract_body_tokens(&test_step.body),
-            Step::Shell { command, .. } => extract_brace_tokens(command),
+            Step::Shell { command, .. } => extract_sigil_tokens(command),
             Step::Lua { .. }
             | Step::LuaBlock { .. }
             | Step::InlineLua { .. }
@@ -83,57 +85,37 @@ pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTr
     refs
 }
 
-/// Extract all {FOO} tokens from a template string. Returns inner content without braces.
-/// (This needs to be public so template.rs can use it later)
-pub fn extract_brace_tokens(template: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut remaining = template;
-
-    while !remaining.is_empty() {
-        match remaining.find('{') {
-            None => break,
-            Some(open) => {
-                let after_open = &remaining[open + 1..];
-                match after_open.find('}') {
-                    None => break,
-                    Some(close) => {
-                        let inner = &after_open[..close];
-                        if !inner.is_empty() {
-                            tokens.push(inner.to_string());
-                        }
-                        remaining = &after_open[close + 1..];
-                    }
-                }
-            }
-        }
-    }
-
-    tokens
+/// Extract all $<IDENT> tokens from a template string. Returns ident strings.
+pub fn extract_sigil_tokens(template: &str) -> Vec<String> {
+    sigil::scan(template)
+        .into_iter()
+        .map(|s| s.ident)
+        .collect()
 }
 
-/// Extract brace-token dep refs from a `Body`, supporting both shell and Lua bodies.
+/// Extract sigil-token dep refs from a `Body`, supporting both shell and Lua bodies.
 ///
-/// For `ShellBlock` bodies, `{NAME}` tokens are scanned exactly as in cook-step
+/// For `ShellBlock` bodies, `$<NAME>` tokens are scanned exactly as in cook-step
 /// shell lines.  For `LuaBlock` bodies, cross-recipe access goes via
-/// `cook.dep_output()` (a Lua API call), which is opaque to the static brace
+/// `cook.dep_output()` (a Lua API call), which is opaque to the static sigil
 /// scanner — return an empty list.
 fn extract_body_tokens(body: &cook_lang::ast::Body) -> Vec<String> {
     use cook_lang::ast::Body;
     match body {
         Body::ShellBlock(lines) => {
             let joined = lines.join("\n");
-            extract_brace_tokens(&joined)
+            extract_sigil_tokens(&joined)
         }
-        // Lua bodies do not participate in cross-recipe `{NAME}` substitution
+        // Lua bodies do not participate in cross-recipe `$<NAME>` substitution
         // (Lua syntax owns the braces). Cross-recipe access in Lua bodies is
         // via `cook.dep_output()` — not extracted here.
         Body::LuaBlock(_) => Vec::new(),
     }
 }
 
-/// Parse a single {FOO} token into a DepRef if it matches a recipe name.
+/// Parse a single $<FOO> token into a DepRef if it matches a recipe name.
 ///
-/// Rules (CS-0022 updated):
+/// Rules (CS-0033 updated):
 /// 1. Skip builtins: `in`, `out`, `all`
 /// 2. Skip CS-0022 dotted own-input/output forms: `in.X`, `out.X`, `out_N.X`
 /// 3. If whole token is a recipe name → DepRef { recipe_name, accessor: None }
@@ -146,18 +128,19 @@ fn parse_dep_token(token: &str, recipe_names: &BTreeSet<String>) -> Option<DepRe
         return None;
     }
 
+    // Rule 1b: skip env. prefix (always env var, never recipe)
+    if token.starts_with("env.") {
+        return None;
+    }
+
     // Rule 2: skip CS-0022 own-input/output accessor forms.
-    // `in.X` — own-input accessor
     if token.starts_with("in.") {
         return None;
     }
-    // `out.X` — single-output accessor
     if token.starts_with("out.") {
         return None;
     }
-    // `out_N` and `out_N.X` — multi-output accessor
     if token.starts_with("out_") {
-        // Check if the part after "out_" is numeric (possibly with .accessor suffix)
         let rest = &token[4..];
         let num_part = rest.split('.').next().unwrap_or(rest);
         if num_part.parse::<usize>().is_ok() {
@@ -228,14 +211,14 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_brace_tokens() {
-        let tokens = extract_brace_tokens("gcc -c {in} -o {out} {libmath}");
+    fn test_extract_sigil_tokens() {
+        let tokens = extract_sigil_tokens("gcc -c $<in> -o $<out> $<libmath>");
         assert_eq!(tokens, vec!["in", "out", "libmath"]);
     }
 
     #[test]
-    fn test_extract_brace_tokens_with_accessor() {
-        let tokens = extract_brace_tokens("build/{protos.stem}.o");
+    fn test_extract_sigil_tokens_with_accessor() {
+        let tokens = extract_sigil_tokens("build/$<protos.stem>.o");
         assert_eq!(tokens, vec!["protos.stem"]);
     }
 
@@ -305,7 +288,7 @@ mod tests {
                 step: CookStep {
                     outputs: vec!["build/app".to_string()],
                     using_clause: Some(UsingClause::ShellBlock(
-                        vec!["gcc -o {out} {in} {libmath} {libstr}".to_string()],
+                        vec!["gcc -o $<out> $<in> $<libmath> $<libstr>".to_string()],
                     )),
                 },
                 line: 2,
@@ -327,7 +310,7 @@ mod tests {
             "app",
             vec![Step::Cook {
                 step: CookStep {
-                    outputs: vec!["build/{protos.stem}.pb.cc".to_string()],
+                    outputs: vec!["build/$<protos.stem>.pb.cc".to_string()],
                     using_clause: None,
                 },
                 line: 2,
@@ -395,18 +378,17 @@ mod tests {
 
     #[test]
     fn cs_0022_shell_block_dep_ref_extraction() {
-        // §5.5 surface extension: {NAME} inside shell_block lines must be extracted.
+        // Shell block with $<NAME> references must be extracted.
         let mut recipe_names = BTreeSet::new();
         recipe_names.insert("libmath".to_string());
 
-        // Build the recipe manually (multi-line block to avoid single-line lexer issue).
         let recipe = make_recipe(
             "app",
             vec![Step::Cook {
                 step: CookStep {
                     outputs: vec!["build/app".to_string()],
                     using_clause: Some(UsingClause::ShellBlock(vec![
-                        "gcc -o {out} main.c {libmath}".to_string(),
+                        "gcc -o $<out> main.c $<libmath>".to_string(),
                     ])),
                 },
                 line: 2,
@@ -416,7 +398,7 @@ mod tests {
         let refs = extract_dep_refs(&recipe, &recipe_names);
         assert!(
             refs.iter().any(|r| r.recipe_name == "libmath" && r.accessor.is_none()),
-            "shell block must contribute its {{libmath}} reference to the dep graph; got: {:?}",
+            "shell block must contribute its $<libmath> reference to the dep graph; got: {:?}",
             refs
         );
     }

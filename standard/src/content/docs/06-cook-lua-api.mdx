@@ -82,7 +82,7 @@ cook.add_unit({
 })
 ```
 
-Records one shell unit with one input and one output. The same registration is produced by the surface form `cook "main.o" using { gcc -c {in} -o {out} }` in a single-output `cook` step (§{recipes.cook-single-output}, §{lua.shell-placeholders}).
+Records one shell unit with one input and one output. The same registration is produced by the surface form `cook "main.o" using { gcc -c $<in> -o $<out> }` in a single-output `cook` step (§{recipes.cook-single-output}, §{lua.shell-placeholders}).
 
 ### Example 6.2.2
 
@@ -288,48 +288,50 @@ Returns the path formed by joining `b` onto `a` with the host separator. If `b` 
 ## 6.7. Placeholder substitutions in shell text [#lua.shell-placeholders]
 **Phase.** Substitution is performed by the code generator at register time; the resulting Lua expression is evaluated at register time when the unit is recorded.
 
-A `cook` step's `using { ... }` shell-block body, a `plate` shell-block body (§{recipes.plate-step}), a `test` shell-block body (§{recipes.test-step}), and every bare `shell_command` is a **shell text** for the purposes of this section. Before a conforming implementation records the resulting unit, it MUST substitute the placeholder set defined in this section. The set is closed: a `{TOKEN}` whose shape does not match any row of the placeholder table below resolves through §{xref.resolution}.
+A `cook` step's `using { ... }` shell-block body, a `plate` shell-block body (§{recipes.plate-step}), a `test` shell-block body (§{recipes.test-step}), and every bare `shell_command` is a **shell text** for the purposes of this section. Shell text MAY contain **sigil placeholders** of the form `$<IDENT>` where `IDENT` is a dot-free or single-dotted identifier (e.g. `$<in>`, `$<in.stem>`, `$<out_2.dir>`). Before a conforming implementation records the resulting unit, it MUST substitute every `$<IDENT>` according to the closed resolution table in this section. A `$<IDENT>` whose shape does not match any row of the placeholder table resolves as an environment variable through §{xref.resolution}.
+
+The sigil syntax `$<IDENT>` is the sole placeholder surface for shell text as of v0.6. Shell brace constructs (`${HOME:-x}`, `${}`, `{a,b,c}`) are not sigil placeholders and MUST be passed through verbatim.
 
 | Placeholder | Valid in iteration mode | Meaning |
 |---|---|---|
-| `{in}` | one-to-one (own or dep-driven) | The current iteration item (path) |
-| `{in.ACCESSOR}` | one-to-one | `path.ACCESSOR(in)` per §{lua.path-helpers} |
-| `{out}` | any mode, single declared output | The unit's single output path |
-| `{out.ACCESSOR}` | any mode, single declared output | `path.ACCESSOR(out)` |
-| `{out_N}` (`N` ∈ 1..) | any mode, multi-output | The unit's `N`-th declared output, in declaration order |
-| `{out_N.ACCESSOR}` | any mode, multi-output | `path.ACCESSOR(out_N)` |
-| `{all}` | many-to-one only | The unit's input list, joined by single space characters |
+| `$<in>` | one-to-one (own or dep-driven) | The current iteration item (path) |
+| `$<in.ACCESSOR>` | one-to-one | `path.ACCESSOR(in)` per §{lua.path-helpers} |
+| `$<out>` | any mode, single declared output | The unit's single output path |
+| `$<out.ACCESSOR>` | any mode, single declared output | `path.ACCESSOR(out)` |
+| `$<out_N>` (`N` ∈ 1..) | any mode, multi-output | The unit's `N`-th declared output, in declaration order |
+| `$<out_N.ACCESSOR>` | any mode, multi-output | `path.ACCESSOR(out_N)` |
+| `$<all>` | many-to-one only | The unit's input list, joined by single space characters |
 
 `ACCESSOR` is one of `stem`, `name`, `ext`, `dir`, with semantics defined by §{xref.path-accessors}.
 
 A conforming implementation MUST reject the following shapes with a load-time diagnostic:
 
-- `{in}` or `{in.ACCESSOR}` in a many-to-one step (no current iteration item exists).
-- `{all}` in a one-to-one step.
-- `{out}` in a multi-output step (ambiguous — use `{out_N}`).
-- `{out_N}` in a single-output step (use plain `{out}`).
-- `{out_N}` for `N` greater than the step's declared output count.
-- `{stem}`, `{name}`, `{ext}`, or `{dir}` as a bare token (i.e. with no `NAME.` prefix). These were the pre-CS-0022 spelling for the current-iteration accessors and are no longer admitted at the placeholder layer; the current spelling is `{in.stem}` etc. The diagnostic MUST name the new form. (A bare `{stem}` would otherwise resolve through §{xref.resolution} step 4 to `cook.env["stem"]`, which is a confusing failure mode for code being migrated forward from a v0.4 surface.)
+- `$<in>` or `$<in.ACCESSOR>` in a many-to-one step (no current iteration item exists).
+- `$<all>` in a one-to-one step.
+- `$<out>` in a multi-output step (ambiguous — use `$<out_N>`).
+- `$<out_N>` in a single-output step (use plain `$<out>`).
+- `$<out_N>` for `N` greater than the step's declared output count.
+- `$<stem>`, `$<name>`, `$<ext>`, or `$<dir>` as a bare sigil (i.e. with no `NAME.` prefix). These bare accessors have no special meaning at the placeholder layer; the correct spelling is `$<in.stem>` etc. The diagnostic MUST name the new form. (A bare `$<stem>` would otherwise resolve through §{xref.resolution} to `cook.require_env("stem")`, which is a confusing failure mode.)
 
 ### Example 6.7.1
 
 ```cook
-cook "build/{in.stem}.o" using { gcc -c {in} -o {out} }
+cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
 ```
 
-with ingredient `main.c` records one shell unit per ingredient. For ingredient `main.c`, the unit's `command` field is `set -e\ngcc -c main.c -o build/main.o`. The output pattern's `{in.stem}` resolves to `main` before the body's `{out}` is substituted; the resulting `{out}` is `build/main.o`.
+with ingredient `main.c` records one shell unit per ingredient. For ingredient `main.c`, the unit's `command` field is `set -e\ngcc -c main.c -o build/main.o`. The output pattern's `$<in.stem>` resolves to `main` before the body's `$<out>` is substituted; the resulting `$<out>` is `build/main.o`.
 
 ### Example 6.7.2
 
 ```cook
 cook "out.js" "out.wasm" using {
     wasm-pack build
-    cp pkg/main.js {out_1}
-    cp pkg/main.wasm {out_2}
+    cp pkg/main.js $<out_1>
+    cp pkg/main.wasm $<out_2>
 }
 ```
 
-with any input list records one shell unit (many-to-one mode — outputs are literal). The body's `{out_1}` and `{out_2}` resolve to `out.js` and `out.wasm` respectively.
+with any input list records one shell unit (many-to-one mode — outputs are literal). The body's `$<out_1>` and `$<out_2>` resolve to `out.js` and `out.wasm` respectively.
 
 ### Note 6.7.1
 
@@ -337,7 +339,7 @@ The block forms (`using { ... }` and `using >{ ... }`) and the placeholder layer
 
 ### Note 6.7.2
 
-Cross-recipe references inside a shell block follow §{xref.string-substitution}: a bare `{NAME}` substitutes to the named recipe's full output list, joined by space. The `{lib.ACCESSOR}` form is rejected inside any using-clause body, including a shell block, because it would smuggle a second iteration source past the output pattern's declaration. Authors who want a recipe's per-element accessors inside a step driven by something else use Lua (`path.stem(cook.dep_output_list("lib")[1])`).
+Cross-recipe references inside a shell block follow §{xref.string-substitution}: a bare `$<NAME>` substitutes to the named recipe's full output list, joined by space. The `$<lib.ACCESSOR>` form is rejected inside any using-clause body, including a shell block, because it would smuggle a second iteration source past the output pattern's declaration. Authors who want a recipe's per-element accessors inside a step driven by something else use Lua (`path.stem(cook.dep_output_list("lib")[1])`).
 
 ### 6.7.1. Plate and test shell-block placeholders [#lua.shell-placeholders-plate-test]
 
@@ -345,19 +347,19 @@ A `plate_step` or `test_step` body that is a `shell_block` admits the following 
 
 | Placeholder | Valid in mode | Meaning |
 |---|---|---|
-| `{in}` | one-to-one | The current iteration item (path) |
-| `{in.ACCESSOR}` | one-to-one | `path.ACCESSOR(in)` per §{lua.path-helpers} |
-| `{all}` | many-to-one | The source list, space-joined |
-| `{NAME}` (NAME is a recipe in scope) | any mode | `cook.dep_output(NAME)` per §{xref.string-substitution} |
-| `{TOKEN}` (none of the above) | any mode | `cook.env[TOKEN]` per §{xref.resolution} |
+| `$<in>` | one-to-one | The current iteration item (path) |
+| `$<in.ACCESSOR>` | one-to-one | `path.ACCESSOR(in)` per §{lua.path-helpers} |
+| `$<all>` | many-to-one | The source list, space-joined |
+| `$<NAME>` (NAME is a recipe in scope) | any mode | `cook.dep_output(NAME)` per §{xref.string-substitution} |
+| `$<TOKEN>` (none of the above) | any mode | `cook.require_env(TOKEN)` per §{xref.resolution} |
 
 A conforming implementation MUST reject:
-- `{in}` or `{in.ACCESSOR}` in a many-to-one or one-shot body (no current iteration);
-- `{all}` in a one-to-one or one-shot body (no batched input list);
-- Any `{out}` / `{out.ACCESSOR}` / `{out_N}` / `{out_N.ACCESSOR}` token in a plate or test body — the step declares no outputs. The diagnostic MUST state that plate/test produce no declared outputs; for a body in one-to-one mode the diagnostic SHOULD additionally direct the author to `{in}` as the iteration item.
-- `{NAME.ACCESSOR}` for any recipe `NAME` in scope (preserves the §{xref.dep-driven} firewall).
+- `$<in>` or `$<in.ACCESSOR>` in a many-to-one or one-shot body (no current iteration);
+- `$<all>` in a one-to-one or one-shot body (no batched input list);
+- Any `$<out>` / `$<out.ACCESSOR>` / `$<out_N>` / `$<out_N.ACCESSOR>` token in a plate or test body — the step declares no outputs. The diagnostic MUST state that plate/test produce no declared outputs; for a body in one-to-one mode the diagnostic SHOULD additionally direct the author to `$<in>` as the iteration item.
+- `$<NAME.ACCESSOR>` for any recipe `NAME` in scope (preserves the §{xref.dep-driven} firewall).
 
-Bare path-accessors (`{stem}`, `{name}`, `{ext}`, `{dir}`) in a plate or test body fall through to `cook.env[TOKEN]` per §{xref.resolution} step 4. A conforming implementation MUST emit a specific diagnostic for these four names that points to `{in.ACCESSOR}` (same diagnostic CS-0022 introduced for cook bodies).
+Bare path-accessors (`$<stem>`, `$<name>`, `$<ext>`, `$<dir>`) in a plate or test body resolve through §{xref.resolution} step 4. A conforming implementation MUST emit a specific diagnostic for these four names that points to `$<in.ACCESSOR>` (same diagnostic CS-0022 introduced for cook bodies).
 
 ## 6.8. The `use` declaration [#lua.use-env]
 > **Normative.** This section defines the `use` declaration, which brings a Lua module into the Cookfile's Lua environment. The grammar is given in App. A.2.
