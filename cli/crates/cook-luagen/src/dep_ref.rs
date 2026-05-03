@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cook_lang::ast::*;
 
@@ -21,6 +21,27 @@ pub struct DepRef {
 /// Extract all recipe names from a Cookfile.
 pub fn extract_recipe_names(cookfile: &Cookfile) -> BTreeSet<String> {
     cookfile.recipes.iter().map(|r| r.name.clone()).collect()
+}
+
+/// Per §7.3, the lookup set for resolving qualified name references is the
+/// union of:
+/// - The current Cookfile's recipe names.
+/// - The set `{alias.recipe : alias is an import alias of the current Cookfile,
+///   recipe is a recipe in the imported Cookfile}`.
+///
+/// This helper builds that union. It is non-transitive: nested-import recipes
+/// (e.g., `lib.shared.recipe`) are NOT included.
+pub fn extract_recipe_names_with_imports(
+    cookfile: &Cookfile,
+    imports_by_alias: &BTreeMap<String, &Cookfile>,
+) -> BTreeSet<String> {
+    let mut set: BTreeSet<String> = cookfile.recipes.iter().map(|r| r.name.clone()).collect();
+    for (alias, imp) in imports_by_alias {
+        for r in &imp.recipes {
+            set.insert(format!("{alias}.{}", r.name));
+        }
+    }
+    set
 }
 
 /// Extract all {dep} and {dep.accessor} references from a recipe's steps,
@@ -339,6 +360,37 @@ mod tests {
             Some("libmath".to_string()),
             "libmath.stem is a genuine dep ref"
         );
+    }
+
+    #[test]
+    fn test_extract_recipe_names_with_imports_includes_aliased() {
+        use std::collections::BTreeMap;
+
+        let lib_cookfile = make_cookfile(vec![
+            make_recipe("lib_build", vec![]),
+            make_recipe("lib_test", vec![]),
+        ]);
+        let main_cookfile = make_cookfile(vec![make_recipe("demo", vec![])]);
+
+        let mut imports_by_alias: BTreeMap<String, &Cookfile> = BTreeMap::new();
+        imports_by_alias.insert("lib".to_string(), &lib_cookfile);
+
+        let names = extract_recipe_names_with_imports(&main_cookfile, &imports_by_alias);
+        assert!(names.contains("demo"));
+        assert!(names.contains("lib.lib_build"));
+        assert!(names.contains("lib.lib_test"));
+        assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_recipe_names_with_imports_no_imports_equals_local() {
+        use std::collections::BTreeMap;
+
+        let cookfile = make_cookfile(vec![make_recipe("a", vec![]), make_recipe("b", vec![])]);
+        let imports_by_alias: BTreeMap<String, &Cookfile> = BTreeMap::new();
+        let names = extract_recipe_names_with_imports(&cookfile, &imports_by_alias);
+        let local = extract_recipe_names(&cookfile);
+        assert_eq!(names, local);
     }
 
     #[test]

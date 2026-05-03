@@ -4,10 +4,31 @@ pub struct UseStatement {
     pub line: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// The shape of an import path token (§7.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportPath {
+    /// Tree-relative path: forward-only, no `..`, not absolute.
+    /// Resolves relative to the importing Cookfile's directory.
+    Tree(String),
+    /// Sigil-anchored path: begins with `//`. The stored String is the
+    /// path AFTER the sigil (forward-only, no `..`, no leading `/`).
+    /// Resolves relative to the workspace root.
+    Sigil(String),
+}
+
+impl std::fmt::Display for ImportPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImportPath::Tree(s) => f.write_str(s),
+            ImportPath::Sigil(s) => write!(f, "//{s}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportDecl {
     pub name: String,
-    pub path: String,
+    pub path: ImportPath,
     pub line: usize,
 }
 

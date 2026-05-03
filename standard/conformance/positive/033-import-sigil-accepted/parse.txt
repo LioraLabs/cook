@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: [ImportDecl name="core" path="//core/lib" line=1]
+  config_blocks: []
+  recipes:
+    Recipe name="x" line=2
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Shell interactive=false command="echo ok"
+  chores:

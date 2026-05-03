@@ -247,6 +247,7 @@ dependencies = [
  "indicatif",
  "notify",
  "open",
+ "pathdiff",
  "serde",
  "serde_json",
  "tempfile",

@@ -9,7 +9,8 @@ sidebar:
 
 ## Versions
 
-- **v0.5** (`cs-standard/v0.5`, 2026-05-01) — CS-0022, CS-0023, CS-0024, CS-0025
+- **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031
+- **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
 - **v0.3** (`cs-standard/v0.3`, 2026-04-28) — CS-0015, CS-0016, CS-0017
 - **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013, CS-0014
@@ -338,3 +339,113 @@ The conformance corpus's `parse.txt` files change format in this cut: `Step::Coo
 **Summary:** Extends the §{exec.cache} list of permissible cache observables with (i) host machine identity (target triple, libc version, locale-affecting environment), (ii) the resolved content of the binaries invoked by the unit's command text, and (iii) an implementation-defined denylist of environment variables excluded from the resolved-environment observable. All three are permissive (`MAY`); a single-machine implementation that elides them remains conforming.
 
 **Motivation.** The shared/team cache (Cook Cloud, Linear epic SHI-140) requires that an artifact produced on one machine be correct when served to another. Today's `command_hash = hash_str(command_text)` plus input-content hashing is insufficient: Alice's `gcc-13` `parser.o` would be served to Bob's `gcc-11` build under the same command text. The amendment authorizes implementations to capture the cross-machine variation without changing language semantics. The denylist clarifies that "the resolved environment" was never intended to include ambient session state or unrelated credentials.
+
+## D.26. CS-0026 — Parse-time enforcement of §7.2 import path shapes. [#changes.cs-0026]
+
+**Date:** 2026-05-02
+
+**Version:** v0.5 (implementation catch-up for the §7.2 prose already present since the cross-Cookfile composition chapter)
+
+**Sections affected:** §{modules.import-declaration} (§7.2 — normative rules on tree-relative and sigil-anchored path shapes were already present; this entry records the reference implementation catching up to those rules).
+
+**Summary:** The `cook-lang` parser now enforces the three path-shape constraints from §7.2 at parse time, in addition to the lexer accepting any non-whitespace token as an import path. Specifically: (1) a tree-relative path containing a `..` segment MUST be rejected with the normative diagnostic `import path '<path>': '..' segments are not permitted; use the workspace-root sigil '//path' for cross-cutting imports`; (2) an absolute path that does not begin with `//` MUST be rejected with `import path '<path>': absolute paths are not permitted; tree-relative or '//' sigil`; (3) a sigil-anchored path (`//`-prefixed) with a `..` segment after the sigil MUST be rejected with `import path '<path>': '..' segments are not permitted after '//'`. Internally, the parser now classifies valid paths into `ImportPath::Tree(String)` or `ImportPath::Sigil(String)` (the stored string for `Sigil` is the path after the `//` prefix). The lexer continues to accept any non-whitespace token for the path field; rejection is a parser-level concern.
+
+**Reference:** the Phase 1 commit of the cross-Cookfile caching implementation plan (`standard/plans/2026-05-02-cross-cookfile-caching-plan.md`, Tasks 1.1–1.3).
+
+## D.27. CS-0027 — Inferred-deps unification across CLI commands; cmd_dag workspace mode. [#changes.cs-0027]
+
+**Date:** 2026-05-02
+
+**Version:** v0.5 (implementation-only; closes App. E.10 — the §{xref.dep-implications} contract previously held only under `cmd_run`).
+
+**Sections affected:** none in the Standard surface. Closes App. E.10.
+
+**Summary.** Pre-CS-0027, the reference implementation realized the §{xref.dep-implications} contract — "a name reference to recipe B in recipe A's body or dep-list establishes a dep edge from A to B" — only when the build was driven by `cmd_run` (`cook NAME`). `cmd_test` and `cmd_dag` either passed `&BTreeMap::new()` to the wave grouper (`cmd_test`, both single-Cookfile and workspace branches) or had no workspace branch at all (`cmd_dag`). The asymmetry made an otherwise-conformant Cookfile fail under one CLI invocation and succeed under another, with the diagnostic surfacing as a register-time `cook.dep_output("NAME")` error ("recipe 'NAME' has no terminal output (not registered or has no cook steps)") rather than a clean cross-recipe-ordering message.
+
+CS-0027 unifies the path. The single-Cookfile `{NAME}` body-ref-extraction loop previously inlined in `cmd_run` is hoisted to a `compute_single_inferred_deps` helper; the workspace counterpart (`compute_workspace_inferred_deps`) was already in place from the cross-Cookfile-caching work. Both helpers are now invoked at every CLI entry that hands recipes off to `cook_engine::run::run`: `cmd_run`, `cmd_test`, and `cmd_dag`. The `cmd_dag` workspace branch — previously absent — mirrors `cmd_run`'s workspace setup (workspace recipe-info, prefix-keyed registry map, qualified-consumer/qualified-dep edge map) and routes each ready recipe through its prefix's registry by reusing the `(prefix, local_name)` split that `cook_engine::run::run` already performs internally. Conflict-warning emission (`recipe X has both explicit ': dep' and inferred '\{dep\}' dependency`) is also factored into `warn_single_dep_conflicts` and `warn_workspace_dep_conflicts` and called from each CLI path.
+
+**Why:** The asymmetry was discoverable only by writing a Cookfile whose `test` body referenced a `cook`-step recipe via `{NAME}` and invoking `cook --test` rather than `cook NAME`. Authors who had been driving builds through `cmd_run` would conform to §\{xref.dep-implications\} by accident; the moment they switched to `cook --test` for CI, the same Cookfile would emit a register-time error from a CLI command that has no language-level reason to behave differently. Pre-1.0 stability requires that the contract hold uniformly across the CLI surface, since the language spec speaks only of recipes and dependencies, not of which `cook` subcommand is in use.
+
+**Implementation notes.** Each of the six CLI call sites — `cmd_run`, `cmd_test`, and `cmd_dag` in both single-Cookfile and workspace branches — now reads from the same two helpers in `cli/crates/cook-cli/src/pipeline.rs`. `cmd_dag`'s register-only loop is factored into `collect_dag_units`, mirroring the per-wave dispatch in `cook_engine::run::run` (`run.rs:170+`) but stopping short of work-unit DAG construction; the dag visualizer only needs the registered units, the explicit edge map, and the inferred-deps map. Two unit tests in `pipeline.rs` (`single_inferred_deps_body_ref_produces_edge`, `single_inferred_deps_empty_when_no_body_refs`) join the existing `workspace_inferred_deps_*` cases to pin both helpers under regression. The `examples/cmd_test_inferred_deps_e10/` fixture is the end-to-end pin: a two-recipe Cookfile (`prepare` cook + `verify_prepare` test referencing `{prepare}`) plus a `verify.sh` that asserts `cook --test --jobs 1` does not surface the "no terminal output" error and that `verify_prepare` reaches `done`.
+
+**Residual scope (out of E.10).** The `add_test` API does not yet propagate `step_group_dep_refs` into unit-DAG `dep_edges`, so a test recipe whose body refs a sibling recipe will race that sibling under `--jobs > 1`. The wave grouper's `build_inferred_groups` performs bidirectional BFS over inferred edges, which can pull a reverse-inferred-edge recipe (e.g., a `verify_X` whose test body refs `{X}`) into a `cook X` build. Both are pre-existing engine concerns surfaced — but not introduced — by CS-0027; neither falls inside §{xref.dep-implications}'s "A → B" wording, and both are tracked separately rather than rolled into this CS.
+
+**Conformance impact.** None at the parser/luagen layer (no AST or dump-format changes). The `examples/cmd_test_inferred_deps_e10/verify.sh` harness pins the runtime contract for `cmd_test`; an analogous runtime fixture for `cmd_dag` is not yet in tree because `cmd_dag` blocks on an HTTP server (a non-blocking `--dag-emit-json` mode would let it slot into the same harness; tracked as future work).
+
+**Reference:** the CS-0027 commit on the `feature/cross-cookfile-caching` branch.
+
+## D.28. CS-0028 — `cook.dep_output` translates local→global names via Registry qualified prefix. [#changes.cs-0028]
+
+**Date:** 2026-05-02
+
+**Version:** v0.5 (implementation-only catch-up; the §7.3 contract on cross-Cookfile body refs was already in the Standard).
+
+**Sections affected:** none in the Standard surface. Closes a gap in the §7.3 reference implementation surfaced by transitive sigil-import scenarios.
+
+**Summary.** Pre-CS-0028, `cook.dep_output(name)` and `cook.dep_output_list(name)` looked up `name` directly in the workspace-scope `terminal_outputs` map. After CS-0027 / `eed8287`, recipes were stored under their **globally-qualified** keys (e.g., `"queue.proto.proto_lib"` when the entry-point Cookfile is `apps/server` and the chain is `server → //libs/queue → //libs/proto`), but a transitively-imported Cookfile's regenerated Lua still references its cousins by their **local** alias (e.g., `cook.dep_output("proto.proto_lib")` inside `libs/queue`'s Lua). The lookup therefore failed at register time with `recipe 'proto.proto_lib' has no terminal output` whenever the entry-point Cookfile was a deep importer of an importer.
+
+CS-0028 threads `Registry.qualified_prefix` into `register_dep_output_api` and qualifies the local name at lookup: `global_key = if prefix.is_empty() { name } else { format!("{}.{}", prefix, name) }`. The dep ref recorded into `step_group_dep_refs` is the global key, so DAG edge wiring against `recipe_leaves` (which uses globally-qualified names) lines up. Path rewriting via `alias_dirs` continues to use the **local** name unchanged — the alias is the local name's first dot-component.
+
+**Why:** Surfaced by `examples/monorepo_codegen/`: `cook server_bin` from `apps/server/` failed because the chain `server → //libs/queue → //libs/proto` has `libs/queue` running under `qualified_prefix = "queue"`, and queue's Lua body `cat {proto.proto_lib} queue.tmpl` lowers to `cook.dep_output("proto.proto_lib")`. The recipe is stored under `queue.proto.proto_lib`. The Standard's §7.3 contract — "a name reference to recipe B in an imported Cookfile resolves to that recipe's terminal output" — implicitly requires this translation; it was simply never exercised by the existing `cache_benchmarks_sigil` fixture, which only goes one import-hop deep.
+
+**Implementation notes.** Single fix site: `cli/crates/cook-register/src/dep_output_api.rs` gains a `qualified_prefix: String` parameter on `register_dep_output_api` and applies it to both `cook.dep_output` and `cook.dep_output_list` lookup paths. The two production callers (`engine.rs` and the `unit_api.rs` test) and the eight in-file unit tests are updated. `test_dep_output_translates_local_to_global_via_qualified_prefix` and `test_dep_output_empty_qualified_prefix_no_translation` are the in-crate regression pins; the runtime fixture lives in `examples/monorepo_codegen/` (transitive sigil + deep-subdir entry).
+
+**Conformance impact.** None at the parser/luagen layer (no AST or dump-format changes; no language surface change). The Standard's §7.3 wording was already correct; this is a reference-implementation fix.
+
+**Reference:** the CS-0028 commit on the `feature/cross-cookfile-caching` branch.
+
+## D.29. CS-0029 — Diamond imports: `cook.dep_output` resolves cross-Cookfile refs via per-alias canonical importee prefix. [#changes.cs-0029]
+
+**Date:** 2026-05-02
+
+**Version:** v0.5 (implementation-only catch-up; the §7.5 diamond-dedup contract was already in the Standard).
+
+**Sections affected:** none in the Standard surface. Closes a residual gap in CS-0028's §7.3 reference-implementation catch-up that was exposed once the `examples/monorepo_codegen/` workspace was built from the root.
+
+**Summary.** Pre-CS-0029, `cook.dep_output("alias.recipe")` resolved cross-Cookfile body refs by prepending the **calling registry's** `qualified_prefix` to the local name (CS-0028's qualify-by-prefix scheme). This works for linear-transitive cases — `apps/server → //libs/queue → //libs/proto` where each Cookfile sits on a single import path — but breaks for **diamond imports**, where the same Cookfile is reachable via two chains. In `monorepo_codegen/`, both `apps/cli` and `apps/server → libs/queue` reach `libs/proto`. `find_full_prefix` deterministically picks a single canonical workspace prefix for proto (e.g., `"server.queue.proto"` if that path won the BTreeMap insertion race), and proto's recipes are stored in `terminal_outputs` under that one prefix. CLI's local alias `"proto"` then has to resolve to `"server.queue.proto"` — *not* `"cli.proto"`, which CS-0028's prefix-prepend would yield.
+
+CS-0029 threads a per-Registry `alias_qualified_prefixes: BTreeMap<String, String>` map into `register_dep_output_api`. The map associates each direct-import alias with its target Cookfile's canonical workspace qualified prefix (the same value that `find_full_prefix(target_canon)` returns). At lookup, `cook.dep_output(name)` splits `name` on the first dot. If the first component is a key in `alias_qualified_prefixes`, the lookup uses that alias's canonical importee prefix to compose the global key (`<importee_prefix>.<recipe>`, or just `<recipe>` when the importee prefix is empty). Otherwise, the call is treated as a same-Cookfile reference and falls back to the calling registry's `qualified_prefix` (CS-0028's behavior). Path rewriting via `alias_dirs` continues to use the local alias unchanged.
+
+The map is computed once per Cookfile by `Workspace::alias_qualified_prefixes_for(importer_dir)` (parallel to the existing `alias_dirs_for`), and supplied through the new `Registry::with_alias_qualified_prefixes` builder. `pipeline.rs` calls both methods at registry construction time for the root and every imported Cookfile.
+
+**Why:** Diamond imports are the textbook case for cross-Cookfile caching to earn its keep — a shared lib referenced by multiple cousins, with §7.5 dedup folding the two paths. CS-0028's prefix-prepend scheme silently relied on each Cookfile having a single ancestry chain; the diamond breaks that assumption. The right resolution rule is "go to the alias's canonical target prefix, regardless of who's asking" — exactly the semantics `Workspace::alias_qualified_prefixes_for` makes explicit.
+
+**Implementation notes.** Touches `cli/crates/cook-register/src/{dep_output_api.rs, engine.rs, unit_api.rs}` plus `cli/crates/cook-cli/src/{workspace.rs, pipeline.rs}`. Two new in-crate regression tests pin the diamond and same-Cookfile fallback paths: `test_dep_output_diamond_resolves_to_canonical_importee_prefix` and `test_dep_output_same_cookfile_uses_self_prefix`. The CS-0028 transitive-sigil test is renamed to `test_dep_output_resolves_via_alias_qualified_prefix` and updated to use the new alias-map signature. The runtime fixture lives in `examples/monorepo_codegen/`: `cook top` from the workspace root exercises the diamond on `libs/proto` (cli direct + server transitive via queue), and `cook server_bin` from `apps/server/` continues to exercise the linear-transitive case.
+
+**Conformance impact.** None at the parser/luagen layer (no AST or dump-format changes; no language surface change). The Standard's §7.3 (cross-Cookfile body refs) and §7.5 (diamond dedup) wording was already correct; this is a reference-implementation fix that closes the gap CS-0028 missed.
+
+**Reference:** the CS-0029 commit on the `feature/cross-cookfile-caching` branch.
+
+## D.30. CS-0030 — `cook.add_test` propagates step-group dep refs into unit-DAG dep edges. [#changes.cs-0030]
+
+**Date:** 2026-05-03
+
+**Version:** v0.5 (implementation-only catch-up; closes the residual scope CS-0027 explicitly tracked).
+
+**Sections affected:** none in the Standard surface. Closes the residual-scope item recorded in D.27 (CS-0027): "The `add_test` API does not yet propagate `step_group_dep_refs` into unit-DAG `dep_edges`, so a test recipe whose body refs a sibling recipe will race that sibling under `--jobs > 1`."
+
+**Summary.** Pre-CS-0030, `cook.add_test` (`cli/crates/cook-register/src/test_api.rs`) created a `CapturedUnit` with `DepKind::TestSibling`/`Sequential` but did not read `state.step_group_dep_refs`. As a result, a `{X}` body ref inside a test step lowered to `cook.dep_output("X")` (which correctly recorded `"X"` in `step_group_dep_refs`) was then dropped by `add_test`'s capture logic. The wave grouper saw no edge from the test recipe to `X`, scheduled them in the same wave, and the test raced its upstream under `--jobs > 1`. CS-0030 mirrors `cook.add_unit`'s pattern in `add_test`: after pushing the test unit, copy `step_group_dep_refs` into `dep_edges` so each ref becomes a `(test_unit_idx, dep_name)` pair. The wave grouper then schedules the upstream recipe before the test.
+
+**Why:** Surfaced by `examples/cross_cookfile_test/`, which mirrors `examples/cross_cookfile_plate/` exactly except the body-ref-bearing step is a `test` instead of a `plate`. Pre-CS-0030, plate (which lowers to `cook.add_unit`) succeeded 10/10 trials at `--jobs 4` while test (which lowers to `cook.add_test`) failed 10/10 with `grep: lib/build/gen.bin: No such file or directory` — a clean A/B isolation of the bug to the `add_test` code path. Post-CS-0030, both succeed 10/10. The §{xref.dep-implications} contract — "a name reference to recipe B in recipe A's body establishes a dep edge from A to B" — now holds uniformly across cook, plate, and test step kinds, instead of plate/cook only.
+
+**Implementation notes.** Single fix site, ~5 lines added at `test_api.rs:46-50` mirroring `unit_api.rs:233-236`. New in-crate regression test `test_add_test_propagates_step_group_dep_refs_to_dep_edges` seeds a synthetic `step_group_dep_refs` entry, runs `cook.add_test`, and asserts the resulting `dep_edges` contains the synthetic ref. The runtime fixture is `examples/cross_cookfile_test/walkthrough.sh`, which 3/3-passes post-fix; its sibling `examples/cross_cookfile_plate/` provides the reference plate-side behavior for diff-based regression checking.
+
+**Conformance impact.** None at the parser/luagen layer (no AST or dump-format changes; no language surface change). The Standard's §{xref.dep-implications} and §7.3 wording was already correct; this catches the `add_test` code path up to the contract.
+
+**Reference:** the CS-0030 commit on the `feature/cross-cookfile-caching` branch.
+
+## D.31. CS-0031 — Standard cut: v0.6. [#changes.cs-0031]
+
+**Date:** 2026-05-03
+
+**Version:** v0.6
+
+**Sections affected:** `standard/VERSION` (`0.5` → `0.6`); App. D Versions index (new v0.6 entry; v0.5 entry widened from `2026-05-01` to `2026-05-01..2026-05-03` and its CS list extended with CS-0026..CS-0030); this entry. Reference-implementation version mirrors bumped: `cli/crates/cook-lang/src/lib.rs` (`COOK_STANDARD_VERSION`), `cli/crates/cook-lang/README.md`, `cli/crates/cook-lang/CONFORMANCE.md`, project root `README.md`.
+
+**Summary.** Cuts the Cook Standard at v0.6. Per the cut procedure in `CONTRIBUTING.md` (and §{intro.version}), this entry plus the v0.6 row in the Versions index plus a `cs-standard/v0.6` git tag at the merge commit constitute the published cut. v0.6 batches the cross-Cookfile caching work that landed during the v0.5-in-progress era: CS-0026 (parse-time enforcement of §7.2 import path shapes), CS-0027 (inferred-deps unification across CLI commands; `cmd_dag` workspace mode; closes App. E.10), CS-0028 (`cook.dep_output` qualifies lookups by the calling registry's prefix for transitive sigil imports), CS-0029 (`cook.dep_output` resolves cross-Cookfile refs via per-alias canonical importee prefix for diamond imports), and CS-0030 (`cook.add_test` propagates step-group dep refs into unit-DAG dep edges, closing CS-0027's residual scope).
+
+**Why a cut.** None of the batched CSes change the language surface — they are all reference-implementation catch-up to existing normative prose (§7.2 import path shapes, §7.3 cross-Cookfile body refs, §7.5 diamond dedup, §7.6 workspace root determination, §{xref.dep-implications}). The cut nevertheless warrants a minor bump because (a) the implementation surface is materially different, with cross-Cookfile workflows that previously failed at register time or raced at scheduling time now working uniformly, and (b) the CS series is large enough (5 CSes over three days) that a fresh tag gives downstream consumers a clean reference for "the branch where cross-Cookfile caching is done." The conformance corpus is unchanged from v0.5 — no parse-format-altering cuts in this range — so `cs-standard/v0.5` and `cs-standard/v0.6` carry corpus-equivalent content; the bump is purely about the implementation contract.
+
+**Cut commit content.** This commit performs all five cut actions in one go: bump `standard/VERSION` from `0.5` to `0.6`; bump `COOK_STANDARD_VERSION` in `cli/crates/cook-lang/src/lib.rs` to `"0.6"`; mirror the claim in `cli/crates/cook-lang/README.md`, `cli/crates/cook-lang/CONFORMANCE.md`, and the project root `README.md`; add the v0.6 entry to the App. D Versions index; widen the v0.5 entry's date and extend its CS list; and add this CS-0031 body. The conformance harness (`cargo test -p cook-lang --test conformance`) passes against the working tree at this commit.
+
+**Reference:** this commit on `main` (post-merge of `feature/cross-cookfile-caching`).

@@ -49,15 +49,18 @@ recipe util
 # Link step — does NOT consume {CFLAGS} via inference
 # but DOES invoke the gcc binary directly. Its context_hash captures
 # the linker's binary identity through the same tool-content hash.
-recipe demo: greet util
+# `{lib.lib_build}` is a cross-Cookfile body reference (§7.3): codegen
+# lowers it to cook.dep_output("lib.lib_build") after Phase 7.
+recipe demo:
     cook "build/demo" using {
-        {CC} {greet} {util} -o {out}
+        {CC} {greet} {util} {lib.lib_build} -o {out}
     }
 
 # `mono` exercises the imported lib alongside demo. Used by the SHI-140
 # addendum verify.sh scenarios 10-11 to assert cross-cookfile cache
 # behavior (DAG ordering + per-recipe caching across cookfile boundaries).
-recipe mono: demo lib.lib_build
+# lib.lib_build is now a transitive dep of demo, so mono just aliases demo.
+recipe mono: demo
 
 # Sister recipe — does NOT consume {CFLAGS}. Used to verify env-key
 # isolation: when the user toggles CFLAGS, this step's cache survives

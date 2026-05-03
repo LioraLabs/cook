@@ -14,7 +14,7 @@ use cook_cache::{
 };
 
 use crate::analyzer::{self, GraphError};
-use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent};
+use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent, RegistryEntry};
 
 /// The result of a successful engine run.
 #[derive(Debug)]
@@ -46,8 +46,7 @@ fn split_recipe_name(name: &str) -> (String, String) {
 ///   load `.cook/cloud.toml`, and compute cookfile-relative paths.
 /// * `recipe_infos` - All known recipes and their dependency metadata.
 /// * `targets` - The target recipes to build.
-/// * `registries` - One `(Registry, lua_source)` per namespace prefix.
-///   Root recipes use `""` as the key.
+/// * `registries` - One `RegistryEntry` per namespace prefix. Root recipes use `""` as the key.
 /// * `num_jobs` - Maximum number of parallel worker threads.
 /// * `inferred_deps` - `{dep}` references: recipe -> recipes it references.
 ///   These cause same-wave merging rather than wave boundaries.
@@ -56,7 +55,7 @@ pub fn run(
     project_root: &Path,
     recipe_infos: &BTreeMap<String, analyzer::RecipeInfo>,
     targets: &[String],
-    registries: &BTreeMap<String, (cook_register::Registry, String)>,
+    registries: &BTreeMap<String, RegistryEntry>,
     num_jobs: usize,
     inferred_deps: &BTreeMap<String, Vec<String>>,
     on_event: impl Fn(EngineEvent) + Send + Sync,
@@ -82,7 +81,7 @@ fn run_inner<F>(
     project_root: &Path,
     recipe_infos: &BTreeMap<String, analyzer::RecipeInfo>,
     targets: &[String],
-    registries: &BTreeMap<String, (cook_register::Registry, String)>,
+    registries: &BTreeMap<String, RegistryEntry>,
     num_jobs: usize,
     inferred_deps: &BTreeMap<String, Vec<String>>,
     on_event: &F,
@@ -175,12 +174,14 @@ where
 
         for name in &wave.recipes {
             let (prefix, local_name) = split_recipe_name(name);
-            let (registry, lua_source) = registries.get(&prefix).ok_or_else(|| {
+            let entry = registries.get(&prefix).ok_or_else(|| {
                 EngineError::RegistrationFailed {
                     recipe: name.clone(),
                     message: format!("no registry for prefix '{prefix}'"),
                 }
             })?;
+            let registry = &entry.registry;
+            let lua_source = &entry.lua_source;
 
             let mut units = registry
                 .register_recipe(lua_source, &local_name, Some(cache_ctx.clone()))

@@ -1,0 +1,2 @@
+message User { name: string; id: int }
+message Job  { id: string; payload: bytes }

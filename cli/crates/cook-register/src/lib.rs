@@ -62,6 +62,12 @@ pub struct CaptureState {
     /// Cleared when step_group ends. Each add_unit call within the group
     /// inherits all accumulated dep refs as edges.
     pub step_group_dep_refs: Vec<String>,
+    /// Importer-relative dep output paths accumulated during current step_group.
+    /// These are the REWRITTEN paths (with alias_dirs applied) returned by
+    /// cook.dep_output() calls. Stored separately from step_group_dep_refs so
+    /// that add_unit can land the correct importer-relative paths in
+    /// cache_meta.input_paths without re-reading the raw terminal_outputs map.
+    pub step_group_dep_input_paths: Vec<String>,
     /// True while the register-phase body of a chore is executing.
     /// `cook.add_unit` raises a Lua error if `cache = true` is passed
     /// while this flag is set (§{chores.no-caching}).
@@ -80,6 +86,7 @@ impl CaptureState {
             last_cook_step_outputs: Vec::new(),
             dep_edges: Vec::new(),
             step_group_dep_refs: Vec::new(),
+            step_group_dep_input_paths: Vec::new(),
             current_chore_active: false,
         }
     }
@@ -99,6 +106,7 @@ pub fn hash_str(s: &str) -> u64 {
 }
 
 // Re-exports for convenience
+pub use dep_output_api::SharedTerminalOutputs;
 pub use engine::Registry;
 pub use fs_api::register_fs_api;
 pub use path_api::register_path_api;

@@ -104,6 +104,13 @@ pub struct Cli {
     #[arg(short = 'f', long = "file", default_value = "Cookfile")]
     pub file: PathBuf,
 
+    /// Override workspace root resolution. When supplied, the workspace root is
+    /// taken to be this directory; the invoked Cookfile MUST be at or below it.
+    /// When omitted, the workspace root is determined per §7.6 (marker file →
+    /// tree-import inference → self-root or reject).
+    #[arg(long = "root")]
+    pub root: Option<PathBuf>,
+
     /// Print transpiled Lua instead of executing
     #[arg(long = "emit-lua")]
     pub emit_lua: bool,

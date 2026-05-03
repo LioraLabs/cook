@@ -1,0 +1,9 @@
+# Library Cookfile — imported via //core/lib sigil from the root and from
+# apps/web. Produces a compiled object file as its terminal output.
+
+recipe core_lib
+    ingredients "src/core.c"
+    cook "build/core.o" using {
+        mkdir -p build
+        gcc -c src/core.c -o {out}
+    }
