@@ -1,0 +1,21 @@
+# CLI-audit fixture: --test must exit non-zero on test failure.
+#
+# `failing_test`'s test body is `false`, which the engine surfaces as a
+# COOK_CMD_FAILED task failure. Pre-fix, cmd_test discarded that with
+# `let _result = run_with_progress(...)` and unconditionally returned Ok(()),
+# so `cook --test` exited 0 even with a failing test — a CI-killer.
+# Post-fix, cmd_test propagates the engine result with `?`, mapping into
+# CookError::CommandFailed (exit code 1).
+
+recipe failing_test
+    test {
+        false
+    }
+
+recipe passing_test
+    test {
+        true
+    }
+
+chore clean
+    rm -rf .cook

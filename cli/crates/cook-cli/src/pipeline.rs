@@ -675,8 +675,12 @@ pub fn cmd_test(
         let inferred_deps = compute_workspace_inferred_deps(&workspace);
         warn_workspace_dep_conflicts(&workspace, &inferred_deps);
 
-        let _result =
-            run_with_progress(cli, &recipe_infos, &test_recipe_names, &registries, num_jobs, &inferred_deps);
+        // Propagate engine failure as a non-zero exit (CookError::TestFailure
+        // for an exit code of 1 — test execution surfaces as engine task
+        // failures since the runner shells the body and a non-zero exit is
+        // reported via COOK_CMD_FAILED). Without this `?`, a failing test
+        // body silently exited 0 — a CI-killer.
+        run_with_progress(cli, &recipe_infos, &test_recipe_names, &registries, num_jobs, &inferred_deps)?;
     } else {
         // Single Cookfile test
         let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
@@ -712,14 +716,13 @@ pub fn cmd_test(
         let inferred_deps = compute_single_inferred_deps(&cookfile);
         warn_single_dep_conflicts(&cookfile);
 
-        let _result =
-            run_with_progress(cli, &recipe_infos, &test_recipes, &registries, num_jobs, &inferred_deps);
+        // Propagate engine failure as a non-zero exit. See workspace branch
+        // above for the full note — same fix.
+        run_with_progress(cli, &recipe_infos, &test_recipes, &registries, num_jobs, &inferred_deps)?;
     }
 
     // TODO: Once cook-engine supports test output collection, convert
     // TestOutput -> TestCaseResult here and display results.
-    // For now, tests execute but detailed results are not yet collected.
-    eprintln!("cook: test execution complete (detailed results pending cook-engine integration)");
 
     Ok(())
 }
@@ -787,11 +790,14 @@ pub fn cmd_init() -> Result<(), CookError> {
     if path.exists() {
         return Err(CookError::Other("Cookfile already exists".to_string()));
     }
+    // CS-0019 dropped `end`: recipe bodies are indented and terminated by the
+    // next column-0 keyword or EOF. Emitting `end` here was a v0.3-era
+    // template; under the current grammar that line parses as a literal
+    // shell command and the build fails with exit 127.
     std::fs::write(
         path,
-        r#"recipe "build"
+        r#"recipe build
     echo "Hello from Cook!"
-end
 "#,
     )
     .map_err(|e| CookError::Other(format!("failed to write Cookfile: {e}")))?;

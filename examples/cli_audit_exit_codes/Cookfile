@@ -1,0 +1,16 @@
+# CLI-audit fixture: exit-code taxonomy.
+#
+# Cook's CLI uses an explicit exit-code table (see cli/crates/cook-cli/src/error.rs
+# CookError::exit_code and the spec's Exit Codes appendix entry). This Cookfile
+# exists so the walkthrough can exercise:
+#   - exit 0  : a normal recipe build
+#   - exit 1  : a failing shell command (CommandFailed)
+#   - exit 3  : an unknown recipe (RecipeNotFound)
+# Parse-error (exit 2) is exercised against a one-shot bad Cookfile in the
+# walkthrough itself.
+
+recipe build
+    echo "ok"
+
+recipe boom
+    false

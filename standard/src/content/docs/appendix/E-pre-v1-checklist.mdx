@@ -181,3 +181,26 @@ A single CS entry can close all three cases:
 - `cmd_dag` workspace mode: add the workspace branch and call `compute_workspace_inferred_deps`.
 
 **Conformance impact.** A new positive fixture under `standard/conformance/` that exercises a `{NAME}` body ref under each command path and asserts edge-respecting registration order, plus the existing single-Cookfile `cmd_run` conformance shape, would pin the contract uniformly.
+
+## E.11. CLI exit-code taxonomy [#pre-v1.cli-exit-codes]
+
+**Status.** Resolved-as-informative in v0.7-track by [CS-0035](D-changes#changes-cs-0035): the reference implementation's exit codes are documented here. The rule is informative pre-1.0 (other implementations MAY adopt different mappings) and is expected to graduate to a normative §9 at the 1.0 cut.
+
+**Symptom.** The Cook Standard described language semantics but did not say what numeric exit code the `cook` CLI should produce on each failure mode. Users wiring `cook` into CI scripts had to read `cli/crates/cook-cli/src/error.rs` to know what to expect, and a regression that flipped an exit code (e.g., `cook --test` returning 0 on test failure — see CS-0035) had no spec hook to catch it.
+
+**Reference implementation taxonomy.** The reference implementation (`cli/crates/cook-cli/src/error.rs`, `CookError::exit_code`) maps each error variant as follows:
+
+| Exit code | Variant            | Meaning                                                                       |
+|-----------|--------------------|-------------------------------------------------------------------------------|
+| `0`       | _no error_         | All requested recipes built and any test bodies passed.                       |
+| `1`       | `CommandFailed`    | A recipe step's shell command (or `test` body) exited non-zero.               |
+| `1`       | `TestFailure(n)`   | Reserved for structured test reporting; today routes through `CommandFailed`. |
+| `1`       | `Other`            | Generic failure (I/O, codegen, registration, etc.).                           |
+| `2`       | `ParseError`       | The Cookfile failed lexical or syntactic validation.                          |
+| `3`       | `RecipeNotFound`   | The named recipe (or default `build`) is not declared in the Cookfile.        |
+
+The runtime pin lives in `examples/cli_audit_exit_codes/walkthrough.sh`; the test-failure-specific pin lives in `examples/cli_audit_test_exit_code/walkthrough.sh`.
+
+**Open question for 1.0.** Whether `TestFailure` should retain a distinct exit code (e.g., `4`) so CI scripts can distinguish "build failed" from "tests failed" without scraping stderr. Promoting structured test output (CS-track follow-up to `cook --test`) is a prerequisite for that split.
+
+**Workaround pre-1.0.** Treat exit `1` as "something failed; see stderr for the variant tag." The taxonomy is stable enough for CI conditioning on `0` vs non-zero, and the table above is the authoritative reference for the reference implementation's specific mapping.

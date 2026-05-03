@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040
+- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
@@ -622,4 +622,23 @@ Companion unit tests: the `cs_0035_*` family in `tests.rs`, `shell_block.rs`, an
 
 **Version:** v0.7
 
+## D.41. CS-0041 — `cook --init` template fix; `cook --test` exit-code propagation; CLI exit-code taxonomy. [#changes.cs-0041]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7
+
+**Sections affected:** App. E.11 (new — informative CLI exit-code taxonomy). Reference-implementation: `cli/crates/cook-cli/src/pipeline.rs` (`cmd_init` template, both `cmd_test` branches), `examples/cli_audit_test_exit_code/` and `examples/cli_audit_exit_codes/` (new walkthroughs).
+
+**Summary.** Closes two CLI-surface bugs and documents the exit-code taxonomy that `cook` already implements but had never written down.
+
+The `--init` template emitted a v0.3-era recipe shape with an `end` line. CS-0019 dropped `end` from the recipe grammar in v0.4, so the literal `end` parsed as a shell command in the generated Cookfile and the first `cook` invocation after `cook --init` failed with exit 127 (`end: command not found`). The new template uses the post-CS-0019 indented body shape (`recipe build` + indented commands, no terminator) and an unquoted recipe name consistent with the rest of the in-tree corpus.
+
+`cook --test` discarded the engine's `Result` (`let _result = run_with_progress(...)`) and unconditionally returned `Ok(())`, so any test failure silently exited 0. The fix is a one-character change in both `cmd_test` branches (workspace and single-Cookfile): replace `let _result = ...` with `?` so the engine result propagates. Test failures already surface as `EngineError::TaskFailures` carrying a `COOK_CMD_FAILED:` payload, which `engine_error_to_cook_error` already maps to `CookError::CommandFailed` (exit code 1). The misleading "test execution complete (detailed results pending cook-engine integration)" message was removed; the `TODO` for structured test output remains as a code comment, where it belongs.
+
+The CLI exit-code taxonomy that the reference implementation already followed (`CookError::exit_code` in `cli/crates/cook-cli/src/error.rs`) is now documented in App. E.11 as an informative table. The status is informative pre-1.0 because (a) the Standard's normative chapters are about the Cookfile language, not the CLI, and (b) other implementations are free to map the same error variants to different numeric codes. App. E.11 calls out one open question for 1.0 — whether `TestFailure` should split off from exit `1` once structured test output lands.
+
+**Why now.** Both bugs predate the v0.7 placeholder migration; the `--init` regression dates to CS-0019 (v0.4) and the `--test` regression to whenever `cmd_test` was first wired. They are visible-on-first-use UX bugs ("first command a new user runs is broken") and CI hazards ("pipeline silently exits 0 on a red test"), and the fix surface is small enough to bundle with the documentation of the existing exit-code mapping. The Standard impact is purely informative — App. E.11 — so this entry does not warrant a version bump beyond the v0.7 line it lands on.
+
+**Reference:** the CS-0041 commit on the worktree branch.
 
