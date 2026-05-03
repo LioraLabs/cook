@@ -28,7 +28,7 @@ pub enum LexError {
     UnterminatedString { line: usize },
     #[error("line {line}: expected quoted name after keyword")]
     MissingRecipeName { line: usize },
-    #[error("line {line}: '{segment}' is a reserved word and cannot be used as a recipe name (or final segment of a dotted recipe name)")]
+    #[error("line {line}: '{segment}' is a reserved word and cannot be used in this position in a dotted recipe name")]
     ReservedRecipeName { line: usize, segment: String },
     #[error("line {line}: a run of three or more `>` characters at line start is reserved (§{{lexical.line-prefixes}})")]
     ReservedTripleArrow { line: usize },
