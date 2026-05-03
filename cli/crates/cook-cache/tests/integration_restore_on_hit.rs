@@ -159,6 +159,115 @@ fn restore_miss_falls_through_to_output_changed() {
 }
 
 #[test]
+fn restore_rejects_tampered_backend_bytes() {
+    // Regression: pre-fix, `try_restore` wrote whatever the backend
+    // returned to disk without verifying its hash. A remote/shared
+    // backend that returned attacker-controlled bytes for a hit key
+    // would silently install them. Post-fix, the byte hash MUST be
+    // compared against `entry.outputs[idx].hash` and a mismatch MUST
+    // fall through to the rebuild path. See spec §8.6 cache integrity.
+    let workspace = tempfile::tempdir().expect("workspace");
+    let store_dir = tempfile::tempdir().expect("store");
+    let backend: Arc<dyn CacheBackend> =
+        Arc::new(LocalBackend::new(store_dir.path().to_path_buf()));
+
+    let wd = workspace.path();
+    write(&wd.join("in.c"), b"int main(){}");
+    // out.o: real prior content; our cached FileRecord pins this hash.
+    write(&wd.join("out.o"), b"correct-bytes");
+
+    let in_hash = xxhash_rust::xxh3::xxh3_64(b"int main(){}");
+    let in_record = FileRecord {
+        path: "in.c".into(),
+        mtime: cook_cache::stat_mtime(&wd.join("in.c")).unwrap(),
+        hash: in_hash,
+    };
+    let real_out_hash = xxhash_rust::xxh3::xxh3_64(b"correct-bytes");
+    let out_record = FileRecord {
+        path: "out.o".into(),
+        mtime: cook_cache::stat_mtime(&wd.join("out.o")).unwrap(),
+        hash: real_out_hash,
+    };
+
+    let recipe_namespace = "proj/Cookfile::build";
+    let mut sorted = vec![in_hash];
+    sorted.sort();
+    let cloud_k = cloud_key(&CloudKeyInputs {
+        schema_version: CACHE_VERSION,
+        recipe_namespace,
+        command_hash: 0xbeef,
+        context_hash: 0,
+        env_contribution: 0,
+        sorted_input_content_hashes: &sorted,
+    });
+    let artifact_k = artifact_key(&cloud_k, 0, "out.o");
+
+    // Seed the backend with TAMPERED bytes whose hash does NOT match
+    // `out_record.hash`. This simulates a malicious or corrupted remote
+    // backend response under the artifact key for which the engine has
+    // a legitimate cache hit signal.
+    let tampered = b"TAMPERED-BY-AUDIT";
+    let meta = ArtifactMeta {
+        recipe_namespace: recipe_namespace.into(),
+        command_hash: 0xbeef,
+        context_hash: 0,
+        env_contribution: 0,
+        schema_version: CACHE_VERSION,
+        size_bytes: tampered.len() as u64,
+        tags: BTreeSet::new(),
+        consulted_env_keys: BTreeSet::new(),
+        output_index: 0,
+        output_path: "out.o".into(),
+    };
+    backend
+        .put(&artifact_k, tampered, &meta)
+        .expect("seed put with tampered bytes");
+
+    // Force the restore-on-hit path: drift the on-disk output so its
+    // hash no longer matches `out_record.hash`.
+    write(&wd.join("out.o"), b"stale-variant");
+
+    let entry = StepEntry {
+        inputs: vec![in_record],
+        outputs: vec![out_record],
+        command_hash: 0xbeef,
+        context_hash: 0,
+        env_contribution: 0,
+    };
+
+    let ctx = RestoreCtx {
+        backend: backend.as_ref(),
+        recipe_namespace,
+    };
+    let (result, updated) = needs_rebuild_cook(
+        Some(&entry),
+        &["in.c"],
+        &["out.o"],
+        0xbeef,
+        0,
+        0,
+        wd,
+        Some(&ctx),
+    );
+
+    // The hash mismatch MUST be treated as a restore miss, which falls
+    // through to OutputChanged (since the on-disk file existed but had
+    // drifted bytes).
+    assert!(
+        matches!(result, RebuildResult::Rebuild(RebuildReason::OutputChanged)),
+        "tampered backend bytes must be rejected: got {result:?}"
+    );
+    assert!(updated.is_none(), "rebuild path must not return an updated entry");
+
+    // The on-disk file MUST NOT be overwritten with the tampered bytes.
+    let on_disk = std::fs::read(wd.join("out.o")).expect("read out.o");
+    assert_ne!(
+        on_disk, tampered,
+        "on-disk bytes must not have been replaced with tampered bytes"
+    );
+}
+
+#[test]
 fn restore_with_no_ctx_returns_output_changed() {
     // Without a RestoreCtx, drift behavior MUST match the pre-amendment code.
     let workspace = tempfile::tempdir().expect("workspace");

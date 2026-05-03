@@ -247,6 +247,17 @@ fn try_restore(
             Ok(Some(b)) => b,
             _ => return false,
         };
+        // Spec §8.6 cache integrity: a restore MUST verify backend bytes
+        // against the recorded fingerprint and treat any mismatch as a
+        // miss. Without this, a remote / shared backend could feed
+        // attacker-controlled bytes into the workspace under a cache hit.
+        // For LocalBackend the check is redundant; for any networked
+        // backend (Cook Cloud, CI artifact stores, etc.) it is the only
+        // line of defence between `cook` and a supply-chain compromise.
+        let bytes_hash = xxhash_rust::xxh3::xxh3_64(&bytes);
+        if bytes_hash != entry.outputs[idx].hash {
+            return false;
+        }
         let abs = working_dir.join(path);
         if let Some(parent) = abs.parent() {
             if std::fs::create_dir_all(parent).is_err() {

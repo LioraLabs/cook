@@ -169,6 +169,13 @@ When the cache indicates that a unit is up-to-date, the implementation MAY skip 
 
 A unit for which the register-phase record disables caching — for example, a bare shell step or an `@` step, whose registration form sets the cache flag to false — MUST be executed on every run of the containing recipe.
 
+### 8.6.1. Cache integrity [#exec.cache.integrity]
+An implementation that records output content in a content-addressable store — whether local, shared between machines, or remote — MUST treat that store as untrusted at restore time. When the implementation reads bytes from the store with the intent to install them as the on-disk content of a declared output, it MUST recompute the same content fingerprint that it recorded for that output and MUST compare the recomputed fingerprint to the recorded one. If the two fingerprints differ, the implementation MUST NOT install the bytes; it MUST treat the read as a cache miss and MUST fall through to the rebuild path defined in §{exec.cache} above.
+
+This requirement holds for every backend, including a backend that resides on the same machine and the same filesystem as the workspace. The Standard does not distinguish "local" from "remote" backends in the cache contract; the integrity check is the same in both cases. An implementation MAY use any deterministic fingerprint that meets the observability constraint of §{exec.cache} (the fingerprint MUST be a function of the bytes being installed, with no dependence on wall-clock time, process identifiers, or other extrinsic state); it MUST use the same function it recorded the original artifact under.
+
+The intent is that an implementation's cache restore path MUST NOT be a vector for installing attacker-controlled or otherwise unauthenticated bytes into the workspace. A backend whose contents have drifted, been corrupted, or been replaced — for any reason — MUST be observationally indistinguishable from a backend that simply does not have the artifact.
+
 ### Example 8.6.1
 
 ```cook

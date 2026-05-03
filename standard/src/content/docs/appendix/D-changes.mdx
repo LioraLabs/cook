@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036
+- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
@@ -546,3 +546,21 @@ CS-0036 reworks `step_context_hash` to (a) split the command text on newlines, (
 **Conformance impact.** None at the parser or codegen layer. No language surface change. The conformance corpus is unchanged. The change is observable only via cache hit/miss behavior, which is implementation-defined per §{intro.non-scope} and §{exec.cache}.
 
 **Reference:** the CS-0036 commit on `worktree-agent-a012ebda236e76f35` (cache-fingerprint multi-line fix).
+
+## D.37. CS-0037 — §8.6.1 cache integrity: restore MUST verify backend bytes against the recorded fingerprint. [#changes.cs-0037]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7
+
+**Sections affected:** `standard/src/content/docs/08-execution-model.mdx` (new §8.6.1 normative subsection); App. D Versions index (v0.7 row extended with CS-0037); this entry. Reference-implementation: `cli/crates/cook-cache/src/check.rs` (`try_restore` now hashes backend bytes with `xxh3_64` and rejects on mismatch); `cli/crates/cook-cache/tests/integration_restore_on_hit.rs` (new `restore_rejects_tampered_backend_bytes` regression test).
+
+**Summary.** Adds a normative MUST/MUST NOT pair to §{exec.cache.integrity}: an implementation that reads bytes from a content-addressable artifact store with the intent to install them as a declared output MUST recompute the recorded content fingerprint and MUST treat any mismatch as a cache miss, falling through to the rebuild path of §{exec.cache}. The rule is backend-agnostic: it applies to local-filesystem stores as well as networked / shared backends. No language-surface change.
+
+**Why.** Cache integrity is part of the v1.0 stability promise. The reference implementation's restore-on-hit path (added with the 2026-05-02 addendum to support drift recovery from a shared backend) wrote backend bytes to disk without checking their hash against the cached `FileRecord.hash`. For the in-tree `LocalBackend` this is observationally equivalent to a verify (the same process wrote the bytes), but a remote / shared backend (Cook Cloud's R2/D1 backend, CI artifact stores, anything writable by another principal) would, under the unfixed code, install whatever bytes the backend returned — including bytes substituted by a compromised or buggy backend — under a cache hit. The `examples/cache_audit_unverified_restore/walkthrough.sh` audit fixture demonstrates the symptom by tampering with the on-disk LocalBackend artifact: pre-fix, `cook` installed the tampered bytes under a hit; post-fix, the hash check rejects them and the recipe rebuilds. Codifying the rule normatively prevents the same hole from reappearing in any future backend, including third-party implementations that target the Standard.
+
+**Conformance impact.** None at the parser / luagen layer; the rule lives entirely in §{exec} and is observable only through the cache. The reference test pinning the rule is a Rust integration test (`restore_rejects_tampered_backend_bytes`) rather than a corpus fixture, since the conformance harness has no notion of a populated backend. A future expansion of the harness to cover cache semantics (cf. App. E pre-1.0 checklist) would add a corpus-level test; for v0.7 the in-crate regression plus the audit walkthrough are the conformance evidence.
+
+**Implementation status.** Lockstep — the §8.6.1 normative subsection, the `try_restore` fix, and the regression test land in the same commit on the `worktree-agent-aad1d5af628d364f9` branch. Implementation uses the same `xxhash_rust::xxh3::xxh3_64` function the cache already uses for `FileRecord.hash` (`hash_file` in `cli/crates/cook-cache/src/check.rs`); both sides of the comparison are derived from the same function so the check is exact, not heuristic.
+
+**Reference:** the CS-0037 commit on the `worktree-agent-aad1d5af628d364f9` branch.
