@@ -642,14 +642,16 @@ pub fn execute_dag(
         let recipe_name = work_node.recipe_name.clone();
 
         if result.success {
-            // Emit output lines
-            for line in &result.output_lines {
+            // Emit output lines.  Each captured line carries its fd-of-origin
+            // (CS-0035) so the OutputLine event reflects stdout vs stderr
+            // honestly instead of hardcoding stdout.
+            for (stream, line) in &result.output_lines {
                 emit(
                     &event_tx,
                     EngineEvent::OutputLine {
                         recipe: recipe_name.clone(),
                         line: line.clone(),
-                        is_stderr: false,
+                        stream: *stream,
                     },
                 );
             }
@@ -742,14 +744,14 @@ pub fn execute_dag(
                 );
             }
         } else {
-            // Emit output lines even on failure
-            for line in &result.output_lines {
+            // Emit output lines even on failure (CS-0035 — stream tagged).
+            for (stream, line) in &result.output_lines {
                 emit(
                     &event_tx,
                     EngineEvent::OutputLine {
                         recipe: recipe_name.clone(),
                         line: line.clone(),
-                        is_stderr: false,
+                        stream: *stream,
                     },
                 );
             }
@@ -803,6 +805,7 @@ pub fn execute_dag(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Stream;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -1018,5 +1021,53 @@ mod tests {
 
         let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
+    }
+
+    // 9. CS-0035: OutputLine events carry true fd-of-origin in the `stream`
+    //    field instead of attributing every captured byte to stdout.  Pre-fix,
+    //    both the success branch and the failure branch in execute_dag
+    //    hardcoded `is_stderr: false`, so any `Stream::Stderr` value rendered
+    //    in events.jsonl was unreachable end-to-end.
+    #[test]
+    fn test_executor_output_line_stream_reflects_fd_of_origin() {
+        use std::sync::mpsc;
+
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        // A shell command that emits one line to stdout and one to stderr.
+        // The captured bytes' fds must round-trip through OutputLine events.
+        let mut dag = Dag::new();
+        dag.add_node(
+            work_node(
+                shell("echo to-stdout; echo to-stderr 1>&2"),
+                "mixed",
+                wd,
+            ),
+            &[],
+        );
+
+        let (tx, rx) = mpsc::channel::<EngineEvent>();
+        let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx);
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+
+        let mut got_stdout = false;
+        let mut got_stderr = false;
+        while let Ok(event) = rx.try_recv() {
+            if let EngineEvent::OutputLine { line, stream, .. } = event {
+                match stream {
+                    Stream::Stdout => {
+                        assert_eq!(line, "to-stdout", "stdout line content");
+                        got_stdout = true;
+                    }
+                    Stream::Stderr => {
+                        assert_eq!(line, "to-stderr", "stderr line content");
+                        got_stderr = true;
+                    }
+                }
+            }
+        }
+        assert!(got_stdout, "expected an OutputLine with stream=Stdout");
+        assert!(got_stderr, "expected an OutputLine with stream=Stderr");
     }
 }

@@ -14,6 +14,21 @@ use std::path::PathBuf;
 /// import it from here rather than defining its own copy.
 pub const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 
+/// Which file descriptor a captured output line came from.
+///
+/// Carried alongside each line in [`crate`]-level work-result output buffers so
+/// downstream observers (the engine event stream, the JSON writer's
+/// `events.jsonl`, the per-node log store) can render the line with its true
+/// origin instead of attributing every byte to stdout. CS-0035 made this
+/// distinction load-bearing: prior to the fix, `WorkResult::output_lines` was
+/// `Vec<String>` with no fd-of-origin and the wire-format's `stream` field
+/// was hardcoded to `"stdout"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OutputStream {
+    Stdout,
+    Stderr,
+}
+
 /// What kind of work a captured unit represents.
 #[derive(Debug, Clone)]
 pub enum WorkPayload {

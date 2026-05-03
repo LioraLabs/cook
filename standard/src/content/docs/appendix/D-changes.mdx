@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042
+- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042, CS-0043
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
@@ -657,4 +657,24 @@ The reference implementation realises the rule in `dag_builder::build_dag`: per 
 **Why no negative conformance fixture.** The §8.4.1 rule is a register/execute-phase rejection, not a syntactic one — the conformance harness in `cli/crates/cook-lang/tests/conformance.rs` walks parser-level fixtures only. The audit walkthrough at `examples/engine_audit_shared_output_race/` is the regression gate.
 
 **Reference:** this commit.
+
+## D.43. CS-0043 — `events.jsonl` `stream` field carries true fd-of-origin. [#changes.cs-0043]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7
+
+**Sections affected:** none in the normative chapters (the `events.jsonl` wire format is not yet covered by a normative section — see App. E for the pre-1.0 follow-up). Reference-implementation: `cli/crates/cook-contracts/src/lib.rs` (new `OutputStream` enum), `cli/crates/cook-luaotp/src/pool.rs` (`WorkResult::output_lines: Vec<String>` → `Vec<(OutputStream, String)>` at the worker boundary; `execute_shell` and `execute_test` tag captured lines by fd at the point of capture), `cli/crates/cook-engine/src/{lib,executor}.rs` (`EngineEvent::OutputLine.is_stderr: bool` → `EngineEvent::OutputLine.stream: OutputStream`; both call sites in `executor.rs` plumb the captured stream through instead of hardcoding `false`), `cli/crates/cook-cli/src/pipeline.rs` (engine→progress bridge maps `OutputStream` to `cook_progress::Stream` instead of synthesizing it from a hardcoded boolean).
+
+**Summary.** Fixes a wire-format honesty bug in the `events.jsonl` JSON renderer. Pre-CS-0043, every `node-output` event was emitted with `"stream": "stdout"` regardless of whether the captured byte came from the child's stdout or stderr. The `Stream::Stderr` variant was reachable in the `cook-progress` enum and JSON-rendered correctly as the literal string `"stderr"`, but the bridge in `cli/crates/cook-cli/src/pipeline.rs` derived `stream` from a boolean `is_stderr` field that the engine's two `EngineEvent::OutputLine` emission sites in `executor.rs` (success branch and failure branch) hardcoded to `false`. The root cause was upstream: `WorkResult::output_lines` in `cook-luaotp` was `Vec<String>`, discarding fd-of-origin at the worker boundary.
+
+The fix plumbs stream provenance through the entire pipeline. A new `OutputStream { Stdout, Stderr }` enum lives in `cook-contracts` (the shared kernel — `cook-luaotp` already depends on it). `WorkResult::output_lines` becomes `Vec<(OutputStream, String)>`; `execute_shell` tags stderr lines `Stderr` and stdout lines `Stdout` at the point they're decoded from `output.stderr` / `output.stdout`; `execute_test` does the same. `EngineEvent::OutputLine` carries `stream: OutputStream` instead of `is_stderr: bool` and re-exports the contracts enum as `cook_engine::Stream` for callers that don't already depend on `cook-contracts`. The `cook-cli` bridge maps the contracts enum to the wire-format `cook_progress::Stream` enum (the two are isomorphic; the second exists because `cook-progress` is `serde::Serialize` for the JSON renderer and `cook-contracts` is intentionally serde-free).
+
+**Why a patch-level fix.** This is a correctness fix for the implementation, not a language change. The `events.jsonl` wire-format `stream` field was already documented in the JSON renderer's behavior (a `"stdout"` / `"stderr"` lowercase string) and in the `node-output` schema test in `cli/crates/cook-progress/src/render/json.rs`; the field's *valid values* are unchanged, but `"stderr"` was unreachable end-to-end pre-fix. No Cookfile, conformance fixture, or downstream consumer is broken by this change — consumers that branched on `"stream"` were already prepared for both values.
+
+**Why CS-0043 in v0.7.** The `events.jsonl` schema is a v1.0 stability surface (App. E.11 — to be filed). Cutting v0.7 with a known wire-format lie would compromise that stability promise: a future v1.0 audit might (correctly) flag the all-`"stdout"` behavior as the documented contract, freezing the bug. Recording this fix as a changelog-only entry against v0.7 (no version bump, no Standard prose change) closes the gap before any downstream tooling pins on the broken behavior.
+
+**Pre-1.0 follow-up.** App. E should track the absence of a normative `events.jsonl` schema section. Per the Cook Standard versioning policy (CS-0012), public wire formats produced by the reference implementation and consumed by external tooling deserve normative section status before v1.0. The current `events.jsonl` shape is documented only in `cli/crates/cook-progress/src/render/json.rs`; promoting it to a normative section (covering `type` discriminator, field schemas per event kind, the `ts` / `v` envelope, and the `stream` field's `"stdout"` / `"stderr"` enumeration) is a prerequisite for v1.0.
+
+**Reference:** the CS-0043 commit on the active branch.
 

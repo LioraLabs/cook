@@ -184,9 +184,9 @@ A single CS entry can close all three cases:
 
 ## E.11. CLI exit-code taxonomy [#pre-v1.cli-exit-codes]
 
-**Status.** Resolved-as-informative in v0.7-track by [CS-0035](D-changes#changes-cs-0035): the reference implementation's exit codes are documented here. The rule is informative pre-1.0 (other implementations MAY adopt different mappings) and is expected to graduate to a normative §9 at the 1.0 cut.
+**Status.** Resolved-as-informative in v0.7-track by [CS-0041](D-changes#changes-cs-0041): the reference implementation's exit codes are documented here. The rule is informative pre-1.0 (other implementations MAY adopt different mappings) and is expected to graduate to a normative §9 at the 1.0 cut.
 
-**Symptom.** The Cook Standard described language semantics but did not say what numeric exit code the `cook` CLI should produce on each failure mode. Users wiring `cook` into CI scripts had to read `cli/crates/cook-cli/src/error.rs` to know what to expect, and a regression that flipped an exit code (e.g., `cook --test` returning 0 on test failure — see CS-0035) had no spec hook to catch it.
+**Symptom.** The Cook Standard described language semantics but did not say what numeric exit code the `cook` CLI should produce on each failure mode. Users wiring `cook` into CI scripts had to read `cli/crates/cook-cli/src/error.rs` to know what to expect, and a regression that flipped an exit code (e.g., `cook --test` returning 0 on test failure — see CS-0041) had no spec hook to catch it.
 
 **Reference implementation taxonomy.** The reference implementation (`cli/crates/cook-cli/src/error.rs`, `CookError::exit_code`) maps each error variant as follows:
 
@@ -204,3 +204,23 @@ The runtime pin lives in `examples/cli_audit_exit_codes/walkthrough.sh`; the tes
 **Open question for 1.0.** Whether `TestFailure` should retain a distinct exit code (e.g., `4`) so CI scripts can distinguish "build failed" from "tests failed" without scraping stderr. Promoting structured test output (CS-track follow-up to `cook --test`) is a prerequisite for that split.
 
 **Workaround pre-1.0.** Treat exit `1` as "something failed; see stderr for the variant tag." The taxonomy is stable enough for CI conditioning on `0` vs non-zero, and the table above is the authoritative reference for the reference implementation's specific mapping.
+
+## E.12. `events.jsonl` wire format has no normative section [#pre-v1.events-jsonl-not-normative]
+
+**Status.** Open as of v0.7. Recent fix [CS-0043](D-changes#changes-cs-0043) corrected a wire-format honesty bug (`stream` field was hardcoded to `"stdout"` regardless of fd-of-origin) without normalizing the format itself.
+
+**Symptom.** The `events.jsonl` JSON-lines stream emitted by `cook` (when the renderer is configured to JSON output) is the documented integration surface for downstream tooling — log aggregators, CI dashboards, the planned Cook Cloud build observability stack, and `cook logs` retrieval from `~/.cook/builds/`. The format is currently defined only by the implementation: `cli/crates/cook-progress/src/render/json.rs` is the de-facto schema, with a small set of unit tests pinning the shape (`build_started_uses_recipe_names`, `recipe_completed_uses_elapsed_ms_integer`, `node_output_uses_names_and_stream_string`, `each_event_is_one_line`). No normative chapter or appendix in the Cook Standard describes the envelope (`ts`, `v`), the `type` discriminator, the per-event field schemas, or the enumerated value sets (`stream: "stdout" | "stderr"`, `reason: "upstream-failed" | "condition-false" | "disabled"`).
+
+**Why this matters pre-1.0.** The Cook Standard versioning policy ([CS-0012](D-changes#changes-cs-0012)) treats wire formats produced by the reference implementation and consumed by external tooling as part of the language surface — what the Standard normatively describes is what downstream consumers can rely on across implementations and versions. Cutting v1.0 with `events.jsonl` defined only by `cli/crates/cook-progress/src/render/json.rs` would freeze the *implementation* as the contract, including any incidental shape choice (field ordering, `null` vs missing field, `_ms` integer vs string-with-units, etc.) that an alternative implementation might reasonably do differently.
+
+**Resolution path.** Add a normative section (likely §9 "Wire formats" or under §8 "Execution model") that covers:
+
+- The envelope: `ts` (RFC-3339 UTC), `v` (schema version integer), and the rule that future schema versions bump `v`.
+- The `type` discriminator and the closed set of values: `build-started`, `recipe-started`, `recipe-completed`, `recipe-failed`, `node-started`, `node-completed`, `node-failed`, `node-cache-hit`, `node-skipped`, `node-output`, `interactive-start`, `interactive-end`, `finished`.
+- The per-event field schema for each `type`, including required vs optional fields, value types, and enumerated value sets (`stream: "stdout" | "stderr"`, `reason: "upstream-failed" | "condition-false" | "disabled"`).
+- The line-orientation invariant (one event per `\n`-terminated line, no embedded newlines in field values without escaping).
+- The "names not opaque IDs" rule: every reference to a recipe or node uses the human-readable name, never the internal `RecipeId` / `NodeId` (a property currently enforced by the `name_lookup` helpers in `json.rs`).
+
+A companion conformance harness — JSON-lines validators against fixture builds — pins the format at corpus level so a future implementation's renderer can be checked against the same contract as the reference cook-cli.
+
+**Found in.** Surfaced during the [CS-0043](D-changes#changes-cs-0043) fix: the bug was traceable only because the unit test in `cli/crates/cook-progress/src/render/json.rs` asserted `"stream":"stderr"` while the upstream pipeline made the `Stream::Stderr` variant unreachable. Without the test the wire-format lie would have been silent. With a normative section, the same audit could have been performed against the spec rather than against the test.

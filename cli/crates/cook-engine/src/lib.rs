@@ -19,7 +19,11 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use cook_contracts::{CacheMeta, WorkPayload};
+use cook_contracts::{CacheMeta, OutputStream, WorkPayload};
+
+// Re-export OutputStream so consumers using EngineEvent::OutputLine don't
+// need a direct cook-contracts dependency just to name the stream variant.
+pub use cook_contracts::OutputStream as Stream;
 
 // ---------------------------------------------------------------------------
 // RecipeTopology — per-recipe topology snapshot for BuildStarted
@@ -148,10 +152,16 @@ pub enum EngineEvent {
         is_terminal: bool,
     },
     /// A line of output from a work node.
+    ///
+    /// `stream` distinguishes stdout vs stderr (CS-0035).  Pre-CS-0035 this
+    /// variant carried `is_stderr: bool` that was hardcoded to `false` at the
+    /// call sites in `executor.rs`, so the wire-format `stream` field in
+    /// `events.jsonl` was always `"stdout"` — a lie about the `Stream::Stderr`
+    /// variant that was never reachable.
     OutputLine {
         recipe: String,
         line: String,
-        is_stderr: bool,
+        stream: OutputStream,
     },
     /// The entire engine run has finished.
     Finished {

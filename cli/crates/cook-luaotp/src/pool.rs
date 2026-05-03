@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 
-use cook_contracts::WorkPayload;
+use cook_contracts::{OutputStream, WorkPayload};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -36,7 +36,11 @@ pub struct WorkResult {
     pub error: Option<String>,
     pub test_output: Option<TestOutput>,
     pub node_name: String,
-    pub output_lines: Vec<String>,
+    /// Captured child output, in emission order.  Each entry is paired with
+    /// the file descriptor it came from so downstream observers can preserve
+    /// stdout/stderr provenance (CS-0035).  Pre-CS-0035 this was `Vec<String>`
+    /// and the engine attributed every line to stdout in the JSON event stream.
+    pub output_lines: Vec<(OutputStream, String)>,
 }
 
 pub struct WorkerPool {
@@ -569,21 +573,22 @@ fn execute_shell(
             output_lines: Vec::new(),
         },
         Ok(output) => {
-            let mut output_lines = Vec::new();
+            let mut output_lines: Vec<(OutputStream, String)> = Vec::new();
 
-            // Accumulate stderr lines
+            // Accumulate stderr lines (tagged so downstream renderers can
+            // preserve fd-of-origin — CS-0035).
             if !output.stderr.is_empty() {
                 let stderr_str = String::from_utf8_lossy(&output.stderr);
                 for l in stderr_str.lines() {
-                    output_lines.push(l.to_string());
+                    output_lines.push((OutputStream::Stderr, l.to_string()));
                 }
             }
 
-            // Accumulate stdout lines
+            // Accumulate stdout lines.
             if !output.stdout.is_empty() {
                 let stdout_str = String::from_utf8_lossy(&output.stdout);
                 for l in stdout_str.lines() {
-                    output_lines.push(l.to_string());
+                    output_lines.push((OutputStream::Stdout, l.to_string()));
                 }
             }
 
@@ -777,13 +782,15 @@ fn execute_test(
 
     let success = if should_fail { !exit_success } else { exit_success };
 
-    // Populate output_lines from captured test output
-    let mut output_lines = Vec::new();
+    // Populate output_lines from captured test output, tagging by fd
+    // origin so the engine event stream can carry true stdout/stderr
+    // provenance (CS-0035).
+    let mut output_lines: Vec<(OutputStream, String)> = Vec::new();
     for line in stdout.lines() {
-        output_lines.push(line.to_string());
+        output_lines.push((OutputStream::Stdout, line.to_string()));
     }
     for line in stderr.lines() {
-        output_lines.push(line.to_string());
+        output_lines.push((OutputStream::Stderr, line.to_string()));
     }
 
     WorkResult {

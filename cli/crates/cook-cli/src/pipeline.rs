@@ -259,7 +259,7 @@ fn bridge_engine_to_progress_events(
                 cook_engine::EngineEvent::OutputLine {
                     recipe,
                     line,
-                    is_stderr,
+                    stream,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
                     // OutputLine does not yet carry a node id at the engine level. Attribute to the
@@ -270,7 +270,13 @@ fn bridge_engine_to_progress_events(
                         .find(|((r, _), _)| r == &recipe)
                         .map(|(_, id)| *id)
                         .unwrap_or_else(|| NodeId::new(u32::MAX));
-                    let stream = if is_stderr { Stream::Stderr } else { Stream::Stdout };
+                    // CS-0035: map cook-contracts::OutputStream → cook-progress::Stream
+                    // (the wire-format enum). The two enums are isomorphic; this
+                    // is the renderer-side adapter, not a value mutation.
+                    let stream = match stream {
+                        cook_engine::Stream::Stdout => Stream::Stdout,
+                        cook_engine::Stream::Stderr => Stream::Stderr,
+                    };
                     cook_progress::ProgressEvent::NodeOutput {
                         recipe: rid,
                         node: nid,
