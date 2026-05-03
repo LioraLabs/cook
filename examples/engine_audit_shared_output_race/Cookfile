@@ -1,0 +1,23 @@
+# Audit fixture: two non-dep-related recipes that both declare the same
+# `cook` output path. Pre-fix, this raced silently under `--jobs > 1`.
+# Post-fix, the engine MUST reject this Cookfile at plan time with
+# `EngineError::OutputCollision` (see `cli/crates/cook-engine/src/dag_builder.rs`).
+#
+# `all` lists both writers as deps with no edge between writer_a and
+# writer_b — they end up in the same wave with the same canonical output
+# path, which is exactly the race condition we're guarding against.
+
+recipe writer_a
+    cook "build/shared.bin" using {
+        mkdir -p build && printf 'a' > $<out>
+    }
+
+recipe writer_b
+    cook "build/shared.bin" using {
+        mkdir -p build && printf 'b' > $<out>
+    }
+
+recipe build: writer_a writer_b
+
+chore clean
+    rm -rf build .cook

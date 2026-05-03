@@ -357,6 +357,12 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
             CookError::Other(format!("registration failed for '{recipe}': {message}"))
         }
         cook_engine::EngineError::CacheError(msg) => CookError::Other(msg),
+        cook_engine::EngineError::OutputCollision { path, recipes } => CookError::Other(format!(
+            "output collision: recipes [{}] all declare output {} with no dependency edge between them; \
+             add an explicit `: <recipe>` dep or merge into one recipe",
+            recipes.join(", "),
+            path.display(),
+        )),
     }
 }
 

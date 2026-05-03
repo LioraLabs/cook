@@ -125,6 +125,34 @@ Cross-recipe ordering is established only by name references (§{xref} of this S
 - A placeholder-sourced edge MAY be refined per §{xref.dep-implications}. A dep-list-sourced edge MUST NOT be refined.
 - No other source of cross-recipe ordering is defined. Specifically, string equality between an ingredient path literal of `A` and a cook output path literal of `B` does NOT establish an edge. See rationale B.5.N.
 
+### 8.4.1. Output-path uniqueness across recipes [#exec.output-uniqueness]
+
+Two distinct recipes `A` and `B` MUST NOT both declare the same canonical output path on `cook` steps unless the cross-recipe ordering rules of §{exec.cross-recipe-ordering} establish a path between them in either direction. The **canonical output path** of a `cook` step is the path produced by joining the recipe's working directory with the step's declared output literal.
+
+A conforming implementation MUST detect this condition at plan time, before any work unit of either recipe runs, and MUST reject the build with a diagnostic naming both colliding recipes and the shared canonical output path.
+
+The rationale is execution-order safety: under parallel execution (`--jobs > 1`), two recipes with no enforced ordering that write to the same path race silently — the artifact's contents become non-deterministic, and downstream cache keys derived from the artifact become unstable. Requiring an explicit dependency edge collapses the race to a defined ordering. Where two recipes legitimately produce the same artifact, authors merge them into one recipe (single declaration site) or add an explicit `: <recipe>` dep edge to serialize them.
+
+The rule applies to the declared output paths of `cook` steps; it does not apply to incidental writes performed by a step's command body to paths it has not declared, which the Standard does not track.
+
+### Example 8.4.1
+
+```cook
+recipe writer_a
+    cook "build/shared.bin" using { printf 'a' > $<out> }
+
+recipe writer_b
+    cook "build/shared.bin" using { printf 'b' > $<out> }
+
+recipe build: writer_a writer_b
+```
+
+The Cookfile MUST be rejected at plan time. `writer_a` and `writer_b` both declare the canonical output `build/shared.bin` and there is no dep-list edge between them, so the implementation cannot serialize their writes. The diagnostic MUST name both `writer_a` and `writer_b` and the path `build/shared.bin`.
+
+### Note 8.4.1
+
+The check is plan-time, not execute-time: an implementation that defers detection until a write-write conflict occurs in the filesystem fails the requirement, because a successful first run can mask a race that fails on a subsequent run. The check looks at canonical paths derived from the source, not at filesystem state.
+
 ## 8.5. Interactive step draining [#exec.interactive-drain]
 A step classified as `interactive_command` (§{recipes.shell-steps}) — that is, a step whose Cookfile source line begins with `@` — MUST, at execute time, **drain** the implementation's concurrent execute-phase work before its command begins. Draining means: at the instant the interactive unit is about to run, no other work unit of any recipe MUST be in progress. The implementation MUST wait until every then-running work unit has completed before beginning the interactive command.
 

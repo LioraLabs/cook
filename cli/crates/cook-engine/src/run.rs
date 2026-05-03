@@ -207,8 +207,10 @@ where
             wave_units.push(units);
         }
 
-        // Build work-unit DAG for this wave and execute it.
-        let dag = dag_builder::build_dag(wave_units);
+        // Build work-unit DAG for this wave and execute it. `build_dag` may
+        // return `EngineError::OutputCollision` at plan time when two
+        // non-dep-related recipes claim the same canonical output path.
+        let dag = dag_builder::build_dag(wave_units)?;
 
         // Emit synthetic lifecycle events for zero-work recipes (meta-targets
         // that have no cook steps of their own, only deps).  The executor never

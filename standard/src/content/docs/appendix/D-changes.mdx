@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041
+- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
@@ -641,4 +641,20 @@ The CLI exit-code taxonomy that the reference implementation already followed (`
 **Why now.** Both bugs predate the v0.7 placeholder migration; the `--init` regression dates to CS-0019 (v0.4) and the `--test` regression to whenever `cmd_test` was first wired. They are visible-on-first-use UX bugs ("first command a new user runs is broken") and CI hazards ("pipeline silently exits 0 on a red test"), and the fix surface is small enough to bundle with the documentation of the existing exit-code mapping. The Standard impact is purely informative — App. E.11 — so this entry does not warrant a version bump beyond the v0.7 line it lands on.
 
 **Reference:** the CS-0041 commit on the worktree branch.
+
+## D.42. CS-0042 — Output-path uniqueness across recipes: plan-time rejection of shared `cook` outputs without a dep edge. [#changes.cs-0042]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7
+
+**Sections affected:** §{exec.cross-recipe-ordering} (added §8.4.1 — Output-path uniqueness across recipes); reference-implementation: `cli/crates/cook-engine/src/dag_builder.rs` (collision check), `cli/crates/cook-engine/src/lib.rs` (new `EngineError::OutputCollision` variant), `cli/crates/cook-engine/src/run.rs` (caller updated to propagate the error), `cli/crates/cook-cli/src/pipeline.rs` (CLI error mapping).
+
+**Summary.** Closes a HIGH-severity correctness gap: pre-fix, two non-dep-related recipes that declared the same `cook "<path>"` output raced silently under `--jobs > 1`. The engine emitted no diagnostic; the artifact's contents and any dependent cache keys became non-deterministic across runs. The new normative §8.4.1 requires that two distinct recipes MUST NOT both declare the same canonical output path on `cook` steps unless the cross-recipe ordering rules of §{exec.cross-recipe-ordering} establish an edge between them in either direction, and that conforming implementations MUST detect this at plan time before any work runs.
+
+The reference implementation realises the rule in `dag_builder::build_dag`: per wave, accumulate `(working_dir.join(output_path), recipe_name)` from every `CacheMeta`, build an undirected dep graph from `RecipeUnits.deps`, and for each path with two or more declarants, reject with `EngineError::OutputCollision { path, recipes }` if any pair is disconnected. The diagnostic names both colliding recipes and the canonical path, and the CLI surfaces it as a CookError with remediation guidance ("add an explicit `: <recipe>` dep or merge into one recipe"). The audit fixture `examples/engine_audit_shared_output_race/walkthrough.sh` asserts the post-fix behaviour end-to-end: non-zero exit, both recipe names in the diagnostic, the colliding path in the diagnostic, and no artifact written.
+
+**Why no negative conformance fixture.** The §8.4.1 rule is a register/execute-phase rejection, not a syntactic one — the conformance harness in `cli/crates/cook-lang/tests/conformance.rs` walks parser-level fixtures only. The audit walkthrough at `examples/engine_audit_shared_output_race/` is the regression gate.
+
+**Reference:** this commit.
 

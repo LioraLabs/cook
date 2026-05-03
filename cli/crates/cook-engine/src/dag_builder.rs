@@ -15,15 +15,33 @@
 //! - For each `(unit_idx, dep_recipe_name)` in `ru.dep_edges`, that specific
 //!   unit additionally depends on the terminal nodes of the named recipe.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::PathBuf;
 
 use cook_contracts::{CapturedUnit, DepKind, RecipeUnits, WorkPayload};
 use cook_dag::Dag;
 
-use crate::WorkNode;
+use crate::{EngineError, WorkNode};
 
 /// Build a `Dag<WorkNode>` from a topologically-sorted list of `RecipeUnits`.
-pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Dag<WorkNode> {
+///
+/// Performs plan-time validation that no two non-dep-related recipes declare
+/// the same canonical output path. If two recipes with no recipe-level
+/// dependency edge between them (in either direction) both claim the same
+/// `working_dir.join(output_path)`, this returns
+/// [`EngineError::OutputCollision`] before any work is dispatched. This
+/// prevents silent races under `--jobs > 1` where two recipes write the same
+/// artifact concurrently with no enforced ordering.
+pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, EngineError> {
+    // ── Plan-time output-collision check ─────────────────────────────────────
+    // Accumulate every (canonical_output_path -> {recipe_name, ...}) pair from
+    // all CacheMetas across all recipes in the wave. Two recipes that share a
+    // canonical output path with no dependency path between them are racing
+    // silently; reject the plan.
+    if let Some(err) = detect_output_collisions(&recipe_units) {
+        return Err(err);
+    }
+
     let mut dag = Dag::new();
 
     // Map from recipe name -> its final barrier (leaf node ids).
@@ -146,7 +164,7 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Dag<WorkNode> {
         recipe_leaves.insert(ru.recipe_name.clone(), barrier);
     }
 
-    dag
+    Ok(dag)
 }
 
 /// A unit is presatisfied (cached) when it has an empty shell command and no
@@ -157,6 +175,94 @@ fn is_presatisfied(unit: &CapturedUnit) -> bool {
         WorkPayload::Test { cmd, .. } => cmd.is_empty() && unit.cache_meta.is_none(),
         _ => false,
     }
+}
+
+/// Detect non-dep-related recipes that declare the same canonical output path.
+///
+/// Returns `Some(EngineError::OutputCollision)` for the first colliding path
+/// found (deterministic — driven by `BTreeMap` iteration order). Returns
+/// `None` when the wave is collision-free.
+fn detect_output_collisions(recipe_units: &[RecipeUnits]) -> Option<EngineError> {
+    // path -> set of recipe names that declare it
+    let mut by_path: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
+    for ru in recipe_units {
+        for unit in &ru.units {
+            let Some(meta) = &unit.cache_meta else {
+                continue;
+            };
+            for output in &meta.output_paths {
+                let canonical = ru.working_dir.join(output);
+                by_path
+                    .entry(canonical)
+                    .or_default()
+                    .insert(ru.recipe_name.clone());
+            }
+        }
+    }
+
+    // Build a recipe-level dep graph from RecipeUnits.deps. Edges are
+    // bidirectional for the "dep-related" reachability check, since either
+    // direction (A depends on B, or B depends on A) imposes ordering.
+    let mut undirected: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for ru in recipe_units {
+        undirected.entry(ru.recipe_name.clone()).or_default();
+        for dep in &ru.deps {
+            undirected
+                .entry(ru.recipe_name.clone())
+                .or_default()
+                .insert(dep.clone());
+            undirected
+                .entry(dep.clone())
+                .or_default()
+                .insert(ru.recipe_name.clone());
+        }
+    }
+
+    for (path, recipes) in &by_path {
+        if recipes.len() < 2 {
+            continue;
+        }
+        // Pick any two recipes from the colliding set and check whether they
+        // are connected in the undirected dep graph. If any pair is
+        // disconnected, we have a true collision.
+        let names: Vec<&String> = recipes.iter().collect();
+        for i in 0..names.len() {
+            for j in (i + 1)..names.len() {
+                if !connected(&undirected, names[i], names[j]) {
+                    return Some(EngineError::OutputCollision {
+                        path: path.clone(),
+                        recipes: recipes.iter().cloned().collect(),
+                    });
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// BFS reachability over the undirected recipe dep graph.
+fn connected(graph: &BTreeMap<String, BTreeSet<String>>, a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut queue: VecDeque<&str> = VecDeque::new();
+    queue.push_back(a);
+    seen.insert(a);
+    while let Some(node) = queue.pop_front() {
+        if node == b {
+            return true;
+        }
+        if let Some(neighbors) = graph.get(node) {
+            for n in neighbors {
+                if seen.insert(n.as_str()) {
+                    queue.push_back(n.as_str());
+                }
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -202,7 +308,7 @@ mod tests {
             terminal_outputs: vec![],
             dep_edges: vec![],
         };
-        let dag = build_dag(vec![units]);
+        let dag = build_dag(vec![units]).expect("no collision");
         assert_eq!(dag.len(), 2);
         // Second node should depend on first
         assert_eq!(dag.node(0).remaining_deps(), 0);
@@ -238,7 +344,7 @@ mod tests {
             terminal_outputs: vec![],
             dep_edges: vec![],
         };
-        let dag = build_dag(vec![units]);
+        let dag = build_dag(vec![units]).expect("no collision");
         assert_eq!(dag.len(), 3);
         // Step group units have 0 deps (first in recipe)
         assert_eq!(dag.node(0).remaining_deps(), 0);
@@ -277,7 +383,7 @@ mod tests {
             terminal_outputs: vec![],
             dep_edges: vec![],
         };
-        let dag = build_dag(vec![setup, build]);
+        let dag = build_dag(vec![setup, build]).expect("no collision");
         assert_eq!(dag.len(), 2);
         // build's unit should depend on setup's unit
         assert_eq!(dag.node(1).remaining_deps(), 1);
@@ -285,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_build_empty() {
-        let dag = build_dag(vec![]);
+        let dag = build_dag(vec![]).expect("no collision");
         assert!(dag.is_empty());
     }
 
@@ -342,7 +448,7 @@ mod tests {
             dep_edges: vec![(1, "libmath".into())], // unit 1 (link) depends on libmath
         };
 
-        let dag = build_dag(vec![libmath, app]);
+        let dag = build_dag(vec![libmath, app]).expect("no collision");
         assert_eq!(dag.len(), 5);
 
         // Nodes: 0=add.c, 1=mul.c, 2=archive, 3=main.c, 4=link
@@ -396,7 +502,7 @@ mod tests {
             terminal_outputs: vec![],
             dep_edges: vec![],
         };
-        let dag = build_dag(vec![setup, build]);
+        let dag = build_dag(vec![setup, build]).expect("no collision");
         assert_eq!(dag.len(), 2);
         // build's unit depends on setup's unit via coarse deps
         assert_eq!(dag.node(1).remaining_deps(), 1);
@@ -428,11 +534,139 @@ mod tests {
             terminal_outputs: vec![],
             dep_edges: vec![],
         };
-        let dag = build_dag(vec![units]);
+        let dag = build_dag(vec![units]).expect("no collision");
         assert_eq!(dag.len(), 2);
         // First node is presatisfied (no payload)
         assert!(dag.node(0).payload().payload.is_none());
         // Second node has payload
         assert!(dag.node(1).payload().payload.is_some());
+    }
+
+    fn cache_meta_for(recipe: &str, outputs: &[&str]) -> cook_contracts::CacheMeta {
+        cook_contracts::CacheMeta {
+            recipe_name: recipe.to_string(),
+            project_id: String::new(),
+            cookfile_path: String::new(),
+            cache_key: format!("k_{recipe}"),
+            input_paths: vec![],
+            output_paths: outputs.iter().map(|s| s.to_string()).collect(),
+            command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_output_collision_unrelated_recipes_rejected() {
+        // Two recipes, no dep edge, both declare the same output path.
+        // build_dag MUST return EngineError::OutputCollision at plan time.
+        let a = RecipeUnits {
+            recipe_name: "a".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch out"),
+                cache_meta: Some(cache_meta_for("a", &["build/shared.bin"])),
+                dep_kind: DepKind::Sequential,
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["build/shared.bin".into()],
+            dep_edges: vec![],
+        };
+        let b = RecipeUnits {
+            recipe_name: "b".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch out"),
+                cache_meta: Some(cache_meta_for("b", &["build/shared.bin"])),
+                dep_kind: DepKind::Sequential,
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["build/shared.bin".into()],
+            dep_edges: vec![],
+        };
+        let err = build_dag(vec![a, b]).expect_err("expected OutputCollision");
+        match err {
+            EngineError::OutputCollision { path, recipes } => {
+                assert_eq!(path, default_wd().join("build/shared.bin"));
+                assert!(recipes.contains(&"a".to_string()));
+                assert!(recipes.contains(&"b".to_string()));
+            }
+            other => panic!("expected OutputCollision, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_output_collision_dep_related_recipes_allowed() {
+        // Two recipes, b depends on a, both touch same output. Allowed because
+        // the dep edge enforces ordering — no race.
+        let a = RecipeUnits {
+            recipe_name: "a".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch out"),
+                cache_meta: Some(cache_meta_for("a", &["build/shared.bin"])),
+                dep_kind: DepKind::Sequential,
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["build/shared.bin".into()],
+            dep_edges: vec![],
+        };
+        let b = RecipeUnits {
+            recipe_name: "b".into(),
+            deps: vec!["a".into()],
+            units: vec![CapturedUnit {
+                payload: shell("touch out"),
+                cache_meta: Some(cache_meta_for("b", &["build/shared.bin"])),
+                dep_kind: DepKind::Sequential,
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["build/shared.bin".into()],
+            dep_edges: vec![],
+        };
+        let dag = build_dag(vec![a, b]).expect("dep edge allows shared output");
+        assert_eq!(dag.len(), 2);
+    }
+
+    #[test]
+    fn test_output_collision_distinct_outputs_allowed() {
+        let a = RecipeUnits {
+            recipe_name: "a".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch out"),
+                cache_meta: Some(cache_meta_for("a", &["build/a.bin"])),
+                dep_kind: DepKind::Sequential,
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["build/a.bin".into()],
+            dep_edges: vec![],
+        };
+        let b = RecipeUnits {
+            recipe_name: "b".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch out"),
+                cache_meta: Some(cache_meta_for("b", &["build/b.bin"])),
+                dep_kind: DepKind::Sequential,
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec!["build/b.bin".into()],
+            dep_edges: vec![],
+        };
+        let dag = build_dag(vec![a, b]).expect("distinct outputs OK");
+        assert_eq!(dag.len(), 2);
     }
 }

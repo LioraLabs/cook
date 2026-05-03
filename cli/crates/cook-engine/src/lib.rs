@@ -193,4 +193,13 @@ pub enum EngineError {
     /// Cache I/O error.
     #[error("cache error: {0}")]
     CacheError(String),
+
+    /// Two or more non-dep-related recipes declare the same canonical output
+    /// path. Detected at plan time, before any work runs, to prevent silent
+    /// races under `--jobs > 1`.
+    #[error("output collision: {recipes:?} all declare output {path:?} with no dependency edge between them")]
+    OutputCollision {
+        path: PathBuf,
+        recipes: Vec<String>,
+    },
 }
