@@ -1,0 +1,8 @@
+recipe build
+    >{
+        local s = [==[
+            this is opaque text
+            with } and ]] inside
+        ]==]
+        print(s)
+    }

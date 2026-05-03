@@ -1,0 +1,20 @@
+# CS-0035 audit fixture: multi-line Lua long strings inside `>{ ... }`.
+#
+# Pre-CS-0035, the line-local brace counter would treat the `}` byte
+# inside the long string as the closer of the surrounding `>{ ... }`
+# block, producing a confusing parse error pointing at the wrong line.
+# Post-CS-0035, the long string is opaque to the brace counter and the
+# block closes only on the trailing `}`.
+
+recipe build
+    >{
+        local doc = [[
+            this Lua long string contains a } brace
+            and another } here
+        ]]
+        local doc2 = [==[
+            and a leveled long string with } and ]] inside
+        ]==]
+        print(doc)
+        print(doc2)
+    }

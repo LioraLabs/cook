@@ -1102,3 +1102,144 @@ end"#;
         err
     );
 }
+
+// ── CS-0035: stateful brace-balance for multi-line spans ──────────
+
+#[test]
+fn cs_0035_lua_block_with_multiline_long_string() {
+    // A `}` byte inside a multi-line `[[ … ]]` long string MUST NOT close
+    // the surrounding `>{ … }` Lua block. Pre-CS-0035, the line-local
+    // brace counter saw the bare `}` as a closer.
+    let source = "\
+recipe build
+    >{
+        local s = [[
+            this string contains a } brace
+            and another } here
+        ]]
+        print(s)
+    }
+";
+    let result = parse(source).expect("CS-0035: long string should not close block");
+    let step = &result.recipes[0].steps[0];
+    match step {
+        Step::LuaBlock { code, .. } => {
+            assert!(code.contains("local s = [["));
+            assert!(code.contains("this string contains a } brace"));
+            assert!(code.contains("and another } here"));
+            assert!(code.contains("]]"));
+            assert!(code.contains("print(s)"));
+        }
+        other => panic!("expected LuaBlock, got {:?}", other),
+    }
+}
+
+#[test]
+fn cs_0035_lua_block_with_multiline_long_string_levels() {
+    // `[==[ … ]==]` long strings: closing `]]` of a lower level does not
+    // close a higher-level open.
+    let source = "\
+recipe build
+    >{
+        local s = [==[
+            this is opaque text
+            with } and ]] inside
+        ]==]
+        print(s)
+    }
+";
+    let result = parse(source).expect("CS-0035: leveled long string should not close block");
+    match &result.recipes[0].steps[0] {
+        Step::LuaBlock { code, .. } => {
+            assert!(code.contains("with } and ]] inside"));
+            assert!(code.contains("]==]"));
+        }
+        other => panic!("expected LuaBlock, got {:?}", other),
+    }
+}
+
+#[test]
+fn cs_0035_lua_block_with_multiline_block_comment() {
+    // A `}` byte inside a multi-line `--[[ … ]]` block comment MUST NOT
+    // close the surrounding `>{ … }` Lua block.
+    let source = "\
+recipe build
+    >{
+        --[[
+            here is a } in a block comment
+            and another } here
+        ]]
+        local x = 1
+    }
+";
+    let result = parse(source).expect("CS-0035: block comment should not close block");
+    match &result.recipes[0].steps[0] {
+        Step::LuaBlock { code, .. } => {
+            assert!(code.contains("--[["));
+            assert!(code.contains("here is a } in a block comment"));
+            assert!(code.contains("and another } here"));
+            assert!(code.contains("local x = 1"));
+        }
+        other => panic!("expected LuaBlock, got {:?}", other),
+    }
+}
+
+#[test]
+fn cs_0035_shell_block_with_heredoc_brace_in_body() {
+    // A `}` byte inside a shell heredoc body MUST NOT close the
+    // surrounding `using { … }` shell block.
+    let source = "\
+recipe emit
+    cook \"out.txt\" using {
+        cat <<EOF > out.txt
+        a heredoc with a } brace
+        and a } here too
+        EOF
+        echo done
+    }
+";
+    let result = parse(source).expect("CS-0035: heredoc should not close shell block");
+    match &result.recipes[0].steps[0] {
+        Step::Cook { step, .. } => {
+            let body = step.using_clause.as_ref().expect("using clause");
+            match body {
+                UsingClause::ShellBlock(lines) => {
+                    assert_eq!(lines.len(), 5);
+                    assert_eq!(lines[0], "cat <<EOF > out.txt");
+                    assert_eq!(lines[1], "a heredoc with a } brace");
+                    assert_eq!(lines[2], "and a } here too");
+                    assert_eq!(lines[3], "EOF");
+                    assert_eq!(lines[4], "echo done");
+                }
+                other => panic!("expected ShellBlock, got {:?}", other),
+            }
+        }
+        other => panic!("expected Cook step, got {:?}", other),
+    }
+}
+
+#[test]
+fn cs_0035_shell_block_with_quoted_heredoc_delimiter() {
+    let source = "\
+recipe emit
+    cook \"out.txt\" using {
+        cat <<'END' > out.txt
+        } stays literal
+        END
+    }
+";
+    let result = parse(source).expect("CS-0035: quoted heredoc delim handled");
+    match &result.recipes[0].steps[0] {
+        Step::Cook { step, .. } => match step.using_clause.as_ref().unwrap() {
+            UsingClause::ShellBlock(lines) => {
+                assert_eq!(lines, &vec![
+                    "cat <<'END' > out.txt".to_string(),
+                    "} stays literal".to_string(),
+                    "END".to_string(),
+                ]);
+            }
+            other => panic!("expected ShellBlock, got {:?}", other),
+        },
+        other => panic!("expected Cook step, got {:?}", other),
+    }
+}

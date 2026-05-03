@@ -187,9 +187,19 @@ SHELL_BLOCK_CONTENT   ::= BRACE_BALANCED   /* see § 2.9 */
 LUA_SOURCE            ::= /* any sequence of lines up to the next column-0
                              top-level keyword or end-of-file; see §{recipes.termination} */
 BRACE_BALANCED        ::= /* text in which `{` and `}` counted outside of
-                             Lua comments (--), double-quoted strings, single-
-                             quoted strings, and long strings ([[...]]) balance
-                             to zero; see § 2.9 */
+                             interior-language opaque spans balance to zero.
+                             For `LUA_BLOCK_CONTENT`: ignore braces inside Lua
+                             line comments (--), double-quoted strings, single-
+                             quoted strings, long strings ([==[...]==] of any
+                             =-level), and block comments (--[==[...]==] of any
+                             =-level). For `SHELL_BLOCK_CONTENT`: ignore braces
+                             inside single- and double-quoted strings, after a
+                             backslash-escape (\{, \}), and inside POSIX here-
+                             docs (<<TAG, <<-TAG, <<'TAG', <<"TAG"). Long-
+                             string, block-comment, and heredoc spans MAY span
+                             multiple source lines; the brace counter MUST
+                             carry their state across lines (CS-0035).
+                             See § 2.9. */
 MODULE_CALL_TEXT      ::= /* see § 4.11 */
 ```
 
@@ -228,6 +238,6 @@ The `ACCESSOR` production is defined above. The `sigil_placeholder` production m
 
 **`lua_line` MAY be empty.** The `>` prefix alone (with no following content) is a valid `lua_line` producing an empty Lua expression.
 
-**Brace-balance algorithm.** Both `LUA_BLOCK_CONTENT` and `SHELL_BLOCK_CONTENT` use the same brace-balance algorithm: `{` increments depth and `}` decrements depth, but braces inside Lua line comments (`--` to end of line), double-quoted strings, single-quoted strings, and long strings (`[[...]]`) are ignored. The block closes on the line where depth first returns to zero or below; that closing line is consumed but not included in the block body.
+**Brace-balance algorithm.** Both `LUA_BLOCK_CONTENT` and `SHELL_BLOCK_CONTENT` use a stateful brace-balance algorithm whose interior-language opaque-span rules differ. For Lua-block content, braces are ignored inside Lua line comments (`--` to end of line), double-quoted strings, single-quoted strings, multi-line long strings (`[==[...]==]` of any `=`-level), and multi-line block comments (`--[==[...]==]` of any `=`-level). For shell-block content, braces are ignored inside single- and double-quoted strings, after a backslash-escape (`\{`, `\}`), and inside POSIX heredocs (`<<TAG`, `<<-TAG`, `<<'TAG'`, `<<"TAG"`). The brace counter carries multi-line opaque-span state (long strings, block comments, heredocs) across lines per CS-0035. The block closes on the line where depth first returns to zero or below; that closing line is consumed but not included in the block body.
 
 **Shell block line normalisation.** Each line of `SHELL_BLOCK_CONTENT` is trimmed of leading and trailing whitespace; blank lines after trimming are discarded. The result is a sequence of command strings, not a single raw string.

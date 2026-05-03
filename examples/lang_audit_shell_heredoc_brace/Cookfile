@@ -1,0 +1,23 @@
+# CS-0035 audit fixture: shell heredoc with `}` brace in body.
+#
+# Pre-CS-0035, the brace counter for `using { ... }` shell blocks did not
+# track open POSIX heredocs across lines. A `}` byte on a heredoc-body
+# line would prematurely close the surrounding shell block. Post-CS-0035,
+# the heredoc body is opaque to the brace counter and the block closes
+# only on the trailing `}` after the heredoc has been closed by its
+# delimiter.
+
+recipe emit
+    cook "out.txt" using {
+        cat <<EOF > out.txt
+        bare heredoc with a } brace
+        and another } here too
+        EOF
+        cat <<'END' >> out.txt
+        single-quoted delimiter; } is literal
+        END
+        cat <<-DASH >> out.txt
+            tab-stripped form; } also literal
+            DASH
+        echo done >> out.txt
+    }

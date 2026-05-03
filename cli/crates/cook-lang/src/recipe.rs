@@ -1,7 +1,8 @@
 use crate::ast::*;
+use crate::brace_scan::LuaScanner;
 use crate::cook_line::*;
 use crate::lexer::*;
-use crate::lua_block::{collect_lua_block, count_brace_delta};
+use crate::lua_block::collect_lua_block;
 use crate::ParseError;
 
 /// Returns true if `text` looks like a module function call: `ident.ident...`
@@ -25,6 +26,10 @@ fn is_module_call(text: &str) -> bool {
 }
 
 /// Collects a module call that may span multiple lines (when braces are unbalanced).
+///
+/// A module call's body is Lua source, so the brace counter uses the stateful
+/// [`LuaScanner`] (CS-0035): braces inside multi-line long strings or block
+/// comments are treated as data and do not prematurely close the call.
 fn collect_module_call(
     first_line_text: &str,
     line: usize,
@@ -32,7 +37,8 @@ fn collect_module_call(
     current_pos: usize,
     source_lines: &[&str],
 ) -> Result<(String, usize), ParseError> {
-    let mut depth = count_brace_delta(first_line_text);
+    let mut scanner = LuaScanner::new();
+    let mut depth = scanner.scan_line(first_line_text);
 
     if depth <= 0 {
         // Single-line call (balanced or no braces)
@@ -46,7 +52,7 @@ fn collect_module_call(
 
     while line_idx < source_lines.len() {
         let raw_line = source_lines[line_idx];
-        depth += count_brace_delta(raw_line);
+        depth += scanner.scan_line(raw_line);
         code_lines.push(raw_line.to_string());
 
         if depth <= 0 {

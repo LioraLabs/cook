@@ -1,0 +1,6 @@
+recipe emit
+    cook "out.txt" using {
+        cat <<'END' > out.txt
+        } stays literal
+        END
+    }

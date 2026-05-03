@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod lexer;
+pub(crate) mod brace_scan;
 pub(crate) mod cook_line;
 pub(crate) mod lua_block;
 pub(crate) mod recipe;

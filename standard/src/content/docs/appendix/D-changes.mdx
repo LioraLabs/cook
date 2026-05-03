@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038
+- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
@@ -512,7 +512,6 @@ The closed-set resolver lives in `cook-luagen/src/resolver.rs` and produces one 
 **Reference:** the v0.7 cut commit on the `feature/sigil-placeholder-syntax` branch (post-merge, on `main`).
 
 ## D.35. CS-0035 — `events.jsonl` wire-format invariants: lexicographic key order and `node`-field source of truth. [#changes.cs-0035]
-
 **Date:** 2026-05-03
 
 **Version:** v0.7
@@ -584,3 +583,36 @@ CS-0036 reworks `step_context_hash` to (a) split the command text on newlines, (
 **Conformance impact.** Three new negative fixtures land alongside this entry: `040-use-name-with-spaces-rejected/` pins the quoted-with-spaces case, `041-use-name-with-dash-rejected/` pins the bare-with-dash case, and `042-use-name-with-dot-rejected/` pins the bare-with-dot case. Each fixture's `error.txt` asserts a substring of the new diagnostic ("`'use' name 'X' is not a valid Lua identifier`"). All existing positive fixtures that exercise `use` (`010-use-and-module-call/`, `017-use-from-execute/`) already satisfy the `LUA_IDENT` rule and continue to parse cleanly. The conformance harness passes against the CS-0038 commit.
 
 **Reference:** the CS-0038 commit on `worktree-agent-a2d8a370be4c0889a` (the lang-audit branch).
+
+## D.39. CS-0039 — Stateful brace-balance: multi-line Lua long strings, block comments, and shell heredocs are opaque to the brace counter. [#changes.cs-0039]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7
+
+**Sections affected:** §{lexical.brace-blocks} (rewritten to require stateful opaque-span tracking; new sub-sections §{lexical.brace-blocks.lua-spans} and §{lexical.brace-blocks.shell-spans}; new Examples 2.9.2 and 2.9.3); App. A `BRACE_BALANCED` production comment; App. A "Brace-balance algorithm" prose. Reference implementation: new `cli/crates/cook-lang/src/brace_scan.rs` module exposing `LuaScanner` and `ShellScanner`; `lua_block.rs`, `shell_block.rs`, and `recipe.rs::collect_module_call` rewritten to drive the stateful scanners. Conformance corpus: positive fixtures `039-lua-multiline-long-string`, `040-lua-multiline-block-comment`, `041-lua-long-string-leveled`, `042-shell-heredoc-brace-in-body`, `043-shell-heredoc-quoted-delim`.
+
+**Summary.** The pre-CS-0039 `count_brace_delta` helper in `cli/crates/cook-lang/src/lua_block.rs` was line-local: it correctly ignored braces inside single-line Lua line comments, single- and double-quoted strings, and single-line long strings (`[[…]]`), but it did not carry opaque-span state across source lines. Three classes of multi-line Lua / shell construct were therefore broken: (i) multi-line Lua long strings `[[ … ]]` and `[==[ … ]==]`, (ii) multi-line Lua block comments `--[[ … ]]` and `--[==[ … ]==]`, and (iii) POSIX shell heredocs (`<<TAG`, `<<-TAG`, `<<'TAG'`, `<<"TAG"`). A `}` byte appearing on any line interior to one of these spans would decrement the running brace depth and prematurely close the surrounding `>{ … }` Lua block, `using { … }` shell block, or multi-line module-call body. CS-0039 makes the brace counter stateful: it now carries long-string level, block-comment level, and pending heredoc delimiters across lines, treating every brace byte interior to such a span as opaque data.
+
+**Lua side.** A new `LuaScanner` (`brace_scan.rs`) tracks an `Option<u32>` long-bracket level. A `[==[` opener at level *n* is opaque until a `]==]` closer at the same level is seen — possibly many lines later. The same level-aware open/close logic governs `--[==[ … ]==]` block comments. Single-line constructs (line comments, quoted strings) remain single-line. `LuaScanner` drives `collect_lua_block` (for `>{ … }`) and `collect_module_call` (for multi-line `mod.fn(…)` invocations).
+
+**Shell side.** A new `ShellScanner` (`brace_scan.rs`) maintains a FIFO queue of pending heredoc closers, each tagged with its delimiter text and `<<-` (tab-strip) flag. While the queue is non-empty, body lines are scanned only for the front-of-queue delimiter; brace bytes are ignored. Multiple heredocs queued on a single opener line (`cmd <<A <<B`) are consumed in opener order. The closer is matched against the **trimmed** body line, consistent with `SHELL_BLOCK_CONTENT` line normalisation: this lets authors write a heredoc inside an indented `{ … }` body without dedenting the closing delimiter to column 0. `ShellScanner` drives `collect_shell_block`.
+
+**Shell-side decision: full support.** The instructions for this CS offered a tractable alternative — REJECT heredocs inside `using { … }` with a clear diagnostic — but full support was chosen because (i) heredocs are a load-bearing POSIX construct that authors expect to "just work" in any shell-like context, (ii) the scanner state is small (a `Vec<(String, bool)>`) and the implementation is comparable in size to a rejection diagnostic, and (iii) trim-first matching collapses the runtime indentation question that would otherwise force authors to dedent or use `<<-` with strict tab discipline.
+
+**Why a non-cut entry on v0.7.** CS-0039 lands as a v0.7 erratum: it is a normative correction to the §{lexical.brace-blocks} algorithm that was already part of v0.7 but was under-specified for multi-line opaque spans. No version bump is taken — implementations that already happened to track multi-line state are conformant; implementations that were line-local (the reference parser pre-CS-0039) need to update.
+
+**Conformance impact.** Five new positive fixtures land alongside this entry and pin the multi-line carry behaviour:
+
+- `039-lua-multiline-long-string` — `}` byte inside multi-line `[[ … ]]` is data.
+- `040-lua-multiline-block-comment` — `}` byte inside multi-line `--[[ … ]]` is data.
+- `041-lua-long-string-leveled` — `[==[ … ]==]` level matching; `]]` does not close `[==[`.
+- `042-shell-heredoc-brace-in-body` — `}` byte inside `<<EOF` body is data.
+- `043-shell-heredoc-quoted-delim` — `<<'END'` quoted delimiter form is recognised.
+
+Companion unit tests: the `cs_0035_*` family in `tests.rs`, `shell_block.rs`, and the per-scanner tests in `brace_scan.rs`. The conformance harness is green at the CS-0039 commit.
+
+**Implementation status.** Lockstep — the spec rewrite, the new `brace_scan` module, the three call-site rewrites (`lua_block.rs`, `shell_block.rs`, `recipe.rs`), the unit tests, and the five conformance fixtures land in the same commit. Walkthrough fixtures live under `examples/lang_audit_lua_multiline_string/`, `examples/lang_audit_lua_block_comment/`, and `examples/lang_audit_shell_heredoc_brace/`.
+
+**Reference:** the CS-0039 commit on `main` (this commit).
+

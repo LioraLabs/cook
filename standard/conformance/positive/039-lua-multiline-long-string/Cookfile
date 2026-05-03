@@ -1,0 +1,8 @@
+recipe build
+    >{
+        local s = [[
+            this string contains a } brace
+            and another } here
+        ]]
+        print(s)
+    }

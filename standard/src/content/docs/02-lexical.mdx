@@ -201,20 +201,42 @@ recipe "run-tests"
 The reference implementation is `parse_test_modifier_tail` in `cli/crates/cook-lang/src/recipe.rs`. The test `test_test_step_with_timeout_and_should_fail` demonstrates the admitted operand ordering: a `NUMBER` directly after `timeout`, followed by the optional `should_fail` marker.
 
 ## 2.9. Brace-balanced blocks [#lexical.brace-blocks]
-A **brace-balanced block** is a span of source text delimited by `{` and a matching `}`, where matching is defined by a single-pass brace-counting algorithm that ignores braces appearing inside certain syntactic contexts. Both the `LUA_BLOCK_CONTENT` (inside `>{ … }`) and the `SHELL_BLOCK_CONTENT` (inside `{ … }` after `using`) are brace-balanced blocks; they differ only in how their collected body is normalised after the block closes.
+A **brace-balanced block** is a span of source text delimited by `{` and a matching `}`, where matching is defined by a stateful brace-counting algorithm that ignores braces appearing inside certain syntactic contexts. Both the `LUA_BLOCK_CONTENT` (inside `>{ … }`) and the `SHELL_BLOCK_CONTENT` (inside `{ … }` after `using`) are brace-balanced blocks; they differ in their interior language (Lua vs. shell) and in how their collected body is normalised after the block closes.
 
-The opening brace is consumed on the line that introduced the block (a `LuaBlockOpen` token for `>{`, or the `{` immediately after `using` for `shell_block`), establishing initial depth `1`. Each subsequent source line is examined character by character; `{` increments depth and `}` decrements depth, except that braces are ignored when they appear:
+The opening brace is consumed on the line that introduced the block (a `LuaBlockOpen` token for `>{`, or the `{` immediately after `using` for `shell_block`), establishing initial depth `1`. The block's body lines are then scanned in source order. Each line is examined character by character; `{` increments depth and `}` decrements depth, except that braces are ignored when they appear inside one of the **opaque spans** enumerated in §{lexical.brace-blocks.lua-spans} (for Lua blocks) or §{lexical.brace-blocks.shell-spans} (for shell blocks). The brace counter MUST carry **opaque-span state across lines** so that a span opened on one line and closed on a later line keeps every brace byte between the open and the close opaque.
 
-- inside a Lua line comment, beginning at `--` and extending to the end of the line;
-- inside a double-quoted string `"…"`, with `\`-escapes honoured;
-- inside a single-quoted string `'…'`, with `\`-escapes honoured;
-- inside a Lua long string `[[ … ]]`.
-
-A conforming implementation MUST apply this exclusion consistently for both Lua blocks and shell blocks, so that a block's closing `}` is never mistaken for a literal `}` inside string or comment content. The block closes on the first line where the running depth returns to zero or below after the line's brace deltas have been applied; that closing line is consumed by the lexer but is NOT included in the block body.
+A conforming implementation MUST apply this exclusion consistently for both Lua blocks and shell blocks, so that a block's closing `}` is never mistaken for a literal `}` inside string, comment, or heredoc content. The block closes on the first line where the running depth returns to zero or below after the line's brace deltas have been applied; that closing line is consumed by the lexer but is NOT included in the block body.
 
 The `LUA_BLOCK_CONTENT` body is the concatenation of the interior lines in source order, joined by newlines, preserving their original whitespace. The `SHELL_BLOCK_CONTENT` body is further normalised per App. A.5: each interior line is trimmed of leading and trailing whitespace, and lines that are empty after trimming are discarded; the result is an ordered sequence of command strings, not a single raw string.
 
 A conforming implementation MUST reject a block whose depth never returns to zero by end of input.
+
+### 2.9.1. Opaque spans inside Lua blocks [#lexical.brace-blocks.lua-spans]
+
+For a `LUA_BLOCK_CONTENT` body and for the body of a multi-line module call (App. A.4 `module_call`), braces are ignored when they appear:
+
+- inside a Lua line comment, beginning at `--` and extending to the end of the line (single-line span);
+- inside a double-quoted string `"…"`, with `\`-escapes honoured (single-line span);
+- inside a single-quoted string `'…'`, with `\`-escapes honoured (single-line span);
+- inside a Lua **long string** `[==[ … ]==]` of any `=`-level — including the level-0 form `[[ … ]]` (single-line **or** multi-line span);
+- inside a Lua **block comment** `--[==[ … ]==]` of any `=`-level — including the level-0 form `--[[ … ]]` (single-line **or** multi-line span).
+
+For long strings and block comments, the closing bracket MUST have the same `=`-level as the opener: a `]]` token does not close a `[==[` opener, and a `]==]` token does not close a `[[` opener. This is the long-bracket rule of the Lua 5.4 reference manual; a conforming implementation MUST honour it for any number of `=` characters.
+
+When a long string or block comment is opened on one source line and closed on a later one, every brace byte in the intervening lines is opaque to the brace counter. CS-0035 establishes this multi-line carry as a normative requirement; see App. D.
+
+### 2.9.2. Opaque spans inside shell blocks [#lexical.brace-blocks.shell-spans]
+
+For a `SHELL_BLOCK_CONTENT` body, braces are ignored when they appear:
+
+- inside a single-quoted string `'…'` (no escapes; single-line span);
+- inside a double-quoted string `"…"`, with `\`-escapes honoured (single-line span);
+- after a backslash-escape `\{` or `\}` (the next byte is consumed as data; single-line span);
+- inside a POSIX **heredoc body** opened by `<<TAG`, `<<-TAG`, `<<'TAG'`, or `<<"TAG"` and closed by a line whose trimmed text equals `TAG` (multi-line span).
+
+The heredoc closer is matched against the **trimmed** body line: this is consistent with the `SHELL_BLOCK_CONTENT` line-normalisation rule above, which trims each interior line before assembling the shell script. Authors writing a heredoc inside an indented `{ … }` body therefore do not need to dedent the closing delimiter to column 0 in the source; the trim-first match closes the heredoc as soon as the trimmed line matches the delimiter.
+
+When a shell heredoc is opened on one source line and closed on a later one, every brace byte in the intervening lines is opaque to the brace counter. Multiple heredocs queued on a single opener line (`cmd <<A <<B`) MUST be consumed in opener order: the first delimiter line closes the first heredoc, the second closes the second, and so on. CS-0035 establishes this multi-line carry as a normative requirement; see App. D.
 
 ### Example 2.9.1
 
@@ -235,9 +257,39 @@ recipe "build"
 
 The `>{ … }` block's body includes the `if`/`end` structure and the nested table `{1, 2, 3}`; the braces inside the string `"a { brace in a string }"` and after the `--` comment are ignored by the brace counter. The `using { … }` block's body, after line normalisation, is the two-element command list `["wasm-pack build", "cp out/main.js out.js"]`.
 
+### Example 2.9.2
+
+```cook
+recipe "build"
+    >{
+        local doc = [==[
+            multi-line long string with a } byte
+            and a stray ]] that does NOT close it
+        ]==]
+        print(doc)
+    }
+```
+
+The `[==[ … ]==]` long string spans four source lines. The `}` byte on the second body line and the `]]` token on the third are interior to the long string and MUST be opaque to the brace counter. The `>{ … }` block closes only at the trailing `}` on the line after `print(doc)`. The corresponding pin is fixture `041-lua-long-string-leveled` in the conformance corpus.
+
+### Example 2.9.3
+
+```cook
+recipe emit
+    cook "out.txt" using {
+        cat <<EOF > out.txt
+        a heredoc with a } brace
+        and a } here too
+        EOF
+        echo done
+    }
+```
+
+The `cat <<EOF` opens a shell heredoc; its body extends through the next two lines, in which `}` bytes are heredoc data and MUST be opaque to the brace counter. The heredoc closes on the trimmed `EOF` line; brace counting resumes for `echo done` and the trailing `}` closes the `using { … }` block. The corresponding pin is fixture `042-shell-heredoc-brace-in-body`.
+
 ### Note 2.9.1
 
-The governing examples are the tests `test_lua_block_nested_braces`, `test_lua_block_brace_in_string`, and `test_lua_block_brace_in_comment` in `cli/crates/cook-lang/src/tests.rs`, and the tests `collects_three_lines`, `drops_blank_lines`, and `respects_nested_braces_in_content` in `cli/crates/cook-lang/src/shell_block.rs`.
+The governing examples are the tests `test_lua_block_nested_braces`, `test_lua_block_brace_in_string`, `test_lua_block_brace_in_comment`, and the `cs_0035_*` family in `cli/crates/cook-lang/src/tests.rs`; the tests `collects_three_lines`, `drops_blank_lines`, `respects_nested_braces_in_content`, and the `cs_0035_*` family in `cli/crates/cook-lang/src/shell_block.rs`; and the unit tests in `cli/crates/cook-lang/src/brace_scan.rs`.
 
 ## 2.10. Line classification cascade [#lexical.line-classification]
 For each source line, a conforming implementation MUST classify the line into exactly one token by applying the following tests in order, with the first matching test winning. The line's trimmed form (leading and trailing whitespace removed) is the subject of each test except where noted.

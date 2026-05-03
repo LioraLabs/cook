@@ -1,0 +1,18 @@
+# CS-0035 audit fixture: multi-line Lua block comments inside `>{ ... }`.
+#
+# Pre-CS-0035, a `}` byte on a body line of a multi-line `--[[ ... ]]`
+# block comment would prematurely close the surrounding `>{ ... }` block.
+
+recipe build
+    >{
+        --[[
+            multi-line block comment with a } brace
+            and a second } here
+        ]]
+        --[==[
+            leveled block comment; ]] does NOT close it
+            still } opaque
+        ]==]
+        local x = 1
+        print(x)
+    }

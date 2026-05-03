@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="emit" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["out.txt"] using=ShellBlock(["cat <<'END' > out.txt", "} stays literal", "END"])
+  chores:

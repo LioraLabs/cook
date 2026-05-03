@@ -1,5 +1,5 @@
+use crate::brace_scan::ShellScanner;
 use crate::lexer::{Located, Token};
-use crate::lua_block::count_brace_delta;
 use crate::ParseError;
 
 /// Try to extract an inline shell block from the text immediately following
@@ -50,6 +50,12 @@ pub(crate) fn try_inline_shell_block(after_open: &str) -> Option<Vec<String>> {
 /// Returns the canonical list of commands: per-line trim, blank lines dropped.
 /// Returns how many tokens to skip past the closing brace line.
 ///
+/// Brace counting uses a stateful [`ShellScanner`] that ignores braces inside
+/// single- and double-quoted strings and inside POSIX heredocs (`<<TAG`,
+/// `<<-TAG`, `<<'TAG'`, `<<"TAG"`). Heredoc state carries across lines so
+/// that a `}` byte inside heredoc body text is treated as data rather than
+/// the block's closing delimiter (CS-0035).
+///
 /// One-line form: the caller should detect and handle inline blocks using
 /// `try_inline_shell_block` before calling this function.  This function
 /// handles the multi-line case only (opening `{` on its own line or without
@@ -64,10 +70,11 @@ pub(crate) fn collect_shell_block(
     let mut depth: i32 = 1;
     let mut commands: Vec<String> = Vec::new();
     let mut line_idx = start_source_line;
+    let mut scanner = ShellScanner::new();
 
     while line_idx < source_lines.len() {
         let raw_line = source_lines[line_idx];
-        depth += count_brace_delta(raw_line);
+        depth += scanner.scan_line(raw_line);
         if depth <= 0 {
             break;
         }
@@ -165,5 +172,33 @@ mod tests {
     fn cs_0022_inline_block_no_close_returns_none() {
         let result = try_inline_shell_block(" wasm-pack build");
         assert_eq!(result, None);
+    }
+
+    // ── CS-0035: heredoc state carries across shell-block lines ──
+
+    #[test]
+    fn cs_0035_heredoc_with_brace_inside_body() {
+        // The `}` on line 3 is heredoc body, not the block close.
+        let src = "{\n    cat <<EOF\n    } not a closer\n    EOF\n    echo done\n}\n";
+        let cmds = run(src).expect("ok");
+        assert_eq!(cmds.len(), 4);
+        assert_eq!(cmds[0], "cat <<EOF");
+        assert_eq!(cmds[1], "} not a closer");
+        assert_eq!(cmds[2], "EOF");
+        assert_eq!(cmds[3], "echo done");
+    }
+
+    #[test]
+    fn cs_0035_heredoc_quoted_delim() {
+        let src = "{\n    cat <<'END'\n    } literal\n    END\n}\n";
+        let cmds = run(src).expect("ok");
+        assert_eq!(cmds, vec!["cat <<'END'", "} literal", "END"]);
+    }
+
+    #[test]
+    fn cs_0035_heredoc_dash_form() {
+        let src = "{\n    cat <<-EOF\n\t} body\n\tEOF\n}\n";
+        let cmds = run(src).expect("ok");
+        assert_eq!(cmds.len(), 3);
     }
 }

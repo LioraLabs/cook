@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        LuaBlock code="        --[[\n            here is a } in a block comment\n            and another } here\n        ]]\n        local x = 1"
+  chores:

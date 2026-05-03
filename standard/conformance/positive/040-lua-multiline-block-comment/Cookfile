@@ -1,0 +1,8 @@
+recipe build
+    >{
+        --[[
+            here is a } in a block comment
+            and another } here
+        ]]
+        local x = 1
+    }

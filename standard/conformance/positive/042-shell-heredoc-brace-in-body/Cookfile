@@ -1,0 +1,8 @@
+recipe emit
+    cook "out.txt" using {
+        cat <<EOF > out.txt
+        a heredoc with a } brace
+        and a } here too
+        EOF
+        echo done
+    }

@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        LuaBlock code="        local s = [==[\n            this is opaque text\n            with } and ]] inside\n        ]==]\n        print(s)"
+  chores:

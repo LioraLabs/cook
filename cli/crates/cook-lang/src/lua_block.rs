@@ -1,9 +1,14 @@
+use crate::brace_scan::LuaScanner;
 use crate::lexer::*;
 use crate::ParseError;
 
 /// Collects raw source lines for a Lua block, tracking brace depth.
 /// Starts after the `>{` token. Reads raw source lines (not tokens) to preserve
-/// original formatting. Tracks brace depth, ignoring braces inside strings and comments.
+/// original formatting. Tracks brace depth, ignoring braces inside strings,
+/// line comments, multi-line long strings (`[==[ … ]==]`), and multi-line
+/// block comments (`--[==[ … ]==]`). The scanner carries state across lines
+/// so that a `}` byte appearing inside one of those spans is treated as data
+/// rather than a block-closing delimiter (CS-0035).
 pub(crate) fn collect_lua_block(
     open_line: usize,
     tokens: &[Located<Token>],
@@ -16,11 +21,12 @@ pub(crate) fn collect_lua_block(
     let mut depth: i32 = 1;
     let mut code_lines = Vec::new();
     let mut line_idx = start_source_line; // 0-indexed line to read
+    let mut scanner = LuaScanner::new();
 
     while line_idx < source_lines.len() {
         let raw_line = source_lines[line_idx];
         // Update depth based on this line
-        depth += count_brace_delta(raw_line);
+        depth += scanner.scan_line(raw_line);
 
         if depth <= 0 {
             // This line contains the closing brace; don't include it in the block
@@ -51,78 +57,4 @@ pub(crate) fn collect_lua_block(
     }
 
     Ok((code, new_pos))
-}
-
-/// Counts the net brace delta ({  = +1, } = -1) on a line,
-/// ignoring braces inside double-quoted strings, single-quoted strings,
-/// long strings ([[...]]), and after -- Lua line comments.
-pub(crate) fn count_brace_delta(line: &str) -> i32 {
-    let mut delta = 0;
-    let chars: Vec<char> = line.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
-
-    while i < len {
-        let c = chars[i];
-
-        // Check for Lua line comment
-        if c == '-' && i + 1 < len && chars[i + 1] == '-' {
-            // Rest of line is a comment — stop processing
-            break;
-        }
-
-        // Check for long string [[ ... ]]
-        if c == '[' && i + 1 < len && chars[i + 1] == '[' {
-            i += 2;
-            // Skip until ]]
-            while i + 1 < len {
-                if chars[i] == ']' && chars[i + 1] == ']' {
-                    i += 2;
-                    break;
-                }
-                i += 1;
-            }
-            continue;
-        }
-
-        // Check for double-quoted string
-        if c == '"' {
-            i += 1;
-            while i < len && chars[i] != '"' {
-                if chars[i] == '\\' {
-                    i += 1; // skip escaped character
-                }
-                i += 1;
-            }
-            if i < len {
-                i += 1; // skip closing quote
-            }
-            continue;
-        }
-
-        // Check for single-quoted string
-        if c == '\'' {
-            i += 1;
-            while i < len && chars[i] != '\'' {
-                if chars[i] == '\\' {
-                    i += 1; // skip escaped character
-                }
-                i += 1;
-            }
-            if i < len {
-                i += 1; // skip closing quote
-            }
-            continue;
-        }
-
-        if c == '{' {
-            delta += 1;
-        } else if c == '}' {
-            delta -= 1;
-        }
-
-        i += 1;
-    }
-
-    delta
 }
