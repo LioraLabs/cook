@@ -213,6 +213,38 @@ impl Workspace {
         out
     }
 
+    /// For a given importer Cookfile directory `importer_dir` (canonical),
+    /// return a map from each of its import aliases to that alias target's
+    /// **canonical workspace qualified prefix** (the same string that
+    /// `find_full_prefix(target_canon)` returns).
+    ///
+    /// This is what `cook.dep_output("alias.recipe")` uses to resolve cross-
+    /// Cookfile references to their workspace-global storage key, in a way
+    /// that survives diamond imports: the same target Cookfile reached via
+    /// two different chains has one canonical prefix, and every importer's
+    /// alias map points at that canonical prefix regardless of which chain
+    /// the importer itself sits on.
+    pub fn alias_qualified_prefixes_for(
+        &self,
+        importer_dir: &Path,
+    ) -> BTreeMap<String, String> {
+        let mut out = BTreeMap::new();
+        let importer_canon = std::fs::canonicalize(importer_dir)
+            .unwrap_or_else(|_| importer_dir.to_path_buf());
+        for (parent_canon, alias, target_canon) in &self.namespace_map {
+            if parent_canon != &importer_canon {
+                continue;
+            }
+            let prefix = cook_engine::analyzer::find_full_prefix(
+                &self.namespace_map,
+                &self.root.dir,
+                target_canon,
+            );
+            out.insert(alias.clone(), prefix);
+        }
+        out
+    }
+
     /// Resolve "backend.build" from a parent dir to (canonical_import_dir, recipe_name).
     #[allow(dead_code)]
     pub fn resolve_namespaced_dep(

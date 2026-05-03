@@ -725,6 +725,7 @@ mod tests {
             capture_state.clone(),
             std::collections::BTreeMap::new(),
             String::new(),
+            std::collections::BTreeMap::new(),
         )
         .unwrap();
 

@@ -22,6 +22,14 @@ pub struct Registry {
     selected_config: Option<String>,
     qualified_prefix: String,
     alias_dirs: BTreeMap<String, PathBuf>,
+    /// Per-alias canonical importee qualified prefix, used by `cook.dep_output`
+    /// to resolve cross-Cookfile body refs to their workspace-global storage
+    /// key. Distinct from `qualified_prefix` (which applies only to
+    /// same-Cookfile name refs). Diamond imports require this — a Cookfile
+    /// reachable via two import chains has one canonical storage prefix, and
+    /// every importer's local alias must resolve to that same canonical
+    /// prefix at lookup time.
+    alias_qualified_prefixes: BTreeMap<String, String>,
 }
 
 impl Registry {
@@ -34,6 +42,7 @@ impl Registry {
             selected_config: None,
             qualified_prefix: String::new(),
             alias_dirs: BTreeMap::new(),
+            alias_qualified_prefixes: BTreeMap::new(),
         }
     }
 
@@ -54,6 +63,14 @@ impl Registry {
 
     pub fn with_alias_dirs(mut self, alias_dirs: BTreeMap<String, PathBuf>) -> Self {
         self.alias_dirs = alias_dirs;
+        self
+    }
+
+    pub fn with_alias_qualified_prefixes(
+        mut self,
+        alias_qualified_prefixes: BTreeMap<String, String>,
+    ) -> Self {
+        self.alias_qualified_prefixes = alias_qualified_prefixes;
         self
     }
 
@@ -120,6 +137,7 @@ impl Registry {
             capture_state.clone(),
             self.alias_dirs.clone(),
             self.qualified_prefix.clone(),
+            self.alias_qualified_prefixes.clone(),
         )?;
         crate::context::register_resolve_ingredients(&lua, &self.working_dir)?;
         crate::codec_api::register_codec_api(&lua)?;
