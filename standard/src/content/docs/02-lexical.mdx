@@ -283,3 +283,26 @@ recipe build: lib setup   # test 7:  RecipeHeader (column 0)
     > os.exit(0)          # test 6:  LuaLine (execute-phase)
     recipes_cleanup       # test 12: Content (falls through test 7 — no separator)
 ```
+
+## 2.11. Placeholders in shell text [#lexical.placeholders]
+
+> **Normative.**
+
+A **placeholder** is the byte sequence `$<IDENT>` appearing in shell text (defined in §{lua.shell-placeholders}). The lexer recognizes a placeholder by the production:
+
+```
+placeholder       = "$<" placeholder_ident ">"
+placeholder_ident = bare_ident | out_indexed | out_indexed_acc
+bare_ident        = ALPHA (ALPHA | DIGIT | "_" | ".")*
+out_indexed       = "out_" DIGIT+
+out_indexed_acc   = "out_" DIGIT+ "." accessor
+accessor          = "stem" | "name" | "ext" | "dir"
+ALPHA             = "a"…"z" | "A"…"Z" | "_"
+DIGIT             = "0"…"9"
+```
+
+A byte sequence beginning with `$<` that does not match this production in full — by malformed `IDENT`, missing `>`, or `IDENT` exceeding the production's character set — is **not** a placeholder. Its bytes are literal shell text. A conforming implementation MUST NOT search forward beyond the first non-`IDENT` byte for a closing `>`.
+
+The strict-bail rule eliminates ambiguity between Cook placeholders and shell idioms that use `{`/`}` (`{a,b,c}` brace expansion, `${VAR}` parameter expansion, `awk '{print $1}'`, JSON literals, etc.). None of those forms begin with `$<` followed by an `IDENT` and a `>`, so they are unambiguously literal under this rule.
+
+Resolution of a successfully-lexed placeholder is governed by §{xref.resolution}. The closed set of valid `IDENT` resolutions and per-iteration-mode validity rules are stated normatively in §{lua.shell-placeholders}.
