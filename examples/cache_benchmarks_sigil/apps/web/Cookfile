@@ -5,5 +5,5 @@ recipe web_obj
     ingredients "src/app.c"
     cook "build/web.o" using {
         mkdir -p build
-        gcc -c src/app.c -o {out}
+        gcc -c src/app.c -o $<out>
     }

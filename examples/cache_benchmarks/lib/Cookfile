@@ -20,5 +20,5 @@ recipe lib_build
     ingredients "src/lib.c"
     cook "build/lib.o" using {
         mkdir -p build
-        {CC} {CFLAGS} -c {all} -o {out}
+        $<CC> $<CFLAGS> -c $<all> -o $<out>
     }

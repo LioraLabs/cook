@@ -4,7 +4,7 @@ import server ./apps/server
 recipe top
     cook "build/release.bin" using {
         mkdir -p build
-        cat {cli.cli_bin} {server.server_bin} > {out}
+        cat $<cli.cli_bin> $<server.server_bin> > $<out>
     }
 
 chore clean

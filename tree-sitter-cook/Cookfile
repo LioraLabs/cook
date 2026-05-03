@@ -24,14 +24,14 @@ chore conformance
 recipe wasm: generate
     ingredients "grammar.js" "src/parser.c" "src/scanner.c"
     cook "../standard/public/tree-sitter-cook.wasm" using {
-        mkdir -p ../standard/public && tree-sitter build --wasm . -o {out}
+        mkdir -p ../standard/public && tree-sitter build --wasm . -o $<out>
     }
 
 recipe nvim-install: generate
     ingredients "src/parser.c" "src/scanner.c"
     cook "build/parser/cook.so" using {
         mkdir -p build/parser
-        tree-sitter build . -o {out}
+        tree-sitter build . -o $<out>
     }
-    plate { mkdir -p $NVIM_SITE/parser && cp {in} $NVIM_SITE/parser/cook.so }
+    plate { mkdir -p $NVIM_SITE/parser && cp $<in> $NVIM_SITE/parser/cook.so }
     bash scripts/install-nvim-queries.sh

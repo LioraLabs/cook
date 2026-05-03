@@ -5,5 +5,5 @@ recipe core_lib
     ingredients "src/core.c"
     cook "build/core.o" using {
         mkdir -p build
-        gcc -c src/core.c -o {out}
+        gcc -c src/core.c -o $<out>
     }
