@@ -1667,7 +1667,8 @@ fn test_compile_chore_multiple_shell_steps_not_bundled() {
 
 #[test]
 fn test_compile_chore_with_lua_step_cache_false() {
-    // Execute-phase Lua steps in a chore compile to a body unit with cache = false.
+    // Execute-phase Lua steps in a chore compile to a body unit with
+    // cache = false AND interactive = true (CS-0051: drain-thread execution).
     let chore = make_chore(
         "status",
         vec![],
@@ -1682,11 +1683,46 @@ fn test_compile_chore_with_lua_step_cache_false() {
         lua.contains("cache = false"),
         "chore Lua body unit must have cache = false, got:\n{lua}"
     );
-    // Emitted as a body unit, not an interactive command.
+    // Emitted as a body unit on the drain thread (CS-0051).
     assert!(lua.contains("lua_code ="), "Lua step should emit lua_code =, got:\n{lua}");
     assert!(
-        !lua.contains("interactive = true"),
-        "Lua-only step should not be interactive, got:\n{lua}"
+        lua.contains("interactive = true"),
+        "chore Lua-bundle unit must be interactive (CS-0051), got:\n{lua}"
+    );
+}
+
+#[test]
+fn chore_lua_block_unit_emits_interactive_true() {
+    // CS-0051: Lua steps in a chore body run on the drain thread (controlling
+    // terminal), so the emitted body unit must carry `interactive = true`.
+    // Uses `>` prefix for a Lua line.
+    let cookfile_src = r#"
+chore mychore
+    @echo first
+    > print("from lua")
+"#;
+    let lua = generate_lua_for_test(cookfile_src);
+    // The chore should have exactly one Lua-bundle unit (lua_code = ...).
+    let lua_unit_count = lua.matches("lua_code =").count();
+    assert_eq!(
+        lua_unit_count,
+        1,
+        "expected exactly one Lua-bundle unit (lua_code =), got:\n{lua}"
+    );
+    // That unit must carry interactive = true (CS-0051: drain-thread execution).
+    // Note: cook.add_unit spans multiple lines when the Lua string uses [[ ]] syntax,
+    // so we check the whole output rather than line-by-line.
+    assert!(
+        lua.contains("interactive = true"),
+        "chore Lua-bundle unit must include `interactive = true`, got:\n{lua}"
+    );
+    assert!(
+        lua.contains("cache = false"),
+        "chore Lua-bundle unit must include `cache = false`, got:\n{lua}"
+    );
+    assert!(
+        lua.contains(r#"print("from lua")"#),
+        "chore Lua-bundle unit must include the Lua code, got:\n{lua}"
     );
 }
 

@@ -886,7 +886,7 @@ fn emit_chore_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]
 
     let wrapped = wrap_lua_string(&chunk);
     out.push_str(&format!(
-        "    cook.add_unit({{lua_code = {}, cache = false}})\n",
+        "    cook.add_unit({{lua_code = {}, interactive = true, cache = false}})\n",
         wrapped
     ));
 }
