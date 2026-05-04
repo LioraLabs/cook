@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::{
     hash_str,
-    store::{FileRecord, StepEntry},
+    record::{FileRecord, StepEntry, CACHE_VERSION},
 };
 
 /// Hash of an empty file. Empty files are treated as signals (marker files)
@@ -225,13 +225,13 @@ fn try_restore(
     entry: &StepEntry,
     current_outputs: &[&str],
     needs_restore: &[usize],
-    updated_inputs: &[crate::store::FileRecord],
+    updated_inputs: &[FileRecord],
     working_dir: &Path,
 ) -> bool {
     let mut sorted: Vec<u64> = updated_inputs.iter().map(|r| r.hash).collect();
     sorted.sort();
     let key_inputs = crate::backend::CloudKeyInputs {
-        schema_version: crate::store::CACHE_VERSION,
+        schema_version: CACHE_VERSION,
         recipe_namespace: ctx.recipe_namespace,
         command_hash: entry.command_hash,
         context_hash: entry.context_hash,
@@ -316,7 +316,7 @@ pub fn needs_rebuild_plate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::FileRecord;
+    use crate::record::FileRecord;
 
     // -------------------------------------------------------------------------
     // Task 4: hashing / mtime utilities

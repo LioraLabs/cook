@@ -7,6 +7,7 @@ description = "Browser-based DAG viewer for the Cook build system"
 [dependencies]
 cook-contracts = { path = "../cook-contracts" }
 cook-cache = { path = "../cook-cache" }
+cook-fingerprint = { path = "../cook-fingerprint" }
 cook-engine = { path = "../cook-engine" }
 
 serde = { version = "1", features = ["derive"] }

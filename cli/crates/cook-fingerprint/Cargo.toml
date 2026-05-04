@@ -1,0 +1,19 @@
+[package]
+name = "cook-fingerprint"
+version = "0.1.0"
+edition = "2024"
+description = "Fingerprint and cache-key computation for the Cook build system"
+
+[build-dependencies]
+# (none)
+
+[dependencies]
+cook-contracts = { path = "../cook-contracts" }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+serde = { version = "1", features = ["derive"] }
+glob = "0.3"
+sha2 = "0.10"
+which = "7"
+
+[dev-dependencies]
+tempfile = "3"

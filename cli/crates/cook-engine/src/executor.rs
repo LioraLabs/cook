@@ -12,6 +12,10 @@ use std::time::{Duration, Instant};
 
 use cook_cache::{CacheContext, ThreadSafeCacheManager};
 use cook_contracts::WorkPayload;
+use cook_fingerprint::{
+    artifact_key, cloud_key, needs_rebuild_cook, ArtifactMeta, CloudKeyInputs, RebuildResult,
+    RestoreCtx, CACHE_VERSION,
+};
 use cook_dag::Dag;
 use cook_luaotp::{WorkItem, WorkerPool};
 
@@ -270,11 +274,11 @@ pub fn execute_dag(
             "{}/{}::{}",
             meta.project_id, meta.cookfile_path, meta.recipe_name
         );
-        let restore_ctx = cook_cache::RestoreCtx {
+        let restore_ctx = RestoreCtx {
             backend: cache_ctx.backend.as_ref(),
             recipe_namespace: &recipe_namespace,
         };
-        let (result, updated) = cook_cache::needs_rebuild_cook(
+        let (result, updated) = needs_rebuild_cook(
             entry,
             &input_refs,
             &current_outputs,
@@ -284,7 +288,7 @@ pub fn execute_dag(
             &work_node.working_dir,
             Some(&restore_ctx),
         );
-        if matches!(result, cook_cache::RebuildResult::Skip) {
+        if matches!(result, RebuildResult::Skip) {
             if let Some(updated_entry) = updated {
                 cm.update_step(&meta.recipe_name, &meta.cache_key, updated_entry);
             }
@@ -530,15 +534,15 @@ pub fn execute_dag(
                                         meta.project_id, meta.cookfile_path, meta.recipe_name
                                     );
 
-                                    let key_inputs = cook_cache::backend::CloudKeyInputs {
-                                        schema_version: cook_cache::store::CACHE_VERSION,
+                                    let key_inputs = CloudKeyInputs {
+                                        schema_version: CACHE_VERSION,
                                         recipe_namespace: &recipe_namespace,
                                         command_hash: meta.command_hash,
                                         context_hash: meta.context_hash,
                                         env_contribution: meta.env_contribution,
                                         sorted_input_content_hashes: &sorted_hashes,
                                     };
-                                    let cloud_k = cook_cache::backend::cloud_key(&key_inputs);
+                                    let cloud_k = cloud_key(&key_inputs);
 
                                     // Upload one artifact per declared output (2026-05-02 addendum
                                     // spec §5.1). Each artifact is keyed by
@@ -550,17 +554,17 @@ pub fn execute_dag(
                                             Ok(b) => b,
                                             Err(_) => continue,
                                         };
-                                        let artifact_k = cook_cache::backend::artifact_key(
+                                        let artifact_k = artifact_key(
                                             &cloud_k,
                                             out_idx as u32,
                                             output_path,
                                         );
-                                        let artifact_meta = cook_cache::backend::ArtifactMeta {
+                                        let artifact_meta = ArtifactMeta {
                                             recipe_namespace: recipe_namespace.clone(),
                                             command_hash: meta.command_hash,
                                             context_hash: meta.context_hash,
                                             env_contribution: meta.env_contribution,
-                                            schema_version: cook_cache::store::CACHE_VERSION,
+                                            schema_version: CACHE_VERSION,
                                             size_bytes: bytes.len() as u64,
                                             tags: std::collections::BTreeSet::new(),
                                             consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
@@ -686,15 +690,15 @@ pub fn execute_dag(
                                 meta.project_id, meta.cookfile_path, meta.recipe_name
                             );
 
-                            let key_inputs = cook_cache::backend::CloudKeyInputs {
-                                schema_version: cook_cache::store::CACHE_VERSION,
+                            let key_inputs = CloudKeyInputs {
+                                schema_version: CACHE_VERSION,
                                 recipe_namespace: &recipe_namespace,
                                 command_hash: meta.command_hash,
                                 context_hash: meta.context_hash,
                                 env_contribution: meta.env_contribution,
                                 sorted_input_content_hashes: &sorted_hashes,
                             };
-                            let cloud_k = cook_cache::backend::cloud_key(&key_inputs);
+                            let cloud_k = cloud_key(&key_inputs);
 
                             // Upload one artifact per declared output (2026-05-02 addendum
                             // spec §5.1).
@@ -704,17 +708,17 @@ pub fn execute_dag(
                                     Ok(b) => b,
                                     Err(_) => continue,
                                 };
-                                let artifact_k = cook_cache::backend::artifact_key(
+                                let artifact_k = artifact_key(
                                     &cloud_k,
                                     out_idx as u32,
                                     output_path,
                                 );
-                                let artifact_meta = cook_cache::backend::ArtifactMeta {
+                                let artifact_meta = ArtifactMeta {
                                     recipe_namespace: recipe_namespace.clone(),
                                     command_hash: meta.command_hash,
                                     context_hash: meta.context_hash,
                                     env_contribution: meta.env_contribution,
-                                    schema_version: cook_cache::store::CACHE_VERSION,
+                                    schema_version: CACHE_VERSION,
                                     size_bytes: bytes.len() as u64,
                                     tags: std::collections::BTreeSet::new(),
                                     consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
@@ -857,8 +861,8 @@ mod tests {
     fn make_cache_ctx(tmp: &TempDir) -> Arc<CacheContext> {
         use cook_cache::{
             backend::LocalBackend, cache_ctx::CacheContext, cloud_config::CloudConfig,
-            context::ExecutionContext, envkey::EnvDenylist,
         };
+        use cook_fingerprint::{EnvDenylist, ExecutionContext};
         Arc::new(CacheContext {
             exec_ctx: Arc::new(ExecutionContext::probe()),
             denylist: Arc::new(EnvDenylist::baseline()),

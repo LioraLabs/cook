@@ -58,7 +58,8 @@ All application logic lives in those modules. The binary just calls into `cli`.
 | `scheduler` | `src/scheduler/` | Builds the execution DAG, manages the thread pool, runs steps in parallel | `contracts`, `cache`, `runtime` |
 | `contracts` | `src/contracts/mod.rs` | Shared types between runtime and scheduler (WorkPayload, CapturedUnit, etc.) | None |
 | `analyzer` | `src/analyzer/` | Resolves implicit dependencies, performs topological sort | `parser` |
-| `cache` | `src/cache/` | Hash-based incremental rebuild with mtime fast-path | None |
+| `fingerprint` | `cli/crates/cook-fingerprint/` | Pure fingerprint / cache-key computation: file/env hashing, machine identity, cloud-key composition, rebuild-decision logic, `CacheBackend` trait | `contracts` |
+| `cache` | `cli/crates/cook-cache/` | Cache backend: filesystem `LocalBackend`, `RecipeCache` on-disk format, `ThreadSafeCacheManager`, `.cook/cloud.toml` config, `CacheContext` | `fingerprint`, `contracts` |
 | `watcher` | `src/watcher/mod.rs` | File system monitoring for `cook --serve` | `parser` |
 | `env` | `src/env/mod.rs` | Loads `.env` files into the process environment | None |
 

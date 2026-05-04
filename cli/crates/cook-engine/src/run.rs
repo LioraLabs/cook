@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use cook_cache::{
     backend::LocalBackend, cache_ctx::CacheContext, cloud_config::CloudConfig,
-    context::ExecutionContext, envkey::EnvDenylist, CacheBackend, ThreadSafeCacheManager,
+    ThreadSafeCacheManager,
 };
+use cook_fingerprint::{CacheBackend, EnvDenylist, ExecutionContext};
 
 use crate::analyzer::{self, GraphError};
 use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent, RegistryEntry};

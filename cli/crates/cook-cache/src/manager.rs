@@ -5,9 +5,9 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 use cook_contracts::CacheMeta;
+use cook_fingerprint::{hash_file, stat_mtime, FileRecord, StepEntry};
 
-use crate::check::{hash_file, stat_mtime};
-use crate::store::{FileRecord, RecipeCache, StepEntry};
+use crate::store::RecipeCache;
 
 /// Build FileRecord vec for a list of relative paths. Bails on the first
 /// path whose mtime or content cannot be read. Returning Err from here

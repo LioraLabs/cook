@@ -12,6 +12,7 @@ cook-register = { path = "../cook-register" }
 cook-dag = { path = "../cook-dag" }
 cook-luaotp = { path = "../cook-luaotp" }
 cook-cache = { path = "../cook-cache" }
+cook-fingerprint = { path = "../cook-fingerprint" }
 thiserror = "2"
 dirs = "5"
 dotenvy = "0.15"

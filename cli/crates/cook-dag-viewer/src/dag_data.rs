@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use cook_cache::{hash_file, needs_rebuild_cook, stat_mtime, RebuildResult, ThreadSafeCacheManager};
+use cook_cache::ThreadSafeCacheManager;
+use cook_fingerprint::{hash_file, needs_rebuild_cook, stat_mtime, RebuildResult};
 use cook_contracts::{DepKind, RecipeUnits, WorkPayload};
 use cook_engine::wave_grouper;
 use std::collections::BTreeSet;

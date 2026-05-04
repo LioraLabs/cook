@@ -1,8 +1,12 @@
+//! On-disk recipe-cache file format. The fingerprint state types
+//! (`StepEntry`, `FileRecord`, `CACHE_VERSION`) live in `cook-fingerprint`
+//! and are re-exported here for callers that already use `cook_cache::store::*`.
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const CACHE_VERSION: u32 = 3;
+pub use cook_fingerprint::record::{FileRecord, StepEntry, CACHE_VERSION};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecipeCache {
@@ -11,22 +15,6 @@ pub struct RecipeCache {
     pub steps: BTreeMap<String, StepEntry>,
     // REMOVED: secondary_inputs_hash (SHI-145) — dead code path.
     // REMOVED: env_hash (SHI-142) — folded into per-step env_contribution.
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct StepEntry {
-    pub inputs: Vec<FileRecord>,
-    pub outputs: Vec<FileRecord>,
-    pub command_hash: u64,
-    pub context_hash: u64,        // NEW (SHI-141)
-    pub env_contribution: u64,    // NEW (SHI-142)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct FileRecord {
-    pub path: String,
-    pub mtime: u64,
-    pub hash: u64,
 }
 
 impl Default for RecipeCache {
