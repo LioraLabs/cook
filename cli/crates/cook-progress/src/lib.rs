@@ -16,3 +16,4 @@ pub use render::Renderer;
 pub use render::inline::InlineRenderer;
 pub use render::json::{check_schema_version, JsonWriter, SchemaCheckError};
 pub use render::plain::PlainRenderer;
+pub use style::{format_verb, verb_for, LineKind, Verb, VerbColor, VERB_COL_WIDTH};
