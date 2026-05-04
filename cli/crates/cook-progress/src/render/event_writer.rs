@@ -202,12 +202,16 @@ impl EventWriter {
                 Ok(true)
             }
 
-            ProgressEvent::InteractiveStart { recipe, name, .. } => {
+            ProgressEvent::InteractiveStart { recipe, name, chore_step_count, .. } => {
                 let rname = recipe_name(state, *recipe);
                 let v = verb_for(LineKind::InteractiveRunning, NodeKind::Cooked);
+                // For chore windows, the subject is always the chore name —
+                // the head step's display_name (`@<line>` or `lua`) is an
+                // implementation detail.
+                let is_chore_window = *chore_step_count > 0;
                 let label = if rname.is_empty() {
                     name.to_string()
-                } else if rname == *name || name.starts_with('@') {
+                } else if is_chore_window || rname == *name || name.starts_with('@') {
                     rname
                 } else {
                     format!("{rname}/{name}")
