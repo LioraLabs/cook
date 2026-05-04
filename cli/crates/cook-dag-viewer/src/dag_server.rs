@@ -1,14 +1,14 @@
 //! HTTP server for the DAG viewer.
 
-use crate::error::CookError;
+use crate::ViewerError;
 
 const HTML_TEMPLATE: &str = include_str!("dag_viewer.html");
 
-pub fn serve_dag(dag_json: &str) -> Result<(), CookError> {
+pub fn serve_dag(dag_json: &str) -> Result<(), ViewerError> {
     let html = HTML_TEMPLATE.replace("/*DAG_DATA_PLACEHOLDER*/{}", dag_json);
 
     let server = tiny_http::Server::http("127.0.0.1:0")
-        .map_err(|e| CookError::Other(format!("failed to start server: {e}")))?;
+        .map_err(|e| ViewerError::ServerStart(e.to_string()))?;
 
     let port = server
         .server_addr()
