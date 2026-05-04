@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use serde_json::{json, Value};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-use crate::event::{ProgressEvent, Stream};
+use crate::event::{ProgressEvent, Stream, PROGRESS_SCHEMA_VERSION};
 use crate::model::build::BuildState;
 use crate::render::Renderer;
 
@@ -19,7 +19,7 @@ pub struct JsonWriter<W: Write + Send> {
 }
 
 impl<W: Write + Send> JsonWriter<W> {
-    pub fn new(out: W) -> Self { Self { out, schema_version: 1 } }
+    pub fn new(out: W) -> Self { Self { out, schema_version: PROGRESS_SCHEMA_VERSION } }
 
     fn now_rfc3339() -> String {
         OffsetDateTime::now_utc()
@@ -151,6 +151,11 @@ impl<W: Write + Send> Renderer for JsonWriter<W> {
         // fields in lex order. This is intentional: keys are sorted so the
         // schema is stable for downstream consumers (diff-friendly, no churn
         // from event-shape edits).
+        //
+        // CS-0048: the `v` field is the wire-format schema version. Writers
+        // emit `PROGRESS_SCHEMA_VERSION`; readers refuse lines whose `v`
+        // exceeds the highest version they recognise. Evolution is additive-
+        // only (new fields without a bump); incompatible changes bump `v`.
         let mut obj = serde_json::Map::new();
         obj.insert("ts".into(), Value::String(Self::now_rfc3339()));
         obj.insert("v".into(), Value::from(self.schema_version));
@@ -166,6 +171,60 @@ impl<W: Write + Send> Renderer for JsonWriter<W> {
     fn finish(&mut self, _state: &BuildState) -> io::Result<()> {
         self.out.flush()
     }
+}
+
+/// Errors raised by [`peek_schema_version`] / [`check_schema_version`].
+#[derive(Debug)]
+pub enum SchemaCheckError {
+    /// The line is not parseable JSON.
+    InvalidJson(String),
+    /// The line parses but is not a JSON object.
+    NotAnObject,
+    /// The `v` field is missing or not an integer.
+    MissingVersion,
+    /// The `v` field exceeds the highest version this build recognises.
+    Unsupported { found: u32, max_known: u32 },
+}
+
+impl std::fmt::Display for SchemaCheckError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidJson(e) => write!(f, "invalid JSON: {e}"),
+            Self::NotAnObject => write!(f, "events.jsonl line is not a JSON object"),
+            Self::MissingVersion => write!(f, "events.jsonl line missing required `v` schema-version field"),
+            Self::Unsupported { found, max_known } => write!(
+                f,
+                "events.jsonl schema version {found} exceeds maximum supported version {max_known}; upgrade required"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SchemaCheckError {}
+
+/// Inspect a single `events.jsonl` line and return its `v` schema version
+/// after enforcing the [CS-0048] read policy: refuse `v > PROGRESS_SCHEMA_VERSION`.
+///
+/// The full event payload is intentionally not deserialized — readers that
+/// need only to validate the envelope can call this without reifying a
+/// `ProgressEvent`. Lines whose `v` is at or below `PROGRESS_SCHEMA_VERSION`
+/// are accepted (additive-only evolution within a major version).
+pub fn check_schema_version(line: &str) -> Result<u32, SchemaCheckError> {
+    let value: Value = serde_json::from_str(line)
+        .map_err(|e| SchemaCheckError::InvalidJson(e.to_string()))?;
+    let obj = value.as_object().ok_or(SchemaCheckError::NotAnObject)?;
+    let v = obj
+        .get("v")
+        .and_then(|x| x.as_u64())
+        .ok_or(SchemaCheckError::MissingVersion)?;
+    let v = v as u32;
+    if v > PROGRESS_SCHEMA_VERSION {
+        return Err(SchemaCheckError::Unsupported {
+            found: v,
+            max_known: PROGRESS_SCHEMA_VERSION,
+        });
+    }
+    Ok(v)
 }
 
 #[cfg(test)]
@@ -316,5 +375,60 @@ mod tests {
         let s = String::from_utf8(buf).unwrap();
         let lines: Vec<&str> = s.lines().collect();
         assert_eq!(lines.len(), 2, "expected 2 lines; got: {s}");
+    }
+
+    // --- CS-0048: schema-version envelope (`v` field) ---
+
+    #[test]
+    fn writer_emits_schema_version_constant() {
+        let state = make_state_with_one_recipe();
+        let s = write_event(&state, &ProgressEvent::Finished { success: true });
+        let needle = format!("\"v\":{PROGRESS_SCHEMA_VERSION}");
+        assert!(s.contains(&needle), "expected `{needle}`; got: {s}");
+    }
+
+    #[test]
+    fn check_schema_version_accepts_current_version() {
+        let state = make_state_with_one_recipe();
+        let line = write_event(&state, &ProgressEvent::Finished { success: true });
+        let line = line.trim_end();
+        let v = check_schema_version(line).expect("current line must validate");
+        assert_eq!(v, PROGRESS_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn check_schema_version_accepts_lower_versions() {
+        // CS-0048: readers accept any `v <= MAX_KNOWN`. Build a synthetic
+        // v=0 line to pin the additive-only contract for the future v=2 case
+        // (today MAX_KNOWN=1, so v=0 is the only "lower" value we can test).
+        let line = r#"{"ts":"1970-01-01T00:00:00Z","type":"finished","success":true,"v":0}"#;
+        let v = check_schema_version(line).expect("v <= MAX_KNOWN must validate");
+        assert_eq!(v, 0);
+    }
+
+    #[test]
+    fn check_schema_version_rejects_higher_versions() {
+        let line = r#"{"ts":"1970-01-01T00:00:00Z","type":"finished","success":true,"v":99}"#;
+        let err = check_schema_version(line).expect_err("v > MAX_KNOWN must be refused");
+        match err {
+            SchemaCheckError::Unsupported { found, max_known } => {
+                assert_eq!(found, 99);
+                assert_eq!(max_known, PROGRESS_SCHEMA_VERSION);
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_schema_version_rejects_missing_v_field() {
+        let line = r#"{"ts":"1970-01-01T00:00:00Z","type":"finished","success":true}"#;
+        let err = check_schema_version(line).expect_err("missing `v` must be refused");
+        assert!(matches!(err, SchemaCheckError::MissingVersion));
+    }
+
+    #[test]
+    fn check_schema_version_rejects_invalid_json() {
+        let err = check_schema_version("{not json").expect_err("garbage must be refused");
+        assert!(matches!(err, SchemaCheckError::InvalidJson(_)));
     }
 }

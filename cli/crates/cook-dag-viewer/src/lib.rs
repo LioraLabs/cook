@@ -6,7 +6,18 @@
 //! data shaping, JSON serialization, and the local viewer server.
 //!
 //! See `standard/src/content/docs/appendix/D-changes.mdx` (CS-0047) for the
-//! split-out and feature-gate rationale.
+//! split-out and feature-gate rationale, and CS-0048 for the
+//! `schema_version` field carried on the JSON payload.
+
+/// Wire-format schema version for the DAG-viewer JSON payload (CS-0048).
+///
+/// Writers emit `schema_version = VIEWER_SCHEMA_VERSION`; the embedded JS
+/// viewer refuses payloads whose `schema_version` exceeds the highest
+/// version it recognises (today, 1). Evolution is additive-only — new
+/// fields are introduced without bumping the version; an incompatible
+/// structural change bumps `VIEWER_SCHEMA_VERSION` (and the `if` guard
+/// in `dag_viewer.html`).
+pub const VIEWER_SCHEMA_VERSION: u32 = 1;
 
 mod dag_data;
 mod dag_server;

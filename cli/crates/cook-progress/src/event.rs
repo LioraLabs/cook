@@ -5,6 +5,20 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+/// Wire-format schema version for `events.jsonl` lines and the equivalent
+/// `--output=json` stream. Pinned at the v1.0 cut by [CS-0048].
+///
+/// The on-wire field is the top-level integer `v` (kept flat in the lex-key
+/// envelope from [CS-0035]); writers MUST emit `v = PROGRESS_SCHEMA_VERSION`
+/// and readers MUST refuse lines whose `v` exceeds the highest version they
+/// recognise. Evolution is additive-only — new fields are introduced without
+/// bumping `v`; an incompatible structural change bumps `v` to 2 and is
+/// documented in App. D.
+///
+/// [CS-0048]: https://example.invalid/cs-0048
+/// [CS-0035]: https://example.invalid/cs-0035
+pub const PROGRESS_SCHEMA_VERSION: u32 = 1;
+
 /// Opaque recipe identifier. Stable within a single build run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RecipeId(u32);

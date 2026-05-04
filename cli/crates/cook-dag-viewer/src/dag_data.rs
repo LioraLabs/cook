@@ -11,12 +11,18 @@ use cook_contracts::{DepKind, RecipeUnits, WorkPayload};
 use cook_engine::wave_grouper;
 use std::collections::BTreeSet;
 
+use crate::VIEWER_SCHEMA_VERSION;
+
 // ---------------------------------------------------------------------------
 // Wave-grouped DAG data model
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
 pub struct WaveDagData {
+    /// Wire-format schema version. CS-0048: writers always emit
+    /// `VIEWER_SCHEMA_VERSION`; the embedded JS viewer refuses payloads whose
+    /// `schema_version` exceeds the highest version it recognises.
+    pub schema_version: u32,
     pub target: String,
     pub waves: Vec<WaveData>,
     pub inter_wave_edges: Vec<EdgeData>,
@@ -137,6 +143,7 @@ pub fn build_wave_dag_data(
     }
 
     WaveDagData {
+        schema_version: VIEWER_SCHEMA_VERSION,
         target: target.to_string(),
         waves: wave_data_list,
         inter_wave_edges,

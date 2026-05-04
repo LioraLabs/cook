@@ -119,6 +119,25 @@ body { background: #1a1a2e; color: #e0e0e0; font-family: 'Inter', system-ui, -ap
 <script>
 const DAG = /*DAG_DATA_PLACEHOLDER*/{};
 
+// CS-0048: refuse payloads whose schema_version is newer than this viewer
+// recognises. A missing field is treated as legacy v1 (additive-only
+// evolution: every cook >= v1.0 is required to emit the field, but a viewer
+// served against an older binary should still render).
+const VIEWER_SCHEMA_VERSION = 1;
+(function checkSchemaVersion() {
+  var v = (typeof DAG.schema_version === 'number') ? DAG.schema_version : 1;
+  if (v > VIEWER_SCHEMA_VERSION) {
+    document.body.innerHTML =
+      '<div style="font-family:sans-serif;padding:2em;color:#900">' +
+      '<h2>Unsupported DAG schema version</h2>' +
+      '<p>This payload reports <code>schema_version = ' + v + '</code>, ' +
+      'but this viewer only understands version ' + VIEWER_SCHEMA_VERSION + '.</p>' +
+      '<p>Rebuild the <code>cook</code> binary or update the viewer asset.</p>' +
+      '</div>';
+    throw new Error('DAG schema_version ' + v + ' > ' + VIEWER_SCHEMA_VERSION);
+  }
+})();
+
 function buildElements() {
   var elements = [];
   var multiWave = DAG.waves && DAG.waves.length > 1;

@@ -6,7 +6,7 @@ use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::event::{NodeId, ProgressEvent, RecipeId, Stream};
+use crate::event::{NodeId, ProgressEvent, RecipeId, Stream, PROGRESS_SCHEMA_VERSION};
 use crate::model::build::BuildState;
 use crate::render::json::event_to_value;
 
@@ -78,7 +78,10 @@ impl LogStore {
             let mut payload = event_to_value(state, event);
             let mut obj = serde_json::Map::new();
             obj.insert("ts".into(), serde_json::Value::String(current_rfc3339()));
-            obj.insert("v".into(), serde_json::Value::from(1u32));
+            // CS-0048: `v` is the wire-format schema version, sourced from
+            // PROGRESS_SCHEMA_VERSION. See the matching emit-site comment on
+            // `JsonWriter::handle` for the read policy.
+            obj.insert("v".into(), serde_json::Value::from(PROGRESS_SCHEMA_VERSION));
             if let serde_json::Value::Object(inner) = payload.take() {
                 for (k, v) in inner {
                     obj.insert(k, v);

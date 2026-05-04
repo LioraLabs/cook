@@ -253,7 +253,7 @@ mod tests {
 
         let cache = manager.get_or_load("nonexistent_recipe");
         assert!(cache.steps.is_empty());
-        assert_eq!(cache.version, store::CACHE_VERSION);
+        assert_eq!(cache.schema_version, store::CACHE_VERSION);
     }
 
     #[test]
