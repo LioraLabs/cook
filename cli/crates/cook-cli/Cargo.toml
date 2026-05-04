@@ -18,6 +18,7 @@ cook-dag = { path = "../cook-dag" }
 cook-register = { path = "../cook-register" }
 cook-luaotp = { path = "../cook-luaotp" }
 cook-engine = { path = "../cook-engine" }
+cook-dag-viewer = { path = "../cook-dag-viewer", optional = true }
 
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.17"
@@ -29,8 +30,14 @@ dotenvy = "0.15"
 pathdiff = "0.2"
 thiserror = "2"
 glob = "0.3"
-tiny_http = "0.12"
-open = "5"
+
+[features]
+default = []
+# Embeds the browser-based DAG viewer used by `cook --dag`. Pulls in the
+# `cook-dag-viewer` crate (which carries `tiny_http`, `open`, and the embedded
+# HTML asset). Off by default so vanilla `cook` builds stay slim and free of
+# an HTTP-server dependency. CS-0047 documents the rationale.
+viewer = ["dep:cook-dag-viewer"]
 
 [dev-dependencies]
 tempfile = "3"

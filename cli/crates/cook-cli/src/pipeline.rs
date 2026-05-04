@@ -901,9 +901,27 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
 }
 
 // ---------------------------------------------------------------------------
-// cmd_dag
+// cmd_dag — feature-gated
 // ---------------------------------------------------------------------------
+//
+// The DAG viewer (`cook --dag`) lives in the `cook-dag-viewer` crate and is
+// pulled in only when the `viewer` cargo feature is enabled (see
+// `Cargo.toml`). When the feature is off, `cmd_dag` short-circuits with a
+// helpful error so users learn which build flag they need. The reference-
+// implementation policy is documented in the Cook Standard at
+// `standard/src/content/docs/appendix/D-changes.mdx#changes-cs-0047`.
 
+#[cfg(not(feature = "viewer"))]
+pub fn cmd_dag(_cli: &Cli, _recipe_name: &str, _config: Option<&str>) -> Result<(), CookError> {
+    Err(CookError::Other(
+        "the `cook --dag` viewer is not built into this binary; rebuild with \
+         `cargo build --features viewer` (or pass `--features viewer` when \
+         running `cargo install`)"
+            .to_string(),
+    ))
+}
+
+#[cfg(feature = "viewer")]
 pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
     let (cookfile, lua_source) = read_and_parse(cli)?;
     validate_selected_config(&cookfile, config)?;
@@ -957,28 +975,28 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
             )?
         };
 
-    let dag_data = crate::dag_data::build_wave_dag_data(
-        recipe_name,
-        &all_units,
-        &explicit_edges,
-        &inferred_deps,
-        &cache_managers,
-    );
-
-    let json = serde_json::to_string(&dag_data)
-        .map_err(|e| CookError::Other(format!("failed to serialize DAG: {e}")))?;
-
-    crate::dag_server::serve_dag(&json)
+    cook_dag_viewer::cmd_dag(&cook_dag_viewer::DagViewerInputs {
+        target: recipe_name,
+        all_units: &all_units,
+        explicit_edges: &explicit_edges,
+        inferred_deps: &inferred_deps,
+        cache_managers: &cache_managers,
+    })
+    .map_err(|e| CookError::Other(e.to_string()))
 }
 
 /// Drive the recipe DAG to register every recipe reachable from `targets` and
-/// collect their `RecipeUnits` for `build_wave_dag_data`.
+/// collect their `RecipeUnits` for the DAG viewer.
 ///
 /// Mirrors the per-wave dispatch loop in `cook_engine::run::run` (`run.rs:170+`)
 /// but stops short of work-unit DAG construction and execution — the dag
 /// visualizer only needs the registered units, the explicit edge map, and the
 /// inferred-deps map. Works for both single-Cookfile (one registry under the
 /// `""` prefix) and workspace (one registry per dotted prefix) inputs.
+///
+/// Compiled only with the `viewer` feature: it is exclusively a `cmd_dag`
+/// helper, so it is dead code in viewer-less builds.
+#[cfg(feature = "viewer")]
 #[allow(clippy::type_complexity)]
 fn collect_dag_units(
     recipe_infos: &BTreeMap<String, cook_engine::analyzer::RecipeInfo>,

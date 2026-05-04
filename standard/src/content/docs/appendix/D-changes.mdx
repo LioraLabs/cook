@@ -9,6 +9,7 @@ sidebar:
 
 ## Versions
 
+- **v0.8** (unreleased) — CS-0045, CS-0046, CS-0047
 - **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042, CS-0043, CS-0044
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
@@ -695,4 +696,25 @@ CS-0044 extracts the three tables into a new `cli/crates/cook-lua-stdlib` crate 
 **Hard non-changes.** CS-0044 does not introduce a filesystem sandbox; it replicates today's behavior exactly. The user-visible Lua API surface is unchanged — every existing recipe continues to work without modification. Sandboxing is a follow-up that this consolidation enables but does not deliver.
 
 **Reference:** the CS-0044 commit series on the `worktree-agent-a6e35722b1cd28f43` branch.
+
+## D.47. CS-0047 — DAG viewer split out + feature-gated. [#changes.cs-0047]
+
+**Date:** 2026-05-03
+
+**Version:** v0.8
+
+**Sections affected:** none in the normative chapters (the `cook --dag` viewer is a tooling affordance of the reference implementation, not a Cookfile-language surface). Reference-implementation: new `cli/crates/cook-dag-viewer/` crate (carries `dag_data.rs`, `dag_server.rs`, the embedded `dag_viewer.html`, and the `cmd_dag` data-shaping + serve entry point); `cli/crates/cook-cli/Cargo.toml` (drops `tiny_http` and `open` direct deps, adds `cook-dag-viewer` as an optional dep behind a new `viewer` cargo feature); `cli/crates/cook-cli/src/{main.rs,pipeline.rs}` (the `mod dag_data` / `mod dag_server` modules are gone, and `cmd_dag` becomes feature-gated — viewer-less builds short-circuit with a clear error pointing at `--features viewer`); `cli/Cargo.toml` (registers the new workspace member). App. D Versions index gains a v0.8 row alongside CS-0045 and CS-0046.
+
+**Summary.** Splits the browser-based DAG viewer (`cook --dag`) out of `cook-cli` into its own `cook-dag-viewer` crate, and gates the wiring on `cook-cli` behind a new `viewer` cargo feature. Pre-CS-0047, the viewer's `tiny_http` HTTP server, `open`-based browser-launch, and ~400 lines of embedded HTML/JS were unconditional dependencies of every `cook` build. Post-CS-0047, vanilla `cargo install cook-cli` (and `cargo build` in the workspace) produces a slim binary with no HTTP-server dependency; users who want the viewer rebuild with `cargo build --features viewer` (or `cargo install --features viewer`). Invoking `cook --dag` against a viewer-less binary produces a clear diagnostic naming the rebuild flag, rather than a `command not found` surprise.
+
+**`cook --dag` is implementation-optional.** The Standard does not require conforming implementations to ship a graphical DAG viewer. The reference implementation provides one as a tooling affordance, and its presence is observable through the `cook --dag` flag; whether that flag is wired in any given build of the reference binary is now a build-time decision. Other implementations MAY omit `--dag` entirely, MAY ship their own viewer under a different flag, or MAY emit a JSON snapshot for an external tool. The pre-1.0 references to `cmd_dag` in App. D and App. E are descriptive of the reference implementation's behavior, not normative requirements.
+
+**Why off by default.** Two reasons. First, `tiny_http` is a network-listening dependency: even bound to `127.0.0.1`, an HTTP server in the default build expands the supply-chain surface area of a tool whose primary job is parsing Cookfiles and orchestrating subprocesses. Second, the viewer is a developer-affordance flag — the median `cook` invocation in CI, in containers, and in scripted callers never reaches `--dag`. Pulling `tiny_http`, `open`, and the embedded HTML asset into every binary to support a flag most users never run is the wrong default. Distros and packagers who want the viewer enable it explicitly; everybody else gets a smaller binary and a smaller dependency footprint. The opposite default ("on, but opt-out via `--no-default-features`") would have been defensible for symmetry with cargo idioms, but the supply-chain argument and the "most users never run `--dag`" observation tip the choice toward `default = []`. This is the conservative pre-1.0 default; if v1.0 ships with the viewer reaching feature parity with mainstream visualization tools and gaining broad enough adoption that turning it off becomes the surprising case, the default can be revisited then.
+
+**Reference-implementation contract.** When the `viewer` feature is enabled, `cook --dag <RECIPE>` MUST behave exactly as it did pre-CS-0047: prepare the wave-grouped DAG, start a local HTTP server bound to a random `127.0.0.1` port, open the user's default browser at that port, and serve the embedded viewer page until interrupted. When the feature is disabled, `cook --dag` MUST exit with a non-zero status and a diagnostic that names the rebuild flag (`cargo build --features viewer`). The split is a refactor — no behavior visible to a viewer-feature-enabled build is changed. The data-shaping helper (`build_wave_dag_data` from §App. E.10's CS-0027 work) and the serve loop (`serve_dag`) move bytes-for-bytes into the new crate; the only Rust-level change is replacing the local `CookError` use in `dag_server.rs` with a crate-local `ViewerError` variant that the cook-cli wrapper maps back to `CookError::Other` at the boundary.
+
+**Conformance impact.** None. The Standard does not pin `cmd_dag` behavior, the conformance harness does not exercise it, and no Cookfile authoring surface is touched.
+
+**Reference:** the CS-0047 commit on the `cs-0047-dag-viewer-extract` branch.
+
 

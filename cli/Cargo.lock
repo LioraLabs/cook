@@ -235,6 +235,7 @@ dependencies = [
  "cook-cache",
  "cook-contracts",
  "cook-dag",
+ "cook-dag-viewer",
  "cook-engine",
  "cook-lang",
  "cook-luagen",
@@ -246,13 +247,11 @@ dependencies = [
  "glob",
  "indicatif",
  "notify",
- "open",
  "pathdiff",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
- "tiny_http",
 ]
 
 [[package]]
@@ -262,6 +261,20 @@ version = "0.1.0"
 [[package]]
 name = "cook-dag"
 version = "0.1.0"
+
+[[package]]
+name = "cook-dag-viewer"
+version = "0.1.0"
+dependencies = [
+ "cook-cache",
+ "cook-contracts",
+ "cook-engine",
+ "open",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tiny_http",
+]
 
 [[package]]
 name = "cook-engine"
