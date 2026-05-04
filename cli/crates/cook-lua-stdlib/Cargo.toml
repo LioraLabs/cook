@@ -1,0 +1,12 @@
+[package]
+name = "cook-lua-stdlib"
+version = "0.1.0"
+edition = "2021"
+description = "Shared Cook Lua API surface (fs.*, path.*, cook.platform.*) used by both the register-phase and execute-phase Lua VMs"
+
+[dependencies]
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+glob = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

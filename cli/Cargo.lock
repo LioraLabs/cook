@@ -289,6 +289,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cook-lua-stdlib"
+version = "0.1.0"
+dependencies = [
+ "glob",
+ "mlua",
+ "tempfile",
+]
+
+[[package]]
 name = "cook-luagen"
 version = "0.1.0"
 dependencies = [
@@ -329,6 +338,7 @@ dependencies = [
  "cook-cache",
  "cook-contracts",
  "cook-lang",
+ "cook-lua-stdlib",
  "cook-luagen",
  "glob",
  "mlua",

@@ -6,6 +6,7 @@ members = [
     "crates/cook-cache",
     "crates/cook-dag",
     "crates/cook-luagen",
+    "crates/cook-lua-stdlib",
     "crates/cook-luaotp",
     "crates/cook-register",
     "crates/cook-engine",
