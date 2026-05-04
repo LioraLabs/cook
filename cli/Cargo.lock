@@ -312,7 +312,7 @@ name = "cook-luaotp"
 version = "0.1.0"
 dependencies = [
  "cook-contracts",
- "glob",
+ "cook-lua-stdlib",
  "mlua",
  "tempfile",
 ]

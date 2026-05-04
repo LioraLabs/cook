@@ -149,7 +149,9 @@ fn worker_loop(
     // Each worker creates its own Lua VM.  The VM is `!Send` but never
     // leaves this thread, so this is safe.
     let lua = unsafe { mlua::Lua::unsafe_new() };
-    crate::path_api::register_path_api(&lua).expect("failed to register path API");
+
+    // `path.*` is pure string manipulation — install once.
+    cook_lua_stdlib::register_path_api(&lua).expect("failed to register path API");
 
     // Shared mutable state for per-item context (single-threaded within
     // this worker, but needs interior mutability for closures).
@@ -161,11 +163,17 @@ fn worker_loop(
     register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_recipe)
         .expect("failed to register cook table");
 
-    // Register the `fs` table once at startup. Closures read the cwd
-    // through `Arc<Mutex<PathBuf>>` so each call sees the *current* work
-    // item's working_dir, not the one in effect at registration time.
-    crate::fs_api::register_fs_api(&lua, &current_working_dir)
-        .expect("failed to register fs API");
+    // Register the `fs` table once at startup with the Live cwd source
+    // so each call sees the *current* work item's working_dir, not the
+    // one in effect at registration time. This is the CS-0017
+    // multi-Cookfile imports contract: one worker VM may serve items
+    // from many Cookfiles (cwds), and `fs.*` resolves against the
+    // active item's cwd at call time.
+    cook_lua_stdlib::register_fs_api(
+        &lua,
+        cook_lua_stdlib::WorkingDirSource::Live(Arc::clone(&current_working_dir)),
+    )
+    .expect("failed to register fs API");
 
     loop {
         let item = {
@@ -300,8 +308,10 @@ fn register_worker_cook_table(
     env_table.set_metatable(Some(meta));
     cook.set("env", env_table)?;
 
-    // cook.platform
-    crate::platform_api::register_platform_api(lua, &cook)?;
+    // cook.platform — installed via the shared cook-lua-stdlib so the
+    // execute-phase string values are byte-identical to the
+    // register-phase ones (CS-0044).
+    cook_lua_stdlib::register_platform_api(lua, &cook)?;
 
     // cook.load_module(name) — execute-phase counterpart of the register-phase
     // resolver in cook-register/src/module_loader.rs (CS-0017, CS-0035,
