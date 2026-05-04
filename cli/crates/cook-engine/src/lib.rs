@@ -91,6 +91,21 @@ pub enum NodeKind {
 }
 
 // ---------------------------------------------------------------------------
+// RecipeKind — engine-side mirror of cook_progress::event::RecipeKind
+// ---------------------------------------------------------------------------
+
+/// Whether a completed recipe was a normal recipe or a chore — engine-side
+/// enum, isomorphic to `cook_progress::event::RecipeKind`. The CLI
+/// translates between the two so that `cook-engine` does not depend on
+/// `cook-progress`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RecipeKind {
+    #[default]
+    Recipe,
+    Chore,
+}
+
+// ---------------------------------------------------------------------------
 // EngineEvent — progress / observability events emitted during execution
 // ---------------------------------------------------------------------------
 
@@ -118,6 +133,7 @@ pub enum EngineEvent {
         elapsed: Duration,
         cached_nodes: usize,
         total_nodes: usize,
+        kind: RecipeKind,
     },
     /// A recipe failed due to one or more node failures.
     RecipeFailed {
@@ -168,6 +184,9 @@ pub enum EngineEvent {
     InteractiveStart {
         recipe: String,
         node_name: String,
+        /// Number of body steps in this chore window. 0 for non-chore
+        /// (legacy single-line) interactives.
+        chore_step_count: usize,
     },
     /// An interactive command finished.
     InteractiveEnd {
@@ -178,6 +197,9 @@ pub enum EngineEvent {
         /// True when no further work will run after this node — the renderer
         /// uses this to leave progress bars frozen instead of resuming them.
         is_terminal: bool,
+        /// 1-indexed step number that failed inside the chore window;
+        /// `None` on success or for non-chore interactives.
+        failed_step: Option<usize>,
     },
     /// A line of output from a work node.
     ///

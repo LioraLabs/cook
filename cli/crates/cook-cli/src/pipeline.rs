@@ -159,6 +159,7 @@ fn bridge_engine_to_progress_events(
                     elapsed,
                     cached_nodes,
                     total_nodes,
+                    kind,
                 } => {
                     let id = intern_recipe(&name, &mut recipe_ids, &mut next_recipe);
                     cook_progress::ProgressEvent::RecipeCompleted {
@@ -166,6 +167,10 @@ fn bridge_engine_to_progress_events(
                         elapsed,
                         cached: cached_nodes,
                         total: total_nodes,
+                        kind: match kind {
+                            cook_engine::RecipeKind::Recipe => cook_progress::event::RecipeKind::Recipe,
+                            cook_engine::RecipeKind::Chore => cook_progress::event::RecipeKind::Chore,
+                        },
                     }
                 }
                 cook_engine::EngineEvent::RecipeFailed {
@@ -286,13 +291,14 @@ fn bridge_engine_to_progress_events(
                         stream,
                     }
                 }
-                cook_engine::EngineEvent::InteractiveStart { recipe, node_name } => {
+                cook_engine::EngineEvent::InteractiveStart { recipe, node_name, chore_step_count } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
                     let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
                     cook_progress::ProgressEvent::InteractiveStart {
                         recipe: rid,
                         node: nid,
                         name: node_name,
+                        chore_step_count,
                     }
                 }
                 cook_engine::EngineEvent::InteractiveEnd {
@@ -301,6 +307,7 @@ fn bridge_engine_to_progress_events(
                     elapsed,
                     success,
                     is_terminal,
+                    failed_step,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
                     let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
@@ -311,6 +318,7 @@ fn bridge_engine_to_progress_events(
                         elapsed,
                         success,
                         is_terminal,
+                        failed_step,
                     }
                 }
                 cook_engine::EngineEvent::Finished { success, .. } => {

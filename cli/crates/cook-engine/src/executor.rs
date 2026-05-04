@@ -19,7 +19,7 @@ use cook_fingerprint::{
 use cook_dag::Dag;
 use cook_luaotp::{WorkItem, WorkerPool};
 
-use crate::{EngineError, EngineEvent, NodeKind, WorkNode};
+use crate::{EngineError, EngineEvent, NodeKind, RecipeKind, WorkNode};
 
 // ---------------------------------------------------------------------------
 // RecipeTracker
@@ -283,6 +283,7 @@ pub fn execute_dag(
                             elapsed,
                             cached_nodes: tracker.cached_nodes,
                             total_nodes: tracker.total_nodes,
+                            kind: RecipeKind::Recipe,
                         },
                     );
                 }
@@ -593,6 +594,7 @@ pub fn execute_dag(
                     EngineEvent::InteractiveStart {
                         recipe: recipe_name.clone(),
                         node_name: node_name.clone(),
+                        chore_step_count: 0, // 0 = legacy non-chore single-line path
                     },
                 );
                 emit(
@@ -643,6 +645,7 @@ pub fn execute_dag(
                         elapsed: interactive_elapsed,
                         success,
                         is_terminal,
+                        failed_step: None,
                     },
                 );
 

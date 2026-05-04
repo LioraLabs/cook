@@ -15,7 +15,7 @@ use cook_cache::{
 use cook_fingerprint::{CacheBackend, EnvDenylist, ExecutionContext};
 
 use crate::analyzer::{self, GraphError};
-use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent, RegistryEntry};
+use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent, RecipeKind, RegistryEntry};
 
 /// The result of a successful engine run.
 #[derive(Debug)]
@@ -231,6 +231,7 @@ where
                         elapsed: std::time::Duration::ZERO,
                         cached_nodes: 0,
                         total_nodes: 0,
+                        kind: RecipeKind::Recipe,
                     });
                 }
             }
