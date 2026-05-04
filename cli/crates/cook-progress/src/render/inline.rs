@@ -138,6 +138,7 @@ mod tests {
             ProgressEvent::RecipeCompleted {
                 recipe: RecipeId::new(0),
                 elapsed: Duration::from_millis(150), cached: 0, total: 1,
+                kind: crate::event::RecipeKind::Recipe,
             },
             ProgressEvent::Finished { success: true },
         ] {

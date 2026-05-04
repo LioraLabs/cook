@@ -51,7 +51,7 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total } => {
+            ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total, .. } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let was_running = r.status == Status::Running;
                     r.elapsed = Some(*elapsed);
@@ -161,7 +161,7 @@ impl BuildState {
                 }
             }
             ProgressEvent::NodeOutput { .. } => { /* log store handles this */ }
-            ProgressEvent::InteractiveStart { recipe, node, name } => {
+            ProgressEvent::InteractiveStart { recipe, node, name, .. } => {
                 // Register the interactive node so downstream renderers
                 // (notably the JSON writer) can resolve its name from
                 // BuildState rather than re-reading the inline `name` field.
@@ -326,6 +326,7 @@ mod tests {
             recipe: RecipeId::new(0),
             elapsed: Duration::from_millis(10),
             cached: 2, total: 2,
+            kind: crate::event::RecipeKind::Recipe,
         });
         assert_eq!(s.recipes[&RecipeId::new(0)].status, Status::Cached);
         assert_eq!(s.totals.cached, 1);
@@ -369,12 +370,14 @@ mod tests {
             recipe: RecipeId::new(0),
             elapsed: Duration::from_millis(10),
             cached: 0, total: 1,
+            kind: crate::event::RecipeKind::Recipe,
         });
         let totals_after_first = s.totals;
         s.apply(&ProgressEvent::RecipeCompleted {
             recipe: RecipeId::new(0),
             elapsed: Duration::from_millis(10),
             cached: 0, total: 1,
+            kind: crate::event::RecipeKind::Recipe,
         });
         assert_eq!(s.totals, totals_after_first, "duplicate RecipeCompleted must not mutate counters");
     }

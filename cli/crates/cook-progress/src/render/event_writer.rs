@@ -166,7 +166,7 @@ impl EventWriter {
                 Ok(true)
             }
 
-            ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total } => {
+            ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total, .. } => {
                 self.flush_cached_suppression(out, *recipe)?;
                 let rname = recipe_name(state, *recipe);
                 let v = verb_for(LineKind::RecipeFinished, NodeKind::Cooked);
@@ -368,6 +368,7 @@ mod tests {
             recipe: RecipeId::new(0),
             elapsed: Duration::from_millis(400),
             cached: 6, total: 6,
+            kind: crate::event::RecipeKind::Recipe,
         };
         state.apply(&ev);
         w.handle(&mut buf, &state, &ev).unwrap();
@@ -423,6 +424,7 @@ mod tests {
             recipe: RecipeId::new(0),
             elapsed: Duration::from_millis(200),
             cached: 0, total: 1,
+            kind: crate::event::RecipeKind::Recipe,
         };
         state.apply(&recipe_done);
         w.handle(&mut buf, &state, &recipe_done).unwrap();
@@ -506,6 +508,7 @@ mod tests {
         // Chore-style sequence: InteractiveStart → InteractiveEnd(terminal) → trailing events.
         let start = ProgressEvent::InteractiveStart {
             recipe: RecipeId::new(0), node: NodeId::new(0), name: "@45".into(),
+            chore_step_count: 0,
         };
         state.apply(&start);
         w.handle(&mut buf, &state, &start).unwrap();
@@ -515,6 +518,7 @@ mod tests {
             elapsed: Duration::from_millis(10),
             success: true,
             is_terminal: true,
+            failed_step: None,
         };
         state.apply(&end);
         w.handle(&mut buf, &state, &end).unwrap();
@@ -529,6 +533,7 @@ mod tests {
                 recipe: RecipeId::new(0),
                 elapsed: Duration::from_millis(15),
                 cached: 0, total: 1,
+                kind: crate::event::RecipeKind::Recipe,
             },
             ProgressEvent::Finished { success: true },
         ] {
@@ -552,6 +557,7 @@ mod tests {
 
         let ev = ProgressEvent::InteractiveStart {
             recipe: RecipeId::new(0), node: NodeId::new(0), name: "@45".into(),
+            chore_step_count: 0,
         };
         let opts = EventWriterOptions { colored: false, ..Default::default() };
         let out = render_one(&state, &ev, opts);

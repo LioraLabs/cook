@@ -51,6 +51,7 @@ fn main() {
         recipe: RecipeId::new(0),
         elapsed: Duration::from_millis(700),
         cached: 0, total: 2,
+        kind: cook_progress::event::RecipeKind::Recipe,
     }).unwrap();
     thread::sleep(Duration::from_millis(200));
     tx.send(ProgressEvent::Finished { success: true }).unwrap();

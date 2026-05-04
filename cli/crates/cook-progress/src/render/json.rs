@@ -85,12 +85,16 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "type": "recipe-started",
             "recipe": recipe_name(state, *recipe),
         }),
-        ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total } => json!({
+        ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total, kind } => json!({
             "type": "recipe-completed",
             "recipe": recipe_name(state, *recipe),
             "elapsed_ms": duration_ms(*elapsed),
             "cached": cached,
             "total": total,
+            "kind": match kind {
+                crate::event::RecipeKind::Recipe => "recipe",
+                crate::event::RecipeKind::Chore => "chore",
+            },
         }),
         ProgressEvent::RecipeFailed { recipe, elapsed, completed, total } => json!({
             "type": "recipe-failed",
@@ -140,17 +144,19 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "stream": stream_str(*stream),
             "line": line,
         }),
-        ProgressEvent::InteractiveStart { recipe, node, name: _ } => json!({
+        ProgressEvent::InteractiveStart { recipe, node, name: _, chore_step_count } => json!({
             "type": "interactive-start",
             "recipe": recipe_name(state, *recipe),
             "node": node_name(state, *recipe, *node),
+            "chore_step_count": chore_step_count,
         }),
-        ProgressEvent::InteractiveEnd { recipe, node, name: _, elapsed, success, .. } => json!({
+        ProgressEvent::InteractiveEnd { recipe, node, name: _, elapsed, success, is_terminal: _, failed_step } => json!({
             "type": "interactive-end",
             "recipe": recipe_name(state, *recipe),
             "node": node_name(state, *recipe, *node),
             "elapsed_ms": duration_ms(*elapsed),
             "success": success,
+            "failed_step": failed_step,
         }),
         ProgressEvent::Finished { success } => json!({
             "type": "finished",
@@ -296,6 +302,7 @@ mod tests {
             recipe: RecipeId::new(0),
             elapsed: Duration::from_millis(1234),
             cached: 0, total: 3,
+            kind: crate::event::RecipeKind::Recipe,
         });
         assert!(s.contains("\"elapsed_ms\":1234"), "expected elapsed_ms integer; got: {s}");
         assert!(s.contains("\"recipe\":\"deps\""), "expected name not id; got: {s}");

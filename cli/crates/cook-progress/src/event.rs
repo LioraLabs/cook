@@ -64,6 +64,17 @@ pub enum Stream {
     Stderr,
 }
 
+/// Distinguishes a regular recipe from a chore. Used by the renderer to
+/// pick the recipe-summary detail string (`(N nodes)` vs `(chore)`).
+/// Defaults to `Recipe` so older readers / tests round-trip unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecipeKind {
+    #[default]
+    Recipe,
+    Chore,
+}
+
 /// What kind of work a node is doing. Determines which verb the renderer prints
 /// (`Compiled`, `Linked`, `Tested`, …). Engine and Lua-stdlib producers fill
 /// this in; unannotated nodes default to `Cooked`.
@@ -105,6 +116,8 @@ pub enum ProgressEvent {
         elapsed: Duration,
         cached: usize,
         total: usize,
+        #[serde(default)]
+        kind: RecipeKind,
     },
     RecipeFailed {
         recipe: RecipeId,
@@ -156,6 +169,10 @@ pub enum ProgressEvent {
         recipe: RecipeId,
         node: NodeId,
         name: String,
+        /// Number of body steps in this chore window. 0 for non-chore
+        /// (legacy single-line) interactives. >=1 for a chore window.
+        #[serde(default)]
+        chore_step_count: usize,
     },
     InteractiveEnd {
         recipe: RecipeId,
@@ -166,6 +183,10 @@ pub enum ProgressEvent {
         /// True when this interactive was the final bit of work — renderers
         /// use this to skip resuming progress bars.
         is_terminal: bool,
+        /// 1-indexed step number that failed inside the chore window;
+        /// `None` on success or for non-chore interactives.
+        #[serde(default)]
+        failed_step: Option<usize>,
     },
     Finished {
         success: bool,

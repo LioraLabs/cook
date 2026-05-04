@@ -39,7 +39,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 }
             }
             ProgressEvent::RecipeStarted { .. } => {}
-            ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total } => {
+            ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total, .. } => {
                 let name = self.name(state, *recipe);
                 let detail = if *cached > 0 {
                     format!("({cached}/{total} cached)")
@@ -169,6 +169,7 @@ mod tests {
             recipe: RecipeId::new(0),
             elapsed: Duration::from_millis(400),
             cached: 0, total: 2,
+            kind: crate::event::RecipeKind::Recipe,
         };
         state.apply(&ev);
         let mut buf = Vec::new();

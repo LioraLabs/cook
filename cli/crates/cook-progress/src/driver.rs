@@ -69,6 +69,7 @@ mod tests {
             recipe: RecipeId::new(0),
             elapsed: Duration::from_millis(10),
             cached: 0, total: 1,
+            kind: crate::event::RecipeKind::Recipe,
         }).unwrap();
         tx.send(ProgressEvent::Finished { success: true }).unwrap();
         drop(tx);
