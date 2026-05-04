@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::event::NodeId;
+use crate::event::{NodeId, NodeKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeStatus {
@@ -23,6 +23,7 @@ pub struct NodeState {
     pub status: NodeStatus,
     pub started_at: Option<Instant>,
     pub completed_at: Option<Instant>,
+    pub kind: NodeKind,
 }
 
 impl NodeState {
@@ -35,6 +36,7 @@ impl NodeState {
             status: NodeStatus::Waiting,
             started_at: None,
             completed_at: None,
+            kind: NodeKind::Cooked,
         }
     }
 
@@ -87,5 +89,16 @@ mod tests {
     fn display_handles_empty_fallback() {
         let n = NodeState::new(NodeId::new(2), "x".into(), None, "".into());
         assert_eq!(n.display(), "$?");
+    }
+
+    #[test]
+    fn new_default_kind_is_cooked() {
+        let n = NodeState::new(
+            NodeId::new(0),
+            "x".into(),
+            None,
+            "".into(),
+        );
+        assert_eq!(n.kind, crate::event::NodeKind::Cooked);
     }
 }

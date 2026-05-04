@@ -76,15 +76,16 @@ impl BuildState {
                     }
                 }
             }
-            ProgressEvent::NodeStarted { recipe, node, name, artifact, fallback_label } => {
+            ProgressEvent::NodeStarted { recipe, node, name, artifact, fallback_label, kind } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let mut ns = NodeState::new(*node, name.clone(), artifact.clone(), fallback_label.clone());
                     ns.status = NodeStatus::Running;
                     ns.started_at = Some(Instant::now());
+                    ns.kind = *kind;
                     r.nodes.insert(*node, ns);
                 }
             }
-            ProgressEvent::NodeCompleted { recipe, node, elapsed: _ } => {
+            ProgressEvent::NodeCompleted { recipe, node, elapsed: _, kind: _ } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let bumped = if let Some(n) = r.nodes.get_mut(node) {
                         if n.status == NodeStatus::Running {
@@ -152,6 +153,7 @@ impl BuildState {
                             status: NodeStatus::Skipped,
                             started_at: None,
                             completed_at: Some(Instant::now()),
+                            kind: crate::event::NodeKind::Cooked,
                         });
                         r.progress.0 += 1;
                         self.totals.completed_nodes += 1;
@@ -226,7 +228,7 @@ impl Default for BuildState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::NodeId;
+    use crate::event::{NodeId, NodeKind};
     use std::path::PathBuf;
 
     fn topo(recipes: &[(u32, &str, &[u32], usize)]) -> Vec<RecipeTopo> {
@@ -275,6 +277,7 @@ mod tests {
             name: "lvm.c".into(),
             artifact: Some(PathBuf::from("build/obj/lvm.o")),
             fallback_label: "clang -c lvm.c".into(),
+            kind: NodeKind::Cooked,
         });
         let r = &s.recipes[&RecipeId::new(0)];
         assert_eq!(r.nodes.len(), 1);
@@ -323,6 +326,7 @@ mod tests {
         s.apply(&ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "x".into(), artifact: None, fallback_label: "x".into(),
+            kind: NodeKind::Cooked,
         });
         s.apply(&ProgressEvent::NodeFailed {
             recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -370,10 +374,12 @@ mod tests {
         s.apply(&ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "a".into(), artifact: None, fallback_label: "a".into(),
+            kind: NodeKind::Cooked,
         });
         s.apply(&ProgressEvent::NodeCompleted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             elapsed: Duration::from_millis(1),
+            kind: NodeKind::Cooked,
         });
         assert_eq!(s.recipes[&RecipeId::new(0)].progress, (1, 2));
         assert_eq!(s.totals.completed_nodes, 1);
@@ -382,6 +388,7 @@ mod tests {
         s.apply(&ProgressEvent::NodeCompleted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             elapsed: Duration::from_millis(1),
+            kind: NodeKind::Cooked,
         });
         assert_eq!(s.recipes[&RecipeId::new(0)].progress, (1, 2));
         assert_eq!(s.totals.completed_nodes, 1);

@@ -4,7 +4,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use cook_progress::{Driver, InlineRenderer, NodeId, ProgressEvent, RecipeId, RecipeTopo};
+use cook_progress::{Driver, InlineRenderer, NodeId, NodeKind, ProgressEvent, RecipeId, RecipeTopo};
 use indicatif::ProgressDrawTarget;
 
 fn main() {
@@ -32,11 +32,13 @@ fn main() {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         name: "fetch-a".into(), artifact: Some("build/deps/a.tar".into()),
         fallback_label: "fetch a".into(),
+        kind: NodeKind::Cooked,
     }).unwrap();
     thread::sleep(Duration::from_millis(400));
     tx.send(ProgressEvent::NodeCompleted {
         recipe: RecipeId::new(0), node: NodeId::new(0),
         elapsed: Duration::from_millis(400),
+        kind: NodeKind::Cooked,
     }).unwrap();
     tx.send(ProgressEvent::RecipeCompleted {
         recipe: RecipeId::new(0),

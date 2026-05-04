@@ -9,7 +9,7 @@ pub mod strip;
 pub mod style;
 
 pub use driver::Driver;
-pub use event::{NodeId, ProgressEvent, RecipeId, RecipeTopo, SkipReason, Stream, PROGRESS_SCHEMA_VERSION};
+pub use event::{NodeId, NodeKind, ProgressEvent, RecipeId, RecipeTopo, SkipReason, Stream, PROGRESS_SCHEMA_VERSION};
 pub use log_store::{LogConfig, LogStore};
 pub use model::{BuildState, Counters, NodeState, NodeStatus, RecipeState, Status};
 pub use render::Renderer;

@@ -64,6 +64,22 @@ pub enum Stream {
     Stderr,
 }
 
+/// What kind of work a node is doing. Determines which verb the renderer prints
+/// (`Compiled`, `Linked`, `Tested`, …). Engine and Lua-stdlib producers fill
+/// this in; unannotated nodes default to `Cooked`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NodeKind {
+    Compile,
+    Link,
+    Resolve,
+    Generate,
+    Write,
+    Test,
+    #[default]
+    Cooked,
+}
+
 /// Topology entry sent once in `BuildStarted`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecipeTopo {
@@ -102,11 +118,15 @@ pub enum ProgressEvent {
         name: String,
         artifact: Option<PathBuf>,
         fallback_label: String,
+        #[serde(default)]
+        kind: NodeKind,
     },
     NodeCompleted {
         recipe: RecipeId,
         node: NodeId,
         elapsed: Duration,
+        #[serde(default)]
+        kind: NodeKind,
     },
     NodeFailed {
         recipe: RecipeId,

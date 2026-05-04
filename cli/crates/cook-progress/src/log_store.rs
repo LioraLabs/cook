@@ -231,6 +231,7 @@ mod tests {
         state.apply(&ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
+            kind: crate::event::NodeKind::Cooked,
         });
         store.record(&state, &ProgressEvent::NodeOutput {
             recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -316,6 +317,7 @@ mod tests {
         state.apply(&ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "../../root".into(), artifact: None, fallback_label: "x".into(),
+            kind: crate::event::NodeKind::Cooked,
         });
         store.record(&state, &ProgressEvent::NodeOutput {
             recipe: RecipeId::new(0), node: NodeId::new(0),

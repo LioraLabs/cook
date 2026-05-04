@@ -250,7 +250,7 @@ impl Renderer for InlineRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::{NodeId, RecipeTopo};
+    use crate::event::{NodeId, NodeKind, RecipeTopo};
     use crate::render::test_term::TestTerm;
     use std::time::Duration;
 
@@ -298,6 +298,7 @@ mod tests {
                 recipe: RecipeId::new(0), node: NodeId::new(0),
                 name: "a.c".into(), artifact: Some("build/a.o".into()),
                 fallback_label: "clang a.c".into(),
+                kind: NodeKind::Cooked,
             },
         ];
         let (state, _term) = drive(&events);
@@ -343,6 +344,7 @@ mod tests {
             ProgressEvent::NodeStarted {
                 recipe: RecipeId::new(0), node: NodeId::new(0),
                 name: "x.c".into(), artifact: None, fallback_label: "clang x.c".into(),
+                kind: NodeKind::Cooked,
             },
             ProgressEvent::NodeFailed {
                 recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -381,6 +383,7 @@ mod tests {
             ProgressEvent::NodeStarted {
                 recipe: RecipeId::new(0), node: NodeId::new(0),
                 name: "repl".into(), artifact: None, fallback_label: "gdb".into(),
+                kind: NodeKind::Cooked,
             },
             ProgressEvent::InteractiveStart { recipe: RecipeId::new(0), node: NodeId::new(0), name: "@5".into() },
             ProgressEvent::InteractiveEnd {
@@ -419,19 +422,23 @@ mod tests {
                 recipe: RecipeId::new(0), node: NodeId::new(0),
                 name: "a.c".into(), artifact: Some("build/a.o".into()),
                 fallback_label: "x".into(),
+                kind: NodeKind::Cooked,
             },
             ProgressEvent::NodeCompleted {
                 recipe: RecipeId::new(0), node: NodeId::new(0),
                 elapsed: Duration::from_millis(100),
+                kind: NodeKind::Cooked,
             },
             ProgressEvent::NodeStarted {
                 recipe: RecipeId::new(0), node: NodeId::new(1),
                 name: "b.c".into(), artifact: Some("build/b.o".into()),
                 fallback_label: "x".into(),
+                kind: NodeKind::Cooked,
             },
             ProgressEvent::NodeCompleted {
                 recipe: RecipeId::new(0), node: NodeId::new(1),
                 elapsed: Duration::from_millis(100),
+                kind: NodeKind::Cooked,
             },
             ProgressEvent::RecipeCompleted {
                 recipe: RecipeId::new(0),
@@ -468,6 +475,7 @@ mod tests {
             ProgressEvent::NodeStarted {
                 recipe: RecipeId::new(0), node: NodeId::new(0),
                 name: "x".into(), artifact: None, fallback_label: "x".into(),
+                kind: NodeKind::Cooked,
             },
             ProgressEvent::InteractiveStart { recipe: RecipeId::new(0), node: NodeId::new(0), name: "x".into() },
             ProgressEvent::InteractiveEnd {

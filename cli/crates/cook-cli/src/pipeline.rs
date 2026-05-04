@@ -181,6 +181,7 @@ fn bridge_engine_to_progress_events(
                         name: node_name,
                         artifact,
                         fallback_label,
+                        kind: cook_progress::NodeKind::Cooked,
                     }
                 }
                 cook_engine::EngineEvent::NodeCompleted {
@@ -194,6 +195,7 @@ fn bridge_engine_to_progress_events(
                         recipe: rid,
                         node: nid,
                         elapsed,
+                        kind: cook_progress::NodeKind::Cooked,
                     }
                 }
                 cook_engine::EngineEvent::NodeFailed {

@@ -53,7 +53,7 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 writeln!(self.out, "  {:24} FAILED   ({}/{} steps) {}", name, completed, total, fmt_secs(*elapsed))?;
             }
             ProgressEvent::NodeStarted { .. } => {}
-            ProgressEvent::NodeCompleted { recipe, node, elapsed } => {
+            ProgressEvent::NodeCompleted { recipe, node, elapsed, kind: _ } => {
                 let rname = self.name(state, *recipe);
                 let nname = state.recipes.get(recipe)
                     .and_then(|r| r.nodes.get(node))
@@ -191,6 +191,7 @@ mod tests {
         state.apply(&ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
+            kind: crate::event::NodeKind::Cooked,
         });
         let ev = ProgressEvent::NodeOutput {
             recipe: RecipeId::new(0), node: NodeId::new(0),

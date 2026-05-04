@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use serde_json::{json, Value};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-use crate::event::{ProgressEvent, Stream, PROGRESS_SCHEMA_VERSION};
+use crate::event::{NodeKind, ProgressEvent, Stream, PROGRESS_SCHEMA_VERSION};
 use crate::model::build::BuildState;
 use crate::render::Renderer;
 
@@ -49,6 +49,23 @@ fn stream_str(s: Stream) -> &'static str {
     match s { Stream::Stdout => "stdout", Stream::Stderr => "stderr" }
 }
 
+/// Wire-format mapping for `NodeKind` on `node-started` / `node-completed`.
+///
+/// Mirrors the `#[serde(rename_all = "kebab-case")]` on the enum, but kept
+/// explicit so the wire shape is visible at the emit site and doesn't drift
+/// silently if the serde attribute changes.
+fn kind_str(k: &NodeKind) -> &'static str {
+    match k {
+        NodeKind::Compile => "compile",
+        NodeKind::Link => "link",
+        NodeKind::Resolve => "resolve",
+        NodeKind::Generate => "generate",
+        NodeKind::Write => "write",
+        NodeKind::Test => "test",
+        NodeKind::Cooked => "cooked",
+    }
+}
+
 /// Build the JSON value for a ProgressEvent, looking up names from BuildState.
 pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value {
     match event {
@@ -82,18 +99,20 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "completed": completed,
             "total": total,
         }),
-        ProgressEvent::NodeStarted { recipe, node, name: _, artifact, fallback_label } => json!({
+        ProgressEvent::NodeStarted { recipe, node, name: _, artifact, fallback_label, kind } => json!({
             "type": "node-started",
             "recipe": recipe_name(state, *recipe),
             "node": node_name(state, *recipe, *node),
             "artifact": artifact.as_ref().map(|p| p.display().to_string()),
             "fallback_label": fallback_label,
+            "kind": kind_str(kind),
         }),
-        ProgressEvent::NodeCompleted { recipe, node, elapsed } => json!({
+        ProgressEvent::NodeCompleted { recipe, node, elapsed, kind } => json!({
             "type": "node-completed",
             "recipe": recipe_name(state, *recipe),
             "node": node_name(state, *recipe, *node),
             "elapsed_ms": duration_ms(*elapsed),
+            "kind": kind_str(kind),
         }),
         ProgressEvent::NodeFailed { recipe, node, elapsed, error } => json!({
             "type": "node-failed",
@@ -230,7 +249,7 @@ pub fn check_schema_version(line: &str) -> Result<u32, SchemaCheckError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::{NodeId, RecipeId, RecipeTopo};
+    use crate::event::{NodeId, NodeKind, RecipeId, RecipeTopo};
     use std::time::Duration;
 
     fn make_state_with_one_recipe() -> BuildState {
@@ -288,6 +307,7 @@ mod tests {
         state.apply(&ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
+            kind: NodeKind::Cooked,
         });
         let s = write_event(&state, &ProgressEvent::NodeOutput {
             recipe: RecipeId::new(0), node: NodeId::new(0),
@@ -334,10 +354,12 @@ mod tests {
         state.apply(&ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "lvm.c".into(), artifact: None, fallback_label: "x".into(),
+            kind: NodeKind::Cooked,
         });
         let s_started = write_event(&state, &ProgressEvent::NodeStarted {
             recipe: RecipeId::new(0), node: NodeId::new(0),
             name: "ignored-inline-name".into(), artifact: None, fallback_label: "x".into(),
+            kind: NodeKind::Cooked,
         });
         assert!(s_started.contains("\"node\":\"lvm.c\""),
             "node-started must read state, not inline name; got: {s_started}");
@@ -358,6 +380,7 @@ mod tests {
         let s = write_event(&state, &ProgressEvent::NodeCompleted {
             recipe: RecipeId::new(0), node: NodeId::new(7),
             elapsed: Duration::from_millis(1),
+            kind: NodeKind::Cooked,
         });
         assert!(s.contains("\"node\":\"node#7\""),
             "expected synthesized fallback; got: {s}");
@@ -375,6 +398,31 @@ mod tests {
         let s = String::from_utf8(buf).unwrap();
         let lines: Vec<&str> = s.lines().collect();
         assert_eq!(lines.len(), 2, "expected 2 lines; got: {s}");
+    }
+
+    // --- NodeKind on the wire (additive `kind` field) ---
+
+    #[test]
+    fn node_started_emits_kind_in_wire_format() {
+        let state = make_state_with_one_recipe();
+        let s = write_event(&state, &ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "lvm.c".into(), artifact: None,
+            fallback_label: "x".into(),
+            kind: NodeKind::Compile,
+        });
+        assert!(s.contains("\"kind\":\"compile\""), "got: {s}");
+    }
+
+    #[test]
+    fn node_completed_emits_kind_in_wire_format() {
+        let state = make_state_with_one_recipe();
+        let s = write_event(&state, &ProgressEvent::NodeCompleted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            elapsed: std::time::Duration::from_millis(100),
+            kind: NodeKind::Link,
+        });
+        assert!(s.contains("\"kind\":\"link\""), "got: {s}");
     }
 
     // --- CS-0048: schema-version envelope (`v` field) ---
