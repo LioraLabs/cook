@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.8** (unreleased) — CS-0045, CS-0046, CS-0047, CS-0048, CS-0049, CS-0050
+- **v0.8** (unreleased) — CS-0045, CS-0046, CS-0047, CS-0048, CS-0049, CS-0050, CS-0051
 - **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042, CS-0043, CS-0044
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
@@ -862,3 +862,23 @@ CS-0050 closes that gap by adding a normative §{exec.output-materialisation} su
 **Conformance impact.** None at the harness level — the conformance corpus exercises Cookfile parsing, register-phase semantics, and cross-recipe scheduling, and a recipe whose declared output sits in a missing subdirectory was already accepted by parser and register paths. The runtime behavioural change (pre-step parent-dir creation) is pinned by the new `cli/crates/cook-engine/src/executor.rs` unit tests and the `examples/engine_audit_auto_mkdir_outputs/` audit fixture. `cargo test --workspace` passes (773 → 773 + 4 new tests).
 
 **Reference:** the CS-0050 commit on `cs-0050-auto-mkdir-output-parents`.
+
+## CS-0051 — Chore body executes as a single drain
+
+**Date:** 2026-05-04
+
+**Version:** v0.8
+
+**Sections affected:** §{chores.default-interactive} (4a.3 prose tightened; the per-step draining sentence is replaced with a normative single-drain rule, and Example 4a.3.1 commentary is aligned). App. D Versions index v0.8 row extended to include CS-0051. Reference-implementation across `cli/crates/cook-contracts`, `cli/crates/cook-register`, `cli/crates/cook-luagen`, `cli/crates/cook-engine`, and `cli/crates/cook-progress`; the layered Rust changes land on `cook-progress-cargo-style` over the CS-0051 commit series. Design spec in `docs/superpowers/specs/2026-05-04-cook-progress-chore-handoff-design.md`.
+
+**Summary.** Pre-CS-0051, a chore body's shell steps each compiled to a separate interactive work unit, and the engine treated each as its own drain (§{exec.interactive-drain}). §4a.3 carried the explicit normative claim "every shell step is its own draining unit." The reference progress renderer therefore emitted one `Running <chore>` line per shell step and leaked the parser's internal `@<line>` fallback labels into the verb stream as `Cooked <chore>/@N` between body steps. The chore-vs-recipe semantic — that a chore takes the controlling terminal as one continuous handoff session — was implicit; the normative wording contradicted user expectation by permitting other recipes' work to interleave between body steps.
+
+CS-0051 makes the single-drain semantic normative for chore bodies. A conforming implementation MUST execute every imperative-region step of a chore body within a single drain: from the moment the first imperative-region step begins, no work unit of any other recipe MAY run until the body completes. The body's shell steps and execute-phase Lua steps run in source order on the controlling terminal under one shared drain window. The interactive-drain rule of §{exec.interactive-drain} continues to govern individual interactive units in non-chore contexts (recipe-internal `@` steps); only the chore-body case is collapsed.
+
+**Scope.** The single-drain rule covers chore bodies only. Recipe-internal `@`-prefixed shell steps and the `interactive = true` flag on `cook.add_unit` (§{lua.add-unit}) continue to drain per-unit per the existing §{exec.interactive-drain} rule. A chore body's failure semantics are unchanged from the per-unit case: the first failing step ends the drain and propagates through the cancellation cascade as before. The prior "every shell step is its own draining unit" wording's implication that a chore body could partially complete with mixed-recipe interleaving is removed.
+
+**Implementation note.** The reference implementation flags chore-body units at register time. `cook-contracts::WorkPayload::Interactive` gains an `is_chore: bool` field; the runtime's `cook.add_unit` registrar (`cook-register/src/unit_api.rs`) reads `CaptureState.current_chore_active` (set by `cook._enter_chore` / `cook._exit_chore`) and stamps the flag accordingly. `cook-luagen::compile_chore` ensures every chore-body unit (shell or Lua-bundle) is emitted with `interactive = true` so they all reach the executor's interactive-drain queue. The executor (`cli/crates/cook-engine/src/executor.rs`) groups consecutive same-recipe interactive entries marked `is_chore = true` into a single drain window, emits one `InteractiveStart` / `InteractiveEnd` event pair for the whole window, and on mid-drain failure attributes the failure to the body via a `step k/n: …` diagnostic. The progress renderer (`cli/crates/cook-progress/src/render/event_writer.rs`) renders the window as a single `Running <chore>` line and suppresses per-step verb lines for the body's anonymous shell units.
+
+**Conformance impact.** None at the parser level; CS-0051 is an execute-time rule. The conformance corpus does not currently exercise chore-body scheduling shape — the reference-implementation behaviour change is pinned by new unit tests in `cook-engine` (chore-window grouping; mid-drain failure attribution; legacy non-chore interactive regression) and end-to-end rendering snapshots in `cook-progress`.
+
+**Reference:** the CS-0051 commit series on `cook-progress-cargo-style`.

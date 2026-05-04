@@ -60,7 +60,9 @@ A `module_call` (§{recipes.module-call-steps}) is permitted in a chore body —
 
 Every `shell_command` step inside a chore body MUST be treated as if it were `@`-prefixed (§{recipes.shell-steps}, "interactive_command"). The `@` marker remains valid (no-op) for symmetry with recipe bodies, but is unnecessary. A chore therefore inherits the TTY-allocation, stdio-inheritance semantics of an interactive recipe step.
 
-The Lua-step phases (`>`/`>{`/`>>`/`>>{`) are unchanged by this rule. An execute-phase Lua step inside a chore body runs on the worker VM exactly as it does inside a recipe body; the body-bundling rule (§{recipes.body-bundling}) does NOT apply to chores — every shell step is its own draining unit per §{exec.interactive-drain}.
+The Lua-step phases (`>`/`>{`/`>>`/`>>{`) are unchanged by this rule. An execute-phase Lua step inside a chore body runs on the worker VM exactly as it does inside a recipe body, but the body-bundling rule (§{recipes.body-bundling}) does NOT apply to chore bodies.
+
+A chore body MUST execute as a **single drain** (CS-0051): once the first imperative-region step of the body begins, no work unit of any other recipe MAY run until the body completes — successfully or with a failure. The body's shell steps and execute-phase Lua steps run in source order on the controlling terminal under one shared drain window. The interactive-drain rule of §{exec.interactive-drain} continues to govern individual interactive units in non-chore contexts (recipe-internal `@` steps); only the chore-body case shares a single drain across multiple imperative-region steps.
 
 ### Example 4a.3.1
 
@@ -71,7 +73,7 @@ chore deploy
     > print("deploy complete")
 ```
 
-The two shell steps are interactive: `cd build` and `rsync ...` run with the user's TTY inherited. The `>` line runs at execute phase on a worker VM after the two shell drainage units complete. There is no body-bundling — each shell line is its own draining unit.
+The two shell steps are interactive: `cd build` and `rsync ...` run with the user's TTY inherited. The `>` line runs at execute phase on a worker VM after the two shell steps complete. There is no body-bundling, and the two shell steps and the `>` Lua line execute under one shared drain — no work unit of any other recipe may run between them (CS-0051).
 
 ## 4a.4. No caching [#chores.no-caching]
 

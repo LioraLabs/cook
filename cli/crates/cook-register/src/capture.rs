@@ -109,6 +109,7 @@ pub fn register_cook_api_capture(
             payload: WorkPayload::Interactive {
                 cmd: cmd.clone(),
                 line,
+                is_chore: false,
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,

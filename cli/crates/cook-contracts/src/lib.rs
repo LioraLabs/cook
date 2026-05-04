@@ -63,6 +63,12 @@ pub enum WorkPayload {
     Interactive {
         cmd: String,
         line: usize,
+        /// True when this unit was emitted inside a chore body (between
+        /// `cook._enter_chore()` and `cook._exit_chore()`). Drives the
+        /// engine's chore-window grouping in `cook-engine/src/executor.rs`.
+        /// False for `interactive = true` shell steps inside a regular
+        /// recipe (the legacy single-line interactive path).
+        is_chore: bool,
     },
     LuaChunk {
         code: String,
@@ -181,8 +187,25 @@ mod tests {
 
     #[test]
     fn work_payload_interactive_construction() {
-        let p = WorkPayload::Interactive { cmd: "docker run -it ubuntu".into(), line: 5 };
+        let p = WorkPayload::Interactive { cmd: "docker run -it ubuntu".into(), line: 5, is_chore: false };
         assert!(matches!(p, WorkPayload::Interactive { line: 5, .. }));
+    }
+
+    #[test]
+    fn interactive_payload_carries_is_chore_flag() {
+        let chore_unit = WorkPayload::Interactive {
+            cmd: "fzf --prompt='> '".into(),
+            line: 5,
+            is_chore: true,
+        };
+        assert!(matches!(chore_unit, WorkPayload::Interactive { is_chore: true, .. }));
+
+        let inline_interactive = WorkPayload::Interactive {
+            cmd: "build/bin/lua -e 'print(1)'".into(),
+            line: 12,
+            is_chore: false,
+        };
+        assert!(matches!(inline_interactive, WorkPayload::Interactive { is_chore: false, .. }));
     }
 
     #[test]

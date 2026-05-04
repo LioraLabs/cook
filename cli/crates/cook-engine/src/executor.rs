@@ -1168,6 +1168,7 @@ mod tests {
                 WorkPayload::Interactive {
                     cmd: "echo interactive".to_string(),
                     line: 5,
+                    is_chore: false,
                 },
                 "run",
                 wd,
