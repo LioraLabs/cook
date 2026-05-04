@@ -10,13 +10,19 @@ pub mod dep_output_api;
 pub mod engine;
 pub mod env_api;
 pub mod export_api;
-pub mod fs_api;
 pub mod module_cache;
 pub mod module_loader;
-pub mod path_api;
-pub mod platform_api;
 pub mod test_api;
 pub mod unit_api;
+
+// `fs.*`, `path.*`, and `cook.platform.*` are part of the shared Cook
+// Lua API surface (CS-0044). The implementation lives in
+// `cook-lua-stdlib` so the same closures register in both the
+// register-phase VM (here) and the execute-phase worker VMs in
+// `cook-luaotp`. Re-exports preserve the historical
+// `cook_register::register_{fs,path}_api` import paths used by the
+// engine module.
+pub use cook_lua_stdlib::{register_fs_api, register_path_api, register_platform_api};
 
 #[cfg(test)]
 mod tests;
@@ -109,5 +115,3 @@ pub fn hash_str(s: &str) -> u64 {
 // Re-exports for convenience
 pub use dep_output_api::SharedTerminalOutputs;
 pub use engine::Registry;
-pub use fs_api::register_fs_api;
-pub use path_api::register_path_api;

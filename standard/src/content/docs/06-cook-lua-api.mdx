@@ -254,6 +254,10 @@ Returns the modification time of `path` as seconds since the Unix epoch, as a `n
 
 The `fs.*` surface is intentionally minimal. Authors needing operations not listed here (symlink manipulation, recursive deletion, permission changes) invoke those operations through the shell — `fs.*` is a host-portable subset for the common cases.
 
+### Note 6.5.2
+
+The "Phase: Both" classification on `fs.*`, `path.*`, and `cook.platform.*` is a behavioral contract: every observable property of these tables — the function signatures, the working-directory rooting rule, the error-on-I/O-failure rule, the order-implementation-defined rule on `fs.glob`, the platform string values — MUST be identical between the register-phase VM and the execute-phase worker VMs. A conforming implementation realizes this by sharing a single implementation of these tables across the two VMs. The reference implementation does so via the `cook-lua-stdlib` crate (CS-0044), which is the sole installer of `fs.*`, `path.*`, and `cook.platform.*` in both `cook-register` and `cook-luaotp`. Implementations MAY structure the sharing differently, but a register-phase call and an execute-phase call to the same `fs.*`/`path.*`/`cook.platform.*` function with the same arguments MUST produce the same result, modulo the working-directory difference inherent to the multi-Cookfile-import case (§7.5; CS-0017).
+
 ## 6.6. Path helpers (`path.*`) [#lua.path-helpers]
 **Phase.** Both. The `path.*` surface is pure string manipulation on path components; it performs no I/O and does not depend on the working directory.
 

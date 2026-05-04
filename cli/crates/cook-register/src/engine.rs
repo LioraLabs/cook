@@ -125,11 +125,21 @@ impl Registry {
             let cook_tbl: LuaTable = lua.globals().get("cook")?;
             install_require_env(&lua, &cook_tbl, self.env_keyset.clone())?;
         }
-        crate::fs_api::register_fs_api(&lua, &self.working_dir)?;
-        crate::path_api::register_path_api(&lua)?;
+        // `fs.*`, `path.*`, `cook.platform.*` come from the shared
+        // cook-lua-stdlib crate (CS-0044) so register-phase and
+        // execute-phase VMs see byte-identical behavior.
+        cook_lua_stdlib::register_fs_api(
+            &lua,
+            cook_lua_stdlib::WorkingDirSource::Static(self.working_dir.clone()),
+        )?;
+        cook_lua_stdlib::register_path_api(&lua)?;
 
-        // Module system APIs
-        crate::platform_api::register_platform_api(&lua)?;
+        // Module system APIs. `register_platform_api` now takes the
+        // `cook` table directly rather than reading it from globals.
+        {
+            let cook_tbl: LuaTable = lua.globals().get("cook")?;
+            cook_lua_stdlib::register_platform_api(&lua, &cook_tbl)?;
+        }
 
         let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(
             ModuleLoaderState::new(self.working_dir.clone()),

@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042, CS-0043
+- **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042, CS-0043, CS-0044
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
 - **v0.4** (`cs-standard/v0.4`, 2026-04-29) — CS-0018, CS-0019, CS-0020, CS-0021
@@ -677,4 +677,22 @@ The fix plumbs stream provenance through the entire pipeline. A new `OutputStrea
 **Pre-1.0 follow-up.** App. E should track the absence of a normative `events.jsonl` schema section. Per the Cook Standard versioning policy (CS-0012), public wire formats produced by the reference implementation and consumed by external tooling deserve normative section status before v1.0. The current `events.jsonl` shape is documented only in `cli/crates/cook-progress/src/render/json.rs`; promoting it to a normative section (covering `type` discriminator, field schemas per event kind, the `ts` / `v` envelope, and the `stream` field's `"stdout"` / `"stderr"` enumeration) is a prerequisite for v1.0.
 
 **Reference:** the CS-0043 commit on the active branch.
+
+## D.44. CS-0044 — Shared `fs.*`/`path.*`/`cook.platform.*` implementation across register and execute VMs. [#changes.cs-0044]
+
+**Date:** 2026-05-03
+
+**Version:** v0.7
+
+**Sections affected:** §{lua.fs-helpers} (new Note 6.5.2 pinning the cross-phase identity contract).
+
+**Summary.** Pre-CS-0044, the reference implementation shipped two parallel implementations of `fs.*`, `path.*`, and `cook.platform.*` — one in `cli/crates/cook-register/src/{fs,path,platform}_api.rs` for the register-phase VM, the other in `cli/crates/cook-luaotp/src/{fs,path,platform}_api.rs` for the execute-phase worker VMs. `path_api.rs` was byte-identical between the two crates; `platform_api.rs` was structurally identical with only the `cook`-table-fetch shape differing; `fs_api.rs` had diverged because the execute-phase VMs needed per-call working-directory resolution (CS-0017 multi-Cookfile imports) while the register-phase VM captured the cwd once at registration. The drift was a v1.0 risk: bug fixes to one copy would silently miss the other, and the §{lua.fs-helpers} "Phase: Both" promise was implementation-fragile.
+
+CS-0044 extracts the three tables into a new `cli/crates/cook-lua-stdlib` crate and parameterizes the `fs.*` cwd source over a `WorkingDirSource` enum with two variants — `Static(PathBuf)` for register-phase use and `Live(Arc<Mutex<PathBuf>>)` for execute-phase use. Both `cook-register` and `cook-luaotp` now depend on `cook-lua-stdlib` and call its `register_fs_api` / `register_path_api` / `register_platform_api` factories instead of carrying local copies. Note 6.5.2 makes the identity contract normative: every observable property of these tables MUST be identical between the two phases, modulo the working-directory difference inherent to the multi-Cookfile-import case.
+
+**Implementation note.** The `fs_api` unification adopts the execute-phase (`cook-luaotp`) cwd-resolution pattern as canonical: `WorkingDirSource::resolve()` is called inside every `fs.*` closure rather than the cwd being captured at registration. For the `Static` variant this is operationally indistinguishable from the previous register-phase behavior (the path is cloned from a `PathBuf` instead of read through a `Mutex`); for the `Live` variant it preserves the CS-0017 contract that lets one worker VM serve items from multiple Cookfiles. As a side effect, any latent CS-0017 cwd-resolution bug in the pre-CS-0044 register-phase `fs_api` is fixed for free — the unified implementation has only one cwd-resolution code path and it is correct under both call patterns.
+
+**Hard non-changes.** CS-0044 does not introduce a filesystem sandbox; it replicates today's behavior exactly. The user-visible Lua API surface is unchanged — every existing recipe continues to work without modification. Sandboxing is a follow-up that this consolidation enables but does not deliver.
+
+**Reference:** the CS-0044 commit series on the `worktree-agent-a6e35722b1cd28f43` branch.
 
