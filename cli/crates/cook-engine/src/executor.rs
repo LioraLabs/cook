@@ -32,6 +32,9 @@ struct RecipeTracker {
     cached_nodes: usize,
     has_failure: bool,
     started: bool,
+    /// CS-0051: marked true when any chore-window step is observed for
+    /// this recipe so `RecipeCompleted` can carry `kind: RecipeKind::Chore`.
+    is_chore: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +224,7 @@ pub fn execute_dag(
                 cached_nodes: 0,
                 has_failure: false,
                 started: false,
+                is_chore: false,
             },
         );
     }
@@ -276,6 +280,11 @@ pub fn execute_dag(
                         },
                     );
                 } else {
+                    let kind = if tracker.is_chore {
+                        RecipeKind::Chore
+                    } else {
+                        RecipeKind::Recipe
+                    };
                     emit(
                         event_tx,
                         EngineEvent::RecipeCompleted {
@@ -283,7 +292,7 @@ pub fn execute_dag(
                             elapsed,
                             cached_nodes: tracker.cached_nodes,
                             total_nodes: tracker.total_nodes,
-                            kind: RecipeKind::Recipe,
+                            kind,
                         },
                     );
                 }
@@ -572,168 +581,164 @@ pub fn execute_dag(
     // ----- Main loop: receive results until every node is accounted for -----
     loop {
         // If pool is drained and we have interactive nodes queued, run them.
+        //
+        // CS-0051: a chore body MUST execute as a single drain. We branch
+        // on the head's `is_chore` flag. Chore steps for the same recipe
+        // are drained as one window with one InteractiveStart/End pair;
+        // legacy non-chore interactives keep their per-node pair.
         while pending == 0 && !interactive_queue.is_empty() {
-            let id = interactive_queue.remove(0);
-            if cancelled[id] {
+            let head_id = interactive_queue[0];
+            if cancelled[head_id] {
+                interactive_queue.remove(0);
                 finished += 1;
                 continue;
             }
 
-            let node = dag.node(id);
-            let work_node = node.payload();
-            if let Some(payload @ WorkPayload::Interactive { cmd, line, .. }) = &work_node.payload {
-                let recipe_name = work_node.recipe_name.clone();
-                let node_name = payload.display_name();
-                ensure_recipe_started(&mut recipe_trackers, &recipe_name, &event_tx);
+            // Peek at head's payload to decide chore vs legacy path.
+            let head_is_chore = matches!(
+                dag.node(head_id).payload().payload,
+                Some(WorkPayload::Interactive { is_chore: true, .. })
+            );
 
-                // InteractiveStart is emitted BEFORE NodeStarted so the renderer can
-                // freeze/clear the progress bars before any repaint triggered by the
-                // node's arrival into the build state.
+            if head_is_chore {
+                // -------- CHORE-WINDOW PATH (CS-0051) --------
+                //
+                // A chore body is emitted as a linear chain of `Interactive`
+                // units bracketed by `_enter_chore`/`_exit_chore` (step1 →
+                // step2 → … stepN). The dag_units emitter chains them with
+                // dependency edges, so only the head is initially in the
+                // interactive queue — later steps surface as we complete
+                // each predecessor.
+                //
+                // To emit one InteractiveStart up front (so the renderer can
+                // hide the progress bars BEFORE any chore output appears),
+                // we statically discover the full window by walking
+                // `dependents()` from the head while same-recipe / chore /
+                // single-successor invariants hold. After the walk we have
+                // the full step count, run the steps, then close with one
+                // InteractiveEnd.
+                let chore_recipe = dag.node(head_id).payload().recipe_name.clone();
+
+                ensure_recipe_started(&mut recipe_trackers, &chore_recipe, &event_tx);
+                if let Some(t) = recipe_trackers.get_mut(&chore_recipe) {
+                    t.is_chore = true;
+                }
+
+                // Pop the head off the queue; gather any other chore-body
+                // steps that are also already queued (rare — the chain is
+                // usually linear so only the head is ready — but harmless).
+                let mut window: Vec<usize> = vec![interactive_queue.remove(0)];
+                while let Some(&peek_id) = interactive_queue.first() {
+                    let same_recipe =
+                        dag.node(peek_id).payload().recipe_name == chore_recipe;
+                    let same_kind = matches!(
+                        dag.node(peek_id).payload().payload,
+                        Some(WorkPayload::Interactive { is_chore: true, .. })
+                    );
+                    if same_recipe && same_kind {
+                        window.push(interactive_queue.remove(0));
+                    } else {
+                        break;
+                    }
+                }
+
+                // Walk the linear chain of chore-body successors from the
+                // tail of `window`. The chain ends at the first node that
+                // (a) is not a chore body for the same recipe, or
+                // (b) has multiple dependents/dependents-of-dependents
+                //     beyond the simple chain.
+                let mut tail = *window.last().unwrap();
+                loop {
+                    let dependents = dag.node(tail).dependents();
+                    if dependents.len() != 1 {
+                        break;
+                    }
+                    let next = dependents[0];
+                    let same_recipe =
+                        dag.node(next).payload().recipe_name == chore_recipe;
+                    let same_kind = matches!(
+                        dag.node(next).payload().payload,
+                        Some(WorkPayload::Interactive { is_chore: true, .. })
+                    );
+                    if !(same_recipe && same_kind) {
+                        break;
+                    }
+                    // The next node must not have other unmet predecessors —
+                    // i.e. it's truly waiting only on `tail`. We're walking
+                    // before any window step has run, so `remaining_deps`
+                    // counts every predecessor still pending. A value of 1
+                    // means `tail` is the sole gate; anything else means
+                    // `next` has a fan-in beyond the chore chain.
+                    if dag.node(next).remaining_deps() != 1 {
+                        break;
+                    }
+                    window.push(next);
+                    tail = next;
+                }
+
+                let n = window.len();
+                let head_node_name = dag
+                    .node(window[0])
+                    .payload()
+                    .payload
+                    .as_ref()
+                    .map(|p| p.display_name())
+                    .unwrap_or_else(|| chore_recipe.clone());
+
+                // Emit the bracketing InteractiveStart BEFORE any step runs
+                // so the renderer freezes / hides progress before chore
+                // output is interleaved.
                 emit(
                     &event_tx,
                     EngineEvent::InteractiveStart {
-                        recipe: recipe_name.clone(),
-                        node_name: node_name.clone(),
-                        chore_step_count: 0, // 0 = legacy non-chore single-line path
-                    },
-                );
-                emit(
-                    &event_tx,
-                    EngineEvent::NodeStarted {
-                        recipe: recipe_name.clone(),
-                        node_name: node_name.clone(),
-                        artifact: work_node.cache_meta.as_ref()
-                            .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
-                        fallback_label: node_name.clone(),
-                        // Interactive payloads (@-shell) are never test steps,
-                        // so default to Cooked.
-                        kind: NodeKind::Cooked,
-                    },
-                );
-                let interactive_start = Instant::now();
-
-                // CS-0050: ensure parent dirs of declared cook-step outputs
-                // exist before the shell text runs. Interactive units today
-                // have `cache_meta == None` (the `interactive = true` flag is
-                // only set by `@`-prefixed shell steps which never declare
-                // outputs), but the call is uniform across dispatch paths so
-                // any future cook-style interactive variant inherits the
-                // contract.
-                let result = match ensure_output_parent_dirs(work_node) {
-                    Ok(()) => run_interactive_on_main(
-                        cmd,
-                        *line,
-                        &work_node.working_dir,
-                        &work_node.env_vars,
-                    ),
-                    Err(e) => Err(e),
-                };
-                let interactive_elapsed = interactive_start.elapsed();
-                finished += 1;
-
-                // Terminal = no more queued interactives and this node has no
-                // (live) dependents, so after it completes the build will end.
-                let is_terminal = interactive_queue.is_empty()
-                    && dag.node(id).dependents().iter().all(|&d| cancelled[d]);
-
-                let success = result.is_ok();
-                emit(
-                    &event_tx,
-                    EngineEvent::InteractiveEnd {
-                        recipe: recipe_name.clone(),
-                        node_name: node_name.clone(),
-                        elapsed: interactive_elapsed,
-                        success,
-                        is_terminal,
-                        failed_step: None,
+                        recipe: chore_recipe.clone(),
+                        node_name: head_node_name.clone(),
+                        chore_step_count: n,
                     },
                 );
 
-                if success {
-                    emit(
-                        &event_tx,
-                        EngineEvent::NodeCompleted {
-                            recipe: recipe_name.clone(),
-                            node_name: node_name.clone(),
-                            elapsed: interactive_elapsed,
-                            // Interactive nodes are never test steps.
-                            kind: NodeKind::Cooked,
-                        },
-                    );
+                let chore_start = Instant::now();
+                let mut failed_idx: Option<usize> = None; // 1-indexed step number
+                let mut last_err: Option<String> = None;
 
-                    // Update cache if needed
-                    if let Some(meta) = &dag.node(id).payload().cache_meta {
-                        if let Some(cm) = cache_managers.get(&dag.node(id).payload().recipe_name) {
-                            match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(id).payload().working_dir) {
-                                Ok(step_entry) => {
-                                    // Compute cloud_key for this unit (spec §5.3).
-                                    let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
-                                    sorted_hashes.sort();
-
-                                    let recipe_namespace = format!(
-                                        "{}/{}::{}",
-                                        meta.project_id, meta.cookfile_path, meta.recipe_name
-                                    );
-
-                                    let key_inputs = CloudKeyInputs {
-                                        schema_version: CACHE_VERSION,
-                                        recipe_namespace: &recipe_namespace,
-                                        command_hash: meta.command_hash,
-                                        context_hash: meta.context_hash,
-                                        env_contribution: meta.env_contribution,
-                                        sorted_input_content_hashes: &sorted_hashes,
-                                    };
-                                    let cloud_k = cloud_key(&key_inputs);
-
-                                    // Upload one artifact per declared output (2026-05-02 addendum
-                                    // spec §5.1). Each artifact is keyed by
-                                    // artifact_key(cloud_key, idx, path) so a future cache hit can
-                                    // restore them all independently.
-                                    for (out_idx, output_path) in meta.output_paths.iter().enumerate() {
-                                        let abs_output = dag.node(id).payload().working_dir.join(output_path);
-                                        let bytes = match std::fs::read(&abs_output) {
-                                            Ok(b) => b,
-                                            Err(_) => continue,
-                                        };
-                                        let artifact_k = artifact_key(
-                                            &cloud_k,
-                                            out_idx as u32,
-                                            output_path,
-                                        );
-                                        let artifact_meta = ArtifactMeta {
-                                            recipe_namespace: recipe_namespace.clone(),
-                                            command_hash: meta.command_hash,
-                                            context_hash: meta.context_hash,
-                                            env_contribution: meta.env_contribution,
-                                            schema_version: CACHE_VERSION,
-                                            size_bytes: bytes.len() as u64,
-                                            tags: std::collections::BTreeSet::new(),
-                                            consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-                                            output_index: out_idx as u32,
-                                            output_path: output_path.clone(),
-                                        };
-                                        if let Err(e) = cache_ctx.backend.put(&artifact_k, &bytes, &artifact_meta) {
-                                            tracing::warn!("cache backend put failed for {}: {}", output_path, e);
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
-                                }
-                            }
+                for (idx0, &id) in window.iter().enumerate() {
+                    if cancelled[id] {
+                        // Pre-cancelled; treat as a skipped attempt below.
+                        continue;
+                    }
+                    let work_node = dag.node(id).payload();
+                    if let Some(WorkPayload::Interactive { cmd, line, is_chore: _ }) =
+                        &work_node.payload
+                    {
+                        // CS-0050: parent-dir creation is a no-op for chore
+                        // bodies (no cache_meta) but kept for uniformity.
+                        let result = match ensure_output_parent_dirs(work_node) {
+                            Ok(()) => run_interactive_on_main(
+                                cmd,
+                                *line,
+                                &work_node.working_dir,
+                                &work_node.env_vars,
+                            ),
+                            Err(e) => Err(e),
+                        };
+                        if let Err(e) = result {
+                            failed_idx = Some(idx0 + 1);
+                            last_err = Some(e);
+                            break;
                         }
                     }
-
-                    finish_recipe_node(
-                        &mut recipe_trackers,
-                        &recipe_name,
-                        false,
-                        false,
-                        &event_tx,
-                    );
-
+                    // Advance the DAG. Window steps form a linear chain, so
+                    // each `dag.complete` releases at most the next window
+                    // step (which we'll process on the next iteration). Any
+                    // out-of-chain dependents (rare for chore bodies, but
+                    // possible if someone declares deps on a chore step)
+                    // route through `process_ready` as usual.
                     let newly_ready = dag.complete(id);
                     for nid in newly_ready {
+                        let already_in_window = window.contains(&nid);
+                        if already_in_window {
+                            continue;
+                        }
                         pending += process_ready(
                             &dag,
                             nid,
@@ -748,33 +753,303 @@ pub fn execute_dag(
                             &mut failures,
                         );
                     }
-                } else {
-                    let err_msg = result.unwrap_err();
-                    emit(
-                        &event_tx,
-                        EngineEvent::NodeFailed {
-                            recipe: recipe_name.clone(),
-                            node_name: node_name.clone(),
-                            elapsed: interactive_elapsed,
-                            error: err_msg.clone(),
-                        },
-                    );
-                    failures.push((id, recipe_name.clone(), err_msg));
+                }
+
+                let chore_elapsed = chore_start.elapsed();
+
+                // Account for steps in the recipe tracker: successful steps
+                // tick `completed_nodes` without failure; the failing step
+                // (if any) ticks with failure=true; the untouched tail is
+                // marked cancelled below.
+                let success_count = match failed_idx {
+                    Some(k) => k - 1,
+                    None => n,
+                };
+                for _ in 0..success_count {
                     finish_recipe_node(
                         &mut recipe_trackers,
-                        &recipe_name,
+                        &chore_recipe,
+                        false,
+                        false,
+                        &event_tx,
+                    );
+                }
+                if failed_idx.is_some() {
+                    finish_recipe_node(
+                        &mut recipe_trackers,
+                        &chore_recipe,
                         false,
                         true,
                         &event_tx,
                     );
-                    for &dep_id in dag.node(id).dependents() {
-                        cancel_subtree(
-                            &dag,
-                            dep_id,
-                            &mut cancelled,
+                }
+                let attempted = failed_idx.unwrap_or(n);
+                finished += attempted;
+
+                // Compute terminality before mutating cancellation state.
+                // Terminal = no more queued/in-flight work and no live
+                // dependents on any window node.
+                let is_terminal = interactive_queue.is_empty()
+                    && pending == 0
+                    && window.iter().all(|&id| {
+                        dag.node(id).dependents().iter().all(|&d| cancelled[d])
+                    });
+
+                emit(
+                    &event_tx,
+                    EngineEvent::InteractiveEnd {
+                        recipe: chore_recipe.clone(),
+                        node_name: head_node_name.clone(),
+                        elapsed: chore_elapsed,
+                        success: failed_idx.is_none(),
+                        is_terminal,
+                        failed_step: failed_idx,
+                    },
+                );
+
+                if let Some(k) = failed_idx {
+                    // Cancel the untouched tail of the window.
+                    for &skipped_id in &window[k..] {
+                        if !cancelled[skipped_id] {
+                            cancelled[skipped_id] = true;
+                            finished += 1;
+                        }
+                    }
+
+                    let err_msg = last_err.unwrap_or_else(|| "unknown".into());
+                    let summary = format!("step {}/{}: {}", k, n, err_msg);
+                    emit(
+                        &event_tx,
+                        EngineEvent::NodeFailed {
+                            recipe: chore_recipe.clone(),
+                            node_name: chore_recipe.clone(),
+                            elapsed: chore_elapsed,
+                            error: summary.clone(),
+                        },
+                    );
+                    failures.push((window[k - 1], chore_recipe.clone(), summary));
+
+                    // Cascade cancellation through any dependents of the
+                    // failing step and the skipped tail.
+                    for &id in &window[(k - 1)..] {
+                        let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
+                        for dep_id in dependents {
+                            cancel_subtree(
+                                &dag,
+                                dep_id,
+                                &mut cancelled,
+                                &event_tx,
+                                &mut recipe_trackers,
+                            );
+                        }
+                    }
+                }
+            } else {
+                // -------- LEGACY PATH: per-node interactive (unchanged) --------
+                let id = interactive_queue.remove(0);
+                if cancelled[id] {
+                    finished += 1;
+                    continue;
+                }
+                let node = dag.node(id);
+                let work_node = node.payload();
+                if let Some(payload @ WorkPayload::Interactive { cmd, line, .. }) =
+                    &work_node.payload
+                {
+                    let recipe_name = work_node.recipe_name.clone();
+                    let node_name = payload.display_name();
+                    ensure_recipe_started(&mut recipe_trackers, &recipe_name, &event_tx);
+
+                    // InteractiveStart is emitted BEFORE NodeStarted so the renderer can
+                    // freeze/clear the progress bars before any repaint triggered by the
+                    // node's arrival into the build state.
+                    emit(
+                        &event_tx,
+                        EngineEvent::InteractiveStart {
+                            recipe: recipe_name.clone(),
+                            node_name: node_name.clone(),
+                            chore_step_count: 0, // 0 = legacy non-chore single-line path
+                        },
+                    );
+                    emit(
+                        &event_tx,
+                        EngineEvent::NodeStarted {
+                            recipe: recipe_name.clone(),
+                            node_name: node_name.clone(),
+                            artifact: work_node.cache_meta.as_ref()
+                                .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
+                            fallback_label: node_name.clone(),
+                            // Interactive payloads (@-shell) are never test steps,
+                            // so default to Cooked.
+                            kind: NodeKind::Cooked,
+                        },
+                    );
+                    let interactive_start = Instant::now();
+
+                    // CS-0050: ensure parent dirs of declared cook-step outputs
+                    // exist before the shell text runs. Interactive units today
+                    // have `cache_meta == None` (the `interactive = true` flag is
+                    // only set by `@`-prefixed shell steps which never declare
+                    // outputs), but the call is uniform across dispatch paths so
+                    // any future cook-style interactive variant inherits the
+                    // contract.
+                    let result = match ensure_output_parent_dirs(work_node) {
+                        Ok(()) => run_interactive_on_main(
+                            cmd,
+                            *line,
+                            &work_node.working_dir,
+                            &work_node.env_vars,
+                        ),
+                        Err(e) => Err(e),
+                    };
+                    let interactive_elapsed = interactive_start.elapsed();
+                    finished += 1;
+
+                    // Terminal = no more queued interactives and this node has no
+                    // (live) dependents, so after it completes the build will end.
+                    let is_terminal = interactive_queue.is_empty()
+                        && dag.node(id).dependents().iter().all(|&d| cancelled[d]);
+
+                    let success = result.is_ok();
+                    emit(
+                        &event_tx,
+                        EngineEvent::InteractiveEnd {
+                            recipe: recipe_name.clone(),
+                            node_name: node_name.clone(),
+                            elapsed: interactive_elapsed,
+                            success,
+                            is_terminal,
+                            failed_step: None,
+                        },
+                    );
+
+                    if success {
+                        emit(
                             &event_tx,
-                            &mut recipe_trackers,
+                            EngineEvent::NodeCompleted {
+                                recipe: recipe_name.clone(),
+                                node_name: node_name.clone(),
+                                elapsed: interactive_elapsed,
+                                // Interactive nodes are never test steps.
+                                kind: NodeKind::Cooked,
+                            },
                         );
+
+                        // Update cache if needed
+                        if let Some(meta) = &dag.node(id).payload().cache_meta {
+                            if let Some(cm) = cache_managers.get(&dag.node(id).payload().recipe_name) {
+                                match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(id).payload().working_dir) {
+                                    Ok(step_entry) => {
+                                        // Compute cloud_key for this unit (spec §5.3).
+                                        let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
+                                        sorted_hashes.sort();
+
+                                        let recipe_namespace = format!(
+                                            "{}/{}::{}",
+                                            meta.project_id, meta.cookfile_path, meta.recipe_name
+                                        );
+
+                                        let key_inputs = CloudKeyInputs {
+                                            schema_version: CACHE_VERSION,
+                                            recipe_namespace: &recipe_namespace,
+                                            command_hash: meta.command_hash,
+                                            context_hash: meta.context_hash,
+                                            env_contribution: meta.env_contribution,
+                                            sorted_input_content_hashes: &sorted_hashes,
+                                        };
+                                        let cloud_k = cloud_key(&key_inputs);
+
+                                        // Upload one artifact per declared output (2026-05-02 addendum
+                                        // spec §5.1). Each artifact is keyed by
+                                        // artifact_key(cloud_key, idx, path) so a future cache hit can
+                                        // restore them all independently.
+                                        for (out_idx, output_path) in meta.output_paths.iter().enumerate() {
+                                            let abs_output = dag.node(id).payload().working_dir.join(output_path);
+                                            let bytes = match std::fs::read(&abs_output) {
+                                                Ok(b) => b,
+                                                Err(_) => continue,
+                                            };
+                                            let artifact_k = artifact_key(
+                                                &cloud_k,
+                                                out_idx as u32,
+                                                output_path,
+                                            );
+                                            let artifact_meta = ArtifactMeta {
+                                                recipe_namespace: recipe_namespace.clone(),
+                                                command_hash: meta.command_hash,
+                                                context_hash: meta.context_hash,
+                                                env_contribution: meta.env_contribution,
+                                                schema_version: CACHE_VERSION,
+                                                size_bytes: bytes.len() as u64,
+                                                tags: std::collections::BTreeSet::new(),
+                                                consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                                                output_index: out_idx as u32,
+                                                output_path: output_path.clone(),
+                                            };
+                                            if let Err(e) = cache_ctx.backend.put(&artifact_k, &bytes, &artifact_meta) {
+                                                tracing::warn!("cache backend put failed for {}: {}", output_path, e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
+                                    }
+                                }
+                            }
+                        }
+
+                        finish_recipe_node(
+                            &mut recipe_trackers,
+                            &recipe_name,
+                            false,
+                            false,
+                            &event_tx,
+                        );
+
+                        let newly_ready = dag.complete(id);
+                        for nid in newly_ready {
+                            pending += process_ready(
+                                &dag,
+                                nid,
+                                &pool,
+                                &mut cancelled,
+                                &mut finished,
+                                &mut interactive_queue,
+                                &event_tx,
+                                &mut recipe_trackers,
+                                &cache_managers,
+                                &cache_ctx,
+                                &mut failures,
+                            );
+                        }
+                    } else {
+                        let err_msg = result.unwrap_err();
+                        emit(
+                            &event_tx,
+                            EngineEvent::NodeFailed {
+                                recipe: recipe_name.clone(),
+                                node_name: node_name.clone(),
+                                elapsed: interactive_elapsed,
+                                error: err_msg.clone(),
+                            },
+                        );
+                        failures.push((id, recipe_name.clone(), err_msg));
+                        finish_recipe_node(
+                            &mut recipe_trackers,
+                            &recipe_name,
+                            false,
+                            true,
+                            &event_tx,
+                        );
+                        for &dep_id in dag.node(id).dependents() {
+                            cancel_subtree(
+                                &dag,
+                                dep_id,
+                                &mut cancelled,
+                                &event_tx,
+                                &mut recipe_trackers,
+                            );
+                        }
                     }
                 }
             }
@@ -1384,5 +1659,143 @@ mod tests {
         let node = cook_node(shell("true"), "r", wd.clone(), vec!["out.txt"]);
         // wd.join("out.txt").parent() == Some(wd) which exists.
         ensure_output_parent_dirs(&node).expect("no parent component should be a no-op");
+    }
+
+    // -----------------------------------------------------------------
+    // CS-0051: chore-window grouping. A chore body MUST execute as a
+    // single drain — one InteractiveStart/InteractiveEnd pair covers all
+    // body steps, and the recipe completion event carries `kind: Chore`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn chore_window_groups_consecutive_chore_steps_into_one_pair() {
+        use std::sync::mpsc;
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        let mut dag = Dag::new();
+        // Three chore steps (is_chore=true) for one recipe — they must group.
+        let a = dag.add_node(
+            work_node(
+                WorkPayload::Interactive { cmd: "true".into(), line: 1, is_chore: true },
+                "chore", wd.clone()),
+            &[]).unwrap();
+        let b = dag.add_node(
+            work_node(
+                WorkPayload::Interactive { cmd: "true".into(), line: 2, is_chore: true },
+                "chore", wd.clone()),
+            &[a]).unwrap();
+        dag.add_node(
+            work_node(
+                WorkPayload::Interactive { cmd: "true".into(), line: 3, is_chore: true },
+                "chore", wd.clone()),
+            &[b]).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx);
+        assert!(result.is_ok(), "got: {result:?}");
+
+        let events: Vec<_> = rx.try_iter().collect();
+        let starts = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveStart { .. })).count();
+        let ends = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveEnd { .. })).count();
+        assert_eq!(starts, 1, "exactly one InteractiveStart per chore window; got events:\n{events:#?}");
+        assert_eq!(ends, 1, "exactly one InteractiveEnd per chore window; got events:\n{events:#?}");
+
+        match events.iter().find(|e| matches!(e, EngineEvent::InteractiveStart { .. })).unwrap() {
+            EngineEvent::InteractiveStart { chore_step_count, .. } => {
+                assert_eq!(*chore_step_count, 3);
+            }
+            _ => unreachable!(),
+        }
+
+        // RecipeCompleted MUST carry kind: Chore for chore recipes.
+        let recipe_completed = events
+            .iter()
+            .find(|e| matches!(e, EngineEvent::RecipeCompleted { .. }))
+            .expect("expected RecipeCompleted event");
+        match recipe_completed {
+            EngineEvent::RecipeCompleted { kind, .. } => {
+                assert_eq!(*kind, RecipeKind::Chore);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn chore_window_failure_mid_run_emits_one_node_failed_with_step_index() {
+        use std::sync::mpsc;
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        let mut dag = Dag::new();
+        let a = dag.add_node(
+            work_node(
+                WorkPayload::Interactive { cmd: "true".into(), line: 1, is_chore: true },
+                "chore", wd.clone()),
+            &[]).unwrap();
+        let b = dag.add_node(
+            work_node(
+                WorkPayload::Interactive { cmd: "false".into(), line: 2, is_chore: true },
+                "chore", wd.clone()),
+            &[a]).unwrap();
+        dag.add_node(
+            work_node(
+                WorkPayload::Interactive { cmd: "true".into(), line: 3, is_chore: true },
+                "chore", wd),
+            &[b]).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx);
+
+        let events: Vec<_> = rx.try_iter().collect();
+        let node_failed: Vec<_> = events.iter().filter(|e| matches!(e, EngineEvent::NodeFailed { .. })).collect();
+        assert_eq!(node_failed.len(), 1, "exactly one NodeFailed per chore failure; got: {events:#?}");
+        match node_failed[0] {
+            EngineEvent::NodeFailed { error, .. } => {
+                assert!(error.contains("step 2/3"), "expected 'step 2/3' in error, got: {error}");
+            }
+            _ => unreachable!(),
+        }
+
+        let end = events.iter().find(|e| matches!(e, EngineEvent::InteractiveEnd { .. })).unwrap();
+        match end {
+            EngineEvent::InteractiveEnd { failed_step, success, .. } => {
+                assert_eq!(*failed_step, Some(2));
+                assert!(!*success);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn non_chore_interactive_still_emits_per_node_pair() {
+        use std::sync::mpsc;
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        let mut dag = Dag::new();
+        dag.add_node(
+            work_node(
+                WorkPayload::Interactive {
+                    cmd: "echo legacy".into(),
+                    line: 1,
+                    is_chore: false,
+                },
+                "step", wd),
+            &[]).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx);
+
+        let events: Vec<_> = rx.try_iter().collect();
+        let starts = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveStart { .. })).count();
+        let ends = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveEnd { .. })).count();
+        assert_eq!(starts, 1);
+        assert_eq!(ends, 1);
+        // chore_step_count must be 0 to flag the legacy path.
+        match events.iter().find(|e| matches!(e, EngineEvent::InteractiveStart { .. })).unwrap() {
+            EngineEvent::InteractiveStart { chore_step_count, .. } => assert_eq!(*chore_step_count, 0),
+            _ => unreachable!(),
+        }
     }
 }
