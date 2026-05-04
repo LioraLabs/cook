@@ -130,7 +130,7 @@ impl BuildState {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     use std::collections::btree_map::Entry;
                     if let Entry::Vacant(e) = r.nodes.entry(*node) {
-                        let mut ns = NodeState::new(*node, name.clone(), artifact.clone(), String::new());
+                        let mut ns = NodeState::new(*node, name.clone(), artifact.clone(), name.clone());
                         ns.status = NodeStatus::Completed;
                         ns.completed_at = Some(Instant::now());
                         e.insert(ns);

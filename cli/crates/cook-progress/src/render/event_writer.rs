@@ -82,14 +82,15 @@ impl EventWriter {
             ProgressEvent::BuildStarted { .. } => Ok(false),
             ProgressEvent::RecipeStarted { .. } => Ok(false),
 
-            ProgressEvent::NodeCacheHit { recipe, name, .. } => {
+            ProgressEvent::NodeCacheHit { recipe, node, .. } => {
                 if self.opts.quiet { return Ok(false); }
                 let counter = self.cached.entry(*recipe).or_default();
                 if counter.printed < self.opts.cached_inline_threshold {
                     counter.printed += 1;
                     let rname = recipe_name(state, *recipe);
+                    let nname = node_display(state, *recipe, *node);
                     let v = verb_for(LineKind::NodeCached, NodeKind::Cooked);
-                    writeln!(out, "{} {rname}/{name}", format_verb(v, self.opts.colored))?;
+                    writeln!(out, "{} {rname}/{nname}", format_verb(v, self.opts.colored))?;
                     Ok(true)
                 } else {
                     counter.suppressed += 1;
@@ -173,7 +174,7 @@ impl EventWriter {
             ProgressEvent::InteractiveStart { recipe, name, .. } => {
                 let rname = recipe_name(state, *recipe);
                 let v = verb_for(LineKind::InteractiveRunning, NodeKind::Cooked);
-                let label = if rname.is_empty() {
+                let label = if rname.is_empty() || rname == *name {
                     name.to_string()
                 } else {
                     format!("{rname}/{name}")

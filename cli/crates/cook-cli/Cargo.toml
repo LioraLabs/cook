@@ -19,7 +19,6 @@ cook-engine = { path = "../cook-engine" }
 cook-dag-viewer = { path = "../cook-dag-viewer", optional = true }
 
 clap = { version = "4", features = ["derive"] }
-indicatif = "0.17"
 notify = "7"
 glob = "0.3"
 
