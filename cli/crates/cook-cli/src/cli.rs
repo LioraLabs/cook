@@ -92,6 +92,10 @@ pub struct Cli {
     #[arg(short, long)]
     pub quiet: bool,
 
+    /// Stream per-node output (stdout + stderr) inline with [recipe/node] prefix.
+    #[arg(short = 'v', long)]
+    pub verbose: bool,
+
     /// Number of parallel jobs (default: number of CPU cores)
     #[arg(short = 'j', long = "jobs")]
     pub jobs: Option<usize>,
