@@ -588,6 +588,9 @@ fn execute_work_item(
             outputs,
             ingredient_groups,
             step_kind: _,
+            // is_chore is consumed by the engine's chore-window dispatch
+            // before the item ever reaches the worker pool.
+            ..
         } => execute_lua_chunk(
             lua,
             work.id,
@@ -1049,6 +1052,7 @@ mod tests {
                 ],
                 ingredient_groups: vec![vec!["src.rs".to_string()]],
                 step_kind: cook_contracts::StepKind::Cook,
+                is_chore: false,
             },
             recipe_name: "multi".to_string(),
             working_dir: dir.path().to_path_buf(),
@@ -1089,6 +1093,7 @@ mod tests {
                 outputs: vec![out_path.to_string_lossy().into_owned()],
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
+                is_chore: false,
             },
             recipe_name: "r".to_string(),
             working_dir: dir.path().to_path_buf(),
@@ -1165,6 +1170,7 @@ mod tests {
                 outputs: vec![out1.to_string_lossy().into_owned()],
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
+                is_chore: false,
             },
             recipe_name: "r".to_string(),
             working_dir: dir1.path().to_path_buf(),
@@ -1183,6 +1189,7 @@ mod tests {
                 outputs: vec![out2.to_string_lossy().into_owned()],
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
+                is_chore: false,
             },
             recipe_name: "r".to_string(),
             working_dir: dir2.path().to_path_buf(),

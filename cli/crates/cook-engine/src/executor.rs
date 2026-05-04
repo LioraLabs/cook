@@ -71,6 +71,26 @@ fn node_kind_for_payload(payload: &WorkPayload) -> NodeKind {
 }
 
 // ---------------------------------------------------------------------------
+// is_chore_window_member — admit a node into the chore-window drain
+// ---------------------------------------------------------------------------
+//
+// A chore body's imperative region may mix shell steps (interactive shell
+// drain) and Lua-bundle steps (execute-phase Lua coalesced through
+// `emit_chore_body_unit`). Both must share the single drain window so the
+// CS-0051 "one drain per chore body" property holds when the body is
+// shell-only, Lua-only, or any mix. The dispatch site in `process_ready`
+// pushes both onto the interactive_queue when `is_chore = true`; the
+// chore-window code below uses this helper to identify members during the
+// pre-walk, head detection, and execution loop.
+fn is_chore_window_member(payload: &Option<WorkPayload>) -> bool {
+    matches!(
+        payload,
+        Some(WorkPayload::Interactive { is_chore: true, .. })
+            | Some(WorkPayload::LuaChunk { is_chore: true, .. })
+    )
+}
+
+// ---------------------------------------------------------------------------
 // recipe_node_counts — count how many nodes belong to each recipe
 // ---------------------------------------------------------------------------
 
@@ -453,6 +473,16 @@ pub fn execute_dag(
                 interactive_queue.push(id);
                 0
             }
+            Some(WorkPayload::LuaChunk { is_chore: true, .. }) => {
+                // CS-0051: chore-body Lua bundles share the drain with the
+                // body's shell steps. The chore-window loop submits each
+                // such chunk to the worker pool individually and waits for
+                // its single result, preserving the one-drain semantic
+                // (no other recipe's work runs while the chore body owns
+                // the controlling terminal).
+                interactive_queue.push(id);
+                0
+            }
             Some(payload) => {
                 // Check cache before executing
                 if check_node_cache(work_node, cache_managers, cache_ctx) {
@@ -595,10 +625,9 @@ pub fn execute_dag(
             }
 
             // Peek at head's payload to decide chore vs legacy path.
-            let head_is_chore = matches!(
-                dag.node(head_id).payload().payload,
-                Some(WorkPayload::Interactive { is_chore: true, .. })
-            );
+            // A chore-window head may be either an interactive shell step
+            // or a Lua-bundle step, both flagged via `is_chore = true`.
+            let head_is_chore = is_chore_window_member(&dag.node(head_id).payload().payload);
 
             if head_is_chore {
                 // -------- CHORE-WINDOW PATH (CS-0051) --------
@@ -631,10 +660,8 @@ pub fn execute_dag(
                 while let Some(&peek_id) = interactive_queue.first() {
                     let same_recipe =
                         dag.node(peek_id).payload().recipe_name == chore_recipe;
-                    let same_kind = matches!(
-                        dag.node(peek_id).payload().payload,
-                        Some(WorkPayload::Interactive { is_chore: true, .. })
-                    );
+                    let same_kind =
+                        is_chore_window_member(&dag.node(peek_id).payload().payload);
                     if same_recipe && same_kind {
                         window.push(interactive_queue.remove(0));
                     } else {
@@ -656,10 +683,8 @@ pub fn execute_dag(
                     let next = dependents[0];
                     let same_recipe =
                         dag.node(next).payload().recipe_name == chore_recipe;
-                    let same_kind = matches!(
-                        dag.node(next).payload().payload,
-                        Some(WorkPayload::Interactive { is_chore: true, .. })
-                    );
+                    let same_kind =
+                        is_chore_window_member(&dag.node(next).payload().payload);
                     if !(same_recipe && same_kind) {
                         break;
                     }
@@ -707,26 +732,105 @@ pub fn execute_dag(
                         continue;
                     }
                     let work_node = dag.node(id).payload();
-                    if let Some(WorkPayload::Interactive { cmd, line, is_chore: _ }) =
-                        &work_node.payload
-                    {
-                        // CS-0050: parent-dir creation is a no-op for chore
-                        // bodies (no cache_meta) but kept for uniformity.
-                        let result = match ensure_output_parent_dirs(work_node) {
-                            Ok(()) => run_interactive_on_main(
-                                cmd,
-                                *line,
-                                &work_node.working_dir,
-                                &work_node.env_vars,
-                            ),
-                            Err(e) => Err(e),
-                        };
-                        if let Err(e) = result {
-                            failed_idx = Some(idx0 + 1);
-                            last_err = Some(e);
-                            break;
+
+                    // CS-0051: a chore-window member is either a shell-step
+                    // interactive unit or a Lua-bundle unit. The shell case
+                    // runs on this thread via `run_interactive_on_main`; the
+                    // Lua case is submitted to the worker pool and we block
+                    // on the single result. Because chore windows enter only
+                    // when `pending == 0`, the submitted Lua chunk is the
+                    // only in-flight item, so the next `rx.recv()` returns
+                    // it — no lock-step protocol needed.
+                    let result: Result<(), String> = match &work_node.payload {
+                        Some(WorkPayload::Interactive { cmd, line, is_chore: _ }) => {
+                            // CS-0050: parent-dir creation is a no-op for
+                            // chore bodies (no cache_meta) but kept for
+                            // uniformity.
+                            match ensure_output_parent_dirs(work_node) {
+                                Ok(()) => run_interactive_on_main(
+                                    cmd,
+                                    *line,
+                                    &work_node.working_dir,
+                                    &work_node.env_vars,
+                                ),
+                                Err(e) => Err(e),
+                            }
                         }
+                        Some(WorkPayload::LuaChunk { .. }) => {
+                            match ensure_output_parent_dirs(work_node) {
+                                Ok(()) => {
+                                    let env_vars_hashmap: std::collections::HashMap<
+                                        String,
+                                        String,
+                                    > = work_node
+                                        .env_vars
+                                        .iter()
+                                        .map(|(k, v)| (k.clone(), v.clone()))
+                                        .collect();
+                                    pool.submit(WorkItem {
+                                        id,
+                                        payload: work_node.payload.clone().expect(
+                                            "chore-window LuaChunk node missing payload",
+                                        ),
+                                        recipe_name: work_node.recipe_name.clone(),
+                                        working_dir: work_node.working_dir.clone(),
+                                        env_vars: env_vars_hashmap,
+                                        project_root: cache_ctx.project_root.clone(),
+                                    });
+                                    match rx.recv() {
+                                        Ok(work_result) => {
+                                            // Forward any captured output.
+                                            // Lua chunks normally inherit
+                                            // stdout/stderr so this list is
+                                            // empty, but forwarding any
+                                            // captured lines preserves the
+                                            // CS-0035 fd-of-origin contract
+                                            // for downstream observers.
+                                            for (stream, line) in &work_result.output_lines {
+                                                emit(
+                                                    &event_tx,
+                                                    EngineEvent::OutputLine {
+                                                        recipe: work_node
+                                                            .recipe_name
+                                                            .clone(),
+                                                        line: line.clone(),
+                                                        stream: *stream,
+                                                    },
+                                                );
+                                            }
+                                            if work_result.success {
+                                                Ok(())
+                                            } else {
+                                                Err(work_result.error.unwrap_or_else(
+                                                    || "lua chunk failed".into(),
+                                                ))
+                                            }
+                                        }
+                                        Err(e) => Err(format!(
+                                            "chore-body lua: pool channel closed: {e}"
+                                        )),
+                                    }
+                                }
+                                Err(e) => Err(e),
+                            }
+                        }
+                        // The pre-walk only admits Interactive and LuaChunk
+                        // members; anything else here is a structural bug.
+                        // Be defensive and surface a clear diagnostic
+                        // rather than silently advancing the DAG.
+                        other => Err(format!(
+                            "BUG: unexpected payload in chore window at step {}: {:?}",
+                            idx0 + 1,
+                            other
+                        )),
+                    };
+
+                    if let Err(e) = result {
+                        failed_idx = Some(idx0 + 1);
+                        last_err = Some(e);
+                        break;
                     }
+
                     // Advance the DAG. Window steps form a linear chain, so
                     // each `dag.complete` releases at most the next window
                     // step (which we'll process on the next iteration). Any
@@ -1806,5 +1910,143 @@ mod tests {
             EngineEvent::InteractiveStart { chore_step_count, .. } => assert_eq!(*chore_step_count, 0),
             _ => unreachable!(),
         }
+    }
+
+    // -----------------------------------------------------------------
+    // CS-0051 Lua-bundle integration: the chore-window drain admits Lua-
+    // bundle steps alongside shell steps. A mixed shell+Lua chore body
+    // produces a single InteractiveStart/End pair; a pure-Lua chore body
+    // does likewise; non-chore LuaChunks still route through the worker
+    // pool (regression guard).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn chore_window_groups_shell_and_lua_into_one_pair() {
+        use std::sync::mpsc;
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        let mut dag = Dag::new();
+        let a = dag.add_node(
+            work_node(
+                WorkPayload::Interactive { cmd: "true".into(), line: 1, is_chore: true },
+                "shell1", wd.clone()),
+            &[]).unwrap();
+        let b = dag.add_node(
+            work_node(
+                WorkPayload::LuaChunk {
+                    code: "-- noop".into(),
+                    inputs: vec![],
+                    outputs: vec![],
+                    ingredient_groups: vec![],
+                    step_kind: cook_contracts::StepKind::Chore,
+                    is_chore: true,
+                },
+                "shell1", wd.clone()),
+            &[a]).unwrap();
+        dag.add_node(
+            work_node(
+                WorkPayload::Interactive { cmd: "true".into(), line: 3, is_chore: true },
+                "shell1", wd),
+            &[b]).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx);
+        assert!(result.is_ok(), "got: {result:?}");
+
+        let events: Vec<_> = rx.try_iter().collect();
+        let starts = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveStart { .. })).count();
+        let ends = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveEnd { .. })).count();
+        assert_eq!(
+            starts, 1,
+            "mixed shell+lua chore body must produce ONE InteractiveStart; got events:\n{events:#?}"
+        );
+        assert_eq!(
+            ends, 1,
+            "mixed shell+lua chore body must produce ONE InteractiveEnd; got events:\n{events:#?}"
+        );
+        match events.iter().find(|e| matches!(e, EngineEvent::InteractiveStart { .. })).unwrap() {
+            EngineEvent::InteractiveStart { chore_step_count, .. } => {
+                assert_eq!(*chore_step_count, 3, "chore_step_count covers all three body steps");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn pure_lua_chore_body_produces_one_drain_window() {
+        use std::sync::mpsc;
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        let mut dag = Dag::new();
+        let a = dag.add_node(
+            work_node(
+                WorkPayload::LuaChunk {
+                    code: "-- noop".into(),
+                    inputs: vec![],
+                    outputs: vec![],
+                    ingredient_groups: vec![],
+                    step_kind: cook_contracts::StepKind::Chore,
+                    is_chore: true,
+                },
+                "lua_chore", wd.clone()),
+            &[]).unwrap();
+        dag.add_node(
+            work_node(
+                WorkPayload::LuaChunk {
+                    code: "-- noop".into(),
+                    inputs: vec![],
+                    outputs: vec![],
+                    ingredient_groups: vec![],
+                    step_kind: cook_contracts::StepKind::Chore,
+                    is_chore: true,
+                },
+                "lua_chore", wd),
+            &[a]).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx);
+        assert!(result.is_ok(), "got: {result:?}");
+
+        let events: Vec<_> = rx.try_iter().collect();
+        let starts = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveStart { .. })).count();
+        let ends = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveEnd { .. })).count();
+        assert_eq!(starts, 1, "pure-lua chore body must produce ONE InteractiveStart; got: {events:#?}");
+        assert_eq!(ends, 1, "pure-lua chore body must produce ONE InteractiveEnd; got: {events:#?}");
+        match events.iter().find(|e| matches!(e, EngineEvent::InteractiveStart { .. })).unwrap() {
+            EngineEvent::InteractiveStart { chore_step_count, .. } => {
+                assert_eq!(*chore_step_count, 2);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn non_chore_lua_chunk_still_dispatches_to_worker_pool() {
+        // Regression: a LuaChunk with `is_chore = false` MUST continue to
+        // route through the worker pool (its is_chore = false means it is
+        // a regular cook/test/plate body, not a chore-window member).
+        // We pin this by exercising a one-node DAG; the engine must
+        // complete without queuing the unit on the interactive_queue.
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        let mut dag = Dag::new();
+        dag.add_node(
+            work_node(
+                WorkPayload::LuaChunk {
+                    code: "-- noop".into(),
+                    inputs: vec![],
+                    outputs: vec![],
+                    ingredient_groups: vec![],
+                    step_kind: cook_contracts::StepKind::Cook,
+                    is_chore: false,
+                },
+                "regular_lua", wd),
+            &[]).unwrap();
+
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
+        assert!(result.is_ok(), "got: {result:?}");
     }
 }

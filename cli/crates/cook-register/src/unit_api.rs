@@ -214,6 +214,9 @@ pub fn register_unit_api(
             None
         };
 
+        // is_chore is read BEFORE the if/else below (and before the later
+        // `cs.borrow_mut()`) so the borrow doesn't overlap with mutable use.
+        let is_chore = cs.borrow().current_chore_active;
         let payload = if let Some(code) = lua_code {
             WorkPayload::LuaChunk {
                 code,
@@ -221,10 +224,9 @@ pub fn register_unit_api(
                 outputs: output_paths.clone(),
                 ingredient_groups,
                 step_kind,
+                is_chore,
             }
         } else if interactive {
-            // is_chore is read BEFORE acquiring the borrow_mut() below.
-            let is_chore = cs.borrow().current_chore_active;
             WorkPayload::Interactive { cmd: command, line, is_chore }
         } else {
             WorkPayload::Shell { cmd: command, line: 0 }
@@ -604,6 +606,7 @@ mod tests {
                 outputs,
                 ingredient_groups,
                 step_kind: _,
+                is_chore: _,
             } => {
                 assert_eq!(code, "print('hi')");
                 assert_eq!(inputs, &vec!["main.c".to_string()]);
@@ -644,6 +647,7 @@ mod tests {
                 outputs,
                 ingredient_groups,
                 step_kind: _,
+                is_chore: _,
             } => {
                 assert_eq!(code, "os.execute('wasm-pack build')");
                 assert_eq!(inputs, &vec!["src.rs".to_string()]);
@@ -814,6 +818,31 @@ mod tests {
                 assert!(*is_chore, "unit emitted inside chore body must have is_chore=true");
             }
             other => panic!("expected Interactive payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_unit_inside_chore_marks_lua_chunk_is_chore_true() {
+        let (lua, capture_state) = make_lua_with_unit_api("my_chore");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+        lua.load(r#"
+            cook._enter_chore()
+            cook.add_unit({
+                lua_code = "print('hello from chore')",
+                interactive = true,
+                cache = false,
+            })
+            cook._exit_chore()
+        "#).exec().unwrap();
+
+        let state = capture_state.borrow();
+        assert_eq!(state.units.len(), 1);
+        match &state.units[0].payload {
+            WorkPayload::LuaChunk { is_chore, .. } => {
+                assert!(*is_chore, "lua chunk emitted inside chore body must have is_chore=true");
+            }
+            other => panic!("expected LuaChunk payload, got {other:?}"),
         }
     }
 

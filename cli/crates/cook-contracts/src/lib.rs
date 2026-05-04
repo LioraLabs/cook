@@ -83,6 +83,9 @@ pub enum WorkPayload {
         /// plate body merely degrades to a Lua runtime error rather
         /// than silently writing outside the project.
         step_kind: StepKind,
+        /// Set by `_enter_chore`/`_exit_chore`; routes the unit to the
+        /// chore-window drain in cook-engine instead of the worker pool.
+        is_chore: bool,
     },
     Test {
         cmd: String,
@@ -216,18 +219,33 @@ mod tests {
             outputs: vec!["out.txt".into()],
             ingredient_groups: vec![vec!["a".into(), "b".into()]],
             step_kind: StepKind::Cook,
+            is_chore: false,
         };
         match &p {
-            WorkPayload::LuaChunk { code, inputs, outputs, ingredient_groups, step_kind } => {
+            WorkPayload::LuaChunk { code, inputs, outputs, ingredient_groups, step_kind, is_chore } => {
                 assert_eq!(*step_kind, StepKind::Cook);
                 assert_eq!(code, "print('hi')");
                 assert_eq!(inputs, &vec!["in.txt".to_string()]);
                 assert_eq!(outputs, &vec!["out.txt".to_string()]);
                 assert_eq!(ingredient_groups.len(), 1);
                 assert_eq!(ingredient_groups[0].len(), 2);
+                assert!(!*is_chore);
             }
             _ => panic!("expected LuaChunk variant"),
         }
+    }
+
+    #[test]
+    fn work_payload_lua_chunk_carries_is_chore_flag() {
+        let chore_unit = WorkPayload::LuaChunk {
+            code: "print('chore')".into(),
+            inputs: vec![],
+            outputs: vec![],
+            ingredient_groups: vec![],
+            step_kind: StepKind::Chore,
+            is_chore: true,
+        };
+        assert!(matches!(chore_unit, WorkPayload::LuaChunk { is_chore: true, .. }));
     }
 
     #[test]
