@@ -2,21 +2,19 @@
 
 mod cli;
 mod cmd_logs;
-mod color;
 mod dag_data;
 mod dag_server;
 mod env;
 mod error;
 mod pipeline;
 mod progress;
-mod test_output;
 mod watcher;
 mod workspace;
 
 use clap::CommandFactory;
 
 use cli::Cli;
-use pipeline::{cmd_dag, cmd_init, cmd_menu, cmd_run, cmd_serve, cmd_test};
+use pipeline::{cmd_dag, cmd_init, cmd_menu, cmd_run, cmd_serve};
 
 fn main() {
     let version_string: &'static str = Box::leak(Box::new(format!(
@@ -40,15 +38,6 @@ fn main() {
         cmd_menu(&cli)
     } else if cli.serve {
         cmd_serve(&cli, &recipe, config.as_deref())
-    } else if cli.test {
-        cmd_test(
-            &cli,
-            cli.filter.clone(),
-            cli.verbose,
-            cli.timeout_multiplier,
-            cli.wrapper.clone(),
-            cli.list,
-        )
     } else if cli.logs {
         crate::cmd_logs::cmd_logs(cli.recipe.as_deref(), cli.build.as_deref(), cli.failed)
     } else {
