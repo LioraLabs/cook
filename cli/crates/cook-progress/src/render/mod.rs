@@ -3,6 +3,7 @@ pub mod inline;
 pub mod plain;
 pub mod json;
 pub mod event_writer;
+pub mod snapshot;
 
 #[cfg(test)]
 pub mod test_term;
