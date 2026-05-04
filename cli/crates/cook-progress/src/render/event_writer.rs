@@ -173,14 +173,20 @@ impl EventWriter {
                 Ok(true)
             }
 
-            ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total, .. } => {
+            ProgressEvent::RecipeCompleted { recipe, elapsed, cached, total, kind } => {
                 self.flush_cached_suppression(out, *recipe)?;
+                if *total == 0 { return Ok(false); }
                 let rname = recipe_name(state, *recipe);
                 let v = verb_for(LineKind::RecipeFinished, NodeKind::Cooked);
-                let detail = if *cached > 0 {
-                    format!("({} nodes, {} cached)", total, cached)
-                } else {
-                    format!("({} nodes)", total)
+                let detail = match kind {
+                    crate::event::RecipeKind::Chore => "(chore)".to_string(),
+                    crate::event::RecipeKind::Recipe => {
+                        if *cached > 0 {
+                            format!("({} nodes, {} cached)", total, cached)
+                        } else {
+                            format!("({} nodes)", total)
+                        }
+                    }
                 };
                 writeln!(out, "{} {rname} in {}   {}",
                     format_verb(v, self.opts.colored), fmt_secs(*elapsed), detail)?;
@@ -621,6 +627,82 @@ mod tests {
         let opts = EventWriterOptions { colored: false, ..Default::default() };
         let out = render_one(&state, &ev, opts);
         assert_eq!(out, "");
+    }
+
+    #[test]
+    fn recipe_completed_zero_nodes_emits_no_line() {
+        let mut state = empty_state();
+        state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+        let ev = ProgressEvent::RecipeCompleted {
+            recipe: RecipeId::new(0),
+            elapsed: Duration::from_millis(0),
+            cached: 0, total: 0,
+            kind: crate::event::RecipeKind::Recipe,
+        };
+        let opts = EventWriterOptions { colored: false, ..Default::default() };
+        let out = render_one(&state, &ev, opts);
+        assert_eq!(out, "", "aggregator (total=0) must emit nothing, got: {out:?}");
+    }
+
+    #[test]
+    fn recipe_completed_one_node_still_prints() {
+        let mut state = empty_state();
+        state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+        let ev = ProgressEvent::RecipeCompleted {
+            recipe: RecipeId::new(0),
+            elapsed: Duration::from_millis(100),
+            cached: 0, total: 1,
+            kind: crate::event::RecipeKind::Recipe,
+        };
+        let opts = EventWriterOptions { colored: false, ..Default::default() };
+        let out = render_one(&state, &ev, opts);
+        assert!(out.contains("Finished lib"), "single-node recipe should still print, got: {out:?}");
+    }
+
+    #[test]
+    fn recipe_completed_chore_kind_uses_chore_detail() {
+        let mut state = empty_state();
+        state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+        let ev = ProgressEvent::RecipeCompleted {
+            recipe: RecipeId::new(0),
+            elapsed: Duration::from_millis(4910),
+            cached: 0, total: 4,
+            kind: crate::event::RecipeKind::Chore,
+        };
+        let opts = EventWriterOptions { colored: false, ..Default::default() };
+        let out = render_one(&state, &ev, opts);
+        assert!(out.contains("(chore)"), "chore recipe summary should show (chore), got: {out:?}");
+        assert!(!out.contains("nodes"), "chore detail must not mention node math, got: {out:?}");
+    }
+
+    #[test]
+    fn chore_window_failure_renders_step_index_and_chore_name() {
+        let mut state = empty_state();
+        state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+        // Apply NodeStarted with the chore name as both name and (no) artifact.
+        // In the real engine flow, the chore-window failure path emits NodeFailed
+        // with `name = chore_recipe`; here we synthesize that view of the state.
+        state.apply(&ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0),
+            node: NodeId::new(0),
+            name: "play".into(),
+            artifact: None,
+            fallback_label: "play".into(),
+            kind: NodeKind::Cooked,
+        });
+        let ev = ProgressEvent::NodeFailed {
+            recipe: RecipeId::new(0),
+            node: NodeId::new(0),
+            elapsed: Duration::from_millis(400),
+            error: "step 2/4: exit 130".into(),
+        };
+        let opts = EventWriterOptions { colored: false, ..Default::default() };
+        let out = render_one(&state, &ev, opts);
+        // node_display for an artifact-less node with fallback_label "play" (no leading '$'):
+        // stripped = "play", first = "play", not starting with '@', so returns "$play".
+        assert!(out.contains("Failed lib/$play") || out.contains("Failed lib/play"),
+            "expected 'Failed lib/$play' (with optional $-prefix from node_display fallback), got: {out:?}");
+        assert!(out.contains("step 2/4: exit 130"), "got: {out:?}");
     }
 
     #[test]
