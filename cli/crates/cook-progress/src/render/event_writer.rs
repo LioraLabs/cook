@@ -192,16 +192,17 @@ impl EventWriter {
                 let v = verb_for(line_kind, NodeKind::Cooked);
                 let elapsed = state.elapsed();
                 let totals = &state.totals;
+                let total = totals.completed_nodes.max(totals.total_nodes);
                 let detail = if *success {
-                    format!("({} nodes, {} cached)", totals.total_nodes, totals.cached_node_count(state))
+                    format!("({} nodes, {} cached)", total, totals.cached_node_count(state))
                 } else {
                     format!("({} failed, {} skipped, {}/{} nodes)",
                         totals.failed_node_count(state),
                         totals.skipped_node_count(state),
                         totals.completed_nodes,
-                        totals.total_nodes)
+                        total)
                 };
-                writeln!(out, "{} build in {}   {}",
+                writeln!(out, "{} in {}   {}",
                     format_verb(v, self.opts.colored), fmt_secs(elapsed), detail)?;
                 Ok(true)
             }
@@ -421,6 +422,18 @@ mod tests {
         let opts = EventWriterOptions { colored: false, verbose: true, ..Default::default() };
         let out = render_one(&state, &ev, opts);
         assert_eq!(out, "[lib/lvm.c] (stderr) warning: unused\n");
+    }
+
+    #[test]
+    fn finished_success_emits_subjectless_summary() {
+        let mut state = empty_state();
+        state.totals.completed_nodes = 47;
+        let ev = ProgressEvent::Finished { success: true };
+        let opts = EventWriterOptions { colored: false, ..Default::default() };
+        let out = render_one(&state, &ev, opts);
+        // No "build" subject, no collision with a recipe of the same name.
+        assert!(out.starts_with("    Finished in "), "got: {out}");
+        assert!(out.contains("(47 nodes, 0 cached)"), "got: {out}");
     }
 
     #[test]
