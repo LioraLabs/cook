@@ -350,8 +350,6 @@ name = "cook-progress"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
- "console 0.15.11",
- "indicatif",
  "insta",
  "serde",
  "serde_json",

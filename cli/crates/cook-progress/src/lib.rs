@@ -5,7 +5,6 @@ pub mod event;
 pub mod log_store;
 pub mod model;
 pub mod render;
-pub mod strip;
 pub mod style;
 
 pub use driver::Driver;
