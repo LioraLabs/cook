@@ -102,6 +102,10 @@ impl EventWriter {
 
             ProgressEvent::NodeCacheHit { recipe, node, .. } => {
                 if self.opts.quiet { return Ok(false); }
+                let n = state.recipes.get(recipe).and_then(|r| r.nodes.get(node));
+                let has_artifact = n.is_some_and(|n| n.artifact.is_some());
+                if !has_artifact && !self.opts.verbose { return Ok(false); }
+
                 let counter = self.cached.entry(*recipe).or_default();
                 if counter.printed < self.opts.cached_inline_threshold {
                     counter.printed += 1;
@@ -118,6 +122,9 @@ impl EventWriter {
 
             ProgressEvent::NodeCompleted { recipe, node, elapsed, kind } => {
                 if self.opts.quiet { return Ok(false); }
+                let n = state.recipes.get(recipe).and_then(|r| r.nodes.get(node));
+                let has_artifact = n.is_some_and(|n| n.artifact.is_some());
+                if !has_artifact && !self.opts.verbose { return Ok(false); }
                 let rname = recipe_name(state, *recipe);
                 let nname = node_display(state, *recipe, *node);
                 let v = verb_for(LineKind::NodeCompleted, *kind);
@@ -353,9 +360,16 @@ mod tests {
         let mut w = EventWriter::new(EventWriterOptions { colored: false, cached_inline_threshold: 3, ..Default::default() });
 
         for i in 0..6 {
+            // Pre-populate node state with an artifact so the hit isn't suppressed.
+            let started = ProgressEvent::NodeStarted {
+                recipe: RecipeId::new(0), node: NodeId::new(i),
+                name: format!("a{i}.c"), artifact: Some(format!("a{i}.o").into()),
+                fallback_label: format!("cc a{i}.c"), kind: NodeKind::Compile,
+            };
+            state.apply(&started);
             let ev = ProgressEvent::NodeCacheHit {
                 recipe: RecipeId::new(0), node: NodeId::new(i),
-                name: format!("a{i}.o"), artifact: None,
+                name: format!("a{i}.o"), artifact: Some(format!("a{i}.o").into()),
             };
             state.apply(&ev);
             w.handle(&mut buf, &state, &ev).unwrap();
@@ -548,6 +562,65 @@ mod tests {
         assert!(out.contains("Running"), "got: {out}");
         assert!(!out.contains("Cooked"), "Cooked should be suppressed: {out}");
         assert!(!out.contains("Finished"), "Finished should be suppressed: {out}");
+    }
+
+    #[test]
+    fn node_completed_no_artifact_emits_no_line() {
+        let mut state = empty_state();
+        state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+        state.apply(&ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "@45".into(),
+            artifact: None,
+            fallback_label: "@45".into(),
+            kind: NodeKind::Cooked,
+        });
+        let ev = ProgressEvent::NodeCompleted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            elapsed: Duration::from_millis(100),
+            kind: NodeKind::Cooked,
+        };
+        let opts = EventWriterOptions { colored: false, ..Default::default() };
+        let out = render_one(&state, &ev, opts);
+        assert_eq!(out, "", "anonymous shell step (no artifact) must emit nothing, got: {out:?}");
+    }
+
+    #[test]
+    fn node_completed_no_artifact_verbose_still_prints() {
+        let mut state = empty_state();
+        state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+        state.apply(&ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "@45".into(), artifact: None, fallback_label: "@45".into(),
+            kind: NodeKind::Cooked,
+        });
+        let ev = ProgressEvent::NodeCompleted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            elapsed: Duration::from_millis(100),
+            kind: NodeKind::Cooked,
+        };
+        let opts = EventWriterOptions { colored: false, verbose: true, ..Default::default() };
+        let out = render_one(&state, &ev, opts);
+        assert!(out.contains("Cooked"), "verbose path should still print Cooked line, got: {out:?}");
+    }
+
+    #[test]
+    fn node_cache_hit_no_artifact_emits_no_line() {
+        let mut state = empty_state();
+        state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+        state.apply(&ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "@45".into(), artifact: None, fallback_label: "@45".into(),
+            kind: NodeKind::Cooked,
+        });
+        let ev = ProgressEvent::NodeCacheHit {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "@45".into(),
+            artifact: None,
+        };
+        let opts = EventWriterOptions { colored: false, ..Default::default() };
+        let out = render_one(&state, &ev, opts);
+        assert_eq!(out, "");
     }
 
     #[test]
