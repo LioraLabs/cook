@@ -223,7 +223,9 @@ pub fn register_unit_api(
                 step_kind,
             }
         } else if interactive {
-            WorkPayload::Interactive { cmd: command, line }
+            // is_chore is read BEFORE acquiring the borrow_mut() below.
+            let is_chore = cs.borrow().current_chore_active;
+            WorkPayload::Interactive { cmd: command, line, is_chore }
         } else {
             WorkPayload::Shell { cmd: command, line: 0 }
         };
@@ -787,6 +789,53 @@ mod tests {
                 assert!(cmd.contains("gcc"));
             }
             other => panic!("expected Shell, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_unit_inside_chore_marks_payload_is_chore_true() {
+        let (lua, capture_state) = make_lua_with_unit_api("my_chore");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+        lua.load(r#"
+            cook._enter_chore()
+            cook.add_unit({
+                command = "fzf --prompt='> '",
+                interactive = true,
+                cache = false,
+            })
+            cook._exit_chore()
+        "#).exec().unwrap();
+
+        let state = capture_state.borrow();
+        assert_eq!(state.units.len(), 1);
+        match &state.units[0].payload {
+            WorkPayload::Interactive { is_chore, .. } => {
+                assert!(*is_chore, "unit emitted inside chore body must have is_chore=true");
+            }
+            other => panic!("expected Interactive payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_unit_outside_chore_marks_payload_is_chore_false() {
+        let (lua, capture_state) = make_lua_with_unit_api("my_recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+        lua.load(r#"
+            cook.add_unit({
+                command = "build/bin/lua -e 'print(1)'",
+                interactive = true,
+                cache = false,
+            })
+        "#).exec().unwrap();
+
+        let state = capture_state.borrow();
+        match &state.units[0].payload {
+            WorkPayload::Interactive { is_chore, .. } => {
+                assert!(!*is_chore, "unit emitted outside chore must have is_chore=false");
+            }
+            other => panic!("expected Interactive payload, got {other:?}"),
         }
     }
 }
