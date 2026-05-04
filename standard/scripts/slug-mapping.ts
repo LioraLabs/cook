@@ -134,7 +134,8 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-8-4':   'exec.cross-recipe-ordering',
   'sec-8-5':   'exec.interactive-drain',
   'sec-8-6':   'exec.cache',
-  'sec-8-7':   'exec.diagnostic-ordering',
+  'sec-8-7':   'exec.output-materialisation',
+  'sec-8-8':   'exec.diagnostic-ordering',
 
   // ── Appendix A — Grammar (normative) ──────────────────────────────────────
   'sec-A-1':     'grammar-appendix.top-level',

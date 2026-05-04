@@ -218,14 +218,29 @@ On the first run, `build/main.o`'s unit executes and its completion MAY be recor
 
 The cache is optional. A conforming implementation that always re-executes every work unit — a clean-build implementation — is conforming so long as the dependency rules of §{exec.two-phase}–§{exec.interactive-drain} are respected.
 
-## 8.7. Diagnostic ordering [#exec.diagnostic-ordering]
+## 8.7. Output path materialisation [#exec.output-materialisation]
+Before invoking the shell text of a `cook` step, a conforming implementation MUST ensure that the parent directory of every output path declared by the step exists, creating it (and any missing ancestors) if necessary. The creation MUST be idempotent: it is not an error if the directory already exists. The creation MUST NOT proceed if the parent path resolves to a non-directory (regular file, symbolic link to a regular file, etc.); in that case the implementation MUST surface a clear diagnostic naming the output path and the offending parent, and MUST NOT execute the step's shell text.
+
+The output paths covered by this rule are exactly those declared by the `cook` step in its surface form (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) — that is, the paths recorded as the unit's output-path list during the register phase (§{exec.cache}). Each output path is resolved against the unit's working directory using the same resolution that the cache fingerprint applies. An output path with no parent component (a path that resolves to the working directory itself) is a no-op.
+
+This rule applies to `cook` steps only. `plate` steps (§{recipes.plate-step}) and `test` steps (§{recipes.test-step}) declare no cacheable output paths and are therefore not covered; authors of `plate` and `test` step bodies that need to create directories MUST do so explicitly.
+
+### Note 8.7.1
+
+This rule turns the common `mkdir -p $<out.dir>` boilerplate into a no-op; authors MAY omit it from new recipes. Existing recipes that contain `mkdir -p` in their `cook`-step shell text continue to work — the explicit call becomes idempotently harmless after the engine's pre-step `mkdir -p`.
+
+### Note 8.7.2
+
+The pre-step directory creation is the engine acting on a path that the register phase has already declared as an output of the unit. It is not a Cook Lua API call and is therefore independent of the `fs.*` sandbox in §{lua.fs-helpers} (CS-0045). Out-of-project output paths are governed by the cache contract in §{exec.cache} and the path-resolution rules in §{modules.workspace-root}; this rule does not relax them.
+
+## 8.8. Diagnostic ordering [#exec.diagnostic-ordering]
 An implementation MUST report syntactic errors (those detectable by the rules of §{lexical} and §{grammar}) before it reports semantic errors (those detectable only in the register or execute phase). On encountering a syntactic error, the implementation MUST halt parsing at the first such error and MUST NOT proceed to register-phase evaluation. Consequently, a Cookfile with both a syntactic error and a semantic error MUST produce only the syntactic diagnostic on a given run.
 
 Within the register and execute phases, the implementation MUST report dependency-graph errors — cycles and references to undefined recipes (§{exec.cross-recipe-ordering}) — before attempting to execute any work unit.
 
 The exact wording and formatting of diagnostics are implementation-defined (§{intro.non-scope}). The diagnostic **class** and its **ordering relative to other diagnostics** are normative.
 
-### Example 8.7.1
+### Example 8.8.1
 
 ```cook
 recipe build
@@ -235,6 +250,6 @@ recipe build
 
 The unterminated output-path string in the `cook` step (`"app` has no closing `"`) is a syntactic error (§{lexical.strings}). The implementation MUST report this diagnostic and MUST NOT proceed to register-phase evaluation; any semantic issue that would have been detected later — for example, a missing dependency — MUST NOT be reported for this run.
 
-### Note 8.7.1
+### Note 8.8.1
 
 The first-error halt in the syntactic layer means that a single run will not enumerate every syntactic problem in the file. A Cookfile author that wants batch syntax checking can re-run after each fix. Implementations MAY elect to attempt error recovery for better editor integration, but the Standard does not require it and does not relax the ordering rule: recovered-from errors MUST still be reported before any semantic diagnostic.

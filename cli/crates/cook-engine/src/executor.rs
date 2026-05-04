@@ -58,6 +58,64 @@ fn recipe_node_counts(dag: &Dag<WorkNode>) -> BTreeMap<String, usize> {
 }
 
 // ---------------------------------------------------------------------------
+// ensure_output_parent_dirs — CS-0050
+//
+// Before a `cook` step's shell text runs, the engine creates the parent
+// directory of every declared output path so authors no longer need
+// `mkdir -p` boilerplate in their recipes. The Standard pins this in
+// §{exec.output-materialisation}; the gate is a non-empty
+// `cache_meta.output_paths`, which is set only for cook steps (plate /
+// test set `cache_meta = None`).
+//
+// Output paths are recorded relative to the unit's working directory and
+// resolved against it the same way the cache fingerprint does. The call
+// is idempotent (`create_dir_all` returns `Ok(())` if the directory
+// already exists) and concurrency-safe under POSIX (multiple step groups
+// sharing a parent dir all succeed). When the parent already exists as a
+// non-directory the helper returns an error with a CS-0050-tagged
+// diagnostic naming the output path and the offending parent.
+// ---------------------------------------------------------------------------
+
+fn ensure_output_parent_dirs(work_node: &WorkNode) -> Result<(), String> {
+    let meta = match &work_node.cache_meta {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+    if meta.output_paths.is_empty() {
+        return Ok(());
+    }
+    for output_path in &meta.output_paths {
+        let abs = work_node.working_dir.join(output_path);
+        let parent = match abs.parent() {
+            // No parent component — the path is a root or empty; nothing to
+            // create. (`create_dir_all("")` is a no-op on POSIX but we
+            // short-circuit explicitly so the diagnostic only ever names
+            // real parent paths.)
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => continue,
+        };
+        if parent.exists() && !parent.is_dir() {
+            return Err(format!(
+                "CS-0050: cannot create parent directory of declared output \
+                 `{}`: a non-directory already exists at `{}`",
+                output_path,
+                parent.display()
+            ));
+        }
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return Err(format!(
+                "CS-0050: failed to create parent directory `{}` of declared \
+                 output `{}`: {}",
+                parent.display(),
+                output_path,
+                e
+            ));
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // run_interactive_on_main
 // ---------------------------------------------------------------------------
 
@@ -300,6 +358,7 @@ pub fn execute_dag(
 
     // ----- helper: process a newly-ready node -----
     // Returns how many work items were submitted to the pool.
+    #[allow(clippy::too_many_arguments)]
     fn process_ready(
         dag: &Dag<WorkNode>,
         id: usize,
@@ -311,6 +370,7 @@ pub fn execute_dag(
         trackers: &mut BTreeMap<String, RecipeTracker>,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
+        failures: &mut Vec<(usize, String, String)>,
     ) -> usize {
         if cancelled[id] {
             *finished += 1;
@@ -350,6 +410,7 @@ pub fn execute_dag(
                         trackers,
                         cache_managers,
                         cache_ctx,
+                        failures,
                     );
                 }
                 submitted
@@ -389,6 +450,7 @@ pub fn execute_dag(
                             trackers,
                             cache_managers,
                             cache_ctx,
+                            failures,
                         );
                     }
                     return submitted;
@@ -405,6 +467,38 @@ pub fn execute_dag(
                         fallback_label: payload.display_name(),
                     },
                 );
+
+                // CS-0050: ensure parent directories of declared cook-step
+                // outputs exist before the shell text runs. No-op for
+                // non-cook units (cache_meta == None) and for outputs whose
+                // parent already exists. A non-directory at the parent path
+                // is reported as a node failure rather than a panic; the
+                // surrounding bookkeeping mirrors a worker-pool failure.
+                if let Err(err_msg) = ensure_output_parent_dirs(work_node) {
+                    emit(
+                        event_tx,
+                        EngineEvent::NodeFailed {
+                            recipe: work_node.recipe_name.clone(),
+                            node_name: payload.display_name(),
+                            elapsed: Duration::ZERO,
+                            error: err_msg.clone(),
+                        },
+                    );
+                    failures.push((id, work_node.recipe_name.clone(), err_msg));
+                    finish_recipe_node(
+                        trackers,
+                        &work_node.recipe_name,
+                        false,
+                        true,
+                        event_tx,
+                    );
+                    *finished += 1;
+                    let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
+                    for dep_id in dependents {
+                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers);
+                    }
+                    return 0;
+                }
 
                 // Convert BTreeMap env_vars to HashMap for WorkItem
                 let env_vars_hashmap: std::collections::HashMap<String, String> =
@@ -446,6 +540,7 @@ pub fn execute_dag(
             &mut recipe_trackers,
             &cache_managers,
             &cache_ctx,
+            &mut failures,
         );
     }
 
@@ -488,8 +583,22 @@ pub fn execute_dag(
                 );
                 let interactive_start = Instant::now();
 
-                let result =
-                    run_interactive_on_main(cmd, *line, &work_node.working_dir, &work_node.env_vars);
+                // CS-0050: ensure parent dirs of declared cook-step outputs
+                // exist before the shell text runs. Interactive units today
+                // have `cache_meta == None` (the `interactive = true` flag is
+                // only set by `@`-prefixed shell steps which never declare
+                // outputs), but the call is uniform across dispatch paths so
+                // any future cook-style interactive variant inherits the
+                // contract.
+                let result = match ensure_output_parent_dirs(work_node) {
+                    Ok(()) => run_interactive_on_main(
+                        cmd,
+                        *line,
+                        &work_node.working_dir,
+                        &work_node.env_vars,
+                    ),
+                    Err(e) => Err(e),
+                };
                 let interactive_elapsed = interactive_start.elapsed();
                 finished += 1;
 
@@ -604,6 +713,7 @@ pub fn execute_dag(
                             &mut recipe_trackers,
                             &cache_managers,
                             &cache_ctx,
+                            &mut failures,
                         );
                     }
                 } else {
@@ -752,6 +862,7 @@ pub fn execute_dag(
                     &mut recipe_trackers,
                     &cache_managers,
                     &cache_ctx,
+                    &mut failures,
                 );
             }
         } else {
@@ -1081,5 +1192,159 @@ mod tests {
         }
         assert!(got_stdout, "expected an OutputLine with stream=Stdout");
         assert!(got_stderr, "expected an OutputLine with stream=Stderr");
+    }
+
+    // ---------------------------------------------------------------------
+    // CS-0050: engine MUST mkdir -p the parent of every declared cook-step
+    // output before the step runs.
+    // ---------------------------------------------------------------------
+
+    fn cook_meta(output_paths: Vec<&str>) -> cook_contracts::CacheMeta {
+        cook_contracts::CacheMeta {
+            recipe_name: "r".into(),
+            project_id: "test".into(),
+            cookfile_path: "Cookfile".into(),
+            cache_key: "k".into(),
+            input_paths: vec![],
+            output_paths: output_paths.into_iter().map(String::from).collect(),
+            command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: BTreeMap::new(),
+        }
+    }
+
+    fn cook_node(payload: WorkPayload, recipe: &str, wd: PathBuf, outputs: Vec<&str>) -> WorkNode {
+        WorkNode {
+            payload: Some(payload),
+            recipe_name: recipe.to_string(),
+            cache_meta: Some(cook_meta(outputs)),
+            working_dir: wd,
+            env_vars: default_env(),
+        }
+    }
+
+    // 10. CS-0050: a cook step's missing output parent dir is created
+    //     before the shell text runs, so authors can drop `mkdir -p`.
+    #[test]
+    fn test_executor_cs_0050_creates_missing_output_parent() {
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        // Output sits in `build/out/foo.txt` — neither `build` nor
+        // `build/out` exists when the step starts. The shell text has NO
+        // `mkdir -p` boilerplate.
+        let mut dag = Dag::new();
+        dag.add_node(
+            cook_node(
+                shell("echo hi > build/out/foo.txt"),
+                "build",
+                wd.clone(),
+                vec!["build/out/foo.txt"],
+            ),
+            &[],
+        )
+        .unwrap();
+
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx);
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+
+        let out = wd.join("build/out/foo.txt");
+        assert!(out.exists(), "output {} not created", out.display());
+        let body = std::fs::read_to_string(&out).unwrap();
+        assert_eq!(body.trim_end(), "hi");
+    }
+
+    // 11. CS-0050: when the parent path resolves to a non-directory (a
+    //     regular file), the engine MUST surface a clear diagnostic
+    //     naming the output and the offending parent, NOT execute the
+    //     shell text, and NOT attempt to overwrite the file.
+    #[test]
+    fn test_executor_cs_0050_parent_is_file_diagnostic() {
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        // Make `build` a regular file; then declare an output whose
+        // parent is `build/`.
+        std::fs::write(wd.join("build"), b"not a dir").unwrap();
+
+        let mut dag = Dag::new();
+        dag.add_node(
+            cook_node(
+                shell("echo hi > build/foo.txt"),
+                "build",
+                wd.clone(),
+                vec!["build/foo.txt"],
+            ),
+            &[],
+        )
+        .unwrap();
+
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx);
+        let err = result.expect_err("expected failure when parent is a regular file");
+        match err {
+            EngineError::TaskFailures { failures, .. } => {
+                assert_eq!(failures.len(), 1);
+                let msg = &failures[0].2;
+                assert!(
+                    msg.contains("CS-0050"),
+                    "diagnostic should be tagged CS-0050; got: {msg}"
+                );
+                assert!(
+                    msg.contains("build/foo.txt"),
+                    "diagnostic should name the declared output; got: {msg}"
+                );
+                assert!(
+                    msg.contains("non-directory") || msg.contains("non-directory"),
+                    "diagnostic should explain why mkdir failed; got: {msg}"
+                );
+            }
+            other => panic!("expected TaskFailures, got: {other:?}"),
+        }
+
+        // The `build` regular file MUST NOT have been overwritten.
+        let body = std::fs::read_to_string(wd.join("build")).unwrap();
+        assert_eq!(body, "not a dir");
+        // And the declared output MUST NOT exist.
+        assert!(!wd.join("build/foo.txt").exists());
+    }
+
+    // 12. CS-0050: the call is a no-op when cache_meta is absent (plate /
+    //     test units, presatisfied units) — those paths must not regress.
+    //     Exercised by the existing `test_executor_runs_single_node`
+    //     baseline; this test pins idempotence on a cook step whose
+    //     parent already exists as a directory.
+    #[test]
+    fn test_executor_cs_0050_idempotent_when_parent_exists() {
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        std::fs::create_dir_all(wd.join("build")).unwrap();
+
+        let mut dag = Dag::new();
+        dag.add_node(
+            cook_node(
+                shell("echo hi > build/foo.txt"),
+                "build",
+                wd.clone(),
+                vec!["build/foo.txt"],
+            ),
+            &[],
+        )
+        .unwrap();
+
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx);
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+        assert!(wd.join("build/foo.txt").exists());
+    }
+
+    // 13. CS-0050 unit-level helper: an output with no parent component
+    //     (root-level path) is a no-op.
+    #[test]
+    fn test_ensure_output_parent_dirs_no_parent_is_noop() {
+        let (wd, _tmp) = tmp_dir();
+        let node = cook_node(shell("true"), "r", wd.clone(), vec!["out.txt"]);
+        // wd.join("out.txt").parent() == Some(wd) which exists.
+        ensure_output_parent_dirs(&node).expect("no parent component should be a no-op");
     }
 }

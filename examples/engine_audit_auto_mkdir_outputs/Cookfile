@@ -1,0 +1,18 @@
+# Audit fixture: a `cook` step whose declared output sits in a
+# subdirectory that does NOT exist when the build starts. The recipe
+# does NOT contain any `mkdir -p` boilerplate — pre-CS-0050, that meant
+# the underlying shell text would fail with "No such file or directory".
+# Post-CS-0050, the engine creates the parent directory of every
+# declared cook-step output before invoking the shell text, so the
+# recipe runs cleanly without explicit directory plumbing.
+#
+# See standard/src/content/docs/08-execution-model.mdx
+# §{exec.output-materialisation}.
+
+recipe build
+    cook "build/out/foo.txt" using {
+        echo hi > $<out>
+    }
+
+chore clean
+    rm -rf build .cook
