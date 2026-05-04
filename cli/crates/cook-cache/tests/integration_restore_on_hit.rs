@@ -14,9 +14,16 @@ use cook_cache::{
     check::{needs_rebuild_cook, RebuildResult, RestoreCtx},
     RebuildReason,
 };
+use filetime::{set_file_mtime, FileTime};
 
 fn write(p: &std::path::Path, bytes: &[u8]) {
     std::fs::write(p, bytes).expect("write");
+}
+
+// Force a deterministic mtime so the cache's mtime fast-path can't match
+// across two writes that land in the same filesystem mtime tick.
+fn stamp(p: &std::path::Path, secs: i64) {
+    set_file_mtime(p, FileTime::from_unix_time(secs, 0)).expect("stamp mtime");
 }
 
 #[test]
@@ -29,6 +36,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
     let wd = workspace.path();
     write(&wd.join("in.c"), b"int main(){}");
     write(&wd.join("out.o"), b"correct-bytes");
+    stamp(&wd.join("out.o"), 1_000_000_000);
 
     let in_hash = xxhash_rust::xxh3::xxh3_64(b"int main(){}");
     let in_record = FileRecord {
@@ -72,8 +80,11 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         .put(&artifact_k, b"correct-bytes", &meta)
         .expect("seed put");
 
-    // Simulate variant-toggle drift: overwrite with stale bytes.
+    // Simulate variant-toggle drift: overwrite with stale bytes, and force a
+    // distinct mtime so the cache's mtime fast-path doesn't short-circuit
+    // (the two writes can otherwise land in the same fs mtime tick).
     write(&wd.join("out.o"), b"stale-variant");
+    stamp(&wd.join("out.o"), 2_000_000_000);
 
     let entry = StepEntry {
         inputs: vec![in_record],
@@ -175,6 +186,7 @@ fn restore_rejects_tampered_backend_bytes() {
     write(&wd.join("in.c"), b"int main(){}");
     // out.o: real prior content; our cached FileRecord pins this hash.
     write(&wd.join("out.o"), b"correct-bytes");
+    stamp(&wd.join("out.o"), 1_000_000_000);
 
     let in_hash = xxhash_rust::xxh3::xxh3_64(b"int main(){}");
     let in_record = FileRecord {
@@ -224,8 +236,10 @@ fn restore_rejects_tampered_backend_bytes() {
         .expect("seed put with tampered bytes");
 
     // Force the restore-on-hit path: drift the on-disk output so its
-    // hash no longer matches `out_record.hash`.
+    // hash no longer matches `out_record.hash`. Stamp a distinct mtime
+    // so the cache's mtime fast-path doesn't short-circuit.
     write(&wd.join("out.o"), b"stale-variant");
+    stamp(&wd.join("out.o"), 2_000_000_000);
 
     let entry = StepEntry {
         inputs: vec![in_record],

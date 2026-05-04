@@ -12,6 +12,13 @@ use cook_cache::{
     check::{needs_rebuild_cook, RebuildResult, RestoreCtx},
     RebuildReason,
 };
+use filetime::{set_file_mtime, FileTime};
+
+// Force a deterministic mtime so the cache's mtime fast-path can't match
+// across two writes that land in the same filesystem mtime tick.
+fn stamp(p: &std::path::Path, secs: i64) {
+    set_file_mtime(p, FileTime::from_unix_time(secs, 0)).expect("stamp mtime");
+}
 
 #[test]
 fn multi_output_restore_writes_all_outputs() {
@@ -24,6 +31,8 @@ fn multi_output_restore_writes_all_outputs() {
     std::fs::write(wd.join("in.txt"), b"src").unwrap();
     std::fs::write(wd.join("foo.out"), b"foo-correct").unwrap();
     std::fs::write(wd.join("bar.out"), b"bar-correct").unwrap();
+    stamp(&wd.join("foo.out"), 1_000_000_000);
+    stamp(&wd.join("bar.out"), 1_000_000_000);
 
     let in_hash = xxhash_rust::xxh3::xxh3_64(b"src");
     let in_record = FileRecord {
@@ -78,9 +87,13 @@ fn multi_output_restore_writes_all_outputs() {
         backend.put(&k, bytes, &meta).expect("seed");
     }
 
-    // Both outputs drift on disk.
+    // Both outputs drift on disk. Stamp distinct mtimes so the cache's
+    // mtime fast-path doesn't short-circuit (the two writes can otherwise
+    // land in the same fs mtime tick as the recorded `mtime`).
     std::fs::write(wd.join("foo.out"), b"foo-stale").unwrap();
     std::fs::write(wd.join("bar.out"), b"bar-stale").unwrap();
+    stamp(&wd.join("foo.out"), 2_000_000_000);
+    stamp(&wd.join("bar.out"), 2_000_000_000);
 
     let entry = StepEntry {
         inputs: vec![in_record],
