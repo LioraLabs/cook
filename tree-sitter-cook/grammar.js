@@ -4,9 +4,10 @@
 // tree-sitter-cook claims conformance with Cook Standard v0.4 + CS-0022.
 // The grammar is STALE relative to v0.7 (cs-standard/v0.7); it does not
 // implement CS-0023 onward (plate/test block bodies, `//`-anchored sigil
-// imports, `$<IDENT>` placeholder syntax). See standard/src/content/docs/
-// appendix/A-grammar.mdx for the normative grammar; the catch-up is
-// tracked by CS-0002 (planned tree-sitter-cook conformance audit).
+// imports). The `$<IDENT>` placeholder shape from §2.11 IS recognized
+// inside string literals and shell text; resolution is the Rust parser's
+// concern. See standard/src/content/docs/appendix/A-grammar.mdx for the
+// normative grammar; the broader catch-up is tracked by CS-0002.
 
 module.exports = grammar({
   name: "cook",
@@ -190,8 +191,20 @@ module.exports = grammar({
     using_lua_block: ($) =>
       seq(">{", alias($._lua_block_content, $.lua_code), "}"),
 
+    // Body chunks: scanner-emitted SHELL_BLOCK_CONTENT segments interleaved
+    // with `$<IDENT>` placeholders (§2.11). The scanner stops at each
+    // valid placeholder boundary so the grammar can lex it as a token.
     shell_block: ($) =>
-      seq("{", alias($._shell_block_content, $.shell_content), "}"),
+      seq(
+        "{",
+        repeat(
+          choice(
+            alias($._shell_block_content, $.shell_content),
+            $.placeholder,
+          ),
+        ),
+        "}",
+      ),
 
     plate_step: ($) =>
       seq(
@@ -251,12 +264,26 @@ module.exports = grammar({
     interactive_command: ($) =>
       seq(
         "@",
-        alias(token.immediate(/[^\n]+/), $.shell_content),
+        repeat1(
+          choice(
+            alias(token.immediate(/[^\n$]+/), $.shell_content),
+            alias(token.immediate("$"), $.shell_content),
+            $.placeholder,
+          ),
+        ),
         $._newline,
       ),
 
     shell_command: ($) =>
-      seq(alias($._shell_content, $.shell_content), $._newline),
+      seq(
+        repeat1(
+          choice(
+            alias($._shell_content, $.shell_content),
+            $.placeholder,
+          ),
+        ),
+        $._newline,
+      ),
 
     // ── Primitives ─────────────────────────────────────────────
 
@@ -264,7 +291,59 @@ module.exports = grammar({
 
     _bare_identifier: ($) => /[a-zA-Z_][a-zA-Z0-9_.\-]*/,
 
-    string: ($) => /"[^"]*"/,
+    // §2.11 placeholder. The seq is structured (rather than `token(...)`)
+    // so the `$<`/`>` punctuation and the inner identifier can each be
+    // captured separately for highlighting. Two surfaces share the byte
+    // shape:
+    //   • `placeholder` — used in shell text where an external scanner
+    //     has stopped at the `$<` boundary; the leading `$<` is matched
+    //     non-immediately because the scanner consumed any leading WS.
+    //   • `_string_placeholder` — used inside string literals where every
+    //     token MUST be immediate to keep extras out of the string body.
+    placeholder: ($) =>
+      seq(
+        "$<",
+        alias(
+          token.immediate(/[A-Za-z_][A-Za-z0-9_.]*/),
+          $.placeholder_ident,
+        ),
+        token.immediate(">"),
+      ),
+
+    _string_placeholder: ($) =>
+      seq(
+        token.immediate("$<"),
+        alias(
+          token.immediate(/[A-Za-z_][A-Za-z0-9_.]*/),
+          $.placeholder_ident,
+        ),
+        token.immediate(">"),
+      ),
+
+    // String literals expose their inner placeholders. The fallback
+    // `_string_chunk` keeps a bare `$` as text so a real placeholder
+    // (which requires `$<`) is the only thing that consumes the `$<`
+    // pair. NOTE: §2.11 strict-bail says a malformed `$<bad spaces>`
+    // is literal text; with this structured rule the seq commits to
+    // `$<` and errors at the missing `>`. The Rust parser remains the
+    // source of truth for that edge case (tree-sitter-cook is stale).
+    string: ($) =>
+      seq(
+        '"',
+        repeat(
+          choice(
+            alias($._string_placeholder, $.placeholder),
+            $._string_chunk,
+          ),
+        ),
+        token.immediate('"'),
+      ),
+
+    _string_chunk: ($) =>
+      choice(
+        token.immediate(/[^"$]+/),
+        token.immediate("$"),
+      ),
 
     path: ($) => /[^\s\n]+/,
 

@@ -1,0 +1,169 @@
+================
+Placeholder in cook output string
+================
+
+recipe build
+    cook "build/$<in.stem>.o"
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string
+        (placeholder
+          (placeholder_ident))))))
+
+================
+Placeholder in shell block (using clause)
+================
+
+recipe lib
+    cook "out" using {
+        cc -c $<in> -o $<out>
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string)
+      (using_clause
+        shell: (shell_block
+          (shell_content)
+          (placeholder
+            (placeholder_ident))
+          (shell_content)
+          (placeholder
+            (placeholder_ident))
+          (shell_content))))))
+
+================
+Placeholder in plate body inside shell-quoted string
+================
+
+recipe r
+    plate {
+        echo "all: $<all>" > out.report
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (plate_step
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
+
+================
+Placeholder in bare shell command
+================
+
+recipe r
+    sleep $<SLEEP>
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (shell_command
+      (shell_content)
+      (placeholder
+        (placeholder_ident)))))
+
+================
+Placeholder at start of shell command
+================
+
+recipe r
+    $<CMD> --flag
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (shell_command
+      (placeholder
+        (placeholder_ident))
+      (shell_content))))
+
+================
+Out-indexed and accessor placeholders
+================
+
+recipe r
+    cook "a.o" "b.o" using {
+        cc -o $<out_1> $<out_2.stem>.tmp
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string)
+      outputs: (string)
+      (block_using_clause
+        shell: (shell_block
+          (shell_content)
+          (placeholder
+            (placeholder_ident))
+          (shell_content)
+          (placeholder
+            (placeholder_ident))
+          (shell_content))))))
+
+================
+Multiple placeholders in one string
+================
+
+recipe r
+    cook "$<a>/$<b.stem>.x"
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string
+        (placeholder
+          (placeholder_ident))
+        (placeholder
+          (placeholder_ident))))))
+
+================
+Placeholder in interactive command
+================
+
+recipe r
+    @./bin/$<APP> --flag
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (interactive_command
+      (shell_content)
+      (placeholder
+        (placeholder_ident))
+      (shell_content))))

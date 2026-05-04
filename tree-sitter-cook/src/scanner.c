@@ -2,6 +2,7 @@
 
 #include <wctype.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum TokenType {
@@ -10,6 +11,45 @@ enum TokenType {
   CONFIG_BLOCK_CONTENT,
   SHELL_BLOCK_CONTENT,
 };
+
+// Persistent state for the SHELL_BLOCK_CONTENT scanner. A `$<IDENT>`
+// placeholder inside a shell-quoted string ("...$<X>...") splits the
+// scan across multiple calls; without persisting the in-string state,
+// the resumed scan would mistreat the closing `"` as opening a new
+// string and the trailing `}` would land in the wrong context.
+typedef struct {
+  uint8_t depth;
+  uint8_t in_string;  // 0 = outside, 1 = double-quoted, 2 = single-quoted
+} ShellBlockState;
+
+// §2.11 placeholder lookahead. Returns true if the bytes at the current
+// lookahead position form a complete `$<IDENT>` placeholder, where
+// IDENT = ALPHA (ALPHA | DIGIT | "_" | ".")*. Advances the lexer cursor
+// past the bytes inspected (caller decides whether to include them in
+// the surrounding token by calling mark_end before/after, exploiting
+// tree-sitter's mark_end semantics: bytes between the last mark_end and
+// the cursor are pure lookahead and the next token starts at mark_end).
+//
+// Strict-bail (§2.11): we never search past the first non-IDENT byte
+// for a closing `>`. A `$<` followed by a malformed IDENT — including
+// missing ALPHA, an out-of-charset continuation char, or a missing `>`
+// — is literal text.
+static bool match_placeholder_lookahead(TSLexer *lexer) {
+  if (lexer->lookahead != '$') return false;
+  lexer->advance(lexer, false);
+  if (lexer->lookahead != '<') return false;
+  lexer->advance(lexer, false);
+  if (!iswalpha(lexer->lookahead) && lexer->lookahead != '_') return false;
+  lexer->advance(lexer, false);
+  while (iswalnum(lexer->lookahead) ||
+         lexer->lookahead == '_' ||
+         lexer->lookahead == '.') {
+    lexer->advance(lexer, false);
+  }
+  if (lexer->lookahead != '>') return false;
+  lexer->advance(lexer, false);
+  return true;
+}
 
 // ── Lua block scanner ──────────────────────────────────────────
 // Scans brace-balanced content after `>{`, stopping before the
@@ -89,51 +129,94 @@ static bool scan_lua_block_content(TSLexer *lexer) {
 // (`"..."`, `'...'`) and `#` line comments so a `{` inside them does
 // not affect depth tracking.
 
-static bool scan_shell_block_content(TSLexer *lexer) {
-  int depth = 0;
+static bool scan_shell_block_content(TSLexer *lexer, ShellBlockState *state) {
   bool has_content = false;
   bool at_line_start = true;
 
   while (!lexer->eof(lexer)) {
     int32_t c = lexer->lookahead;
 
+    // Inside a shell-quoted string: only the matching close quote, an
+    // escape (in double-quoted), or a `$<IDENT>` placeholder is special.
+    // `{`/`}` inside a string DO NOT affect block-brace depth.
+    if (state->in_string != 0) {
+      int32_t close = (state->in_string == 1) ? '"' : '\'';
+      if (c == close) {
+        state->in_string = 0;
+        has_content = true;
+        lexer->advance(lexer, false);
+        continue;
+      }
+      if (state->in_string == 1 && c == '\\') {
+        // Double-quote escape — advance past `\` and the next char.
+        has_content = true;
+        lexer->advance(lexer, false);
+        if (!lexer->eof(lexer)) lexer->advance(lexer, false);
+        continue;
+      }
+      if (c == '$') {
+        lexer->mark_end(lexer);
+        if (match_placeholder_lookahead(lexer)) {
+          if (has_content) {
+            lexer->result_symbol = SHELL_BLOCK_CONTENT;
+            return true;
+          }
+          return false;
+        }
+        lexer->mark_end(lexer);
+        has_content = true;
+        continue;
+      }
+      // Ordinary char inside string.
+      has_content = true;
+      lexer->advance(lexer, false);
+      continue;
+    }
+
+    // Outside any string.
     if (c == '{') {
-      depth++;
+      state->depth++;
       has_content = true;
       at_line_start = false;
       lexer->advance(lexer, false);
     } else if (c == '}') {
-      if (depth == 0) {
+      if (state->depth == 0) {
+        // Return false (rather than an empty SHELL_BLOCK_CONTENT) so the
+        // grammar can match the literal `}`. Emitting a zero-length token
+        // inside a `repeat(shell_content | placeholder)` would loop forever.
+        if (!has_content) return false;
         lexer->mark_end(lexer);
         lexer->result_symbol = SHELL_BLOCK_CONTENT;
         return true;
       }
-      depth--;
+      state->depth--;
       has_content = true;
       at_line_start = false;
       lexer->advance(lexer, false);
+    } else if (c == '$') {
+      // §2.11 placeholder boundary. Mark end at the `$` so the cursor
+      // can rewind here if lookahead confirms a placeholder.
+      lexer->mark_end(lexer);
+      if (match_placeholder_lookahead(lexer)) {
+        if (has_content) {
+          lexer->result_symbol = SHELL_BLOCK_CONTENT;
+          return true;
+        }
+        return false;
+      }
+      lexer->mark_end(lexer);
+      has_content = true;
+      at_line_start = false;
     } else if (c == '"') {
+      state->in_string = 1;
       has_content = true;
       at_line_start = false;
       lexer->advance(lexer, false);
-      while (!lexer->eof(lexer) && lexer->lookahead != '"') {
-        if (lexer->lookahead == '\\')
-          lexer->advance(lexer, false);
-        if (!lexer->eof(lexer))
-          lexer->advance(lexer, false);
-      }
-      if (!lexer->eof(lexer))
-        lexer->advance(lexer, false);
     } else if (c == '\'') {
+      state->in_string = 2;
       has_content = true;
       at_line_start = false;
       lexer->advance(lexer, false);
-      while (!lexer->eof(lexer) && lexer->lookahead != '\'') {
-        if (!lexer->eof(lexer))
-          lexer->advance(lexer, false);
-      }
-      if (!lexer->eof(lexer))
-        lexer->advance(lexer, false);
     } else if (c == '#' && at_line_start) {
       has_content = true;
       while (!lexer->eof(lexer) && lexer->lookahead != '\n') {
@@ -191,6 +274,8 @@ static bool scan_shell_content(TSLexer *lexer) {
   if (c == '"')
     return false;
 
+  bool has_content = false;
+
   // If starts with an identifier, check for step keywords, `end`, and
   // the module-call dispatch pattern (App. A.4).
   if (iswalpha(c) || c == '_') {
@@ -240,16 +325,38 @@ static bool scan_shell_content(TSLexer *lexer) {
       // Otherwise (`foo.123`, `foo.-x`, `foo.`) fall through and
       // consume the rest of the line as a shell command.
     }
+
+    // Reaching here means the alpha branch consumed at least one
+    // identifier byte that is part of the shell command.
+    has_content = true;
   }
 
-  // Consume rest of line
+  // Consume rest of line. The `has_content` flag distinguishes a
+  // placeholder at the start of a line (yield to grammar, return false)
+  // from one mid-line (emit accumulated content, return true).
   while (!lexer->eof(lexer) && lexer->lookahead != '\n') {
+    if (lexer->lookahead == '$') {
+      // §2.11 placeholder boundary — see the comment above
+      // match_placeholder_lookahead for the mark_end pattern.
+      lexer->mark_end(lexer);
+      if (match_placeholder_lookahead(lexer)) {
+        if (has_content) {
+          lexer->result_symbol = SHELL_CONTENT;
+          return true;
+        }
+        return false;
+      }
+      lexer->mark_end(lexer);
+      has_content = true;
+      continue;
+    }
     lexer->advance(lexer, false);
+    has_content = true;
   }
 
   lexer->mark_end(lexer);
   lexer->result_symbol = SHELL_CONTENT;
-  return true;
+  return has_content;
 }
 
 // ── Top-level keyword check ────────────────────────────────────
@@ -283,6 +390,15 @@ static bool scan_config_block_content(TSLexer *lexer) {
       // new top-level declaration. We do NOT skip leading whitespace
       // here — column-0 means the very first character of the line.
       if (c != ' ' && c != '\t' && c != '\n' && c != 0) {
+        // A column-0 `#` is a Cookfile-level comment, not Lua body.
+        // Stop here so the grammar can match it as a top-level comment.
+        // (Lua uses `--` for comments; column-0 `#` would be invalid Lua,
+        // so this carries no risk of swallowing real config-body content.)
+        if (c == '#') {
+          lexer->mark_end(lexer);
+          lexer->result_symbol = CONFIG_BLOCK_CONTENT;
+          return has_content;
+        }
         // Peek ahead to read an identifier
         char word[8];
         int len = 0;
@@ -372,27 +488,46 @@ static bool scan_config_block_content(TSLexer *lexer) {
 
 // ── External scanner API ───────────────────────────────────────
 
-void *tree_sitter_cook_external_scanner_create(void) { return NULL; }
+void *tree_sitter_cook_external_scanner_create(void) {
+  ShellBlockState *state = calloc(1, sizeof(ShellBlockState));
+  return state;
+}
 
-void tree_sitter_cook_external_scanner_destroy(void *payload) {}
+void tree_sitter_cook_external_scanner_destroy(void *payload) {
+  free(payload);
+}
 
 unsigned tree_sitter_cook_external_scanner_serialize(void *payload,
                                                      char *buffer) {
-  return 0;
+  ShellBlockState *state = (ShellBlockState *)payload;
+  buffer[0] = (char)state->depth;
+  buffer[1] = (char)state->in_string;
+  return 2;
 }
 
 void tree_sitter_cook_external_scanner_deserialize(void *payload,
                                                    const char *buffer,
-                                                   unsigned length) {}
+                                                   unsigned length) {
+  ShellBlockState *state = (ShellBlockState *)payload;
+  if (length >= 2) {
+    state->depth = (uint8_t)buffer[0];
+    state->in_string = (uint8_t)buffer[1];
+  } else {
+    state->depth = 0;
+    state->in_string = 0;
+  }
+}
 
 bool tree_sitter_cook_external_scanner_scan(void *payload, TSLexer *lexer,
                                             const bool *valid_symbols) {
+  ShellBlockState *state = (ShellBlockState *)payload;
+
   if (valid_symbols[CONFIG_BLOCK_CONTENT]) {
     return scan_config_block_content(lexer);
   }
 
   if (valid_symbols[SHELL_BLOCK_CONTENT]) {
-    return scan_shell_block_content(lexer);
+    return scan_shell_block_content(lexer, state);
   }
 
   if (valid_symbols[LUA_BLOCK_CONTENT]) {

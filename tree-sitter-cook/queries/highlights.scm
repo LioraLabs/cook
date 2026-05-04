@@ -122,6 +122,20 @@
 
 (number) @number
 
+; ── Placeholders (§2.11) ────────────────────────────────────────
+; A `$<IDENT>` placeholder appears inside string literals and shell
+; text. The seq is structured so the brackets and the identifier each
+; pick up a distinct highlight — the brackets read as punctuation, the
+; identifier as a parameter-style variable. Placement after the broad
+; `(string) @string` capture lets these inner-node captures take over.
+
+(placeholder
+  "$<" @punctuation.special
+  ">" @punctuation.special)
+
+(placeholder
+  (placeholder_ident) @variable.parameter)
+
 ; ── Comments ────────────────────────────────────────────────────
 
 (comment) @comment

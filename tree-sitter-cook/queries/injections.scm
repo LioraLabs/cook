@@ -24,15 +24,27 @@
   (lua_code) @injection.content
   (#set! injection.language "lua"))
 
-; Inject bash into shell commands
+; Inject bash into shell commands. `$<IDENT>` placeholders interleave
+; with shell_content chunks; the `[shell_content placeholder]+` choice
+; matches the full sequence so every chunk is captured in one match,
+; while `injection.combined` joins the chunks into a single bash
+; injection (placeholder bytes are excluded). Without this, a
+; shell-quoted string broken by a placeholder — `echo "libfoo: $<all>"`
+; → ["echo \"libfoo: ", "\""] — would reach bash as two unterminated
+; fragments and lose its @string highlight; combined, bash sees
+; `echo "libfoo: " ` and the string is recognized as a whole.
+
 (shell_command
-  (shell_content) @injection.content
-  (#set! injection.language "bash"))
+  [(shell_content) @injection.content (placeholder)]+
+  (#set! injection.language "bash")
+  (#set! injection.combined))
 
 (interactive_command
-  (shell_content) @injection.content
-  (#set! injection.language "bash"))
+  [(shell_content) @injection.content (placeholder)]+
+  (#set! injection.language "bash")
+  (#set! injection.combined))
 
 (shell_block
-  (shell_content) @injection.content
-  (#set! injection.language "bash"))
+  [(shell_content) @injection.content (placeholder)]+
+  (#set! injection.language "bash")
+  (#set! injection.combined))
