@@ -258,27 +258,6 @@ impl Workspace {
         out
     }
 
-    /// Resolve "backend.build" from a parent dir to (canonical_import_dir, recipe_name).
-    #[allow(dead_code)]
-    pub fn resolve_namespaced_dep(
-        &self,
-        parent_dir: &Path,
-        dep: &str,
-    ) -> Option<(PathBuf, String)> {
-        let dot_pos = dep.find('.')?;
-        let import_name = &dep[..dot_pos];
-        let recipe_name = &dep[dot_pos + 1..];
-
-        let parent_canonical =
-            std::fs::canonicalize(parent_dir).unwrap_or_else(|_| parent_dir.to_path_buf());
-
-        for (parent, name, target) in &self.namespace_map {
-            if parent == &parent_canonical && name == import_name {
-                return Some((target.clone(), recipe_name.to_string()));
-            }
-        }
-        None
-    }
 }
 
 /// Per §7.3, regenerate the lua_source for every Cookfile in the workspace
