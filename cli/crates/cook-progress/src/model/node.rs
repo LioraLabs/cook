@@ -57,6 +57,13 @@ impl NodeState {
             format!("${first}")
         }
     }
+
+    /// Raw node name (e.g. "lvm.c"), for log-line prefixes like
+    /// `[recipe/<label>] line`. Distinct from `display()`, which prefers the
+    /// artifact basename and is used for verb lines.
+    pub fn label(&self) -> &str {
+        &self.name
+    }
 }
 
 #[cfg(test)]
@@ -89,6 +96,19 @@ mod tests {
     fn display_handles_empty_fallback() {
         let n = NodeState::new(NodeId::new(2), "x".into(), None, "".into());
         assert_eq!(n.display(), "$?");
+    }
+
+    #[test]
+    fn label_returns_raw_name() {
+        let n = NodeState::new(
+            NodeId::new(0),
+            "lvm.c".into(),
+            Some("build/obj/lvm.o".into()),
+            "clang -c lvm.c".into(),
+        );
+        assert_eq!(n.label(), "lvm.c");
+        // display() picks the artifact basename, label() the raw name — they differ on purpose.
+        assert_eq!(n.display(), "lvm.o");
     }
 
     #[test]

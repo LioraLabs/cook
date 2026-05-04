@@ -2,6 +2,7 @@
 pub mod inline;
 pub mod plain;
 pub mod json;
+pub mod event_writer;
 
 #[cfg(test)]
 pub mod test_term;

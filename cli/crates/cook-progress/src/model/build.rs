@@ -221,6 +221,21 @@ impl BuildState {
     }
 }
 
+impl Counters {
+    pub fn cached_node_count(&self, state: &BuildState) -> usize {
+        state.recipes.values().map(|r| r.cached_count).sum()
+    }
+    pub fn failed_node_count(&self, state: &BuildState) -> usize {
+        state.recipes.values()
+            .flat_map(|r| r.nodes.values())
+            .filter(|n| matches!(n.status, crate::model::node::NodeStatus::Failed))
+            .count()
+    }
+    pub fn skipped_node_count(&self, state: &BuildState) -> usize {
+        state.recipes.values().map(|r| r.skipped.len()).sum()
+    }
+}
+
 impl Default for BuildState {
     fn default() -> Self { Self::new() }
 }
@@ -362,6 +377,24 @@ mod tests {
             cached: 0, total: 1,
         });
         assert_eq!(s.totals, totals_after_first, "duplicate RecipeCompleted must not mutate counters");
+    }
+
+    #[test]
+    fn cached_node_count_sums_per_recipe() {
+        let mut s = BuildState::new();
+        s.apply(&ProgressEvent::BuildStarted {
+            recipes: topo(&[(0, "deps", &[], 2), (1, "lib", &[], 2)]),
+            total_nodes: 4,
+        });
+        s.apply(&ProgressEvent::NodeCacheHit {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "a".into(), artifact: None,
+        });
+        s.apply(&ProgressEvent::NodeCacheHit {
+            recipe: RecipeId::new(1), node: NodeId::new(0),
+            name: "b".into(), artifact: None,
+        });
+        assert_eq!(s.totals.cached_node_count(&s), 2);
     }
 
     #[test]
