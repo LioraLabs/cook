@@ -883,4 +883,6 @@ CS-0051 makes the single-drain semantic normative for chore bodies. A conforming
 
 **Test note.** The `cook-register` runtime test suite pins the chore-mode flag plumbing via `add_unit_inside_chore_marks_payload_is_chore_true` and `add_unit_outside_chore_marks_payload_is_chore_false` — the two canonical cases of `_enter_chore` / `_exit_chore` round-tripping into `WorkPayload::Interactive::is_chore`.
 
+**Implementation gap (follow-up).** The reference implementation in this CS series enforces the single-drain rule for **shell-step chore bodies only**. Chore-body Lua bundles (`Step::Lua` / `Step::LuaBlock` coalesced through `emit_chore_body_unit`) compile to `WorkPayload::LuaChunk` rather than `WorkPayload::Interactive`, so the runtime currently dispatches them to the worker pool rather than the drain thread. Cookfile authors who write chore bodies composed exclusively of execute-phase Lua steps (`>` / `>{` lines without intervening shell steps) will observe the pre-CS-0051 behaviour for those Lua bodies until a follow-up extends `is_chore` plumbing through `WorkPayload::LuaChunk` and the executor's chore-window pre-walk. Chore bodies whose imperative region is shell-only — the common case, including `examples/fzf-picker` — are fully covered.
+
 **Reference:** the CS-0051 commit series on `cook-progress-cargo-style`.
