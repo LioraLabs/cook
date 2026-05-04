@@ -4,14 +4,21 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use cook_progress::{Driver, InlineRenderer, NodeId, NodeKind, ProgressEvent, RecipeId, RecipeTopo};
-use indicatif::ProgressDrawTarget;
+use cook_progress::{
+    Driver, EventWriterOptions, InlineOptions, InlineRenderer, NodeId, NodeKind,
+    ProgressEvent, RecipeId, RecipeTopo, StatusLineOptions,
+};
 
 fn main() {
     let (tx, rx) = mpsc::channel::<ProgressEvent>();
     let handle = thread::spawn(move || {
+        let opts = InlineOptions {
+            event: EventWriterOptions::default(),
+            status: StatusLineOptions::default(),
+            status_enabled: true,
+        };
         let mut driver = Driver::new(
-            Box::new(InlineRenderer::new(ProgressDrawTarget::stderr())),
+            Box::new(InlineRenderer::new(opts)),
             None,
         );
         driver.run(rx).unwrap();

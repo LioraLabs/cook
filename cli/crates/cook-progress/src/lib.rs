@@ -13,7 +13,9 @@ pub use event::{NodeId, NodeKind, ProgressEvent, RecipeId, RecipeTopo, SkipReaso
 pub use log_store::{LogConfig, LogStore};
 pub use model::{BuildState, Counters, NodeState, NodeStatus, RecipeState, Status};
 pub use render::Renderer;
-pub use render::inline::InlineRenderer;
+pub use render::inline::{InlineOptions, InlineRenderer};
+pub use render::event_writer::EventWriterOptions;
+pub use render::snapshot::StatusLineOptions;
 pub use render::json::{check_schema_version, JsonWriter, SchemaCheckError};
 pub use render::plain::PlainRenderer;
 pub use style::{format_verb, verb_for, LineKind, Verb, VerbColor, VERB_COL_WIDTH};

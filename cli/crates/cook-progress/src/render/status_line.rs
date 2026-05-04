@@ -102,12 +102,12 @@ pub struct TermStderr;
 impl StatusWriter for TermStderr {
     fn write_status_line(&mut self, line: &str) -> io::Result<()> {
         let mut out = io::stderr().lock();
-        write!(out, "\r\x1b[2K{line}")?;
+        write!(out, "{}{line}", crate::render::CLEAR_LINE)?;
         out.flush()
     }
     fn clear_line(&mut self) -> io::Result<()> {
         let mut out = io::stderr().lock();
-        write!(out, "\r\x1b[2K")?;
+        write!(out, "{}", crate::render::CLEAR_LINE)?;
         out.flush()
     }
 }

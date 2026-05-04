@@ -40,6 +40,16 @@ impl Default for StatusLineOptions {
 }
 
 impl StatusSnapshot {
+    /// Empty snapshot — the tick thread won't paint until a real one is published.
+    pub fn empty() -> Self {
+        Self {
+            total_nodes: 0,
+            done_nodes: 0,
+            running: Vec::new(),
+            started_at: std::time::Instant::now(),
+        }
+    }
+
     pub fn from_state(state: &BuildState) -> Self {
         let total_nodes = state.totals.total_nodes;
         let done_nodes = state.totals.completed_nodes;
