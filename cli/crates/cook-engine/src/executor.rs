@@ -756,6 +756,38 @@ pub fn execute_dag(
                 }
 
                 let chore_elapsed = chore_start.elapsed();
+                let attempted = failed_idx.unwrap_or(n);
+                finished += attempted;
+
+                // Compute terminality before mutating cancellation state.
+                // Terminal = no more queued/in-flight work and every
+                // window-node dependent is either cancelled or part of
+                // the window itself (already run by this same drain).
+                let window_set: std::collections::BTreeSet<usize> =
+                    window.iter().copied().collect();
+                let is_terminal = interactive_queue.is_empty()
+                    && pending == 0
+                    && window.iter().all(|&id| {
+                        dag.node(id).dependents().iter().all(|&d| {
+                            cancelled[d] || window_set.contains(&d)
+                        })
+                    });
+
+                // InteractiveEnd MUST precede the recipe-tracker ticks so
+                // a terminal-chore renderer can set its suppression flag
+                // before RecipeCompleted (and the global Finished) arrive.
+                // The cargo-run shape is: chore body output, then nothing.
+                emit(
+                    &event_tx,
+                    EngineEvent::InteractiveEnd {
+                        recipe: chore_recipe.clone(),
+                        node_name: head_node_name.clone(),
+                        elapsed: chore_elapsed,
+                        success: failed_idx.is_none(),
+                        is_terminal,
+                        failed_step: failed_idx,
+                    },
+                );
 
                 // Account for steps in the recipe tracker: successful steps
                 // tick `completed_nodes` without failure; the failing step
@@ -783,29 +815,6 @@ pub fn execute_dag(
                         &event_tx,
                     );
                 }
-                let attempted = failed_idx.unwrap_or(n);
-                finished += attempted;
-
-                // Compute terminality before mutating cancellation state.
-                // Terminal = no more queued/in-flight work and no live
-                // dependents on any window node.
-                let is_terminal = interactive_queue.is_empty()
-                    && pending == 0
-                    && window.iter().all(|&id| {
-                        dag.node(id).dependents().iter().all(|&d| cancelled[d])
-                    });
-
-                emit(
-                    &event_tx,
-                    EngineEvent::InteractiveEnd {
-                        recipe: chore_recipe.clone(),
-                        node_name: head_node_name.clone(),
-                        elapsed: chore_elapsed,
-                        success: failed_idx.is_none(),
-                        is_terminal,
-                        failed_step: failed_idx,
-                    },
-                );
 
                 if let Some(k) = failed_idx {
                     // Cancel the untouched tail of the window.
