@@ -19,7 +19,7 @@ use cook_fingerprint::{
 use cook_dag::Dag;
 use cook_luaotp::{WorkItem, WorkerPool};
 
-use crate::{EngineError, EngineEvent, WorkNode};
+use crate::{EngineError, EngineEvent, NodeKind, WorkNode};
 
 // ---------------------------------------------------------------------------
 // RecipeTracker
@@ -41,6 +41,29 @@ struct RecipeTracker {
 fn emit(tx: &Option<mpsc::Sender<EngineEvent>>, event: EngineEvent) {
     if let Some(tx) = tx {
         let _ = tx.send(event);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// node_kind_for_payload — classify a captured work payload for the renderer
+// ---------------------------------------------------------------------------
+//
+// Today only test-step bodies get a non-default kind (`NodeKind::Test` →
+// rendered as green "Tested"). All other shell/cook/lua payloads fall
+// through to `Cooked`. The Lua stdlib (`cpp.lib`, `cpp.bin`,
+// `cpp.compile_commands`) will widen this in a follow-up plan to emit
+// Compile/Link/Generate/etc. for individual sub-units, at which point the
+// classifier may need access to richer metadata than `WorkPayload` carries.
+
+fn node_kind_for_payload(payload: &WorkPayload) -> NodeKind {
+    match payload {
+        WorkPayload::Test { .. } => NodeKind::Test,
+        WorkPayload::Shell { .. }
+        | WorkPayload::Interactive { .. }
+        | WorkPayload::LuaChunk { .. } => NodeKind::Cooked,
+        // CS-0049: `WorkPayload` is `#[non_exhaustive]`. Future variants
+        // default to `Cooked` until they get a dedicated mapping.
+        _ => NodeKind::Cooked,
     }
 }
 
@@ -465,6 +488,7 @@ pub fn execute_dag(
                         artifact: work_node.cache_meta.as_ref()
                             .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
                         fallback_label: payload.display_name(),
+                        kind: node_kind_for_payload(payload),
                     },
                 );
 
@@ -579,6 +603,9 @@ pub fn execute_dag(
                         artifact: work_node.cache_meta.as_ref()
                             .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
                         fallback_label: node_name.clone(),
+                        // Interactive payloads (@-shell) are never test steps,
+                        // so default to Cooked.
+                        kind: NodeKind::Cooked,
                     },
                 );
                 let interactive_start = Instant::now();
@@ -626,6 +653,8 @@ pub fn execute_dag(
                             recipe: recipe_name.clone(),
                             node_name: node_name.clone(),
                             elapsed: interactive_elapsed,
+                            // Interactive nodes are never test steps.
+                            kind: NodeKind::Cooked,
                         },
                     );
 
@@ -783,6 +812,11 @@ pub fn execute_dag(
                     recipe: recipe_name.clone(),
                     node_name: result.node_name.clone(),
                     elapsed: Duration::ZERO,
+                    kind: work_node
+                        .payload
+                        .as_ref()
+                        .map(node_kind_for_payload)
+                        .unwrap_or(NodeKind::Cooked),
                 },
             );
 

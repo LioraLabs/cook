@@ -71,6 +71,26 @@ pub struct WorkNode {
 }
 
 // ---------------------------------------------------------------------------
+// NodeKind — engine-side mirror of cook_progress::NodeKind
+// ---------------------------------------------------------------------------
+
+/// Kind of work a node is doing — engine-side enum, isomorphic to
+/// `cook_progress::NodeKind`. The CLI translates between the two so that
+/// `cook-engine` does not depend on `cook-progress` (the renderer is one
+/// of several possible event consumers).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NodeKind {
+    Compile,
+    Link,
+    Resolve,
+    Generate,
+    Write,
+    Test,
+    #[default]
+    Cooked,
+}
+
+// ---------------------------------------------------------------------------
 // EngineEvent — progress / observability events emitted during execution
 // ---------------------------------------------------------------------------
 
@@ -112,12 +132,19 @@ pub enum EngineEvent {
         node_name: String,
         artifact: Option<std::path::PathBuf>,
         fallback_label: String,
+        /// What sort of work this node is doing. Drives the verb the renderer
+        /// prints on completion (`Tested`, `Compiled`, `Cooked`, …). Defaults
+        /// to `Cooked` for shell/cook/lua steps; test-step nodes emit `Test`.
+        kind: NodeKind,
     },
     /// A work node completed successfully.
     NodeCompleted {
         recipe: String,
         node_name: String,
         elapsed: Duration,
+        /// Mirrors the `kind` from the matching `NodeStarted` so the renderer
+        /// can pick the right verb without remembering per-node state.
+        kind: NodeKind,
     },
     /// A work node failed.
     NodeFailed {

@@ -64,6 +64,21 @@ fn print_dep_conflicts(warnings: &[String]) {
 // EngineEvent → ProgressEvent bridge
 // ---------------------------------------------------------------------------
 
+/// Translate the engine's `NodeKind` mirror onto `cook_progress::NodeKind`.
+/// The two enums are isomorphic by design — keeping them separate lets
+/// `cook-engine` stay free of a `cook-progress` dependency.
+fn translate_kind(k: cook_engine::NodeKind) -> cook_progress::NodeKind {
+    match k {
+        cook_engine::NodeKind::Compile => cook_progress::NodeKind::Compile,
+        cook_engine::NodeKind::Link => cook_progress::NodeKind::Link,
+        cook_engine::NodeKind::Resolve => cook_progress::NodeKind::Resolve,
+        cook_engine::NodeKind::Generate => cook_progress::NodeKind::Generate,
+        cook_engine::NodeKind::Write => cook_progress::NodeKind::Write,
+        cook_engine::NodeKind::Test => cook_progress::NodeKind::Test,
+        cook_engine::NodeKind::Cooked => cook_progress::NodeKind::Cooked,
+    }
+}
+
 /// Bridge cook-engine events to the new cook-progress ProgressEvent stream.
 /// Interns recipe names and node names into stable `RecipeId` / `NodeId`.
 fn bridge_engine_to_progress_events(
@@ -172,6 +187,7 @@ fn bridge_engine_to_progress_events(
                     node_name,
                     artifact,
                     fallback_label,
+                    kind,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
                     let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
@@ -181,13 +197,14 @@ fn bridge_engine_to_progress_events(
                         name: node_name,
                         artifact,
                         fallback_label,
-                        kind: cook_progress::NodeKind::Cooked,
+                        kind: translate_kind(kind),
                     }
                 }
                 cook_engine::EngineEvent::NodeCompleted {
                     recipe,
                     node_name,
                     elapsed,
+                    kind,
                 } => {
                     let rid = intern_recipe(&recipe, &mut recipe_ids, &mut next_recipe);
                     let nid = intern_node(&recipe, &node_name, &mut node_ids, &mut next_node);
@@ -195,7 +212,7 @@ fn bridge_engine_to_progress_events(
                         recipe: rid,
                         node: nid,
                         elapsed,
-                        kind: cook_progress::NodeKind::Cooked,
+                        kind: translate_kind(kind),
                     }
                 }
                 cook_engine::EngineEvent::NodeFailed {
