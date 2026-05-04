@@ -339,6 +339,12 @@ The body uses `{all}` and no `{in}`; the step is many-to-one and registers exact
 
 A `plate_step`'s body grammar matches a `cook_step`'s `using` payload, but the keyword `using` is not used. A `plate_step` has no separate output declaration to separate from the body, so a separator keyword is not needed. See rationale §{rationale.plate-test-no-output-decl}.
 
+### Note 4.7.2 — Plate step bodies are NOT sandboxed [#recipes.plate-step-not-sandboxed]
+
+A `plate_step` body is the explicit "ship outside the project" surface and runs without the project-root sandbox imposed on `cook` / `test` / `chore` step bodies (§{lua.fs-sandbox}). A `plate` body MAY pass an absolute path outside the project root to `fs.*`, MAY call `os.execute` and `io.popen`, and MAY traverse upward via `..`. This is by construction: deploys, uploads, and other release-time side effects often touch paths the project does not own (e.g. `$HOME/.config/...`, `/var/...`, an S3 bucket).
+
+A conforming implementation MUST run a `plate_step`'s body without applying the §{lua.fs-sandbox} confinement. Authors who want the confinement on a non-cacheable side-effect step SHOULD use a `chore` instead, which IS sandboxed (chores are non-cacheable but hermetic-by-intent — the sandbox catches accidental escapes without blocking the deliberate ones plate covers).
+
 ## 4.8. `test` step [#recipes.test-step]
 A `test_step` (§{grammar-appendix.steps}, `test_step`) has the same body grammar as a `plate_step` (§{recipes.plate-step}) and additionally admits two trailing modifiers:
 

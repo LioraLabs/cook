@@ -412,6 +412,13 @@ pub fn execute_dag(
                     recipe_name: work_node.recipe_name.clone(),
                     working_dir: work_node.working_dir.clone(),
                     env_vars: env_vars_hashmap,
+                    // CS-0045: project_root drives the worker's
+                    // sandbox policy. CacheContext is the canonical
+                    // source — it survives the cross-Cookfile-import
+                    // case where work_node.working_dir is an
+                    // imported subdir but the project root stays at
+                    // the workspace root.
+                    project_root: cache_ctx.project_root.clone(),
                 });
                 1
             }

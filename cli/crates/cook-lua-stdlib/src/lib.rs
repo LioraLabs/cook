@@ -30,13 +30,17 @@
 pub mod fs_api;
 pub mod path_api;
 pub mod platform_api;
+pub mod sandbox;
+pub mod shell_guard;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-pub use fs_api::register_fs_api;
+pub use fs_api::{register_fs_api, register_fs_api_with_sandbox};
 pub use path_api::register_path_api;
 pub use platform_api::register_platform_api;
+pub use sandbox::{SandboxPolicy, SandboxSource};
+pub use shell_guard::install_shell_escape_guards;
 
 /// Source of the working directory used to resolve relative paths in
 /// `fs.*` calls.

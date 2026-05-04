@@ -1,0 +1,3 @@
+# Runtime artifact produced by walkthrough.sh scenario 5
+# (the in-project no-regression check writes inside.txt).
+/inside.txt

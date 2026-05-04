@@ -1,0 +1,8 @@
+recipe glob_outside_probe
+    >{
+        -- CS-0045: fs.glob with an absolute pattern outside the
+        -- project root MUST raise. A path-traversal glob
+        -- ("../../../*") MUST also raise.
+        local matches = fs.glob("/etc/*")
+        print(#matches)
+    }

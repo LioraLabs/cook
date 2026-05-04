@@ -1,0 +1,8 @@
+recipe sandbox_probe
+    >{
+        -- CS-0045: a `cook` step Lua body MUST reject an absolute
+        -- path that escapes the project root. /etc/passwd is the
+        -- canonical sandbox-escape probe.
+        local data = fs.read("/etc/passwd")
+        print(#data)
+    }

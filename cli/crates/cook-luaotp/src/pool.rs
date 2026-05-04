@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 
-use cook_contracts::{OutputStream, WorkPayload};
+use cook_contracts::{OutputStream, StepKind, WorkPayload};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -16,6 +16,13 @@ pub struct WorkItem {
     pub recipe_name: String,
     pub working_dir: PathBuf,
     pub env_vars: HashMap<String, String>,
+    /// Project root for the CS-0045 sandbox. The worker installs the
+    /// per-item sandbox policy by combining this root with the
+    /// payload's `step_kind` (Cook/Test/Chore → Confined; Plate →
+    /// Off). One worker VM may serve items from multiple projects in
+    /// the cross-Cookfile-import case (CS-0017), so the root must
+    /// travel with the item rather than being captured at pool spawn.
+    pub project_root: PathBuf,
 }
 
 #[derive(Clone, Debug)]
@@ -159,6 +166,15 @@ fn worker_loop(
     let current_working_dir: Arc<Mutex<PathBuf>> = Arc::new(Mutex::new(PathBuf::new()));
     let current_env_vars: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
 
+    // CS-0045 sandbox slot. Updated per work item before the body
+    // runs: Cook/Test/Chore → Confined { project_root }, Plate → Off.
+    // Default is `Off` — the slot is overwritten before the first
+    // body executes, but if a future code path somehow runs Lua
+    // before the first slot update, `Off` is the safe fallback (no
+    // false positives on legitimate I/O).
+    let current_sandbox: Arc<Mutex<cook_lua_stdlib::SandboxPolicy>> =
+        Arc::new(Mutex::new(cook_lua_stdlib::SandboxPolicy::Off));
+
     // Register the `cook` table once with closures that capture shared state.
     register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_recipe)
         .expect("failed to register cook table");
@@ -169,11 +185,25 @@ fn worker_loop(
     // multi-Cookfile imports contract: one worker VM may serve items
     // from many Cookfiles (cwds), and `fs.*` resolves against the
     // active item's cwd at call time.
-    cook_lua_stdlib::register_fs_api(
+    //
+    // CS-0045: pair the live cwd source with a live sandbox source so
+    // each call also sees the active item's policy (cook = confined,
+    // plate = off).
+    cook_lua_stdlib::register_fs_api_with_sandbox(
         &lua,
         cook_lua_stdlib::WorkingDirSource::Live(Arc::clone(&current_working_dir)),
+        cook_lua_stdlib::SandboxSource::Live(Arc::clone(&current_sandbox)),
     )
     .expect("failed to register fs API");
+
+    // CS-0045: install Lua-side shell escape-hatch guards on
+    // `os.execute` and `io.popen`. Same Live source so the per-item
+    // policy applies.
+    cook_lua_stdlib::install_shell_escape_guards(
+        &lua,
+        cook_lua_stdlib::SandboxSource::Live(Arc::clone(&current_sandbox)),
+    )
+    .expect("failed to install shell escape guards");
 
     loop {
         let item = {
@@ -207,6 +237,30 @@ fn worker_loop(
                 {
                     let mut env = current_env_vars.lock().expect("env_vars lock");
                     *env = work.env_vars.clone();
+                }
+                // CS-0045: pick the per-item sandbox policy. Plate
+                // bodies run unsandboxed; everything else (Cook, Test,
+                // Chore, and any non-LuaChunk payload) runs confined to
+                // `project_root`. For Shell/Test/Interactive payloads
+                // the policy is irrelevant — the worker doesn't run
+                // user Lua for those — but setting it consistently
+                // means a stray `lua.load()` in a future code path
+                // can't accidentally land Off.
+                {
+                    let kind = match &work.payload {
+                        WorkPayload::LuaChunk { step_kind, .. } => *step_kind,
+                        _ => StepKind::Cook,
+                    };
+                    let policy = match kind {
+                        StepKind::Plate => cook_lua_stdlib::SandboxPolicy::Off,
+                        StepKind::Cook | StepKind::Test | StepKind::Chore => {
+                            cook_lua_stdlib::SandboxPolicy::Confined {
+                                project_root: work.project_root.clone(),
+                            }
+                        }
+                    };
+                    let mut sb = current_sandbox.lock().expect("sandbox slot lock");
+                    *sb = policy;
                 }
 
                 // Refresh package.path so `require` resolves cook_modules/
@@ -527,6 +581,7 @@ fn execute_work_item(
             inputs,
             outputs,
             ingredient_groups,
+            step_kind: _,
         } => execute_lua_chunk(
             lua,
             work.id,
@@ -851,6 +906,7 @@ mod tests {
             recipe_name: "test_recipe".to_string(),
             working_dir: dir.path().to_path_buf(),
             env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
         });
 
         let result = rx.recv().unwrap();
@@ -875,6 +931,7 @@ mod tests {
                 recipe_name: format!("recipe_{i}"),
                 working_dir: dir.path().to_path_buf(),
                 env_vars: HashMap::new(),
+                project_root: dir.path().to_path_buf(),
             });
         }
 
@@ -909,6 +966,7 @@ mod tests {
             recipe_name: "fail_recipe".to_string(),
             working_dir: dir.path().to_path_buf(),
             env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
         });
 
         let result = rx.recv().unwrap();
@@ -939,6 +997,7 @@ mod tests {
             recipe_name: "dir_test".to_string(),
             working_dir: dir.path().to_path_buf(),
             env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
         });
 
         let result = rx.recv().unwrap();
@@ -971,10 +1030,12 @@ mod tests {
                     dir.path().join("b.txt").to_string_lossy().into_owned(),
                 ],
                 ingredient_groups: vec![vec!["src.rs".to_string()]],
+                step_kind: cook_contracts::StepKind::Cook,
             },
             recipe_name: "multi".to_string(),
             working_dir: dir.path().to_path_buf(),
             env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
         });
 
         let result = rx.recv().unwrap();
@@ -1009,10 +1070,12 @@ mod tests {
                 inputs: vec!["hello".to_string()],
                 outputs: vec![out_path.to_string_lossy().into_owned()],
                 ingredient_groups: vec![],
+                step_kind: cook_contracts::StepKind::Cook,
             },
             recipe_name: "r".to_string(),
             working_dir: dir.path().to_path_buf(),
             env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
         });
 
         let result = rx.recv().unwrap();
@@ -1043,6 +1106,7 @@ mod tests {
             recipe_name: "env_test".to_string(),
             working_dir: dir.path().to_path_buf(),
             env_vars: env,
+            project_root: dir.path().to_path_buf(),
         });
 
         let result = rx.recv().unwrap();
@@ -1082,10 +1146,12 @@ mod tests {
                 inputs: vec![],
                 outputs: vec![out1.to_string_lossy().into_owned()],
                 ingredient_groups: vec![],
+                step_kind: cook_contracts::StepKind::Cook,
             },
             recipe_name: "r".to_string(),
             working_dir: dir1.path().to_path_buf(),
             env_vars: HashMap::new(),
+            project_root: dir1.path().to_path_buf(),
         });
         let r1 = rx.recv().unwrap();
         assert!(r1.success, "first item failed: {:?}", r1.error);
@@ -1098,10 +1164,12 @@ mod tests {
                 inputs: vec![],
                 outputs: vec![out2.to_string_lossy().into_owned()],
                 ingredient_groups: vec![],
+                step_kind: cook_contracts::StepKind::Cook,
             },
             recipe_name: "r".to_string(),
             working_dir: dir2.path().to_path_buf(),
             env_vars: HashMap::new(),
+            project_root: dir2.path().to_path_buf(),
         });
         let r2 = rx.recv().unwrap();
         assert!(r2.success, "second item failed: {:?}", r2.error);
@@ -1137,6 +1205,7 @@ mod tests {
             recipe_name: "__cook_test_panic__".to_string(),
             working_dir: dir.path().to_path_buf(),
             env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
         });
         let r1 = rx.recv().unwrap();
         assert_eq!(r1.id, 7);
@@ -1157,6 +1226,7 @@ mod tests {
             recipe_name: "recovery".to_string(),
             working_dir: dir.path().to_path_buf(),
             env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
         });
         let r2 = rx.recv().unwrap();
         assert_eq!(r2.id, 8);

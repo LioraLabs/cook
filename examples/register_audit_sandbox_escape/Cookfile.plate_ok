@@ -1,0 +1,10 @@
+recipe ship
+    plate >{
+        -- CS-0045: plate-step Lua bodies are NOT sandboxed;
+        -- shipping outside the project root is the explicit
+        -- purpose of a plate. This MUST succeed.
+        local probe = fs.read("/etc/hostname")
+        -- And os.execute MUST be allowed in plate context.
+        os.execute("true")
+        print("plate-ok")
+    }

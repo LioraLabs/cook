@@ -128,11 +128,30 @@ impl Registry {
         // `fs.*`, `path.*`, `cook.platform.*` come from the shared
         // cook-lua-stdlib crate (CS-0044) so register-phase and
         // execute-phase VMs see byte-identical behavior.
-        cook_lua_stdlib::register_fs_api(
+        //
+        // The register-phase VM is always confined to the project root
+        // (CS-0045). The captured `lua_code` strings will replay at
+        // execute time with the per-step-kind sandbox policy applied
+        // there; here we just need to keep `cook.add_unit({...})`-time
+        // file accesses (e.g. `cook.dep_output(...)` resolution helpers
+        // that read from disk) within the project. `project_root` is
+        // sourced from CacheContext when available; in the test/legacy
+        // path we fall back to the recipe's working_dir, which is
+        // operationally indistinguishable for single-Cookfile projects.
+        let project_root: std::path::PathBuf = cache_ctx
+            .as_ref()
+            .map(|c| c.project_root.clone())
+            .unwrap_or_else(|| self.working_dir.clone());
+        cook_lua_stdlib::register_fs_api_with_sandbox(
             &lua,
             cook_lua_stdlib::WorkingDirSource::Static(self.working_dir.clone()),
+            cook_lua_stdlib::SandboxSource::confined(project_root.clone()),
         )?;
         cook_lua_stdlib::register_path_api(&lua)?;
+        cook_lua_stdlib::install_shell_escape_guards(
+            &lua,
+            cook_lua_stdlib::SandboxSource::confined(project_root),
+        )?;
 
         // Module system APIs. `register_platform_api` now takes the
         // `cook` table directly rather than reading it from globals.

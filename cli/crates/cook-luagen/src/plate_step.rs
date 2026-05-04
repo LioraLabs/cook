@@ -76,13 +76,17 @@ pub(crate) fn generate_plate_step(
         // to produce a correctly-quoted Lua string literal, then concatenate with
         // the body long-string.  This way the execute-phase chunk is self-contained
         // and does not rely on any out-of-band `_bind_*` field on `cook.add_unit`.
+        //
+        // CS-0045: `step_kind = "plate"` tells the worker to run this
+        // body without the project-root sandbox — plates are the
+        // explicit ship-outside-the-project surface.
         (Body::LuaBlock(code), PlateTestMode::OneToOne) => {
             out.push_str(&format!(
                 "    for _, _plate_in in ipairs({}) do\n",
                 source_expr
             ));
             out.push_str(&format!(
-                "        cook.add_unit({{cache = false, lua_code = (\"local input = \" .. string.format(\"%q\", _plate_in) .. \"\\n\") .. {}, consulted_env_keys = \"*\"}})\n",
+                "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (\"local input = \" .. string.format(\"%q\", _plate_in) .. \"\\n\") .. {}, consulted_env_keys = \"*\"}})\n",
                 lua_chunk_literal(code)
             ));
             out.push_str("    end\n");
@@ -94,14 +98,14 @@ pub(crate) fn generate_plate_step(
         // helper that quotes each element, producing a self-contained chunk.
         (Body::LuaBlock(code), PlateTestMode::ManyToOne) => {
             out.push_str(&format!(
-                "    cook.add_unit({{cache = false, lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), consulted_env_keys = \"*\"}})\n",
+                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), consulted_env_keys = \"*\"}})\n",
                 source_expr, lua_chunk_literal(code)
             ));
         }
         // (6) Lua, OneShot — one unit, no source binding.
         (Body::LuaBlock(code), PlateTestMode::OneShot) => {
             out.push_str(&format!(
-                "    cook.add_unit({{cache = false, lua_code = {}, consulted_env_keys = \"*\"}})\n",
+                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\"}})\n",
                 lua_chunk_literal(code)
             ));
         }

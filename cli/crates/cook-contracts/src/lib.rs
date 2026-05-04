@@ -29,6 +29,27 @@ pub enum OutputStream {
     Stderr,
 }
 
+/// Which Cookfile step kind a unit was captured from.
+///
+/// CS-0045: drives the per-item sandbox policy in the execute-phase
+/// Lua VM. Cook/test/chore step Lua bodies run with the project-root
+/// sandbox; plate step Lua bodies run unsandboxed because plates are
+/// the explicit "ship outside the project" surface
+/// (§{recipes.plate-step}).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StepKind {
+    /// `cook` step body — cacheable, hermetic, sandboxed.
+    Cook,
+    /// `plate` step body — non-cacheable, non-hermetic by design,
+    /// not sandboxed.
+    Plate,
+    /// `test` step body — non-cacheable but hermetic-by-intent,
+    /// sandboxed identically to `Cook`.
+    Test,
+    /// `chore` body — non-cacheable, hermetic-by-intent, sandboxed.
+    Chore,
+}
+
 /// What kind of work a captured unit represents.
 #[derive(Debug, Clone)]
 pub enum WorkPayload {
@@ -45,6 +66,14 @@ pub enum WorkPayload {
         inputs: Vec<String>,
         outputs: Vec<String>,
         ingredient_groups: Vec<Vec<String>>,
+        /// Originating step kind, used by the execute-phase worker
+        /// to pick a [`crate::StepKind`]-appropriate sandbox policy
+        /// (CS-0045). Older code paths that did not yet plumb the
+        /// kind capture `Cook` here as the safe default — cook-step
+        /// confinement is the strictest contract and a misclassified
+        /// plate body merely degrades to a Lua runtime error rather
+        /// than silently writing outside the project.
+        step_kind: StepKind,
     },
     Test {
         cmd: String,
@@ -159,9 +188,11 @@ mod tests {
             inputs: vec!["in.txt".into()],
             outputs: vec!["out.txt".into()],
             ingredient_groups: vec![vec!["a".into(), "b".into()]],
+            step_kind: StepKind::Cook,
         };
         match &p {
-            WorkPayload::LuaChunk { code, inputs, outputs, ingredient_groups } => {
+            WorkPayload::LuaChunk { code, inputs, outputs, ingredient_groups, step_kind } => {
+                assert_eq!(*step_kind, StepKind::Cook);
                 assert_eq!(code, "print('hi')");
                 assert_eq!(inputs, &vec!["in.txt".to_string()]);
                 assert_eq!(outputs, &vec!["out.txt".to_string()]);

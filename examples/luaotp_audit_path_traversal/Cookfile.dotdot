@@ -1,0 +1,9 @@
+recipe traversal_probe
+    >{
+        -- CS-0045: a relative path that escapes via `..` MUST be
+        -- rejected even if every component is a valid Lua string.
+        -- The check is on the lexically-normalized resolution, not on
+        -- syntactic shape.
+        local data = fs.read("../../../etc/passwd")
+        print(#data)
+    }

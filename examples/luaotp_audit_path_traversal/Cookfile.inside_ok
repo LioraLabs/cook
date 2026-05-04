@@ -1,0 +1,9 @@
+recipe inside_probe
+    >{
+        -- Confined paths inside the project root MUST succeed.
+        -- This is the no-regression case: the sandbox MUST NOT
+        -- break legitimate file I/O.
+        fs.write("inside.txt", "ok")
+        local s = fs.read("inside.txt")
+        print("inside-ok:" .. s)
+    }

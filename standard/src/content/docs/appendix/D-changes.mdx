@@ -9,6 +9,7 @@ sidebar:
 
 ## Versions
 
+- **v0.8** (unreleased) — CS-0045
 - **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042, CS-0043, CS-0044
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
@@ -695,4 +696,30 @@ CS-0044 extracts the three tables into a new `cli/crates/cook-lua-stdlib` crate 
 **Hard non-changes.** CS-0044 does not introduce a filesystem sandbox; it replicates today's behavior exactly. The user-visible Lua API surface is unchanged — every existing recipe continues to work without modification. Sandboxing is a follow-up that this consolidation enables but does not deliver.
 
 **Reference:** the CS-0044 commit series on the `worktree-agent-a6e35722b1cd28f43` branch.
+
+## D.45. CS-0045 — Project-root sandbox for `cook` / `test` / `chore` step Lua bodies. [#changes.cs-0045]
+
+**Date:** 2026-05-03
+
+**Version:** v0.8
+
+**Sections affected:** §{lua.fs-helpers} (new §6.5.8 normative sandbox section, new §6.5.9 normative shell-escape-hatch section), §{recipes.plate-step} (new Note 4.7.2 pinning the plate-step exemption).
+
+**Summary.** Pre-CS-0045, the Cook Lua API surface confined `fs.*` paths to the recipe's *working directory* (a path-resolution anchor) but applied no upper bound: a `cook` step body could read `/etc/passwd`, write to `/tmp/leaked`, `..`-traverse out of the project, or shell out via `os.execute("rm -rf /")`, and the implementation would happily comply. The cache fingerprint records the captured `lua_code` string but cannot capture out-of-project side effects, so a hostile or accidentally-broken cook step could silently corrupt the user's environment while still appearing cache-clean.
+
+CS-0045 closes that gap by adding a normative project-root sandbox to the Cook Lua API. Every path-taking entry in `fs.*` (§6.5.1–6.5.7) MUST further confine its argument to the **project root** (the workspace root, §{modules.workspace-root}) when invoked from a sandboxed context. The sandboxed contexts are `cook` / `test` / `chore` step bodies and all register-phase Lua execution (config blocks, inline-Lua, cook-step register-time orchestration); the explicit non-sandboxed context is the `plate` step body, because shipping outside the project root is what `plate` exists for (§{recipes.plate-step-not-sandboxed}). The sandbox check is **lexical**: paths are normalized via component-by-component `..` / `.` resolution without consulting the filesystem, so `fs.write` and `fs.mkdir_p` continue to succeed against not-yet-existent paths. An out-of-project path raises a Lua runtime error tagged with `CS-0045`; no silent truncation or fallback is permitted.
+
+The companion §6.5.9 deals with the Lua-side shell escape hatches `os.execute` and `io.popen`: in a sandboxed context, both MUST raise rather than spawn a child process, because arbitrary shell text bypasses the path-confinement check and the unit's `command_hash`. `cook.sh` (§6.3.1) is unaffected — it already runs with the recipe's working-directory rooting and is recorded in the unit's command hash. Plate-step bodies retain unrestricted access to all three.
+
+**Implementation note.** The reference implementation lives in `cli/crates/cook-lua-stdlib/src/sandbox.rs` and `cli/crates/cook-lua-stdlib/src/shell_guard.rs`. `SandboxPolicy` is an enum with two variants (`Off` and `Confined { project_root }`) and `SandboxSource` mirrors the `WorkingDirSource` split from CS-0044 so the execute-phase worker pool can flip the policy per work item. `WorkPayload::LuaChunk` gains a `step_kind: StepKind` field that the worker reads on each item: `Cook` / `Test` / `Chore` install `Confined`, `Plate` installs `Off`. The register-phase VM is always installed with `Confined`, since every register-phase Lua execution participates in the captured cache fingerprint.
+
+**Why `path.*` is not sandboxed.** `path.*` (§6.6) is pure string manipulation. It performs no I/O. Constraining `path.join` to in-project results would force authors to reach for `string.format` to build out-of-project path strings for plate steps, which is a worse outcome than leaving `path.*` as a transparent string utility. The sandbox is on the I/O-performing surface only; that is sufficient to enforce hermeticity.
+
+**Why tests are sandboxed identically to cook steps.** `test` step bodies are non-cacheable but **hermetic-by-intent**: the user runs them under `cook --test` precisely to verify the project's correctness without depending on the host environment. A test body that reads `/etc/passwd` to fabricate an outcome is a worse outcome than the test failing to compile under the sandbox. Authors who want to test a plate-step's behavior should invoke that plate from the test's `cook.sh` (which runs in the recipe's working directory and is recorded in the test's `command_hash`) rather than re-creating the plate's escape-hatch surface inside the test body.
+
+**Hard non-changes.** CS-0045 is purely additive on the rejection side: a Cookfile that previously did not depend on out-of-project I/O continues to work without modification. The user-visible Lua API signatures of `fs.*` and `path.*` are unchanged; only their behavior on out-of-project arguments tightens. `os.execute` and `io.popen` semantics in plate steps and outside Cook entirely (e.g. running a Cookfile-generated Lua script directly) are unchanged.
+
+**Audit fixtures.** `examples/register_audit_sandbox_escape/walkthrough.sh` exercises the cook-step / config-block / `os.execute` rejection paths and the plate-step exemption. `examples/luaotp_audit_path_traversal/walkthrough.sh` exercises the relative `..` traversal, absolute `fs.write`, `fs.glob` outside-pattern, and `io.popen` rejection paths and pins the no-regression case (in-project paths MUST still succeed).
+
+**Reference:** the CS-0045 commit on the `cs-0045-sandbox-cook-steps` branch.
 

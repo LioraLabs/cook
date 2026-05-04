@@ -44,6 +44,23 @@ pub fn register_unit_api(
         let interactive: bool = tbl.get::<Option<bool>>("interactive").unwrap_or(None).unwrap_or(false);
         let line: usize = tbl.get::<Option<usize>>("line").unwrap_or(None).unwrap_or(0);
         let cache_enabled: bool = tbl.get::<Option<bool>>("cache").unwrap_or(None).unwrap_or(true);
+        // CS-0045: the originating step kind drives the execute-phase
+        // sandbox policy on the resulting LuaChunk. Codegen passes
+        // `step_kind = "plate"` for plate-step bodies (which are
+        // unsandboxed by design) and omits the field for cook/test/
+        // chore bodies. The captured-unit default is `cook` because
+        // that is the strictest policy: a misclassified plate body
+        // becomes a Lua runtime error rather than a silent escape.
+        let step_kind: cook_contracts::StepKind = match tbl
+            .get::<String>("step_kind")
+            .ok()
+            .as_deref()
+        {
+            Some("plate") => cook_contracts::StepKind::Plate,
+            Some("test") => cook_contracts::StepKind::Test,
+            Some("chore") => cook_contracts::StepKind::Chore,
+            _ => cook_contracts::StepKind::Cook,
+        };
 
         // §{chores.no-caching}: cache = true is not permitted inside a chore body.
         if cache_enabled && cs.borrow().current_chore_active {
@@ -203,6 +220,7 @@ pub fn register_unit_api(
                 inputs,
                 outputs: output_paths.clone(),
                 ingredient_groups,
+                step_kind,
             }
         } else if interactive {
             WorkPayload::Interactive { cmd: command, line }
@@ -583,6 +601,7 @@ mod tests {
                 inputs,
                 outputs,
                 ingredient_groups,
+                step_kind: _,
             } => {
                 assert_eq!(code, "print('hi')");
                 assert_eq!(inputs, &vec!["main.c".to_string()]);
@@ -622,6 +641,7 @@ mod tests {
                 inputs,
                 outputs,
                 ingredient_groups,
+                step_kind: _,
             } => {
                 assert_eq!(code, "os.execute('wasm-pack build')");
                 assert_eq!(inputs, &vec!["src.rs".to_string()]);

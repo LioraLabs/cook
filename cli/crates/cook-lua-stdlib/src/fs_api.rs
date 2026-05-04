@@ -9,29 +9,57 @@
 //!
 //! Bug fixes to `fs.*` semantics MUST land here so both the
 //! register-phase and execute-phase VMs benefit (CS-0044).
+//!
+//! Each entry consults a [`SandboxSource`] (CS-0045) before performing
+//! I/O. Under `SandboxPolicy::Confined` the call rejects paths that
+//! resolve outside the project root with a Lua runtime error; under
+//! `SandboxPolicy::Off` the call behaves as it did pre-CS-0045. Plate
+//! step Lua bodies are the only execute-phase context that runs with
+//! `Off`; cook/test/chore step bodies and all register-phase Lua run
+//! with `Confined`.
 
 use mlua::prelude::*;
 
+use crate::sandbox::{SandboxPolicy, SandboxSource};
 use crate::WorkingDirSource;
 
-/// Register the `fs` table on the supplied Lua VM.
-///
-/// `wd_source` is cloned once per registered closure so each entry
-/// independently resolves its working directory at call time.
+/// Register the `fs` table on the supplied Lua VM, with no sandbox
+/// (pre-CS-0045 behavior). Kept as a thin wrapper for callers that
+/// have not yet been ported to the sandbox-aware factory; new call
+/// sites SHOULD use [`register_fs_api_with_sandbox`] directly.
 pub fn register_fs_api(lua: &Lua, wd_source: WorkingDirSource) -> LuaResult<()> {
+    register_fs_api_with_sandbox(lua, wd_source, SandboxSource::off())
+}
+
+/// Register the `fs` table on the supplied Lua VM with a sandbox
+/// policy. CS-0045.
+///
+/// `wd_source` and `sandbox` are each cloned once per registered
+/// closure so every entry independently resolves its working directory
+/// and policy at call time.
+pub fn register_fs_api_with_sandbox(
+    lua: &Lua,
+    wd_source: WorkingDirSource,
+    sandbox: SandboxSource,
+) -> LuaResult<()> {
     let fs = lua.create_table()?;
 
     let s = wd_source.clone();
+    let sb = sandbox.clone();
     fs.set(
         "exists",
-        lua.create_function(move |_, path: String| Ok(s.resolve().join(&path).exists()))?,
+        lua.create_function(move |_, path: String| {
+            let full = check_path(&sb, "fs.exists", &s.resolve(), &path)?;
+            Ok(full.exists())
+        })?,
     )?;
 
     let s = wd_source.clone();
+    let sb = sandbox.clone();
     fs.set(
         "size",
         lua.create_function(move |_, path: String| {
-            let full = s.resolve().join(&path);
+            let full = check_path(&sb, "fs.size", &s.resolve(), &path)?;
             let meta = std::fs::metadata(&full)
                 .map_err(|e| mlua::Error::runtime(format!("fs.size: {e}")))?;
             Ok(meta.len())
@@ -39,10 +67,11 @@ pub fn register_fs_api(lua: &Lua, wd_source: WorkingDirSource) -> LuaResult<()> 
     )?;
 
     let s = wd_source.clone();
+    let sb = sandbox.clone();
     fs.set(
         "read",
         lua.create_function(move |_, path: String| {
-            let full = s.resolve().join(&path);
+            let full = check_path(&sb, "fs.read", &s.resolve(), &path)?;
             let content = std::fs::read_to_string(&full)
                 .map_err(|e| mlua::Error::runtime(format!("fs.read: {e}")))?;
             Ok(content)
@@ -50,15 +79,38 @@ pub fn register_fs_api(lua: &Lua, wd_source: WorkingDirSource) -> LuaResult<()> 
     )?;
 
     let s = wd_source.clone();
+    let sb = sandbox.clone();
     fs.set(
         "glob",
         lua.create_function(move |lua, pattern: String| {
-            let full_pattern = s.resolve().join(&pattern).to_string_lossy().to_string();
-            let paths: Vec<String> = glob::glob(&full_pattern)
+            // Glob's pattern is itself a path-like string; sandbox it
+            // with the same resolution as fs.read/fs.write so
+            // `fs.glob("/etc/*")` raises rather than enumerating
+            // outside the project. The resulting matches are also
+            // re-checked: a glob that crosses a `..` boundary mid-
+            // pattern (`fs.glob("../*")`) must reject every match.
+            let full_pattern_path = check_path(&sb, "fs.glob", &s.resolve(), &pattern)?;
+            let full_pattern = full_pattern_path.to_string_lossy().to_string();
+            let policy = sb.resolve();
+            let wd = s.resolve();
+            let mut paths: Vec<String> = Vec::new();
+            for entry in glob::glob(&full_pattern)
                 .map_err(|e| mlua::Error::runtime(format!("fs.glob: {e}")))?
-                .filter_map(|p| p.ok())
-                .map(|p| p.to_string_lossy().to_string())
-                .collect();
+            {
+                let path = match entry {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+                // Re-check each match against the sandbox. This guards
+                // the case where `pattern` itself sandbox-checked clean
+                // but a wildcard expands to a symlink target that
+                // escapes the root (best-effort: see Note 6.5.3 — we
+                // do not chase hostile symlinks).
+                let lossy = path.to_string_lossy().to_string();
+                if policy.resolve("fs.glob", &wd, &lossy).is_ok() {
+                    paths.push(lossy);
+                }
+            }
             let table = lua.create_table()?;
             for (i, path) in paths.iter().enumerate() {
                 table.set(i + 1, path.as_str())?;
@@ -68,10 +120,11 @@ pub fn register_fs_api(lua: &Lua, wd_source: WorkingDirSource) -> LuaResult<()> 
     )?;
 
     let s = wd_source.clone();
+    let sb = sandbox.clone();
     fs.set(
         "mtime",
         lua.create_function(move |_, path: String| {
-            let full = s.resolve().join(&path);
+            let full = check_path(&sb, "fs.mtime", &s.resolve(), &path)?;
             let meta = std::fs::metadata(&full)
                 .map_err(|e| mlua::Error::runtime(format!("fs.mtime: {e}")))?;
             let mtime = meta
@@ -85,10 +138,11 @@ pub fn register_fs_api(lua: &Lua, wd_source: WorkingDirSource) -> LuaResult<()> 
     )?;
 
     let s = wd_source.clone();
+    let sb = sandbox.clone();
     fs.set(
         "write",
         lua.create_function(move |_, (path, content): (String, String)| {
-            let full = s.resolve().join(&path);
+            let full = check_path(&sb, "fs.write", &s.resolve(), &path)?;
             if let Some(parent) = full.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| mlua::Error::runtime(format!("fs.write: {e}")))?;
@@ -100,10 +154,11 @@ pub fn register_fs_api(lua: &Lua, wd_source: WorkingDirSource) -> LuaResult<()> 
     )?;
 
     let s = wd_source.clone();
+    let sb = sandbox.clone();
     fs.set(
         "mkdir_p",
         lua.create_function(move |_, path: String| {
-            let full = s.resolve().join(&path);
+            let full = check_path(&sb, "fs.mkdir_p", &s.resolve(), &path)?;
             std::fs::create_dir_all(&full)
                 .map_err(|e| mlua::Error::runtime(format!("fs.mkdir_p: {e}")))?;
             Ok(())
@@ -112,6 +167,22 @@ pub fn register_fs_api(lua: &Lua, wd_source: WorkingDirSource) -> LuaResult<()> 
 
     lua.globals().set("fs", fs)?;
     Ok(())
+}
+
+/// Resolve `user_path` against `working_dir` and apply the active
+/// sandbox policy. On success returns the absolute path the OS call
+/// should use; on failure raises a Lua runtime error tagged with the
+/// `api` label so the user sees which entry rejected the path.
+fn check_path(
+    sandbox: &SandboxSource,
+    api: &'static str,
+    working_dir: &std::path::Path,
+    user_path: &str,
+) -> LuaResult<std::path::PathBuf> {
+    let policy: SandboxPolicy = sandbox.resolve();
+    policy
+        .resolve(api, working_dir, user_path)
+        .map_err(|e| mlua::Error::runtime(e.to_string()))
 }
 
 #[cfg(test)]
@@ -130,6 +201,17 @@ mod tests {
     fn setup_live(slot: Arc<Mutex<PathBuf>>) -> Lua {
         let lua = Lua::new();
         register_fs_api(&lua, WorkingDirSource::Live(slot)).unwrap();
+        lua
+    }
+
+    fn setup_confined(dir: &std::path::Path, project_root: &std::path::Path) -> Lua {
+        let lua = Lua::new();
+        register_fs_api_with_sandbox(
+            &lua,
+            WorkingDirSource::Static(dir.to_path_buf()),
+            SandboxSource::confined(project_root.to_path_buf()),
+        )
+        .unwrap();
         lua
     }
 
@@ -257,5 +339,86 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(count, 2);
+    }
+
+    // ---- Sandbox tests (CS-0045) ------------------------------------
+
+    /// A confined `fs.read` MUST reject an absolute path outside the
+    /// project root with a Lua error mentioning the path.
+    #[test]
+    fn confined_fs_read_rejects_absolute_outside_root() {
+        let dir = TempDir::new().unwrap();
+        let lua = setup_confined(dir.path(), dir.path());
+        let err = lua
+            .load(r#"return fs.read("/etc/passwd")"#)
+            .exec()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("CS-0045"), "diagnostic missing CS-0045 tag: {err}");
+        assert!(err.contains("/etc/passwd"), "diagnostic missing path: {err}");
+    }
+
+    /// A confined `fs.read` MUST reject a relative path that escapes
+    /// the project root via `..`.
+    #[test]
+    fn confined_fs_read_rejects_dotdot_traversal() {
+        let outside = TempDir::new().unwrap();
+        let project = outside.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "shh").unwrap();
+
+        let lua = setup_confined(&project, &project);
+        let err = lua
+            .load(r#"return fs.read("../secret.txt")"#)
+            .exec()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("CS-0045"), "got: {err}");
+    }
+
+    /// A confined `fs.write` to a path inside the project root MUST
+    /// succeed.
+    #[test]
+    fn confined_fs_write_inside_root_succeeds() {
+        let dir = TempDir::new().unwrap();
+        let lua = setup_confined(dir.path(), dir.path());
+        lua.load(r#"fs.write("sub/x.txt", "ok")"#).exec().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("sub/x.txt")).unwrap(),
+            "ok"
+        );
+    }
+
+    /// `fs.glob` rejects an absolute pattern outside the project root.
+    #[test]
+    fn confined_fs_glob_rejects_outside_pattern() {
+        let dir = TempDir::new().unwrap();
+        let lua = setup_confined(dir.path(), dir.path());
+        let err = lua
+            .load(r#"return fs.glob("/etc/*")"#)
+            .exec()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("CS-0045"), "got: {err}");
+    }
+
+    /// CS-0017: a confined fs.* call from an imported Cookfile sees a
+    /// subdir cwd while the project root is the workspace root. Paths
+    /// that stay within the workspace root MUST be admitted, even when
+    /// they normalize via `..` from the importer's cwd.
+    #[test]
+    fn confined_subcookfile_relative_dotdot_inside_root_ok() {
+        let project = TempDir::new().unwrap();
+        let sub = project.path().join("lib");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(project.path().join("shared.txt"), "data").unwrap();
+
+        let lua = setup_confined(&sub, project.path());
+        // From /project/lib, ../shared.txt = /project/shared.txt — inside root.
+        let s: String = lua
+            .load(r#"return fs.read("../shared.txt")"#)
+            .eval()
+            .unwrap();
+        assert_eq!(s, "data");
     }
 }

@@ -1,0 +1,7 @@
+recipe os_execute_probe
+    >{
+        -- CS-0045: os.execute is a Lua escape hatch that bypasses
+        -- cook.sh's working_dir rooting and the unit's
+        -- command_hash. In a cook step it MUST raise.
+        os.execute("touch /tmp/cs_0045_escape")
+    }

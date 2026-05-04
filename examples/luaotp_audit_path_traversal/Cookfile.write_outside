@@ -1,0 +1,7 @@
+recipe write_outside_probe
+    >{
+        -- CS-0045: fs.write to an absolute path outside the project
+        -- root MUST raise (not silently land bytes on disk).
+        fs.write("/tmp/cs_0045_should_not_exist.txt", "leaked")
+        print("UNREACHED")
+    }
