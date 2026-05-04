@@ -9,6 +9,7 @@ sidebar:
 
 ## Versions
 
+- **v0.8** (unreleased) — CS-0045, CS-0046
 - **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042, CS-0043, CS-0044
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
@@ -695,4 +696,24 @@ CS-0044 extracts the three tables into a new `cli/crates/cook-lua-stdlib` crate 
 **Hard non-changes.** CS-0044 does not introduce a filesystem sandbox; it replicates today's behavior exactly. The user-visible Lua API surface is unchanged — every existing recipe continues to work without modification. Sandboxing is a follow-up that this consolidation enables but does not deliver.
 
 **Reference:** the CS-0044 commit series on the `worktree-agent-a6e35722b1cd28f43` branch.
+
+## D.46. CS-0046 — Removal of `cook --test` runner. [#changes.cs-0046]
+
+**Date:** 2026-05-03
+
+**Version:** v0.8 (unreleased)
+
+**Sections affected:** none in the normative chapters — the Cookfile language, `test_step` syntax (§{recipes.test-step}), and `cook.add_test` (§{lua.api-overview}) are unchanged. App. E.10 and App. E.11 have informative cross-references to the runner that are updated to reflect its removal. Reference-implementation: `cli/crates/cook-cli/src/cli.rs` (drops the `--test`, `--filter`, `--verbose`, `--timeout-multiplier`, `--wrapper`, `--list` flags), `cli/crates/cook-cli/src/main.rs` (drops the dispatch arm), `cli/crates/cook-cli/src/pipeline.rs` (drops `cmd_test`), `cli/crates/cook-cli/src/test_output.rs` (deleted — JUnit XML / JSON / terminal-summary scaffolding that only `cmd_test` consumed), `examples/cli_audit_test_exit_code/` and `examples/cmd_test_inferred_deps_e10/` and `examples/cross_cookfile_test/` (deleted — fixtures that exercised the removed runner end-to-end).
+
+**Summary.** The pre-1.0 reference implementation shipped a `cook --test` subcommand whose contract was always provisional: it discovered every `recipe` containing a `test_step` and shelled the bodies through the same DAG executor as `cook NAME`. The bundled sub-flags (`--filter`, `--verbose`, `--timeout-multiplier`, `--wrapper`, `--list`) were stubs that printed `not yet implemented` warnings and then ran the full set anyway; the structured-output scaffolding in `test_output.rs` (JUnit XML, JSON, terminal summary) was never wired to engine results. Cutting v1.0 with this surface in place would freeze a half-shape — author-visible flags that don't do what their names imply, plus an exit-code split (CS-0041, App. E.11) that depends on structured test results that don't exist — into the stability promise. CS-0046 removes the runner outright; v1.0 will define a test execution surface whose semantics are designed up front rather than retrofitted onto today's stub.
+
+**What stays.** The recipe-level `test` step (§{recipes.test-step}, App. A.4) is unchanged: parsing, register-phase recording via `cook.add_test`, and execute-phase invocation through the same worker pool that runs `cook` and `plate` steps all behave exactly as before. A test step continues to participate in the DAG of its enclosing recipe, and `cook RECIPE_NAME` still runs every step in that recipe — including its `test_step`s — exactly as it did before CS-0046. The removal is scoped to the CLI dispatch flag and its sub-flags; no language-surface, register-phase, or execute-phase behavior changes.
+
+**What goes.** The `--test`, `--filter`, `--verbose`, `--timeout-multiplier`, `--wrapper`, and `--list` CLI flags; the `cmd_test` dispatcher in `pipeline.rs` and its workspace/single-Cookfile branches; the unused `test_output.rs` result-rendering module (`TestStatus`, `TestCaseResult`, `TestSuiteResult`, `TestResults`, JUnit XML emitter, JSON emitter, terminal summary). The audit fixtures under `examples/cli_audit_test_exit_code/`, `examples/cmd_test_inferred_deps_e10/`, and `examples/cross_cookfile_test/` are deleted; each was scoped to behavior of the removed runner.
+
+**Why now.** v0.8 is the last opportunity before the v1.0 stability cut to drop a half-finished surface without a deprecation cycle. The `--test` runner's flag set was actively misleading (`--filter` ignored, no per-test timing, no machine-readable output) and its CI failure mode had needed a CS-0041 patch to surface non-zero exits at all. Shipping a v1.0 `cook --test` would then commit to backwards compatibility for behavior nobody wants long-term. Removal first, redesign later, is the conservative path.
+
+**Forward-looking note.** Test execution is **implementation-defined** in v0.8. The Cook Standard's normative chapters describe what a `test_step` *is* (§{recipes.test-step}) and how a conforming implementation registers and runs one (§{lua.api-overview}); whether and how a CLI surface aggregates multiple recipes' test steps into a single batch run is not specified. The v0.7-track `cook --test` runner was the reference implementation's first attempt at such a surface; it has been withdrawn pending redesign.
+
+**Reference:** this commit, on the `cs-0046-remove-cook-test` branch.
 

@@ -14,11 +14,6 @@ use crate::cli::Cli;
 use crate::env::{load_env, resolve_env};
 use crate::error::CookError;
 use crate::progress::spawn_new_renderer;
-
-// Test output types are used by cmd_test once cook-engine supports test
-// result collection. Keep the import for future wiring.
-#[allow(unused_imports)]
-use crate::test_output::{self, TestCaseResult, TestResults, TestStatus};
 use crate::watcher::CookWatcher;
 use crate::workspace::Workspace;
 
@@ -373,7 +368,7 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
 }
 
 // ---------------------------------------------------------------------------
-// Build recipe_infos + registries (shared by cmd_run and cmd_test)
+// Build recipe_infos + registries (shared by cmd_run and cmd_dag)
 // ---------------------------------------------------------------------------
 
 /// Build recipe_infos from a single Cookfile's recipes and chores.
@@ -599,142 +594,6 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
 
         run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
     }
-
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// cmd_test
-// ---------------------------------------------------------------------------
-
-pub fn cmd_test(
-    cli: &Cli,
-    filter: Option<String>,
-    verbose: bool,
-    timeout_multiplier: u64,
-    wrapper: Option<String>,
-    list: bool,
-) -> Result<(), CookError> {
-    // Warn about unimplemented flags
-    if filter.is_some() {
-        eprintln!("cook: warning: --filter is not yet implemented, running all tests");
-    }
-    if verbose {
-        eprintln!("cook: warning: --verbose is not yet implemented");
-    }
-    if timeout_multiplier != 1 {
-        eprintln!("cook: warning: --timeout-multiplier is not yet implemented");
-    }
-    if wrapper.is_some() {
-        eprintln!("cook: warning: --wrapper is not yet implemented");
-    }
-    if list {
-        eprintln!("cook: warning: --list is not yet implemented");
-    }
-
-    let (cookfile, lua_source) = read_and_parse(cli)?;
-
-    let num_jobs = resolve_num_jobs(cli);
-
-    if !cookfile.imports.is_empty() {
-        // Workspace test
-        let workspace_root = crate::workspace::resolve_workspace_root(
-            &cli.file,
-            cli.root.clone(),
-        )?;
-        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)?;
-
-        // Discover test recipes across ALL Cookfiles (root + imports)
-        let mut test_recipe_names: Vec<String> = Vec::new();
-
-        // Root test recipes
-        for recipe in &workspace.root.cookfile.recipes {
-            if recipe
-                .steps
-                .iter()
-                .any(|s| matches!(s, cook_lang::ast::Step::Test { .. }))
-            {
-                test_recipe_names.push(recipe.name.clone());
-            }
-        }
-
-        // Imported test recipes (namespaced)
-        for (canonical_path, loaded) in &workspace.imports {
-            let prefix = find_full_prefix(&workspace, canonical_path);
-            for recipe in &loaded.cookfile.recipes {
-                if recipe
-                    .steps
-                    .iter()
-                    .any(|s| matches!(s, cook_lang::ast::Step::Test { .. }))
-                {
-                    test_recipe_names.push(format!("{prefix}.{}", recipe.name));
-                }
-            }
-        }
-
-        if test_recipe_names.is_empty() {
-            eprintln!("cook: no test recipes found");
-            return Ok(());
-        }
-
-        let recipe_infos = build_workspace_recipe_info(&workspace)?;
-        let registries = build_workspace_registries(&workspace, None, &cli.set)?;
-
-        // App. E.10: cmd_test must compute inferred_deps from `{NAME}` body
-        // refs the same way cmd_run does, otherwise the wave grouper sees no
-        // edge from a `test`-bearing recipe to a `cook`-step recipe it consumes
-        // and registers them out of order.
-        let inferred_deps = compute_workspace_inferred_deps(&workspace);
-        warn_workspace_dep_conflicts(&workspace, &inferred_deps);
-
-        // Propagate engine failure as a non-zero exit (CookError::TestFailure
-        // for an exit code of 1 — test execution surfaces as engine task
-        // failures since the runner shells the body and a non-zero exit is
-        // reported via COOK_CMD_FAILED). Without this `?`, a failing test
-        // body silently exited 0 — a CI-killer.
-        run_with_progress(cli, &recipe_infos, &test_recipe_names, &registries, num_jobs, &inferred_deps)?;
-    } else {
-        // Single Cookfile test
-        let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
-        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
-            Path::new(".")
-        } else {
-            cookfile_dir
-        };
-        let dotenv_vars = load_env(cookfile_dir);
-        let env_vars = resolve_env(None, dotenv_vars, &cli.set)?;
-
-        // Find all recipes that contain test steps
-        let test_recipes: Vec<String> = cookfile
-            .recipes
-            .iter()
-            .filter(|r| {
-                r.steps
-                    .iter()
-                    .any(|s| matches!(s, cook_lang::ast::Step::Test { .. }))
-            })
-            .map(|r| r.name.clone())
-            .collect();
-
-        if test_recipes.is_empty() {
-            eprintln!("cook: no test recipes found");
-            return Ok(());
-        }
-
-        let recipe_infos = build_single_recipe_infos(&cookfile);
-        let registries = build_single_registries(cookfile_dir, env_vars, lua_source, None);
-
-        // App. E.10: see workspace branch above.
-        let inferred_deps = compute_single_inferred_deps(&cookfile);
-        warn_single_dep_conflicts(&cookfile);
-
-        // Propagate engine failure as a non-zero exit. See workspace branch
-        // above for the full note — same fix.
-        run_with_progress(cli, &recipe_infos, &test_recipes, &registries, num_jobs, &inferred_deps)?;
-    }
-
-    // TODO: Once cook-engine supports test output collection, convert
-    // TestOutput -> TestCaseResult here and display results.
 
     Ok(())
 }
@@ -1071,7 +930,7 @@ fn collect_dag_units(
 }
 
 // ---------------------------------------------------------------------------
-// Workspace helpers (kept — used by cmd_run, cmd_test, cmd_menu, cmd_serve)
+// Workspace helpers (kept — used by cmd_run, cmd_menu, cmd_serve, cmd_dag)
 // ---------------------------------------------------------------------------
 
 /// Build a WorkspaceLayout from a Workspace for cook-engine's analyzer.
@@ -1463,8 +1322,8 @@ mod tests {
     }
 
     /// Single-Cookfile case: a recipe whose body references `{prepare}` should
-    /// produce `{"verify" -> ["prepare"]}`. This pins the helper that backs the
-    /// cmd_test single-Cookfile path (App. E.10).
+    /// produce `{"verify" -> ["prepare"]}`. This pins the single-Cookfile
+    /// inferred-deps helper (App. E.10).
     #[test]
     fn single_inferred_deps_body_ref_produces_edge() {
         let src = "recipe prepare\n    cook \"prepare.out\" using { echo $<out> }\nrecipe verify\n    test { echo $<prepare> }\n";

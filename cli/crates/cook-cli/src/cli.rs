@@ -1,8 +1,8 @@
 //! Clap argument parsing for the `cook` binary.
 //!
-//! Built-in commands (`--menu`, `--init`, `--serve`, `--test`, `--logs`) are
-//! flag-form so the bare positional namespace stays free for recipe names.
-//! Anything that isn't a built-in flag is treated as a recipe target.
+//! Built-in commands (`--menu`, `--init`, `--serve`, `--logs`) are flag-form so
+//! the bare positional namespace stays free for recipe names. Anything that
+//! isn't a built-in flag is treated as a recipe target.
 
 use clap::Parser;
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ use std::path::PathBuf;
     about = "A modern build system with Lua",
     override_usage = "cook [OPTIONS] [RECIPE] [CONFIG]",
     after_help = "Run `cook <recipe>` to execute a recipe (defaults to 'build').\n\
-                  Built-in commands: --menu, --init, --serve, --test, --logs."
+                  Built-in commands: --menu, --init, --serve, --logs."
 )]
 pub struct Cli {
     /// Recipe to run (default: 'build'). Also used as the target for --serve
@@ -28,7 +28,7 @@ pub struct Cli {
     #[arg(
         long = "menu",
         help_heading = "Built-in commands",
-        conflicts_with_all = ["init", "serve", "test", "logs"]
+        conflicts_with_all = ["init", "serve", "logs"]
     )]
     pub menu: bool,
 
@@ -36,7 +36,7 @@ pub struct Cli {
     #[arg(
         long = "init",
         help_heading = "Built-in commands",
-        conflicts_with_all = ["menu", "serve", "test", "logs"]
+        conflicts_with_all = ["menu", "serve", "logs"]
     )]
     pub init: bool,
 
@@ -44,51 +44,17 @@ pub struct Cli {
     #[arg(
         long = "serve",
         help_heading = "Built-in commands",
-        conflicts_with_all = ["menu", "init", "test", "logs"]
+        conflicts_with_all = ["menu", "init", "logs"]
     )]
     pub serve: bool,
-
-    /// Run all test recipes
-    #[arg(
-        long = "test",
-        help_heading = "Built-in commands",
-        conflicts_with_all = ["menu", "init", "serve", "logs"]
-    )]
-    pub test: bool,
 
     /// Show logs for past builds. Uses RECIPE positional as selector.
     #[arg(
         long = "logs",
         help_heading = "Built-in commands",
-        conflicts_with_all = ["menu", "init", "serve", "test"]
+        conflicts_with_all = ["menu", "init", "serve"]
     )]
     pub logs: bool,
-
-    // ===== --test sub-args =====
-    /// Filter tests by name substring
-    #[arg(long, help_heading = "Test options (with --test)", requires = "test")]
-    pub filter: Option<String>,
-
-    /// Show all test output (don't capture)
-    #[arg(long, help_heading = "Test options (with --test)", requires = "test")]
-    pub verbose: bool,
-
-    /// Multiply all timeouts by this factor
-    #[arg(
-        long = "timeout-multiplier",
-        help_heading = "Test options (with --test)",
-        default_value = "1",
-        requires = "test"
-    )]
-    pub timeout_multiplier: u64,
-
-    /// Run every test through this wrapper command
-    #[arg(long, help_heading = "Test options (with --test)", requires = "test")]
-    pub wrapper: Option<String>,
-
-    /// List tests without running them
-    #[arg(long = "list", help_heading = "Test options (with --test)", requires = "test")]
-    pub list: bool,
 
     // ===== --logs sub-args =====
     /// Specific build id
@@ -118,7 +84,7 @@ pub struct Cli {
     /// Visualize the build DAG in a browser
     #[arg(
         long = "dag",
-        conflicts_with_all = ["menu", "init", "serve", "test", "logs"]
+        conflicts_with_all = ["menu", "init", "serve", "logs"]
     )]
     pub dag: bool,
 
