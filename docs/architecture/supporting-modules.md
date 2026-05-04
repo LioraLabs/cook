@@ -179,7 +179,7 @@ Renders build progress to the terminal and persists every build to `.cook/logs/<
 
 ### Architecture
 
-cook-engine emits `EngineEvent`s over an `mpsc::Sender`. `cook-cli` bridges those to `cook_progress::ProgressEvent` (interning recipe/node names into typed `RecipeId`/`NodeId`). The `Driver` consumes events, applies them to a pure `BuildState`, records them to an optional `LogStore`, then hands them to a `Renderer`.
+cook-engine emits `EngineEvent`s over an `mpsc::Sender`. `cook-cli` bridges those to `cook_progress::ProgressEvent` (interning recipe/node names into typed `RecipeId`/`NodeId`, and tagging each node with a `NodeKind` — `Cooked` by default, `Test` for test-step nodes, with room for `Compile`/`Link`/`Resolve`/`Generate`/`Write` as the engine grows). The `Driver` consumes events, applies them to a pure `BuildState`, records them to an optional `LogStore`, then hands them to a `Renderer`.
 
 ```
 cook-engine ──EngineEvent──▶ bridge ──ProgressEvent──▶ Driver
@@ -187,8 +187,8 @@ cook-engine ──EngineEvent──▶ bridge ──ProgressEvent──▶ Drive
                                                          ├──▶ BuildState (pure state machine)
                                                          ├──▶ LogStore  (optional; writes .cook/logs/)
                                                          └──▶ Renderer
-                                                                   ├── InlineRenderer (indicatif, TTY default)
-                                                                   ├── PlainRenderer (non-TTY / CI)
+                                                                   ├── InlineRenderer (cargo-style, TTY default)
+                                                                   ├── PlainRenderer  (non-TTY / CI)
                                                                    └── JsonWriter    (--output=json)
 ```
 
@@ -209,23 +209,22 @@ Guards in `apply` prevent duplicate events from corrupting counters (important f
 
 ### Renderers
 
+`cook-progress` exposes the `ProgressEvent` API and three renderers: `InlineRenderer` (cargo-style append-only event lines + sticky status line, default on TTY), `PlainRenderer` (append-only text, default off-TTY), and `JsonWriter` (one event per line, opt-in via `--output=json`). The inline renderer is built from two decoupled components — `EventWriter` for verb-prefixed event lines and `StatusLine` for a single redrawn bottom-of-terminal status line — coordinated through a shared stderr lock. See `docs/superpowers/specs/2026-05-03-cook-progress-cargo-style-design.md` for the full design.
+
 Selected by the driver based on flags + environment:
 
 | Context | Renderer |
 |---|---|
-| stderr is a TTY | InlineRenderer (indicatif MultiProgress) |
+| stderr is a TTY | InlineRenderer (cargo-style verbs + sticky status line) |
 | stderr not a TTY, or `--no-ui`, or `--output=plain`, or `CI=true`, or `TERM=dumb` | PlainRenderer |
 | `--output=json` | JsonWriter |
 
-**InlineRenderer** uses one `indicatif::ProgressBar` per recipe with per-state templates:
+**InlineRenderer** is composed of two pieces sharing a stderr lock:
 
-- Waiting: one-line `◇ <name> waiting ← deps`.
-- Running: two-line — bar header with progress + elapsed, plus an artifact status strip showing `N cached · ✓ recent · ◆ running · ◇ waiting +N` (priority-ordered, truncated to fit width).
-- Completed: one-line `✓ <name> N/N · Xs (· K cached)`.
-- Cached: one-line `≋ <name> N/N cached`.
-- Failed: one-line header plus a fenced error block printed via `MultiProgress::println`.
+- `EventWriter` (`render/event_writer.rs`) prints right-aligned 12-column verb-prefixed lines as events arrive — `Cooked` / `Tested` / `Compiled` / `Linked` / etc. for completed nodes (verb chosen from `NodeKind`), `Cached` for cache hits, `Skipped` for guard-skipped nodes (with collapsing into `… (N more cached)` past a threshold), `Failed` with an indented stderr block, `Running` for interactive handoffs, and `Finished` / `Failed` for build summaries. `--verbose` streams per-node stdout/stderr inline with `[recipe/node]` prefixes; `--quiet` drops per-node lines.
+- `StatusLine` (`render/status_line.rs`) keeps a single sticky line at the bottom of the terminal — verb `Cooking` followed by `[N/M] <currently-running, …>`. It runs a 10 Hz tick thread that reads an `arc_swap`'d `StatusSnapshot` (`render/snapshot.rs`) and redraws via `\r` + clear-to-EOL. The snapshot is rebuilt by the driver from `BuildState` on every event apply. Width is queried per redraw via `terminal_size`. `render_status_line` is a pure function (snapshot + width → string), tested independently of any terminal.
 
-The artifact status strip is computed by `crate::strip::artifact_strip(recipe, cols)` — pure, unicode-width aware. It drops pills by priority (waiting first, then completed, running/failed last) when width is exceeded, emitting a `+N` marker.
+`style.rs` is the verb vocabulary — `LineKind` × `NodeKind` → `Verb { text, color, bold }`, plus a tiny ANSI formatter that honors `NO_COLOR` / non-TTY by emitting plain text.
 
 **PlainRenderer** writes chronological append-only text with `[recipe/node]` prefixes. Safe to pipe, grep, tee, or consume from CI.
 
@@ -235,13 +234,11 @@ The artifact status strip is computed by `crate::strip::artifact_strip(recipe, c
 
 ### Interactive command takeover
 
-When a node is interactive (gdb, REPL), the inline renderer does not clear its live frame. Sequence:
+When a node is interactive (gdb, REPL), the inline renderer hides its sticky status line so the child has clean stdio. The append-only event log is unaffected — printed lines stay in scrollback like any other output.
 
-1. On `InteractiveStart`: write a divider via `MultiProgress::println`, then `set_draw_target(ProgressDrawTarget::hidden())`. The previously-drawn bars remain in scrollback as a frozen snapshot. The child process inherits stdio and runs on fresh lines below.
-2. On `InteractiveEnd`: set `pending_resume = true`. Do NOT draw yet.
-3. On the next event:
-   - If `Finished`: do nothing. Interactive was the final step; the build ends with bars frozen above and interactive output below.
-   - Otherwise: rebuild a fresh `MultiProgress`, repopulate bars from `BuildState`, and handle the new event normally. The old frozen bars remain in scrollback above the interactive output; a new live bar region appears below.
+1. On `InteractiveStart`: `EventWriter` prints a `Running <recipe>/<node>` line, then `StatusLine::hide()` flips a flag so the tick thread no-ops (no further redraws). The child process inherits stdio and runs on fresh lines below.
+2. On `InteractiveEnd { is_terminal: false }`: refresh the snapshot from `BuildState` and call `show()` — the tick thread resumes redrawing at the bottom.
+3. On `InteractiveEnd { is_terminal: true }` or `Finished`: leave the status line hidden. The terminal ends with the event log and the interactive child's output in scrollback, no live tail.
 
 ---
 
