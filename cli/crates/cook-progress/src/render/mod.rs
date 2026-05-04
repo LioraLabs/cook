@@ -4,6 +4,7 @@ pub mod plain;
 pub mod json;
 pub mod event_writer;
 pub mod snapshot;
+pub mod status_line;
 
 #[cfg(test)]
 pub mod test_term;
