@@ -2,12 +2,10 @@
 
 mod cli;
 mod cmd_logs;
-mod env;
 mod error;
 mod pipeline;
 mod progress;
 mod watcher;
-mod workspace;
 
 use clap::CommandFactory;
 

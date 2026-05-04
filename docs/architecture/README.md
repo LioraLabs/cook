@@ -49,8 +49,9 @@ All application logic lives in those modules. The binary just calls into `cli`.
 
 | Module | Location | What it does | Key dependencies |
 |---|---|---|---|
-| `cli` | `src/cli/mod.rs` | Thin shell: clap arg parsing, dispatches to engine | `engine` |
-| `engine` | `src/engine/` | Orchestration: reads Cookfile, runs pipeline, handles subcommands | All other modules |
+| `cli` | `cli/crates/cook-cli/` | Thin shell: clap arg parsing, dispatches to engine, bridges `EngineEvent` → `cook_progress::ProgressEvent` for the renderer | `engine`, `cook-progress` |
+| `engine::pipeline` | `cli/crates/cook-engine/src/pipeline/` | Pipeline orchestration: parse Cookfile, walk imports (`Workspace`), assemble `RegistryEntry` map, compute `{NAME}` inferred deps. Owns `PipelineError`. | `cook-lang`, `cook-luagen`, `cook-register` |
+| `engine` (run + executor) | `cli/crates/cook-engine/src/{run,executor,...}.rs` | Wave-parallel DAG execution: registers each wave, builds work-unit DAG, schedules through `cook-luaotp`, evaluates cache | All other engine submodules |
 | `parser` | `src/parser/` | Converts Cookfile text → tokens → AST | None |
 | `codegen` | `src/codegen/` | Walks the AST and emits a Lua source string | `parser`, `contracts` |
 | `runtime` | `src/runtime/` | Hosts the Lua VM, registers the Cook API, runs two-phase execution | `contracts`, `cache`, `parser` |
