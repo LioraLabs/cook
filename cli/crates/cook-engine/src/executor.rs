@@ -580,7 +580,7 @@ pub fn execute_dag(
 
             let node = dag.node(id);
             let work_node = node.payload();
-            if let Some(payload @ WorkPayload::Interactive { cmd, line }) = &work_node.payload {
+            if let Some(payload @ WorkPayload::Interactive { cmd, line, .. }) = &work_node.payload {
                 let recipe_name = work_node.recipe_name.clone();
                 let node_name = payload.display_name();
                 ensure_recipe_started(&mut recipe_trackers, &recipe_name, &event_tx);
