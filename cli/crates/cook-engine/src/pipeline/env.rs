@@ -3,7 +3,7 @@
 //! Layer order (later wins):
 //!   1. System env
 //!   2. .env file (dotenvy)
-//!   3. CLI --set flags
+//!   3. Caller-supplied `KEY=VALUE` overrides (e.g. CLI `--set` flags)
 //!
 //! Cookfile-defined variables live inside `config ... end` Lua blocks
 //! and are applied at runtime, not as part of this static layering.
@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::error::CookError;
+use super::error::PipelineError;
 
 /// Load variables from a `.env` file in `cookfile_dir`, if present.
 pub fn load_env(cookfile_dir: &Path) -> HashMap<String, String> {
@@ -23,14 +23,15 @@ pub fn load_env(cookfile_dir: &Path) -> HashMap<String, String> {
 }
 
 /// Merge all environment layers into a single map.
+///
+/// `selected_config` is accepted but unused: it no longer overlays env
+/// vars; it flows to the runtime for `config NAME ... end` Lua-block
+/// dispatch. Kept here so call sites don't churn.
 pub fn resolve_env(
     selected_config: Option<&str>,
     dotenv_vars: HashMap<String, String>,
-    cli_sets: &[String],
-) -> Result<HashMap<String, String>, CookError> {
-    // selected_config no longer overlays env vars; it flows to the runtime
-    // for `config NAME ... end` Lua-block dispatch. Kept here to avoid churn
-    // in call sites.
+    overrides: &[String],
+) -> Result<HashMap<String, String>, PipelineError> {
     let _ = selected_config;
 
     // Layer 1: system env
@@ -41,16 +42,14 @@ pub fn resolve_env(
         env.insert(k, v);
     }
 
-    // Layer 3: CLI --set (split on first '=')
-    for set_arg in cli_sets {
+    // Layer 3: caller-supplied KEY=VALUE overrides (split on first '=')
+    for set_arg in overrides {
         if let Some(eq_pos) = set_arg.find('=') {
             let key = set_arg[..eq_pos].to_string();
             let value = set_arg[eq_pos + 1..].to_string();
             env.insert(key, value);
         } else {
-            return Err(CookError::Other(format!(
-                "--set value must be KEY=VALUE, got: {}", set_arg
-            )));
+            return Err(PipelineError::InvalidSet(set_arg.clone()));
         }
     }
 
@@ -104,5 +103,11 @@ mod tests {
         let env = load_env(dir.path());
         assert_eq!(env.get("SINGLE").unwrap(), "hello world");
         assert_eq!(env.get("DOUBLE").unwrap(), "hello world");
+    }
+
+    #[test]
+    fn test_resolve_env_invalid_set() {
+        let result = resolve_env(None, HashMap::new(), &["NOT_A_PAIR".to_string()]);
+        assert!(matches!(result, Err(PipelineError::InvalidSet(_))));
     }
 }

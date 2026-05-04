@@ -6,6 +6,7 @@
 pub mod analyzer;
 pub mod dag_builder;
 pub mod executor;
+pub mod pipeline;
 pub mod recipe_dag;
 pub mod registry_entry;
 pub mod run;

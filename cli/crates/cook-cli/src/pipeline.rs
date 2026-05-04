@@ -1,84 +1,68 @@
-//! Pipeline: glue layer that wires cook-lang -> cook-luagen -> cook-register
-//! -> cook-engine together.
+//! CLI dispatch: thin wrappers around `cook_engine::pipeline` orchestration.
 //!
-//! This is the main orchestration module. It parses Cookfiles, builds recipe
-//! metadata and registries, then delegates execution to `cook_engine::run::run()`
-//! which handles wave-parallel DAG execution for both single-Cookfile and
-//! workspace builds.
+//! Heavy lifting (parse, workspace load, registry assembly, dep inference)
+//! lives in `cook_engine::pipeline`. This module owns CLI-specific glue:
+//!   * mapping `--menu` / `--init` / `--serve` / `--dag` flags to the right
+//!     engine entry point
+//!   * bridging `cook_engine::EngineEvent` to `cook_progress::ProgressEvent`
+//!     and wiring the renderer into a background thread
+//!   * mapping `EngineError` / `PipelineError` into `CookError` for exit-code
+//!     classification and human-facing diagnostics
+//!
+//! In particular: nothing in this file consumes a `cook_lang::ast::Cookfile`
+//! directly anymore — that's the engine's concern.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::collections::BTreeMap;
 use std::sync::mpsc;
 
+use cook_engine::pipeline::{self, ParsedCookfile, PipelineError, Workspace};
+
 use crate::cli::Cli;
-use crate::env::{load_env, resolve_env};
 use crate::error::CookError;
 use crate::progress::spawn_new_renderer;
 use crate::watcher::CookWatcher;
-use crate::workspace::Workspace;
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Error mapping
 // ---------------------------------------------------------------------------
 
-pub fn read_and_parse(cli: &Cli) -> Result<(cook_lang::ast::Cookfile, String), CookError> {
-    let source = std::fs::read_to_string(&cli.file)
-        .map_err(|e| CookError::Other(format!("cannot read {}: {e}", cli.file.display())))?;
+/// Map `cook_engine::pipeline::PipelineError` onto `CookError` for the CLI's
+/// exit-code classification.
+fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
+    match e {
+        PipelineError::Io { path, source } => {
+            CookError::Other(format!("cannot read {}: {source}", path.display()))
+        }
+        PipelineError::Parse(msg) => CookError::ParseError(msg),
+        PipelineError::Codegen(msg) => CookError::Other(msg),
+        PipelineError::UnknownConfig { .. }
+        | PipelineError::Workspace(_)
+        | PipelineError::InvalidSet(_)
+        | PipelineError::Other(_) => CookError::Other(e.to_string()),
+    }
+}
 
-    let cookfile =
-        cook_lang::parse(&source).map_err(|e| CookError::ParseError(e.to_string()))?;
+/// Parse the Cookfile and print any codegen warnings to stderr.
+///
+/// Thin convenience wrapper: the engine returns warnings as data; the CLI
+/// is responsible for surfacing them in the human-output channel.
+fn read_and_parse(cli: &Cli) -> Result<ParsedCookfile, CookError> {
+    let parsed = pipeline::read_and_parse(&cli.file).map_err(pipeline_error_to_cook_error)?;
+    for w in &parsed.warnings {
+        eprintln!("cook: warning: {w}");
+    }
+    Ok(parsed)
+}
 
-    // Pre-scan: extract recipe names for codegen disambiguation
-    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
-
-    // § 5.4 — accessor placement validation rejects `{lib.ACCESSOR}` in
-    // contexts that lack a matching driver in an output pattern.
-    let lua_source = cook_luagen::generate_with_names_checked(&cookfile, &recipe_names)
-        .map_err(|e| CookError::Other(e.to_string()))?;
-
-    // § 5.5 — register-time warnings for references whose referent has an
-    // empty output list.
-    let (_, warnings) =
-        cook_luagen::generate_with_names_and_warnings(&cookfile, &recipe_names);
+fn print_dep_conflicts(warnings: &[String]) {
     for w in warnings {
-        eprintln!("cook: warning: {}", w);
-    }
-
-    Ok((cookfile, lua_source))
-}
-
-/// Validate that `config` (if supplied) matches a named `config NAME ... end`
-/// block in the Cookfile. Errors with the list of available names on mismatch.
-pub fn validate_selected_config(
-    cookfile: &cook_lang::ast::Cookfile,
-    config: Option<&str>,
-) -> Result<(), CookError> {
-    let Some(name) = config else { return Ok(()); };
-    let has_match = cookfile
-        .config_blocks
-        .iter()
-        .any(|b| b.name.as_deref() == Some(name));
-    if has_match {
-        return Ok(());
-    }
-    let available: Vec<&str> = cookfile
-        .config_blocks
-        .iter()
-        .filter_map(|b| b.name.as_deref())
-        .collect();
-    if available.is_empty() {
-        Err(CookError::Other(format!(
-            "unknown config '{}': no named configs defined",
-            name
-        )))
-    } else {
-        Err(CookError::Other(format!(
-            "unknown config '{}'. available: {}",
-            name,
-            available.join(", ")
-        )))
+        eprintln!("cook: warning: {w}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// EngineEvent → ProgressEvent bridge
+// ---------------------------------------------------------------------------
 
 /// Bridge cook-engine events to the new cook-progress ProgressEvent stream.
 /// Interns recipe names and node names into stable `RecipeId` / `NodeId`.
@@ -368,132 +352,8 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
 }
 
 // ---------------------------------------------------------------------------
-// Build recipe_infos + registries (shared by cmd_run and cmd_dag)
+// Run-with-progress glue
 // ---------------------------------------------------------------------------
-
-/// Build recipe_infos from a single Cookfile's recipes and chores.
-///
-/// Chores are registered as recipes with no ingredients and no cook outputs
-/// (they never produce cached artifacts). The engine sees them as ordinary
-/// recipes; the chore contract (interactive-only, cache=false) is enforced
-/// at codegen time by `compile_chore` (cook-luagen).
-fn build_single_recipe_infos(
-    cookfile: &cook_lang::ast::Cookfile,
-) -> BTreeMap<String, cook_engine::analyzer::RecipeInfo> {
-    let mut recipe_infos = BTreeMap::new();
-    for recipe in &cookfile.recipes {
-        recipe_infos.insert(
-            recipe.name.clone(),
-            cook_engine::analyzer::RecipeInfo {
-                ingredients: recipe.ingredients.clone(),
-                serves: recipe
-                    .steps
-                    .iter()
-                    .flat_map(|s| {
-                        if let cook_lang::ast::Step::Cook { step, .. } = s {
-                            step.outputs.clone()
-                        } else {
-                            Vec::new()
-                        }
-                    })
-                    .collect(),
-                requires: recipe.deps.clone(),
-            },
-        );
-    }
-    // Chores have no ingredients or cook outputs; their deps are explicit only.
-    for chore in &cookfile.chores {
-        recipe_infos.insert(
-            chore.name.clone(),
-            cook_engine::analyzer::RecipeInfo {
-                ingredients: vec![],
-                serves: vec![],
-                requires: chore.deps.clone(),
-            },
-        );
-    }
-    recipe_infos
-}
-
-/// Build a single-Cookfile registry map (empty-string prefix).
-fn build_single_registries(
-    cookfile_dir: &Path,
-    env_vars: std::collections::HashMap<String, String>,
-    lua_source: String,
-    selected_config: Option<&str>,
-) -> BTreeMap<String, cook_engine::RegistryEntry> {
-    let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars)
-        .with_selected_config(selected_config.map(|s| s.to_string()));
-    let mut registries = BTreeMap::new();
-    registries.insert(
-        String::new(),
-        cook_engine::RegistryEntry { registry, lua_source, alias_dirs: BTreeMap::new() },
-    );
-    registries
-}
-
-/// Build workspace registries: one for root (empty prefix), one per import.
-fn build_workspace_registries(
-    workspace: &Workspace,
-    config: Option<&str>,
-    cli_sets: &[String],
-) -> Result<BTreeMap<String, cook_engine::RegistryEntry>, CookError> {
-    let dotenv_vars = load_env(&workspace.root.dir);
-    let root_env = resolve_env(config, dotenv_vars, cli_sets)?;
-
-    // One shared terminal-outputs map for the entire workspace invocation.
-    // All Registries write to and read from the same map, keyed by
-    // fully-qualified recipe name (e.g. "lib.lib_build" or "build").
-    let shared_outputs: cook_register::SharedTerminalOutputs =
-        std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
-
-    let mut registries: BTreeMap<String, cook_engine::RegistryEntry> = BTreeMap::new();
-
-    let root_alias_dirs = workspace.alias_dirs_for(&workspace.root.dir);
-    let root_alias_qp = workspace.alias_qualified_prefixes_for(&workspace.root.dir);
-    // Root has empty prefix (already the default; explicit for clarity).
-    let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env)
-        .with_selected_config(config.map(|s| s.to_string()))
-        .with_shared_terminal_outputs(shared_outputs.clone())
-        .with_qualified_prefix(String::new())
-        .with_alias_dirs(root_alias_dirs.clone())
-        .with_alias_qualified_prefixes(root_alias_qp);
-    registries.insert(
-        String::new(),
-        cook_engine::RegistryEntry {
-            registry: root_registry,
-            lua_source: workspace.root.lua_source.clone(),
-            alias_dirs: root_alias_dirs,
-        },
-    );
-
-    for (canonical_path, loaded) in &workspace.imports {
-        let prefix = find_full_prefix(workspace, canonical_path);
-        let import_env = resolve_env(
-            config,
-            std::collections::HashMap::new(),
-            cli_sets,
-        )?;
-        let alias_dirs = workspace.alias_dirs_for(&loaded.dir);
-        let alias_qp = workspace.alias_qualified_prefixes_for(&loaded.dir);
-        let registry = cook_register::Registry::new(loaded.dir.clone(), import_env)
-            .with_selected_config(config.map(|s| s.to_string()))
-            .with_shared_terminal_outputs(shared_outputs.clone())
-            .with_qualified_prefix(prefix.clone())
-            .with_alias_dirs(alias_dirs.clone())
-            .with_alias_qualified_prefixes(alias_qp);
-        registries.insert(
-            prefix,
-            cook_engine::RegistryEntry {
-                registry,
-                lua_source: loaded.lua_source.clone(),
-                alias_dirs,
-            },
-        );
-    }
-
-    Ok(registries)
-}
 
 /// Run the engine with progress rendering wired up.
 fn run_with_progress(
@@ -504,8 +364,7 @@ fn run_with_progress(
     num_jobs: usize,
     inferred_deps: &BTreeMap<String, Vec<String>>,
 ) -> Result<cook_engine::run::RunResult, CookError> {
-    let project_root = std::env::current_dir()
-        .map_err(|e| CookError::Other(e.to_string()))?;
+    let project_root = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
     let (progress_tx, progress_rx) = mpsc::channel::<cook_progress::ProgressEvent>();
     let render_thread = spawn_new_renderer(cli, project_root.clone(), progress_rx);
 
@@ -529,8 +388,6 @@ fn run_with_progress(
     let _ = bridge_thread.join();
     // Drop progress_tx before joining the render thread so the channel is
     // closed even if the engine exited abnormally without emitting Finished.
-    // Without this, the renderer's rx.recv() would block forever when the
-    // engine panics and never sends Finished.
     drop(progress_tx);
     let _success = render_thread.join().unwrap_or(false);
 
@@ -551,46 +408,50 @@ fn resolve_num_jobs(cli: &Cli) -> usize {
 // ---------------------------------------------------------------------------
 
 pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
-    let (cookfile, lua_source) = read_and_parse(cli)?;
-    validate_selected_config(&cookfile, config)?;
+    let parsed = read_and_parse(cli)?;
+    pipeline::validate_selected_config(&parsed.cookfile, config)
+        .map_err(pipeline_error_to_cook_error)?;
 
     if cli.emit_lua {
-        println!("{lua_source}");
+        println!("{}", parsed.lua_source);
         return Ok(());
     }
 
     let num_jobs = resolve_num_jobs(cli);
     let targets = vec![recipe_name.to_string()];
 
-    if !cookfile.imports.is_empty() {
-        let workspace_root = crate::workspace::resolve_workspace_root(
-            &cli.file,
-            cli.root.clone(),
-        )?;
-        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)?;
-        let recipe_infos = build_workspace_recipe_info(&workspace)?;
-        let registries = build_workspace_registries(&workspace, config, &cli.set)?;
+    if !parsed.cookfile.imports.is_empty() {
+        let workspace_root =
+            pipeline::resolve_workspace_root(&cli.file, cli.root.clone())
+                .map_err(pipeline_error_to_cook_error)?;
+        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)
+            .map_err(pipeline_error_to_cook_error)?;
+        let recipe_infos = pipeline::build_workspace_recipe_info(&workspace);
+        let registries = pipeline::build_workspace_registries(&workspace, config, &cli.set)
+            .map_err(pipeline_error_to_cook_error)?;
 
-        let inferred_deps = compute_workspace_inferred_deps(&workspace);
-        warn_workspace_dep_conflicts(&workspace, &inferred_deps);
+        let inferred_deps = pipeline::compute_workspace_inferred_deps(&workspace);
+        print_dep_conflicts(&pipeline::workspace_dep_conflicts(&workspace, &inferred_deps));
 
         run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
     } else {
         // Single Cookfile build
-        let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
+        let cookfile_dir = cli.file.parent().unwrap_or(std::path::Path::new("."));
         let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
-            Path::new(".")
+            std::path::Path::new(".")
         } else {
             cookfile_dir
         };
-        let dotenv_vars = load_env(cookfile_dir);
-        let env_vars = resolve_env(config, dotenv_vars, &cli.set)?;
+        let dotenv_vars = pipeline::load_env(cookfile_dir);
+        let env_vars = pipeline::resolve_env(config, dotenv_vars, &cli.set)
+            .map_err(pipeline_error_to_cook_error)?;
 
-        let recipe_infos = build_single_recipe_infos(&cookfile);
-        let inferred_deps = compute_single_inferred_deps(&cookfile);
-        warn_single_dep_conflicts(&cookfile);
+        let recipe_infos = pipeline::build_single_recipe_infos(&parsed.cookfile);
+        let inferred_deps = pipeline::compute_single_inferred_deps(&parsed.cookfile);
+        print_dep_conflicts(&pipeline::single_dep_conflicts(&parsed.cookfile));
 
-        let registries = build_single_registries(cookfile_dir, env_vars, lua_source, config);
+        let registries =
+            pipeline::build_single_registries(cookfile_dir, env_vars, parsed.lua_source, config);
 
         run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
     }
@@ -603,9 +464,9 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
 // ---------------------------------------------------------------------------
 
 pub fn cmd_menu(cli: &Cli) -> Result<(), CookError> {
-    let (cookfile, _) = read_and_parse(cli)?;
+    let parsed = read_and_parse(cli)?;
 
-    for recipe in &cookfile.recipes {
+    for recipe in &parsed.cookfile.recipes {
         let mut desc = format!("  recipe {}", recipe.name);
         if !recipe.ingredients.is_empty() {
             desc.push_str(&format!("  ingredients: {:?}", recipe.ingredients));
@@ -614,17 +475,14 @@ pub fn cmd_menu(cli: &Cli) -> Result<(), CookError> {
             desc.push_str(&format!("  deps: {:?}", recipe.deps));
         }
         for step in &recipe.steps {
-            if let cook_lang::ast::Step::Cook {
-                step: cook_step, ..
-            } = step
-            {
+            if let cook_lang::ast::Step::Cook { step: cook_step, .. } = step {
                 desc.push_str(&format!("  cook: {}", cook_step.outputs.join(" ")));
             }
         }
         println!("{desc}");
     }
 
-    for chore in &cookfile.chores {
+    for chore in &parsed.cookfile.chores {
         let mut desc = format!("  chore  {}", chore.name);
         if !chore.deps.is_empty() {
             desc.push_str(&format!("  deps: {:?}", chore.deps));
@@ -632,14 +490,14 @@ pub fn cmd_menu(cli: &Cli) -> Result<(), CookError> {
         println!("{desc}");
     }
 
-    if !cookfile.imports.is_empty() {
-        let workspace_root = crate::workspace::resolve_workspace_root(
-            &cli.file,
-            cli.root.clone(),
-        )?;
-        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)?;
+    if !parsed.cookfile.imports.is_empty() {
+        let workspace_root =
+            pipeline::resolve_workspace_root(&cli.file, cli.root.clone())
+                .map_err(pipeline_error_to_cook_error)?;
+        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)
+            .map_err(pipeline_error_to_cook_error)?;
         for (canonical_path, loaded) in &workspace.imports {
-            let prefix = find_full_prefix(&workspace, canonical_path);
+            let prefix = pipeline::find_full_prefix(&workspace, canonical_path);
             for recipe in &loaded.cookfile.recipes {
                 println!("  recipe {}.{}", prefix, recipe.name);
             }
@@ -681,11 +539,12 @@ pub fn cmd_init() -> Result<(), CookError> {
 // ---------------------------------------------------------------------------
 
 pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
-    let (cookfile, _lua_source) = read_and_parse(cli)?;
-    validate_selected_config(&cookfile, config)?;
+    let parsed = read_and_parse(cli)?;
+    pipeline::validate_selected_config(&parsed.cookfile, config)
+        .map_err(pipeline_error_to_cook_error)?;
 
     // Check for interactive steps -- not supported under cook --serve
-    for recipe in &cookfile.recipes {
+    for recipe in &parsed.cookfile.recipes {
         for step in &recipe.steps {
             if let cook_lang::ast::Step::Shell {
                 interactive: true,
@@ -702,9 +561,9 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
     }
 
     // Resolve execution order via engine analyzer for glob collection
-    let recipe_infos = build_single_recipe_infos(&cookfile);
-    let order = cook_engine::analyzer::topological_sort(&recipe_infos, recipe_name)
-        .map_err(|e| match e {
+    let recipe_infos = pipeline::build_single_recipe_infos(&parsed.cookfile);
+    let order =
+        cook_engine::analyzer::topological_sort(&recipe_infos, recipe_name).map_err(|e| match e {
             cook_engine::analyzer::GraphError::CycleDetected(name) => {
                 CookError::Other(format!("dependency cycle involving: {name}"))
             }
@@ -713,7 +572,7 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
             }
         })?;
 
-    let globs = CookWatcher::collect_globs_for_recipes(&cookfile, &order);
+    let globs = CookWatcher::collect_globs_for_recipes(&parsed.cookfile, &order);
     if globs.is_empty() {
         return Err(CookError::Other(
             "nothing to watch: no recipes in the chain have ingredients".to_string(),
@@ -726,12 +585,12 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
     let mut cookfile_paths = vec![cookfile_path];
 
     // If imports exist, collect all imported Cookfile paths for watching
-    if !cookfile.imports.is_empty() {
-        let workspace_root = crate::workspace::resolve_workspace_root(
-            &cli.file,
-            cli.root.clone(),
-        )?;
-        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)?;
+    if !parsed.cookfile.imports.is_empty() {
+        let workspace_root =
+            pipeline::resolve_workspace_root(&cli.file, cli.root.clone())
+                .map_err(pipeline_error_to_cook_error)?;
+        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)
+            .map_err(pipeline_error_to_cook_error)?;
         for (_canonical_path, loaded) in &workspace.imports {
             let import_cookfile = loaded.dir.join("Cookfile");
             if let Ok(canonical) = std::fs::canonicalize(&import_cookfile) {
@@ -782,8 +641,9 @@ pub fn cmd_dag(_cli: &Cli, _recipe_name: &str, _config: Option<&str>) -> Result<
 
 #[cfg(feature = "viewer")]
 pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
-    let (cookfile, lua_source) = read_and_parse(cli)?;
-    validate_selected_config(&cookfile, config)?;
+    let parsed = read_and_parse(cli)?;
+    pipeline::validate_selected_config(&parsed.cookfile, config)
+        .map_err(pipeline_error_to_cook_error)?;
 
     let targets = vec![recipe_name.to_string()];
 
@@ -791,575 +651,49 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
     // workspace mode at all" gap by mirroring cmd_run's workspace setup and
     // routing each ready recipe through its prefix's registry (the same
     // dispatch cook_engine::run::run does internally).
-    let (all_units, explicit_edges, inferred_deps, cache_managers) =
-        if !cookfile.imports.is_empty() {
-            let workspace_root = crate::workspace::resolve_workspace_root(
-                &cli.file,
-                cli.root.clone(),
-            )?;
-            let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)?;
+    let units = if !parsed.cookfile.imports.is_empty() {
+        let workspace_root =
+            pipeline::resolve_workspace_root(&cli.file, cli.root.clone())
+                .map_err(pipeline_error_to_cook_error)?;
+        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)
+            .map_err(pipeline_error_to_cook_error)?;
 
-            let recipe_infos = build_workspace_recipe_info(&workspace)?;
-            let registries = build_workspace_registries(&workspace, config, &cli.set)?;
-            let inferred_deps = compute_workspace_inferred_deps(&workspace);
-            warn_workspace_dep_conflicts(&workspace, &inferred_deps);
+        let recipe_infos = pipeline::build_workspace_recipe_info(&workspace);
+        let registries = pipeline::build_workspace_registries(&workspace, config, &cli.set)
+            .map_err(pipeline_error_to_cook_error)?;
+        let inferred_deps = pipeline::compute_workspace_inferred_deps(&workspace);
+        print_dep_conflicts(&pipeline::workspace_dep_conflicts(&workspace, &inferred_deps));
 
-            collect_dag_units(
-                &recipe_infos,
-                &targets,
-                &registries,
-                &inferred_deps,
-            )?
+        pipeline::collect_dag_units(&recipe_infos, &targets, &registries, &inferred_deps)
+            .map_err(pipeline_error_to_cook_error)?
+    } else {
+        // Single-Cookfile branch.
+        let cookfile_dir = cli.file.parent().unwrap_or(std::path::Path::new("."));
+        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+            std::path::Path::new(".")
         } else {
-            // Single-Cookfile branch.
-            let cookfile_dir = cli.file.parent().unwrap_or(Path::new("."));
-            let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
-                Path::new(".")
-            } else {
-                cookfile_dir
-            };
-            let dotenv_vars = load_env(cookfile_dir);
-            let env_vars = resolve_env(config, dotenv_vars, &cli.set)?;
-
-            let recipe_infos = build_single_recipe_infos(&cookfile);
-            let registries = build_single_registries(cookfile_dir, env_vars, lua_source, config);
-            let inferred_deps = compute_single_inferred_deps(&cookfile);
-            warn_single_dep_conflicts(&cookfile);
-
-            collect_dag_units(
-                &recipe_infos,
-                &targets,
-                &registries,
-                &inferred_deps,
-            )?
+            cookfile_dir
         };
+        let dotenv_vars = pipeline::load_env(cookfile_dir);
+        let env_vars = pipeline::resolve_env(config, dotenv_vars, &cli.set)
+            .map_err(pipeline_error_to_cook_error)?;
+
+        let recipe_infos = pipeline::build_single_recipe_infos(&parsed.cookfile);
+        let registries =
+            pipeline::build_single_registries(cookfile_dir, env_vars, parsed.lua_source, config);
+        let inferred_deps = pipeline::compute_single_inferred_deps(&parsed.cookfile);
+        print_dep_conflicts(&pipeline::single_dep_conflicts(&parsed.cookfile));
+
+        pipeline::collect_dag_units(&recipe_infos, &targets, &registries, &inferred_deps)
+            .map_err(pipeline_error_to_cook_error)?
+    };
 
     cook_dag_viewer::cmd_dag(&cook_dag_viewer::DagViewerInputs {
         target: recipe_name,
-        all_units: &all_units,
-        explicit_edges: &explicit_edges,
-        inferred_deps: &inferred_deps,
-        cache_managers: &cache_managers,
+        all_units: &units.all_units,
+        explicit_edges: &units.explicit_edges,
+        inferred_deps: &units.inferred_deps,
+        cache_managers: &units.cache_managers,
     })
     .map_err(|e| CookError::Other(e.to_string()))
-}
-
-/// Drive the recipe DAG to register every recipe reachable from `targets` and
-/// collect their `RecipeUnits` for the DAG viewer.
-///
-/// Mirrors the per-wave dispatch loop in `cook_engine::run::run` (`run.rs:170+`)
-/// but stops short of work-unit DAG construction and execution — the dag
-/// visualizer only needs the registered units, the explicit edge map, and the
-/// inferred-deps map. Works for both single-Cookfile (one registry under the
-/// `""` prefix) and workspace (one registry per dotted prefix) inputs.
-///
-/// Compiled only with the `viewer` feature: it is exclusively a `cmd_dag`
-/// helper, so it is dead code in viewer-less builds.
-#[cfg(feature = "viewer")]
-#[allow(clippy::type_complexity)]
-fn collect_dag_units(
-    recipe_infos: &BTreeMap<String, cook_engine::analyzer::RecipeInfo>,
-    targets: &[String],
-    registries: &BTreeMap<String, cook_engine::RegistryEntry>,
-    inferred_deps: &BTreeMap<String, Vec<String>>,
-) -> Result<
-    (
-        Vec<(String, cook_contracts::RecipeUnits)>,
-        BTreeMap<String, Vec<String>>,
-        BTreeMap<String, Vec<String>>,
-        BTreeMap<String, std::sync::Arc<cook_cache::ThreadSafeCacheManager>>,
-    ),
-    CookError,
-> {
-    let mut edges =
-        cook_engine::analyzer::dependency_edges_multi(recipe_infos, targets).map_err(|e| match e {
-            cook_engine::analyzer::GraphError::CycleDetected(s) => {
-                CookError::Other(format!("dependency cycle involving: {s}"))
-            }
-            cook_engine::analyzer::GraphError::UnknownRecipe(s) => CookError::RecipeNotFound(s),
-        })?;
-
-    // Save explicit edges before merging inferred deps (needed for wave grouping).
-    let explicit_edges = edges.clone();
-
-    // Merge inferred deps into the edge map so the RecipeDag registers
-    // recipes in the correct order.
-    for (recipe_name, deps) in inferred_deps {
-        for dep_name in deps {
-            edges.entry(dep_name.clone()).or_insert_with(Vec::new);
-            let entry = edges.entry(recipe_name.clone()).or_insert_with(Vec::new);
-            if !entry.contains(dep_name) {
-                entry.push(dep_name.clone());
-            }
-        }
-    }
-    for deps in edges.values_mut() {
-        deps.sort();
-    }
-
-    let mut recipe_dag = cook_engine::recipe_dag::RecipeDag::new(&edges);
-    let mut all_units: Vec<(String, cook_contracts::RecipeUnits)> = Vec::new();
-    let mut cache_managers: BTreeMap<String, std::sync::Arc<cook_cache::ThreadSafeCacheManager>> =
-        BTreeMap::new();
-
-    loop {
-        let ready = recipe_dag.pop_ready();
-        if ready.is_empty() {
-            break;
-        }
-
-        for qualified_name in &ready {
-            // Split off the namespace prefix so the right registry handles
-            // registration. Single-Cookfile recipes always live under the "" prefix.
-            let (prefix, local_name) = match qualified_name.rfind('.') {
-                Some(pos) => (&qualified_name[..pos], &qualified_name[pos + 1..]),
-                None => ("", qualified_name.as_str()),
-            };
-            let entry = registries.get(prefix).ok_or_else(|| {
-                CookError::Other(format!(
-                    "no registry for prefix '{prefix}' (recipe '{qualified_name}')"
-                ))
-            })?;
-
-            let mut units = entry
-                .registry
-                .register_recipe(&entry.lua_source, local_name, None)
-                .map_err(|e| {
-                    CookError::Other(format!("registration failed for '{qualified_name}': {e}"))
-                })?;
-            // Rewrite to the fully qualified form so build_wave_dag_data
-            // sees the same names everywhere.
-            units.recipe_name = qualified_name.clone();
-
-            let cache_dir = entry.registry.working_dir().join(".cook").join("cache");
-            cache_managers
-                .entry(qualified_name.clone())
-                .or_insert_with(|| {
-                    std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(cache_dir))
-                });
-
-            all_units.push((qualified_name.clone(), units));
-        }
-
-        recipe_dag.mark_done(&ready);
-    }
-
-    Ok((all_units, explicit_edges, inferred_deps.clone(), cache_managers))
-}
-
-// ---------------------------------------------------------------------------
-// Workspace helpers (kept — used by cmd_run, cmd_menu, cmd_serve, cmd_dag)
-// ---------------------------------------------------------------------------
-
-/// Build a WorkspaceLayout from a Workspace for cook-engine's analyzer.
-/// This is the anti-corruption layer: cook-cli owns Workspace (discovery/loading),
-/// cook-engine owns namespace resolution and dependency analysis.
-fn workspace_to_layout(
-    workspace: &Workspace,
-) -> cook_engine::analyzer::WorkspaceLayout {
-    let root_dir = std::fs::canonicalize(&workspace.root.dir)
-        .unwrap_or_else(|_| workspace.root.dir.clone());
-
-    // Chores are first-class peers of recipes from the engine's POV: they
-    // carry a name and a deps list; cross-form deps work transparently.
-    // Merge both into the layout's name→deps tables.
-    let root_recipes: Vec<(String, Vec<String>)> = workspace
-        .root
-        .cookfile
-        .recipes
-        .iter()
-        .map(|r| (r.name.clone(), r.deps.clone()))
-        .chain(
-            workspace
-                .root
-                .cookfile
-                .chores
-                .iter()
-                .map(|c| (c.name.clone(), c.deps.clone())),
-        )
-        .collect();
-
-    let imported_recipes: Vec<(std::path::PathBuf, Vec<(String, Vec<String>)>)> = workspace
-        .imports
-        .iter()
-        .map(|(canonical_path, loaded)| {
-            let recipes: Vec<(String, Vec<String>)> = loaded
-                .cookfile
-                .recipes
-                .iter()
-                .map(|r| (r.name.clone(), r.deps.clone()))
-                .chain(
-                    loaded
-                        .cookfile
-                        .chores
-                        .iter()
-                        .map(|c| (c.name.clone(), c.deps.clone())),
-                )
-                .collect();
-            (canonical_path.clone(), recipes)
-        })
-        .collect();
-
-    cook_engine::analyzer::WorkspaceLayout {
-        root_dir,
-        root_recipes,
-        imported_recipes,
-        namespace_map: workspace.namespace_map.clone(),
-    }
-}
-
-/// Build workspace recipe info and resolve via cook-engine's analyzer.
-fn build_workspace_recipe_info(
-    workspace: &Workspace,
-) -> Result<std::collections::BTreeMap<String, cook_engine::analyzer::RecipeInfo>, CookError> {
-    let layout = workspace_to_layout(workspace);
-    Ok(cook_engine::analyzer::build_workspace_recipe_info(&layout))
-}
-
-/// Find the full dotted prefix for a canonical import path.
-/// Delegates to cook-engine's analyzer.
-pub fn find_full_prefix(workspace: &Workspace, canonical_path: &std::path::Path) -> String {
-    let root_dir = std::fs::canonicalize(&workspace.root.dir)
-        .unwrap_or_else(|_| workspace.root.dir.clone());
-    cook_engine::analyzer::find_full_prefix(
-        &workspace.namespace_map,
-        &root_dir,
-        canonical_path,
-    )
-}
-
-/// Compute inferred dependencies from `{NAME}` body refs in a single Cookfile.
-///
-/// Returns a `BTreeMap` keyed by recipe name, valued by a sorted-deduplicated
-/// vector of dep recipe names (no namespace prefixes — this is the single-file
-/// case). The companion to `compute_workspace_inferred_deps`; both functions
-/// produce the shape `cook_engine::run::run` consumes via its `inferred_deps`
-/// parameter, and every CLI command path that invokes `run_with_progress`
-/// MUST pass an inferred_deps map computed by one of the two helpers — passing
-/// `&BTreeMap::new()` silently drops the §{xref.dep-implications} contract
-/// (App. E.10).
-fn compute_single_inferred_deps(
-    cookfile: &cook_lang::ast::Cookfile,
-) -> BTreeMap<String, Vec<String>> {
-    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(cookfile);
-    let mut inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for recipe in &cookfile.recipes {
-        let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
-        let dep_names: Vec<String> = refs
-            .iter()
-            .map(|r| r.recipe_name.clone())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        if !dep_names.is_empty() {
-            inferred.insert(recipe.name.clone(), dep_names);
-        }
-    }
-    inferred
-}
-
-/// Emit "explicit + inferred dep on the same name" warnings for a single Cookfile.
-fn warn_single_dep_conflicts(cookfile: &cook_lang::ast::Cookfile) {
-    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(cookfile);
-    for recipe in &cookfile.recipes {
-        let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
-        for dep_ref in &refs {
-            if recipe.deps.contains(&dep_ref.recipe_name) {
-                eprintln!(
-                    "cook: warning: recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
-                    recipe.name, dep_ref.recipe_name, dep_ref.recipe_name
-                );
-            }
-        }
-    }
-}
-
-/// Emit "explicit + inferred dep on the same name" warnings for a workspace.
-/// Mirrors `warn_single_dep_conflicts` but iterates root + imported recipes
-/// using the qualified-consumer keys produced by `compute_workspace_inferred_deps`.
-fn warn_workspace_dep_conflicts(
-    workspace: &Workspace,
-    inferred_deps: &BTreeMap<String, Vec<String>>,
-) {
-    for recipe in &workspace.root.cookfile.recipes {
-        if let Some(dep_list) = inferred_deps.get(&recipe.name) {
-            for inferred_dep in dep_list {
-                if recipe.deps.contains(inferred_dep) {
-                    eprintln!(
-                        "cook: warning: recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
-                        recipe.name, inferred_dep, inferred_dep
-                    );
-                }
-            }
-        }
-    }
-    for (canonical_path, loaded) in &workspace.imports {
-        let prefix = find_full_prefix(workspace, canonical_path);
-        for recipe in &loaded.cookfile.recipes {
-            let qualified_consumer = format!("{prefix}.{}", recipe.name);
-            if let Some(dep_list) = inferred_deps.get(&qualified_consumer) {
-                for inferred_dep in dep_list {
-                    if recipe.deps.contains(inferred_dep) {
-                        eprintln!(
-                            "cook: warning: recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
-                            qualified_consumer, inferred_dep, inferred_dep
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Compute inferred dependencies from `{alias.recipe}` body refs across the
-/// entire workspace (§7.3 union).
-///
-/// Returns a `BTreeMap<String, Vec<String>>` keyed by **qualified consumer name**
-/// (e.g. `"top"` for a root recipe, `"web.web_obj"` for an imported one), valued
-/// by a sorted-deduplicated vector of **qualified dep names**.  This is the same
-/// shape that `cook_engine::run::run` already consumes via the `inferred_deps`
-/// parameter.
-///
-/// The single-Cookfile case is handled by `compute_single_inferred_deps`;
-/// every CLI command path that invokes `run_with_progress` for a workspace
-/// MUST call this function (App. E.10).
-fn compute_workspace_inferred_deps(workspace: &Workspace) -> BTreeMap<String, Vec<String>> {
-    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
-    // Build a canonical-path → &Cookfile snapshot for alias resolution.
-    let root_canon = std::fs::canonicalize(&workspace.root.dir)
-        .unwrap_or_else(|_| workspace.root.dir.clone());
-    let mut canon_to_cookfile: BTreeMap<std::path::PathBuf, &cook_lang::ast::Cookfile> =
-        BTreeMap::new();
-    canon_to_cookfile.insert(root_canon.clone(), &workspace.root.cookfile);
-    for (canon, loaded) in &workspace.imports {
-        canon_to_cookfile.insert(canon.clone(), &loaded.cookfile);
-    }
-
-    // Collect all (canon_path, qualified_prefix, &Cookfile) triples.
-    // Root has empty prefix; each import has a dotted prefix computed via find_full_prefix.
-    let entries: Vec<(std::path::PathBuf, String, &cook_lang::ast::Cookfile)> =
-        std::iter::once((root_canon.clone(), String::new(), &workspace.root.cookfile))
-            .chain(workspace.imports.iter().map(|(canon, loaded)| {
-                let prefix = find_full_prefix(workspace, canon);
-                (canon.clone(), prefix, &loaded.cookfile)
-            }))
-            .collect();
-
-    for (cookfile_canon, prefix, cookfile) in &entries {
-        // For this Cookfile, build two maps keyed by local alias:
-        //   alias_to_importee_prefix: alias → qualified prefix of the importee
-        //   imports_by_alias:         alias → &Cookfile of the importee
-        // Used to resolve `{alias.recipe}` tokens.
-        let mut alias_to_importee_prefix: BTreeMap<String, String> = BTreeMap::new();
-        let mut imports_by_alias: BTreeMap<String, &cook_lang::ast::Cookfile> = BTreeMap::new();
-        for (parent_canon, alias, target_canon) in &workspace.namespace_map {
-            if parent_canon != cookfile_canon {
-                continue;
-            }
-            let importee_prefix =
-                find_full_prefix(workspace, target_canon);
-            alias_to_importee_prefix.insert(alias.clone(), importee_prefix);
-            if let Some(cf) = canon_to_cookfile.get(target_canon) {
-                imports_by_alias.insert(alias.clone(), cf);
-            }
-        }
-
-        // Build the §7.3 union: local recipe names ∪ {alias.recipe} pairs for
-        // direct imports.  This is what extract_dep_refs uses to distinguish
-        // recipe references from env-var tokens.
-        let union = cook_luagen::dep_ref::extract_recipe_names_with_imports(
-            cookfile,
-            &imports_by_alias,
-        );
-
-        for recipe in &cookfile.recipes {
-            let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &union);
-            if refs.is_empty() {
-                continue;
-            }
-
-            // Qualify the consumer name.
-            let consumer = if prefix.is_empty() {
-                recipe.name.clone()
-            } else {
-                format!("{prefix}.{}", recipe.name)
-            };
-
-            let mut deps_set: BTreeSet<String> = BTreeSet::new();
-            for dep_ref in refs {
-                // dep_ref.recipe_name is either:
-                //   "local_recipe"    — same-Cookfile reference (no dot)
-                //   "alias.recipe"    — cross-Cookfile reference via local alias
-                let qualified = if let Some((alias, sub)) =
-                    dep_ref.recipe_name.split_once('.')
-                {
-                    // Cross-Cookfile: resolve alias → importee's qualified prefix.
-                    if let Some(importee_prefix) = alias_to_importee_prefix.get(alias) {
-                        if importee_prefix.is_empty() {
-                            sub.to_string()
-                        } else {
-                            format!("{importee_prefix}.{sub}")
-                        }
-                    } else {
-                        // Should not happen if the union was built correctly;
-                        // skip defensively.
-                        continue;
-                    }
-                } else if prefix.is_empty() {
-                    // Same-Cookfile, root: no prefix needed.
-                    dep_ref.recipe_name.clone()
-                } else {
-                    // Same-Cookfile, imported: prepend the Cookfile's prefix.
-                    format!("{prefix}.{}", dep_ref.recipe_name)
-                };
-                deps_set.insert(qualified);
-            }
-
-            if !deps_set.is_empty() {
-                out.insert(consumer, deps_set.into_iter().collect());
-            }
-        }
-    }
-
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::TempDir;
-
-    // Helper: write minimal Cookfile content and return the workspace.
-    fn make_workspace(
-        root_cookfile: &str,
-        imports: &[(&str, &str)], // (dir_name, cookfile_content)
-    ) -> (TempDir, Workspace) {
-        let dir = TempDir::new().unwrap();
-        // Write sub-Cookfiles first.
-        for (sub_dir, content) in imports {
-            fs::create_dir_all(dir.path().join(sub_dir)).unwrap();
-            fs::write(dir.path().join(sub_dir).join("Cookfile"), content).unwrap();
-        }
-        fs::write(dir.path().join("Cookfile"), root_cookfile).unwrap();
-        fs::write(dir.path().join(".cookroot"), "").unwrap();
-        let entry = dir.path().join("Cookfile");
-        let root = std::fs::canonicalize(dir.path()).unwrap();
-        let ws = Workspace::load(&entry, &root, &[]).unwrap();
-        (dir, ws)
-    }
-
-    /// Tree-relative case: root has `recipe top` referencing `$<lib.lib_build>` in
-    /// its body, lib has `recipe lib_build`.
-    /// Expected: `{"top" -> ["lib.lib_build"]}`.
-    #[test]
-    fn workspace_inferred_deps_tree_relative() {
-        let (_dir, ws) = make_workspace(
-            "import lib ./lib\nrecipe top\n    cook \"build/top\" using { echo $<lib.lib_build> }\n",
-            &[("lib", "recipe lib_build\n    cook \"lib.o\" using { echo $<out> }\n")],
-        );
-        let deps = compute_workspace_inferred_deps(&ws);
-        assert_eq!(
-            deps.get("top"),
-            Some(&vec!["lib.lib_build".to_string()]),
-            "expected top -> [lib.lib_build], got: {deps:?}"
-        );
-        // lib_build has no body refs → not in the map.
-        assert!(deps.get("lib.lib_build").is_none());
-    }
-
-    /// Sigil case: root imports `apps/web` tree-relatively AND imports `core/lib`
-    /// directly via sigil (`//core/lib`).  `apps/web` also imports `core/lib` via
-    /// sigil.  This is a diamond: `core/lib` appears once in workspace.imports but
-    /// is reachable from both root (as `core`) and web (as `core`).
-    ///
-    /// `web`'s `web_app` recipe references `$<core.core_lib>`.  Because root
-    /// directly imports core/lib with alias `core`, `find_full_prefix` walks up:
-    /// core/lib → root → prefix = `"core"`.  So the dep should qualify as
-    /// `core.core_lib`, not `web.core.core_lib`.
-    #[test]
-    fn workspace_inferred_deps_sigil_alias_resolves_to_importee_prefix() {
-        let dir = TempDir::new().unwrap();
-        // core/lib Cookfile
-        fs::create_dir_all(dir.path().join("core/lib")).unwrap();
-        fs::write(
-            dir.path().join("core/lib/Cookfile"),
-            "recipe core_lib\n    cook \"core.o\" using { echo $<out> }\n",
-        )
-        .unwrap();
-        // apps/web Cookfile — imports core via sigil, refs $<core.core_lib>
-        fs::create_dir_all(dir.path().join("apps/web")).unwrap();
-        fs::write(
-            dir.path().join("apps/web/Cookfile"),
-            "import core //core/lib\nrecipe web_app\n    cook \"web.o\" using { echo $<core.core_lib> }\n",
-        )
-        .unwrap();
-        // root Cookfile: imports BOTH web (tree) AND core (sigil) directly.
-        // This creates the diamond: core/lib is reachable as root→core AND as
-        // root→web→core.  The workspace-level prefix is "core" (shortest root path).
-        fs::write(
-            dir.path().join("Cookfile"),
-            "import web ./apps/web\nimport core //core/lib\nrecipe top\n    cook \"build/top\" using { echo $<web.web_app> $<core.core_lib> }\n",
-        )
-        .unwrap();
-        fs::write(dir.path().join(".cookroot"), "").unwrap();
-
-        let entry = dir.path().join("Cookfile");
-        let root = std::fs::canonicalize(dir.path()).unwrap();
-        let ws = Workspace::load(&entry, &root, &[]).unwrap();
-        let deps = compute_workspace_inferred_deps(&ws);
-
-        // web_app's $<core.core_lib>: the local alias "core" in apps/web maps to the
-        // workspace-level prefix "core" (core/lib is directly imported by root).
-        assert_eq!(
-            deps.get("web.web_app"),
-            Some(&vec!["core.core_lib".to_string()]),
-            "web_app should have dep on core.core_lib (importee workspace prefix), got: {deps:?}"
-        );
-        // top's body refs: $<web.web_app> → "web.web_app" and $<core.core_lib> → "core.core_lib".
-        assert_eq!(
-            deps.get("top"),
-            Some(&vec!["core.core_lib".to_string(), "web.web_app".to_string()]),
-            "top should have deps on web.web_app and core.core_lib, got: {deps:?}"
-        );
-    }
-
-    /// Empty case: workspace where no recipes have body refs returns empty map.
-    #[test]
-    fn workspace_inferred_deps_empty_when_no_body_refs() {
-        let (_dir, ws) = make_workspace(
-            "import lib ./lib\nrecipe top\n    echo hello\n",
-            &[("lib", "recipe lib_build\n    echo world\n")],
-        );
-        let deps = compute_workspace_inferred_deps(&ws);
-        assert!(
-            deps.is_empty(),
-            "expected empty inferred_deps when no body refs, got: {deps:?}"
-        );
-    }
-
-    /// Single-Cookfile case: a recipe whose body references `{prepare}` should
-    /// produce `{"verify" -> ["prepare"]}`. This pins the single-Cookfile
-    /// inferred-deps helper (App. E.10).
-    #[test]
-    fn single_inferred_deps_body_ref_produces_edge() {
-        let src = "recipe prepare\n    cook \"prepare.out\" using { echo $<out> }\nrecipe verify\n    test { echo $<prepare> }\n";
-        let cf = cook_lang::parse(src).unwrap();
-        let deps = compute_single_inferred_deps(&cf);
-        assert_eq!(
-            deps.get("verify"),
-            Some(&vec!["prepare".to_string()]),
-            "expected verify -> [prepare], got: {deps:?}"
-        );
-        assert!(deps.get("prepare").is_none());
-    }
-
-    /// Empty case: a single Cookfile with no body refs returns an empty map.
-    #[test]
-    fn single_inferred_deps_empty_when_no_body_refs() {
-        let cf = cook_lang::parse("recipe a\n    echo hi\nrecipe b\n    echo bye\n").unwrap();
-        let deps = compute_single_inferred_deps(&cf);
-        assert!(deps.is_empty(), "expected empty, got: {deps:?}");
-    }
 }

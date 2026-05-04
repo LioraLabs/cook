@@ -1,11 +1,21 @@
 //! Workspace loading: multi-Cookfile resolution via imports.
+//!
+//! A `Workspace` is the engine-side representation of a multi-Cookfile build:
+//! the root Cookfile, every transitively-imported Cookfile, and the namespace
+//! map that records the (parent, alias, target) tuples needed to translate
+//! `alias.recipe` references into fully-qualified recipe names.
+//!
+//! Sigil imports (`//path/from/root`) are anchored at `workspace_root`;
+//! tree-relative imports (`./path`) are anchored at the importer's directory.
+//! Cycles are rejected at load time; the same canonical target reached via two
+//! aliases is deduplicated.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use cook_lang::ast::Cookfile;
 
-use crate::error::CookError;
+use super::error::PipelineError;
 
 /// A loaded Cookfile with its parsed AST, generated Lua source, and directory.
 #[derive(Debug)]
@@ -30,10 +40,10 @@ impl Workspace {
     pub fn load(
         cookfile_path: &Path,
         workspace_root: &Path,
-        _cli_sets: &[String],
-    ) -> Result<Self, CookError> {
+        _overrides: &[String],
+    ) -> Result<Self, PipelineError> {
         let cookfile_path = std::fs::canonicalize(cookfile_path).map_err(|e| {
-            CookError::Other(format!(
+            PipelineError::Workspace(format!(
                 "cannot resolve {}: {e}",
                 cookfile_path.display()
             ))
@@ -44,23 +54,23 @@ impl Workspace {
             .to_path_buf();
 
         let workspace_root = std::fs::canonicalize(workspace_root).map_err(|e| {
-            CookError::Other(format!(
+            PipelineError::Workspace(format!(
                 "cannot resolve workspace root {}: {e}",
                 workspace_root.display()
             ))
         })?;
 
         let source = std::fs::read_to_string(&cookfile_path).map_err(|e| {
-            CookError::Other(format!(
+            PipelineError::Workspace(format!(
                 "cannot read {}: {e}",
                 cookfile_path.display()
             ))
         })?;
         let cookfile =
-            cook_lang::parse(&source).map_err(|e| CookError::ParseError(e.to_string()))?;
+            cook_lang::parse(&source).map_err(|e| PipelineError::Parse(e.to_string()))?;
         let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
         let lua_source = cook_luagen::generate_with_names_checked(&cookfile, &recipe_names)
-            .map_err(|e| CookError::Other(e.to_string()))?;
+            .map_err(|e| PipelineError::Codegen(e.to_string()))?;
 
         let mut imports = BTreeMap::new();
         let mut namespace_map = Vec::new();
@@ -99,7 +109,7 @@ impl Workspace {
         imports: &mut BTreeMap<PathBuf, LoadedCookfile>,
         namespace_map: &mut Vec<(PathBuf, String, PathBuf)>,
         visited: &mut HashSet<PathBuf>,
-    ) -> Result<(), CookError> {
+    ) -> Result<(), PipelineError> {
         let parent_canonical = std::fs::canonicalize(cookfile_dir)
             .unwrap_or_else(|_| cookfile_dir.to_path_buf());
 
@@ -110,14 +120,14 @@ impl Workspace {
             };
 
             if !import_dir.exists() {
-                return Err(CookError::Other(format!(
+                return Err(PipelineError::Workspace(format!(
                     "Import '{}': directory '{}' not found",
                     import_decl.name, import_decl.path
                 )));
             }
 
             let canonical = std::fs::canonicalize(&import_dir).map_err(|e| {
-                CookError::Other(format!(
+                PipelineError::Workspace(format!(
                     "Import '{}': cannot resolve '{}': {e}",
                     import_decl.name, import_decl.path
                 ))
@@ -127,7 +137,7 @@ impl Workspace {
             if matches!(&import_decl.path, cook_lang::ast::ImportPath::Sigil(_))
                 && !canonical.starts_with(workspace_root)
             {
-                return Err(CookError::Other(format!(
+                return Err(PipelineError::Workspace(format!(
                     "Import '{}': sigil path resolves outside workspace root '{}'",
                     import_decl.name,
                     workspace_root.display()
@@ -144,7 +154,7 @@ impl Workspace {
                 if imports.contains_key(&canonical) {
                     continue; // Dedup: already loaded
                 }
-                return Err(CookError::Other(format!(
+                return Err(PipelineError::Workspace(format!(
                     "Circular import detected involving '{}'",
                     import_decl.path
                 )));
@@ -152,23 +162,26 @@ impl Workspace {
 
             let import_cookfile_path = import_dir.join("Cookfile");
             if !import_cookfile_path.exists() {
-                return Err(CookError::Other(format!(
+                return Err(PipelineError::Workspace(format!(
                     "Import '{}': no Cookfile found in '{}'",
                     import_decl.name, import_decl.path
                 )));
             }
 
             let source = std::fs::read_to_string(&import_cookfile_path).map_err(|e| {
-                CookError::Other(format!(
+                PipelineError::Workspace(format!(
                     "Import '{}': cannot read Cookfile: {e}",
                     import_decl.name
                 ))
             })?;
-            let sub_cookfile = cook_lang::parse(&source)
-                .map_err(|e| CookError::ParseError(format!("Import '{}': {e}", import_decl.name)))?;
+            let sub_cookfile = cook_lang::parse(&source).map_err(|e| {
+                PipelineError::Parse(format!("Import '{}': {e}", import_decl.name))
+            })?;
             let sub_recipe_names = cook_luagen::dep_ref::extract_recipe_names(&sub_cookfile);
             let sub_lua = cook_luagen::generate_with_names_checked(&sub_cookfile, &sub_recipe_names)
-                .map_err(|e| CookError::Other(format!("Import '{}': {e}", import_decl.name)))?;
+                .map_err(|e| {
+                    PipelineError::Codegen(format!("Import '{}': {e}", import_decl.name))
+                })?;
 
             Self::load_imports(
                 &sub_cookfile,
@@ -235,7 +248,7 @@ impl Workspace {
             if parent_canon != &importer_canon {
                 continue;
             }
-            let prefix = cook_engine::analyzer::find_full_prefix(
+            let prefix = crate::analyzer::find_full_prefix(
                 &self.namespace_map,
                 &self.root.dir,
                 target_canon,
@@ -272,11 +285,11 @@ impl Workspace {
 /// using the union recipe-name set (local names + `alias.recipe` names from
 /// direct imports).  This is a second pass after `load_imports` completes so
 /// that every Cookfile's imported recipe list is already present.
-fn regenerate_lua_sources_with_unions(workspace: &mut Workspace) -> Result<(), CookError> {
+fn regenerate_lua_sources_with_unions(workspace: &mut Workspace) -> Result<(), PipelineError> {
     // Build a snapshot of canonical-path → Cookfile for cross-reference.
     let root_canon = std::fs::canonicalize(&workspace.root.dir)
         .unwrap_or_else(|_| workspace.root.dir.clone());
-    let mut canon_to_cookfile: BTreeMap<PathBuf, cook_lang::ast::Cookfile> = workspace
+    let mut canon_to_cookfile: BTreeMap<PathBuf, Cookfile> = workspace
         .imports
         .iter()
         .map(|(p, l)| (p.clone(), l.cookfile.clone()))
@@ -288,11 +301,11 @@ fn regenerate_lua_sources_with_unions(workspace: &mut Workspace) -> Result<(), C
     // Build the union recipe-name set for `cookfile` located at `cookfile_dir`,
     // then regenerate its Lua source.
     let regen = |cookfile_dir: &Path,
-                 cookfile: &cook_lang::ast::Cookfile|
-     -> Result<String, CookError> {
+                 cookfile: &Cookfile|
+     -> Result<String, PipelineError> {
         let cookfile_dir_canon = std::fs::canonicalize(cookfile_dir)
             .unwrap_or_else(|_| cookfile_dir.to_path_buf());
-        let mut imports_by_alias: BTreeMap<String, &cook_lang::ast::Cookfile> = BTreeMap::new();
+        let mut imports_by_alias: BTreeMap<String, &Cookfile> = BTreeMap::new();
         for imp_decl in &cookfile.imports {
             let imp_dir = match &imp_decl.path {
                 cook_lang::ast::ImportPath::Tree(p) => cookfile_dir_canon.join(p),
@@ -308,7 +321,7 @@ fn regenerate_lua_sources_with_unions(workspace: &mut Workspace) -> Result<(), C
             &imports_by_alias,
         );
         cook_luagen::generate_with_names_checked(cookfile, &union)
-            .map_err(|e| CookError::Other(e.to_string()))
+            .map_err(|e| PipelineError::Codegen(e.to_string()))
     };
 
     // Regenerate root.
@@ -337,7 +350,7 @@ fn regenerate_lua_sources_with_unions(workspace: &mut Workspace) -> Result<(), C
 fn cookfile_transitively_imports_via_tree(
     candidate_cookfile: &Path,
     target_dir: &Path,
-) -> Result<bool, CookError> {
+) -> Result<bool, PipelineError> {
     let target_canon = std::fs::canonicalize(target_dir)
         .unwrap_or_else(|_| target_dir.to_path_buf());
 
@@ -382,7 +395,7 @@ fn cookfile_transitively_imports_via_tree(
 /// reachable from `candidate_root/Cookfile` (across both tree-relative and
 /// sigil-anchored imports) and verify that every sigil-anchored import target
 /// canonicalises to a directory at or below `candidate_root`.
-fn all_reachable_sigils_resolve_under(candidate_root: &Path) -> Result<bool, CookError> {
+fn all_reachable_sigils_resolve_under(candidate_root: &Path) -> Result<bool, PipelineError> {
     let root_canon = std::fs::canonicalize(candidate_root)
         .unwrap_or_else(|_| candidate_root.to_path_buf());
     let entry = root_canon.join("Cookfile");
@@ -436,7 +449,7 @@ fn all_reachable_sigils_resolve_under(candidate_root: &Path) -> Result<bool, Coo
 /// sigil_path_string))` if one is found, `None` if none exist.
 fn first_reachable_sigil_import(
     invoked_cookfile: &Path,
-) -> Result<Option<(PathBuf, String, String)>, CookError> {
+) -> Result<Option<(PathBuf, String, String)>, PipelineError> {
     let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut stack: Vec<PathBuf> = vec![invoked_cookfile.to_path_buf()];
 
@@ -475,19 +488,20 @@ fn first_reachable_sigil_import(
 pub fn resolve_workspace_root(
     invoked_cookfile: &Path,
     override_root: Option<PathBuf>,
-) -> Result<PathBuf, CookError> {
+) -> Result<PathBuf, PipelineError> {
     // Rule 1: explicit override.
     if let Some(root) = override_root {
         let root = std::fs::canonicalize(&root).map_err(|e| {
-            CookError::Other(format!("--root '{}': {e}", root.display()))
+            PipelineError::Workspace(format!("--root '{}': {e}", root.display()))
         })?;
         let invoked_canon = std::fs::canonicalize(invoked_cookfile).map_err(|e| {
-            CookError::Other(format!(
-                "cannot resolve {}: {e}", invoked_cookfile.display()
+            PipelineError::Workspace(format!(
+                "cannot resolve {}: {e}",
+                invoked_cookfile.display()
             ))
         })?;
         if !invoked_canon.starts_with(&root) {
-            return Err(CookError::Other(format!(
+            return Err(PipelineError::Workspace(format!(
                 "invoked Cookfile {} is not at or below --root {}",
                 invoked_canon.display(),
                 root.display()
@@ -503,7 +517,11 @@ pub fn resolve_workspace_root(
             .unwrap_or(Path::new("."))
             .to_path_buf();
         // An empty path (parent of a bare "Cookfile") is treated as ".".
-        if p.as_os_str().is_empty() { PathBuf::from(".") } else { p }
+        if p.as_os_str().is_empty() {
+            PathBuf::from(".")
+        } else {
+            p
+        }
     };
     let mut cur = std::fs::canonicalize(&invoked_dir).unwrap_or(invoked_dir.clone());
     loop {
@@ -539,7 +557,7 @@ pub fn resolve_workspace_root(
     // Rules 4 and 5: no ancestor satisfied. Self-root if no sigils anywhere
     // reachable; reject otherwise.
     if let Some((cf, alias, path)) = first_reachable_sigil_import(invoked_cookfile)? {
-        return Err(CookError::Other(format!(
+        return Err(PipelineError::Workspace(format!(
             "Cookfile {} (or a Cookfile reachable from it) declares sigil import \
              '{}' (alias '{}', in {}), but no enclosing workspace root could be \
              identified to anchor it. Drop a .cookroot marker at the workspace \
@@ -666,10 +684,6 @@ mod tests {
 
     #[test]
     fn test_dedup_same_path_via_two_tree_imports() {
-        // Root imports both `a` and `b`, and both are independent children.
-        // The root also directly imports `shared`. All three sub-Cookfiles
-        // load without error, and the imports map has exactly one entry per
-        // unique canonical path.
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("a")).unwrap();
         fs::create_dir_all(dir.path().join("b")).unwrap();
@@ -756,7 +770,6 @@ mod tests {
         fs::write(dir.path().join("sibling/a/Cookfile"), "recipe \"x\"\n").unwrap();
         fs::write(dir.path().join("sibling/b/Cookfile"), "recipe \"y\"\n").unwrap();
 
-        // Invoke a/Cookfile but pass --root pointing at b/ (disjoint subtree).
         let invoked = dir.path().join("sibling/a/Cookfile");
         let wrong_root = dir.path().join("sibling/b");
         let result = resolve_workspace_root(&invoked, Some(wrong_root));
@@ -805,12 +818,6 @@ mod tests {
     #[test]
     fn test_resolve_workspace_root_skips_candidate_that_doesnt_anchor_sigils() {
         let dir = TempDir::new().unwrap();
-        // Layout: dir/Cookfile imports inner/, inner/Cookfile uses //top/lib.
-        // dir/top/lib/ exists. dir/inner/top/ does NOT exist.
-        // Inference: dir/inner/ would be a candidate (transitively tree-imports
-        // dir/inner/leaf), but //top/lib doesn't resolve under dir/inner/, so
-        // dir/inner/ fails sigil validation. dir/ does anchor //top/lib (path
-        // dir/top/lib exists), so dir/ wins.
         fs::create_dir_all(dir.path().join("top/lib")).unwrap();
         fs::create_dir_all(dir.path().join("inner/leaf")).unwrap();
         fs::write(dir.path().join("Cookfile"), "import inner ./inner\nrecipe \"x\"\n").unwrap();
@@ -828,54 +835,20 @@ mod tests {
         assert_eq!(got, expected, "expected dir/ as root (anchors //top/lib), got {got:?}");
     }
 
-    /// Tighter gate test: the sigil-validation gate must be observable.
-    ///
-    /// Layout
-    /// ------
-    /// dir/
-    ///   shared/lib/Cookfile    (target of the sigil import)
-    ///   inner/
-    ///     Cookfile             imports ./leaf  AND  //shared/lib
-    ///     leaf/
-    ///       Cookfile           [invoked] — has its OWN sigil import //shared/lib
-    ///                          (so any_reachable_sigil_imports returns true)
-    ///
-    /// There is NO Cookfile directly in dir/ itself.
-    ///
-    /// Walk-up from dir/inner/leaf/ (invoked dir):
-    ///   d = dir/inner/: has Cookfile
-    ///     - cookfile_transitively_imports_via_tree: YES (./leaf)
-    ///     - all_reachable_sigils_resolve_under(dir/inner/): tries to resolve
-    ///       //shared/lib → dir/inner/shared/lib, which does NOT exist → Ok(false)
-    ///       → gate rejects dir/inner/ as a candidate
-    ///   d = dir/: no Cookfile → skipped
-    ///
-    /// No candidate found.  any_reachable_sigil_imports(invoked) → true
-    /// (the invoked Cookfile itself declares //shared/lib) → Rule 5 fires → Err.
-    ///
-    /// Without the gate (sigil-validation removed), dir/inner/ WOULD become the
-    /// only candidate (tree-import check passes) → resolve_workspace_root returns
-    /// Ok(dir/inner/) instead of Err, so the test would fail.  The gate is the
-    /// sole mechanism that eliminates the candidate and forces rule 5.
     #[test]
     fn test_resolve_workspace_root_gate_eliminates_only_candidate_falls_to_rule5() {
         let dir = TempDir::new().unwrap();
-        // dir/shared/lib/ — sigil target that resolves at dir/ level but NOT under inner/
         fs::create_dir_all(dir.path().join("shared/lib")).unwrap();
         fs::write(dir.path().join("shared/lib/Cookfile"), "recipe \"lib\"\n").unwrap();
-        // dir/inner/leaf/ — the invoked Cookfile, also has a sigil import
         fs::create_dir_all(dir.path().join("inner/leaf")).unwrap();
         fs::write(
             dir.path().join("inner/leaf/Cookfile"),
             "import shared //shared/lib\nrecipe \"leaf\"\n",
         ).unwrap();
-        // dir/inner/Cookfile — tree-imports ./leaf AND uses //shared/lib
-        // (no dir/inner/shared/ directory, so the sigil fails the gate at this level)
         fs::write(
             dir.path().join("inner/Cookfile"),
             "import leaf ./leaf\nimport shared //shared/lib\nrecipe \"inner\"\n",
         ).unwrap();
-        // Deliberately NO Cookfile at dir/ itself.
 
         let invoked = dir.path().join("inner/leaf/Cookfile");
         let result = resolve_workspace_root(&invoked, None);

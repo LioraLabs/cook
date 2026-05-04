@@ -6,12 +6,16 @@ description = "Build pipeline orchestrator for the Cook build system"
 
 [dependencies]
 cook-contracts = { path = "../cook-contracts" }
+cook-lang = { path = "../cook-lang" }
+cook-luagen = { path = "../cook-luagen" }
 cook-register = { path = "../cook-register" }
 cook-dag = { path = "../cook-dag" }
 cook-luaotp = { path = "../cook-luaotp" }
 cook-cache = { path = "../cook-cache" }
 thiserror = "2"
 dirs = "5"
+dotenvy = "0.15"
+pathdiff = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
