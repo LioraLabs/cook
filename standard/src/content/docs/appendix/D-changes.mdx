@@ -881,6 +881,6 @@ CS-0051 makes the single-drain semantic normative for chore bodies. A conforming
 
 **Conformance impact.** None at the parser level; CS-0051 is an execute-time rule. The conformance corpus does not currently exercise chore-body scheduling shape — the reference-implementation behaviour change is pinned by new unit tests in `cook-engine` (chore-window grouping; mid-drain failure attribution; legacy non-chore interactive regression) and end-to-end rendering snapshots in `cook-progress`.
 
-**Test note.** The `cook-register` runtime test suite pins the chore-mode flag plumbing via `add_unit_inside_chore_marks_payload_is_chore_true` and `add_unit_outside_chore_marks_payload_is_chore_false` — exhaustive proof that `_enter_chore` / `_exit_chore` round-trip into `WorkPayload::Interactive::is_chore`.
+**Test note.** The `cook-register` runtime test suite pins the chore-mode flag plumbing via `add_unit_inside_chore_marks_payload_is_chore_true` and `add_unit_outside_chore_marks_payload_is_chore_false` — the two canonical cases of `_enter_chore` / `_exit_chore` round-tripping into `WorkPayload::Interactive::is_chore`.
 
 **Reference:** the CS-0051 commit series on `cook-progress-cargo-style`.

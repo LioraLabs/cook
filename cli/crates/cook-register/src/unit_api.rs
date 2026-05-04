@@ -831,6 +831,7 @@ mod tests {
         "#).exec().unwrap();
 
         let state = capture_state.borrow();
+        assert_eq!(state.units.len(), 1);
         match &state.units[0].payload {
             WorkPayload::Interactive { is_chore, .. } => {
                 assert!(!*is_chore, "unit emitted outside chore must have is_chore=false");
