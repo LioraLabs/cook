@@ -22,6 +22,7 @@ use recipe::{parse_chore, parse_config_block_lua, parse_recipe};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum ParseError {
     #[error("{0}")]
     Lex(#[from] LexError),

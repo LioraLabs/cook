@@ -24,6 +24,7 @@ pub const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 /// `Vec<String>` with no fd-of-origin and the wire-format's `stream` field
 /// was hardcoded to `"stdout"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum OutputStream {
     Stdout,
     Stderr,
@@ -37,6 +38,7 @@ pub enum OutputStream {
 /// the explicit "ship outside the project" surface
 /// (§{recipes.plate-step}).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum StepKind {
     /// `cook` step body — cacheable, hermetic, sandboxed.
     Cook,
@@ -52,6 +54,7 @@ pub enum StepKind {
 
 /// What kind of work a captured unit represents.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum WorkPayload {
     Shell {
         cmd: String,
@@ -135,6 +138,7 @@ pub struct CapturedUnit {
 
 /// How a captured unit relates to others in the recipe.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum DepKind {
     /// Part of a cook step group (can run parallel with siblings in the group).
     StepGroup(usize),

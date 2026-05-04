@@ -1075,6 +1075,7 @@ mod tests {
                         assert_eq!(line, "to-stderr", "stderr line content");
                         got_stderr = true;
                     }
+                    _ => panic!("unexpected non-exhaustive Stream variant"),
                 }
             }
         }

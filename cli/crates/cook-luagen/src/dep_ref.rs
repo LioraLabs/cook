@@ -71,6 +71,9 @@ pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTr
             | Step::LuaBlock { .. }
             | Step::InlineLua { .. }
             | Step::InlineLuaBlock { .. } => vec![],
+            // `Step` is `#[non_exhaustive]`; unknown future variants contribute
+            // no dep-refs in this analyzer until codegen learns about them.
+            _ => vec![],
         };
 
         for token in tokens {

@@ -157,21 +157,7 @@ pub(crate) enum OutputPatternKind {
     /// Pattern contains `$<in.ACCESSOR>` — one-to-one over own inputs.
     OwnInputAccessor,
     /// Pattern contains `$<recipe.ACCESSOR>` — one-to-one over that dep's outputs.
-    #[allow(dead_code)]
-    DepDriven { dep_name: String, accessor: String, lua_expr: String },
-}
-
-/// Determine the iteration kind of an output pattern WITHOUT recipe-name knowledge.
-#[allow(dead_code)]
-pub(crate) fn output_pattern_kind(pattern: &str) -> OutputPatternKind {
-    let spans = sigil::scan(pattern);
-    for span in &spans {
-        let ident = &span.ident;
-        if ident == "in" || ident.starts_with("in.") {
-            return OutputPatternKind::OwnInputAccessor;
-        }
-    }
-    OutputPatternKind::Literal
+    DepDriven { dep_name: String, lua_expr: String },
 }
 
 /// Determine the iteration kind of an output pattern WITH full recipe-name knowledge.
@@ -190,7 +176,7 @@ pub(crate) fn output_pattern_kind_with_recipes(
     if let Some((dep, accessor)) = first_dep_accessor_sigil(pattern, recipe_names) {
         let mut _discard = ConsultedEnv::new();
         let lua_expr = expand_dep_driven_output_pattern(&dep, &accessor, pattern, recipe_names, &mut _discard);
-        return OutputPatternKind::DepDriven { dep_name: dep, accessor, lua_expr };
+        return OutputPatternKind::DepDriven { dep_name: dep, lua_expr };
     }
     OutputPatternKind::Literal
 }

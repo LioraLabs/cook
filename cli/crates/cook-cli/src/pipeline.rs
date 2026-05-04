@@ -255,6 +255,10 @@ fn bridge_engine_to_progress_events(
                     let stream = match stream {
                         cook_engine::Stream::Stdout => Stream::Stdout,
                         cook_engine::Stream::Stderr => Stream::Stderr,
+                        // CS-0049: `OutputStream` is `#[non_exhaustive]`; future
+                        // variants (e.g. PTY-tagged output) default to stdout
+                        // until a CS adds them to the wire enum mapping.
+                        _ => Stream::Stdout,
                     };
                     cook_progress::ProgressEvent::NodeOutput {
                         recipe: rid,

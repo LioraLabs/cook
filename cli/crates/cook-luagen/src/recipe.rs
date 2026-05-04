@@ -299,6 +299,10 @@ fn validate_accessor_placement(
                     // accessor-placement check; the {NAME.ACCESSOR} surface
                     // does not run inside a Lua chunk.
                 }
+                // `Step` is `#[non_exhaustive]`; future step kinds added by the
+                // reference implementation pass through this validation pass
+                // without surface checks until the codegen learns about them.
+                _ => {}
             }
         }
     }
@@ -671,6 +675,14 @@ pub fn generate_with_names(
                         &cookfile.uses,
                         recipe_names,
                     );
+                }
+                // `Step` is `#[non_exhaustive]`. Future step kinds added by the
+                // reference implementation that this codegen has not yet learned
+                // about are skipped — the validator pass above already accepts
+                // them silently and runtime never sees them in a generated
+                // recipe.
+                _ => {
+                    i += 1;
                 }
             }
         }

@@ -77,6 +77,7 @@ fn format_step(step: &Step) -> String {
                 step.should_fail,
             )
         }
+        _ => "<unknown Step variant>".to_string(),
     }
 }
 

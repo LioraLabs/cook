@@ -258,6 +258,12 @@ fn worker_loop(
                                 project_root: work.project_root.clone(),
                             }
                         }
+                        // CS-0049: `StepKind` is `#[non_exhaustive]`. Future
+                        // variants default to the strictest policy (Confined)
+                        // until a CS classifies them explicitly.
+                        _ => cook_lua_stdlib::SandboxPolicy::Confined {
+                            project_root: work.project_root.clone(),
+                        },
                     };
                     let mut sb = current_sandbox.lock().expect("sandbox slot lock");
                     *sb = policy;
@@ -605,6 +611,18 @@ fn execute_work_item(
         WorkPayload::Test { cmd, line, timeout, should_fail, suite_name, test_name } => {
             execute_test(work.id, cmd, *line, *timeout, *should_fail, suite_name, test_name, working_dir, env_vars, node_name)
         }
+        // `WorkPayload` is `#[non_exhaustive]` so the reference implementation
+        // can introduce new payload kinds without an immediate breaking change.
+        // Treat any unknown variant as a worker-side bug — the dispatcher
+        // upstream of this fn is responsible for routing only known kinds.
+        _ => WorkResult {
+            id: work.id,
+            success: false,
+            error: Some(format!("BUG: unknown WorkPayload variant dispatched to worker pool: {:?}", work.payload)),
+            test_output: None,
+            node_name,
+            output_lines: Vec::new(),
+        },
     }
 }
 

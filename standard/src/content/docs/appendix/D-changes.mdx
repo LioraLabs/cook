@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.8** (unreleased) — CS-0045, CS-0046, CS-0047, CS-0048
+- **v0.8** (unreleased) — CS-0045, CS-0046, CS-0047, CS-0048, CS-0049
 - **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042, CS-0043, CS-0044
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
@@ -799,3 +799,36 @@ The companion §6.5.9 deals with the Lua-side shell escape hatches `os.execute` 
 
 **Reference:** the CS-0048 commit on the `cs-0048-schema-versioning` branch.
 
+## D.49. CS-0049 — Rust public-API hygiene: `#[non_exhaustive]` on language-surface enums + cook-luagen dead-code removal. [#changes.cs-0049]
+
+**Date:** 2026-05-03
+
+**Version:** v0.8
+
+**Sections affected:** none in the Standard prose. Reference-implementation only: `cli/crates/cook-contracts/src/lib.rs` (`OutputStream`, `StepKind`, `WorkPayload`, `DepKind`); `cli/crates/cook-lang/src/lib.rs` (`ParseError`); `cli/crates/cook-lang/src/ast.rs` (`Step`); `cli/crates/cook-luagen/src/resolver.rs` (`IterMode`, `OutputShape`, `BuiltinKind`, `Resolved`, `ResolveError`); `cli/crates/cook-luagen/src/cook_step.rs` (dead `cook_step_mode` removal); `cli/crates/cook-luagen/src/template.rs` (dead `output_pattern_kind` and unused `accessor` field on `OutputPatternKind::DepDriven`). Downstream wildcard-arm additions in `cli/crates/cook-luaotp/src/pool.rs`, `cli/crates/cook-engine/src/dag_builder.rs`, `cli/crates/cook-luagen/src/{recipe,dep_ref}.rs`, and `cli/crates/cook-lang/tests/conformance.rs`.
+
+**Summary.** Marks every Rust enum on a language-surface public API in the reference implementation as `#[non_exhaustive]` so that the implementation can grow new variants post-1.0 without forcing a major bump on the Rust crate API. The annotation is purely a Rust source-level guard: downstream Rust consumers MUST add a wildcard match arm against any of these enums; in-crate matches are unaffected. Wire-format compatibility for serialized enums (`cook_progress::ProgressEvent` and friends) is governed independently by **CS-0048**'s schema-versioning policy — `#[non_exhaustive]` does not touch serialization.
+
+The same commit removes a small set of stale `#[allow(dead_code)]` items in `cook-luagen` whose live counterparts (the recipe-name-aware variants) have replaced them in production code paths. The removed surface is internal (`pub(crate)`), so this is not an API change.
+
+**Enums marked.** Each is on a public API surface that the reference implementation expects to extend post-1.0:
+- `cook_contracts::OutputStream` — fd-of-origin tag for captured child output (CS-0043). New variants (e.g., `Combined`, `Pty`) are conceivable.
+- `cook_contracts::StepKind` — step-kind tag plumbed through `WorkPayload::LuaChunk` for sandbox policy selection (CS-0045). New step kinds map directly to new variants.
+- `cook_contracts::WorkPayload` — kinds of captured work; new payload kinds (e.g., a future host-tool invocation primitive) are anticipated.
+- `cook_contracts::DepKind` — within-recipe dependency edges; the parallelism story is not closed (e.g., a future "fan-out" kind).
+- `cook_lang::ParseError` — top-level parser error categories; new error kinds are routinely needed as language surface grows.
+- `cook_lang::ast::Step` — the seven-kind step cascade; this enum has historically grown (per CS-0015, CS-0020) and will keep growing.
+- `cook_luagen::resolver::{IterMode, OutputShape, BuiltinKind, Resolved, ResolveError}` — the closed-set placeholder resolver's surface (CS-0033). Future builtins, modes, or resolution outcomes attach here.
+
+**Forward-compatibility policy.** Adding a new variant to any `#[non_exhaustive]` enum in the reference implementation is a SemVer-minor change for the affected Rust crate: external consumers will need to refresh their match arms, but their code continues to compile because they were already required to write a wildcard arm. This policy is consistent with how the standard library applies `#[non_exhaustive]` (`std::io::ErrorKind`, etc.). It is independent of and complementary to **CS-0048**, which governs the wire-format SemVer of serialized enums in `cook-progress` and any other on-disk or IPC surfaces.
+
+**Dead-code removal.** Three items were flagged `#[allow(dead_code)]` in `cook-luagen` and have been removed because their recipe-name-aware counterparts subsume them in production:
+- `cook_step::cook_step_mode()` — superseded by `cook_step_mode_with_names()`. The five `cs_0022_mode_tests` test cases were migrated to call `cook_step_mode_with_names` (with empty or populated recipe-name sets, as appropriate) so the coverage stays.
+- `template::output_pattern_kind()` — superseded by `output_pattern_kind_with_recipes()`. Was only reachable through the removed `cook_step_mode()` and is dropped together with it.
+- `template::OutputPatternKind::DepDriven { accessor: String, .. }` — the `accessor` field on this variant was constructed but never read. The variant itself is **not** removed (it is matched in `cook_step.rs` and `recipe.rs`); only the dead field is dropped, keeping `dep_name` and `lua_expr`.
+
+**Conformance impact.** None. No surface syntax, execution semantics, Cook Lua API, or module-system behavior is changed. The conformance harness (`cargo test -p cook-lang --test conformance`) passes against this commit unchanged.
+
+**Why a v0.8 entry on a Rust-only change.** The reference implementation lives in lockstep with the Standard pre-1.0 (CS-0012). Even when a change is purely a Rust API hygiene matter, it lands in App. D so that the changelog remains the single chronological record of every amendment to anything the Standard or its reference implementation publish to consumers — internal and external. The v0.8 row in the Versions index opens here; subsequent v0.8 entries (including the CS-0048 wire-format work and other hygiene items en route to a `cs-standard/v0.8` cut) will land alongside.
+
+**Reference:** the CS-0049 commit on `cs-0049-non-exhaustive-and-deadcode`.

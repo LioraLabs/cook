@@ -97,6 +97,7 @@ pub struct TestStep {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Step {
     Shell { command: String, line: usize, interactive: bool },
     /// Execute-phase Lua line (`>` prefix). Coalesced into a body unit by

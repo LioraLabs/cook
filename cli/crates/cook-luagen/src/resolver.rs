@@ -12,6 +12,7 @@ use cook_contracts::ACCESSORS;
 
 /// Iteration mode of the enclosing step (for builtin validity).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IterMode {
     OneToOne,
     ManyToOne,
@@ -20,6 +21,7 @@ pub enum IterMode {
 
 /// Output declaration shape of the enclosing step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OutputShape {
     /// No declared outputs (plate, test, bare shell command).
     None,
@@ -37,6 +39,7 @@ pub struct ResolveCtx<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BuiltinKind {
     In,                    // {in}
     InAccessor(String),    // {in.stem} etc — accessor stored
@@ -48,6 +51,7 @@ pub enum BuiltinKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Resolved {
     Builtin(BuiltinKind),
     Recipe { name: String, accessor: Option<String> },
@@ -56,6 +60,7 @@ pub enum Resolved {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ResolveError {
     #[error("placeholder $<{ident}>: '{builtin}' is not valid in {mode:?} mode")]
     BuiltinWrongMode { ident: String, builtin: String, mode: IterMode },

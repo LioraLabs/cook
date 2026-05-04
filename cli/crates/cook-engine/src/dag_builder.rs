@@ -80,6 +80,10 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                 DepKind::Sequential => barrier.clone(),
                 DepKind::StepGroup(_) => barrier.clone(),
                 DepKind::TestSibling(_) => barrier.clone(),
+                // `DepKind` is `#[non_exhaustive]`; treat any future variant
+                // conservatively as a sequential barrier until the dag-builder
+                // is taught the new semantics.
+                _ => barrier.clone(),
             };
 
             // Combine within-recipe and cross-recipe deps.
@@ -156,6 +160,11 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                             barrier = group_dag_ids[gi].clone();
                         }
                     }
+                }
+                // `DepKind` is `#[non_exhaustive]`; treat unknown future
+                // variants as a fresh sequential barrier.
+                _ => {
+                    barrier = vec![dag_id];
                 }
             }
         }

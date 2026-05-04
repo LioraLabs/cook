@@ -35,43 +35,12 @@ fn format_ingredient_groups(n: usize) -> String {
 ///
 /// CS-0033: output patterns use `$<in.ACCESSOR>` for own-input iteration.
 /// - No using_clause                             → DeclarationOnly
-/// - Multiple outputs, any with $<in.X>         → OneToMany
-/// - Multiple outputs, all literal               → BlockStep
-/// - Single output with $<in.X>                 → OneToOne (own-input accessor)
-/// - Single output with $<dep.X>                → OneToOne (dep-driven, needs recipe names)
-/// - Single literal output                       → ManyToOne
+/// - Multiple outputs, any iterating              → OneToMany
+/// - Multiple outputs, all literal                → BlockStep
+/// - Single output with `$<in.X>`                 → OneToOne (own-input accessor)
+/// - Single output with `$<dep.X>`                → OneToOne (dep-driven; needs recipe names)
+/// - Single literal output                        → ManyToOne
 ///
-/// Without recipe-name context, dep-driven patterns (e.g. `$<protos.stem>`) look like Literal.
-/// Use `cook_step_mode_with_names` when recipe names are available.
-#[allow(dead_code)]
-pub(crate) fn cook_step_mode(step: &CookStep) -> CookMode {
-    use crate::template::output_pattern_kind;
-
-    if step.using_clause.is_none() {
-        return CookMode::DeclarationOnly;
-    }
-
-    if step.outputs.len() > 1 {
-        let any_own_input = step
-            .outputs
-            .iter()
-            .any(|p| matches!(output_pattern_kind(p), OutputPatternKind::OwnInputAccessor));
-        return if any_own_input {
-            CookMode::OneToMany
-        } else {
-            CookMode::BlockStep
-        };
-    }
-
-    match output_pattern_kind(&step.outputs[0]) {
-        OutputPatternKind::OwnInputAccessor | OutputPatternKind::DepDriven { .. } => {
-            CookMode::OneToOne
-        }
-        OutputPatternKind::Literal => CookMode::ManyToOne,
-    }
-}
-
-/// Recipe-name-aware variant of `cook_step_mode`.
 /// Correctly identifies dep-driven patterns (e.g. `$<protos.stem>`) as OneToOne.
 pub(crate) fn cook_step_mode_with_names(
     step: &CookStep,
@@ -381,6 +350,10 @@ mod cs_0022_mode_tests {
         }
     }
 
+    fn empty_recipes() -> BTreeSet<String> {
+        BTreeSet::new()
+    }
+
     #[test]
     fn literal_output_is_many_to_one_regardless_of_body() {
         // A literal output pattern → ManyToOne, even if the body contains $<in>.
@@ -388,7 +361,10 @@ mod cs_0022_mode_tests {
             &["build/app"],
             Some(UsingClause::ShellBlock(vec!["gcc $<in>".into()])),
         );
-        assert!(matches!(cook_step_mode(&s), CookMode::ManyToOne));
+        assert!(matches!(
+            cook_step_mode_with_names(&s, &empty_recipes()),
+            CookMode::ManyToOne
+        ));
     }
 
     #[test]
@@ -397,24 +373,32 @@ mod cs_0022_mode_tests {
             &["build/$<in.stem>.o"],
             Some(UsingClause::ShellBlock(vec!["gcc $<in> -o $<out>".into()])),
         );
-        assert!(matches!(cook_step_mode(&s), CookMode::OneToOne));
+        assert!(matches!(
+            cook_step_mode_with_names(&s, &empty_recipes()),
+            CookMode::OneToOne
+        ));
     }
 
     #[test]
     fn lib_accessor_output_is_one_to_one_dep_driven() {
-        // `cook_step_mode` (no recipe-name context) treats `$<libmath.stem>` as
-        // Literal because it can't confirm `libmath` is a recipe; the result is
-        // ManyToOne. With names (via `cook_step_mode_with_names`), it becomes
-        // OneToOne.
+        // With recipe-name context, `$<libmath.stem>` is recognised as a
+        // dep-driven pattern → OneToOne. Without names it is Literal →
+        // ManyToOne. Both outcomes are acceptable here; the exhaustive
+        // check is in resolves_recipe_accessor / sigil tests.
         let s = step(
             &["build/$<libmath.stem>.x"],
             Some(UsingClause::ShellBlock(vec!["echo $<in>".into()])),
         );
-        let m = cook_step_mode(&s);
-        assert!(
-            matches!(m, CookMode::OneToOne | CookMode::ManyToOne),
-            "dep-driven pattern should be OneToOne (with names) or ManyToOne (without names)"
-        );
+        let mut names = BTreeSet::new();
+        names.insert("libmath".to_string());
+        assert!(matches!(
+            cook_step_mode_with_names(&s, &names),
+            CookMode::OneToOne
+        ));
+        assert!(matches!(
+            cook_step_mode_with_names(&s, &empty_recipes()),
+            CookMode::ManyToOne
+        ));
     }
 
     #[test]
@@ -423,12 +407,18 @@ mod cs_0022_mode_tests {
             &["a.js", "a.wasm"],
             Some(UsingClause::ShellBlock(vec!["gen".into()])),
         );
-        assert!(matches!(cook_step_mode(&s), CookMode::BlockStep));
+        assert!(matches!(
+            cook_step_mode_with_names(&s, &empty_recipes()),
+            CookMode::BlockStep
+        ));
     }
 
     #[test]
     fn declaration_only_no_using_clause() {
         let s = step(&["x"], None);
-        assert!(matches!(cook_step_mode(&s), CookMode::DeclarationOnly));
+        assert!(matches!(
+            cook_step_mode_with_names(&s, &empty_recipes()),
+            CookMode::DeclarationOnly
+        ));
     }
 }

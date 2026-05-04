@@ -213,6 +213,9 @@ fn build_wave(
                     format!("lua: {}", &code[..code.len().min(60)])
                 }
                 WorkPayload::Test { cmd, .. } => format!("test: {cmd}"),
+                // `WorkPayload` is `#[non_exhaustive]`; viewer falls back to the
+                // payload's `display_name` for unknown future kinds.
+                _ => unit.payload.display_name(),
             };
 
             let output = unit.cache_meta.as_ref().and_then(|m| m.output_paths.first().cloned());
@@ -230,6 +233,10 @@ fn build_wave(
                 DepKind::StepGroup(idx) => ("step_group".to_string(), Some(*idx)),
                 DepKind::Sequential => ("sequential".to_string(), None),
                 DepKind::TestSibling(idx) => ("test_sibling".to_string(), Some(*idx)),
+                // `DepKind` is `#[non_exhaustive]`; surface unknown future
+                // variants to the viewer as a generic label so the UI doesn't
+                // silently drop them.
+                _ => ("unknown".to_string(), None),
             };
 
             // --- Cache status ---
@@ -364,6 +371,18 @@ fn build_wave(
                             .map(|&idx| format!("unit:{}:{}", recipe_name, idx))
                             .collect();
                     }
+                }
+                // `DepKind` is `#[non_exhaustive]`; render unknown future
+                // variants as a fresh sequential edge so the viewer stays
+                // structurally honest.
+                _ => {
+                    for b in &barrier {
+                        edges.push(EdgeData {
+                            from: b.clone(),
+                            to: unit_id.clone(),
+                        });
+                    }
+                    barrier = vec![unit_id.clone()];
                 }
             }
 

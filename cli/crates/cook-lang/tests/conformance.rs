@@ -110,6 +110,10 @@ fn format_step(step: &Step) -> String {
                 step.should_fail,
             )
         }
+        // `Step` is `#[non_exhaustive]`; render unknown future variants with a
+        // generic placeholder so the conformance harness keeps building when
+        // the AST grows.
+        _ => "Step(unknown)".to_string(),
     }
 }
 
