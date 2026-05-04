@@ -55,11 +55,21 @@ pub struct EventWriter {
     cached: BTreeMap<RecipeId, CachedCounter>,
     /// Pending UpstreamFailed skips per recipe, flushed as a collapsed line.
     pending_upstream_skips: Vec<(RecipeId, String)>,
+    /// Set when a terminal `InteractiveEnd` fires (chore-style handoff that's
+    /// the last work in the DAG). Suppresses all subsequent event lines so the
+    /// chore's own output remains the user's last view — same shape as
+    /// `cargo run`.
+    after_terminal_chore: bool,
 }
 
 impl EventWriter {
     pub fn new(opts: EventWriterOptions) -> Self {
-        Self { opts, cached: BTreeMap::new(), pending_upstream_skips: Vec::new() }
+        Self {
+            opts,
+            cached: BTreeMap::new(),
+            pending_upstream_skips: Vec::new(),
+            after_terminal_chore: false,
+        }
     }
 
     /// Render an event to `out`. Returns whether anything was written.
@@ -69,6 +79,14 @@ impl EventWriter {
         state: &BuildState,
         event: &ProgressEvent,
     ) -> io::Result<bool> {
+        // After a terminal chore handoff, cook is silent — the chore body
+        // had terminal control and any subsequent NodeCompleted /
+        // RecipeCompleted / Finished events would just be cleanup noise the
+        // user shouldn't see.
+        if self.after_terminal_chore {
+            return Ok(false);
+        }
+
         // Flush any pending cascaded-skip buffer when the next event is not
         // an UpstreamFailed skip.
         if !matches!(event,
@@ -174,8 +192,10 @@ impl EventWriter {
             ProgressEvent::InteractiveStart { recipe, name, .. } => {
                 let rname = recipe_name(state, *recipe);
                 let v = verb_for(LineKind::InteractiveRunning, NodeKind::Cooked);
-                let label = if rname.is_empty() || rname == *name {
+                let label = if rname.is_empty() {
                     name.to_string()
+                } else if rname == *name || name.starts_with('@') {
+                    rname
                 } else {
                     format!("{rname}/{name}")
                 };
@@ -183,8 +203,14 @@ impl EventWriter {
                 Ok(true)
             }
 
-            ProgressEvent::InteractiveEnd { .. }
-            | ProgressEvent::NodeStarted { .. } => Ok(false),
+            ProgressEvent::InteractiveEnd { is_terminal, .. } => {
+                if *is_terminal {
+                    self.after_terminal_chore = true;
+                }
+                Ok(false)
+            }
+
+            ProgressEvent::NodeStarted { .. } => Ok(false),
 
             ProgressEvent::Finished { success } => {
                 self.flush_skips(out)?;
@@ -466,5 +492,70 @@ mod tests {
         let skipped_lines = out.lines().filter(|l| l.contains("Skipped")).count();
         assert_eq!(skipped_lines, 1, "expected 1 collapsed line, got: {out}");
         assert!(out.contains("upstream failed"), "got: {out}");
+    }
+
+    #[test]
+    fn terminal_interactive_end_suppresses_subsequent_output() {
+        let mut state = empty_state();
+        state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+
+        let opts = EventWriterOptions { colored: false, ..Default::default() };
+        let mut w = EventWriter::new(opts);
+        let mut buf = Vec::new();
+
+        // Chore-style sequence: InteractiveStart → InteractiveEnd(terminal) → trailing events.
+        let start = ProgressEvent::InteractiveStart {
+            recipe: RecipeId::new(0), node: NodeId::new(0), name: "@45".into(),
+        };
+        state.apply(&start);
+        w.handle(&mut buf, &state, &start).unwrap();
+
+        let end = ProgressEvent::InteractiveEnd {
+            recipe: RecipeId::new(0), node: NodeId::new(0), name: "@45".into(),
+            elapsed: Duration::from_millis(10),
+            success: true,
+            is_terminal: true,
+        };
+        state.apply(&end);
+        w.handle(&mut buf, &state, &end).unwrap();
+
+        // These would normally print but should be suppressed after a terminal chore end.
+        for ev in [
+            ProgressEvent::NodeCompleted {
+                recipe: RecipeId::new(0), node: NodeId::new(0),
+                elapsed: Duration::from_millis(10), kind: NodeKind::Cooked,
+            },
+            ProgressEvent::RecipeCompleted {
+                recipe: RecipeId::new(0),
+                elapsed: Duration::from_millis(15),
+                cached: 0, total: 1,
+            },
+            ProgressEvent::Finished { success: true },
+        ] {
+            state.apply(&ev);
+            w.handle(&mut buf, &state, &ev).unwrap();
+        }
+
+        let out = String::from_utf8(buf).unwrap();
+        // Only one Running line; nothing else.
+        let line_count = out.lines().count();
+        assert_eq!(line_count, 1, "expected only the Running line; got: {out}");
+        assert!(out.contains("Running"), "got: {out}");
+        assert!(!out.contains("Cooked"), "Cooked should be suppressed: {out}");
+        assert!(!out.contains("Finished"), "Finished should be suppressed: {out}");
+    }
+
+    #[test]
+    fn interactive_start_with_at_tag_drops_the_tag() {
+        let mut state = empty_state();
+        state.apply(&ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) });
+
+        let ev = ProgressEvent::InteractiveStart {
+            recipe: RecipeId::new(0), node: NodeId::new(0), name: "@45".into(),
+        };
+        let opts = EventWriterOptions { colored: false, ..Default::default() };
+        let out = render_one(&state, &ev, opts);
+        // Should be "Running lib" (the recipe name in empty_state), not "Running lib/@45".
+        assert_eq!(out, "     Running lib\n", "got: {out:?}");
     }
 }
