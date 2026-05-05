@@ -348,10 +348,18 @@ fn try_restore(
     for &idx in needs_restore {
         let path = current_outputs[idx];
         let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
-        let bytes = match ctx.backend.get(&artifact_k) {
-            Ok(Some(b)) => b,
+        let mut reader = match ctx.backend.get(&artifact_k) {
+            Ok(Some(r)) => r,
             _ => return false,
         };
+        // Drain the streaming reader. The CS-0054 / CS-0056 streaming
+        // verifier raises `io::Error(InvalidData)` at EOF on hash
+        // mismatch; we treat any read failure (including the verifier's
+        // mismatch) as a miss and fall through to rebuild.
+        let mut bytes = Vec::new();
+        if std::io::Read::read_to_end(&mut reader, &mut bytes).is_err() {
+            return false;
+        }
         // Spec §8.6 cache integrity: a restore MUST verify backend bytes
         // against the recorded fingerprint and treat any mismatch as a
         // miss. Without this, a remote / shared backend could feed

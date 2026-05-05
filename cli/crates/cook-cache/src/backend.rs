@@ -5,6 +5,8 @@
 //! For back-compat we re-export the trait/key types here so existing callers
 //! that say `cook_cache::backend::*` continue to compile.
 
+use std::fs::File;
+use std::io::{self, Cursor, Read, Write};
 use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
@@ -13,6 +15,117 @@ pub use cook_fingerprint::backend::{
     artifact_key, cloud_key, ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey,
     CloudKeyInputs,
 };
+
+/// Streaming SHA-256 verifier: wraps an `R: Read`, tees bytes through a
+/// hasher, and on EOF compares the finalized hash to `expected`. On
+/// mismatch, the EOF read returns `io::Error` of kind `InvalidData`.
+///
+/// This is the streaming-equivalent of CS-0054's read-side self-verify:
+/// without it, a multi-GB cache restore would have to materialise the full
+/// artifact into a `Vec<u8>` before verification, which is the OOM path
+/// CS-0056 was created to close.
+///
+/// Generic over `R: Read` so callers can wrap a `File`, an HTTP-body
+/// reader, a `Cursor<Vec<u8>>`, etc., with no allocation in the hot path
+/// beyond the per-instance `Sha256` state.
+pub struct VerifyingReader<R: Read> {
+    inner: R,
+    hasher: Sha256,
+    expected: [u8; 32],
+    /// Once we've raised the EOF mismatch error (or matched cleanly), we
+    /// don't want to re-finalize on a subsequent read attempt — `Sha256`
+    /// is consumed by `finalize()`. We track terminal state explicitly.
+    done: bool,
+}
+
+impl<R: Read> VerifyingReader<R> {
+    pub fn new(inner: R, expected: [u8; 32]) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+            expected,
+            done: false,
+        }
+    }
+}
+
+impl<R: Read> Read for VerifyingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.done {
+            // After a successful EOF (or after a raised mismatch), every
+            // subsequent read is EOF. Honest readers stop on the first 0;
+            // defensive ones keep calling — keep returning 0 (or the same
+            // error if we already raised one would be ideal, but `Sha256`
+            // is consumed and we can't recompute. The mismatch was raised
+            // on the EOF read; that's the signal callers contract on).
+            return Ok(0);
+        }
+        let n = self.inner.read(buf)?;
+        if n == 0 {
+            // EOF — finalize and check.
+            self.done = true;
+            // Take the hasher out so we can call `finalize()` (which
+            // consumes self).
+            let hasher = std::mem::replace(&mut self.hasher, Sha256::new());
+            let actual: [u8; 32] = hasher.finalize().into();
+            if actual != self.expected {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "cache integrity: content_hash mismatch (expected={}, actual={})",
+                        hex::encode(self.expected),
+                        hex::encode(actual),
+                    ),
+                ));
+            }
+            return Ok(0);
+        }
+        self.hasher.update(&buf[..n]);
+        Ok(n)
+    }
+}
+
+/// Convenience helper: read the full artifact bytes into a `Vec<u8>`.
+/// Wraps `CacheBackend::get` for callers that already need the bytes
+/// resident in memory; for streaming callers, prefer `get` directly.
+///
+/// The streaming verification is enforced inside the returned reader, so
+/// `read_to_end` here surfaces any tampering as an `io::Error` (mapped to
+/// `BackendError::Other` for the trait's error type).
+pub fn get_bytes(
+    backend: &dyn CacheBackend,
+    key: &CloudKey,
+) -> BackendResult<Option<Vec<u8>>> {
+    let Some(mut reader) = backend.get(key)? else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    match reader.read_to_end(&mut bytes) {
+        Ok(_) => Ok(Some(bytes)),
+        Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+            // CS-0054 read-side fail-closed: the streaming verification
+            // detected tampering. Surface as a miss (Ok(None)) rather
+            // than as a transport error — the engine treats the same way.
+            tracing::warn!("cache integrity: streaming verification failed: {e}");
+            Ok(None)
+        }
+        Err(e) => Err(BackendError::Other(format!("read streaming body: {e}"))),
+    }
+}
+
+/// Convenience helper: write `bytes` to the backend through the streaming
+/// `put`. Wraps `CacheBackend::put` for callers that already have the
+/// bytes in hand; for streaming callers (genuinely large artifacts that
+/// originate on disk or from the network), prefer `put` directly.
+pub fn put_bytes(
+    backend: &dyn CacheBackend,
+    key: &CloudKey,
+    bytes: &[u8],
+    meta: &mut ArtifactMeta,
+) -> BackendResult<()> {
+    let mut cursor = Cursor::new(bytes);
+    backend.put(key, &mut cursor, meta)
+}
 
 pub struct LocalBackend {
     root: PathBuf,
@@ -44,31 +157,25 @@ impl CacheBackend for LocalBackend {
         Ok(hits)
     }
 
-    fn get(&self, key: &CloudKey) -> BackendResult<Option<Vec<u8>>> {
+    fn get(&self, key: &CloudKey) -> BackendResult<Option<Box<dyn Read + Send>>> {
         let path = self.path_for(key);
-        let bytes = match std::fs::read(&path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(BackendError::Other(format!("read {}: {e}", path.display()))),
-        };
 
-        // CS-0054: self-verify content integrity before returning bytes.
-        // The sidecar carries a SHA-256 stamped at `put` time; if the
-        // bytes-on-disk no longer hash to that value (bit-flip, opportunistic
-        // tampering of bytes-only in a shared store, or a tampered sidecar
-        // pointing at the wrong hash), we fail closed by treating the read
-        // as a miss. The engine then falls through to the rebuild path
-        // (Cook Standard §{exec.cache.integrity}). A missing or unreadable
-        // sidecar is treated identically — without a recorded hash we have
-        // no integrity proof and MUST NOT install the bytes.
+        // Read the sidecar first — without a recorded `content_hash` we
+        // have no integrity proof and MUST NOT install the bytes. A
+        // missing or unparseable sidecar surfaces as `Ok(None)`, same
+        // as CS-0054's pre-streaming behaviour.
         let meta_path = path.with_extension("meta.json");
         let meta_bytes = match std::fs::read(&meta_path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::warn!(
-                    "cache integrity: missing sidecar for {}; treating as miss",
-                    path.display()
-                );
+                // Missing sidecar: either no entry at all, or partial
+                // write recovery — both surface as miss.
+                if path.exists() {
+                    tracing::warn!(
+                        "cache integrity: missing sidecar for {}; treating as miss",
+                        path.display()
+                    );
+                }
                 return Ok(None);
             }
             Err(e) => {
@@ -88,45 +195,102 @@ impl CacheBackend for LocalBackend {
                 return Ok(None);
             }
         };
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        let actual: [u8; 32] = hasher.finalize().into();
-        if actual != meta.content_hash {
+        // CS-0054 orphan-on-upgrade: a sidecar whose `content_hash` is
+        // the zero sentinel is a pre-CS-0054 entry without an integrity
+        // proof. Fail closed, treat as miss, force rebuild.
+        if meta.content_hash == ArtifactMeta::zero_content_hash() {
             tracing::warn!(
-                "cache integrity: content_hash mismatch for {} (sidecar={}, actual={}); failing closed as miss",
-                path.display(),
-                hex::encode(meta.content_hash),
-                hex::encode(actual),
+                "cache integrity: pre-CS-0054 zero-sentinel content_hash at {}; treating as miss",
+                meta_path.display()
             );
             return Ok(None);
         }
-        Ok(Some(bytes))
+
+        // Open the bytes file for streaming. The `VerifyingReader`
+        // wrapper tees bytes through a SHA-256 hasher and surfaces a
+        // mismatch as `io::Error(InvalidData)` on EOF — the streaming
+        // equivalent of CS-0054's in-memory check.
+        let file = match File::open(&path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Sidecar present but bytes missing — partial write or
+                // partial replication. Same fail-closed semantics.
+                tracing::warn!(
+                    "cache integrity: sidecar without bytes at {}; treating as miss",
+                    path.display()
+                );
+                return Ok(None);
+            }
+            Err(e) => return Err(BackendError::Other(format!("open {}: {e}", path.display()))),
+        };
+        Ok(Some(Box::new(VerifyingReader::new(file, meta.content_hash))))
     }
 
-    fn put(&self, key: &CloudKey, bytes: &[u8], meta: &ArtifactMeta) -> BackendResult<()> {
+    fn put(
+        &self,
+        key: &CloudKey,
+        reader: &mut dyn Read,
+        meta: &mut ArtifactMeta,
+    ) -> BackendResult<()> {
         let path = self.path_for(key);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| BackendError::Other(format!("mkdir {}: {e}", parent.display())))?;
         }
 
-        // CS-0054: compute the SHA-256 of the artifact bytes once. Used by
-        // CS-0055 below to detect content drift cheaply, and stamped into
-        // the sidecar as the integrity primitive `get` verifies against.
+        // Stream the bytes to a temporary file, hashing as they flow.
+        // The temp file is our scratch space until conflict detection
+        // and the caller-claimed-hash check pass; on rejection we discard
+        // it without ever exposing the new bytes to readers.
+        let tmp = path.with_extension("tmp");
+        let mut tmp_file = File::create(&tmp)
+            .map_err(|e| BackendError::Other(format!("create {}: {e}", tmp.display())))?;
         let mut hasher = Sha256::new();
-        hasher.update(bytes);
-        let content_hash: [u8; 32] = hasher.finalize().into();
+        let mut buf = [0u8; 64 * 1024];
+        let mut total: u64 = 0;
+        loop {
+            let n = reader.read(&mut buf).map_err(|e| {
+                let _ = std::fs::remove_file(&tmp);
+                BackendError::Other(format!("read source for {}: {e}", path.display()))
+            })?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+            tmp_file.write_all(&buf[..n]).map_err(|e| {
+                let _ = std::fs::remove_file(&tmp);
+                BackendError::Other(format!("write {}: {e}", tmp.display()))
+            })?;
+            total += n as u64;
+        }
+        tmp_file.flush().map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            BackendError::Other(format!("flush {}: {e}", tmp.display()))
+        })?;
+        drop(tmp_file);
+        let computed: [u8; 32] = hasher.finalize().into();
 
-        // CS-0055: idempotency contract. Before writing, check whether an
-        // artifact already exists at this key. If yes and its recorded
-        // content_hash matches SHA-256(bytes), this is an idempotent re-put
-        // and we return Ok(()) without rewriting (a correct rebuild
-        // deterministically produced the same bytes — common case). If yes
-        // and the hashes differ, this is a key collision: two distinct byte
-        // sequences claiming the same key. We refuse to overwrite and return
-        // BackendError::Other with a diagnostic. A missing or unreadable
-        // sidecar is treated as "no existing artifact" and we write through
-        // (partial-write recovery from CS-0054 §3.2).
+        // Caller-claimed `content_hash` consistency check. The standard
+        // calling convention is to pass the zero sentinel and let `put`
+        // stamp the computed hash; a non-zero caller-claimed hash that
+        // matches is honoured (idempotent re-stamp), but a non-zero
+        // hash that doesn't match the bytes is a caller bug — refuse to
+        // persist a sidecar inconsistent with the bytes.
+        let zero = ArtifactMeta::zero_content_hash();
+        if meta.content_hash != zero && meta.content_hash != computed {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(BackendError::Other(format!(
+                "caller-claimed content_hash differs from streamed bytes \
+                 (claimed={}, computed={})",
+                hex::encode(meta.content_hash),
+                hex::encode(computed),
+            )));
+        }
+
+        // CS-0055: idempotency / conflict detection against any prior
+        // artifact at this key. The temp file is already written; on
+        // idempotent match we discard it, on conflict we discard it,
+        // and on no-prior-artifact we rename it into place.
         let meta_path = path.with_extension("meta.json");
         let path_exists = path.exists();
         if path_exists {
@@ -134,32 +298,36 @@ impl CacheBackend for LocalBackend {
                 Ok(existing_meta_bytes) => {
                     match serde_json::from_slice::<ArtifactMeta>(&existing_meta_bytes) {
                         Ok(existing) => {
-                            // Pre-CS-0054 sidecars deserialize with the zero
-                            // sentinel for content_hash. Treat that as "no
-                            // recorded hash" and write through — same upgrade
-                            // boundary the read-side fail-closed already
-                            // covers (cf. CS-0055 spec §7).
-                            if existing.content_hash == ArtifactMeta::zero_content_hash() {
+                            // Pre-CS-0054 sidecars deserialize with the
+                            // zero sentinel for content_hash. Treat that
+                            // as "no recorded hash" and write through.
+                            if existing.content_hash == zero {
                                 tracing::warn!(
                                     "cache idempotency: pre-CS-0054 sentinel content_hash at {}; treating as no prior artifact",
                                     meta_path.display(),
                                 );
-                            } else if existing.content_hash == content_hash {
-                                // Idempotent re-put — same bytes. No-op.
+                            } else if existing.content_hash == computed {
+                                // Idempotent re-put — same bytes. Discard
+                                // the temp; stamp meta.content_hash so the
+                                // caller observes the canonical hash even
+                                // on the no-op path.
+                                let _ = std::fs::remove_file(&tmp);
+                                meta.content_hash = computed;
                                 return Ok(());
                             } else {
+                                let _ = std::fs::remove_file(&tmp);
                                 let key_hex = hex::encode(key);
                                 return Err(BackendError::Other(format!(
                                     "artifact key conflict at {key_hex}: existing content_hash differs from new bytes \
                                      (existing={}, new={})",
                                     hex::encode(existing.content_hash),
-                                    hex::encode(content_hash),
+                                    hex::encode(computed),
                                 )));
                             }
                         }
                         Err(e) => {
-                            // Malformed sidecar — no recoverable hash to
-                            // compare against. Fall through to write path.
+                            // Malformed sidecar — no recoverable hash.
+                            // Fall through to write path.
                             tracing::warn!(
                                 "cache idempotency: malformed sidecar at {} ({e}); treating as no prior artifact",
                                 meta_path.display(),
@@ -175,6 +343,7 @@ impl CacheBackend for LocalBackend {
                     );
                 }
                 Err(e) => {
+                    let _ = std::fs::remove_file(&tmp);
                     return Err(BackendError::Other(format!(
                         "read meta {}: {e}",
                         meta_path.display()
@@ -183,27 +352,27 @@ impl CacheBackend for LocalBackend {
             }
         }
 
-        // Atomic write via tmp + rename.
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, bytes)
-            .map_err(|e| BackendError::Other(format!("write {}: {e}", tmp.display())))?;
+        // Commit the temp file to its final path (atomic via rename).
         std::fs::rename(&tmp, &path)
             .map_err(|e| BackendError::Other(format!("rename {}: {e}", path.display())))?;
 
-        // CS-0054: stamp the SHA-256 of the artifact bytes into the sidecar.
-        // The caller's `meta.content_hash` is treated as a placeholder
-        // (typically the zero sentinel) and overwritten here — the contract
-        // is that `put` is the sole authority on the persisted hash. `get`
-        // verifies against this value on every restore.
-        let stamped = ArtifactMeta {
-            content_hash,
-            ..meta.clone()
-        };
+        // Stamp the computed hash into the caller's meta (in-place) so
+        // they observe the canonical hash, then persist the sidecar.
+        // The stamp is authoritative whether the caller passed the zero
+        // sentinel or a matching hash; either way `meta.content_hash`
+        // ends up equal to `computed`.
+        meta.content_hash = computed;
+        // size_bytes was historically populated by the caller; we leave
+        // it untouched here (the caller's bytes-len is already correct
+        // for its source). For streaming callers who don't know the
+        // length up front, the streamed `total` is available — but
+        // overwriting could regress callers who pre-set size_bytes
+        // intentionally. Keep it caller-set; surface the streamed total
+        // as a tracing field for observability.
+        let _ = total; // silenced — see comment above
 
-        // Sidecar metadata. Atomic write via tmp + rename so a partially
-        // written sidecar can never be observed alongside fully-written bytes.
         let meta_tmp = path.with_extension("meta.json.tmp");
-        let meta_bytes = serde_json::to_vec(&stamped)
+        let meta_bytes = serde_json::to_vec(meta)
             .map_err(|e| BackendError::Other(format!("serialize meta: {e}")))?;
         std::fs::write(&meta_tmp, &meta_bytes)
             .map_err(|e| BackendError::Other(format!("write meta {}: {e}", meta_tmp.display())))?;
@@ -253,6 +422,42 @@ mod tests {
         k
     }
 
+    // ─── VerifyingReader unit tests ─────────────────────────────────────────
+
+    #[test]
+    fn verifying_reader_passes_through_on_match() {
+        let bytes = b"verifying-reader payload";
+        let expected: [u8; 32] = <Sha256 as Digest>::digest(bytes).into();
+        let mut vr = VerifyingReader::new(Cursor::new(bytes.to_vec()), expected);
+        let mut out = Vec::new();
+        vr.read_to_end(&mut out).expect("read_to_end ok on match");
+        assert_eq!(out, bytes);
+    }
+
+    #[test]
+    fn verifying_reader_errors_on_mismatch() {
+        let bytes = b"verifying-reader payload";
+        // Expected hash for *different* bytes — guarantees a mismatch
+        // when we feed `bytes` through the reader.
+        let bogus: [u8; 32] = <Sha256 as Digest>::digest(b"not the real bytes").into();
+        let mut vr = VerifyingReader::new(Cursor::new(bytes.to_vec()), bogus);
+        let mut out = Vec::new();
+        let err = vr.read_to_end(&mut out).expect_err("expected mismatch error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn verifying_reader_passes_through_on_empty_match() {
+        let bytes: &[u8] = b"";
+        let expected: [u8; 32] = <Sha256 as Digest>::digest(bytes).into();
+        let mut vr = VerifyingReader::new(Cursor::new(bytes.to_vec()), expected);
+        let mut out = Vec::new();
+        vr.read_to_end(&mut out).expect("empty match ok");
+        assert!(out.is_empty());
+    }
+
+    // ─── LocalBackend basic tests ───────────────────────────────────────────
+
     #[test]
     fn local_backend_health_ok_on_existing_root() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -273,8 +478,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let backend = LocalBackend::new(dir.path().to_path_buf());
         let k = key(0x01);
-        backend.put(&k, b"hello", &sample_meta()).expect("put");
-        let got = backend.get(&k).expect("get").expect("hit");
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, b"hello", &mut meta).expect("put");
+        let got = get_bytes(&backend, &k).expect("get").expect("hit");
         assert_eq!(got, b"hello");
     }
 
@@ -283,9 +489,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let backend = LocalBackend::new(dir.path().to_path_buf());
         let k = key(0x02);
-        backend.put(&k, b"data", &sample_meta()).expect("put 1");
-        backend.put(&k, b"data", &sample_meta()).expect("put 2");
-        let got = backend.get(&k).expect("get").expect("hit");
+        let mut meta1 = sample_meta();
+        let mut meta2 = sample_meta();
+        put_bytes(&backend, &k, b"data", &mut meta1).expect("put 1");
+        put_bytes(&backend, &k, b"data", &mut meta2).expect("put 2");
+        let got = get_bytes(&backend, &k).expect("get").expect("hit");
         assert_eq!(got, b"data");
     }
 
@@ -296,8 +504,10 @@ mod tests {
         let k1 = key(0x10);
         let k2 = key(0x20);
         let k3 = key(0x30);
-        backend.put(&k1, b"a", &sample_meta()).expect("put1");
-        backend.put(&k3, b"c", &sample_meta()).expect("put3");
+        let mut m1 = sample_meta();
+        let mut m3 = sample_meta();
+        put_bytes(&backend, &k1, b"a", &mut m1).expect("put1");
+        put_bytes(&backend, &k3, b"c", &mut m3).expect("put3");
         let hits = backend.batch_query(&[k1, k2, k3]).expect("query");
         assert!(hits.contains(&k1));
         assert!(!hits.contains(&k2));
@@ -310,7 +520,8 @@ mod tests {
         let backend = LocalBackend::new(dir.path().to_path_buf());
         let k = key(0xFF);
         backend.delete(&k).expect("delete missing ok"); // never existed
-        backend.put(&k, b"x", &sample_meta()).expect("put");
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, b"x", &mut meta).expect("put");
         backend.delete(&k).expect("delete existing ok");
         backend.delete(&k).expect("delete missing again ok");
         assert!(backend.get(&k).expect("get").is_none());
@@ -324,7 +535,7 @@ mod tests {
         let mut meta = sample_meta();
         meta.tags.insert("ci".into());
         meta.tags.insert("release:v0.5".into());
-        backend.put(&k, b"x", &meta).expect("put");
+        put_bytes(&backend, &k, b"x", &mut meta).expect("put");
 
         // Read the sidecar file directly to verify structure.
         let path = backend.path_for(&k);
@@ -362,7 +573,7 @@ mod tests {
         // Caller passes the zero sentinel; put must overwrite.
         let mut meta = sample_meta();
         meta.content_hash = [0u8; 32];
-        backend.put(&k, bytes, &meta).expect("put");
+        put_bytes(&backend, &k, bytes, &mut meta).expect("put");
 
         let path = backend.path_for(&k);
         let meta_path = path.with_extension("meta.json");
@@ -382,6 +593,9 @@ mod tests {
             [0u8; 32],
             "put must overwrite the caller's zero sentinel"
         );
+        // The in-memory `meta` is also stamped — caller observes the
+        // canonical hash without re-reading the sidecar.
+        assert_eq!(meta.content_hash, expected_arr);
     }
 
     /// Happy round-trip: put bytes, get bytes, content_hash verifies, bytes
@@ -392,78 +606,74 @@ mod tests {
         let backend = LocalBackend::new(dir.path().to_path_buf());
         let k = key(0xC6);
         let bytes = b"round-trip payload";
-        backend.put(&k, bytes, &sample_meta()).expect("put");
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut meta).expect("put");
 
-        let got = backend.get(&k).expect("get").expect("hit");
+        let got = get_bytes(&backend, &k).expect("get").expect("hit");
         assert_eq!(got, bytes, "get returns the bytes put under this key");
     }
 
-    /// Tampering the bytes-on-disk after `put` MUST cause `get` to return
-    /// `None`. The threat model is bit-flip / disk corruption locally and
-    /// opportunistic byte-only tampering on a shared backend; we MUST NOT
-    /// hand the tampered bytes to the engine's restore path.
+    /// Tampering the bytes-on-disk after `put` MUST cause `get` to surface
+    /// as `None` once the streaming verification finalizes at EOF.
     #[test]
     fn get_fails_closed_on_byte_tamper() {
         let dir = tempfile::tempdir().expect("tempdir");
         let backend = LocalBackend::new(dir.path().to_path_buf());
         let k = key(0xC7);
         let bytes = b"original bytes";
-        backend.put(&k, bytes, &sample_meta()).expect("put");
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut meta).expect("put");
 
-        // Mutate the on-disk artifact bytes — sidecar is left intact, so
-        // the recorded SHA-256 no longer matches.
+        // Mutate the on-disk artifact bytes — sidecar is left intact.
         let path = backend.path_for(&k);
         std::fs::write(&path, b"TAMPERED bytes").expect("tamper write");
 
-        let got = backend.get(&k).expect("get");
+        let got = get_bytes(&backend, &k).expect("get");
         assert!(
             got.is_none(),
             "byte tamper must surface as a miss (fail closed); got Some"
         );
     }
 
-    /// Tampering the sidecar (e.g., flipping `content_hash` to the SHA-256
-    /// of bytes the attacker wants the engine to install) MUST also cause
-    /// `get` to return `None`. The attacker would need to consistently
-    /// rewrite both bytes AND the sidecar's hash field — that case is
-    /// out of scope (deferred to signed-artifact / SLSA work) — but
-    /// rewriting only one side MUST fail closed.
+    /// Tampering the sidecar's `content_hash` MUST also cause `get` to
+    /// surface as `None` (the streaming reader fails at EOF — the bytes
+    /// hash to their actual value, which no longer matches the rewritten
+    /// sidecar's claim).
     #[test]
     fn get_fails_closed_on_meta_tamper() {
         let dir = tempfile::tempdir().expect("tempdir");
         let backend = LocalBackend::new(dir.path().to_path_buf());
         let k = key(0xC8);
         let bytes = b"original bytes 2";
-        backend.put(&k, bytes, &sample_meta()).expect("put");
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut meta).expect("put");
 
-        // Read the sidecar, flip content_hash to a different value
-        // (here we use the SHA-256 of *different* bytes), write back.
+        // Read the sidecar, flip content_hash to a different value.
         let path = backend.path_for(&k);
         let meta_path = path.with_extension("meta.json");
-        let mut meta: ArtifactMeta =
+        let mut restored: ArtifactMeta =
             serde_json::from_slice(&std::fs::read(&meta_path).expect("read meta"))
                 .expect("deserialize");
         let bogus = <Sha256 as Digest>::digest(b"not the real bytes");
-        meta.content_hash = bogus.into();
-        std::fs::write(&meta_path, serde_json::to_vec(&meta).expect("serialize")).expect("rewrite");
+        restored.content_hash = bogus.into();
+        std::fs::write(&meta_path, serde_json::to_vec(&restored).expect("serialize"))
+            .expect("rewrite");
 
-        let got = backend.get(&k).expect("get");
+        let got = get_bytes(&backend, &k).expect("get");
         assert!(
             got.is_none(),
             "meta tamper must surface as a miss (fail closed); got Some"
         );
     }
 
-    /// A sidecar that is missing entirely (for whatever reason — partial
-    /// delete, partial replication on a remote backend, manual interference)
-    /// MUST be treated as a miss: without a recorded hash, the implementation
-    /// has no integrity proof and MUST NOT install the bytes.
+    /// Missing sidecar — without a recorded hash, no integrity proof; miss.
     #[test]
     fn get_fails_closed_on_missing_meta() {
         let dir = tempfile::tempdir().expect("tempdir");
         let backend = LocalBackend::new(dir.path().to_path_buf());
         let k = key(0xC9);
-        backend.put(&k, b"x", &sample_meta()).expect("put");
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, b"x", &mut meta).expect("put");
 
         let path = backend.path_for(&k);
         let meta_path = path.with_extension("meta.json");
@@ -479,28 +689,29 @@ mod tests {
     // ─── CS-0055: backend trait idempotency contract ────────────────────────
 
     /// `put` of identical bytes to an existing key MUST succeed (idempotent
-    /// re-put). A correct rebuild that deterministically produces the same
-    /// bytes is the common case; the second `put` is a no-op.
+    /// re-put).
     #[test]
     fn put_idempotent_on_same_bytes() {
         let dir = tempfile::tempdir().expect("tempdir");
         let backend = LocalBackend::new(dir.path().to_path_buf());
         let k = key(0x55);
         let bytes = b"identical payload";
-        backend.put(&k, bytes, &sample_meta()).expect("first put");
-        backend
-            .put(&k, bytes, &sample_meta())
+        let mut m1 = sample_meta();
+        let mut m2 = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut m1).expect("first put");
+        put_bytes(&backend, &k, bytes, &mut m2)
             .expect("re-put with identical bytes must succeed");
 
         // Bytes still readable round-trip.
-        let got = backend.get(&k).expect("get").expect("hit");
+        let got = get_bytes(&backend, &k).expect("get").expect("hit");
         assert_eq!(got, bytes);
+        // Both meta values were stamped with the canonical hash.
+        let expected: [u8; 32] = <Sha256 as Digest>::digest(bytes).into();
+        assert_eq!(m1.content_hash, expected);
+        assert_eq!(m2.content_hash, expected);
     }
 
-    /// `put` of conflicting bytes to an existing key MUST be rejected with
-    /// `BackendError::Other`. The diagnostic MUST name the key in hex and
-    /// describe the conflict. The implementation MUST NOT overwrite the
-    /// prior bytes.
+    /// `put` of conflicting bytes to an existing key MUST be rejected.
     #[test]
     fn put_rejects_conflict() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -508,10 +719,11 @@ mod tests {
         let k = key(0x56);
         let bytes_a = b"payload alpha";
         let bytes_b = b"payload bravo";
-        backend.put(&k, bytes_a, &sample_meta()).expect("put a");
+        let mut m_a = sample_meta();
+        let mut m_b = sample_meta();
+        put_bytes(&backend, &k, bytes_a, &mut m_a).expect("put a");
 
-        let err = backend
-            .put(&k, bytes_b, &sample_meta())
+        let err = put_bytes(&backend, &k, bytes_b, &mut m_b)
             .expect_err("conflicting put must error");
         let err_msg = err.to_string();
         assert!(
@@ -529,64 +741,199 @@ mod tests {
         }
 
         // Prior bytes must still be on disk and readable.
-        let got = backend.get(&k).expect("get").expect("hit");
+        let got = get_bytes(&backend, &k).expect("get").expect("hit");
         assert_eq!(
             got, bytes_a,
             "conflicting put must NOT overwrite prior bytes"
         );
     }
 
-    /// If the meta sidecar is missing (partial-write recovery case), `put`
-    /// MUST treat the entry as if no prior artifact existed and write
-    /// through. This restores a healthy entry from a half-written state.
+    /// Missing sidecar — partial write recovery.
     #[test]
     fn put_recovers_from_missing_meta() {
         let dir = tempfile::tempdir().expect("tempdir");
         let backend = LocalBackend::new(dir.path().to_path_buf());
         let k = key(0x57);
         let bytes = b"recovery payload";
-        backend.put(&k, bytes, &sample_meta()).expect("put 1");
+        let mut m1 = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut m1).expect("put 1");
 
-        // Manually delete the sidecar — simulates partial replication or
-        // interrupted write between bytes-rename and sidecar-rename.
         let path = backend.path_for(&k);
         let meta_path = path.with_extension("meta.json");
         std::fs::remove_file(&meta_path).expect("remove sidecar");
 
-        // Re-put MUST succeed (write-through), restoring a complete entry.
-        backend
-            .put(&k, bytes, &sample_meta())
+        let mut m2 = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut m2)
             .expect("re-put after missing sidecar must succeed");
 
-        // Round-trip works again (sidecar restored, bytes match).
-        let got = backend.get(&k).expect("get").expect("hit");
+        let got = get_bytes(&backend, &k).expect("get").expect("hit");
         assert_eq!(got, bytes);
     }
 
-    /// If the meta sidecar is present but unparseable (corrupt), `put` MUST
-    /// treat the entry as if no prior artifact existed and write through.
-    /// A single corrupt sidecar must not permanently brick a key.
+    /// Corrupt sidecar — must not permanently brick a key.
     #[test]
     fn put_recovers_from_corrupt_meta() {
         let dir = tempfile::tempdir().expect("tempdir");
         let backend = LocalBackend::new(dir.path().to_path_buf());
         let k = key(0x58);
         let bytes = b"corrupt-meta payload";
-        backend.put(&k, bytes, &sample_meta()).expect("put 1");
+        let mut m1 = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut m1).expect("put 1");
 
-        // Manually corrupt the sidecar with non-JSON garbage.
         let path = backend.path_for(&k);
         let meta_path = path.with_extension("meta.json");
         std::fs::write(&meta_path, b"this is not JSON {{{ ::: garbage")
             .expect("corrupt sidecar");
 
-        // Re-put MUST succeed (write-through), restoring a parseable sidecar.
-        backend
-            .put(&k, bytes, &sample_meta())
+        let mut m2 = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut m2)
             .expect("re-put after corrupt sidecar must succeed");
 
-        // Round-trip works again.
-        let got = backend.get(&k).expect("get").expect("hit");
+        let got = get_bytes(&backend, &k).expect("get").expect("hit");
         assert_eq!(got, bytes);
+    }
+
+    // ─── CS-0056: streaming + helpers ───────────────────────────────────────
+
+    /// Put bytes, get returns a streaming reader; reading to end produces
+    /// exactly the bytes that were put.
+    #[test]
+    fn local_backend_get_returns_streaming_reader() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x60);
+        let bytes: Vec<u8> = (0..=255u8).cycle().take(10_000).collect();
+        let mut meta = sample_meta();
+        meta.size_bytes = bytes.len() as u64;
+        put_bytes(&backend, &k, &bytes, &mut meta).expect("put");
+
+        let mut reader = backend.get(&k).expect("get").expect("hit");
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).expect("read_to_end ok");
+        assert_eq!(out, bytes);
+    }
+
+    /// On the streaming path, byte tamper surfaces as an `io::Error`
+    /// (`InvalidData`) when the reader hits EOF — not as silent
+    /// corruption. The `get_bytes` helper maps that to `Ok(None)`; the
+    /// raw streaming API surfaces it as the error directly.
+    #[test]
+    fn local_backend_get_streaming_errors_on_byte_tamper() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x61);
+        let bytes = b"streaming-tamper original";
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut meta).expect("put");
+
+        let path = backend.path_for(&k);
+        std::fs::write(&path, b"streaming-tamper TAMPERED").expect("tamper write");
+
+        let mut reader = backend.get(&k).expect("get").expect("hit");
+        let mut out = Vec::new();
+        let err = reader
+            .read_to_end(&mut out)
+            .expect_err("streaming verifier must raise InvalidData on tamper");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// `put` with the zero sentinel stamps `meta.content_hash` in-place to
+    /// `SHA-256(bytes)` — the streaming-path equivalent of the CS-0054
+    /// stamp.
+    #[test]
+    fn local_backend_put_streams_with_zero_sentinel() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x62);
+        let bytes = b"sentinel stamp test";
+        let mut meta = sample_meta();
+        meta.content_hash = ArtifactMeta::zero_content_hash();
+        put_bytes(&backend, &k, bytes, &mut meta).expect("put");
+
+        let expected: [u8; 32] = <Sha256 as Digest>::digest(bytes).into();
+        assert_eq!(
+            meta.content_hash, expected,
+            "put must stamp meta.content_hash in-place"
+        );
+    }
+
+    /// `put` with a non-zero `content_hash` that does NOT match the
+    /// streamed bytes is a caller bug — must error, must not persist.
+    #[test]
+    fn local_backend_put_rejects_caller_hash_mismatch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x63);
+        let bytes = b"caller-bug detection";
+        let mut meta = sample_meta();
+        // A non-zero hash that is provably *not* SHA-256(bytes).
+        let bogus: [u8; 32] = <Sha256 as Digest>::digest(b"different bytes entirely").into();
+        meta.content_hash = bogus;
+
+        let err = put_bytes(&backend, &k, bytes, &mut meta)
+            .expect_err("caller-claimed hash mismatch must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("caller-claimed content_hash"),
+            "diagnostic must mention caller-claimed mismatch; got: {msg}"
+        );
+        // No artifact persisted at this key.
+        assert!(backend.get(&k).expect("get").is_none());
+    }
+
+    /// `put` with a non-zero `content_hash` that DOES match the streamed
+    /// bytes succeeds (caller pre-computed the canonical hash).
+    #[test]
+    fn local_backend_put_accepts_caller_hash_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x64);
+        let bytes = b"caller pre-computed hash";
+        let mut meta = sample_meta();
+        let pre: [u8; 32] = <Sha256 as Digest>::digest(bytes).into();
+        meta.content_hash = pre;
+        put_bytes(&backend, &k, bytes, &mut meta).expect("put with matching hash ok");
+        assert_eq!(meta.content_hash, pre);
+    }
+
+    /// Convenience helper round-trip: `put_bytes` / `get_bytes` produce
+    /// the right bytes through the streaming trait surface.
+    #[test]
+    fn put_bytes_helper_round_trip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x65);
+        let bytes = b"helper round trip";
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut meta).expect("put_bytes");
+        let got = get_bytes(&backend, &k).expect("get_bytes").expect("hit");
+        assert_eq!(got, bytes);
+    }
+
+    /// `get_bytes` returns `Ok(None)` on tamper rather than an error —
+    /// the helper folds the streaming `InvalidData` back into the
+    /// fail-closed shape callers already expect.
+    #[test]
+    fn get_bytes_helper_round_trip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x66);
+        let bytes = b"helper tamper-surface test";
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, bytes, &mut meta).expect("put");
+
+        // Happy path: bytes round-trip.
+        assert_eq!(
+            get_bytes(&backend, &k).expect("get").expect("hit"),
+            bytes
+        );
+
+        // Tamper: helper folds InvalidData into Ok(None).
+        let path = backend.path_for(&k);
+        std::fs::write(&path, b"helper tamper-surface ATTACKER").expect("tamper");
+        assert!(
+            get_bytes(&backend, &k).expect("get").is_none(),
+            "tamper must surface as None through the helper"
+        );
     }
 }

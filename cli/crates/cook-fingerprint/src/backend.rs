@@ -3,6 +3,7 @@
 //! `cook-cache::backend::LocalBackend` is the v3 filesystem implementation.
 
 use std::collections::BTreeSet;
+use std::io::Read;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -82,40 +83,73 @@ pub trait CacheBackend: Send + Sync {
     /// Implementations MAY ignore order; the engine sorts before calling.
     fn batch_query(&self, keys: &[CloudKey]) -> BackendResult<BTreeSet<CloudKey>>;
 
-    /// Fetch artifact bytes. Returns Ok(None) on miss (NOT an error).
+    /// Fetch artifact bytes as a streaming reader. Returns `Ok(None)` on
+    /// miss (NOT an error).
     ///
-    /// Implementations MUST self-verify content integrity before returning
-    /// bytes. Concretely: the bytes returned MUST be byte-identical to the
-    /// bytes most recently `put` under this key — otherwise `Ok(None)` MUST
-    /// be returned (treat as miss, fail closed). The reference contract is
-    /// SHA-256 of bytes-on-disk equal to `ArtifactMeta::content_hash` from
-    /// the sidecar; alternative cryptographic schemes are permitted so long
-    /// as the byte-identity property holds. This is the soundness primitive
-    /// the Standard §{exec.cache.integrity} relies on; it MUST hold whether
-    /// the backend is local-filesystem or a multi-tenant shared store.
-    fn get(&self, key: &CloudKey) -> BackendResult<Option<Vec<u8>>>;
+    /// Implementations MUST self-verify content integrity such that the
+    /// bytes ultimately delivered through the returned reader are
+    /// byte-identical to the bytes most recently `put` under this key —
+    /// otherwise the implementation MUST surface the failure either as
+    /// `Ok(None)` (the integrity proof was unrecoverable before any bytes
+    /// flowed: missing sidecar, malformed sidecar, zero-sentinel
+    /// `content_hash` — pre-CS-0054 orphan) or as an `io::Error` of
+    /// `ErrorKind::InvalidData` raised by the returned reader at
+    /// end-of-stream (the bytes flowed but their hash did not match the
+    /// sidecar's `content_hash`). The reference contract is SHA-256 of
+    /// bytes-as-they-stream equal to `ArtifactMeta::content_hash` from the
+    /// sidecar; alternative cryptographic schemes are permitted so long as
+    /// the byte-identity property holds. Streaming verification (a
+    /// `VerifyingReader`-style wrapper that tees bytes through a hasher
+    /// and surfaces failure at EOF) is the recommended shape — it
+    /// generalises cleanly to a future `CloudBackend` whose body is an
+    /// HTTP response stream — but an implementation MAY also buffer the
+    /// full bytes, verify, and return a `Cursor`. This is the soundness
+    /// primitive the Standard §{exec.cache.integrity} relies on; it MUST
+    /// hold whether the backend is local-filesystem or a multi-tenant
+    /// shared store.
+    fn get(&self, key: &CloudKey) -> BackendResult<Option<Box<dyn Read + Send>>>;
 
-    /// Upload artifact bytes with metadata.
+    /// Upload artifact bytes with metadata, streaming from `reader`.
     ///
-    /// Implementations MUST stamp `meta.content_hash` with the SHA-256 of
-    /// `bytes` (or an equivalent cryptographic digest) before persisting
-    /// the sidecar; callers pass the zero sentinel and treat the overwrite
-    /// as authoritative. The persisted hash is the value `get` will check
-    /// the bytes-on-disk against on a subsequent restore.
+    /// Implementations MUST stream the bytes from `reader` to a temporary
+    /// location (without materialising the full artifact in memory),
+    /// computing SHA-256 (or an equivalent cryptographic digest) of the
+    /// bytes as they flow, and finalize the hash on EOF. The contract for
+    /// `meta.content_hash` is:
     ///
-    /// **Idempotency contract (CS-0055).** A `put` to a key that already
-    /// holds an artifact MUST distinguish two cases by comparing the SHA-256
-    /// of the new `bytes` against the recorded `content_hash` of the existing
-    /// artifact:
+    /// 1. If the caller's `meta.content_hash` is the zero sentinel
+    ///    (`[0u8; 32]`), the implementation MUST stamp the computed hash
+    ///    into `meta` (in-place) before returning `Ok(())`, and MUST
+    ///    persist the stamped hash in the sidecar. This is the common
+    ///    case: callers initialise with the sentinel and let `put` be the
+    ///    sole authority on the persisted hash.
+    /// 2. If the caller's `meta.content_hash` is non-zero and equal to the
+    ///    computed hash, the implementation MUST persist `meta` as-is and
+    ///    return `Ok(())` (caller-claimed hash matched).
+    /// 3. If the caller's `meta.content_hash` is non-zero and differs from
+    ///    the computed hash, the implementation MUST return
+    ///    `BackendError::Other("caller-claimed content_hash differs from
+    ///    streamed bytes")` (or a diagnostic of equivalent specificity)
+    ///    — defence against caller bugs that would persist a sidecar
+    ///    inconsistent with the bytes.
     ///
-    /// 1. **Identical bytes** (`SHA-256(new_bytes) == existing.content_hash`):
-    ///    the `put` MUST succeed as a no-op (or as an idempotent re-stamp);
-    ///    `Ok(())` MUST be returned. This is the common case: a correct
-    ///    rebuild deterministically produced the same bytes.
-    /// 2. **Conflicting bytes** (`SHA-256(new_bytes) != existing.content_hash`):
-    ///    the `put` MUST return `BackendError::Other(...)` with a diagnostic
-    ///    message that names the key in hex and describes the conflict. The
-    ///    implementation MUST NOT overwrite the prior bytes or sidecar.
+    /// **Idempotency contract (CS-0055).** Conflict detection MUST happen
+    /// after the bytes have streamed and the SHA-256 has been finalized
+    /// (the temporary file is the implementation's scratch space). A `put`
+    /// to a key that already holds an artifact MUST distinguish two cases
+    /// by comparing the computed hash against the recorded `content_hash`
+    /// of the existing artifact:
+    ///
+    /// 1. **Identical bytes** (`computed == existing.content_hash`): the
+    ///    `put` MUST discard the temporary and succeed as a no-op (or as
+    ///    an idempotent re-stamp); `Ok(())` MUST be returned. This is the
+    ///    common case: a correct rebuild deterministically produced the
+    ///    same bytes.
+    /// 2. **Conflicting bytes** (`computed != existing.content_hash`): the
+    ///    `put` MUST discard the temporary and return
+    ///    `BackendError::Other(...)` with a diagnostic message that names
+    ///    the key in hex and describes the conflict. The implementation
+    ///    MUST NOT overwrite the prior bytes or sidecar.
     ///
     /// This is the write-side analogue of the `get` integrity check: it
     /// guarantees that a key in the artifact store maps to one and only one
@@ -125,12 +159,18 @@ pub trait CacheBackend: Send + Sync {
     /// produced different bytes) from silently corrupting another client's
     /// artifact through a key collision.
     ///
-    /// If the existing meta sidecar is missing, unreadable, or malformed
-    /// (i.e., no recorded `content_hash` is recoverable), the implementation
-    /// MUST treat the entry as if no prior artifact existed and write through
-    /// — this is the partial-write recovery path established by the atomic
-    /// sidecar contract (cf. CS-0054 §3.2).
-    fn put(&self, key: &CloudKey, bytes: &[u8], meta: &ArtifactMeta) -> BackendResult<()>;
+    /// If the existing meta sidecar is missing, unreadable, malformed, or
+    /// carries the zero-sentinel `content_hash` (i.e., no recorded hash is
+    /// recoverable), the implementation MUST treat the entry as if no prior
+    /// artifact existed and write through — this is the partial-write
+    /// recovery path established by the atomic sidecar contract (cf.
+    /// CS-0054 §3.2 and CS-0055 §7).
+    fn put(
+        &self,
+        key: &CloudKey,
+        reader: &mut dyn Read,
+        meta: &mut ArtifactMeta,
+    ) -> BackendResult<()>;
 
     /// Explicit deletion. Idempotent: returns Ok(()) for both
     /// "deleted" and "didn't exist".

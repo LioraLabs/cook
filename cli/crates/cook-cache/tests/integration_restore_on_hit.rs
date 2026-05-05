@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use cook_cache::backend::{
-    artifact_key, cloud_key, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend,
+    artifact_key, cloud_key, put_bytes, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend,
 };
 use cook_cache::store::{FileRecord, StepEntry, CACHE_VERSION};
 use cook_cache::{
@@ -64,7 +64,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
     let artifact_k = artifact_key(&cloud_k, 0, "out.o");
 
     // Seed the artifact store with the correct bytes.
-    let meta = ArtifactMeta {
+    let mut meta = ArtifactMeta {
         recipe_namespace: recipe_namespace.into(),
         command_hash: 0xbeef,
         context_hash: 0,
@@ -77,8 +77,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         output_path: "out.o".into(),
         content_hash: ArtifactMeta::zero_content_hash(),
     };
-    backend
-        .put(&artifact_k, b"correct-bytes", &meta)
+    put_bytes(backend.as_ref(), &artifact_k, b"correct-bytes", &mut meta)
         .expect("seed put");
 
     // Simulate variant-toggle drift: overwrite with stale bytes, and force a
@@ -222,7 +221,7 @@ fn restore_rejects_tampered_backend_bytes() {
     // backend response under the artifact key for which the engine has
     // a legitimate cache hit signal.
     let tampered = b"TAMPERED-BY-AUDIT";
-    let meta = ArtifactMeta {
+    let mut meta = ArtifactMeta {
         recipe_namespace: recipe_namespace.into(),
         command_hash: 0xbeef,
         context_hash: 0,
@@ -235,8 +234,7 @@ fn restore_rejects_tampered_backend_bytes() {
         output_path: "out.o".into(),
         content_hash: ArtifactMeta::zero_content_hash(),
     };
-    backend
-        .put(&artifact_k, tampered, &meta)
+    put_bytes(backend.as_ref(), &artifact_k, tampered, &mut meta)
         .expect("seed put with tampered bytes");
 
     // Force the restore-on-hit path: drift the on-disk output so its

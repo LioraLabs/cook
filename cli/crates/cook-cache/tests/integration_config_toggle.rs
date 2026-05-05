@@ -4,7 +4,9 @@
 
 use std::collections::BTreeMap;
 
-use cook_cache::backend::{cloud_key, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend};
+use cook_cache::backend::{
+    cloud_key, get_bytes, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend,
+};
 use cook_cache::envkey::{env_contribution, EnvDenylist};
 use cook_cache::store::CACHE_VERSION;
 
@@ -68,14 +70,16 @@ fn toggling_back_rehits_prior_entry() {
         content_hash: ArtifactMeta::zero_content_hash(),
     };
 
-    backend.put(&key_o2, b"O2-bytes", &meta_for(env_contrib_o2)).expect("put o2");
-    backend.put(&key_o3, b"O3-bytes", &meta_for(env_contrib_o3)).expect("put o3");
+    let mut m_o2 = meta_for(env_contrib_o2);
+    let mut m_o3 = meta_for(env_contrib_o3);
+    put_bytes(&backend, &key_o2, b"O2-bytes", &mut m_o2).expect("put o2");
+    put_bytes(&backend, &key_o3, b"O3-bytes", &mut m_o3).expect("put o3");
 
     // Toggle back: O2 still hits with O2 bytes (no overwrite).
-    let bytes_o2 = backend.get(&key_o2).expect("get").expect("hit");
+    let bytes_o2 = get_bytes(&backend, &key_o2).expect("get").expect("hit");
     assert_eq!(bytes_o2, b"O2-bytes");
 
-    let bytes_o3 = backend.get(&key_o3).expect("get").expect("hit");
+    let bytes_o3 = get_bytes(&backend, &key_o3).expect("get").expect("hit");
     assert_eq!(bytes_o3, b"O3-bytes");
 }
 

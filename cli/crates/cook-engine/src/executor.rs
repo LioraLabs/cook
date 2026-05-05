@@ -1147,7 +1147,7 @@ pub fn execute_dag(
                                                 out_idx as u32,
                                                 output_path,
                                             );
-                                            let artifact_meta = ArtifactMeta {
+                                            let mut artifact_meta = ArtifactMeta {
                                                 recipe_namespace: recipe_namespace.clone(),
                                                 command_hash: meta.command_hash,
                                                 context_hash: meta.context_hash,
@@ -1161,7 +1161,12 @@ pub fn execute_dag(
                                                 // CS-0054: stamped by the backend on put.
                                                 content_hash: ArtifactMeta::zero_content_hash(),
                                             };
-                                            if let Err(e) = cache_ctx.backend.put(&artifact_k, &bytes, &artifact_meta) {
+                                            if let Err(e) = cook_cache::backend::put_bytes(
+                                                cache_ctx.backend.as_ref(),
+                                                &artifact_k,
+                                                &bytes,
+                                                &mut artifact_meta,
+                                            ) {
                                                 tracing::warn!("cache backend put failed for {}: {}", output_path, e);
                                             }
                                         }
@@ -1179,7 +1184,7 @@ pub fn execute_dag(
                                                         depfile_idx,
                                                         &di.from,
                                                     );
-                                                    let artifact_meta = ArtifactMeta {
+                                                    let mut artifact_meta = ArtifactMeta {
                                                         recipe_namespace: recipe_namespace.clone(),
                                                         command_hash: meta.command_hash,
                                                         context_hash: meta.context_hash,
@@ -1197,10 +1202,11 @@ pub fn execute_dag(
                                                         // CS-0054: stamped by the backend on put.
                                                         content_hash: ArtifactMeta::zero_content_hash(),
                                                     };
-                                                    if let Err(e) = cache_ctx.backend.put(
+                                                    if let Err(e) = cook_cache::backend::put_bytes(
+                                                        cache_ctx.backend.as_ref(),
                                                         &artifact_k,
                                                         &bytes,
-                                                        &artifact_meta,
+                                                        &mut artifact_meta,
                                                     ) {
                                                         tracing::warn!(
                                                             "cache backend put failed for depfile {}: {e}",
@@ -1407,7 +1413,7 @@ pub fn execute_dag(
                                     out_idx as u32,
                                     output_path,
                                 );
-                                let artifact_meta = ArtifactMeta {
+                                let mut artifact_meta = ArtifactMeta {
                                     recipe_namespace: recipe_namespace.clone(),
                                     command_hash: meta.command_hash,
                                     context_hash: meta.context_hash,
@@ -1421,7 +1427,12 @@ pub fn execute_dag(
                                     // CS-0054: stamped by the backend on put.
                                     content_hash: ArtifactMeta::zero_content_hash(),
                                 };
-                                if let Err(e) = cache_ctx.backend.put(&artifact_k, &bytes, &artifact_meta) {
+                                if let Err(e) = cook_cache::backend::put_bytes(
+                                    cache_ctx.backend.as_ref(),
+                                    &artifact_k,
+                                    &bytes,
+                                    &mut artifact_meta,
+                                ) {
                                     tracing::warn!("cache backend put failed for {}: {}", output_path, e);
                                 }
                             }
@@ -1439,7 +1450,7 @@ pub fn execute_dag(
                                             depfile_idx,
                                             &di.from,
                                         );
-                                        let artifact_meta = ArtifactMeta {
+                                        let mut artifact_meta = ArtifactMeta {
                                             recipe_namespace: recipe_namespace.clone(),
                                             command_hash: meta.command_hash,
                                             context_hash: meta.context_hash,
@@ -1457,10 +1468,11 @@ pub fn execute_dag(
                                             // CS-0054: stamped by the backend on put.
                                             content_hash: ArtifactMeta::zero_content_hash(),
                                         };
-                                        if let Err(e) = cache_ctx.backend.put(
+                                        if let Err(e) = cook_cache::backend::put_bytes(
+                                            cache_ctx.backend.as_ref(),
                                             &artifact_k,
                                             &bytes,
-                                            &artifact_meta,
+                                            &mut artifact_meta,
                                         ) {
                                             tracing::warn!(
                                                 "cache backend put failed for depfile {}: {e}",

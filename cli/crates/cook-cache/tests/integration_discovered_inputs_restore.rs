@@ -5,7 +5,9 @@
 //! files and returns Skip.
 
 use cook_cache::{
-    backend::{artifact_key, cloud_key, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend},
+    backend::{
+        artifact_key, cloud_key, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend,
+    },
     parse_make_depfile,
     store::{FileRecord, StepEntry, CACHE_VERSION},
 };
@@ -100,10 +102,10 @@ fn missing_outputs_and_depfile_are_both_restored() {
         output_path: path.to_string(),
         content_hash: ArtifactMeta::zero_content_hash(),
     };
-    backend.put(&obj_k, &obj_bytes, &mk_meta(0, "a.o", obj_bytes.len() as u64))
-        .expect("put obj");
-    backend.put(&dep_k, &dep_bytes, &mk_meta(1, ".cook/deps/a.d", dep_bytes.len() as u64))
-        .expect("put dep");
+    let mut obj_meta = mk_meta(0, "a.o", obj_bytes.len() as u64);
+    let mut dep_meta = mk_meta(1, ".cook/deps/a.d", dep_bytes.len() as u64);
+    put_bytes(&backend, &obj_k, &obj_bytes, &mut obj_meta).expect("put obj");
+    put_bytes(&backend, &dep_k, &dep_bytes, &mut dep_meta).expect("put dep");
 
     // Wipe .o and .d from the working tree to simulate a partial clean.
     std::fs::remove_file(wd.join("a.o")).expect("rm o");

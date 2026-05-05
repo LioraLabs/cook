@@ -5,7 +5,9 @@
 //! The cache hit is correct because input *content* matches; B's
 //! subsequent builds generate a depfile and pick up header changes.
 
-use cook_cache::backend::{cloud_key, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend};
+use cook_cache::backend::{
+    cloud_key, get_bytes, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend,
+};
 use cook_cache::store::{FileRecord, StepEntry, CACHE_VERSION};
 
 fn make_step_with_thin_inputs(source_path: &str, source_hash: u64) -> StepEntry {
@@ -50,7 +52,7 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
 
     // Machine A uploads the artifact bytes (object file contents).
     let artifact_bytes: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
-    let meta = ArtifactMeta {
+    let mut meta = ArtifactMeta {
         recipe_namespace: "myproj/Cookfile::build".into(),
         command_hash: entry_a.command_hash,
         context_hash: entry_a.context_hash,
@@ -63,7 +65,7 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
         output_path: "build/main.o".into(),
         content_hash: ArtifactMeta::zero_content_hash(),
     };
-    backend.put(&key, &artifact_bytes, &meta).expect("put");
+    put_bytes(&backend, &key, &artifact_bytes, &mut meta).expect("put");
 
     // Machine B: fresh checkout, no .d file. Same source content.
     // Its key composition produces the same key.
@@ -82,7 +84,7 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
     assert_eq!(key, key_b, "same content → same cloud_key across machines");
 
     // Machine B pulls.
-    let bytes_b = backend.get(&key_b).expect("get").expect("hit");
+    let bytes_b = get_bytes(&backend, &key_b).expect("get").expect("hit");
     assert_eq!(bytes_b, artifact_bytes, "B receives A's bytes");
 }
 

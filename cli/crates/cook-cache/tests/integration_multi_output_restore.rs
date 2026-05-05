@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use cook_cache::backend::{
-    artifact_key, cloud_key, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend,
+    artifact_key, cloud_key, put_bytes, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend,
 };
 use cook_cache::store::{FileRecord, StepEntry, CACHE_VERSION};
 use cook_cache::{
@@ -72,7 +72,7 @@ fn multi_output_restore_writes_all_outputs() {
     .enumerate()
     {
         let k = artifact_key(&cloud_k, idx as u32, path);
-        let meta = ArtifactMeta {
+        let mut meta = ArtifactMeta {
             recipe_namespace: recipe_namespace.into(),
             command_hash: 0x1234,
             context_hash: 0,
@@ -85,7 +85,7 @@ fn multi_output_restore_writes_all_outputs() {
             output_path: path.to_string(),
             content_hash: ArtifactMeta::zero_content_hash(),
         };
-        backend.put(&k, bytes, &meta).expect("seed");
+        put_bytes(backend.as_ref(), &k, bytes, &mut meta).expect("seed");
     }
 
     // Both outputs drift on disk. Stamp distinct mtimes so the cache's
@@ -167,7 +167,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
     });
     // Seed only the first artifact.
     let k0 = artifact_key(&cloud_k, 0, "foo.out");
-    let meta0 = ArtifactMeta {
+    let mut meta0 = ArtifactMeta {
         recipe_namespace: recipe_namespace.into(),
         command_hash: 0x1234,
         context_hash: 0,
@@ -180,7 +180,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         output_path: "foo.out".into(),
         content_hash: ArtifactMeta::zero_content_hash(),
     };
-    backend.put(&k0, b"foo-correct", &meta0).expect("seed");
+    put_bytes(backend.as_ref(), &k0, b"foo-correct", &mut meta0).expect("seed");
 
     let entry = StepEntry {
         inputs: vec![in_record],
