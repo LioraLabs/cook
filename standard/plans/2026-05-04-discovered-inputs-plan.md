@@ -2227,11 +2227,11 @@ If the second run still reports anything less than 37 cached, the augmentation p
 **Files:**
 - Modify: `standard/src/content/docs/06-cook-lua-api.mdx`
 
-- [ ] **Step 17.1: Locate `cook.add_unit` field table**
+- [x] **Step 17.1: Locate `cook.add_unit` field table**
 
 In `standard/src/content/docs/06-cook-lua-api.mdx`, find the `cook.add_unit` field table (around lines 51-61). It currently ends with the `ingredient_groups` row.
 
-- [ ] **Step 17.2: Append the `discovered_inputs` row**
+- [x] **Step 17.2: Append the `discovered_inputs` row**
 
 Add a new row to the table:
 
@@ -2239,7 +2239,7 @@ Add a new row to the table:
 | `discovered_inputs` | table         | absent  | If present, declares a file the command writes during the execute phase that records additional input paths the command consumed (§{exec.cache.discovered-inputs}). Subfields: `from` (string, required, working-directory-relative path) and `format` (string, required; the only mandatory format is `"make"`). |
 ```
 
-- [ ] **Step 17.3: Add a normative subsection after §6.2 examples**
+- [x] **Step 17.3: Add a normative subsection after §6.2 examples**
 
 Find the end of §6.2 (just before §6.3 starts). Add a new subsection:
 
@@ -2270,7 +2270,7 @@ A conforming implementation MUST:
 The semantic effect of `discovered_inputs` on the cache is specified in §{exec.cache.discovered-inputs}. The `from` path MUST NOT also appear in `outputs[]`; the implementation tracks the file as an implicit cache artifact and surfaces it to neither the using-block `outputs` binding nor `cook.dep_output` resolution.
 ```
 
-- [ ] **Step 17.4: Build the spec**
+- [x] **Step 17.4: Build the spec**
 
 ```bash
 cd standard && pnpm build
@@ -2278,7 +2278,7 @@ cd standard && pnpm build
 
 Expected: exit 0, no `error` lines.
 
-- [ ] **Step 17.5: Commit**
+- [x] **Step 17.5: Commit**
 
 ```bash
 cd /home/alex/dev/cook

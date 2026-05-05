@@ -59,6 +59,7 @@ Within the body of a `config_block` (§{grammar.config-blocks}), the bare global
 | `output`            | string         | absent  | Single declared output path (§{recipes.cook-single-output}). |
 | `outputs`           | array of string | absent | Multiple declared output paths (§{recipes.cook-multi-output}). |
 | `ingredient_groups` | array of arrays of string | `{}` | For Lua-code units, the sequence of ingredient groups exposed as `input_N` (§{lua.using-block-globals}). |
+| `discovered_inputs` | table         | absent  | If present, declares a file the command writes during the execute phase that records additional input paths the command consumed (§{exec.cache.discovered-inputs}). Subfields: `from` (string, required, working-directory-relative path) and `format` (string, required; the only mandatory format is `"make"`). |
 
 **Output-field exclusivity.** A conforming implementation MUST reject `spec` if both `output` and `outputs` are set, raising a Lua runtime error.
 
@@ -104,6 +105,31 @@ A conforming implementation MAY use implementation-defined internal markers to t
 ### Note 6.2.1
 
 Adjacent `cook.add_unit` calls made inside the same register-phase `cook.step_group(fn)` invocation become siblings in the same scheduler step group (§{exec.step-groups}) and MAY run in parallel. Outside a step group they are serial. The surface `cook` step (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) routes through `cook.step_group` implicitly.
+
+### 6.2.1. `discovered_inputs` field [#lua.add-unit-discovered-inputs]
+
+A unit that consumes input files which are not statically known until execute time MAY declare a `discovered_inputs` table on its `cook.add_unit` call:
+
+```lua
+cook.add_unit({
+    inputs  = { "src/a.c" },
+    output  = "build/a.o",
+    command = "gcc -c {in} -MMD -MF .cook/deps/a.d -o {out}",
+    discovered_inputs = {
+        from   = ".cook/deps/a.d",
+        format = "make",
+    },
+})
+```
+
+A conforming implementation MUST:
+
+- accept `discovered_inputs` as either absent or a Lua table; reject any non-table value with a register-phase Lua error.
+- require both `from` (non-empty string) and `format` (string) when the table is present; reject missing or wrong-typed subfields with a register-phase Lua error.
+- require `from` to be a relative path under the unit's working directory; reject absolute paths and paths containing `..` segments.
+- support `format = "make"`; MAY support additional formats; MUST raise a register-phase Lua error if `format` names a value the implementation does not recognise. The diagnostic MUST include the offending value and the list of supported values.
+
+The semantic effect of `discovered_inputs` on the cache is specified in §{exec.cache.discovered-inputs}. The `from` path MUST NOT also appear in `outputs[]`; the implementation tracks the file as an implicit cache artifact and surfaces it to neither the using-block `outputs` binding nor `cook.dep_output` resolution.
 
 ## 6.3. Shell and Lua step helpers [#lua.step-helpers]
 The `cook` table exposes the following helpers. Unless stated otherwise, they behave identically in both phases — the register-phase behaviour is defined in terms of capture (§{exec.capture-mode}), and the execute-phase behaviour is defined in terms of actual invocation.
