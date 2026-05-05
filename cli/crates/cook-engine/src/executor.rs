@@ -1085,15 +1085,12 @@ pub fn execute_dag(
                                                 working_dir,
                                             ) {
                                                 Ok(discovered_paths) => {
-                                                    let strs: Vec<String> = discovered_paths
-                                                        .iter()
-                                                        .cloned()
-                                                        .collect();
-                                                    match cook_cache::collect_records_public(&strs, working_dir) {
+                                                    match cook_cache::collect_records_public(&discovered_paths, working_dir) {
                                                         Ok(records) => {
                                                             for rec in records {
                                                                 step_entry.inputs.push(rec);
                                                             }
+                                                            // clone: step_entry.inputs is borrowed below for cloud_key composition.
                                                             cm.update_step(
                                                                 &meta.recipe_name,
                                                                 &meta.cache_key,
@@ -1297,15 +1294,12 @@ pub fn execute_dag(
                                     working_dir,
                                 ) {
                                     Ok(discovered_paths) => {
-                                        let strs: Vec<String> = discovered_paths
-                                            .iter()
-                                            .cloned()
-                                            .collect();
-                                        match cook_cache::collect_records_public(&strs, working_dir) {
+                                        match cook_cache::collect_records_public(&discovered_paths, working_dir) {
                                             Ok(records) => {
                                                 for rec in records {
                                                     step_entry.inputs.push(rec);
                                                 }
+                                                // clone: step_entry.inputs is borrowed below for cloud_key composition.
                                                 cm.update_step(
                                                     &meta.recipe_name,
                                                     &meta.cache_key,
