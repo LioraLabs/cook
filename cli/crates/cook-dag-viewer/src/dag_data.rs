@@ -259,6 +259,7 @@ fn build_wave(
                         meta.env_contribution,
                         &ru.working_dir,
                         None,
+                        None,
                     );
                     Some(matches!(result, RebuildResult::Skip))
                 }

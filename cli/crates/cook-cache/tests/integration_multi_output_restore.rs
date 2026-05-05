@@ -116,6 +116,7 @@ fn multi_output_restore_writes_all_outputs() {
         0,
         wd,
         Some(&ctx),
+        None,
     );
 
     assert_eq!(result, RebuildResult::Skip);
@@ -199,6 +200,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         0,
         wd,
         Some(&ctx),
+        None,
     );
     assert!(matches!(
         result,

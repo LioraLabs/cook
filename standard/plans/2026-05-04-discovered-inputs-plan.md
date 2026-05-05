@@ -641,7 +641,7 @@ This task is signature-only — no behaviour change. It updates the function sig
 - Modify: `cli/crates/cook-cache/tests/integration_restore_on_hit.rs` (4 calls)
 - Modify: `cli/crates/cook-cache/tests/integration_multi_output_restore.rs` (2 calls)
 
-- [ ] **Step 5.1: Update the function signature in `check.rs`**
+- [x] **Step 5.1: Update the function signature in `check.rs`**
 
 In `cli/crates/cook-fingerprint/src/check.rs`, modify the `pub fn needs_rebuild_cook` signature:
 
@@ -669,7 +669,7 @@ grep '^cook-contracts' cli/crates/cook-fingerprint/Cargo.toml
 
 If missing, add `cook-contracts = { path = "../cook-contracts" }` to `[dependencies]`.
 
-- [ ] **Step 5.2: Update all in-file test calls to pass `None`**
+- [x] **Step 5.2: Update all in-file test calls to pass `None`**
 
 Within `check.rs`, the in-module tests around lines 404, 428, 454, 478, 515, 614, 637 each call `needs_rebuild_cook(...)`. Append `, None` (the new ninth argument) to each call. Use this surgical sed-like edit:
 
@@ -682,7 +682,7 @@ grep -c 'needs_rebuild_cook(' cli/crates/cook-fingerprint/src/check.rs
 
 For each occurrence (other than the `pub fn needs_rebuild_cook(` line that is the definition), replace the trailing `None);` (the previous restore_ctx) with `None, None);` and the trailing `Some(&...));` with `Some(&...), None);`. The simplest approach is to open `check.rs` and do this manually, one call site at a time.
 
-- [ ] **Step 5.3: Update `cook-engine::executor` call site (line ~392)**
+- [x] **Step 5.3: Update `cook-engine::executor` call site (line ~392)**
 
 In `cli/crates/cook-engine/src/executor.rs` around line 392, change the call:
 
@@ -702,17 +702,17 @@ let (result, updated) = needs_rebuild_cook(
 
 This wires through `meta.discovered_inputs` (currently always `None` since nothing populates it yet — that lands in Task 7).
 
-- [ ] **Step 5.4: Update `cook-dag-viewer::dag_data` call site (line ~253)**
+- [x] **Step 5.4: Update `cook-dag-viewer::dag_data` call site (line ~253)**
 
 In `cli/crates/cook-dag-viewer/src/dag_data.rs` around line 253, append `, None` to the `needs_rebuild_cook(...)` call (the dag-viewer doesn't consume `CacheMeta`, so passing `None` is correct).
 
-- [ ] **Step 5.5: Update integration test call sites**
+- [x] **Step 5.5: Update integration test call sites**
 
 In `cli/crates/cook-cache/tests/integration_restore_on_hit.rs`, append `, None` to each of the four `needs_rebuild_cook(...)` calls (around lines 101, 155, 256, 312).
 
 In `cli/crates/cook-cache/tests/integration_multi_output_restore.rs`, append `, None` to each of the two `needs_rebuild_cook(...)` calls (around lines 110, 193).
 
-- [ ] **Step 5.6: Build and run the whole CLI test suite**
+- [x] **Step 5.6: Build and run the whole CLI test suite**
 
 ```bash
 cd cli && cargo test
@@ -720,7 +720,7 @@ cd cli && cargo test
 
 Expected: all green. No behaviour has changed — the new parameter is `None` everywhere.
 
-- [ ] **Step 5.7: Commit**
+- [x] **Step 5.7: Commit**
 
 ```bash
 cd /home/alex/dev/cook

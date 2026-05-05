@@ -398,6 +398,7 @@ pub fn execute_dag(
             meta.env_contribution,
             &work_node.working_dir,
             Some(&restore_ctx),
+            meta.discovered_inputs.as_ref(),
         );
         if matches!(result, RebuildResult::Skip) {
             if let Some(updated_entry) = updated {

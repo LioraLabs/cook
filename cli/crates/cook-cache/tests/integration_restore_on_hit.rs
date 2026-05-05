@@ -107,6 +107,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         0,
         wd,
         Some(&ctx),
+        None,
     );
 
     assert_eq!(result, RebuildResult::Skip);
@@ -161,6 +162,7 @@ fn restore_miss_falls_through_to_output_changed() {
         0,
         wd,
         Some(&ctx),
+        None,
     );
 
     assert!(matches!(
@@ -262,6 +264,7 @@ fn restore_rejects_tampered_backend_bytes() {
         0,
         wd,
         Some(&ctx),
+        None,
     );
 
     // The hash mismatch MUST be treated as a restore miss, which falls
@@ -317,6 +320,7 @@ fn restore_with_no_ctx_returns_output_changed() {
         0,
         0,
         wd,
+        None,
         None,
     );
 
