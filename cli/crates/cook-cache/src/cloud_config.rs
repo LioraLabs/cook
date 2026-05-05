@@ -3,7 +3,9 @@
 //! Spec §9. The file is optional; if missing or empty, defaults apply.
 
 use std::path::Path;
+use std::time::Duration;
 
+use cook_fingerprint::backend::BackendConfig;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -22,6 +24,22 @@ pub struct CloudSection {
     pub endpoint: Option<String>,
     #[serde(default)]
     pub project: Option<String>,
+
+    // CS-0057 backend tunables. All optional; absent values fall back to
+    // `BackendConfig::default()`. Honoured by `LocalBackend` for
+    // `max_artifact_bytes` only; the timeout / retry / backoff knobs are
+    // wired through but no-ops on disk I/O. `CloudBackend` (next ticket)
+    // will honour all five.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub max_retries: Option<u32>,
+    #[serde(default)]
+    pub backoff_initial_ms: Option<u64>,
+    #[serde(default)]
+    pub backoff_max_ms: Option<u64>,
+    #[serde(default)]
+    pub max_artifact_mib: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -102,6 +120,30 @@ impl CloudConfig {
 
     pub fn cache_tools(&self) -> &[String] {
         &self.cache.tools
+    }
+
+    /// Build a `BackendConfig` for this project (CS-0057). Starts from
+    /// `BackendConfig::default()` and overrides each field that the
+    /// `[cloud]` section in `.cook/cloud.toml` set. Unset fields keep
+    /// their default; this is the cloud-toml-empty-or-absent identity.
+    pub fn backend_config(&self) -> BackendConfig {
+        let mut cfg = BackendConfig::default();
+        if let Some(secs) = self.cloud.timeout_secs {
+            cfg.timeout = Duration::from_secs(secs);
+        }
+        if let Some(n) = self.cloud.max_retries {
+            cfg.max_retries = n;
+        }
+        if let Some(ms) = self.cloud.backoff_initial_ms {
+            cfg.backoff_initial = Duration::from_millis(ms);
+        }
+        if let Some(ms) = self.cloud.backoff_max_ms {
+            cfg.backoff_max = Duration::from_millis(ms);
+        }
+        if let Some(mib) = self.cloud.max_artifact_mib {
+            cfg.max_artifact_bytes = mib.saturating_mul(1024 * 1024);
+        }
+        cfg
     }
 }
 
@@ -213,5 +255,45 @@ tools = ["gcc", "ld", "strip"]
         std::fs::create_dir_all(&project_dir).expect("mkdir");
         let cfg = CloudConfig::load_or_default(&project_dir).expect("load");
         assert_eq!(cfg.project_id_or_fallback(&project_dir), "my-cool-project");
+    }
+
+    // ─── CS-0057: BackendConfig threading ───────────────────────────────────
+
+    /// An empty `[cloud]` section produces a `BackendConfig` exactly equal
+    /// to `BackendConfig::default()` — the no-tunables identity.
+    #[test]
+    fn backend_config_uses_defaults_when_unset() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        let bc = cfg.backend_config();
+        let def = BackendConfig::default();
+        assert_eq!(bc.timeout, def.timeout);
+        assert_eq!(bc.max_retries, def.max_retries);
+        assert_eq!(bc.backoff_initial, def.backoff_initial);
+        assert_eq!(bc.backoff_max, def.backoff_max);
+        assert_eq!(bc.max_artifact_bytes, def.max_artifact_bytes);
+    }
+
+    /// All five `[cloud]` knobs override the corresponding
+    /// `BackendConfig` fields with the user-provided values, including
+    /// the `_secs` / `_ms` / `_mib` unit conversions.
+    #[test]
+    fn backend_config_overrides_from_toml() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+timeout_secs = 90
+max_retries = 7
+backoff_initial_ms = 250
+backoff_max_ms = 12000
+max_artifact_mib = 256
+"#);
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        let bc = cfg.backend_config();
+        assert_eq!(bc.timeout, Duration::from_secs(90));
+        assert_eq!(bc.max_retries, 7);
+        assert_eq!(bc.backoff_initial, Duration::from_millis(250));
+        assert_eq!(bc.backoff_max, Duration::from_millis(12_000));
+        assert_eq!(bc.max_artifact_bytes, 256u64 * 1024 * 1024);
     }
 }

@@ -4,12 +4,57 @@
 
 use std::collections::BTreeSet;
 use std::io::Read;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// 32-byte SHA-256 cloud cache key.
 pub type CloudKey = [u8; 32];
+
+/// User-overrideable backend tunables (CS-0057). Threaded into every
+/// `CacheBackend` constructor; the future `CloudBackend` will honour
+/// `timeout`, `max_retries`, `backoff_initial`, and `backoff_max` for HTTP
+/// calls, while every backend (local or cloud) MUST honour
+/// `max_artifact_bytes` at `put` time.
+///
+/// Defaults are tuned for cloud-grade workloads: 30s per-call timeout,
+/// 3 retries with exponential backoff from 100ms to 5s, and a 1 GiB cap
+/// on a single artifact's size. Users override via `[cloud]` knobs in
+/// `.cook/cloud.toml` (cf. design spec
+/// `standard/specs/2026-05-04-cache-backend-config-design.md`).
+#[derive(Debug, Clone)]
+pub struct BackendConfig {
+    /// Per-network-call timeout. Honored by network backends; ignored by
+    /// `LocalBackend` (disk I/O does not time out in the cooperative-cancel
+    /// sense). Default: 30s.
+    pub timeout: Duration,
+    /// Maximum number of retry attempts for transient failures (e.g.,
+    /// network errors mapped to `BackendError::Transient`). Default: 3.
+    pub max_retries: u32,
+    /// Initial backoff delay before the first retry. Default: 100ms.
+    pub backoff_initial: Duration,
+    /// Cap on backoff delay between retries. Default: 5s.
+    pub backoff_max: Duration,
+    /// Maximum bytes a single artifact may have at put time. Default: 1 GiB.
+    /// Both `LocalBackend` and `CloudBackend` MUST refuse `put` calls whose
+    /// streamed bytes exceed this limit, returning `BackendError::Other`
+    /// with a message naming the limit. The check happens during streaming,
+    /// not pre-flight (the caller may not know the size up front).
+    pub max_artifact_bytes: u64,
+}
+
+impl Default for BackendConfig {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_secs(30),
+            max_retries: 3,
+            backoff_initial: Duration::from_millis(100),
+            backoff_max: Duration::from_secs(5),
+            max_artifact_bytes: 1024 * 1024 * 1024, // 1 GiB
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum BackendError {

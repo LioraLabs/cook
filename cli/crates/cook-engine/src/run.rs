@@ -122,7 +122,12 @@ where
                 .join("cook")
                 .join("cloud")
         });
-    let backend: Arc<dyn CacheBackend> = Arc::new(LocalBackend::new(cache_dir));
+    // CS-0057: thread the BackendConfig from .cook/cloud.toml into the
+    // backend constructor. LocalBackend honours `max_artifact_bytes`;
+    // timeout / retry / backoff are no-ops on disk I/O but ride along so
+    // the future CloudBackend can accept the same shape.
+    let backend: Arc<dyn CacheBackend> =
+        Arc::new(LocalBackend::with_config(cache_dir, cloud_config.backend_config()));
     if let Err(e) = backend.health() {
         tracing::warn!("cache backend unavailable: {e}; continuing with backend disabled");
     }

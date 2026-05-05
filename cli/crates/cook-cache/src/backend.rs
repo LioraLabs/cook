@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use sha2::{Digest, Sha256};
 
 pub use cook_fingerprint::backend::{
-    artifact_key, cloud_key, ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey,
-    CloudKeyInputs,
+    artifact_key, cloud_key, ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend,
+    CloudKey, CloudKeyInputs,
 };
 
 /// Streaming SHA-256 verifier: wraps an `R: Read`, tees bytes through a
@@ -129,13 +129,37 @@ pub fn put_bytes(
 
 pub struct LocalBackend {
     root: PathBuf,
+    /// CS-0057 tunables. `LocalBackend` honours `max_artifact_bytes` at
+    /// `put` time (streamed-byte counter aborts oversize puts); the
+    /// `timeout`, `max_retries`, `backoff_initial`, and `backoff_max`
+    /// fields are no-ops for disk I/O — they're documented and threaded
+    /// through anyway so the future `CloudBackend` constructor can accept
+    /// the same `BackendConfig` shape.
+    config: BackendConfig,
 }
 
 impl LocalBackend {
+    /// Construct a `LocalBackend` rooted at `root` with default
+    /// `BackendConfig` tunables. Equivalent to
+    /// `LocalBackend::with_config(root, BackendConfig::default())`.
     pub fn new(root: PathBuf) -> Self {
+        Self::with_config(root, BackendConfig::default())
+    }
+
+    /// Construct a `LocalBackend` rooted at `root` with explicit
+    /// `BackendConfig` tunables. The CLI bootstrap calls this with
+    /// `cloud.toml`-derived overrides; tests call it to pin specific
+    /// `max_artifact_bytes` for the oversize-rejection path.
+    pub fn with_config(root: PathBuf, config: BackendConfig) -> Self {
         // Ensure root exists; ignore "already exists" errors.
         let _ = std::fs::create_dir_all(&root);
-        Self { root }
+        Self { root, config }
+    }
+
+    /// Borrow the active `BackendConfig`. Diagnostic accessor for tests
+    /// and observability call sites; not part of the `CacheBackend` trait.
+    pub fn config(&self) -> &BackendConfig {
+        &self.config
     }
 
     /// Compute the on-disk path for a CloudKey:
@@ -248,6 +272,7 @@ impl CacheBackend for LocalBackend {
         let mut hasher = Sha256::new();
         let mut buf = [0u8; 64 * 1024];
         let mut total: u64 = 0;
+        let limit = self.config.max_artifact_bytes;
         loop {
             let n = reader.read(&mut buf).map_err(|e| {
                 let _ = std::fs::remove_file(&tmp);
@@ -256,12 +281,25 @@ impl CacheBackend for LocalBackend {
             if n == 0 {
                 break;
             }
+            // CS-0057: enforce `max_artifact_bytes` as bytes flow. The
+            // check happens during streaming, not pre-flight — the caller
+            // may not know the size up front (e.g., a streaming source).
+            // On overflow, abort: discard the temp file, return an error
+            // that names the limit. No partial bytes ever surface to a
+            // reader because the rename-into-place commit hasn't run.
+            total = total.saturating_add(n as u64);
+            if total > limit {
+                drop(tmp_file);
+                let _ = std::fs::remove_file(&tmp);
+                return Err(BackendError::Other(format!(
+                    "artifact exceeds max_artifact_bytes ({total}); cap {limit}"
+                )));
+            }
             hasher.update(&buf[..n]);
             tmp_file.write_all(&buf[..n]).map_err(|e| {
                 let _ = std::fs::remove_file(&tmp);
                 BackendError::Other(format!("write {}: {e}", tmp.display()))
             })?;
-            total += n as u64;
         }
         tmp_file.flush().map_err(|e| {
             let _ = std::fs::remove_file(&tmp);
@@ -935,5 +973,96 @@ mod tests {
             get_bytes(&backend, &k).expect("get").is_none(),
             "tamper must surface as None through the helper"
         );
+    }
+
+    // ─── CS-0057: BackendConfig threading ───────────────────────────────────
+
+    /// `BackendConfig::default()` matches the values pinned by the
+    /// CS-0057 spec. Sanity check — if anyone tightens or loosens the
+    /// defaults later, this test is the single source of truth they
+    /// should review.
+    #[test]
+    fn backend_config_default_values() {
+        let cfg = BackendConfig::default();
+        assert_eq!(cfg.timeout, std::time::Duration::from_secs(30));
+        assert_eq!(cfg.max_retries, 3);
+        assert_eq!(cfg.backoff_initial, std::time::Duration::from_millis(100));
+        assert_eq!(cfg.backoff_max, std::time::Duration::from_secs(5));
+        assert_eq!(cfg.max_artifact_bytes, 1024 * 1024 * 1024);
+    }
+
+    /// `LocalBackend::with_config` stores the config and exposes it via
+    /// the `config()` accessor — observable proof that the constructor
+    /// honoured the override rather than silently substituting defaults.
+    #[test]
+    fn local_backend_with_config_honored() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let custom = BackendConfig {
+            timeout: std::time::Duration::from_secs(7),
+            max_retries: 11,
+            backoff_initial: std::time::Duration::from_millis(42),
+            backoff_max: std::time::Duration::from_secs(13),
+            max_artifact_bytes: 4096,
+        };
+        let backend = LocalBackend::with_config(dir.path().to_path_buf(), custom.clone());
+        assert_eq!(backend.config().timeout, custom.timeout);
+        assert_eq!(backend.config().max_retries, custom.max_retries);
+        assert_eq!(backend.config().backoff_initial, custom.backoff_initial);
+        assert_eq!(backend.config().backoff_max, custom.backoff_max);
+        assert_eq!(backend.config().max_artifact_bytes, custom.max_artifact_bytes);
+    }
+
+    /// `put` of bytes that exceed `max_artifact_bytes` MUST be rejected
+    /// during streaming, with a diagnostic that names the limit. No
+    /// artifact persisted at the key.
+    #[test]
+    fn local_backend_put_rejects_oversize_artifact() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = BackendConfig {
+            max_artifact_bytes: 100,
+            ..BackendConfig::default()
+        };
+        let backend = LocalBackend::with_config(dir.path().to_path_buf(), cfg);
+        let k = key(0x70);
+        let bytes = vec![0xABu8; 200]; // 2x the cap
+        let mut meta = sample_meta();
+        let err = put_bytes(&backend, &k, &bytes, &mut meta)
+            .expect_err("oversize put must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("exceeds"),
+            "diagnostic must mention 'exceeds'; got: {msg}"
+        );
+        assert!(
+            msg.contains("100"),
+            "diagnostic must name the limit (100); got: {msg}"
+        );
+        match err {
+            BackendError::Other(_) => {}
+            other => panic!("expected BackendError::Other, got {other:?}"),
+        }
+
+        // No artifact persisted at this key — the rejected put must not
+        // leak partial bytes through to a reader.
+        assert!(backend.get(&k).expect("get").is_none());
+    }
+
+    /// `put` of exactly `max_artifact_bytes` bytes succeeds — the cap is
+    /// "MUST NOT exceed", not "MUST be strictly less than".
+    #[test]
+    fn local_backend_put_accepts_artifact_at_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = BackendConfig {
+            max_artifact_bytes: 100,
+            ..BackendConfig::default()
+        };
+        let backend = LocalBackend::with_config(dir.path().to_path_buf(), cfg);
+        let k = key(0x71);
+        let bytes = vec![0xCDu8; 100]; // exactly at the cap
+        let mut meta = sample_meta();
+        put_bytes(&backend, &k, &bytes, &mut meta).expect("put at limit ok");
+
+        let got = get_bytes(&backend, &k).expect("get").expect("hit");
+        assert_eq!(got, bytes);
     }
 }
