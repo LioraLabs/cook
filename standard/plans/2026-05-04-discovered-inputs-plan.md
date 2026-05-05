@@ -1835,7 +1835,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Create: `cli/crates/cook-cache/tests/integration_discovered_inputs_restore.rs`
 
-- [ ] **Step 13.1: Write the integration test**
+- [x] **Step 13.1: Write the integration test**
 
 Create `cli/crates/cook-cache/tests/integration_discovered_inputs_restore.rs`:
 
@@ -1978,7 +1978,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
 }
 ```
 
-- [ ] **Step 13.2: Run the test**
+- [x] **Step 13.2: Run the test**
 
 ```bash
 cd cli && cargo test -p cook-cache --test integration_discovered_inputs_restore
@@ -1986,7 +1986,7 @@ cd cli && cargo test -p cook-cache --test integration_discovered_inputs_restore
 
 Expected: pass.
 
-- [ ] **Step 13.3: Commit**
+- [x] **Step 13.3: Commit**
 
 ```bash
 cd /home/alex/dev/cook

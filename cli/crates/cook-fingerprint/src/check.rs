@@ -178,10 +178,21 @@ pub fn needs_rebuild_cook(
 
     // Pre-check augmentation: when the unit declares discovered_inputs and
     // a prior depfile is on disk, fatten current_inputs by the discovered
-    // paths so the entry's input set matches. A missing or malformed depfile
-    // is no-augmentation (fallthrough to InputSetChanged → rebuild → self-heal).
+    // paths so the entry's input set matches.
+    //
+    // §10 refinement: when the depfile is missing or malformed but a
+    // restore_ctx is available, fall back to the stored entry's input list
+    // rather than forcing a rebuild. The depfile itself is an implicit output
+    // (appended by record_completion) and will be restored by try_restore if
+    // the outputs check finds it missing. Without this fallback, a partial
+    // disk wipe that removes only the depfile causes an InputSetChanged
+    // rebuild even though the backend can restore both the .d and .o.
+    //
+    // Without restore_ctx: a missing or malformed depfile is no-augmentation
+    // (fallthrough to InputSetChanged → rebuild → self-heal).
     let augmented_storage: Vec<String>;
     let augmented_refs: Vec<&str>;
+    let entry_inputs_refs: Vec<&str>;
     let current_inputs_for_check: &[&str] = if let Some(di) = discovered_inputs {
         let source_for_skip = current_inputs.first().copied().unwrap_or("");
         match __depfile_call::parse(
@@ -199,7 +210,19 @@ pub fn needs_rebuild_cook(
                 augmented_refs = augmented_storage.iter().map(String::as_str).collect();
                 &augmented_refs
             }
-            Err(_) => current_inputs,
+            Err(_) => {
+                // Depfile missing or malformed. If we have a restore_ctx,
+                // use the stored entry's fat input list so the check can
+                // proceed to the outputs walk where try_restore will fetch
+                // the depfile back. Without a restore_ctx there's nothing
+                // to recover from, so fall back to rebuild (self-heal).
+                if restore_ctx.is_some() {
+                    entry_inputs_refs = entry.inputs.iter().map(|f| f.path.as_str()).collect();
+                    &entry_inputs_refs
+                } else {
+                    current_inputs
+                }
+            }
         }
     } else {
         current_inputs
