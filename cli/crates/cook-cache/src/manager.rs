@@ -137,6 +137,21 @@ impl ThreadSafeCacheManager {
         let new_outputs = collect_records(&meta.output_paths, working_dir)
             .map_err(|p| RecordError::UnreadableFile(p))?;
 
+        let mut new_outputs = new_outputs;
+        if let Some(di) = &meta.discovered_inputs {
+            // Append the depfile as an implicit output. If the file is
+            // missing on disk post-execution, skip silently — the engine's
+            // augmentation block (Task 10) handles the warning.
+            if let Ok(records) = collect_records(
+                &[di.from.clone()],
+                working_dir,
+            ) {
+                if let Some(rec) = records.into_iter().next() {
+                    new_outputs.push(rec);
+                }
+            }
+        }
+
         let entry = StepEntry {
             inputs: new_inputs,
             outputs: new_outputs,
@@ -298,6 +313,36 @@ mod tests {
         cm.flush_all().expect("flush");
         let loaded = store::RecipeCache::load(&cache_dir, "rec");
         assert!(loaded.is_none() || loaded.unwrap().steps.is_empty());
+    }
+
+    #[test]
+    fn record_completion_appends_depfile_to_outputs() {
+        use cook_contracts::DiscoveredInputs;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        std::fs::write(wd.join("a.c"), b"src").expect("a.c");
+        std::fs::write(wd.join("a.o"), b"obj").expect("a.o");
+        std::fs::create_dir_all(wd.join(".cook/deps")).expect("mkdir");
+        std::fs::write(wd.join(".cook/deps/a.d"), b"a.o: a.c\n").expect("dep");
+
+        let cache_dir = wd.join(".cook/cache");
+        std::fs::create_dir_all(&cache_dir).expect("cachedir");
+        let mgr = ThreadSafeCacheManager::new(cache_dir.clone());
+
+        let mut meta = make_cache_meta(vec!["a.c".into()], vec!["a.o".into()]);
+        meta.discovered_inputs = Some(DiscoveredInputs {
+            from: ".cook/deps/a.d".into(),
+            format: "make".into(),
+        });
+
+        let entry = mgr.record_completion("rec", "k", &meta, wd).expect("rec");
+
+        let output_paths: Vec<&str> =
+            entry.outputs.iter().map(|fr| fr.path.as_str()).collect();
+        assert!(output_paths.contains(&"a.o"), "user output present");
+        assert!(output_paths.contains(&".cook/deps/a.d"),
+            "depfile appended to outputs when discovered_inputs is set");
     }
 
     #[test]

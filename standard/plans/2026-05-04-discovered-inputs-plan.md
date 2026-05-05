@@ -1357,7 +1357,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - Modify: `cli/crates/cook-cache/src/manager.rs`
 - Test: `cli/crates/cook-cache/src/manager.rs` (existing test module)
 
-- [ ] **Step 9.1: Write the failing test**
+- [x] **Step 9.1: Write the failing test**
 
 In `cli/crates/cook-cache/src/manager.rs`, append to the `mod tests` section:
 
@@ -1396,7 +1396,7 @@ In `cli/crates/cook-cache/src/manager.rs`, append to the `mod tests` section:
 
 This test references the existing `make_cache_meta` helper at `cli/crates/cook-cache/src/manager.rs:175`. If the helper doesn't already initialise `discovered_inputs: None`, Task 1's cascade fixed that already; verify by looking at the helper.
 
-- [ ] **Step 9.2: Run the test — verify it fails**
+- [x] **Step 9.2: Run the test — verify it fails**
 
 ```bash
 cd cli && cargo test -p cook-cache --lib record_completion_appends_depfile_to_outputs
@@ -1404,7 +1404,7 @@ cd cli && cargo test -p cook-cache --lib record_completion_appends_depfile_to_ou
 
 Expected: fail. The test's last assertion fails because the depfile isn't in `entry.outputs`.
 
-- [ ] **Step 9.3: Append the depfile to `new_outputs` in `record_completion`**
+- [x] **Step 9.3: Append the depfile to `new_outputs` in `record_completion`**
 
 In `cli/crates/cook-cache/src/manager.rs` `record_completion`, after the existing:
 
@@ -1434,7 +1434,7 @@ Add:
 
 `new_outputs` now needs to be `mut`; the rebinding shadow is intentional and idiomatic.
 
-- [ ] **Step 9.4: Run the test — verify it passes**
+- [x] **Step 9.4: Run the test — verify it passes**
 
 ```bash
 cd cli && cargo test -p cook-cache --lib record_completion_appends_depfile_to_outputs
@@ -1442,7 +1442,7 @@ cd cli && cargo test -p cook-cache --lib record_completion_appends_depfile_to_ou
 
 Expected: pass.
 
-- [ ] **Step 9.5: Run the full cache suite**
+- [x] **Step 9.5: Run the full cache suite**
 
 ```bash
 cd cli && cargo test -p cook-cache
@@ -1450,7 +1450,7 @@ cd cli && cargo test -p cook-cache
 
 Expected: all green.
 
-- [ ] **Step 9.6: Commit**
+- [x] **Step 9.6: Commit**
 
 ```bash
 cd /home/alex/dev/cook
