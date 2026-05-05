@@ -84,29 +84,6 @@ local function register_target(name)
 end
 
 -- ---------------------------------------------------------------------------
--- Depfile parsing (header dependency tracking)
--- ---------------------------------------------------------------------------
-
---- Parse a Make-format .d depfile, returning a list of header paths.
---- Filters out system headers (absolute paths) and the source file itself.
---- Skips headers that no longer exist (stale depfile).
-local function parse_depfile(dep_path, source_path)
-    if not fs.exists(dep_path) then return {} end
-    local content = fs.read(dep_path)
-    -- Strip "target: " prefix and join continuation lines
-    local deps_str = content:gsub("^.-:%s*", ""):gsub("\\\n", " "):gsub("\\\r\n", " ")
-    local deps = {}
-    for dep in deps_str:gmatch("%S+") do
-        if not dep:match("^/") and dep ~= source_path then
-            if fs.exists(dep) then
-                deps[#deps + 1] = dep
-            end
-        end
-    end
-    return deps
-end
-
--- ---------------------------------------------------------------------------
 -- Minimal JSON encoder (for compile_commands.json)
 -- ---------------------------------------------------------------------------
 
@@ -299,21 +276,13 @@ function cpp.compile(source, opts)
 
     local cmd = compiler .. " " .. table.concat(flags, " ") .. " " .. source .. " -o " .. obj_out
 
-    -- Parse existing depfile for header inputs
-    local inputs = { source }
-    local header_deps = parse_depfile(dep_file, source)
-    for _, h in ipairs(header_deps) do
-        inputs[#inputs + 1] = h
-    end
-
     cook.add_unit({
-        inputs = inputs,
+        inputs = { source },
         output = obj_out,
         command = cmd,
-        consulted_env_keys = {
-            "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
-            "LIBRARY_PATH", "LD_LIBRARY_PATH", "PKG_CONFIG_PATH",
-            "SDKROOT",
+        discovered_inputs = {
+            from = dep_file,
+            format = "make",
         },
     })
 
@@ -519,10 +488,15 @@ function cpp.static_library(name, opts)
                 -- Produce BMI
                 local bmi_cmd = compiler .. " " .. table.concat(mflags, " ")
                     .. " " .. mod_src .. " -o " .. bmi_path
-                local bmi_inputs = { mod_src }
-                local mod_deps = parse_depfile(".cook/deps/" .. name .. "/" .. mstem .. ".d", mod_src)
-                for _, h in ipairs(mod_deps) do bmi_inputs[#bmi_inputs + 1] = h end
-                cook.add_unit({ inputs = bmi_inputs, output = bmi_path, command = bmi_cmd })
+                cook.add_unit({
+                    inputs = { mod_src },
+                    output = bmi_path,
+                    command = bmi_cmd,
+                    discovered_inputs = {
+                        from = ".cook/deps/" .. name .. "/" .. mstem .. ".d",
+                        format = "make",
+                    },
+                })
 
                 -- Compile BMI to object
                 local obj_cmd = compiler .. " -c " .. bmi_path .. " -o " .. obj_path
@@ -705,10 +679,15 @@ function cpp.executable(name, opts)
 
                 local bmi_cmd = compiler .. " " .. table.concat(mflags, " ")
                     .. " " .. mod_src .. " -o " .. bmi_path
-                local bmi_inputs = { mod_src }
-                local mod_deps = parse_depfile(".cook/deps/" .. name .. "/" .. mstem .. ".d", mod_src)
-                for _, h in ipairs(mod_deps) do bmi_inputs[#bmi_inputs + 1] = h end
-                cook.add_unit({ inputs = bmi_inputs, output = bmi_path, command = bmi_cmd })
+                cook.add_unit({
+                    inputs = { mod_src },
+                    output = bmi_path,
+                    command = bmi_cmd,
+                    discovered_inputs = {
+                        from = ".cook/deps/" .. name .. "/" .. mstem .. ".d",
+                        format = "make",
+                    },
+                })
 
                 local obj_cmd = compiler .. " -c " .. bmi_path .. " -o " .. obj_path
                 cook.add_unit({ inputs = { bmi_path }, output = obj_path, command = obj_cmd })

@@ -2131,7 +2131,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 The two sibling copies have the same `parse_depfile` function and the same three call sites (line numbers may differ). Apply the same transformations as Task 14.
 
-- [ ] **Step 15.1: Verify call-site count in each sibling**
+- [x] **Step 15.1: Verify call-site count in each sibling**
 
 ```bash
 grep -c parse_depfile examples/cpp-project/cook_modules/cpp.lua
@@ -2140,15 +2140,15 @@ grep -c parse_depfile examples/fzf-picker/cook_modules/cpp.lua
 
 Expected: 4 each (1 definition + 3 call sites).
 
-- [ ] **Step 15.2: Apply Task 14's edits to `examples/cpp-project/cook_modules/cpp.lua`**
+- [x] **Step 15.2: Apply Task 14's edits to `examples/cpp-project/cook_modules/cpp.lua`**
 
 Same removals and same `discovered_inputs` table additions. Use the line-near anchors (`local function parse_depfile`, `local mod_deps = parse_depfile(`, etc.) to locate them.
 
-- [ ] **Step 15.3: Apply Task 14's edits to `examples/fzf-picker/cook_modules/cpp.lua`**
+- [x] **Step 15.3: Apply Task 14's edits to `examples/fzf-picker/cook_modules/cpp.lua`**
 
 Same.
 
-- [ ] **Step 15.4: Verify no `parse_depfile` references remain in any cpp.lua copy**
+- [x] **Step 15.4: Verify no `parse_depfile` references remain in any cpp.lua copy**
 
 ```bash
 grep -rn parse_depfile examples/
@@ -2156,7 +2156,7 @@ grep -rn parse_depfile examples/
 
 Expected: no output.
 
-- [ ] **Step 15.5: Build the workspace**
+- [x] **Step 15.5: Build the workspace**
 
 ```bash
 cd cli && cargo build
@@ -2164,7 +2164,7 @@ cd cli && cargo build
 
 Expected: exit 0.
 
-- [ ] **Step 15.6: Commit**
+- [x] **Step 15.6: Commit**
 
 ```bash
 cd /home/alex/dev/cook
