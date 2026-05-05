@@ -1170,35 +1170,43 @@ pub fn execute_dag(
                                             let depfile_idx = meta.output_paths.len() as u32;
                                             let working_dir = &dag.node(id).payload().working_dir;
                                             let abs_depfile = working_dir.join(&di.from);
-                                            if let Ok(bytes) = std::fs::read(&abs_depfile) {
-                                                let artifact_k = artifact_key(
-                                                    &cloud_k,
-                                                    depfile_idx,
-                                                    &di.from,
-                                                );
-                                                let artifact_meta = ArtifactMeta {
-                                                    recipe_namespace: recipe_namespace.clone(),
-                                                    command_hash: meta.command_hash,
-                                                    context_hash: meta.context_hash,
-                                                    env_contribution: meta.env_contribution,
-                                                    schema_version: CACHE_VERSION,
-                                                    size_bytes: bytes.len() as u64,
-                                                    tags: std::collections::BTreeSet::new(),
-                                                    consulted_env_keys: meta
-                                                        .consulted_env
-                                                        .keys()
-                                                        .cloned()
-                                                        .collect(),
-                                                    output_index: depfile_idx,
-                                                    output_path: di.from.clone(),
-                                                };
-                                                if let Err(e) = cache_ctx.backend.put(
-                                                    &artifact_k,
-                                                    &bytes,
-                                                    &artifact_meta,
-                                                ) {
+                                            match std::fs::read(&abs_depfile) {
+                                                Ok(bytes) => {
+                                                    let artifact_k = artifact_key(
+                                                        &cloud_k,
+                                                        depfile_idx,
+                                                        &di.from,
+                                                    );
+                                                    let artifact_meta = ArtifactMeta {
+                                                        recipe_namespace: recipe_namespace.clone(),
+                                                        command_hash: meta.command_hash,
+                                                        context_hash: meta.context_hash,
+                                                        env_contribution: meta.env_contribution,
+                                                        schema_version: CACHE_VERSION,
+                                                        size_bytes: bytes.len() as u64,
+                                                        tags: std::collections::BTreeSet::new(),
+                                                        consulted_env_keys: meta
+                                                            .consulted_env
+                                                            .keys()
+                                                            .cloned()
+                                                            .collect(),
+                                                        output_index: depfile_idx,
+                                                        output_path: di.from.clone(),
+                                                    };
+                                                    if let Err(e) = cache_ctx.backend.put(
+                                                        &artifact_k,
+                                                        &bytes,
+                                                        &artifact_meta,
+                                                    ) {
+                                                        tracing::warn!(
+                                                            "cache backend put failed for depfile {}: {e}",
+                                                            di.from
+                                                        );
+                                                    }
+                                                }
+                                                Err(e) => {
                                                     tracing::warn!(
-                                                        "cache backend put failed for depfile {}: {e}",
+                                                        "discovered-inputs: depfile '{}' not found after execution: {e}",
                                                         di.from
                                                     );
                                                 }
@@ -1418,35 +1426,43 @@ pub fn execute_dag(
                                 let depfile_idx = meta.output_paths.len() as u32;
                                 let working_dir = &dag.node(result.id).payload().working_dir;
                                 let abs_depfile = working_dir.join(&di.from);
-                                if let Ok(bytes) = std::fs::read(&abs_depfile) {
-                                    let artifact_k = artifact_key(
-                                        &cloud_k,
-                                        depfile_idx,
-                                        &di.from,
-                                    );
-                                    let artifact_meta = ArtifactMeta {
-                                        recipe_namespace: recipe_namespace.clone(),
-                                        command_hash: meta.command_hash,
-                                        context_hash: meta.context_hash,
-                                        env_contribution: meta.env_contribution,
-                                        schema_version: CACHE_VERSION,
-                                        size_bytes: bytes.len() as u64,
-                                        tags: std::collections::BTreeSet::new(),
-                                        consulted_env_keys: meta
-                                            .consulted_env
-                                            .keys()
-                                            .cloned()
-                                            .collect(),
-                                        output_index: depfile_idx,
-                                        output_path: di.from.clone(),
-                                    };
-                                    if let Err(e) = cache_ctx.backend.put(
-                                        &artifact_k,
-                                        &bytes,
-                                        &artifact_meta,
-                                    ) {
+                                match std::fs::read(&abs_depfile) {
+                                    Ok(bytes) => {
+                                        let artifact_k = artifact_key(
+                                            &cloud_k,
+                                            depfile_idx,
+                                            &di.from,
+                                        );
+                                        let artifact_meta = ArtifactMeta {
+                                            recipe_namespace: recipe_namespace.clone(),
+                                            command_hash: meta.command_hash,
+                                            context_hash: meta.context_hash,
+                                            env_contribution: meta.env_contribution,
+                                            schema_version: CACHE_VERSION,
+                                            size_bytes: bytes.len() as u64,
+                                            tags: std::collections::BTreeSet::new(),
+                                            consulted_env_keys: meta
+                                                .consulted_env
+                                                .keys()
+                                                .cloned()
+                                                .collect(),
+                                            output_index: depfile_idx,
+                                            output_path: di.from.clone(),
+                                        };
+                                        if let Err(e) = cache_ctx.backend.put(
+                                            &artifact_k,
+                                            &bytes,
+                                            &artifact_meta,
+                                        ) {
+                                            tracing::warn!(
+                                                "cache backend put failed for depfile {}: {e}",
+                                                di.from
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
                                         tracing::warn!(
-                                            "cache backend put failed for depfile {}: {e}",
+                                            "discovered-inputs: depfile '{}' not found after execution: {e}",
                                             di.from
                                         );
                                     }
