@@ -1698,7 +1698,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Create: `cli/crates/cook-cache/tests/integration_discovered_inputs_warmup.rs`
 
-- [ ] **Step 12.1: Write the integration test**
+- [x] **Step 12.1: Write the integration test**
 
 Create `cli/crates/cook-cache/tests/integration_discovered_inputs_warmup.rs`:
 
@@ -1805,7 +1805,7 @@ fn warmup_collapses_to_two_runs() {
 }
 ```
 
-- [ ] **Step 12.2: Run the integration test**
+- [x] **Step 12.2: Run the integration test**
 
 ```bash
 cd cli && cargo test -p cook-cache --test integration_discovered_inputs_warmup
@@ -1813,7 +1813,7 @@ cd cli && cargo test -p cook-cache --test integration_discovered_inputs_warmup
 
 Expected: pass. (If you wrote it before the implementation, this would fail — but Tasks 4 + 6 already landed the necessary behaviour.)
 
-- [ ] **Step 12.3: Commit**
+- [x] **Step 12.3: Commit**
 
 ```bash
 cd /home/alex/dev/cook

@@ -213,8 +213,31 @@ pub fn needs_rebuild_cook(
         Ok(u) => u,
     };
 
+    // Output augmentation: when discovered_inputs is set, record_completion
+    // appends the depfile as an implicit output. Augment current_outputs to
+    // include the depfile path so the output count and content checks below
+    // work correctly against the stored fat entry.
+    let augmented_outputs_storage: Vec<String>;
+    let augmented_outputs_refs: Vec<&str>;
+    let current_outputs_for_check: &[&str] = if let Some(di) = discovered_inputs {
+        if entry.outputs.len() == current_outputs.len() + 1 {
+            // Entry has one extra output — assume it's the implicit depfile.
+            augmented_outputs_storage = current_outputs
+                .iter()
+                .map(|s| (*s).to_string())
+                .chain(std::iter::once(di.from.clone()))
+                .collect();
+            augmented_outputs_refs = augmented_outputs_storage.iter().map(String::as_str).collect();
+            &augmented_outputs_refs
+        } else {
+            current_outputs
+        }
+    } else {
+        current_outputs
+    };
+
     // Output count must match.
-    if entry.outputs.len() != current_outputs.len() {
+    if entry.outputs.len() != current_outputs_for_check.len() {
         return (RebuildResult::Rebuild(RebuildReason::OutputMissing), None);
     }
 
@@ -224,7 +247,7 @@ pub fn needs_rebuild_cook(
     for (i, (cached_out, rel_path)) in entry
         .outputs
         .iter()
-        .zip(current_outputs.iter())
+        .zip(current_outputs_for_check.iter())
         .enumerate()
     {
         let abs = working_dir.join(rel_path);
@@ -249,7 +272,7 @@ pub fn needs_rebuild_cook(
             Some(ctx) => try_restore(
                 ctx,
                 entry,
-                current_outputs,
+                current_outputs_for_check,
                 &needs_restore,
                 &updated_inputs,
                 working_dir,
