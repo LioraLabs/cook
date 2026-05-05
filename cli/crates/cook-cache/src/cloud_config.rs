@@ -25,17 +25,6 @@ pub struct CloudSection {
     #[serde(default)]
     pub project: Option<String>,
 
-    /// CS-0058 cloud-auth field. Bearer token sent as
-    /// `Authorization: Bearer <api_key>` on every CloudBackend request.
-    /// Resolution priority is `COOK_CLOUD_API_KEY` env var > this field;
-    /// see [`CloudConfig::resolved_api_key`]. When `cloud.enabled = true`,
-    /// the resolved key MUST be non-empty or `load_or_default` errors with
-    /// `MissingApiKey`. The TOML form is convenient for local development;
-    /// the env var is recommended for shared / CI repositories so the
-    /// secret is not checked in.
-    #[serde(default)]
-    pub api_key: Option<String>,
-
     // CS-0057 backend tunables. All optional; absent values fall back to
     // `BackendConfig::default()`. Honoured by `LocalBackend` for
     // `max_artifact_bytes` only; the timeout / retry / backoff knobs are
@@ -76,10 +65,12 @@ pub enum CloudConfigError {
     /// engine cannot construct a `CloudBackend` without one. Distinct from
     /// `MissingProject` so the diagnostic names the right field.
     MissingEndpoint,
-    /// CS-0058. `cloud.enabled = true` but no API key was resolved from
-    /// `COOK_CLOUD_API_KEY` env var or `[cloud] api_key` in cloud.toml.
-    /// The engine refuses to construct a `CloudBackend` without a bearer
-    /// token; no HTTP request is ever sent unauthenticated.
+    /// CS-0058 / CS-0059. `cloud.enabled = true` but no API key was
+    /// resolved from `COOK_CLOUD_API_KEY`. The engine refuses to construct a
+    /// `CloudBackend` without a bearer token; no HTTP request is ever sent
+    /// unauthenticated. Pre-CS-0059 a `[cloud] api_key` TOML field was a
+    /// secondary source; that field was removed to close the
+    /// secret-in-checked-in-config foot-gun.
     MissingApiKey,
 }
 
@@ -101,8 +92,8 @@ impl std::fmt::Display for CloudConfigError {
             Self::MissingApiKey => write!(
                 f,
                 "[cloud] enabled=true but no API key resolved — \
-                 set `api_key = \"...\"` in .cook/cloud.toml or \
-                 export COOK_CLOUD_API_KEY=<your-token>"
+                 export COOK_CLOUD_API_KEY=<your-token> \
+                 (interactive `cook cloud login` is planned in a future release)"
             ),
         }
     }
@@ -141,18 +132,17 @@ impl CloudConfig {
         Ok(cfg)
     }
 
-    /// CS-0058. Resolve the bearer-token API key for `CloudBackend` requests.
-    /// Priority: `COOK_CLOUD_API_KEY` env var > `[cloud] api_key` TOML field.
-    /// An empty env var (`COOK_CLOUD_API_KEY=""`) is treated as unset and
-    /// falls through to the TOML form. Returns `None` when no key is
-    /// available.
+    /// CS-0058 / CS-0059. Resolve the bearer-token API key for
+    /// `CloudBackend` requests from `COOK_CLOUD_API_KEY`. An empty env var
+    /// (`COOK_CLOUD_API_KEY=""`) is treated as unset. Returns `None` when
+    /// no key is available — `load_or_default` then surfaces
+    /// `CloudConfigError::MissingApiKey` when `cloud.enabled = true`.
+    /// CS-0059 dropped the secondary `[cloud] api_key` TOML form because
+    /// that field encouraged committing secrets in shared repositories.
     pub fn resolved_api_key(&self) -> Option<String> {
-        if let Ok(v) = std::env::var("COOK_CLOUD_API_KEY") {
-            if !v.is_empty() {
-                return Some(v);
-            }
-        }
-        self.cloud.api_key.clone()
+        std::env::var("COOK_CLOUD_API_KEY")
+            .ok()
+            .filter(|v| !v.is_empty())
     }
 
     /// Returns the configured project_id, or the project root directory name
@@ -261,26 +251,25 @@ endpoint = "https://api.cook.dev"
 
     #[test]
     fn cloud_enabled_with_project_ok() {
-        // CS-0058: cloud-enabled now also requires endpoint and api_key.
-        // The api_key is set via the TOML field here; the env-var path is
-        // covered by `cloud_enabled_uses_env_var_api_key`.
+        // CS-0058 + CS-0059: cloud-enabled requires endpoint and a
+        // resolvable env-var api_key. CS-0059 removed the TOML api_key
+        // field; resolution is env-var-only now.
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // Defensive: clear env so the TOML field is the resolution.
         // SAFETY: tests touching COOK_CLOUD_API_KEY hold ENV_LOCK; this
         // serialises set/remove across them.
-        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
+        unsafe { std::env::set_var("COOK_CLOUD_API_KEY", "env-tok-12345"); }
         let dir = tempfile::tempdir().expect("tempdir");
         write_toml(dir.path(), r#"
 [cloud]
 enabled = true
 endpoint = "https://api.cook.dev"
 project = "cook"
-api_key = "tok-test-12345"
 "#);
         let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
         assert!(cfg.cloud.enabled);
         assert_eq!(cfg.cloud.project.as_deref(), Some("cook"));
-        assert_eq!(cfg.resolved_api_key().as_deref(), Some("tok-test-12345"));
+        assert_eq!(cfg.resolved_api_key().as_deref(), Some("env-tok-12345"));
+        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
     }
 
     #[test]
@@ -416,67 +405,32 @@ project = "cook"
         unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
     }
 
-    /// `cloud.enabled = true` with project + endpoint + `api_key` in TOML
-    /// (no env var) → validation passes; `resolved_api_key` returns the
-    /// TOML value.
-    #[test]
-    fn cloud_enabled_uses_toml_api_key() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
-        let dir = tempfile::tempdir().expect("tempdir");
-        write_toml(dir.path(), r#"
-[cloud]
-enabled = true
-endpoint = "https://api.cook.dev"
-project = "cook"
-api_key = "toml-tok-zzz"
-"#);
-        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
-        assert_eq!(cfg.resolved_api_key().as_deref(), Some("toml-tok-zzz"));
-    }
-
-    /// Env var wins over TOML when both are set.
-    #[test]
-    fn cloud_env_var_wins_over_toml() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("COOK_CLOUD_API_KEY", "env-wins"); }
-        let dir = tempfile::tempdir().expect("tempdir");
-        write_toml(dir.path(), r#"
-[cloud]
-enabled = true
-endpoint = "https://api.cook.dev"
-project = "cook"
-api_key = "toml-loses"
-"#);
-        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
-        assert_eq!(cfg.resolved_api_key().as_deref(), Some("env-wins"));
-        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
-    }
-
     /// `cloud.enabled = true` without an endpoint → `MissingEndpoint`,
-    /// even if api_key is present.
+    /// even with the api_key env var set.
     #[test]
     fn cloud_enabled_requires_endpoint() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
+        unsafe { std::env::set_var("COOK_CLOUD_API_KEY", "tok-for-endpoint-test"); }
         let dir = tempfile::tempdir().expect("tempdir");
         write_toml(dir.path(), r#"
 [cloud]
 enabled = true
 project = "cook"
-api_key = "tok"
 "#);
         let result = CloudConfig::load_or_default(dir.path());
         match result {
             Err(CloudConfigError::MissingEndpoint) => {}
             other => panic!("expected MissingEndpoint, got: {other:?}"),
         }
+        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
     }
 
-    /// Empty env var (`COOK_CLOUD_API_KEY=""`) is treated as unset, falls
-    /// through to the TOML field.
+    /// CS-0059. Empty env var (`COOK_CLOUD_API_KEY=""`) is treated as
+    /// unset; resolution returns None and `load_or_default` errors with
+    /// `MissingApiKey` for cloud-enabled configs. Pre-CS-0059 this case
+    /// fell through to a `[cloud] api_key` TOML field; that field is gone.
     #[test]
-    fn cloud_empty_env_var_falls_through_to_toml() {
+    fn cloud_empty_env_var_treated_as_unset() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("COOK_CLOUD_API_KEY", ""); }
         let dir = tempfile::tempdir().expect("tempdir");
@@ -485,10 +439,39 @@ api_key = "tok"
 enabled = true
 endpoint = "https://api.cook.dev"
 project = "cook"
-api_key = "toml-fallback"
 "#);
-        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
-        assert_eq!(cfg.resolved_api_key().as_deref(), Some("toml-fallback"));
+        let result = CloudConfig::load_or_default(dir.path());
+        match result {
+            Err(CloudConfigError::MissingApiKey) => {}
+            other => panic!("expected MissingApiKey, got: {other:?}"),
+        }
+        // And in the disabled-cloud case, the empty env var is just None
+        // — no error path is even invoked.
+        let cfg = CloudConfig::default();
+        assert_eq!(cfg.resolved_api_key(), None);
+        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
+    }
+
+    /// CS-0059. Stray `[cloud] api_key = "..."` lines that pre-date
+    /// CS-0059 deserialise cleanly because serde ignores unknown fields
+    /// by default — no `#[serde(deny_unknown_fields)]` on `CloudSection`.
+    /// A user upgrading from CS-0058 sees the field silently ignored;
+    /// resolution falls back to env-var-only and surfaces `MissingApiKey`
+    /// if the env var is unset, prompting the user to migrate.
+    #[test]
+    fn legacy_toml_api_key_field_silently_ignored() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("COOK_CLOUD_API_KEY", "env-takes-precedence"); }
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+enabled = true
+endpoint = "https://api.cook.dev"
+project = "cook"
+api_key = "stale-toml-secret-should-be-ignored"
+"#);
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("legacy field is ignored, not rejected");
+        assert_eq!(cfg.resolved_api_key().as_deref(), Some("env-takes-precedence"));
         unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
     }
 }

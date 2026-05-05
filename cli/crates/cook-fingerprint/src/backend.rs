@@ -62,8 +62,13 @@ pub enum BackendError {
     Transient(String),
     /// Authentication/permission failure. Engine logs once, disables backend for build.
     Unauthorized(String),
-    /// Quota exceeded on put. Engine logs, drops the put, build continues.
-    QuotaExceeded,
+    /// Quota exceeded. CS-0059: carries an optional `Retry-After` hint
+    /// parsed from the server response. `None` is the terminal "drop &
+    /// continue" CS-0058 behaviour (server gave no timing); `Some(d)` is
+    /// retryable — the retry shell sleeps `d` (clamped to
+    /// `[backoff_initial, backoff_max]`) and tries again, still bounded by
+    /// `BackendConfig::max_retries`.
+    QuotaExceeded(Option<std::time::Duration>),
     /// Unexpected backend state (corrupted response, etc.). Logged; treated as miss.
     Other(String),
 }
@@ -73,7 +78,10 @@ impl std::fmt::Display for BackendError {
         match self {
             BackendError::Transient(s) => write!(f, "transient backend error: {s}"),
             BackendError::Unauthorized(s) => write!(f, "backend unauthorized: {s}"),
-            BackendError::QuotaExceeded => write!(f, "backend quota exceeded"),
+            BackendError::QuotaExceeded(Some(d)) => {
+                write!(f, "backend quota exceeded; retry after {d:?}")
+            }
+            BackendError::QuotaExceeded(None) => write!(f, "backend quota exceeded"),
             BackendError::Other(s) => write!(f, "backend error: {s}"),
         }
     }

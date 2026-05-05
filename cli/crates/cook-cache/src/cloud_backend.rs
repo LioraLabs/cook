@@ -103,13 +103,40 @@ impl CloudBackend {
 
 // ─── helpers: status mapping, retry, jitter, header packing ───────────────
 
+/// CS-0059. Parse a `Retry-After` response header per RFC 9110 §10.2.3.
+/// v1 supports the **delta-seconds** form only — an integer count of
+/// seconds the client SHOULD wait before retrying. The HTTP-date form is
+/// recognised by the parser but treated as `None` (no hint) because v1's
+/// retry shell sleeps a `Duration`, not a wall-clock target, and timezone
+/// /clock-skew handling is out of scope. CF Rate Limiter and BetterAuth's
+/// rate-limit middleware emit delta-seconds, so this is the form we'll
+/// see in practice; HTTP-date support can be added in a future revision
+/// if a server we care about uses it.
+fn parse_retry_after(response: &ureq::Response) -> Option<Duration> {
+    response
+        .header("Retry-After")?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_secs)
+}
+
 /// Map an HTTP status code to a `BackendError` variant. The body diagnostic
 /// is included; the request's `Authorization` header is NEVER included
 /// (the body is server-supplied, not request-derived).
-fn map_status_error(status: u16, ctx: &str, body: String) -> BackendError {
+///
+/// `retry_after` is the server-supplied hint parsed from the `Retry-After`
+/// header (if any); it's only meaningful for `429` but threaded uniformly
+/// to keep the call sites simple.
+fn map_status_error(
+    status: u16,
+    ctx: &str,
+    body: String,
+    retry_after: Option<Duration>,
+) -> BackendError {
     match status {
         401 | 403 => BackendError::Unauthorized(format!("{ctx}: status {status}: {body}")),
-        429 => BackendError::QuotaExceeded,
+        429 => BackendError::QuotaExceeded(retry_after),
         500..=599 => BackendError::Transient(format!("{ctx}: status {status}: {body}")),
         409 => BackendError::Other(format!(
             "conflict at {ctx}: server-side bytes differ: {body}"
@@ -127,11 +154,16 @@ fn map_status_error(status: u16, ctx: &str, body: String) -> BackendError {
 /// Map a `ureq::Error` to a `BackendError`. `ureq::Error::Status` carries
 /// an HTTP status; `ureq::Error::Transport` is a network/IO failure
 /// (always `Transient`).
+///
+/// CS-0059: extract `Retry-After` from response headers BEFORE consuming
+/// the body via `into_string()` — the response is moved into the
+/// body-extract call, so any header read must happen first.
 fn map_ureq_error(err: ureq::Error, ctx: &str) -> BackendError {
     match err {
         ureq::Error::Status(status, response) => {
+            let retry_after = parse_retry_after(&response);
             let body = response.into_string().unwrap_or_else(|_| "<no body>".into());
-            map_status_error(status, ctx, body)
+            map_status_error(status, ctx, body, retry_after)
         }
         ureq::Error::Transport(t) => {
             BackendError::Transient(format!("{ctx}: transport: {t}"))
@@ -168,10 +200,20 @@ fn jittered_capped(delay: Duration, cap: Duration) -> Duration {
     }
 }
 
-/// Retry shell. Calls `op` up to `1 + max_retries` times, retrying ONLY on
-/// `BackendError::Transient`. Sleeps `backoff_initial` after the first
-/// failure, doubling each retry, capped at `backoff_max`, with ±25% jitter
-/// applied to the sleep value.
+/// Retry shell. Calls `op` up to `1 + max_retries` times, retrying on:
+///
+/// - `BackendError::Transient` — sleeps the exponentially-growing
+///   `backoff_initial → backoff_max` schedule with ±25% jitter.
+/// - `BackendError::QuotaExceeded(Some(hint))` (CS-0059) — sleeps the
+///   server-supplied `hint` clamped to `[backoff_initial, backoff_max]`,
+///   no jitter (the server told us when to come back; the bounds keep us
+///   from sleeping forever or hammering immediately). Does NOT advance
+///   the exponential `delay` cursor — quota retries are independent of
+///   the transient-error backoff schedule.
+///
+/// `BackendError::QuotaExceeded(None)` is terminal (CS-0058 behaviour
+/// preserved when the server omits the header). All other variants
+/// terminate immediately.
 fn retry_loop<T, F>(config: &BackendConfig, mut op: F) -> BackendResult<T>
 where
     F: FnMut() -> BackendResult<T>,
@@ -191,6 +233,18 @@ where
                 std::thread::sleep(sleep_for);
                 // Double the next base delay, capped.
                 delay = std::cmp::min(delay.saturating_mul(2), config.backoff_max);
+                attempt += 1;
+                continue;
+            }
+            Err(BackendError::QuotaExceeded(Some(hint))) if attempt < config.max_retries => {
+                let clamped = hint.clamp(config.backoff_initial, config.backoff_max);
+                tracing::debug!(
+                    "cloud backend rate-limited (Retry-After={hint:?}); sleeping {clamped:?} \
+                     (attempt {}/{})",
+                    attempt + 1,
+                    config.max_retries + 1,
+                );
+                std::thread::sleep(clamped);
                 attempt += 1;
                 continue;
             }
@@ -693,8 +747,11 @@ mod tests {
         m.assert();
     }
 
+    /// CS-0058: a 429 with NO `Retry-After` header is terminal. The retry
+    /// shell sees `QuotaExceeded(None)` and falls through. CS-0059
+    /// preserves this — the `None` payload is the "no hint" sentinel.
     #[test]
-    fn cloud_backend_does_not_retry_on_429() {
+    fn cloud_backend_does_not_retry_on_429_without_retry_after() {
         let mut server = mockito::Server::new();
         let k = key(0x42);
         let url_path = format!("/v1/artifacts/{}", hex::encode(k));
@@ -706,8 +763,155 @@ mod tests {
 
         let backend = make_backend(&server.url(), 5);
         match backend.get(&k) {
-            Err(BackendError::QuotaExceeded) => {}
-            Err(other) => panic!("expected BackendError::QuotaExceeded, got {other:?}"),
+            Err(BackendError::QuotaExceeded(None)) => {}
+            Err(other) => panic!("expected BackendError::QuotaExceeded(None), got {other:?}"),
+            Ok(_) => panic!("expected error, got success"),
+        }
+        m.assert();
+    }
+
+    /// CS-0059: a 429 WITH `Retry-After: <delta-seconds>` is retryable.
+    /// The retry shell sleeps the server-supplied hint (clamped to
+    /// `[backoff_initial, backoff_max]`), then retries. Server returns
+    /// 429 on call 1 and 200 on call 2; the test asserts exactly two
+    /// calls happened and that elapsed time is at least the hinted delay.
+    #[test]
+    fn cloud_backend_honors_retry_after_on_429() {
+        use std::time::Instant;
+
+        let mut server = mockito::Server::new();
+        let bytes = b"";
+        let hash: [u8; 32] = <Sha256 as Digest>::digest(bytes).into();
+        let k = key(0x43);
+        let url_path = format!("/v1/artifacts/{}", hex::encode(k));
+
+        // Call 1: 429 with Retry-After: 1 (one second).
+        let m_429 = server
+            .mock("GET", url_path.as_str())
+            .with_status(429)
+            .with_header("Retry-After", "1")
+            .expect(1)
+            .create();
+        // Call 2: 200 with valid headers and empty body.
+        let m_200 = server
+            .mock("GET", url_path.as_str())
+            .with_status(200)
+            .with_header("X-Cook-Content-Hash", &hex::encode(hash))
+            .with_header("X-Cook-Size-Bytes", "0")
+            .with_header("X-Cook-Schema-Version", "3")
+            .with_header("X-Cook-Recipe-Namespace", "cook/Cookfile::build")
+            .with_header("X-Cook-Output-Index", "0")
+            .with_header("X-Cook-Output-Path", "build/foo.o")
+            .with_body(bytes)
+            .expect(1)
+            .create();
+
+        // backoff_max = 5s gives the 1s hint room to land unclamped.
+        let cfg = BackendConfig {
+            timeout: Duration::from_secs(5),
+            max_retries: 3,
+            backoff_initial: Duration::from_millis(1),
+            backoff_max: Duration::from_secs(5),
+            max_artifact_bytes: 1024 * 1024,
+        };
+        let backend = CloudBackend::new(server.url(), "test-token-zzz".into(), cfg);
+
+        let started = Instant::now();
+        let mut reader = backend.get(&k).expect("get ok").expect("present");
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).expect("read body");
+        let elapsed = started.elapsed();
+
+        assert_eq!(buf, bytes);
+        assert!(
+            elapsed >= Duration::from_millis(900),
+            "Retry-After=1s must produce at least ~1s elapsed, got {elapsed:?}"
+        );
+        m_429.assert();
+        m_200.assert();
+    }
+
+    /// CS-0059: a `Retry-After` hint that exceeds `backoff_max` is
+    /// clamped down. Server returns 429 with `Retry-After: 600` (10 min)
+    /// and a tight `backoff_max = 50ms`. The retry must proceed within a
+    /// few hundred ms — far below the 10-minute hint.
+    #[test]
+    fn cloud_backend_clamps_retry_after_to_backoff_max() {
+        use std::time::Instant;
+
+        let mut server = mockito::Server::new();
+        let bytes = b"";
+        let hash: [u8; 32] = <Sha256 as Digest>::digest(bytes).into();
+        let k = key(0x44);
+        let url_path = format!("/v1/artifacts/{}", hex::encode(k));
+
+        let m_429 = server
+            .mock("GET", url_path.as_str())
+            .with_status(429)
+            .with_header("Retry-After", "600")
+            .expect(1)
+            .create();
+        let m_200 = server
+            .mock("GET", url_path.as_str())
+            .with_status(200)
+            .with_header("X-Cook-Content-Hash", &hex::encode(hash))
+            .with_header("X-Cook-Size-Bytes", "0")
+            .with_header("X-Cook-Schema-Version", "3")
+            .with_header("X-Cook-Recipe-Namespace", "cook/Cookfile::build")
+            .with_header("X-Cook-Output-Index", "0")
+            .with_header("X-Cook-Output-Path", "build/foo.o")
+            .with_body(bytes)
+            .expect(1)
+            .create();
+
+        let cfg = BackendConfig {
+            timeout: Duration::from_secs(5),
+            max_retries: 3,
+            backoff_initial: Duration::from_millis(1),
+            backoff_max: Duration::from_millis(50),
+            max_artifact_bytes: 1024 * 1024,
+        };
+        let backend = CloudBackend::new(server.url(), "test-token-zzz".into(), cfg);
+
+        let started = Instant::now();
+        let mut reader = backend.get(&k).expect("get ok").expect("present");
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).expect("read body");
+        let elapsed = started.elapsed();
+
+        assert_eq!(buf, bytes);
+        // Generous upper bound — even on a slow CI runner, 10 minutes of
+        // unclamped sleep would blow this by orders of magnitude.
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "Retry-After=600s must clamp to backoff_max=50ms, got {elapsed:?}"
+        );
+        m_429.assert();
+        m_200.assert();
+    }
+
+    /// CS-0059: HTTP-date form of `Retry-After` is recognised by the
+    /// parser but not honoured (delta-seconds only in v1). Maps to
+    /// `QuotaExceeded(None)` → terminal, no retry. Pins the parser's
+    /// fall-through behaviour.
+    #[test]
+    fn cloud_backend_retry_after_http_date_falls_through_to_none() {
+        let mut server = mockito::Server::new();
+        let k = key(0x45);
+        let url_path = format!("/v1/artifacts/{}", hex::encode(k));
+        let m = server
+            .mock("GET", url_path.as_str())
+            .with_status(429)
+            .with_header("Retry-After", "Wed, 21 Oct 2026 07:28:00 GMT")
+            .expect(1)
+            .create();
+
+        let backend = make_backend(&server.url(), 5);
+        match backend.get(&k) {
+            Err(BackendError::QuotaExceeded(None)) => {}
+            Err(other) => panic!(
+                "HTTP-date form must map to QuotaExceeded(None) (terminal), got {other:?}"
+            ),
             Ok(_) => panic!("expected error, got success"),
         }
         m.assert();
