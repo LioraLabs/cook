@@ -24,9 +24,16 @@ impl std::fmt::Display for DepfileError {
     }
 }
 
-impl std::error::Error for DepfileError {}
+impl std::error::Error for DepfileError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            DepfileError::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
-/// Parse a Make-format depfile.
+/// Parse a Make-format depfile. Returns paths in input order, deduped.
 ///
 /// Filter rules (see design §4.3):
 ///   - Strip the leading target text up to and including the first `:`.
@@ -37,9 +44,9 @@ impl std::error::Error for DepfileError {}
 ///
 /// `source_path` may be the empty string (no self-skip).
 pub fn parse_make_depfile(
-    depfile_path: &Path,
-    source_path: &str,
-    working_dir: &Path,
+    _depfile_path: &Path,
+    _source_path: &str,
+    _working_dir: &Path,
 ) -> Result<Vec<String>, DepfileError> {
     todo!("Task 4")
 }
