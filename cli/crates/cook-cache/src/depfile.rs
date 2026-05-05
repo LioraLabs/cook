@@ -114,6 +114,26 @@ mod tests {
     }
 
     #[test]
+    fn joins_crlf_continuation_lines() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        write_file(wd, "src/a.c", "");
+        write_file(wd, "include/a.h", "");
+        write_file(wd, "include/b.h", "");
+        write_file(wd, ".cook/deps/a.d",
+            "build/a.o: src/a.c \\\r\n  include/a.h \\\r\n  include/b.h\r\n");
+
+        let paths = parse_make_depfile(
+            &wd.join(".cook/deps/a.d"),
+            "src/a.c",
+            wd,
+        )
+        .expect("ok");
+
+        assert_eq!(paths, vec!["include/a.h".to_string(), "include/b.h".to_string()]);
+    }
+
+    #[test]
     fn skips_absolute_paths() {
         let dir = tempfile::tempdir().expect("tempdir");
         let wd = dir.path();
