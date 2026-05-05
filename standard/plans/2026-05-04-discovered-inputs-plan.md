@@ -749,7 +749,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - Modify: `cli/crates/cook-fingerprint/src/check.rs`
 - Test: `cli/crates/cook-fingerprint/src/check.rs` (existing test module)
 
-- [ ] **Step 6.1: Write the failing test for the augmentation path**
+- [x] **Step 6.1: Write the failing test for the augmentation path**
 
 In the test module of `cli/crates/cook-fingerprint/src/check.rs`, append:
 
@@ -863,7 +863,7 @@ In the test module of `cli/crates/cook-fingerprint/src/check.rs`, append:
     }
 ```
 
-- [ ] **Step 6.2: Run the new tests — verify they fail**
+- [x] **Step 6.2: Run the new tests — verify they fail**
 
 ```bash
 cd cli && cargo test -p cook-fingerprint augments_current_inputs_from_depfile_and_skips missing_depfile_falls_back_to_thin_inputs
@@ -871,7 +871,7 @@ cd cli && cargo test -p cook-fingerprint augments_current_inputs_from_depfile_an
 
 Expected: both fail. The first reports `Rebuild(InputSetChanged)` because no augmentation happens yet (current is thin, entry is fat). The second already passes by accident (the no-augmentation behaviour matches what the test expects). Note that explicitly: it's the first test that should drive the implementation.
 
-- [ ] **Step 6.3: Implement pre-check augmentation**
+- [x] **Step 6.3: Implement pre-check augmentation**
 
 In `cli/crates/cook-fingerprint/src/check.rs`, locate the existing line:
 
@@ -955,7 +955,7 @@ pub use __depfile_call::install as install_depfile_parser;
 
 This keeps the dependency graph clean (no cycle between fingerprint and cache) and lets tests install a parser.
 
-- [ ] **Step 6.4: Install the parser in the test**
+- [x] **Step 6.4: Install the parser in the test**
 
 Update the new tests in Step 6.1 to install the real parser before calling `needs_rebuild_cook`:
 
@@ -981,7 +981,7 @@ The fingerprint crate now needs `cook-cache` as a dev-dependency (test-only — 
 cook-cache = { path = "../cook-cache" }
 ```
 
-- [ ] **Step 6.5: Run the augmentation tests — verify they pass**
+- [x] **Step 6.5: Run the augmentation tests — verify they pass**
 
 ```bash
 cd cli && cargo test -p cook-fingerprint augments_current_inputs_from_depfile_and_skips missing_depfile_falls_back_to_thin_inputs
@@ -989,7 +989,7 @@ cd cli && cargo test -p cook-fingerprint augments_current_inputs_from_depfile_an
 
 Expected: both pass.
 
-- [ ] **Step 6.6: Run the entire fingerprint suite to confirm no regressions**
+- [x] **Step 6.6: Run the entire fingerprint suite to confirm no regressions**
 
 ```bash
 cd cli && cargo test -p cook-fingerprint
@@ -997,7 +997,7 @@ cd cli && cargo test -p cook-fingerprint
 
 Expected: all green.
 
-- [ ] **Step 6.7: Commit**
+- [x] **Step 6.7: Commit**
 
 ```bash
 cd /home/alex/dev/cook

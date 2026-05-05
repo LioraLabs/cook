@@ -23,8 +23,8 @@ pub use backend::{
     CloudKeyInputs,
 };
 pub use check::{
-    hash_env, hash_file, needs_rebuild_cook, needs_rebuild_plate, stat_mtime, RebuildReason,
-    RebuildResult, RestoreCtx,
+    hash_env, hash_file, install_depfile_parser, needs_rebuild_cook, needs_rebuild_plate,
+    stat_mtime, RebuildReason, RebuildResult, RestoreCtx,
 };
 pub use context::{ExecutionContext, MachineIdentity, ToolHash};
 pub use envkey::{env_contribution, EnvDenylist};

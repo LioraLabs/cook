@@ -99,6 +99,35 @@ fn check_inputs(
     Ok(updated)
 }
 
+mod __depfile_call {
+    use std::path::Path;
+
+    /// Function pointer the engine installs at startup. `cook-fingerprint`
+    /// does not depend on `cook-cache`; the engine wires the real parser
+    /// before any check fires (see cook-engine::executor).
+    static PARSER: std::sync::OnceLock<
+        fn(&Path, &str, &Path, &str) -> Result<Vec<String>, ()>,
+    > = std::sync::OnceLock::new();
+
+    pub fn install(parser: fn(&Path, &str, &Path, &str) -> Result<Vec<String>, ()>) {
+        let _ = PARSER.set(parser);
+    }
+
+    pub fn parse(
+        depfile_path: &Path,
+        source_path: &str,
+        working_dir: &Path,
+        format: &str,
+    ) -> Result<Vec<String>, ()> {
+        match PARSER.get() {
+            Some(p) => p(depfile_path, source_path, working_dir, format),
+            None => Err(()),
+        }
+    }
+}
+
+pub use __depfile_call::install as install_depfile_parser;
+
 /// Context for restore-on-hit attempts (2026-05-02 addendum spec §5.2).
 ///
 /// When `Some(&RestoreCtx)` is passed to `needs_rebuild_cook`, a cache entry
@@ -131,7 +160,7 @@ pub fn needs_rebuild_cook(
     env_contribution: u64,
     working_dir: &Path,
     restore_ctx: Option<&RestoreCtx>,
-    _discovered_inputs: Option<&cook_contracts::DiscoveredInputs>,
+    discovered_inputs: Option<&cook_contracts::DiscoveredInputs>,
 ) -> (RebuildResult, Option<StepEntry>) {
     let entry = match entry {
         None => return (RebuildResult::Rebuild(RebuildReason::NoCacheEntry), None),
@@ -147,10 +176,39 @@ pub fn needs_rebuild_cook(
         return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
     }
 
+    // Pre-check augmentation: when the unit declares discovered_inputs and
+    // a prior depfile is on disk, fatten current_inputs by the discovered
+    // paths so the entry's input set matches. A missing or malformed depfile
+    // is no-augmentation (fallthrough to InputSetChanged → rebuild → self-heal).
+    let augmented_storage: Vec<String>;
+    let augmented_refs: Vec<&str>;
+    let current_inputs_for_check: &[&str] = if let Some(di) = discovered_inputs {
+        let source_for_skip = current_inputs.first().copied().unwrap_or("");
+        match __depfile_call::parse(
+            &working_dir.join(&di.from),
+            source_for_skip,
+            working_dir,
+            &di.format,
+        ) {
+            Ok(discovered_paths) => {
+                augmented_storage = current_inputs
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .chain(discovered_paths)
+                    .collect();
+                augmented_refs = augmented_storage.iter().map(String::as_str).collect();
+                &augmented_refs
+            }
+            Err(_) => current_inputs,
+        }
+    } else {
+        current_inputs
+    };
+
     // Inputs first (spec §5.3): we need the input content hashes to recompose
     // cloud_key for the restore attempt below. InputChanged/InputSetChanged
     // still short-circuits to rebuild before any restore work happens.
-    let updated_inputs = match check_inputs(&entry.inputs, current_inputs, working_dir) {
+    let updated_inputs = match check_inputs(&entry.inputs, current_inputs_for_check, working_dir) {
         Err(reason) => return (RebuildResult::Rebuild(reason), None),
         Ok(u) => u,
     };
@@ -658,5 +716,128 @@ mod tests {
         let (result, updated) = needs_rebuild_plate(Some(&entry), &["in.c"], 0xbeef, 0x9999, 0, wd);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::ContextChanged));
         assert!(updated.is_none());
+    }
+
+    #[test]
+    fn augments_current_inputs_from_depfile_and_skips() {
+        use cook_contracts::DiscoveredInputs;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        // Lay out source, header, and a depfile that references both.
+        std::fs::write(wd.join("src.c"), b"src").expect("src");
+        std::fs::write(wd.join("hdr.h"), b"hdr").expect("hdr");
+        std::fs::create_dir_all(wd.join(".cook/deps")).expect("mkdir");
+        std::fs::write(
+            wd.join(".cook/deps/src.d"),
+            b"build/src.o: src.c hdr.h\n",
+        ).expect("d");
+        std::fs::write(wd.join("out.o"), b"obj").expect("out");
+
+        // Build a stored entry that already has the fat input set.
+        let src_hash = hash_file(&wd.join("src.c")).unwrap();
+        let hdr_hash = hash_file(&wd.join("hdr.h")).unwrap();
+        let out_hash = hash_file(&wd.join("out.o")).unwrap();
+
+        let entry = StepEntry {
+            inputs: vec![
+                FileRecord { path: "src.c".into(), mtime: 0, hash: src_hash },
+                FileRecord { path: "hdr.h".into(), mtime: 0, hash: hdr_hash },
+            ],
+            outputs: vec![FileRecord {
+                path: "out.o".into(),
+                mtime: stat_mtime(&wd.join("out.o")).unwrap_or(0),
+                hash: out_hash,
+            }],
+            command_hash: 0xc0de,
+            context_hash: 0,
+            env_contribution: 0,
+        };
+
+        let di = DiscoveredInputs {
+            from: ".cook/deps/src.d".into(),
+            format: "make".into(),
+        };
+
+        install_real_parser_once();
+
+        // Caller passes only the declared input.
+        let (result, _updated) = needs_rebuild_cook(
+            Some(&entry),
+            &["src.c"],
+            &["out.o"],
+            0xc0de,
+            0,
+            0,
+            wd,
+            None,
+            Some(&di),
+        );
+
+        assert!(matches!(result, RebuildResult::Skip),
+            "augmented current_inputs (declared + discovered) should match the fat entry");
+    }
+
+    #[test]
+    fn missing_depfile_falls_back_to_thin_inputs() {
+        use cook_contracts::DiscoveredInputs;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        std::fs::write(wd.join("src.c"), b"src").expect("src");
+        std::fs::write(wd.join("hdr.h"), b"hdr").expect("hdr");
+        std::fs::write(wd.join("out.o"), b"obj").expect("out");
+
+        let src_hash = hash_file(&wd.join("src.c")).unwrap();
+        let hdr_hash = hash_file(&wd.join("hdr.h")).unwrap();
+        let out_hash = hash_file(&wd.join("out.o")).unwrap();
+
+        let entry = StepEntry {
+            inputs: vec![
+                FileRecord { path: "src.c".into(), mtime: 0, hash: src_hash },
+                FileRecord { path: "hdr.h".into(), mtime: 0, hash: hdr_hash },
+            ],
+            outputs: vec![FileRecord {
+                path: "out.o".into(),
+                mtime: stat_mtime(&wd.join("out.o")).unwrap_or(0),
+                hash: out_hash,
+            }],
+            command_hash: 0xc0de,
+            context_hash: 0,
+            env_contribution: 0,
+        };
+
+        let di = DiscoveredInputs {
+            from: ".cook/deps/src.d".into(),  // does not exist
+            format: "make".into(),
+        };
+
+        install_real_parser_once();
+
+        let (result, _) = needs_rebuild_cook(
+            Some(&entry),
+            &["src.c"],
+            &["out.o"],
+            0xc0de,
+            0,
+            0,
+            wd,
+            None,
+            Some(&di),
+        );
+
+        // Augmentation no-ops; current=[src.c] vs entry=[src.c, hdr.h] → InputSetChanged.
+        assert!(matches!(result, RebuildResult::Rebuild(RebuildReason::InputSetChanged)));
+    }
+
+    fn install_real_parser_once() {
+        use std::sync::OnceLock;
+        static ONCE: OnceLock<()> = OnceLock::new();
+        ONCE.get_or_init(|| {
+            crate::install_depfile_parser(|p, s, wd, fmt| {
+                if fmt != "make" { return Err(()); }
+                cook_cache::parse_make_depfile(p, s, wd).map_err(|_| ())
+            });
+        });
     }
 }
