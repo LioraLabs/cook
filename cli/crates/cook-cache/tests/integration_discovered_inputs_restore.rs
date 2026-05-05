@@ -98,6 +98,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
         consulted_env_keys: Default::default(),
         output_index: idx,
         output_path: path.to_string(),
+        content_hash: ArtifactMeta::zero_content_hash(),
     };
     backend.put(&obj_k, &obj_bytes, &mk_meta(0, "a.o", obj_bytes.len() as u64))
         .expect("put obj");

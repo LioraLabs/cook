@@ -7,6 +7,8 @@
 
 use std::path::PathBuf;
 
+use sha2::{Digest, Sha256};
+
 pub use cook_fingerprint::backend::{
     artifact_key, cloud_key, ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey,
     CloudKeyInputs,
@@ -44,11 +46,61 @@ impl CacheBackend for LocalBackend {
 
     fn get(&self, key: &CloudKey) -> BackendResult<Option<Vec<u8>>> {
         let path = self.path_for(key);
-        match std::fs::read(&path) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(BackendError::Other(format!("read {}: {e}", path.display()))),
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(BackendError::Other(format!("read {}: {e}", path.display()))),
+        };
+
+        // CS-0054: self-verify content integrity before returning bytes.
+        // The sidecar carries a SHA-256 stamped at `put` time; if the
+        // bytes-on-disk no longer hash to that value (bit-flip, opportunistic
+        // tampering of bytes-only in a shared store, or a tampered sidecar
+        // pointing at the wrong hash), we fail closed by treating the read
+        // as a miss. The engine then falls through to the rebuild path
+        // (Cook Standard §{exec.cache.integrity}). A missing or unreadable
+        // sidecar is treated identically — without a recorded hash we have
+        // no integrity proof and MUST NOT install the bytes.
+        let meta_path = path.with_extension("meta.json");
+        let meta_bytes = match std::fs::read(&meta_path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::warn!(
+                    "cache integrity: missing sidecar for {}; treating as miss",
+                    path.display()
+                );
+                return Ok(None);
+            }
+            Err(e) => {
+                return Err(BackendError::Other(format!(
+                    "read meta {}: {e}",
+                    meta_path.display()
+                )))
+            }
+        };
+        let meta: ArtifactMeta = match serde_json::from_slice(&meta_bytes) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    "cache integrity: malformed sidecar at {} ({e}); treating as miss",
+                    meta_path.display()
+                );
+                return Ok(None);
+            }
+        };
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        let actual: [u8; 32] = hasher.finalize().into();
+        if actual != meta.content_hash {
+            tracing::warn!(
+                "cache integrity: content_hash mismatch for {} (sidecar={}, actual={}); failing closed as miss",
+                path.display(),
+                hex::encode(meta.content_hash),
+                hex::encode(actual),
+            );
+            return Ok(None);
         }
+        Ok(Some(bytes))
     }
 
     fn put(&self, key: &CloudKey, bytes: &[u8], meta: &ArtifactMeta) -> BackendResult<()> {
@@ -64,12 +116,29 @@ impl CacheBackend for LocalBackend {
         std::fs::rename(&tmp, &path)
             .map_err(|e| BackendError::Other(format!("rename {}: {e}", path.display())))?;
 
-        // Sidecar metadata.
+        // CS-0054: stamp the SHA-256 of the artifact bytes into the sidecar.
+        // The caller's `meta.content_hash` is treated as a placeholder
+        // (typically the zero sentinel) and overwritten here — the contract
+        // is that `put` is the sole authority on the persisted hash. `get`
+        // verifies against this value on every restore.
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        let content_hash: [u8; 32] = hasher.finalize().into();
+        let stamped = ArtifactMeta {
+            content_hash,
+            ..meta.clone()
+        };
+
+        // Sidecar metadata. Atomic write via tmp + rename so a partially
+        // written sidecar can never be observed alongside fully-written bytes.
         let meta_path = path.with_extension("meta.json");
-        let meta_bytes = serde_json::to_vec(meta)
+        let meta_tmp = path.with_extension("meta.json.tmp");
+        let meta_bytes = serde_json::to_vec(&stamped)
             .map_err(|e| BackendError::Other(format!("serialize meta: {e}")))?;
-        std::fs::write(&meta_path, &meta_bytes)
-            .map_err(|e| BackendError::Other(format!("write meta {}: {e}", meta_path.display())))?;
+        std::fs::write(&meta_tmp, &meta_bytes)
+            .map_err(|e| BackendError::Other(format!("write meta {}: {e}", meta_tmp.display())))?;
+        std::fs::rename(&meta_tmp, &meta_path)
+            .map_err(|e| BackendError::Other(format!("rename meta {}: {e}", meta_path.display())))?;
         Ok(())
     }
 
@@ -104,6 +173,7 @@ mod tests {
             consulted_env_keys: BTreeSet::new(),
             output_index: 0,
             output_path: "build/foo.o".into(),
+            content_hash: ArtifactMeta::zero_content_hash(),
         }
     }
 
@@ -206,5 +276,133 @@ mod tests {
         assert_eq!(parent, "ab");
         let file_name = path.file_name().unwrap().to_string_lossy();
         assert_eq!(file_name.len(), 62);
+    }
+
+    // ─── CS-0054: SHA-256 content_hash integrity ────────────────────────────
+
+    /// `put` MUST stamp `meta.content_hash` with the SHA-256 of the bytes,
+    /// overwriting whatever placeholder the caller passed. The persisted
+    /// sidecar reflects the stamped value.
+    #[test]
+    fn put_computes_sha256_in_meta() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xC5);
+        let bytes = b"hello cs-0054";
+        // Caller passes the zero sentinel; put must overwrite.
+        let mut meta = sample_meta();
+        meta.content_hash = [0u8; 32];
+        backend.put(&k, bytes, &meta).expect("put");
+
+        let path = backend.path_for(&k);
+        let meta_path = path.with_extension("meta.json");
+        let restored: ArtifactMeta =
+            serde_json::from_slice(&std::fs::read(&meta_path).expect("read meta"))
+                .expect("deserialize");
+
+        // Known-answer check against an independent SHA-256.
+        let expected = <Sha256 as Digest>::digest(bytes);
+        let expected_arr: [u8; 32] = expected.into();
+        assert_eq!(
+            restored.content_hash, expected_arr,
+            "put must stamp content_hash with SHA-256(bytes)"
+        );
+        assert_ne!(
+            restored.content_hash,
+            [0u8; 32],
+            "put must overwrite the caller's zero sentinel"
+        );
+    }
+
+    /// Happy round-trip: put bytes, get bytes, content_hash verifies, bytes
+    /// returned are byte-identical to bytes put.
+    #[test]
+    fn get_succeeds_when_bytes_match_meta() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xC6);
+        let bytes = b"round-trip payload";
+        backend.put(&k, bytes, &sample_meta()).expect("put");
+
+        let got = backend.get(&k).expect("get").expect("hit");
+        assert_eq!(got, bytes, "get returns the bytes put under this key");
+    }
+
+    /// Tampering the bytes-on-disk after `put` MUST cause `get` to return
+    /// `None`. The threat model is bit-flip / disk corruption locally and
+    /// opportunistic byte-only tampering on a shared backend; we MUST NOT
+    /// hand the tampered bytes to the engine's restore path.
+    #[test]
+    fn get_fails_closed_on_byte_tamper() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xC7);
+        let bytes = b"original bytes";
+        backend.put(&k, bytes, &sample_meta()).expect("put");
+
+        // Mutate the on-disk artifact bytes — sidecar is left intact, so
+        // the recorded SHA-256 no longer matches.
+        let path = backend.path_for(&k);
+        std::fs::write(&path, b"TAMPERED bytes").expect("tamper write");
+
+        let got = backend.get(&k).expect("get");
+        assert!(
+            got.is_none(),
+            "byte tamper must surface as a miss (fail closed); got Some"
+        );
+    }
+
+    /// Tampering the sidecar (e.g., flipping `content_hash` to the SHA-256
+    /// of bytes the attacker wants the engine to install) MUST also cause
+    /// `get` to return `None`. The attacker would need to consistently
+    /// rewrite both bytes AND the sidecar's hash field — that case is
+    /// out of scope (deferred to signed-artifact / SLSA work) — but
+    /// rewriting only one side MUST fail closed.
+    #[test]
+    fn get_fails_closed_on_meta_tamper() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xC8);
+        let bytes = b"original bytes 2";
+        backend.put(&k, bytes, &sample_meta()).expect("put");
+
+        // Read the sidecar, flip content_hash to a different value
+        // (here we use the SHA-256 of *different* bytes), write back.
+        let path = backend.path_for(&k);
+        let meta_path = path.with_extension("meta.json");
+        let mut meta: ArtifactMeta =
+            serde_json::from_slice(&std::fs::read(&meta_path).expect("read meta"))
+                .expect("deserialize");
+        let bogus = <Sha256 as Digest>::digest(b"not the real bytes");
+        meta.content_hash = bogus.into();
+        std::fs::write(&meta_path, serde_json::to_vec(&meta).expect("serialize")).expect("rewrite");
+
+        let got = backend.get(&k).expect("get");
+        assert!(
+            got.is_none(),
+            "meta tamper must surface as a miss (fail closed); got Some"
+        );
+    }
+
+    /// A sidecar that is missing entirely (for whatever reason — partial
+    /// delete, partial replication on a remote backend, manual interference)
+    /// MUST be treated as a miss: without a recorded hash, the implementation
+    /// has no integrity proof and MUST NOT install the bytes.
+    #[test]
+    fn get_fails_closed_on_missing_meta() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0xC9);
+        backend.put(&k, b"x", &sample_meta()).expect("put");
+
+        let path = backend.path_for(&k);
+        let meta_path = path.with_extension("meta.json");
+        std::fs::remove_file(&meta_path).expect("remove sidecar");
+
+        let got = backend.get(&k).expect("get");
+        assert!(
+            got.is_none(),
+            "missing sidecar must surface as a miss; got Some"
+        );
     }
 }

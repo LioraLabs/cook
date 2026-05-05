@@ -65,6 +65,7 @@ fn toggling_back_rehits_prior_entry() {
         consulted_env_keys: ["CXXFLAGS".to_string()].into_iter().collect(),
         output_index: 0,
         output_path: "build/main.o".into(),
+        content_hash: ArtifactMeta::zero_content_hash(),
     };
 
     backend.put(&key_o2, b"O2-bytes", &meta_for(env_contrib_o2)).expect("put o2");

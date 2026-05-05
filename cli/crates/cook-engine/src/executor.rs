@@ -1158,6 +1158,8 @@ pub fn execute_dag(
                                                 consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
                                                 output_index: out_idx as u32,
                                                 output_path: output_path.clone(),
+                                                // CS-0054: stamped by the backend on put.
+                                                content_hash: ArtifactMeta::zero_content_hash(),
                                             };
                                             if let Err(e) = cache_ctx.backend.put(&artifact_k, &bytes, &artifact_meta) {
                                                 tracing::warn!("cache backend put failed for {}: {}", output_path, e);
@@ -1192,6 +1194,8 @@ pub fn execute_dag(
                                                             .collect(),
                                                         output_index: depfile_idx,
                                                         output_path: di.from.clone(),
+                                                        // CS-0054: stamped by the backend on put.
+                                                        content_hash: ArtifactMeta::zero_content_hash(),
                                                     };
                                                     if let Err(e) = cache_ctx.backend.put(
                                                         &artifact_k,
@@ -1414,6 +1418,8 @@ pub fn execute_dag(
                                     consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
                                     output_index: out_idx as u32,
                                     output_path: output_path.clone(),
+                                    // CS-0054: stamped by the backend on put.
+                                    content_hash: ArtifactMeta::zero_content_hash(),
                                 };
                                 if let Err(e) = cache_ctx.backend.put(&artifact_k, &bytes, &artifact_meta) {
                                     tracing::warn!("cache backend put failed for {}: {}", output_path, e);
@@ -1448,6 +1454,8 @@ pub fn execute_dag(
                                                 .collect(),
                                             output_index: depfile_idx,
                                             output_path: di.from.clone(),
+                                            // CS-0054: stamped by the backend on put.
+                                            content_hash: ArtifactMeta::zero_content_hash(),
                                         };
                                         if let Err(e) = cache_ctx.backend.put(
                                             &artifact_k,

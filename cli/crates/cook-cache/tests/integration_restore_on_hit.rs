@@ -75,6 +75,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         consulted_env_keys: BTreeSet::new(),
         output_index: 0,
         output_path: "out.o".into(),
+        content_hash: ArtifactMeta::zero_content_hash(),
     };
     backend
         .put(&artifact_k, b"correct-bytes", &meta)
@@ -232,6 +233,7 @@ fn restore_rejects_tampered_backend_bytes() {
         consulted_env_keys: BTreeSet::new(),
         output_index: 0,
         output_path: "out.o".into(),
+        content_hash: ArtifactMeta::zero_content_hash(),
     };
     backend
         .put(&artifact_k, tampered, &meta)

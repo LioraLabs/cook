@@ -83,6 +83,7 @@ fn multi_output_restore_writes_all_outputs() {
             consulted_env_keys: BTreeSet::new(),
             output_index: idx as u32,
             output_path: path.to_string(),
+            content_hash: ArtifactMeta::zero_content_hash(),
         };
         backend.put(&k, bytes, &meta).expect("seed");
     }
@@ -177,6 +178,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         consulted_env_keys: BTreeSet::new(),
         output_index: 0,
         output_path: "foo.out".into(),
+        content_hash: ArtifactMeta::zero_content_hash(),
     };
     backend.put(&k0, b"foo-correct", &meta0).expect("seed");
 

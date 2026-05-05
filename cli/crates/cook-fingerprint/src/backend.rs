@@ -54,6 +54,27 @@ pub struct ArtifactMeta {
     pub output_index: u32,
     /// Workspace-relative output path. Diagnostic only; not part of equality.
     pub output_path: String,
+    /// SHA-256 of the artifact bytes. Computed and stamped by the backend
+    /// in `CacheBackend::put`; verified against the on-disk bytes by
+    /// `CacheBackend::get`. Callers SHOULD pass the all-zero sentinel
+    /// `[0u8; 32]` at construction time — `put` overwrites it before
+    /// persisting the sidecar. This is the soundness primitive for shared
+    /// (multi-tenant) backends where the artifact bytes may be tampered
+    /// with by parties other than the local build; cf. Cook Standard
+    /// §{exec.cache.integrity}. Cryptographic strength here defends against
+    /// byte-only tampering; an adversary capable of consistently rewriting
+    /// both bytes and meta is out of scope (see CS-0054 spec §2).
+    #[serde(default = "ArtifactMeta::zero_content_hash")]
+    pub content_hash: [u8; 32],
+}
+
+impl ArtifactMeta {
+    /// Sentinel placeholder for `content_hash` at construction time;
+    /// overwritten by `CacheBackend::put`. Also the serde default for
+    /// pre-CS-0054 sidecars that lack the field.
+    pub fn zero_content_hash() -> [u8; 32] {
+        [0u8; 32]
+    }
 }
 
 pub trait CacheBackend: Send + Sync {
@@ -62,10 +83,26 @@ pub trait CacheBackend: Send + Sync {
     fn batch_query(&self, keys: &[CloudKey]) -> BackendResult<BTreeSet<CloudKey>>;
 
     /// Fetch artifact bytes. Returns Ok(None) on miss (NOT an error).
+    ///
+    /// Implementations MUST self-verify content integrity before returning
+    /// bytes. Concretely: the bytes returned MUST be byte-identical to the
+    /// bytes most recently `put` under this key — otherwise `Ok(None)` MUST
+    /// be returned (treat as miss, fail closed). The reference contract is
+    /// SHA-256 of bytes-on-disk equal to `ArtifactMeta::content_hash` from
+    /// the sidecar; alternative cryptographic schemes are permitted so long
+    /// as the byte-identity property holds. This is the soundness primitive
+    /// the Standard §{exec.cache.integrity} relies on; it MUST hold whether
+    /// the backend is local-filesystem or a multi-tenant shared store.
     fn get(&self, key: &CloudKey) -> BackendResult<Option<Vec<u8>>>;
 
     /// Upload artifact bytes with metadata. Idempotent on (key, bytes):
     /// re-putting the same pair MUST succeed.
+    ///
+    /// Implementations MUST stamp `meta.content_hash` with the SHA-256 of
+    /// `bytes` (or an equivalent cryptographic digest) before persisting
+    /// the sidecar; callers pass the zero sentinel and treat the overwrite
+    /// as authoritative. The persisted hash is the value `get` will check
+    /// the bytes-on-disk against on a subsequent restore.
     fn put(&self, key: &CloudKey, bytes: &[u8], meta: &ArtifactMeta) -> BackendResult<()>;
 
     /// Explicit deletion. Idempotent: returns Ok(()) for both
