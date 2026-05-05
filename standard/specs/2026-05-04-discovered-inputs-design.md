@@ -473,7 +473,7 @@ The `cook_step` grammar (Appendix A §{grammar-appendix.steps}) is unchanged. No
 
 None blocking implementation.
 
-1. **Restore depfile mid-check.** Whether to attempt depfile restore from the backend before falling through to `InputSetChanged` rebuild when the depfile alone is missing on disk while the local entry is intact. The baseline self-heals on the next run; this refinement saves one rebuild in a niche edge case (typically: a partial wipe of `.cook/deps/`). Defer to follow-up work unless the rebuild is observed to bite.
+1. **Restore depfile mid-check — RESOLVED during Task 13.** During implementation, the integration test for restore-on-hit revealed that without this refinement, a partial wipe of `.cook/deps/` paired with an intact local entry burns an avoidable rebuild. The adopted approach: when the pre-check depfile parse fails AND a `restore_ctx` is available, substitute the stored entry's input set so the outputs walk and restore path can proceed. The refinement is gated on `restore_ctx.is_some()` so the no-backend path retains the original baseline self-heal. See §{exec.cache.discovered-inputs} clause 2 for the normative wording.
 2. **Future format strategies.** `format = "rustc-dep-info-json"`, `format = "ninja-deps"`, `format = "fsatrace"`. Each is purely additive; specifying them is left to the spec that introduces the corresponding language module.
 3. **Eviction of pre-amendment thin-key artifact uploads.** Any uploads made before this design's commit path landed are correctly addressed under their own `artifact_key`s; they are reachable but orphaned once the unit's entry grows fat. Eviction policy work owns this cleanup.
 

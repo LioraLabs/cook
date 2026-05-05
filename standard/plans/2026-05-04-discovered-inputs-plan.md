@@ -2300,11 +2300,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Modify: `standard/src/content/docs/08-execution-model.mdx`
 
-- [ ] **Step 18.1: Locate the cache subsection**
+- [x] **Step 18.1: Locate the cache subsection**
 
 In `standard/src/content/docs/08-execution-model.mdx`, find the `§{exec.cache}` subsection. It currently covers cache keys, restore-on-hit (per 2026-05-02 spec), and per-output artifacts.
 
-- [ ] **Step 18.2: Append the new normative subsection**
+- [x] **Step 18.2: Append the new normative subsection**
 
 After the existing cache subsection content, add:
 
@@ -2321,7 +2321,7 @@ A unit whose declaration carries `discovered_inputs` (§{lua.add-unit-discovered
 The `"make"` discovery format is the Make rule format produced by GCC's `-MMD` flag and equivalent compiler options. The conforming parser MUST: strip the leading target text up to and including the first `:`; join continuation lines (`\\\n` and `\\\r\n`); ignore entries beginning with `/`; ignore the unit's first declared input; ignore entries whose paths do not exist on disk.
 ```
 
-- [ ] **Step 18.3: Build the spec**
+- [x] **Step 18.3: Build the spec**
 
 ```bash
 cd standard && pnpm build
@@ -2329,7 +2329,7 @@ cd standard && pnpm build
 
 Expected: exit 0.
 
-- [ ] **Step 18.4: Commit**
+- [x] **Step 18.4: Commit**
 
 ```bash
 cd /home/alex/dev/cook
