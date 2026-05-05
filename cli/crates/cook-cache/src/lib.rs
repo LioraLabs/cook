@@ -13,8 +13,11 @@
 pub mod backend;
 pub mod cache_ctx;
 pub mod cloud_config;
+pub mod depfile;
 pub mod manager;
 pub mod store;
+
+pub use depfile::{parse_make_depfile, DepfileError};
 
 // Re-exports of fingerprint-side items for back-compat with existing call sites.
 // New code should import from `cook_fingerprint` directly.

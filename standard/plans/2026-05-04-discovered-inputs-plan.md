@@ -231,7 +231,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - Create: `cli/crates/cook-cache/src/depfile.rs`
 - Modify: `cli/crates/cook-cache/src/lib.rs`
 
-- [ ] **Step 2.1: Write the failing test (single skeleton)**
+- [x] **Step 2.1: Write the failing test (single skeleton)**
 
 Create `cli/crates/cook-cache/src/depfile.rs` with **only** the public surface and a `todo!()` body, plus a module-level test:
 
@@ -307,7 +307,7 @@ pub mod depfile;
 pub use depfile::{parse_make_depfile, DepfileError};
 ```
 
-- [ ] **Step 2.2: Run the test — verify it fails on `todo!()`**
+- [x] **Step 2.2: Run the test — verify it fails on `todo!()`**
 
 ```bash
 cd cli && cargo test -p cook-cache --lib depfile::tests::returns_not_found_for_missing_file
@@ -315,7 +315,7 @@ cd cli && cargo test -p cook-cache --lib depfile::tests::returns_not_found_for_m
 
 Expected: PANIC with "not yet implemented: Task 4". The module compiles; the panic confirms the path through to the function works.
 
-- [ ] **Step 2.3: Verify the workspace still builds**
+- [x] **Step 2.3: Verify the workspace still builds**
 
 ```bash
 cd cli && cargo build
@@ -323,7 +323,7 @@ cd cli && cargo build
 
 Expected: exit 0.
 
-- [ ] **Step 2.4: Commit**
+- [x] **Step 2.4: Commit**
 
 ```bash
 cd /home/alex/dev/cook
