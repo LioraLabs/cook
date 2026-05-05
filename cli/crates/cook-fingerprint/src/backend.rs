@@ -95,14 +95,41 @@ pub trait CacheBackend: Send + Sync {
     /// the backend is local-filesystem or a multi-tenant shared store.
     fn get(&self, key: &CloudKey) -> BackendResult<Option<Vec<u8>>>;
 
-    /// Upload artifact bytes with metadata. Idempotent on (key, bytes):
-    /// re-putting the same pair MUST succeed.
+    /// Upload artifact bytes with metadata.
     ///
     /// Implementations MUST stamp `meta.content_hash` with the SHA-256 of
     /// `bytes` (or an equivalent cryptographic digest) before persisting
     /// the sidecar; callers pass the zero sentinel and treat the overwrite
     /// as authoritative. The persisted hash is the value `get` will check
     /// the bytes-on-disk against on a subsequent restore.
+    ///
+    /// **Idempotency contract (CS-0055).** A `put` to a key that already
+    /// holds an artifact MUST distinguish two cases by comparing the SHA-256
+    /// of the new `bytes` against the recorded `content_hash` of the existing
+    /// artifact:
+    ///
+    /// 1. **Identical bytes** (`SHA-256(new_bytes) == existing.content_hash`):
+    ///    the `put` MUST succeed as a no-op (or as an idempotent re-stamp);
+    ///    `Ok(())` MUST be returned. This is the common case: a correct
+    ///    rebuild deterministically produced the same bytes.
+    /// 2. **Conflicting bytes** (`SHA-256(new_bytes) != existing.content_hash`):
+    ///    the `put` MUST return `BackendError::Other(...)` with a diagnostic
+    ///    message that names the key in hex and describes the conflict. The
+    ///    implementation MUST NOT overwrite the prior bytes or sidecar.
+    ///
+    /// This is the write-side analogue of the `get` integrity check: it
+    /// guarantees that a key in the artifact store maps to one and only one
+    /// byte sequence over its lifetime, which is the invariant the read-side
+    /// verification relies upon. On a multi-tenant shared backend this also
+    /// prevents one client (e.g., one running a poisoned toolchain that
+    /// produced different bytes) from silently corrupting another client's
+    /// artifact through a key collision.
+    ///
+    /// If the existing meta sidecar is missing, unreadable, or malformed
+    /// (i.e., no recorded `content_hash` is recoverable), the implementation
+    /// MUST treat the entry as if no prior artifact existed and write through
+    /// — this is the partial-write recovery path established by the atomic
+    /// sidecar contract (cf. CS-0054 §3.2).
     fn put(&self, key: &CloudKey, bytes: &[u8], meta: &ArtifactMeta) -> BackendResult<()>;
 
     /// Explicit deletion. Idempotent: returns Ok(()) for both

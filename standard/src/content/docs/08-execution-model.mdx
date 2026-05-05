@@ -205,6 +205,8 @@ This requirement holds for every backend, including a backend that resides on th
 
 The intent is that an implementation's cache restore path MUST NOT be a vector for installing attacker-controlled or otherwise unauthenticated bytes into the workspace. A backend whose contents have drifted, been corrupted, or been replaced — for any reason — MUST be observationally indistinguishable from a backend that simply does not have the artifact.
 
+An implementation's artifact-store write path MUST treat a `put` of bytes that conflict with bytes already stored at the same key as an error. "Conflict" means the bytes differ; re-writing identical bytes is idempotent and MUST succeed. The error MUST surface to the caller; the implementation MUST NOT silently overwrite the prior bytes. This requirement is the write-side analogue of the read-side fingerprint check: it ensures that a key in the artifact store maps to one and only one byte sequence over its lifetime, which is the invariant the read-side verification relies upon.
+
 ### Example 8.6.1
 
 ```cook
