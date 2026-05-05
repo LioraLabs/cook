@@ -537,7 +537,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Modify: `cli/crates/cook-cache/src/depfile.rs`
 
-- [ ] **Step 4.1: Replace the `todo!()` body with the parser**
+- [x] **Step 4.1: Replace the `todo!()` body with the parser**
 
 In `cli/crates/cook-cache/src/depfile.rs`, replace the `parse_make_depfile` body:
 
@@ -605,7 +605,7 @@ pub fn parse_make_depfile(
 }
 ```
 
-- [ ] **Step 4.2: Run the parser tests — verify they pass**
+- [x] **Step 4.2: Run the parser tests — verify they pass**
 
 ```bash
 cd cli && cargo test -p cook-cache --lib depfile::tests
@@ -613,7 +613,7 @@ cd cli && cargo test -p cook-cache --lib depfile::tests
 
 Expected: all eight tests pass.
 
-- [ ] **Step 4.3: Commit**
+- [x] **Step 4.3: Commit**
 
 ```bash
 cd /home/alex/dev/cook

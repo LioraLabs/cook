@@ -44,11 +44,67 @@ impl std::error::Error for DepfileError {
 ///
 /// `source_path` may be the empty string (no self-skip).
 pub fn parse_make_depfile(
-    _depfile_path: &Path,
-    _source_path: &str,
-    _working_dir: &Path,
+    depfile_path: &Path,
+    source_path: &str,
+    working_dir: &Path,
 ) -> Result<Vec<String>, DepfileError> {
-    todo!("Task 4")
+    let content = match std::fs::read_to_string(depfile_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Err(DepfileError::NotFound);
+        }
+        Err(e) => return Err(DepfileError::Io(e)),
+    };
+
+    // Locate the first ':' separating the target from the prerequisites.
+    let colon_pos = match content.find(':') {
+        Some(p) => p,
+        None => {
+            return Err(DepfileError::Malformed {
+                byte_offset: 0,
+                reason: "no ':' separating target from prerequisites".to_string(),
+            });
+        }
+    };
+
+    // Strip target text and any leading whitespace after the colon.
+    let after_colon = &content[colon_pos + 1..];
+
+    // Join continuation lines: '\\\r\n' and '\\\n' both become a single space.
+    // CRLF is processed first so the trailing '\r' doesn't leak into a token
+    // when the file uses Windows line endings.
+    let joined = after_colon
+        .replace("\\\r\n", " ")
+        .replace("\\\n", " ");
+
+    // Tokenise on any whitespace and apply filter rules. Preserve first-occurrence order.
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+
+    for token in joined.split_whitespace() {
+        if token.is_empty() {
+            continue;
+        }
+        // Filter: skip absolute paths.
+        if token.starts_with('/') {
+            continue;
+        }
+        // Filter: skip the source itself.
+        if !source_path.is_empty() && token == source_path {
+            continue;
+        }
+        // Filter: skip non-existent paths (relative to working_dir).
+        let abs = working_dir.join(token);
+        if !abs.exists() {
+            continue;
+        }
+        // Dedupe.
+        if seen.insert(token.to_string()) {
+            out.push(token.to_string());
+        }
+    }
+
+    Ok(out)
 }
 
 #[cfg(test)]
