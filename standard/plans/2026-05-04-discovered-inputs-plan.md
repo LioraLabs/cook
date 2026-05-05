@@ -1170,7 +1170,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - Modify: `cli/crates/cook-register/src/unit_api.rs`
 - Test: `cli/crates/cook-register/src/tests.rs`
 
-- [ ] **Step 8.1: Write the failing tests**
+- [x] **Step 8.1: Write the failing tests**
 
 In `cli/crates/cook-register/src/tests.rs`, append:
 
@@ -1259,7 +1259,7 @@ fn add_unit_rejects_dotdot_discovered_from() {
 }
 ```
 
-- [ ] **Step 8.2: Run the tests — verify they fail**
+- [x] **Step 8.2: Run the tests — verify they fail**
 
 ```bash
 cd cli && cargo test -p cook-register add_unit_rejects_
@@ -1267,7 +1267,7 @@ cd cli && cargo test -p cook-register add_unit_rejects_
 
 Expected: all three fail. The invalid inputs are accepted today.
 
-- [ ] **Step 8.3: Add validation to `unit_api.rs`**
+- [x] **Step 8.3: Add validation to `unit_api.rs`**
 
 Modify the discovered-inputs reader from Task 7 to enforce the rules:
 
@@ -1318,7 +1318,7 @@ Modify the discovered-inputs reader from Task 7 to enforce the rules:
             };
 ```
 
-- [ ] **Step 8.4: Run the tests — verify they pass**
+- [x] **Step 8.4: Run the tests — verify they pass**
 
 ```bash
 cd cli && cargo test -p cook-register add_unit_rejects_
@@ -1326,7 +1326,7 @@ cd cli && cargo test -p cook-register add_unit_rejects_
 
 Expected: all three pass.
 
-- [ ] **Step 8.5: Run the full register suite**
+- [x] **Step 8.5: Run the full register suite**
 
 ```bash
 cd cli && cargo test -p cook-register
@@ -1334,7 +1334,7 @@ cd cli && cargo test -p cook-register
 
 Expected: all green.
 
-- [ ] **Step 8.6: Commit**
+- [x] **Step 8.6: Commit**
 
 ```bash
 cd /home/alex/dev/cook

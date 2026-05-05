@@ -209,6 +209,21 @@ pub fn register_unit_api(
                             "cook.add_unit: discovered_inputs.from must be non-empty".into(),
                         ));
                     }
+                    if from.starts_with('/') {
+                        return Err(LuaError::RuntimeError(format!(
+                            "cook.add_unit: discovered_inputs.from must be a relative path; got absolute path {from:?}"
+                        )));
+                    }
+                    if from.split('/').any(|seg| seg == "..") {
+                        return Err(LuaError::RuntimeError(format!(
+                            "cook.add_unit: discovered_inputs.from must not contain '..' segments; got {from:?}"
+                        )));
+                    }
+                    if format != "make" {
+                        return Err(LuaError::RuntimeError(format!(
+                            "cook.add_unit: discovered_inputs.format = {format:?} is not supported by this implementation (supported: \"make\")"
+                        )));
+                    }
                     Some(cook_contracts::DiscoveredInputs { from, format })
                 }
                 Ok(LuaValue::Nil) | Err(_) => None,
@@ -922,5 +937,60 @@ mod tests {
         let di = cm.discovered_inputs.as_ref().expect("discovered_inputs");
         assert_eq!(di.from, ".cook/deps/a.d");
         assert_eq!(di.format, "make");
+    }
+
+    #[test]
+    fn add_unit_rejects_unsupported_discovered_inputs_format() {
+        let (lua, _capture_state) = make_lua_with_unit_api("demo");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        let result = lua.load(r#"
+            cook.add_unit({
+                inputs = { "x" }, output = "y", command = "true",
+                discovered_inputs = { from = "x.d", format = "ninja" },
+            })
+        "#).exec();
+
+        let err = result.expect_err("expected error for unsupported format").to_string();
+        assert!(err.contains("ninja"), "diagnostic must name the unsupported format; got: {err}");
+        assert!(err.contains("supported"), "diagnostic must say what is supported; got: {err}");
+    }
+
+    #[test]
+    fn add_unit_rejects_absolute_discovered_from() {
+        let (lua, _capture_state) = make_lua_with_unit_api("demo");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        let result = lua.load(r#"
+            cook.add_unit({
+                inputs = { "x" }, output = "y", command = "true",
+                discovered_inputs = { from = "/etc/secrets.d", format = "make" },
+            })
+        "#).exec();
+
+        let err = result.expect_err("expected error for absolute path").to_string();
+        assert!(
+            err.contains("relative") || err.contains("absolute"),
+            "diagnostic must mention 'relative' or 'absolute'; got: {err}"
+        );
+    }
+
+    #[test]
+    fn add_unit_rejects_dotdot_discovered_from() {
+        let (lua, _capture_state) = make_lua_with_unit_api("demo");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        let result = lua.load(r#"
+            cook.add_unit({
+                inputs = { "x" }, output = "y", command = "true",
+                discovered_inputs = { from = "../escape.d", format = "make" },
+            })
+        "#).exec();
+
+        let err = result.expect_err("expected error for '..' path").to_string();
+        assert!(err.contains(".."), "diagnostic must contain '..'; got: {err}");
     }
 }
