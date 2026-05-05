@@ -2008,11 +2008,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Modify: `examples/lua-build/cook_modules/cpp.lua`
 
-- [ ] **Step 14.1: Remove the `parse_depfile` function**
+- [x] **Step 14.1: Remove the `parse_depfile` function**
 
 In `examples/lua-build/cook_modules/cpp.lua`, delete the entire `local function parse_depfile(...) ... end` block at lines 115–132 (function definition + closing). Verify the function is no longer referenced after the next steps.
 
-- [ ] **Step 14.2: Replace the `cpp.compile` call site (line ~327–338)**
+- [x] **Step 14.2: Replace the `cpp.compile` call site (line ~327–338)**
 
 In `cpp.compile`, replace:
 
@@ -2045,7 +2045,7 @@ with:
     })
 ```
 
-- [ ] **Step 14.3: Replace the C++20 BMI compile call site (around line ~575–581)**
+- [x] **Step 14.3: Replace the C++20 BMI compile call site (around line ~575–581)**
 
 Find:
 
@@ -2070,11 +2070,11 @@ Replace with:
                 })
 ```
 
-- [ ] **Step 14.4: Replace the second BMI compile call site (around line ~821–827)**
+- [x] **Step 14.4: Replace the second BMI compile call site (around line ~821–827)**
 
 Find the parallel call in the second `cook.step_group` block (line ~824). Apply the same transformation as Step 14.3.
 
-- [ ] **Step 14.5: Verify `parse_depfile` is no longer referenced**
+- [x] **Step 14.5: Verify `parse_depfile` is no longer referenced**
 
 ```bash
 grep -n parse_depfile examples/lua-build/cook_modules/cpp.lua
@@ -2082,7 +2082,7 @@ grep -n parse_depfile examples/lua-build/cook_modules/cpp.lua
 
 Expected: no output. If anything remains, it's a missed call site — remove it.
 
-- [ ] **Step 14.6: Build the workspace**
+- [x] **Step 14.6: Build the workspace**
 
 ```bash
 cd cli && cargo build
@@ -2090,7 +2090,7 @@ cd cli && cargo build
 
 Expected: exit 0.
 
-- [ ] **Step 14.7: Run lua-build end-to-end (manual verification)**
+- [x] **Step 14.7: Run lua-build end-to-end (manual verification)**
 
 This step requires running the `cook` CLI. From `examples/lua-build`:
 
@@ -2103,7 +2103,7 @@ cargo run --quiet --manifest-path ../../cli/Cargo.toml --bin cook
 
 Expected: the second `cook` invocation reports `(N nodes, N cached)` for every `.o` node — collapsed warmup. If it still reports `0 cached` for the `.o` nodes, augmentation isn't reaching them; revisit Tasks 6, 7, and 10.
 
-- [ ] **Step 14.8: Commit**
+- [x] **Step 14.8: Commit**
 
 ```bash
 cd /home/alex/dev/cook
