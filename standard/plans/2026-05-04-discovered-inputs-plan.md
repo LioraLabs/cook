@@ -344,7 +344,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Modify: `cli/crates/cook-cache/src/depfile.rs` (test module)
 
-- [ ] **Step 3.1: Add the parser fixture tests**
+- [x] **Step 3.1: Add the parser fixture tests**
 
 Append to the `mod tests` in `cli/crates/cook-cache/src/depfile.rs`:
 
@@ -507,7 +507,7 @@ Append to the `mod tests` in `cli/crates/cook-cache/src/depfile.rs`:
     }
 ```
 
-- [ ] **Step 3.2: Run the tests — verify they fail on `todo!()`**
+- [x] **Step 3.2: Run the tests — verify they fail on `todo!()`**
 
 ```bash
 cd cli && cargo test -p cook-cache --lib depfile::tests
@@ -515,7 +515,7 @@ cd cli && cargo test -p cook-cache --lib depfile::tests
 
 Expected: every test panics with "not yet implemented: Task 4" except `returns_not_found_for_missing_file` from Task 2 (which still passes because the function returns NotFound before reaching `todo!()` — actually no, it doesn't; the early return is what we'll implement in Task 4. As of now all eight tests panic).
 
-- [ ] **Step 3.3: Commit (failing tests as specification)**
+- [x] **Step 3.3: Commit (failing tests as specification)**
 
 ```bash
 cd /home/alex/dev/cook
