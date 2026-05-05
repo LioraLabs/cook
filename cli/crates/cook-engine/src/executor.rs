@@ -212,6 +212,19 @@ pub fn execute_dag(
     event_tx: Option<mpsc::Sender<EngineEvent>>,
     cache_ctx: Arc<CacheContext>,
 ) -> Result<(), EngineError> {
+    // Install the depfile parser pointer so cook-fingerprint's pre-check
+    // augmentation can call back into cook-cache without a runtime dep cycle.
+    {
+        use std::sync::Once;
+        static INSTALL: Once = Once::new();
+        INSTALL.call_once(|| {
+            cook_fingerprint::install_depfile_parser(|p, src, wd, fmt| {
+                if fmt != "make" { return Err(()); }
+                cook_cache::parse_make_depfile(p, src, wd).map_err(|_| ())
+            });
+        });
+    }
+
     // Empty DAG — nothing to do.
     if dag.is_empty() {
         return Ok(());
@@ -1054,6 +1067,55 @@ pub fn execute_dag(
                             if let Some(cm) = cache_managers.get(&dag.node(id).payload().recipe_name) {
                                 match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(id).payload().working_dir) {
                                     Ok(step_entry) => {
+                                        // Post-execution augmentation: parse the just-written
+                                        // depfile and append discovered FileRecords to
+                                        // step_entry.inputs, then persist the augmented entry.
+                                        let mut step_entry = step_entry;
+                                        if let Some(di) = &meta.discovered_inputs {
+                                            let working_dir = &dag.node(id).payload().working_dir;
+                                            let abs_depfile = working_dir.join(&di.from);
+                                            let source_for_skip = meta
+                                                .input_paths
+                                                .first()
+                                                .map(String::as_str)
+                                                .unwrap_or("");
+                                            match cook_cache::parse_make_depfile(
+                                                &abs_depfile,
+                                                source_for_skip,
+                                                working_dir,
+                                            ) {
+                                                Ok(discovered_paths) => {
+                                                    let strs: Vec<String> = discovered_paths
+                                                        .iter()
+                                                        .cloned()
+                                                        .collect();
+                                                    match cook_cache::collect_records_public(&strs, working_dir) {
+                                                        Ok(records) => {
+                                                            for rec in records {
+                                                                step_entry.inputs.push(rec);
+                                                            }
+                                                            cm.update_step(
+                                                                &meta.recipe_name,
+                                                                &meta.cache_key,
+                                                                step_entry.clone(),
+                                                            );
+                                                        }
+                                                        Err(p) => {
+                                                            tracing::warn!(
+                                                                "discovered-inputs: failed to hash discovered path '{}'", p
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "discovered-inputs: depfile parse failed for '{}': {e}",
+                                                        di.from
+                                                    );
+                                                }
+                                            }
+                                        }
+
                                         // Compute cloud_key for this unit (spec §5.3).
                                         let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
                                         sorted_hashes.sort();
@@ -1217,6 +1279,55 @@ pub fn execute_dag(
                 if let Some(cm) = cache_managers.get(&dag.node(result.id).payload().recipe_name) {
                     match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(result.id).payload().working_dir) {
                         Ok(step_entry) => {
+                            // Post-execution augmentation: parse the just-written
+                            // depfile and append discovered FileRecords to
+                            // step_entry.inputs, then persist the augmented entry.
+                            let mut step_entry = step_entry;
+                            if let Some(di) = &meta.discovered_inputs {
+                                let working_dir = &dag.node(result.id).payload().working_dir;
+                                let abs_depfile = working_dir.join(&di.from);
+                                let source_for_skip = meta
+                                    .input_paths
+                                    .first()
+                                    .map(String::as_str)
+                                    .unwrap_or("");
+                                match cook_cache::parse_make_depfile(
+                                    &abs_depfile,
+                                    source_for_skip,
+                                    working_dir,
+                                ) {
+                                    Ok(discovered_paths) => {
+                                        let strs: Vec<String> = discovered_paths
+                                            .iter()
+                                            .cloned()
+                                            .collect();
+                                        match cook_cache::collect_records_public(&strs, working_dir) {
+                                            Ok(records) => {
+                                                for rec in records {
+                                                    step_entry.inputs.push(rec);
+                                                }
+                                                cm.update_step(
+                                                    &meta.recipe_name,
+                                                    &meta.cache_key,
+                                                    step_entry.clone(),
+                                                );
+                                            }
+                                            Err(p) => {
+                                                tracing::warn!(
+                                                    "discovered-inputs: failed to hash discovered path '{}'", p
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "discovered-inputs: depfile parse failed for '{}': {e}",
+                                            di.from
+                                        );
+                                    }
+                                }
+                            }
+
                             // Compute cloud_key for this unit (spec §5.3).
                             let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
                             sorted_hashes.sort();

@@ -1475,7 +1475,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 This task wires the parser-pointer install (so pre-check augmentation works) and adds the post-execution amend-and-replace block to both `record_completion` call sites.
 
-- [ ] **Step 10.1: Install the depfile parser at engine startup**
+- [x] **Step 10.1: Install the depfile parser at engine startup**
 
 In `cli/crates/cook-engine/src/executor.rs`, find the public entry point — the function that builds the executor (likely named `run_with_dag` or similar; search for the start of the main exec function). Add at the top of that function (before any node executes):
 
@@ -1494,7 +1494,7 @@ In `cli/crates/cook-engine/src/executor.rs`, find the public entry point — the
     }
 ```
 
-- [ ] **Step 10.2: Add the post-execution augmentation block**
+- [x] **Step 10.2: Add the post-execution augmentation block**
 
 Locate both call sites where `record_completion` is invoked and `step_entry` is built (interactive ~1052 and worker ~1219). After each `match cm.record_completion(...)` arm that gets `Ok(step_entry)`, immediately before the existing `let mut sorted_hashes:` line that composes `cloud_key`, insert:
 
@@ -1551,7 +1551,7 @@ Locate both call sites where `record_completion` is invoked and `step_entry` is 
 
 This duplicates between the two call sites is intentional — they live in distinct branches of the executor's match (interactive vs. worker) and the surrounding context differs. Keep them in sync; if they diverge in a future change, the integration test in Task 13 catches it.
 
-- [ ] **Step 10.3: Expose `collect_records` from `cook-cache`**
+- [x] **Step 10.3: Expose `collect_records` from `cook-cache`**
 
 Currently `collect_records` is private to `cli/crates/cook-cache/src/manager.rs:15`. Add a thin public wrapper at the top of that file (near the existing `fn collect_records`):
 
@@ -1572,7 +1572,7 @@ Re-export it in `cli/crates/cook-cache/src/lib.rs`:
 pub use manager::collect_records_public;
 ```
 
-- [ ] **Step 10.4: Build and run the entire CLI test suite**
+- [x] **Step 10.4: Build and run the entire CLI test suite**
 
 ```bash
 cd cli && cargo test
@@ -1580,7 +1580,7 @@ cd cli && cargo test
 
 Expected: all green. The post-execution path doesn't have a unit test yet — Task 13 covers it via integration.
 
-- [ ] **Step 10.5: Commit**
+- [x] **Step 10.5: Commit**
 
 ```bash
 cd /home/alex/dev/cook

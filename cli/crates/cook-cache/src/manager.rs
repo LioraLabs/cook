@@ -23,6 +23,15 @@ fn collect_records(paths: &[String], working_dir: &Path) -> Result<Vec<FileRecor
     Ok(out)
 }
 
+/// Public wrapper for [`collect_records`] used by the engine's post-execution
+/// augmentation path.
+pub fn collect_records_public(
+    paths: &[String],
+    working_dir: &Path,
+) -> Result<Vec<FileRecord>, String> {
+    collect_records(paths, working_dir)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RecordError {
     #[error("cache record skipped: input file missing or unreadable: {0}")]

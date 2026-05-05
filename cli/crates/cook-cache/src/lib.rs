@@ -32,5 +32,5 @@ pub use cook_fingerprint::{
 pub use backend::LocalBackend;
 pub use cache_ctx::CacheContext;
 pub use cloud_config::{CloudConfig, CloudConfigError};
-pub use manager::{CacheState, RecordError, SharedCacheState, ThreadSafeCacheManager};
+pub use manager::{collect_records_public, CacheState, RecordError, SharedCacheState, ThreadSafeCacheManager};
 pub use store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};
