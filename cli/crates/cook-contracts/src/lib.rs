@@ -115,6 +115,25 @@ impl WorkPayload {
     }
 }
 
+/// Declarative description of post-execution input discovery for a unit.
+///
+/// When present on a [`CacheMeta`], the engine MUST:
+///   - Read the file at [`Self::from`] (relative to the unit's working
+///     directory) before composing the cache check's `current_inputs`,
+///     parsing it under [`Self::format`].
+///   - After successful execution, parse the file again and append its
+///     contents to the recorded `StepEntry.inputs`.
+///   - Treat the file as an implicit restorable output: uploaded under
+///     its own artifact key, restored on a hit-with-drifted-outputs check.
+///
+/// The only currently supported `format` is `"make"`. See the design at
+/// `standard/specs/2026-05-04-discovered-inputs-design.md`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiscoveredInputs {
+    pub from: String,
+    pub format: String,
+}
+
 /// Metadata used by the caching subsystem to determine whether a unit can be
 /// skipped.
 #[derive(Debug, Clone, PartialEq)]
@@ -135,6 +154,7 @@ pub struct CacheMeta {
     /// NEW: the (key, value) pairs the command consulted post-denylist.
     /// Phase 5 wires real values; empty BTreeMap until then.
     pub consulted_env: std::collections::BTreeMap<String, String>,
+    pub discovered_inputs: Option<DiscoveredInputs>,
 }
 
 /// A single captured unit of work within a recipe.
@@ -274,6 +294,7 @@ mod tests {
             context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
+            discovered_inputs: None,
         };
         assert_eq!(m.recipe_name, "build");
         assert_eq!(m.command_hash, 42);
@@ -294,8 +315,50 @@ mod tests {
             context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
+            discovered_inputs: None,
         };
         assert!(m.output_paths.is_empty());
+    }
+
+    #[test]
+    fn cache_meta_construction_with_discovered_inputs() {
+        let m = CacheMeta {
+            recipe_name: "compile".into(),
+            project_id: "p".into(),
+            cookfile_path: "Cookfile".into(),
+            cache_key: "k".into(),
+            input_paths: vec!["src/a.c".into()],
+            output_paths: vec!["build/a.o".into()],
+            command_hash: 0xdead,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: std::collections::BTreeMap::new(),
+            discovered_inputs: Some(DiscoveredInputs {
+                from: ".cook/deps/a.d".into(),
+                format: "make".into(),
+            }),
+        };
+        let di = m.discovered_inputs.as_ref().expect("present");
+        assert_eq!(di.from, ".cook/deps/a.d");
+        assert_eq!(di.format, "make");
+    }
+
+    #[test]
+    fn cache_meta_default_discovered_inputs_is_none() {
+        let m = CacheMeta {
+            recipe_name: "r".into(),
+            project_id: "p".into(),
+            cookfile_path: "Cookfile".into(),
+            cache_key: "k".into(),
+            input_paths: vec![],
+            output_paths: vec![],
+            command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: std::collections::BTreeMap::new(),
+            discovered_inputs: None,
+        };
+        assert!(m.discovered_inputs.is_none());
     }
 
     #[test]
@@ -397,6 +460,7 @@ mod tests {
                 context_hash: 0,
                 env_contribution: 0,
                 consulted_env: std::collections::BTreeMap::new(),
+                discovered_inputs: None,
             }),
             dep_kind: DepKind::StepGroup(0),
         };

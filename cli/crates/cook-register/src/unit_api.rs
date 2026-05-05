@@ -209,6 +209,7 @@ pub fn register_unit_api(
                 context_hash,
                 env_contribution: env_contribution_val,
                 consulted_env,
+                discovered_inputs: None,
             })
         } else {
             None

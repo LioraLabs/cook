@@ -1637,6 +1637,7 @@ mod tests {
             context_hash: 0,
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
+            discovered_inputs: None,
         }
     }
 

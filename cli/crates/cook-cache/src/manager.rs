@@ -184,6 +184,7 @@ mod tests {
             context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
+            discovered_inputs: None,
         }
     }
 

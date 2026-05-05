@@ -79,7 +79,7 @@ No file is fully deleted in this plan; legacy code (`parse_depfile` in `cpp.lua`
 - Modify: `cli/crates/cook-contracts/src/lib.rs`
 - Test: `cli/crates/cook-contracts/src/lib.rs` (existing `#[cfg(test)] mod tests`)
 
-- [ ] **Step 1.1: Write the failing test**
+- [x] **Step 1.1: Write the failing test**
 
 In `cli/crates/cook-contracts/src/lib.rs`, append to the existing test module (after `cache_meta_no_output`):
 
@@ -126,7 +126,7 @@ fn cache_meta_default_discovered_inputs_is_none() {
 }
 ```
 
-- [ ] **Step 1.2: Run the test — verify it fails**
+- [x] **Step 1.2: Run the test — verify it fails**
 
 ```bash
 cd cli && cargo test -p cook-contracts cache_meta_construction_with_discovered_inputs
@@ -134,7 +134,7 @@ cd cli && cargo test -p cook-contracts cache_meta_construction_with_discovered_i
 
 Expected: compile error on `DiscoveredInputs` not in scope and `discovered_inputs` field missing on `CacheMeta`.
 
-- [ ] **Step 1.3: Add the `DiscoveredInputs` struct and field**
+- [x] **Step 1.3: Add the `DiscoveredInputs` struct and field**
 
 In `cli/crates/cook-contracts/src/lib.rs`, immediately before the `CacheMeta` struct definition:
 
@@ -177,11 +177,11 @@ pub struct CacheMeta {
 }
 ```
 
-- [ ] **Step 1.4: Update existing tests in this file to set the new field**
+- [x] **Step 1.4: Update existing tests in this file to set the new field**
 
 Search the file for `CacheMeta {` and add `discovered_inputs: None,` to every existing literal. There are five such literals at line offsets approximately: 266 (`cache_meta_construction`), 286 (`cache_meta_no_output`), and three more in the later integration-style tests around line 389. Each gets `discovered_inputs: None,` after `consulted_env`.
 
-- [ ] **Step 1.5: Run the tests — verify they pass**
+- [x] **Step 1.5: Run the tests — verify they pass**
 
 ```bash
 cd cli && cargo test -p cook-contracts
@@ -189,7 +189,7 @@ cd cli && cargo test -p cook-contracts
 
 Expected: all green.
 
-- [ ] **Step 1.6: Update other crates that construct `CacheMeta` literals**
+- [x] **Step 1.6: Update other crates that construct `CacheMeta` literals**
 
 The contracts crate change cascades. Find every other call site:
 
@@ -200,7 +200,7 @@ cd cli && cargo build 2>&1 | grep -E 'missing field|error\[E0063\]' | head -40
 
 Each error names a file and line. For every `CacheMeta { ... }` literal found, append `discovered_inputs: None,` to the field list. Likely sites: `cli/crates/cook-register/src/unit_api.rs` (the `Some(CacheMeta { ... })` block around line 201), `cli/crates/cook-register/src/tests.rs` (test fixtures), and any other test fixtures.
 
-- [ ] **Step 1.7: Verify the whole workspace builds**
+- [x] **Step 1.7: Verify the whole workspace builds**
 
 ```bash
 cd cli && cargo build
@@ -208,7 +208,7 @@ cd cli && cargo build
 
 Expected: exit 0.
 
-- [ ] **Step 1.8: Commit**
+- [x] **Step 1.8: Commit**
 
 ```bash
 cd /home/alex/dev/cook
