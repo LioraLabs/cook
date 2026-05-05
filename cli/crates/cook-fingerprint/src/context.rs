@@ -136,18 +136,74 @@ impl ToolHash {
     }
 }
 
+/// Failure modes for declared-tool resolution at build start (CS-0052).
+///
+/// Both variants are fatal — the build MUST NOT start with a misdeclared
+/// `[cache] tools` entry. The whole point of explicit declaration is to
+/// surface mistakes; falling back to "tool not found, ignored" reproduces
+/// the silent-miss class CS-0052 exists to close.
+#[derive(Debug)]
+pub enum DeclaredToolError {
+    NotFound { name: String, source: which::Error },
+    Canonicalize { name: String, source: std::io::Error },
+}
+
+impl std::fmt::Display for DeclaredToolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound { name, .. } => write!(
+                f,
+                "declared tool `{name}` not found on PATH (.cook/cloud.toml [cache] tools). \
+                 Either install it, remove it from the list, or run in an environment \
+                 where it resolves (devcontainer, nix-shell)."
+            ),
+            Self::Canonicalize { name, source } => write!(
+                f,
+                "declared tool `{name}` resolved but could not be canonicalized: {source}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DeclaredToolError {}
+
 pub struct ExecutionContext {
     pub machine: MachineIdentity,
     /// Per-build: lazily probed and cached, keyed by canonical realpath.
     pub(crate) tool_cache: Mutex<HashMap<PathBuf, ToolHash>>,
+    /// Build-wide hash over (declared name, content) pairs from `[cache] tools`.
+    /// Sentinel zero when the list is empty — preserves the v3 fold-shape so
+    /// projects without the config produce a deterministic identity contribution.
+    pub declared_tools_hash: u64,
+    /// Diagnostic: declared name → resolved canonical realpath. Surfaced by
+    /// `cook --explain-cache-key` (future) and a `tracing::debug!` line at
+    /// probe time. Not part of the hash directly; the hash is over
+    /// (name, content_sha256) pairs computed in `compute_declared_tools_hash`.
+    pub declared_tools: BTreeMap<String, PathBuf>,
 }
 
 impl ExecutionContext {
     pub fn probe() -> Self {
-        Self {
-            machine: MachineIdentity::probe(),
-            tool_cache: Mutex::new(HashMap::new()),
-        }
+        Self::probe_with_declared_tools(&[]).expect("empty declared-tool list cannot fail")
+    }
+
+    /// Probe the build-wide context and resolve `[cache] tools` declarations.
+    ///
+    /// Each name in `declared_tool_names` is resolved via `which::which`,
+    /// canonicalized to its realpath, and SHA-256-hashed. The combined hash
+    /// folds into every step's `context_hash` (see `step_context_hash`).
+    /// An empty slice produces a sentinel `declared_tools_hash` of `0`.
+    pub fn probe_with_declared_tools(
+        declared_tool_names: &[String],
+    ) -> Result<Self, DeclaredToolError> {
+        let machine = MachineIdentity::probe();
+        let tool_cache: Mutex<HashMap<PathBuf, ToolHash>> = Mutex::new(HashMap::new());
+        let (declared_tools_hash, declared_tools) =
+            compute_declared_tools_hash(declared_tool_names, &tool_cache)?;
+        // Diagnostic logging is the caller's responsibility — the fingerprint
+        // crate stays free of logging deps. CLI bindings inspect
+        // `declared_tools` after probe and emit a `tracing::debug!` line there.
+        Ok(Self { machine, tool_cache, declared_tools_hash, declared_tools })
     }
 
     /// Compute the per-step context hash from machine identity plus the
@@ -167,12 +223,13 @@ impl ExecutionContext {
     /// (`(…)`), or `xargs`/`find -exec` are NOT fingerprinted. To pin the
     /// fingerprint for those tools, place each invocation on its own line,
     /// or declare them explicitly via `cache.tools = { ... }` (planned cache
-    /// configuration mechanism — see CS-0035).
+    /// configuration mechanism — see CS-0052).
     pub fn step_context_hash(&self, command: &str) -> u64 {
         let realpaths = resolved_tool_realpaths(command);
         let machine_bytes = self.machine.encode();
         let mut hasher = xxhash_rust::xxh3::Xxh3::new();
         hasher.update(&machine_bytes);
+        hasher.update(&self.declared_tools_hash.to_le_bytes());
         if realpaths.is_empty() {
             // Preserve prior behavior for commands that resolve no executable
             // (e.g., empty string, builtins-only): fold in the empty ToolHash
@@ -201,6 +258,50 @@ impl ExecutionContext {
         cache.insert(rp.to_path_buf(), computed.clone());
         computed
     }
+}
+
+/// Resolve a list of declared tool names to canonical realpaths and hash
+/// the (name, content) pairs deterministically.
+///
+/// Folding by *declared name* (rather than realpath) is deliberate: two
+/// distros where `gcc` resolves to differently-named realpaths
+/// (`/usr/bin/gcc-13` vs. `/usr/bin/gcc-11`) MUST produce different
+/// `declared_tools_hash` values. The empty-input case returns the sentinel
+/// `0` so projects without `[cache] tools` configuration produce a
+/// deterministic "no contribution" value (CS-0052 §3.2 invariant 1).
+pub fn compute_declared_tools_hash(
+    names: &[String],
+    tool_cache: &Mutex<HashMap<PathBuf, ToolHash>>,
+) -> Result<(u64, BTreeMap<String, PathBuf>), DeclaredToolError> {
+    if names.is_empty() {
+        return Ok((0, BTreeMap::new()));
+    }
+    let mut resolved: BTreeMap<String, (PathBuf, [u8; 32])> = BTreeMap::new();
+    for name in names {
+        let p = which::which(name)
+            .map_err(|source| DeclaredToolError::NotFound { name: name.clone(), source })?;
+        let rp = std::fs::canonicalize(&p)
+            .map_err(|source| DeclaredToolError::Canonicalize { name: name.clone(), source })?;
+        let hash = {
+            let mut cache = tool_cache.lock().expect("tool_cache poisoned");
+            cache
+                .entry(rp.clone())
+                .or_insert_with(|| ToolHash::for_resolved(Some(rp.as_path())))
+                .content_sha256
+        };
+        resolved.insert(name.clone(), (rp, hash));
+    }
+    let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+    for (name, (_rp, sha)) in &resolved {
+        hasher.update(name.as_bytes());
+        hasher.update(&[0x00]);
+        hasher.update(sha);
+    }
+    let realpaths = resolved
+        .into_iter()
+        .map(|(n, (rp, _))| (n, rp))
+        .collect::<BTreeMap<_, _>>();
+    Ok((hasher.digest(), realpaths))
 }
 
 /// Tokenize `command` and resolve every executable token reachable via
@@ -408,6 +509,176 @@ mod tests {
         let h_b = ctx.step_context_hash("\n# leading comment\nsh -c true\n\n");
         assert_eq!(h_a, h_b);
     }
+
+    // ---- CS-0052 declared-tools tests (spec §6.1) ----
+
+    fn make_fake_tool_dir(name: &str, contents: &[u8]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(name);
+        std::fs::write(&path, contents).expect("write");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&path).expect("meta").permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).expect("chmod");
+        }
+        dir
+    }
+
+    /// Process-wide lock that serialises any test which mutates `PATH`.
+    /// Cargo runs tests in parallel by default; without serialisation, one
+    /// test's `set_var("PATH", original)` cleanup can race ahead of another
+    /// test's `which::which` lookup and produce spurious NotFound failures.
+    static PATH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Run `f` with the test tempdir prepended to `PATH` so `which::which`
+    /// resolves against it. Reverts `PATH` after `f` returns.
+    fn with_path_prefix<F, R>(extra: &Path, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        // Hold the process-wide lock for the entire duration of the PATH
+        // mutation + caller body. Lock poisoning from a panicking test is
+        // recoverable here — the next test still re-sets PATH before reading.
+        let _guard = PATH_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original = std::env::var("PATH").unwrap_or_default();
+        let new_path = format!(
+            "{}{}{}",
+            extra.display(),
+            if cfg!(windows) { ";" } else { ":" },
+            original
+        );
+        // SAFETY: env mutation under PATH_TEST_LOCK is the documented protocol
+        // for these tests; no other test path mutates PATH outside the lock.
+        unsafe {
+            std::env::set_var("PATH", &new_path);
+        }
+        let r = f();
+        unsafe {
+            std::env::set_var("PATH", &original);
+        }
+        r
+    }
+
+    #[test]
+    fn compute_declared_tools_hash_empty_is_sentinel_zero() {
+        let tool_cache = Mutex::new(HashMap::new());
+        let (h, map) = compute_declared_tools_hash(&[], &tool_cache).expect("ok");
+        assert_eq!(h, 0, "empty input MUST return sentinel zero");
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn compute_declared_tools_hash_deterministic() {
+        let dir = make_fake_tool_dir("ftool", b"v1");
+        with_path_prefix(dir.path(), || {
+            let cache_a = Mutex::new(HashMap::new());
+            let cache_b = Mutex::new(HashMap::new());
+            let names = vec!["ftool".to_string()];
+            let (h1, _) = compute_declared_tools_hash(&names, &cache_a).expect("ok");
+            let (h2, _) = compute_declared_tools_hash(&names, &cache_b).expect("ok");
+            assert_eq!(h1, h2, "same inputs MUST hash identically");
+            assert_ne!(h1, 0, "non-empty input MUST NOT collide with the sentinel zero");
+        });
+    }
+
+    #[test]
+    fn compute_declared_tools_hash_differs_on_content() {
+        let dir_a = make_fake_tool_dir("gtool", b"contents A");
+        let cache_a = Mutex::new(HashMap::new());
+        let names = vec!["gtool".to_string()];
+        let h_a = with_path_prefix(dir_a.path(), || {
+            compute_declared_tools_hash(&names, &cache_a).expect("ok").0
+        });
+        let dir_b = make_fake_tool_dir("gtool", b"contents B");
+        let cache_b = Mutex::new(HashMap::new());
+        let h_b = with_path_prefix(dir_b.path(), || {
+            compute_declared_tools_hash(&names, &cache_b).expect("ok").0
+        });
+        assert_ne!(h_a, h_b, "different binary contents MUST hash differently");
+    }
+
+    #[test]
+    fn compute_declared_tools_hash_differs_on_membership() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for n in &["mtool_a", "mtool_b"] {
+            let p = dir.path().join(n);
+            std::fs::write(&p, n.as_bytes()).expect("write");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&p).expect("meta").permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&p, perms).expect("chmod");
+            }
+        }
+        with_path_prefix(dir.path(), || {
+            let cache = Mutex::new(HashMap::new());
+            let one = vec!["mtool_a".to_string()];
+            let two = vec!["mtool_a".to_string(), "mtool_b".to_string()];
+            let (h_one, _) = compute_declared_tools_hash(&one, &cache).expect("ok");
+            let (h_two, _) = compute_declared_tools_hash(&two, &cache).expect("ok");
+            assert_ne!(h_one, h_two, "adding a tool MUST change the hash");
+        });
+    }
+
+    #[test]
+    fn compute_declared_tools_hash_order_independent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for (n, body) in &[("otool_a", &b"alpha"[..]), ("otool_b", &b"beta"[..])] {
+            let p = dir.path().join(n);
+            std::fs::write(&p, body).expect("write");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&p).expect("meta").permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&p, perms).expect("chmod");
+            }
+        }
+        with_path_prefix(dir.path(), || {
+            let cache = Mutex::new(HashMap::new());
+            let ab = vec!["otool_a".to_string(), "otool_b".to_string()];
+            let ba = vec!["otool_b".to_string(), "otool_a".to_string()];
+            let (h_ab, _) = compute_declared_tools_hash(&ab, &cache).expect("ok");
+            let (h_ba, _) = compute_declared_tools_hash(&ba, &cache).expect("ok");
+            assert_eq!(h_ab, h_ba, "BTreeMap-sorted fold MUST be order-independent");
+        });
+    }
+
+    #[test]
+    fn compute_declared_tools_hash_errors_on_missing() {
+        let cache = Mutex::new(HashMap::new());
+        let names = vec!["definitely-not-on-path-cs0035-xyz".to_string()];
+        let err = compute_declared_tools_hash(&names, &cache)
+            .expect_err("missing tool MUST error, not silently ignore");
+        match err {
+            DeclaredToolError::NotFound { name, .. } => {
+                assert_eq!(name, "definitely-not-on-path-cs0035-xyz");
+            }
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn step_context_hash_folds_declared() {
+        let dir = make_fake_tool_dir("ctool", b"v1");
+        let names = vec!["ctool".to_string()];
+        with_path_prefix(dir.path(), || {
+            let ctx_empty = ExecutionContext::probe_with_declared_tools(&[]).expect("ok");
+            let ctx_decl = ExecutionContext::probe_with_declared_tools(&names).expect("ok");
+            let cmd = "/bin/sh -c true";
+            let h_empty = ctx_empty.step_context_hash(cmd);
+            let h_decl = ctx_decl.step_context_hash(cmd);
+            assert_ne!(
+                h_empty, h_decl,
+                "declared_tools_hash MUST contribute to step_context_hash"
+            );
+        });
+    }
+
+    // ---- end CS-0052 ----
 
     #[test]
     fn is_env_prefix_token_recognises_assignments() {

@@ -30,6 +30,13 @@ pub struct CacheSection {
     pub ignore_env: Vec<String>,
     #[serde(default)]
     pub cache_dir: Option<String>,
+    /// Declared toolchain pinning (CS-0052). Each name is resolved via `which`
+    /// at build start; the resolved binaries' content hashes fold into every
+    /// step's context_hash. An empty list (or absent field) is observationally
+    /// inert. Misdeclared names cause a build-start error — see the design at
+    /// standard/specs/2026-05-04-cache-declared-tools-design.md.
+    #[serde(default)]
+    pub tools: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -91,6 +98,10 @@ impl CloudConfig {
 
     pub fn cache_dir(&self) -> Option<&str> {
         self.cache.cache_dir.as_deref()
+    }
+
+    pub fn cache_tools(&self) -> &[String] {
+        &self.cache.tools
     }
 }
 
@@ -168,6 +179,24 @@ ignore_env = ["GITHUB_TOKEN", "MY_API_KEY"]
         assert_eq!(ignore.len(), 2);
         assert!(ignore.contains(&"GITHUB_TOKEN".to_string()));
         assert!(ignore.contains(&"MY_API_KEY".to_string()));
+    }
+
+    #[test]
+    fn cache_tools_parsed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cache]
+tools = ["gcc", "ld", "strip"]
+"#);
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        assert_eq!(cfg.cache_tools(), &["gcc", "ld", "strip"]);
+    }
+
+    #[test]
+    fn cache_tools_default_empty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        assert!(cfg.cache_tools().is_empty());
     }
 
     #[test]

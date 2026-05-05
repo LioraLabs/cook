@@ -99,7 +99,20 @@ where
     let mut denylist = EnvDenylist::baseline();
     denylist.extend_with(cloud_config.cache_ignore_env());
     let denylist = Arc::new(denylist);
-    let exec_ctx = Arc::new(ExecutionContext::probe());
+    let exec_ctx = Arc::new(
+        ExecutionContext::probe_with_declared_tools(cloud_config.cache_tools())
+            .map_err(|e| EngineError::CacheError(e.to_string()))?,
+    );
+    if !exec_ctx.declared_tools.is_empty() {
+        tracing::debug!(
+            "declared cache tools: {:?}",
+            exec_ctx
+                .declared_tools
+                .iter()
+                .map(|(n, p)| format!("{n} -> {}", p.display()))
+                .collect::<Vec<_>>()
+        );
+    }
     let cache_dir = cloud_config
         .cache_dir()
         .map(std::path::PathBuf::from)

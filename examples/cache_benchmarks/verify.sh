@@ -287,5 +287,45 @@ fi
 rm -f .cookroot
 
 echo
+echo "--- Scenario 18: declared cache.tools fold (CS-0052) ---"
+# Adding `[cache] tools = ["gcc"]` MUST invalidate every step's cloud_key
+# (declared_tools_hash flips from sentinel zero to a non-zero fold).
+# Removing it MUST flip back. Both transitions are one-shot full rebuilds.
+clean_state
+"$COOK" demo >/dev/null 2>&1
+run_assert "Baseline rebuild: 4 hit"                  "4 cached recipes, 4 done"  "$COOK" demo
+trap 'cp -f .cook/cloud.toml.bak .cook/cloud.toml 2>/dev/null; rm -f .cook/cloud.toml.bak' EXIT
+cp -f .cook/cloud.toml .cook/cloud.toml.bak
+cat >> .cook/cloud.toml <<'EOF'
+tools = ["gcc"]
+EOF
+run_assert "Adding cache.tools=[gcc]: full rebuild"   "0 cached recipes, 4 done"  "$COOK" demo
+run_assert "Same cache.tools=[gcc] re-run: 4 hit"     "4 cached recipes, 4 done"  "$COOK" demo
+# Misdeclaration must error at build start.
+cat > .cook/cloud.toml <<'EOF'
+[cloud]
+enabled = false
+project = "cache_benchmarks"
+
+[cache]
+ignore_env = ["MY_PERSONAL_TOKEN"]
+tools = ["definitely-not-on-path-cs0035-zzz"]
+EOF
+scenario=$((scenario + 1))
+printf "  [%2d] %-55s " "$scenario" "Misdeclared tool errors at build start"
+err_out="$("$COOK" demo 2>&1 || true)"
+if echo "$err_out" | grep -q 'declared tool .* not found on PATH'; then
+    echo "PASS"
+    pass=$((pass + 1))
+else
+    echo "FAIL"
+    echo "       got: $err_out"
+    fail=$((fail + 1))
+fi
+# Restore the original cloud.toml for subsequent verify.sh invocations.
+cp -f .cook/cloud.toml.bak .cook/cloud.toml
+rm -f .cook/cloud.toml.bak
+
+echo
 echo "=== Summary: $pass passed, $fail failed ==="
 exit "$fail"
