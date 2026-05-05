@@ -1025,7 +1025,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - Modify: `cli/crates/cook-register/src/unit_api.rs`
 - Test: `cli/crates/cook-register/src/tests.rs`
 
-- [ ] **Step 7.1: Write the failing test**
+- [x] **Step 7.1: Write the failing test**
 
 In `cli/crates/cook-register/src/tests.rs`, append:
 
@@ -1064,7 +1064,7 @@ fn add_unit_reads_discovered_inputs_table() {
 }
 ```
 
-- [ ] **Step 7.2: Run the test — verify it fails**
+- [x] **Step 7.2: Run the test — verify it fails**
 
 ```bash
 cd cli && cargo test -p cook-register add_unit_reads_discovered_inputs_table
@@ -1072,7 +1072,7 @@ cd cli && cargo test -p cook-register add_unit_reads_discovered_inputs_table
 
 Expected: fail. `cm.discovered_inputs` is `None` because nothing reads the field yet.
 
-- [ ] **Step 7.3: Read the table in `unit_api.rs`**
+- [x] **Step 7.3: Read the table in `unit_api.rs`**
 
 In `cli/crates/cook-register/src/unit_api.rs`, locate the `cache_meta` construction (around line 191-215). Immediately before the `let cache_meta = if cache_enabled {` block, add a discovery-table reader:
 
@@ -1132,7 +1132,7 @@ Then thread it into the `CacheMeta` literal:
         };
 ```
 
-- [ ] **Step 7.4: Run the test — verify it passes**
+- [x] **Step 7.4: Run the test — verify it passes**
 
 ```bash
 cd cli && cargo test -p cook-register add_unit_reads_discovered_inputs_table
@@ -1140,7 +1140,7 @@ cd cli && cargo test -p cook-register add_unit_reads_discovered_inputs_table
 
 Expected: pass.
 
-- [ ] **Step 7.5: Run the full register suite**
+- [x] **Step 7.5: Run the full register suite**
 
 ```bash
 cd cli && cargo test -p cook-register
@@ -1148,7 +1148,7 @@ cd cli && cargo test -p cook-register
 
 Expected: all green.
 
-- [ ] **Step 7.6: Commit**
+- [x] **Step 7.6: Commit**
 
 ```bash
 cd /home/alex/dev/cook

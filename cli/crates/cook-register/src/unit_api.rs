@@ -188,6 +188,37 @@ pub fn register_unit_api(
                 (0, 0, String::new(), cookfile_relative_path(lua))
             };
 
+        // Read optional discovered_inputs table.
+        let discovered_inputs: Option<cook_contracts::DiscoveredInputs> =
+            match tbl.get::<LuaValue>("discovered_inputs") {
+                Ok(LuaValue::Table(di_tbl)) => {
+                    let from: String = di_tbl.get::<String>("from").map_err(|_| {
+                        LuaError::RuntimeError(
+                            "cook.add_unit: discovered_inputs.from is required and must be a string"
+                                .into(),
+                        )
+                    })?;
+                    let format: String = di_tbl.get::<String>("format").map_err(|_| {
+                        LuaError::RuntimeError(
+                            "cook.add_unit: discovered_inputs.format is required and must be a string"
+                                .into(),
+                        )
+                    })?;
+                    if from.is_empty() {
+                        return Err(LuaError::RuntimeError(
+                            "cook.add_unit: discovered_inputs.from must be non-empty".into(),
+                        ));
+                    }
+                    Some(cook_contracts::DiscoveredInputs { from, format })
+                }
+                Ok(LuaValue::Nil) | Err(_) => None,
+                Ok(_) => {
+                    return Err(LuaError::RuntimeError(
+                        "cook.add_unit: discovered_inputs must be a table".into(),
+                    ));
+                }
+            };
+
         let cache_meta = if cache_enabled {
             let cache_key = build_local_cache_key(
                 &cookfile_path,
@@ -209,7 +240,7 @@ pub fn register_unit_api(
                 context_hash,
                 env_contribution: env_contribution_val,
                 consulted_env,
-                discovered_inputs: None,
+                discovered_inputs,
             })
         } else {
             None
@@ -868,5 +899,28 @@ mod tests {
             }
             other => panic!("expected Interactive payload, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn add_unit_reads_discovered_inputs_table() {
+        let (lua, capture_state) = make_lua_with_unit_api("demo");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                inputs = { "src/a.c" },
+                output = "build/a.o",
+                command = "gcc -c src/a.c -o build/a.o",
+                discovered_inputs = { from = ".cook/deps/a.d", format = "make" },
+            })
+        "#).exec().expect("exec");
+
+        let st = capture_state.borrow();
+        let unit: &CapturedUnit = st.units.last().expect("one unit");
+        let cm = unit.cache_meta.as_ref().expect("cache_meta");
+        let di = cm.discovered_inputs.as_ref().expect("discovered_inputs");
+        assert_eq!(di.from, ".cook/deps/a.d");
+        assert_eq!(di.format, "make");
     }
 }
