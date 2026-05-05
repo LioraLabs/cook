@@ -218,7 +218,7 @@ On the first run, `build/main.o`'s unit executes and its completion MAY be recor
 
 The cache is optional. A conforming implementation that always re-executes every work unit — a clean-build implementation — is conforming so long as the dependency rules of §{exec.two-phase}–§{exec.interactive-drain} are respected.
 
-### 8.6.2. Discovered inputs [#exec.cache.discovered-inputs]
+### 8.6.3. Discovered inputs [#exec.cache.discovered-inputs]
 
 A unit whose declaration carries `discovered_inputs` (§{lua.add-unit-discovered-inputs}) participates in post-execution input discovery. When such a unit is checked against an existing cache entry, a conforming implementation:
 
