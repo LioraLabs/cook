@@ -1,0 +1,38 @@
+# Cache dep-output drift — focused regression fixture for the 2026-05-02
+# addendum §4.3 fix ("cross-recipe dep outputs land in cache_meta.input_paths").
+#
+# The bug:    `app` references `{lib_obj}` in its body. Pre-fix, lib.o's path
+#             never made it into app's StepEntry.inputs, so a content change
+#             in lib.o was silently ignored — app would "hit" cache even
+#             though its dep had drifted underneath.
+#
+# The fix:    register_unit_api appends step_group_dep_input_paths to
+#             cache_meta.input_paths (cli/crates/cook-register/src/unit_api.rs).
+#
+# verify.sh asserts:
+#   1. Fresh build → both execute (0 cached, 2 done)
+#   2. No-op rebuild → both hit (2 cached, 2 done)
+#   3. Mutate lib.c content → lib_obj rebuilds AND app rebuilds (0 cached, 2 done)
+#      ^^ this is the line that fails pre-fix: app would say (1 cached, 2 done)
+#         because main.c didn't change and lib.o wasn't in its inputs.
+
+config
+    env.CC = "gcc"
+    env.CFLAGS = "-O0"
+
+recipe lib_obj
+    ingredients "src/lib.c"
+    cook "build/lib.o" using {
+        mkdir -p build
+        $<CC> $<CFLAGS> -c $<all> -o $<out>
+    }
+
+recipe app
+    ingredients "src/main.c"
+    cook "build/app" using {
+        mkdir -p build
+        $<CC> $<CFLAGS> $<all> $<lib_obj> -o $<out>
+    }
+
+chore clean
+    rm -rf build .cook/cache
