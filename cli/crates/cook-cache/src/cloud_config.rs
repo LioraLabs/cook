@@ -25,11 +25,21 @@ pub struct CloudSection {
     #[serde(default)]
     pub project: Option<String>,
 
+    /// CS-0058 cloud-auth field. Bearer token sent as
+    /// `Authorization: Bearer <api_key>` on every CloudBackend request.
+    /// Resolution priority is `COOK_CLOUD_API_KEY` env var > this field;
+    /// see [`CloudConfig::resolved_api_key`]. When `cloud.enabled = true`,
+    /// the resolved key MUST be non-empty or `load_or_default` errors with
+    /// `MissingApiKey`. The TOML form is convenient for local development;
+    /// the env var is recommended for shared / CI repositories so the
+    /// secret is not checked in.
+    #[serde(default)]
+    pub api_key: Option<String>,
+
     // CS-0057 backend tunables. All optional; absent values fall back to
     // `BackendConfig::default()`. Honoured by `LocalBackend` for
     // `max_artifact_bytes` only; the timeout / retry / backoff knobs are
-    // wired through but no-ops on disk I/O. `CloudBackend` (next ticket)
-    // will honour all five.
+    // honoured by `CloudBackend` (CS-0058).
     #[serde(default)]
     pub timeout_secs: Option<u64>,
     #[serde(default)]
@@ -62,6 +72,15 @@ pub enum CloudConfigError {
     Io(std::io::Error),
     Parse(toml::de::Error),
     MissingProject,
+    /// CS-0058. `cloud.enabled = true` but no endpoint configured. The
+    /// engine cannot construct a `CloudBackend` without one. Distinct from
+    /// `MissingProject` so the diagnostic names the right field.
+    MissingEndpoint,
+    /// CS-0058. `cloud.enabled = true` but no API key was resolved from
+    /// `COOK_CLOUD_API_KEY` env var or `[cloud] api_key` in cloud.toml.
+    /// The engine refuses to construct a `CloudBackend` without a bearer
+    /// token; no HTTP request is ever sent unauthenticated.
+    MissingApiKey,
 }
 
 impl std::fmt::Display for CloudConfigError {
@@ -73,6 +92,17 @@ impl std::fmt::Display for CloudConfigError {
                 f,
                 "[cloud] enabled=true but [cloud] project is missing — \
                  set `project = \"...\"` in .cook/cloud.toml or set `enabled = false`"
+            ),
+            Self::MissingEndpoint => write!(
+                f,
+                "[cloud] enabled=true but [cloud] endpoint is missing — \
+                 set `endpoint = \"https://...\"` in .cook/cloud.toml or set `enabled = false`"
+            ),
+            Self::MissingApiKey => write!(
+                f,
+                "[cloud] enabled=true but no API key resolved — \
+                 set `api_key = \"...\"` in .cook/cloud.toml or \
+                 export COOK_CLOUD_API_KEY=<your-token>"
             ),
         }
     }
@@ -92,10 +122,37 @@ impl CloudConfig {
             toml::from_str::<Self>(&bytes).map_err(CloudConfigError::Parse)?
         };
 
-        if cfg.cloud.enabled && cfg.cloud.project.is_none() {
-            return Err(CloudConfigError::MissingProject);
+        if cfg.cloud.enabled {
+            if cfg.cloud.project.is_none() {
+                return Err(CloudConfigError::MissingProject);
+            }
+            // CS-0058: cloud-enabled must have an endpoint and a resolvable
+            // API key. Endpoint check is path-only (no URL parse) — keeping
+            // the validator dependency-free; URL validity is the
+            // CloudBackend constructor's concern (it surfaces a Transient
+            // health-check failure if unreachable).
+            if cfg.cloud.endpoint.is_none() {
+                return Err(CloudConfigError::MissingEndpoint);
+            }
+            if cfg.resolved_api_key().is_none() {
+                return Err(CloudConfigError::MissingApiKey);
+            }
         }
         Ok(cfg)
+    }
+
+    /// CS-0058. Resolve the bearer-token API key for `CloudBackend` requests.
+    /// Priority: `COOK_CLOUD_API_KEY` env var > `[cloud] api_key` TOML field.
+    /// An empty env var (`COOK_CLOUD_API_KEY=""`) is treated as unset and
+    /// falls through to the TOML form. Returns `None` when no key is
+    /// available.
+    pub fn resolved_api_key(&self) -> Option<String> {
+        if let Ok(v) = std::env::var("COOK_CLOUD_API_KEY") {
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+        self.cloud.api_key.clone()
     }
 
     /// Returns the configured project_id, or the project root directory name
@@ -152,6 +209,13 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    /// Tests that mutate `COOK_CLOUD_API_KEY` via `std::env::set_var` /
+    /// `remove_var` MUST hold this lock for their duration. Rust's parallel
+    /// test runner otherwise races, causing flakes where one test's
+    /// `set_var` is still visible to another's `resolved_api_key()` call.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn write_toml(dir: &Path, contents: &str) -> PathBuf {
         let cook_dir = dir.join(".cook");
@@ -197,16 +261,26 @@ endpoint = "https://api.cook.dev"
 
     #[test]
     fn cloud_enabled_with_project_ok() {
+        // CS-0058: cloud-enabled now also requires endpoint and api_key.
+        // The api_key is set via the TOML field here; the env-var path is
+        // covered by `cloud_enabled_uses_env_var_api_key`.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Defensive: clear env so the TOML field is the resolution.
+        // SAFETY: tests touching COOK_CLOUD_API_KEY hold ENV_LOCK; this
+        // serialises set/remove across them.
+        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
         let dir = tempfile::tempdir().expect("tempdir");
         write_toml(dir.path(), r#"
 [cloud]
 enabled = true
 endpoint = "https://api.cook.dev"
 project = "cook"
+api_key = "tok-test-12345"
 "#);
         let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
         assert!(cfg.cloud.enabled);
         assert_eq!(cfg.cloud.project.as_deref(), Some("cook"));
+        assert_eq!(cfg.resolved_api_key().as_deref(), Some("tok-test-12345"));
     }
 
     #[test]
@@ -295,5 +369,126 @@ max_artifact_mib = 256
         assert_eq!(bc.backoff_initial, Duration::from_millis(250));
         assert_eq!(bc.backoff_max, Duration::from_millis(12_000));
         assert_eq!(bc.max_artifact_bytes, 256u64 * 1024 * 1024);
+    }
+
+    // ─── CS-0058: api_key validation + resolution ─────────────────────────
+
+    /// `cloud.enabled = true` with project + endpoint but neither an
+    /// `api_key` TOML field nor `COOK_CLOUD_API_KEY` env var → `MissingApiKey`.
+    #[test]
+    fn cloud_enabled_requires_api_key() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: we hold ENV_LOCK; no other test in this module mutates
+        // COOK_CLOUD_API_KEY without taking the lock.
+        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+enabled = true
+endpoint = "https://api.cook.dev"
+project = "cook"
+"#);
+        let result = CloudConfig::load_or_default(dir.path());
+        match result {
+            Err(CloudConfigError::MissingApiKey) => {}
+            other => panic!("expected MissingApiKey, got: {other:?}"),
+        }
+    }
+
+    /// `cloud.enabled = true` with project + endpoint + `COOK_CLOUD_API_KEY`
+    /// env var (no TOML `api_key`) → validation passes; `resolved_api_key`
+    /// returns the env-var value.
+    #[test]
+    fn cloud_enabled_uses_env_var_api_key() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: ENV_LOCK serialises COOK_CLOUD_API_KEY mutation.
+        unsafe { std::env::set_var("COOK_CLOUD_API_KEY", "env-tok-9999"); }
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+enabled = true
+endpoint = "https://api.cook.dev"
+project = "cook"
+"#);
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        assert_eq!(cfg.resolved_api_key().as_deref(), Some("env-tok-9999"));
+        // Cleanup so subsequent tests don't see this env var.
+        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
+    }
+
+    /// `cloud.enabled = true` with project + endpoint + `api_key` in TOML
+    /// (no env var) → validation passes; `resolved_api_key` returns the
+    /// TOML value.
+    #[test]
+    fn cloud_enabled_uses_toml_api_key() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+enabled = true
+endpoint = "https://api.cook.dev"
+project = "cook"
+api_key = "toml-tok-zzz"
+"#);
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        assert_eq!(cfg.resolved_api_key().as_deref(), Some("toml-tok-zzz"));
+    }
+
+    /// Env var wins over TOML when both are set.
+    #[test]
+    fn cloud_env_var_wins_over_toml() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("COOK_CLOUD_API_KEY", "env-wins"); }
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+enabled = true
+endpoint = "https://api.cook.dev"
+project = "cook"
+api_key = "toml-loses"
+"#);
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        assert_eq!(cfg.resolved_api_key().as_deref(), Some("env-wins"));
+        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
+    }
+
+    /// `cloud.enabled = true` without an endpoint → `MissingEndpoint`,
+    /// even if api_key is present.
+    #[test]
+    fn cloud_enabled_requires_endpoint() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+enabled = true
+project = "cook"
+api_key = "tok"
+"#);
+        let result = CloudConfig::load_or_default(dir.path());
+        match result {
+            Err(CloudConfigError::MissingEndpoint) => {}
+            other => panic!("expected MissingEndpoint, got: {other:?}"),
+        }
+    }
+
+    /// Empty env var (`COOK_CLOUD_API_KEY=""`) is treated as unset, falls
+    /// through to the TOML field.
+    #[test]
+    fn cloud_empty_env_var_falls_through_to_toml() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("COOK_CLOUD_API_KEY", ""); }
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+enabled = true
+endpoint = "https://api.cook.dev"
+project = "cook"
+api_key = "toml-fallback"
+"#);
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        assert_eq!(cfg.resolved_api_key().as_deref(), Some("toml-fallback"));
+        unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
     }
 }

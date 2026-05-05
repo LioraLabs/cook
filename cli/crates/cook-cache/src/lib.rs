@@ -12,6 +12,7 @@
 
 pub mod backend;
 pub mod cache_ctx;
+pub mod cloud_backend;
 pub mod cloud_config;
 pub mod depfile;
 pub mod manager;
@@ -31,6 +32,7 @@ pub use cook_fingerprint::{
 
 pub use backend::LocalBackend;
 pub use cache_ctx::CacheContext;
+pub use cloud_backend::CloudBackend;
 pub use cloud_config::{CloudConfig, CloudConfigError};
 pub use manager::{collect_records_public, CacheState, RecordError, SharedCacheState, ThreadSafeCacheManager};
 pub use store::{FileRecord, RecipeCache, StepEntry, CACHE_VERSION};

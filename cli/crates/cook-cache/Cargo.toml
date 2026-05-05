@@ -15,8 +15,14 @@ serde_json = "1"
 toml = "0.8"
 thiserror = "1"
 tracing = "0.1"
+# CS-0058 — sync HTTP client for CloudBackend. `tls` feature pulls rustls
+# (no native OpenSSL), keeping the dependency surface minimal and
+# tokio-free (CacheBackend is a sync trait, see CS-0056 §3).
+ureq = { version = "2", features = ["tls", "json"] }
 
 [dev-dependencies]
 tempfile = "3"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 filetime = "0.2"
+# CS-0058 — HTTP server mocking for CloudBackend tests.
+mockito = "1"

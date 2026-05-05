@@ -9,8 +9,8 @@ use std::sync::mpsc;
 use std::sync::Arc;
 
 use cook_cache::{
-    backend::LocalBackend, cache_ctx::CacheContext, cloud_config::CloudConfig,
-    ThreadSafeCacheManager,
+    backend::LocalBackend, cache_ctx::CacheContext, cloud_backend::CloudBackend,
+    cloud_config::CloudConfig, ThreadSafeCacheManager,
 };
 use cook_fingerprint::{CacheBackend, EnvDenylist, ExecutionContext};
 
@@ -124,10 +124,39 @@ where
         });
     // CS-0057: thread the BackendConfig from .cook/cloud.toml into the
     // backend constructor. LocalBackend honours `max_artifact_bytes`;
-    // timeout / retry / backoff are no-ops on disk I/O but ride along so
-    // the future CloudBackend can accept the same shape.
-    let backend: Arc<dyn CacheBackend> =
-        Arc::new(LocalBackend::with_config(cache_dir, cloud_config.backend_config()));
+    // CloudBackend (CS-0058) honours all five tunables.
+    //
+    // CS-0058: branch on `cloud.enabled`. When true, build a CloudBackend
+    // pointing at the configured endpoint and authenticated with the
+    // resolved API key (env var preferred over TOML field).
+    // load_or_default has already validated `endpoint` and the resolved
+    // API key are non-empty when enabled — so unwrap is safe here.
+    let backend: Arc<dyn CacheBackend> = if cloud_config.cloud.enabled {
+        let endpoint = cloud_config
+            .cloud
+            .endpoint
+            .clone()
+            .expect("validated by load_or_default when cloud.enabled");
+        let api_key = cloud_config
+            .resolved_api_key()
+            .expect("validated by load_or_default when cloud.enabled");
+        tracing::debug!(
+            "cache backend: cloud (endpoint={}, project={:?})",
+            endpoint,
+            cloud_config.cloud.project,
+        );
+        Arc::new(CloudBackend::new(
+            endpoint,
+            api_key,
+            cloud_config.backend_config(),
+        ))
+    } else {
+        tracing::debug!("cache backend: local ({})", cache_dir.display());
+        Arc::new(LocalBackend::with_config(
+            cache_dir,
+            cloud_config.backend_config(),
+        ))
+    };
     if let Err(e) = backend.health() {
         tracing::warn!("cache backend unavailable: {e}; continuing with backend disabled");
     }
