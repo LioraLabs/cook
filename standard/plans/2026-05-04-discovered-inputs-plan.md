@@ -1606,11 +1606,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Modify: `cli/crates/cook-engine/src/executor.rs`
 
-- [ ] **Step 11.1: Locate the existing per-output upload loop**
+- [x] **Step 11.1: Locate the existing per-output upload loop**
 
 In `cli/crates/cook-engine/src/executor.rs`, find the `for (out_idx, output_path) in meta.output_paths.iter().enumerate()` loop (there are two — one in each branch, around line 1079 and around line 1241). Each loop body uploads one user-declared output via `backend.put(&artifact_k, &bytes, &artifact_meta)`.
 
-- [ ] **Step 11.2: After the loop, upload the depfile (if any)**
+- [x] **Step 11.2: After the loop, upload the depfile (if any)**
 
 Immediately after each per-output loop, insert the depfile upload block:
 
@@ -1659,7 +1659,7 @@ Immediately after each per-output loop, insert the depfile upload block:
 
 Verify `CACHE_VERSION` is in scope (already imported in executor.rs:9).
 
-- [ ] **Step 11.3: Build the workspace**
+- [x] **Step 11.3: Build the workspace**
 
 ```bash
 cd cli && cargo build
@@ -1667,7 +1667,7 @@ cd cli && cargo build
 
 Expected: exit 0.
 
-- [ ] **Step 11.4: Run the whole CLI test suite**
+- [x] **Step 11.4: Run the whole CLI test suite**
 
 ```bash
 cd cli && cargo test
@@ -1675,7 +1675,7 @@ cd cli && cargo test
 
 Expected: all green.
 
-- [ ] **Step 11.5: Commit**
+- [x] **Step 11.5: Commit**
 
 ```bash
 cd /home/alex/dev/cook
