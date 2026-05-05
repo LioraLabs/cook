@@ -280,6 +280,11 @@ function cpp.compile(source, opts)
         inputs = { source },
         output = obj_out,
         command = cmd,
+        consulted_env_keys = {
+            "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
+            "LIBRARY_PATH", "LD_LIBRARY_PATH", "PKG_CONFIG_PATH",
+            "SDKROOT",
+        },
         discovered_inputs = {
             from = dep_file,
             format = "make",
