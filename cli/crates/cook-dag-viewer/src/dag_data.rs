@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use cook_cache::ThreadSafeCacheManager;
 use cook_fingerprint::{hash_file, needs_rebuild_cook, stat_mtime, RebuildResult};
-use cook_contracts::{DepKind, RecipeUnits, WorkPayload};
+use cook_contracts::{DepKind, DiscoveredInputs, RecipeUnits, WorkPayload};
 use cook_engine::wave_grouper;
 use std::collections::BTreeSet;
 
@@ -69,6 +69,24 @@ pub struct EdgeData {
     pub to: String,
 }
 
+
+/// Read and parse the depfile a unit declares via `discovered_inputs`.
+///
+/// On any error (missing file, I/O, malformed) returns an empty `Vec` and
+/// logs at `debug` level. The viewer is a tooling affordance; a stale or
+/// absent depfile must never fail rendering.
+fn read_discovered_paths(
+    di: &DiscoveredInputs,
+    source_path: Option<&str>,
+    working_dir: &std::path::Path,
+) -> Vec<String> {
+    let depfile = working_dir.join(&di.from);
+    let source = source_path.unwrap_or("");
+    match cook_cache::parse_make_depfile(&depfile, source, working_dir) {
+        Ok(paths) => paths,
+        Err(_) => Vec::new(),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Wave-grouped DAG builder
@@ -348,6 +366,52 @@ fn build_wave(
                 }
             }
 
+            // --- Discovered file nodes + file→unit edges ---
+            // Read the depfile if the unit declares discovered_inputs.
+            // Errors (missing/malformed) downgrade to empty list — viewer
+            // remains rendering-correct on stale or absent state.
+            if let Some(meta) = &unit.cache_meta {
+                if let Some(di) = &meta.discovered_inputs {
+                    let source = meta.input_paths.first().map(String::as_str);
+                    let discovered = read_discovered_paths(di, source, &ru.working_dir);
+                    for path in discovered {
+                        if unit_output_paths.contains(path.as_str()) {
+                            continue;
+                        }
+                        let file_id = format!("file:{}", path);
+                        if file_node_ids.contains_key(&path) {
+                            edges.push(EdgeData {
+                                from: file_id,
+                                to: unit_id.clone(),
+                            });
+                            continue;
+                        }
+                        let label = std::path::Path::new(&path)
+                            .file_name()
+                            .map(|f| f.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.clone());
+                        nodes.push(NodeData {
+                            id: file_id.clone(),
+                            kind: "file".to_string(),
+                            label,
+                            recipe: None,
+                            command: None,
+                            output: None,
+                            cached: None,
+                            dep_kind: None,
+                            group_index: None,
+                            modified: None,
+                            discovered: Some(true),
+                        });
+                        file_node_ids.insert(path.clone(), file_id.clone());
+                        edges.push(EdgeData {
+                            from: file_id,
+                            to: unit_id.clone(),
+                        });
+                    }
+                }
+            }
+
             // --- Barrier / intra-recipe unit→unit edges ---
             match &unit.dep_kind {
                 DepKind::Sequential => {
@@ -439,6 +503,127 @@ fn build_wave(
     };
 
     (wave_data, recipe_terminals, recipe_roots)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cook_contracts::{
+        CapturedUnit, DepKind, DiscoveredInputs, RecipeUnits, WorkPayload,
+    };
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    /// Build a single-unit RecipeUnits whose cache_meta declares
+    /// `discovered_inputs = { from = depfile_rel, format = "make" }`.
+    fn recipe_with_depfile(
+        recipe_name: &str,
+        working_dir: std::path::PathBuf,
+        source: &str,
+        output: &str,
+        depfile_rel: &str,
+    ) -> (String, RecipeUnits) {
+        let cache_meta = cook_contracts::CacheMeta {
+            recipe_name: recipe_name.into(),
+            project_id: "p".into(),
+            cookfile_path: "Cookfile".into(),
+            cache_key: "k0".into(),
+            input_paths: vec![source.into()],
+            output_paths: vec![output.into()],
+            command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: BTreeMap::new(),
+            discovered_inputs: Some(DiscoveredInputs {
+                from: depfile_rel.into(),
+                format: "make".into(),
+            }),
+        };
+        let unit = CapturedUnit {
+            payload: WorkPayload::Shell {
+                cmd: format!("clang++ -c {source} -o {output}"),
+                line: 1,
+            },
+            cache_meta: Some(cache_meta),
+            dep_kind: DepKind::Sequential,
+        };
+        let ru = RecipeUnits {
+            recipe_name: recipe_name.into(),
+            deps: vec![],
+            units: vec![unit],
+            step_groups: vec![],
+            working_dir,
+            env_vars: BTreeMap::new(),
+            terminal_outputs: vec![output.into()],
+            dep_edges: vec![],
+        };
+        (recipe_name.into(), ru)
+    }
+
+    fn write_depfile(working_dir: &std::path::Path, rel: &str, body: &str) {
+        let path = working_dir.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, body).unwrap();
+    }
+
+    /// Make sure each header listed in the depfile actually exists on disk
+    /// (the parser drops nonexistent paths). Touches an empty file at each.
+    fn touch(working_dir: &std::path::Path, rels: &[&str]) {
+        for rel in rels {
+            let path = working_dir.join(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&path, "").unwrap();
+        }
+    }
+
+    #[test]
+    fn build_wave_dag_data_emits_discovered_file_nodes() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_path_buf();
+
+        // Touch the source and the headers so they all exist; the depfile
+        // parser filters out nonexistent paths.
+        touch(&wd, &["bar.cpp", "helpers.h", "math.h"]);
+        write_depfile(
+            &wd,
+            "bar.d",
+            "bar.o: bar.cpp \\\n  helpers.h \\\n  math.h\n",
+        );
+
+        let (name, ru) = recipe_with_depfile("compile", wd.clone(), "bar.cpp", "bar.o", "bar.d");
+        let all_units = vec![(name.clone(), ru)];
+        let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
+
+        let g = build_wave_dag_data("build", &all_units, &explicit, &inferred, &cms);
+
+        assert_eq!(g.waves.len(), 1, "single wave expected");
+        let nodes = &g.waves[0].nodes;
+        let by_id = |id: &str| nodes.iter().find(|n| n.id == id);
+
+        let bar_cpp = by_id("file:bar.cpp").expect("declared file node missing");
+        assert_eq!(bar_cpp.discovered, None, "declared file should not be flagged discovered");
+
+        let helpers = by_id("file:helpers.h").expect("discovered helpers.h missing");
+        assert_eq!(helpers.discovered, Some(true));
+
+        let math = by_id("file:math.h").expect("discovered math.h missing");
+        assert_eq!(math.discovered, Some(true));
+
+        let edges = &g.waves[0].edges;
+        let has_edge = |from: &str, to: &str| {
+            edges.iter().any(|e| e.from == from && e.to == to)
+        };
+        assert!(has_edge("file:bar.cpp", "unit:compile:0"));
+        assert!(has_edge("file:helpers.h", "unit:compile:0"));
+        assert!(has_edge("file:math.h", "unit:compile:0"));
+    }
 }
 
 /// Check whether a file is modified relative to its cached record.
