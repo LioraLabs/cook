@@ -17,7 +17,7 @@ pub mod theme;
 pub mod tui;
 
 pub use dag_data::{build_wave_dag_data, EdgeData, NodeData, WaveData, WaveDagData};
-pub use frame::{NodeStatus, SnapshotFrame, ViewFrame};
+pub use frame::{FrameEvent, NodeStatus, SnapshotFrame, ViewFrame};
 
 /// Wire-format schema version for the DAG-viewer JSON payload (CS-0048).
 pub const VIEWER_SCHEMA_VERSION: u32 = 1;
