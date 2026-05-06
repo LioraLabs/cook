@@ -105,6 +105,7 @@ pub struct AppState {
     pub follow: bool,
     pub should_quit: bool,
     pub edge_picker: EdgePicker,
+    pub search: crate::render::search::SearchState,
     pub graph: std::sync::Arc<WaveDagData>,
 }
 
@@ -120,6 +121,7 @@ impl AppState {
             follow: true,
             should_quit: false,
             edge_picker: EdgePicker::default(),
+            search: Default::default(),
             graph: arc,
         }
     }

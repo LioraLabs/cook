@@ -41,7 +41,8 @@ pub fn draw<F: ViewFrame>(
         Mode::EdgePicker => overlay::render_edge_picker(area, buf, &app.edge_picker),
         Mode::Help => overlay::render_help(area, buf),
         Mode::DetailOverlay => overlay::render_detail_overlay(area, buf, app, frame),
-        Mode::Search | Mode::Normal => {}
+        Mode::Search => search::render(area, buf, &app.search),
+        Mode::Normal => {}
     }
 }
 

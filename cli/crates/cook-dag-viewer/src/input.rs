@@ -12,7 +12,8 @@ pub fn handle(app: &mut AppState, layout: &Layout, event: &Event, size: Rect) {
     match app.mode {
         Mode::Normal => normal_key(app, key, layout, pane),
         Mode::EdgePicker => picker_key(app, key),
-        _ => {}
+        Mode::Search => search_key(app, key),
+        Mode::Help | Mode::DetailOverlay => overlay_key(app, key),
     }
 }
 
@@ -49,6 +50,28 @@ fn normal_key(app: &mut AppState, key: &KeyEvent, layout: &Layout, pane: Rect) {
         (KeyCode::Char('K'), _) => app.pan_camera(0, -(pane_h as i32) / 2, layout, pane),
         (KeyCode::Char('c'), KeyModifiers::NONE) => app.recenter(layout, pane),
         (KeyCode::Char('a'), KeyModifiers::NONE) => app.auto_fit(layout, pane),
+        (KeyCode::Char('/'), _) => app.mode = Mode::Search,
+        (KeyCode::Char('?'), _) => app.mode = Mode::Help,
+        (KeyCode::Char('v'), KeyModifiers::NONE) => app.mode = Mode::DetailOverlay,
+        (KeyCode::Char('n'), KeyModifiers::NONE) => {
+            let n = app.search.matches.len();
+            if n > 0 {
+                app.search.cursor = (app.search.cursor + 1) % n;
+                let id = app.search.matches[app.search.cursor].clone();
+                app.jump_to_node(&id);
+            }
+        }
+        (KeyCode::Char('N'), _) => {
+            let n = app.search.matches.len();
+            if n > 0 {
+                app.search.cursor = (app.search.cursor + n - 1) % n;
+                let id = app.search.matches[app.search.cursor].clone();
+                app.jump_to_node(&id);
+            }
+        }
+        (KeyCode::Char('r'), KeyModifiers::NONE) => {
+            // refresh — snapshot mode is a no-op; documented in spec.
+        }
         _ => {}
     }
 }
@@ -87,6 +110,38 @@ fn picker_key(app: &mut AppState, key: &KeyEvent) {
             }
         }
         _ => {}
+    }
+}
+
+fn search_key(app: &mut AppState, key: &KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.mode = Mode::Normal;
+            app.search = Default::default();
+        }
+        KeyCode::Enter => {
+            if let Some(id) = app.search.matches.first().cloned() {
+                app.jump_to_node(&id);
+            }
+            app.mode = Mode::Normal;
+        }
+        KeyCode::Backspace => {
+            app.search.query.pop();
+            let g = app.graph.clone();
+            app.search.update(&g);
+        }
+        KeyCode::Char(c) => {
+            app.search.query.push(c);
+            let g = app.graph.clone();
+            app.search.update(&g);
+        }
+        _ => {}
+    }
+}
+
+fn overlay_key(app: &mut AppState, key: &KeyEvent) {
+    if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+        app.mode = Mode::Normal;
     }
 }
 
