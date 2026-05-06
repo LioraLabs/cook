@@ -57,10 +57,15 @@ pub fn run_with_theme<F: ViewFrame>(
     let mut terminal: Terminal<CrosstermBackend<Stdout>> =
         Terminal::new(backend).map_err(|e| ViewerError::TerminalInit(e.to_string()))?;
 
-    let layout = layout::compute(frame.graph(), layout::LayoutDims::FULL);
     let mut app = AppState::with_theme(frame.graph(), theme);
 
     loop {
+        let dims = match app.density {
+            crate::state::DensityMode::Full => layout::LayoutDims::FULL,
+            crate::state::DensityMode::Compact => layout::LayoutDims::COMPACT,
+            crate::state::DensityMode::Dot => layout::LayoutDims::DOT,
+        };
+        let layout = layout::compute(frame.graph(), dims);
         let canvas_buf = canvas::render(&layout, &app, &frame);
 
         terminal
