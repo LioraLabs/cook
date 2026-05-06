@@ -6,6 +6,7 @@ pub mod detail;
 pub mod flow;
 pub mod index;
 pub mod layout;
+pub mod layout_radial;
 pub mod overlay;
 pub mod search;
 
