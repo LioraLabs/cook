@@ -94,7 +94,7 @@ fn draw_bottom_bar(area: Rect, buf: &mut Buffer, app: &mut AppState) {
             Mode::EdgePicker => " 1-9 jump · esc cancel".to_string(),
             Mode::Help => " help · q close".to_string(),
             Mode::DetailOverlay => " esc close".to_string(),
-            Mode::Normal => " ? help · / search · q quit · [/] up/down · HJKL pan · c center".to_string(),
+            Mode::Normal => " ? help · / · q · [/] · HJKL · m mode · p pin · 1-9 jump · X clear".to_string(),
         }
     };
     let line = format!("{} [{}]", hint, mode);
