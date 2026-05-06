@@ -1169,4 +1169,115 @@ mod tests {
         // Radial canvas is square.
         assert_eq!(layout.canvas_w, layout.canvas_h);
     }
+
+    fn graph_with_files() -> WaveDagData {
+        use crate::dag_data::EdgeData;
+        WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["a".into()],
+                nodes: vec![
+                    NodeData {
+                        id: "file:foo.cpp".into(),
+                        kind: "file".into(),
+                        label: "foo.cpp".into(),
+                        recipe: None,
+                        command: None,
+                        output: None,
+                        cached: None,
+                        dep_kind: None,
+                        group_index: None,
+                        modified: Some(false),
+                        discovered: None,
+                    },
+                    NodeData {
+                        id: "unit:a:0".into(),
+                        kind: "unit".into(),
+                        label: "a0".into(),
+                        recipe: Some("a".into()),
+                        command: Some("c".into()),
+                        output: None,
+                        cached: Some(true),
+                        dep_kind: Some("sequential".into()),
+                        group_index: None,
+                        modified: None,
+                        discovered: None,
+                    },
+                ],
+                edges: vec![EdgeData { from: "file:foo.cpp".into(), to: "unit:a:0".into() }],
+            }],
+            inter_wave_edges: vec![],
+        }
+    }
+
+    #[test]
+    fn expand_step_in_on_wave_opens_files_folder_when_already_expanded() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        // Wave 0 is auto-expanded by default (AppState::new).
+        assert!(app.tree.waves[0].expanded);
+        // First press of `l` is consumed by AppState::expand_or_step_in.
+        // Since wave is already expanded and has files, it should open the
+        // Files folder rather than no-op.
+        app.expand_or_step_in();
+        assert!(app.tree.waves[0].files_expanded);
+    }
+
+    #[test]
+    fn move_cursor_walks_through_file_rows_when_folder_expanded() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].files_expanded = true;
+        // Visible rows in order:
+        //   wave_only(0)
+        //   file(0, 0)            ← foo.cpp
+        //   recipe(0, 0)
+        assert_eq!(app.selection, Selection::wave_only(0));
+        app.move_cursor(false);
+        assert_eq!(app.selection, Selection::file(0, 0));
+        app.move_cursor(false);
+        assert_eq!(app.selection, Selection::recipe(0, 0));
+    }
+
+    #[test]
+    fn collapse_step_out_on_file_collapses_folder_and_returns_to_wave() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].files_expanded = true;
+        app.selection = Selection::file(0, 0);
+        app.collapse_or_step_out();
+        assert_eq!(app.selection, Selection::wave_only(0));
+        assert!(!app.tree.waves[0].files_expanded);
+    }
+
+    #[test]
+    fn jump_to_node_on_file_lands_on_file_row_and_expands_folder() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].files_expanded = false;
+        app.jump_to_node("file:foo.cpp");
+        assert_eq!(app.selection, Selection::file(0, 0));
+        assert!(app.tree.waves[0].expanded);
+        assert!(app.tree.waves[0].files_expanded);
+    }
+
+    #[test]
+    fn selection_node_id_resolves_file_leaf() {
+        let g = graph_with_files();
+        let app = AppState::new(&g);
+        let sel = Selection::file(0, 0);
+        assert_eq!(sel.node_id(&app.tree), Some("file:foo.cpp"));
+    }
+
+    #[test]
+    fn bulk_pin_recipe_on_file_selection_emits_on_file() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].files_expanded = true;
+        app.selection = Selection::file(0, 0);
+        app.bulk_pin_recipe(&g);
+        assert_eq!(app.last_pin_message, Some(PinMsg::OnFile));
+        assert!(app.pins.is_empty());
+    }
 }
