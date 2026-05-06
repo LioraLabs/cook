@@ -290,4 +290,37 @@ mod tests {
             "inter-wave edge must be merged into the synthetic wave",
         );
     }
+
+    #[test]
+    fn recipe_focus_pulls_units_plus_one_hop_neighbors() {
+        let g = small_dag();
+        let mut app = AppState::new(&g);
+        // Recipe `a` selected (no unit). Focus = unit:a:0; 1-hop = file:foo.cpp + unit:b:0.
+        app.selection = Selection::recipe(0, 0);
+        let sub = focus_subgraph(&g, &app);
+        let ids: BTreeSet<&str> = sub.waves[0].nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("unit:a:0"));
+        assert!(ids.contains("file:foo.cpp"));
+        assert!(ids.contains("unit:b:0"));
+        assert!(!ids.contains("file:noise.h"));
+    }
+
+    #[test]
+    fn file_focus_pulls_consumers() {
+        let g = small_dag();
+        let mut app = AppState::new(&g);
+        // Need the IndexTree to surface foo.cpp in the wave's files.
+        // foo.cpp is alphabetically first, so file_index 0.
+        assert_eq!(
+            app.tree.waves[0].files.get(0).map(|f| f.node_id.as_str()),
+            Some("file:foo.cpp"),
+        );
+        app.selection = Selection::file(0, 0);
+        let sub = focus_subgraph(&g, &app);
+        let ids: BTreeSet<&str> = sub.waves[0].nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("file:foo.cpp"));
+        assert!(ids.contains("unit:a:0"), "file's consumer must be visible");
+        assert!(!ids.contains("unit:b:0"), "non-consumer must be filtered");
+        assert!(!ids.contains("file:noise.h"));
+    }
 }
