@@ -286,6 +286,12 @@ impl AppState {
         }
     }
 
+    pub fn clear_all_pins(&mut self) {
+        let n = self.pins.iter().count();
+        self.pins.clear();
+        self.last_pin_message = Some(PinMsg::ClearedAll(n));
+    }
+
     pub fn bulk_pin_recipe(&mut self, graph: &WaveDagData) {
         let Some(selected_id) = self.selection.node_id(&self.tree) else {
             self.last_pin_message = Some(PinMsg::OnFile);

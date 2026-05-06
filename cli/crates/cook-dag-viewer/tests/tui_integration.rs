@@ -271,3 +271,31 @@ fn capital_p_on_file_node_emits_on_file_message() {
     );
     assert!(app.pins.is_empty());
 }
+
+#[test]
+fn capital_x_clears_all_pins() {
+    let g = fixtures::three_wave_dag();
+    let layout = cook_dag_viewer::render::layout::compute(
+        &g,
+        cook_dag_viewer::render::layout::LayoutDims::FULL,
+    );
+    let mut app = cook_dag_viewer::state::AppState::new(&g);
+    let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
+    let term = Rect::new(0, 0, 120, 40);
+
+    app.pins.pin("synth:1");
+    app.pins.pin("synth:2");
+
+    cook_dag_viewer::input::handle(
+        &mut app,
+        &layout,
+        &frame,
+        &keymod('X', KeyModifiers::SHIFT),
+        term,
+    );
+    assert!(app.pins.is_empty());
+    assert_eq!(
+        app.last_pin_message,
+        Some(cook_dag_viewer::state::PinMsg::ClearedAll(2)),
+    );
+}

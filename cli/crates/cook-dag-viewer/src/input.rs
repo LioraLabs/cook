@@ -105,6 +105,7 @@ fn normal_key<F: crate::frame::ViewFrame>(
         }
         (KeyCode::Char('p'), KeyModifiers::NONE) => app.toggle_pin_selected(),
         (KeyCode::Char('P'), _) => app.bulk_pin_recipe(frame.graph()),
+        (KeyCode::Char('X'), _) => app.clear_all_pins(),
         (KeyCode::Char('/'), _) => app.mode = Mode::Search,
         (KeyCode::Char('?'), _) => app.mode = Mode::Help,
         (KeyCode::Char('v'), KeyModifiers::NONE) => app.mode = Mode::DetailOverlay,
