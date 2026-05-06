@@ -81,7 +81,7 @@ pub struct Cli {
     #[arg(long = "emit-lua")]
     pub emit_lua: bool,
 
-    /// Visualize the build DAG in a browser
+    /// Visualize the build DAG in a TUI viewer
     #[arg(
         long = "dag",
         conflicts_with_all = ["menu", "init", "serve", "logs"]
