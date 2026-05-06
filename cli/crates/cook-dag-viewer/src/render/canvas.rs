@@ -353,7 +353,7 @@ mod tests {
 
         let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
         let cell = buf.cell((placed.x, placed.y)).unwrap();
-        assert_eq!(cell.symbol(), "●", "dot mode should draw a single ● glyph");
+        assert_eq!(cell.symbol(), "●", "flow mode should draw a single ● glyph");
     }
 
     #[test]

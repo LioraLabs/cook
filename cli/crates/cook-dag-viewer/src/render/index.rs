@@ -255,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn pinned_legend_renders_in_dot_mode_with_pins() {
+    fn pinned_legend_renders_in_flow_mode_with_pins() {
         let g = WaveDagData {
             schema_version: crate::VIEWER_SCHEMA_VERSION,
             target: "build".into(),
@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn pinned_legend_hidden_when_density_not_dot() {
+    fn pinned_legend_hidden_when_density_not_flow() {
         let g = WaveDagData {
             schema_version: crate::VIEWER_SCHEMA_VERSION,
             target: "build".into(),
@@ -337,6 +337,6 @@ mod tests {
         let any_row_has_glyph = (0..area.height).any(|y| {
             (0..area.width).any(|x| buf.cell((x, y)).unwrap().symbol().contains('❶'))
         });
-        assert!(!any_row_has_glyph, "legend must not render outside Dot mode");
+        assert!(!any_row_has_glyph, "legend must not render outside Flow mode");
     }
 }
