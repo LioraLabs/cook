@@ -26,8 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::dag_data::{NodeData, WaveDagData};
 
 /// Geometry preset for one density mode. The renderer picks one of
-/// `LayoutDims::FULL`, `LayoutDims::COMPACT`, `LayoutDims::DOT`, or
-/// `LayoutDims::FLOW`
+/// `LayoutDims::FULL`, `LayoutDims::COMPACT`, or `LayoutDims::FLOW`
 /// based on `AppState.density`. See spec §4.2 / §5.2.
 #[derive(Debug, Clone, Copy)]
 pub struct LayoutDims {
@@ -40,7 +39,6 @@ pub struct LayoutDims {
 impl LayoutDims {
     pub const FULL: Self    = Self { layer_width: 32, node_w: 22, node_h: 3, row_pad: 1 };
     pub const COMPACT: Self = Self { layer_width: 22, node_w: 18, node_h: 1, row_pad: 1 };
-    pub const DOT: Self     = Self { layer_width:  3, node_w:  1, node_h: 1, row_pad: 0 };
     pub const FLOW: Self    = Self { layer_width:  6, node_w:  2, node_h: 2, row_pad: 1 };
 }
 
