@@ -741,6 +741,54 @@ mod tests {
         assert!(has_edge("unit:a:0"));
         assert!(has_edge("unit:b:0"));
     }
+
+    #[test]
+    fn missing_depfile_does_not_panic_or_emit_discovered() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_path_buf();
+        touch(&wd, &["bar.cpp"]);
+        // Note: no bar.d on disk.
+
+        let (name, ru) = recipe_with_depfile("compile", wd.clone(), "bar.cpp", "bar.o", "bar.d");
+        let all_units = vec![(name, ru)];
+        let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
+
+        let g = build_wave_dag_data("build", &all_units, &explicit, &inferred, &cms);
+
+        let wave = &g.waves[0];
+        // Declared file is present; no discovered nodes.
+        assert!(wave.nodes.iter().any(|n| n.id == "file:bar.cpp"));
+        assert!(
+            !wave.nodes.iter().any(|n| n.discovered == Some(true)),
+            "no discovered nodes when depfile is missing",
+        );
+    }
+
+    #[test]
+    fn malformed_depfile_does_not_panic_or_emit_discovered() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_path_buf();
+        touch(&wd, &["bar.cpp"]);
+        // No ':' in the file → `parse_make_depfile` returns Malformed.
+        write_depfile(&wd, "bar.d", "this is not a valid depfile body\n");
+
+        let (name, ru) = recipe_with_depfile("compile", wd.clone(), "bar.cpp", "bar.o", "bar.d");
+        let all_units = vec![(name, ru)];
+        let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
+
+        let g = build_wave_dag_data("build", &all_units, &explicit, &inferred, &cms);
+
+        let wave = &g.waves[0];
+        assert!(wave.nodes.iter().any(|n| n.id == "file:bar.cpp"));
+        assert!(
+            !wave.nodes.iter().any(|n| n.discovered == Some(true)),
+            "no discovered nodes when depfile is malformed",
+        );
+    }
 }
 
 /// Check whether a file is modified relative to its cached record.
