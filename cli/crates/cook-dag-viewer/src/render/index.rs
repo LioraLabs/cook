@@ -35,6 +35,55 @@ fn render_tree<F: ViewFrame>(
         if !wave.expanded {
             continue;
         }
+
+        // Files folder (rendered only when the wave has any files).
+        if !wave.files.is_empty() {
+            if row >= area.y + area.height {
+                break 'outer;
+            }
+            let glyph = if wave.files_expanded { '▼' } else { '▶' };
+            let line = format!("{} Files ({})", glyph, wave.files.len());
+            write_line(area, buf, row, 2, &line, Style::default());
+            row += 1;
+
+            if wave.files_expanded {
+                for (fi, file) in wave.files.iter().enumerate() {
+                    if row >= area.y + area.height {
+                        break 'outer;
+                    }
+                    let (kind_glyph, kind_color) = if file.discovered {
+                        ('◇', Some(app.theme.badge_discovered))
+                    } else {
+                        ('▢', None)
+                    };
+                    let status = frame.status_of(&file.node_id);
+                    let badge = file_badge(status);
+                    let badge_color = match status {
+                        NodeStatus::Modified => Some(app.theme.badge_modified),
+                        _ => None,
+                    };
+                    let style = sel_style(app.selection, Selection::file(wi, fi));
+                    // Render glyph (kind_color) + space + label, then badge at right.
+                    let label_line = format!("{} {}", kind_glyph, file.label);
+                    let glyph_style = match kind_color {
+                        Some(c) => style.fg(c),
+                        None => style,
+                    };
+                    write_line(area, buf, row, 4, &label_line, glyph_style);
+                    // Badge at the right edge — overwrite the last 1 cell.
+                    let badge_x = area.x + area.width.saturating_sub(2);
+                    if let Some(cell) = buf.cell_mut((badge_x, row)) {
+                        let s = match badge_color {
+                            Some(c) => style.fg(c),
+                            None => style,
+                        };
+                        cell.set_char(badge).set_style(s);
+                    }
+                    row += 1;
+                }
+            }
+        }
+
         for (ri, recipe) in wave.recipes.iter().enumerate() {
             if row >= area.y + area.height {
                 break 'outer;
@@ -158,6 +207,14 @@ fn badge(s: NodeStatus) -> char {
         NodeStatus::Modified => '⚠',
         NodeStatus::Done => '·',
         NodeStatus::Pending | NodeStatus::Running | NodeStatus::Failed => ' ',
+    }
+}
+
+fn file_badge(s: NodeStatus) -> char {
+    match s {
+        NodeStatus::Modified => '⚠',
+        NodeStatus::Done => '·',
+        _ => ' ',
     }
 }
 
@@ -338,5 +395,112 @@ mod tests {
             (0..area.width).any(|x| buf.cell((x, y)).unwrap().symbol().contains('❶'))
         });
         assert!(!any_row_has_glyph, "legend must not render outside Flow mode");
+    }
+
+    fn graph_with_files() -> WaveDagData {
+        use crate::dag_data::EdgeData;
+        WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["a".into()],
+                nodes: vec![
+                    NodeData {
+                        id: "file:bar.cpp".into(),
+                        kind: "file".into(),
+                        label: "bar.cpp".into(),
+                        recipe: None,
+                        command: None,
+                        output: None,
+                        cached: None,
+                        dep_kind: None,
+                        group_index: None,
+                        modified: Some(true),
+                        discovered: None,
+                    },
+                    NodeData {
+                        id: "file:helpers.h".into(),
+                        kind: "file".into(),
+                        label: "helpers.h".into(),
+                        recipe: None,
+                        command: None,
+                        output: None,
+                        cached: None,
+                        dep_kind: None,
+                        group_index: None,
+                        modified: Some(false),
+                        discovered: Some(true),
+                    },
+                    unit("unit:a:0", "a", "a0", Some(true)),
+                ],
+                edges: vec![
+                    EdgeData { from: "file:bar.cpp".into(), to: "unit:a:0".into() },
+                    EdgeData { from: "file:helpers.h".into(), to: "unit:a:0".into() },
+                ],
+            }],
+            inter_wave_edges: vec![],
+        }
+    }
+
+    fn row_text(buf: &Buffer, area: Rect, y: u16) -> String {
+        (area.x..area.x + area.width)
+            .map(|x| buf.cell((x, y)).unwrap().symbol().to_string())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
+    #[test]
+    fn files_folder_header_renders_with_count() {
+        let g = graph_with_files();
+        let app = AppState::new(&g); // wave 0 expanded by default; files folder collapsed
+        let frame = SnapshotFrame::new(g);
+        let area = Rect::new(0, 0, 28, 6);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, &frame);
+
+        // Row 0: wave header. Row 1: Files folder header (collapsed).
+        let line = row_text(&buf, area, 1);
+        assert!(line.contains("Files (2)"), "expected `Files (2)` header, got: `{line}`");
+        assert!(line.contains('▶'), "collapsed folder uses the right-pointing triangle");
+    }
+
+    #[test]
+    fn files_folder_expanded_lists_files_alphabetical() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].files_expanded = true;
+        let frame = SnapshotFrame::new(g);
+        let area = Rect::new(0, 0, 28, 8);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, &frame);
+
+        // Row 1 = Files folder header (expanded with ▼).
+        assert!(row_text(&buf, area, 1).contains('▼'));
+        // Row 2 = first file alphabetically: bar.cpp (declared, modified).
+        let bar_row = row_text(&buf, area, 2);
+        assert!(bar_row.contains("bar.cpp"), "row 2 should contain bar.cpp, got: `{bar_row}`");
+        assert!(bar_row.contains('▢'), "declared file uses ▢ glyph");
+        assert!(bar_row.contains('⚠'), "modified file uses ⚠ badge");
+
+        // Row 3 = helpers.h (discovered, clean).
+        let helpers_row = row_text(&buf, area, 3);
+        assert!(helpers_row.contains("helpers.h"));
+        assert!(helpers_row.contains('◇'), "discovered file uses ◇ glyph");
+        assert!(helpers_row.contains('·'), "clean file uses · badge");
+    }
+
+    #[test]
+    fn files_folder_hidden_when_wave_has_no_files() {
+        let g = graph(); // existing fixture in this mod with one unit, no files
+        let app = AppState::new(&g);
+        let frame = SnapshotFrame::new(g);
+        let area = Rect::new(0, 0, 28, 4);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, &frame);
+
+        // Row 0 = wave header. Row 1 should be the recipe row (no Files header).
+        let line = row_text(&buf, area, 1);
+        assert!(!line.contains("Files"), "no Files header for empty-files wave");
     }
 }
