@@ -48,11 +48,11 @@ const MAX_BARYCENTER_ITERS: usize = 24;
 
 /// `(from, to, chain)` triples capturing the original edge endpoints
 /// alongside the real-and-dummy node IDs that the polyline must traverse.
-type EdgeChain = (String, String, Vec<String>);
+pub(crate) type EdgeChain = (String, String, Vec<String>);
 
 /// Output of [`insert_dummies`]: augmented layer table, unit-length edge
 /// list, per-original-edge chains, and the set of dummy IDs.
-type DummyInsertion = (
+pub(crate) type DummyInsertion = (
     BTreeMap<String, usize>,
     Vec<(String, String)>,
     Vec<EdgeChain>,
@@ -143,7 +143,7 @@ pub fn compute(g: &WaveDagData, dims: LayoutDims) -> Layout {
 // Pipeline stages
 // ---------------------------------------------------------------------------
 
-fn collect_nodes(g: &WaveDagData) -> (BTreeMap<String, NodeData>, Vec<String>) {
+pub(crate) fn collect_nodes(g: &WaveDagData) -> (BTreeMap<String, NodeData>, Vec<String>) {
     let mut nodes = BTreeMap::new();
     let mut order = Vec::new();
     for wave in &g.waves {
@@ -157,7 +157,7 @@ fn collect_nodes(g: &WaveDagData) -> (BTreeMap<String, NodeData>, Vec<String>) {
     (nodes, order)
 }
 
-fn collect_edges(
+pub(crate) fn collect_edges(
     g: &WaveDagData,
     nodes: &BTreeMap<String, NodeData>,
 ) -> Vec<(String, String)> {
@@ -187,7 +187,7 @@ fn collect_edges(
 
 /// Longest-path layering. Cycle-tolerant — any node not reached by the
 /// topological sweep falls back to layer 0.
-fn assign_layers(
+pub(crate) fn assign_layers(
     ids: &[String],
     edges: &[(String, String)],
 ) -> BTreeMap<String, usize> {
@@ -245,7 +245,7 @@ fn assign_layers(
 /// table, the unit-length edge list (used by crossing reduction), the
 /// per-original-edge chain (used by edge routing), and the set of dummy
 /// IDs (which participate in ordering but are not rendered as boxes).
-fn insert_dummies(
+pub(crate) fn insert_dummies(
     real_layers: &BTreeMap<String, usize>,
     real_edges: &[(String, String)],
 ) -> DummyInsertion {
@@ -283,7 +283,7 @@ fn insert_dummies(
 
 /// Group node IDs by layer, preserving real-node insertion order and
 /// appending dummies at the end of their layers.
-fn group_by_layer(
+pub(crate) fn group_by_layer(
     layers: &BTreeMap<String, usize>,
     ordered_real: &[String],
     dummies: &BTreeSet<String>,
@@ -304,7 +304,7 @@ fn group_by_layer(
 
 /// Alternating top-down / bottom-up barycenter sweeps. Stops early when a
 /// full round-trip leaves every layer unchanged.
-fn barycenter_sweeps(
+pub(crate) fn barycenter_sweeps(
     order: &mut BTreeMap<usize, Vec<String>>,
     edges: &[(String, String)],
 ) {
