@@ -19,9 +19,10 @@ use crate::VIEWER_SCHEMA_VERSION;
 
 #[derive(Serialize, Clone)]
 pub struct WaveDagData {
-    /// Wire-format schema version. CS-0048: writers always emit
-    /// `VIEWER_SCHEMA_VERSION`; the embedded JS viewer refuses payloads whose
-    /// `schema_version` exceeds the highest version it recognises.
+    /// Wire-format schema version (CS-0048). Currently write-only: the JS
+    /// viewer that gated on this was removed by CS-0060, so no consumer
+    /// reads it. Bumped when the payload shape changes so a future external
+    /// consumer can reason about compatibility.
     pub schema_version: u32,
     pub target: String,
     pub waves: Vec<WaveData>,
@@ -80,11 +81,20 @@ pub struct EdgeData {
 fn read_discovered_paths(
     di: &DiscoveredInputs,
     source_path: Option<&str>,
-    working_dir: &std::path::Path,
+    working_dir: &Path,
 ) -> Vec<String> {
     let depfile = working_dir.join(&di.from);
     let source = source_path.unwrap_or("");
     cook_cache::parse_make_depfile(&depfile, source, working_dir).unwrap_or_default()
+}
+
+/// Render a file path's basename for use as a node label, falling back to
+/// the full path when the path has no terminal component.
+fn file_label(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -348,15 +358,10 @@ fn build_wave(
                             }),
                         );
 
-                        let file_label = Path::new(path)
-                            .file_name()
-                            .map(|f| f.to_string_lossy().to_string())
-                            .unwrap_or_else(|| path.clone());
-
                         nodes.push(NodeData {
                             id: file_id.clone(),
                             kind: "file".to_string(),
-                            label: file_label,
+                            label: file_label(path),
                             recipe: None,
                             command: None,
                             output: None,
@@ -396,10 +401,6 @@ fn build_wave(
                             });
                             continue;
                         }
-                        let label = std::path::Path::new(&path)
-                            .file_name()
-                            .map(|f| f.to_string_lossy().to_string())
-                            .unwrap_or_else(|| path.clone());
                         let discovered_flag = if declared_input_paths.contains(&path) {
                             None
                         } else {
@@ -408,7 +409,7 @@ fn build_wave(
                         nodes.push(NodeData {
                             id: file_id.clone(),
                             kind: "file".to_string(),
-                            label,
+                            label: file_label(&path),
                             recipe: None,
                             command: None,
                             output: None,
@@ -518,6 +519,34 @@ fn build_wave(
     };
 
     (wave_data, recipe_terminals, recipe_roots)
+}
+
+/// Check whether a file is modified relative to its cached record.
+///
+/// Checks mtime first (cheap). If mtime differs, falls back to hash comparison.
+/// Returns `true` if the file appears modified or cannot be read.
+fn compute_file_modified(
+    rel_path: &str,
+    working_dir: &Path,
+    cached: Option<(u64, u64)>,
+) -> bool {
+    let abs = working_dir.join(rel_path);
+    let Some((cached_mtime, cached_hash)) = cached else {
+        // No cache entry → treat as modified (needs build).
+        return true;
+    };
+    let Some(disk_mtime) = stat_mtime(&abs) else {
+        return true;
+    };
+    if disk_mtime == cached_mtime {
+        return false;
+    }
+    // mtime differs — check hash to distinguish genuine content change from
+    // a metadata-only touch.
+    match hash_file(&abs) {
+        Some(h) => h != cached_hash,
+        None => true,
+    }
 }
 
 #[cfg(test)]
@@ -879,32 +908,3 @@ mod tests {
         }
     }
 }
-
-/// Check whether a file is modified relative to its cached record.
-///
-/// Checks mtime first (cheap). If mtime differs, falls back to hash comparison.
-/// Returns `true` if the file appears modified or cannot be read.
-fn compute_file_modified(
-    rel_path: &str,
-    working_dir: &Path,
-    cached: Option<(u64, u64)>,
-) -> bool {
-    let abs = working_dir.join(rel_path);
-    let Some((cached_mtime, cached_hash)) = cached else {
-        // No cache entry → treat as modified (needs build).
-        return true;
-    };
-    let Some(disk_mtime) = stat_mtime(&abs) else {
-        return true;
-    };
-    if disk_mtime == cached_mtime {
-        return false;
-    }
-    // mtime differs — check hash to distinguish genuine content change from
-    // a metadata-only touch.
-    match hash_file(&abs) {
-        Some(h) => h != cached_hash,
-        None => true,
-    }
-}
-
