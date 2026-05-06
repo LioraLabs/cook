@@ -94,7 +94,13 @@ fn draw_bottom_bar(area: Rect, buf: &mut Buffer, app: &mut AppState) {
             Mode::EdgePicker => " 1-9 jump · esc cancel".to_string(),
             Mode::Help => " help · q close".to_string(),
             Mode::DetailOverlay => " esc close".to_string(),
-            Mode::Normal => " ? help · / · q · [/] · HJKL · m mode · p pin · 1-9 jump · X clear".to_string(),
+            Mode::Normal => {
+                if matches!(app.density, crate::state::DensityMode::Flow) {
+                    " ? help · / · q · [/] · HJKL · m mode · s shape · R radial · p pin · 1-9 jump · X clear".to_string()
+                } else {
+                    " ? help · / · q · [/] · HJKL · m mode · p pin · 1-9 jump · X clear".to_string()
+                }
+            }
         }
     };
     let line = format!("{} [{}]", hint, mode);

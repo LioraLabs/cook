@@ -103,6 +103,16 @@ fn normal_key<F: crate::frame::ViewFrame>(
         (KeyCode::Char('m'), KeyModifiers::NONE) => {
             app.density = app.density.next();
         }
+        (KeyCode::Char('s'), KeyModifiers::NONE) => {
+            if matches!(app.density, crate::state::DensityMode::Flow) {
+                app.glyph = app.glyph.next();
+            }
+        }
+        (KeyCode::Char('R'), _) => {
+            if matches!(app.density, crate::state::DensityMode::Flow) {
+                app.radial = !app.radial;
+            }
+        }
         (KeyCode::Char('p'), KeyModifiers::NONE) => app.toggle_pin_selected(),
         (KeyCode::Char('P'), _) => app.bulk_pin_recipe(frame.graph()),
         (KeyCode::Char('X'), _) => app.clear_all_pins(),
@@ -212,4 +222,81 @@ fn graph_pane_rect(terminal: Rect) -> Rect {
     let detail_h = 6.min(body_h);
     let graph_h = body_h.saturating_sub(detail_h);
     Rect::new(28, 1, terminal.width.saturating_sub(28), graph_h)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dag_data::{NodeData, WaveData, WaveDagData};
+    use crate::frame::SnapshotFrame;
+    use crate::render::layout;
+    use crate::state::{DensityMode, GlyphStyle};
+
+    fn dag() -> WaveDagData {
+        WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "t".into(),
+            waves: vec![WaveData {
+                recipes: vec!["a".into()],
+                nodes: vec![NodeData {
+                    id: "unit:a:0".into(),
+                    kind: "unit".into(),
+                    label: "a0".into(),
+                    recipe: Some("a".into()),
+                    command: Some("c".into()),
+                    output: None,
+                    cached: Some(true),
+                    dep_kind: Some("sequential".into()),
+                    group_index: None,
+                    modified: None,
+                    discovered: None,
+                }],
+                edges: vec![],
+            }],
+            inter_wave_edges: vec![],
+        }
+    }
+
+    fn key(c: char) -> Event {
+        Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn s_cycles_glyph_in_flow_mode() {
+        let g = dag();
+        let mut app = AppState::new(&g);
+        app.density = DensityMode::Flow;
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::FLOW);
+        let size = Rect::new(0, 0, 80, 24);
+        handle(&mut app, &layout, &frame, &key('s'), size);
+        assert_eq!(app.glyph, GlyphStyle::Diamond);
+    }
+
+    #[test]
+    fn s_is_noop_outside_flow_mode() {
+        let g = dag();
+        let mut app = AppState::new(&g);
+        app.density = DensityMode::Full;
+        let original = app.glyph;
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::FULL);
+        let size = Rect::new(0, 0, 80, 24);
+        handle(&mut app, &layout, &frame, &key('s'), size);
+        assert_eq!(app.glyph, original);
+    }
+
+    #[test]
+    fn shift_r_toggles_radial_in_flow_mode() {
+        let g = dag();
+        let mut app = AppState::new(&g);
+        app.density = DensityMode::Flow;
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::FLOW);
+        let size = Rect::new(0, 0, 80, 24);
+        handle(&mut app, &layout, &frame, &key('R'), size);
+        assert!(app.radial);
+        handle(&mut app, &layout, &frame, &key('R'), size);
+        assert!(!app.radial);
+    }
 }
