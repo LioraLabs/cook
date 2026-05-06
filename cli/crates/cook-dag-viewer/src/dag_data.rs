@@ -789,6 +789,95 @@ mod tests {
             "no discovered nodes when depfile is malformed",
         );
     }
+
+    #[test]
+    fn discovered_path_that_is_a_unit_output_is_not_emitted_as_file() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_path_buf();
+        // Two units: archive consumes a.o (the compile unit's output).
+        // Contrived: archive's depfile lists a.o (which would normally be
+        // an inter-unit edge, not a file node). The discovered loop must
+        // skip it because a.o is in unit_output_paths.
+        touch(&wd, &["a.cpp", "a.o"]);
+        write_depfile(&wd, "archive.d", "libfoo.a: a.o\n");
+
+        let cm_compile = cook_contracts::CacheMeta {
+            recipe_name: "compile".into(),
+            project_id: "p".into(),
+            cookfile_path: "Cookfile".into(),
+            cache_key: "k_c".into(),
+            input_paths: vec!["a.cpp".into()],
+            output_paths: vec!["a.o".into()],
+            command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: BTreeMap::new(),
+            discovered_inputs: None,
+        };
+        let unit_compile = CapturedUnit {
+            payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
+            cache_meta: Some(cm_compile),
+            dep_kind: DepKind::Sequential,
+        };
+        let ru_compile = RecipeUnits {
+            recipe_name: "compile".into(),
+            deps: vec![],
+            units: vec![unit_compile],
+            step_groups: vec![],
+            working_dir: wd.clone(),
+            env_vars: BTreeMap::new(),
+            terminal_outputs: vec!["a.o".into()],
+            dep_edges: vec![],
+        };
+
+        let cm_archive = cook_contracts::CacheMeta {
+            recipe_name: "archive".into(),
+            project_id: "p".into(),
+            cookfile_path: "Cookfile".into(),
+            cache_key: "k_a".into(),
+            input_paths: vec!["a.o".into()],
+            output_paths: vec!["libfoo.a".into()],
+            command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: BTreeMap::new(),
+            discovered_inputs: Some(DiscoveredInputs {
+                from: "archive.d".into(),
+                format: "make".into(),
+            }),
+        };
+        let unit_archive = CapturedUnit {
+            payload: WorkPayload::Shell { cmd: "ar rcs libfoo.a a.o".into(), line: 1 },
+            cache_meta: Some(cm_archive),
+            dep_kind: DepKind::Sequential,
+        };
+        let ru_archive = RecipeUnits {
+            recipe_name: "archive".into(),
+            deps: vec![],
+            units: vec![unit_archive],
+            step_groups: vec![],
+            working_dir: wd,
+            env_vars: BTreeMap::new(),
+            terminal_outputs: vec!["libfoo.a".into()],
+            dep_edges: vec![],
+        };
+
+        let all_units = vec![("compile".into(), ru_compile), ("archive".into(), ru_archive)];
+        let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
+
+        let g = build_wave_dag_data("build", &all_units, &explicit, &inferred, &cms);
+
+        // Across whatever wave layout the grouper picks, no `file:a.o` ever
+        // appears — a.o is a unit output, not a source file.
+        for wave in &g.waves {
+            assert!(
+                !wave.nodes.iter().any(|n| n.id == "file:a.o"),
+                "a.o is a unit output and must not be emitted as a file node",
+            );
+        }
+    }
 }
 
 /// Check whether a file is modified relative to its cached record.
