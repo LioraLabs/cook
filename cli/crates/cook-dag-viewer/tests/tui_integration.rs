@@ -48,7 +48,7 @@ fn jjl_walks_into_first_unit() {
     input::handle(&mut app, &layout, &frame, &key('l'), term); // expand recipe
     input::handle(&mut app, &layout, &frame, &key('j'), term); // down into first unit
 
-    assert_eq!(app.selection, Selection { wave: 0, recipe: Some(0), unit: Some(0) });
+    assert_eq!(app.selection, Selection::unit(0, 0, 0));
 }
 
 #[test]

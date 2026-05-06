@@ -229,7 +229,7 @@ mod tests {
         let g = graph();
         let mut app = AppState::new(&g);
         app.tree.waves[0].recipes[0].expanded = true;
-        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.selection = Selection::unit(0, 0, 0);
         let frame = SnapshotFrame::new(g);
         let area = Rect::new(0, 0, 80, 6);
         let mut buf = Buffer::empty(area);
@@ -330,7 +330,7 @@ mod tests {
         let g = graph_with_discovered();
         let mut app = AppState::new(&g);
         app.tree.waves[0].recipes[0].expanded = true;
-        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.selection = Selection::unit(0, 0, 0);
         let frame = SnapshotFrame::new(g);
         let area = Rect::new(0, 0, 80, 6);
         let mut buf = Buffer::empty(area);
@@ -355,7 +355,7 @@ mod tests {
         let g = graph(); // existing fixture: declared input only, no discovered
         let mut app = AppState::new(&g);
         app.tree.waves[0].recipes[0].expanded = true;
-        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.selection = Selection::unit(0, 0, 0);
         let frame = SnapshotFrame::new(g);
         let area = Rect::new(0, 0, 80, 6);
         let mut buf = Buffer::empty(area);

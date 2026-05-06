@@ -222,7 +222,7 @@ mod tests {
         let g = dag();
         let mut app = AppState::new(&g);
         app.tree.waves[0].recipes[0].expanded = true;
-        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.selection = Selection::unit(0, 0, 0);
         let frame = SnapshotFrame::new(g.clone());
         let layout = layout::compute(&g, layout::LayoutDims::FULL);
         let buf = render(&layout, &app, &frame);
@@ -242,7 +242,7 @@ mod tests {
         let g = dag();
         let mut app = AppState::new(&g);
         app.tree.waves[0].recipes[0].expanded = true;
-        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.selection = Selection::unit(0, 0, 0);
         let frame = SnapshotFrame::new(g.clone());
         let layout = layout::compute(&g, layout::LayoutDims::FULL);
         let buf = render(&layout, &app, &frame);

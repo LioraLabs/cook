@@ -365,7 +365,7 @@ mod tests {
         let mut app = AppState::new(&g);
         app.glyph = crate::state::GlyphStyle::Dot;
         app.tree.waves[0].recipes[0].expanded = true;
-        app.selection = crate::state::Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.selection = crate::state::Selection::unit(0, 0, 0);
         let frame = SnapshotFrame::new(g.clone());
         let layout = layout::compute(&g, layout::LayoutDims::FLOW);
         let buf = render(&layout, &app, &frame);

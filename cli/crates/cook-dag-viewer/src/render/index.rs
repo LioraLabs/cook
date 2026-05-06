@@ -28,7 +28,7 @@ fn render_tree<F: ViewFrame>(
         }
         let glyph = if wave.expanded { '▼' } else { '▶' };
         let line = format!("{} {}", glyph, wave.label);
-        let style = sel_style(app.selection, Selection { wave: wi, recipe: None, unit: None });
+        let style = sel_style(app.selection, Selection::wave_only(wi));
         write_line(area, buf, row, 0, &line, style);
         row += 1;
 
@@ -42,7 +42,7 @@ fn render_tree<F: ViewFrame>(
             let glyph = if recipe.expanded { '▼' } else { '▶' };
             let line = format!("{} {}", glyph, recipe.name);
             let style =
-                sel_style(app.selection, Selection { wave: wi, recipe: Some(ri), unit: None });
+                sel_style(app.selection, Selection::recipe(wi, ri));
             write_line(area, buf, row, 2, &line, style);
             row += 1;
 
@@ -57,7 +57,7 @@ fn render_tree<F: ViewFrame>(
                 let line = format!("● {}  {}", unit.label, badge);
                 let style = sel_style(
                     app.selection,
-                    Selection { wave: wi, recipe: Some(ri), unit: Some(ui) },
+                    Selection::unit(wi, ri, ui),
                 );
                 write_line(area, buf, row, 4, &line, style);
                 row += 1;
