@@ -120,6 +120,78 @@ impl AppState {
     }
 }
 
+impl AppState {
+    /// Move the selection one visible row down (or up if `up`).
+    pub fn move_cursor(&mut self, up: bool) {
+        let visible = self.visible_rows();
+        let Some(idx) = visible.iter().position(|s| *s == self.selection) else {
+            self.selection = visible.first().copied().unwrap_or(self.selection);
+            return;
+        };
+        let new = if up { idx.saturating_sub(1) } else { (idx + 1).min(visible.len() - 1) };
+        self.selection = visible[new];
+    }
+
+    pub fn collapse_or_step_out(&mut self) {
+        match (self.selection.recipe, self.selection.unit) {
+            (Some(_), Some(_)) => {
+                self.selection.unit = None;
+            }
+            (Some(ri), None) => {
+                self.tree.waves[self.selection.wave].recipes[ri].expanded = false;
+            }
+            (None, _) => {
+                self.tree.waves[self.selection.wave].expanded = false;
+            }
+        }
+    }
+
+    pub fn expand_or_step_in(&mut self) {
+        match (self.selection.recipe, self.selection.unit) {
+            (None, _) => {
+                let w = self.selection.wave;
+                self.tree.waves[w].expanded = true;
+            }
+            (Some(ri), None) => {
+                self.tree.waves[self.selection.wave].recipes[ri].expanded = true;
+            }
+            (Some(_), Some(_)) => { /* already at leaf */ }
+        }
+    }
+
+    pub fn jump_first(&mut self) {
+        if let Some(first) = self.visible_rows().first() {
+            self.selection = *first;
+        }
+    }
+
+    pub fn jump_last(&mut self) {
+        if let Some(last) = self.visible_rows().last() {
+            self.selection = *last;
+        }
+    }
+
+    fn visible_rows(&self) -> Vec<Selection> {
+        let mut out = Vec::new();
+        for (wi, wave) in self.tree.waves.iter().enumerate() {
+            out.push(Selection { wave: wi, recipe: None, unit: None });
+            if !wave.expanded {
+                continue;
+            }
+            for (ri, recipe) in wave.recipes.iter().enumerate() {
+                out.push(Selection { wave: wi, recipe: Some(ri), unit: None });
+                if !recipe.expanded {
+                    continue;
+                }
+                for ui in 0..recipe.units.len() {
+                    out.push(Selection { wave: wi, recipe: Some(ri), unit: Some(ui) });
+                }
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +289,31 @@ mod tests {
         assert_eq!(app.selection, Selection::first());
         assert!(app.follow);
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn move_cursor_down_steps_through_waves() {
+        let g = graph_2x2();
+        let mut app = AppState::new(&g);
+        // Wave 0 expanded by default but recipes collapsed.
+        // Visible: W0, recipe a, recipe b, W1.
+        assert_eq!(app.selection, Selection { wave: 0, recipe: None, unit: None });
+        app.move_cursor(false);
+        assert_eq!(app.selection, Selection { wave: 0, recipe: Some(0), unit: None });
+        app.move_cursor(false);
+        assert_eq!(app.selection, Selection { wave: 0, recipe: Some(1), unit: None });
+        app.move_cursor(false);
+        assert_eq!(app.selection, Selection { wave: 1, recipe: None, unit: None });
+    }
+
+    #[test]
+    fn expand_then_step_in_descends_into_units() {
+        let g = graph_2x2();
+        let mut app = AppState::new(&g);
+        app.move_cursor(false); // recipe a
+        app.expand_or_step_in();
+        assert!(app.tree.waves[0].recipes[0].expanded);
+        app.move_cursor(false); // first unit a0
+        assert_eq!(app.selection, Selection { wave: 0, recipe: Some(0), unit: Some(0) });
     }
 }
