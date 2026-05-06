@@ -209,6 +209,22 @@ fn build_wave(
         }
     }
 
+    // Wave preflight: every input path declared by any unit in this wave.
+    // Used by the discovered loop to pin a path's classification regardless
+    // of the order units are processed in. See spec §3.3.
+    let mut declared_input_paths: BTreeSet<String> = BTreeSet::new();
+    for recipe_name in recipe_names {
+        if let Some(ru) = units_by_name.get(recipe_name.as_str()) {
+            for unit in &ru.units {
+                if let Some(meta) = &unit.cache_meta {
+                    for inp in &meta.input_paths {
+                        declared_input_paths.insert(inp.clone());
+                    }
+                }
+            }
+        }
+    }
+
     // Per-recipe terminal unit node IDs (last barrier after processing units).
     let mut recipe_terminals: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // Per-recipe root unit node IDs (first barrier encountered).
@@ -389,6 +405,11 @@ fn build_wave(
                             .file_name()
                             .map(|f| f.to_string_lossy().to_string())
                             .unwrap_or_else(|| path.clone());
+                        let discovered_flag = if declared_input_paths.contains(&path) {
+                            None
+                        } else {
+                            Some(true)
+                        };
                         nodes.push(NodeData {
                             id: file_id.clone(),
                             kind: "file".to_string(),
@@ -400,7 +421,7 @@ fn build_wave(
                             dep_kind: None,
                             group_index: None,
                             modified: None,
-                            discovered: Some(true),
+                            discovered: discovered_flag,
                         });
                         file_node_ids.insert(path.clone(), file_id.clone());
                         edges.push(EdgeData {
@@ -622,6 +643,108 @@ mod tests {
         assert!(has_edge("file:bar.cpp", "unit:compile:0"));
         assert!(has_edge("file:helpers.h", "unit:compile:0"));
         assert!(has_edge("file:math.h", "unit:compile:0"));
+    }
+
+    #[test]
+    fn discovered_path_declared_by_other_unit_is_classified_declared() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_path_buf();
+        touch(&wd, &["a.cpp", "b.cpp", "shared.h"]);
+        // a discovers shared.h via depfile.
+        write_depfile(&wd, "a.d", "a.o: a.cpp shared.h\n");
+        // b declares shared.h explicitly (no depfile).
+
+        // Recipe A is processed first (alphabetical via wave_grouper) — it
+        // would otherwise set `discovered = Some(true)` on shared.h.
+        let cm_a = cook_contracts::CacheMeta {
+            recipe_name: "a".into(),
+            project_id: "p".into(),
+            cookfile_path: "Cookfile".into(),
+            cache_key: "k_a".into(),
+            input_paths: vec!["a.cpp".into()],
+            output_paths: vec!["a.o".into()],
+            command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: BTreeMap::new(),
+            discovered_inputs: Some(DiscoveredInputs {
+                from: "a.d".into(),
+                format: "make".into(),
+            }),
+        };
+        let unit_a = CapturedUnit {
+            payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
+            cache_meta: Some(cm_a),
+            dep_kind: DepKind::Sequential,
+        };
+        let ru_a = RecipeUnits {
+            recipe_name: "a".into(),
+            deps: vec![],
+            units: vec![unit_a],
+            step_groups: vec![],
+            working_dir: wd.clone(),
+            env_vars: BTreeMap::new(),
+            terminal_outputs: vec!["a.o".into()],
+            dep_edges: vec![],
+        };
+
+        let cm_b = cook_contracts::CacheMeta {
+            recipe_name: "b".into(),
+            project_id: "p".into(),
+            cookfile_path: "Cookfile".into(),
+            cache_key: "k_b".into(),
+            input_paths: vec!["b.cpp".into(), "shared.h".into()],
+            output_paths: vec!["b.o".into()],
+            command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            consulted_env: BTreeMap::new(),
+            discovered_inputs: None,
+        };
+        let unit_b = CapturedUnit {
+            payload: WorkPayload::Shell { cmd: "clang -c b.cpp".into(), line: 1 },
+            cache_meta: Some(cm_b),
+            dep_kind: DepKind::Sequential,
+        };
+        let ru_b = RecipeUnits {
+            recipe_name: "b".into(),
+            deps: vec![],
+            units: vec![unit_b],
+            step_groups: vec![],
+            working_dir: wd,
+            env_vars: BTreeMap::new(),
+            terminal_outputs: vec!["b.o".into()],
+            dep_edges: vec![],
+        };
+
+        let all_units = vec![("a".into(), ru_a), ("b".into(), ru_b)];
+        let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
+
+        let g = build_wave_dag_data("build", &all_units, &explicit, &inferred, &cms);
+
+        // shared.h appears in the same wave as both units (a and b have no
+        // explicit deps so the wave grouper places them together).
+        let wave = &g.waves[0];
+        let shared = wave
+            .nodes
+            .iter()
+            .find(|n| n.id == "file:shared.h")
+            .expect("shared.h node missing");
+        assert_eq!(
+            shared.discovered, None,
+            "path declared by another unit in the wave should not be classified discovered",
+        );
+
+        // Both units have an edge from shared.h.
+        let has_edge = |to: &str| {
+            wave.edges
+                .iter()
+                .any(|e| e.from == "file:shared.h" && e.to == to)
+        };
+        assert!(has_edge("unit:a:0"));
+        assert!(has_edge("unit:b:0"));
     }
 }
 
