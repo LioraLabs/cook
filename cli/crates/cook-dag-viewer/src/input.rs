@@ -10,7 +10,8 @@ pub fn handle(app: &mut AppState, _layout: &Layout, event: &Event, _size: Rect) 
     let Event::Key(key) = event else { return };
     match app.mode {
         Mode::Normal => normal_key(app, key),
-        _ => {} // overlay modes handled in later tasks.
+        Mode::EdgePicker => picker_key(app, key),
+        _ => {} // search/help/detail handled in later tasks.
     }
 }
 
@@ -33,6 +34,49 @@ fn normal_key(app: &mut AppState, key: &KeyEvent) {
         }
         (KeyCode::Char('g'), KeyModifiers::NONE) => app.jump_first(),
         (KeyCode::Char('G'), _) => app.jump_last(),
+        (KeyCode::Char(']'), KeyModifiers::NONE) => {
+            app.open_edge_picker_for_selection(crate::state::PickerDir::Downstream);
+        }
+        (KeyCode::Char('['), KeyModifiers::NONE) => {
+            app.open_edge_picker_for_selection(crate::state::PickerDir::Upstream);
+        }
+        _ => {}
+    }
+}
+
+fn picker_key(app: &mut AppState, key: &KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.mode = Mode::Normal;
+            app.edge_picker = crate::state::EdgePicker::default();
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            let n = app.edge_picker.candidates.len();
+            if n > 0 {
+                app.edge_picker.cursor = (app.edge_picker.cursor + 1) % n;
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            let n = app.edge_picker.candidates.len();
+            if n > 0 {
+                app.edge_picker.cursor = (app.edge_picker.cursor + n - 1) % n;
+            }
+        }
+        KeyCode::Enter => {
+            let id = app.edge_picker.candidates[app.edge_picker.cursor].clone();
+            app.jump_to_node(&id);
+            app.mode = Mode::Normal;
+            app.edge_picker = crate::state::EdgePicker::default();
+        }
+        KeyCode::Char(c) if c.is_ascii_digit() => {
+            let idx = c.to_digit(10).unwrap() as usize;
+            if idx >= 1 && idx <= app.edge_picker.candidates.len() {
+                let id = app.edge_picker.candidates[idx - 1].clone();
+                app.jump_to_node(&id);
+                app.mode = Mode::Normal;
+                app.edge_picker = crate::state::EdgePicker::default();
+            }
+        }
         _ => {}
     }
 }

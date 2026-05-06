@@ -36,6 +36,13 @@ pub fn draw<F: ViewFrame>(
     draw_top_bar(chunks[0], buf, app, frame);
     draw_body(chunks[1], buf, app, frame, r);
     draw_bottom_bar(chunks[2], buf, app);
+
+    match app.mode {
+        Mode::EdgePicker => overlay::render_edge_picker(area, buf, &app.edge_picker),
+        Mode::Help => overlay::render_help(area, buf),
+        Mode::DetailOverlay => overlay::render_detail_overlay(area, buf, app, frame),
+        Mode::Search | Mode::Normal => {}
+    }
 }
 
 fn draw_top_bar<F: ViewFrame>(area: Rect, buf: &mut Buffer, _app: &AppState, frame: &F) {

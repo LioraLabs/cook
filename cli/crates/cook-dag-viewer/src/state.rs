@@ -104,20 +104,99 @@ pub struct AppState {
     pub camera_y: i32,
     pub follow: bool,
     pub should_quit: bool,
+    pub edge_picker: EdgePicker,
+    pub graph: std::sync::Arc<WaveDagData>,
 }
 
 impl AppState {
     pub fn new(graph: &WaveDagData) -> Self {
+        let arc = std::sync::Arc::new(graph.clone());
         Self {
-            tree: IndexTree::from_graph(graph),
+            tree: IndexTree::from_graph(&arc),
             selection: Selection::first(),
             mode: Mode::Normal,
             camera_x: 0,
             camera_y: 0,
             follow: true,
             should_quit: false,
+            edge_picker: EdgePicker::default(),
+            graph: arc,
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EdgePicker {
+    pub direction: PickerDir,
+    pub candidates: Vec<String>,
+    pub cursor: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerDir {
+    #[default]
+    Downstream,
+    Upstream,
+}
+
+impl AppState {
+    pub fn open_edge_picker(&mut self, graph: &WaveDagData, dir: PickerDir) {
+        let Some(node_id) = self.selection.node_id(&self.tree).map(str::to_string) else {
+            return;
+        };
+        let candidates = adjacency(graph, &node_id, dir);
+        if candidates.is_empty() {
+            return;
+        }
+        if candidates.len() == 1 {
+            self.jump_to_node(&candidates[0]);
+            return;
+        }
+        self.edge_picker = EdgePicker { direction: dir, candidates, cursor: 0 };
+        self.mode = Mode::EdgePicker;
+    }
+
+    pub fn open_edge_picker_for_selection(&mut self, dir: PickerDir) {
+        let g = self.graph.clone();
+        self.open_edge_picker(&g, dir);
+    }
+
+    pub fn jump_to_node(&mut self, node_id: &str) {
+        for (wi, wave) in self.tree.waves.iter_mut().enumerate() {
+            for (ri, recipe) in wave.recipes.iter_mut().enumerate() {
+                for (ui, unit) in recipe.units.iter().enumerate() {
+                    if unit.node_id == node_id {
+                        wave.expanded = true;
+                        recipe.expanded = true;
+                        self.selection = Selection { wave: wi, recipe: Some(ri), unit: Some(ui) };
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Adjacency lookup walks all wave edges + inter-wave edges.
+fn adjacency(graph: &WaveDagData, node_id: &str, dir: PickerDir) -> Vec<String> {
+    let mut out = Vec::new();
+    for wave in &graph.waves {
+        for e in &wave.edges {
+            match dir {
+                PickerDir::Downstream if e.from == node_id => out.push(e.to.clone()),
+                PickerDir::Upstream if e.to == node_id => out.push(e.from.clone()),
+                _ => {}
+            }
+        }
+    }
+    for e in &graph.inter_wave_edges {
+        match dir {
+            PickerDir::Downstream if e.from == node_id => out.push(e.to.clone()),
+            PickerDir::Upstream if e.to == node_id => out.push(e.from.clone()),
+            _ => {}
+        }
+    }
+    out
 }
 
 impl AppState {
@@ -195,7 +274,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dag_data::{NodeData, WaveData, WaveDagData};
+    use crate::dag_data::{EdgeData, NodeData, WaveData, WaveDagData};
 
     fn unit(id: &str, recipe: &str, label: &str) -> NodeData {
         NodeData {
@@ -315,5 +394,49 @@ mod tests {
         assert!(app.tree.waves[0].recipes[0].expanded);
         app.move_cursor(false); // first unit a0
         assert_eq!(app.selection, Selection { wave: 0, recipe: Some(0), unit: Some(0) });
+    }
+
+    #[test]
+    fn open_edge_picker_zero_candidates_no_op() {
+        let g = graph_2x2();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.open_edge_picker(&g, PickerDir::Downstream);
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn open_edge_picker_single_candidate_jumps_directly() {
+        let mut g = graph_2x2();
+        g.inter_wave_edges.push(EdgeData {
+            from: "unit:a:0".into(),
+            to: "unit:c:0".into(),
+        });
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.open_edge_picker(&g, PickerDir::Downstream);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selection.node_id(&app.tree), Some("unit:c:0"));
+    }
+
+    #[test]
+    fn open_edge_picker_multiple_candidates_opens_picker() {
+        let mut g = graph_2x2();
+        g.inter_wave_edges.push(EdgeData {
+            from: "unit:a:0".into(),
+            to: "unit:c:0".into(),
+        });
+        g.waves[0].edges.push(EdgeData {
+            from: "unit:a:0".into(),
+            to: "unit:b:0".into(),
+        });
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.open_edge_picker(&g, PickerDir::Downstream);
+        assert_eq!(app.mode, Mode::EdgePicker);
+        assert_eq!(app.edge_picker.candidates.len(), 2);
     }
 }
