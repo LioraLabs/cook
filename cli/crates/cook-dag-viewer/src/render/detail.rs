@@ -26,8 +26,18 @@ pub fn render<F: ViewFrame>(area: Rect, buf: &mut Buffer, app: &AppState, frame:
         node.command.as_deref().unwrap_or("(no command — file node)")
     );
     let inputs = adjacency(g, wave_idx, node_id, AdjDir::In);
+    let (declared_inputs, discovered_inputs) = split_inputs_by_discovered(g, &inputs);
     let consumers = adjacency(g, wave_idx, node_id, AdjDir::Out);
-    let inputs_line = format!("inputs ({}):  {}", inputs.len(), inputs.join(" · "));
+    let inputs_line = format!(
+        "inputs ({}):  {}",
+        declared_inputs.len(),
+        declared_inputs.join(" · ")
+    );
+    let discovered_line = format!(
+        "discovered ({}):  {}",
+        discovered_inputs.len(),
+        discovered_inputs.join(" · ")
+    );
     let consumers_line =
         format!("consumers ({}):  {}", consumers.len(), consumers.join(" · "));
     let recipe_line = format!(
@@ -37,13 +47,16 @@ pub fn render<F: ViewFrame>(area: Rect, buf: &mut Buffer, app: &AppState, frame:
         group_label(node)
     );
 
-    let lines = [
-        header.as_str(),
-        cmd_line.as_str(),
-        inputs_line.as_str(),
-        consumers_line.as_str(),
-        recipe_line.as_str(),
-    ];
+    let mut lines: Vec<&str> = Vec::with_capacity(6);
+    lines.push(header.as_str());
+    lines.push(cmd_line.as_str());
+    lines.push(inputs_line.as_str());
+    if !discovered_inputs.is_empty() {
+        lines.push(discovered_line.as_str());
+    }
+    lines.push(consumers_line.as_str());
+    lines.push(recipe_line.as_str());
+
     for (i, line) in lines.iter().enumerate() {
         let y = area.y + i as u16;
         if y >= area.y + area.height {
@@ -51,6 +64,29 @@ pub fn render<F: ViewFrame>(area: Rect, buf: &mut Buffer, app: &AppState, frame:
         }
         write_line(area, buf, y, line);
     }
+}
+
+/// Partition a unit's incoming-edge node IDs into (declared, discovered)
+/// based on the `discovered` flag of each `from` node in the graph.
+fn split_inputs_by_discovered(
+    g: &WaveDagData,
+    incoming: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let mut declared = Vec::new();
+    let mut discovered = Vec::new();
+    for id in incoming {
+        let is_discovered = g.waves.iter().any(|w| {
+            w.nodes
+                .iter()
+                .any(|n| n.id == *id && n.discovered == Some(true))
+        });
+        if is_discovered {
+            discovered.push(id.clone());
+        } else {
+            declared.push(id.clone());
+        }
+    }
+    (declared, discovered)
 }
 
 enum AdjDir {
@@ -217,5 +253,122 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render(area, &mut buf, &app, &frame);
         assert!(first_line(&buf, area).contains("(no selection)"));
+    }
+
+    fn graph_with_discovered() -> WaveDagData {
+        WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["a".into()],
+                nodes: vec![
+                    NodeData {
+                        id: "file:foo.cpp".into(),
+                        kind: "file".into(),
+                        label: "foo.cpp".into(),
+                        recipe: None,
+                        command: None,
+                        output: None,
+                        cached: None,
+                        dep_kind: None,
+                        group_index: None,
+                        modified: Some(false),
+                        discovered: None,
+                    },
+                    NodeData {
+                        id: "file:helpers.h".into(),
+                        kind: "file".into(),
+                        label: "helpers.h".into(),
+                        recipe: None,
+                        command: None,
+                        output: None,
+                        cached: None,
+                        dep_kind: None,
+                        group_index: None,
+                        modified: None,
+                        discovered: Some(true),
+                    },
+                    NodeData {
+                        id: "unit:a:0".into(),
+                        kind: "unit".into(),
+                        label: "foo.o".into(),
+                        recipe: Some("a".into()),
+                        command: Some("clang -c foo.cpp".into()),
+                        output: Some("foo.o".into()),
+                        cached: Some(true),
+                        dep_kind: Some("sequential".into()),
+                        group_index: None,
+                        modified: None,
+                        discovered: None,
+                    },
+                ],
+                edges: vec![
+                    EdgeData {
+                        from: "file:foo.cpp".into(),
+                        to: "unit:a:0".into(),
+                    },
+                    EdgeData {
+                        from: "file:helpers.h".into(),
+                        to: "unit:a:0".into(),
+                    },
+                ],
+            }],
+            inter_wave_edges: vec![],
+        }
+    }
+
+    fn read_row(buf: &Buffer, area: Rect, row: u16) -> String {
+        (area.x..area.x + area.width)
+            .map(|x| buf.cell((x, area.y + row)).unwrap().symbol().to_string())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
+    #[test]
+    fn detail_pane_lists_discovered_inputs_separately() {
+        let g = graph_with_discovered();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        let frame = SnapshotFrame::new(g);
+        let area = Rect::new(0, 0, 80, 6);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, &frame);
+
+        // The declared inputs row mentions foo.cpp (existing behaviour).
+        assert!(read_row(&buf, area, 2).contains("file:foo.cpp"));
+
+        // A new row mentions the discovered input. Look across rows 3 and
+        // 4 — the order is implementation-pinned to row 3 below, but if
+        // future styling shifts it the test only cares it appears somewhere
+        // visible.
+        let combined = format!("{}\n{}", read_row(&buf, area, 3), read_row(&buf, area, 4));
+        assert!(
+            combined.contains("file:helpers.h") && combined.to_lowercase().contains("discovered"),
+            "expected a discovered inputs row mentioning helpers.h, got:\n{combined}",
+        );
+    }
+
+    #[test]
+    fn detail_pane_omits_discovered_row_when_unit_has_none() {
+        let g = graph(); // existing fixture: declared input only, no discovered
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        let frame = SnapshotFrame::new(g);
+        let area = Rect::new(0, 0, 80, 6);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, &frame);
+
+        // Whichever row layout we choose, no row should contain "discovered"
+        // when the unit has none.
+        for row in 0..area.height {
+            let line = read_row(&buf, area, row);
+            assert!(
+                !line.to_lowercase().contains("discovered"),
+                "row {row} should not mention discovered: {line}",
+            );
+        }
     }
 }
