@@ -20,6 +20,26 @@ impl DensityMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlyphStyle {
+    Dot,
+    Circle,
+    Diamond,
+    Square,
+}
+
+impl GlyphStyle {
+    /// Cycle for the `s` key: Dot → Circle → Diamond → Square → Dot.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Dot => Self::Circle,
+            Self::Circle => Self::Diamond,
+            Self::Diamond => Self::Square,
+            Self::Square => Self::Dot,
+        }
+    }
+}
+
 pub const PIN_SLOTS: usize = 9;
 
 /// Numbered-circle glyph for pin slot N (0-indexed). Slot 0 → `❶`.
@@ -242,6 +262,8 @@ pub struct AppState {
     pub graph: std::sync::Arc<WaveDagData>,
     pub theme: crate::theme::Theme,
     pub density: DensityMode,
+    pub glyph: GlyphStyle,
+    pub radial: bool,
     pub pins: PinState,
     pub last_pin_message: Option<PinMsg>,
 }
@@ -262,6 +284,8 @@ impl AppState {
             graph: arc,
             theme: Default::default(),
             density: choose_initial_mode(graph),
+            glyph: GlyphStyle::Circle,
+            radial: false,
             pins: PinState::default(),
             last_pin_message: None,
         }
@@ -769,6 +793,32 @@ mod tests {
         assert_eq!(m, DensityMode::Full);
         m = m.next();
         assert_eq!(m, DensityMode::Flow);
+    }
+
+    #[test]
+    fn glyph_style_cycles_dot_circle_diamond_square_dot() {
+        let mut g = GlyphStyle::Dot;
+        g = g.next();
+        assert_eq!(g, GlyphStyle::Circle);
+        g = g.next();
+        assert_eq!(g, GlyphStyle::Diamond);
+        g = g.next();
+        assert_eq!(g, GlyphStyle::Square);
+        g = g.next();
+        assert_eq!(g, GlyphStyle::Dot);
+    }
+
+    #[test]
+    fn app_state_default_glyph_is_circle_radial_off() {
+        let g = WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "t".into(),
+            waves: vec![],
+            inter_wave_edges: vec![],
+        };
+        let app = AppState::new(&g);
+        assert_eq!(app.glyph, GlyphStyle::Circle);
+        assert!(!app.radial);
     }
 
     #[test]
