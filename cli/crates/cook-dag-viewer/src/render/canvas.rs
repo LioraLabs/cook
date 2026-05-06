@@ -12,16 +12,19 @@ use crate::render::layout::Layout;
 use crate::state::AppState;
 
 pub fn render<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F) -> Buffer {
+    if matches!(app.density, crate::state::DensityMode::Flow) {
+        return crate::render::flow::render(layout, app, frame);
+    }
     let area = Rect::new(0, 0, layout.canvas_w.max(1), layout.canvas_h.max(1));
     let mut buf = Buffer::empty(area);
 
     draw_edges(layout, area, &mut buf, &app.theme);
     match app.density {
-        crate::state::DensityMode::Flow => draw_dots(layout, app, frame, &mut buf),
         crate::state::DensityMode::Compact => draw_compact(layout, app, frame, &mut buf),
         crate::state::DensityMode::Full => draw_nodes(layout, area, &mut buf),
+        crate::state::DensityMode::Flow => unreachable!(),
     }
-    // Badge overlay (✓ ✗ ⚠) is a Full-mode-only affordance: in Dot the dot
+    // Badge overlay (✓ ✗ ⚠) is a Full-mode-only affordance: in Flow the
     // glyph itself carries cache colour; in Compact the bracketed label
     // is coloured per status, so a separate badge would clobber the last
     // label cell.
@@ -88,24 +91,6 @@ fn draw_nodes(layout: &Layout, _area: Rect, buf: &mut Buffer) {
     }
 }
 
-fn draw_dots<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F, buf: &mut Buffer) {
-    for node in &layout.nodes {
-        let (glyph, color) = if let Some(slot) = app.pins.slot_of(&node.id) {
-            // Pinned: slot glyph wins; cache state is read off the legend card.
-            (crate::state::pin_glyph(slot), app.theme.pin_slots[slot])
-        } else {
-            let glyph = if node.kind == "file" && node.discovered == Some(true) {
-                '~'
-            } else {
-                '●'
-            };
-            (glyph, status_color(&node.id, frame, &app.theme))
-        };
-        if let Some(cell) = buf.cell_mut((node.x, node.y)) {
-            cell.set_char(glyph).set_style(Style::default().fg(color));
-        }
-    }
-}
 
 /// Render each node as a single-row bracketed label: `[label]`. The label
 /// is left-padded into the interior width (node_w - 2 cells); too-long
@@ -343,20 +328,6 @@ mod tests {
     }
 
     #[test]
-    fn flow_mode_legacy_renders_single_cell_glyph_per_node() {
-        let g = dag(); // existing fixture
-        let mut app = AppState::new(&g);
-        app.density = crate::state::DensityMode::Flow;
-        let frame = SnapshotFrame::new(g.clone());
-        let layout = layout::compute(&g, layout::LayoutDims::DOT);
-        let buf = render(&layout, &app, &frame);
-
-        let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
-        let cell = buf.cell((placed.x, placed.y)).unwrap();
-        assert_eq!(cell.symbol(), "●", "flow mode should draw a single ● glyph");
-    }
-
-    #[test]
     fn compact_mode_renders_bracketed_label_in_one_row() {
         let g = dag();
         let mut app = AppState::new(&g);
@@ -374,92 +345,6 @@ mod tests {
             .cell((placed.x + placed.w.saturating_sub(1), placed.y))
             .unwrap();
         assert_eq!(last.symbol(), "]", "compact mode closes with `]`");
-    }
-
-    #[test]
-    fn flow_mode_legacy_renders_pin_glyph_at_pinned_slot() {
-        let g = dag();
-        let mut app = AppState::new(&g);
-        app.density = crate::state::DensityMode::Flow;
-        app.pins.pin("unit:a:0");
-        let frame = SnapshotFrame::new(g.clone());
-        let layout = layout::compute(&g, layout::LayoutDims::DOT);
-        let buf = render(&layout, &app, &frame);
-
-        let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
-        let cell = buf.cell((placed.x, placed.y)).unwrap();
-        assert_eq!(cell.symbol(), "❶", "pinned dot in slot 0 renders ❶");
-    }
-
-    #[test]
-    fn flow_mode_legacy_renders_tilde_for_discovered_file() {
-        let g = WaveDagData {
-            schema_version: crate::VIEWER_SCHEMA_VERSION,
-            target: "build".into(),
-            waves: vec![WaveData {
-                recipes: vec!["a".into()],
-                nodes: vec![
-                    NodeData {
-                        id: "file:helpers.h".into(),
-                        kind: "file".into(),
-                        label: "helpers.h".into(),
-                        recipe: None,
-                        command: None,
-                        output: None,
-                        cached: None,
-                        dep_kind: None,
-                        group_index: None,
-                        modified: None,
-                        discovered: Some(true),
-                    },
-                    NodeData {
-                        id: "unit:a:0".into(),
-                        kind: "unit".into(),
-                        label: "a0".into(),
-                        recipe: Some("a".into()),
-                        command: Some("c".into()),
-                        output: None,
-                        cached: Some(true),
-                        dep_kind: Some("sequential".into()),
-                        group_index: None,
-                        modified: None,
-                        discovered: None,
-                    },
-                ],
-                edges: vec![EdgeData {
-                    from: "file:helpers.h".into(),
-                    to: "unit:a:0".into(),
-                }],
-            }],
-            inter_wave_edges: vec![],
-        };
-        let mut app = AppState::new(&g);
-        app.density = crate::state::DensityMode::Flow;
-        let frame = SnapshotFrame::new(g.clone());
-        let layout = layout::compute(&g, layout::LayoutDims::DOT);
-        let buf = render(&layout, &app, &frame);
-
-        let helpers = layout.nodes.iter().find(|n| n.id == "file:helpers.h").unwrap();
-        let cell = buf.cell((helpers.x, helpers.y)).unwrap();
-        assert_eq!(cell.symbol(), "~", "discovered file in flow mode renders as ~");
-    }
-
-    #[test]
-    fn flow_mode_legacy_unit_dot_inherits_cache_status_color() {
-        let g = dag();
-        let mut app = AppState::new(&g);
-        app.density = crate::state::DensityMode::Flow;
-        let frame = SnapshotFrame::new(g.clone());
-        let layout = layout::compute(&g, layout::LayoutDims::DOT);
-        let buf = render(&layout, &app, &frame);
-
-        let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
-        let cell = buf.cell((placed.x, placed.y)).unwrap();
-        assert_eq!(
-            cell.style().fg,
-            Some(app.theme.badge_cached),
-            "cached unit dot should pick up theme.badge_cached"
-        );
     }
 
     #[test]

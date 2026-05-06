@@ -3,6 +3,7 @@
 pub mod camera;
 pub mod canvas;
 pub mod detail;
+pub mod flow;
 pub mod index;
 pub mod layout;
 pub mod overlay;
