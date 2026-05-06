@@ -31,6 +31,7 @@ pub fn render<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F) -> Buffe
 
     draw_edges(&nodes_by_id, frame.graph(), area, app, frame, &mut buf);
     draw_nodes(layout, area, app, frame, &mut buf);
+    overlay_pin_glyphs(layout, app, &mut buf);
     buf
 }
 
@@ -70,7 +71,7 @@ fn draw_edges<F: ViewFrame>(
             y1: flip_y(s.y, area.height) - s.h as f64 / 2.0,
             x2: t.x as f64 + t.w as f64 / 2.0,
             y2: flip_y(t.y, area.height) - t.h as f64 / 2.0,
-            color: node_color(s, frame, &theme),
+            color: node_color(s, frame, &theme, &app.search.matches),
         })
         .collect();
 
@@ -97,7 +98,11 @@ fn node_color<F: ViewFrame>(
     node: &PlacedNode,
     frame: &F,
     theme: &crate::theme::Theme,
+    search_matches: &[String],
 ) -> Color {
+    if search_matches.iter().any(|m| m == &node.id) {
+        return theme.search_highlight;
+    }
     if node.kind == "file" {
         return theme.file;
     }
@@ -119,7 +124,7 @@ fn draw_nodes<F: ViewFrame>(
     let style = app.glyph;
     let theme = app.theme;
     let nodes = &layout.nodes;
-    let colors: Vec<Color> = nodes.iter().map(|n| node_color(n, frame, &theme)).collect();
+    let colors: Vec<Color> = nodes.iter().map(|n| node_color(n, frame, &theme, &app.search.matches)).collect();
     let selected: Option<&str> = app.selection.node_id(&app.tree);
     let ring_color = theme.selected_ring;
 
@@ -210,6 +215,22 @@ fn draw_glyph(
             for (a, b) in [(tl, tr), (tr, br), (br, bl), (bl, tl)] {
                 ctx.draw(&Line { x1: a.0, y1: a.1, x2: b.0, y2: b.1, color });
             }
+        }
+    }
+}
+
+fn overlay_pin_glyphs(layout: &Layout, app: &AppState, buf: &mut Buffer) {
+    use ratatui::style::Style;
+    for n in &layout.nodes {
+        let Some(slot) = app.pins.slot_of(&n.id) else { continue };
+        let cx = n.x + n.w / 2;
+        let cy = n.y + n.h / 2;
+        let glyph = crate::state::pin_glyph(slot);
+        let color = app.theme.pin_slots[slot];
+        // Place adjacent to the right of the node center.
+        let target_x = cx + 1;
+        if let Some(cell) = buf.cell_mut((target_x, cy)) {
+            cell.set_char(glyph).set_style(Style::default().fg(color));
         }
     }
 }
@@ -385,5 +406,41 @@ mod tests {
             Some(app.theme.badge_cached),
             "cached unit dot should use the cached badge color"
         );
+    }
+
+    #[test]
+    fn flow_pinned_node_renders_slot_glyph_adjacent_to_center() {
+        let g = two_node_dag();
+        let mut app = AppState::new(&g);
+        app.glyph = crate::state::GlyphStyle::Dot;
+        app.pins.pin("unit:a:0");
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::FLOW);
+        let buf = render(&layout, &app, &frame);
+
+        let n = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
+        let cx = n.x + n.w / 2;
+        let cy = n.y + n.h / 2;
+        // Slot 0 → ❶ at (cx + 1, cy).
+        let cell = buf.cell((cx + 1, cy)).unwrap();
+        assert_eq!(cell.symbol(), "❶");
+        assert_eq!(cell.style().fg, Some(app.theme.pin_slots[0]));
+    }
+
+    #[test]
+    fn flow_search_match_overrides_node_color() {
+        let g = two_node_dag();
+        let mut app = AppState::new(&g);
+        app.glyph = crate::state::GlyphStyle::Dot;
+        app.search.matches = vec!["unit:a:0".into()];
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::FLOW);
+        let buf = render(&layout, &app, &frame);
+
+        let n = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
+        let cx = n.x + n.w / 2;
+        let cy = n.y + n.h / 2;
+        let cell = buf.cell((cx, cy)).unwrap();
+        assert_eq!(cell.style().fg, Some(app.theme.search_highlight));
     }
 }
