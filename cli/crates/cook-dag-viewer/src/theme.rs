@@ -17,6 +17,7 @@ pub struct Theme {
     pub badge_modified: Color,
     pub badge_discovered: Color,
     pub pin_slots: [Color; 9],
+    pub selected_ring: Color,
     pub kind: ThemeKind,
 }
 
@@ -40,6 +41,7 @@ impl Theme {
                 Color::DarkGray,
                 Color::Cyan,
             ],
+            selected_ring: Color::White,
             kind: ThemeKind::Auto,
         }
     }
@@ -53,6 +55,7 @@ impl Theme {
             badge_modified: Color::Reset,
             badge_discovered: Color::Reset,
             pin_slots: [Color::Reset; 9],
+            selected_ring: Color::Reset,
             kind: ThemeKind::Mono,
         }
     }

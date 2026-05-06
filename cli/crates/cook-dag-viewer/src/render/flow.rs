@@ -120,6 +120,8 @@ fn draw_nodes<F: ViewFrame>(
     let theme = app.theme;
     let nodes = &layout.nodes;
     let colors: Vec<Color> = nodes.iter().map(|n| node_color(n, frame, &theme)).collect();
+    let selected: Option<&str> = app.selection.node_id(&app.tree);
+    let ring_color = theme.selected_ring;
 
     let w = area.width as f64;
     let h = area.height as f64;
@@ -148,6 +150,20 @@ fn draw_nodes<F: ViewFrame>(
                 let cy = h - target_dot_y * h / (res_y - 1.0);
                 let radius = (n.w.min(n.h) as f64) / 2.0;
                 draw_glyph(ctx, cx, cy, radius, style, *color);
+                if Some(n.id.as_str()) == selected {
+                    // Use simple cell-center canvas coords for the ring — a
+                    // Circle spans many cells so Braille sub-pixel precision
+                    // is not needed here.
+                    let ring_cx = n.x as f64 + n.w as f64 / 2.0;
+                    let ring_cy = flip_y(n.y, area.height) - n.h as f64 / 2.0;
+                    let ring = Circle {
+                        x: ring_cx,
+                        y: ring_cy,
+                        radius: radius * 1.5,
+                        color: ring_color,
+                    };
+                    ctx.draw(&ring);
+                }
             }
         })
         .render(area, buf);
@@ -320,6 +336,35 @@ mod tests {
             }
         }
         assert!(any_braille, "expected at least one Braille glyph on the Flow canvas");
+    }
+
+    #[test]
+    fn flow_selected_node_gets_outer_ring() {
+        let g = two_node_dag();
+        let mut app = AppState::new(&g);
+        app.glyph = crate::state::GlyphStyle::Dot;
+        app.tree.waves[0].recipes[0].expanded = true;
+        app.selection = crate::state::Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::FLOW);
+        let buf = render(&layout, &app, &frame);
+
+        // Around the selected node center, look one extra cell out for the ring.
+        let n = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
+        let cx = n.x + n.w / 2;
+        let cy = n.y + n.h / 2;
+        let outer_neighbours = [
+            (cx.saturating_sub(2), cy),
+            (cx + 2, cy),
+            (cx, cy.saturating_sub(2)),
+            (cx, cy + 2),
+        ];
+        let any_ring = outer_neighbours.iter().any(|&(x, y)| {
+            buf.cell((x, y))
+                .map(|c| c.symbol().chars().any(|ch| ('\u{2800}'..='\u{28FF}').contains(&ch)))
+                .unwrap_or(false)
+        });
+        assert!(any_ring, "selection ring not drawn at outer cells");
     }
 
     #[test]
