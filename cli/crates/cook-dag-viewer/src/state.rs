@@ -22,6 +22,13 @@ impl DensityMode {
 
 pub const PIN_SLOTS: usize = 9;
 
+/// Numbered-circle glyph for pin slot N (0-indexed). Slot 0 → `❶`.
+/// Out-of-range slots return `'●'`.
+pub fn pin_glyph(slot: usize) -> char {
+    const GLYPHS: [char; PIN_SLOTS] = ['❶', '❷', '❸', '❹', '❺', '❻', '❼', '❽', '❾'];
+    GLYPHS.get(slot).copied().unwrap_or('●')
+}
+
 /// Up to 9 pinned node IDs, indexed by slot. Slot N holds the node ID
 /// pinned in that slot; `None` is an empty slot. See spec §4.3.
 #[derive(Debug, Clone)]

@@ -15,6 +15,7 @@ pub struct Theme {
     pub badge_stale: Color,
     pub badge_modified: Color,
     pub badge_discovered: Color,
+    pub pin_slots: [Color; 9],
     pub kind: ThemeKind,
 }
 
@@ -26,6 +27,17 @@ impl Theme {
             badge_stale: Color::Red,
             badge_modified: Color::Yellow,
             badge_discovered: Color::Cyan,
+            pin_slots: [
+                Color::Magenta,
+                Color::Blue,
+                Color::LightMagenta,
+                Color::LightBlue,
+                Color::LightCyan,
+                Color::White,
+                Color::Gray,
+                Color::DarkGray,
+                Color::Cyan,
+            ],
             kind: ThemeKind::Auto,
         }
     }
@@ -37,6 +49,7 @@ impl Theme {
             badge_stale: Color::Reset,
             badge_modified: Color::Reset,
             badge_discovered: Color::Reset,
+            pin_slots: [Color::Reset; 9],
             kind: ThemeKind::Mono,
         }
     }

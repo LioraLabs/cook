@@ -72,15 +72,20 @@ fn draw_nodes(layout: &Layout, _area: Rect, buf: &mut Buffer) {
     }
 }
 
-fn draw_dots(layout: &Layout, _app: &AppState, buf: &mut Buffer) {
+fn draw_dots(layout: &Layout, app: &AppState, buf: &mut Buffer) {
     for node in &layout.nodes {
-        let glyph = if node.kind == "file" && node.discovered == Some(true) {
-            '~'
+        let (glyph, style) = if let Some(slot) = app.pins.slot_of(&node.id) {
+            (
+                crate::state::pin_glyph(slot),
+                Style::default().fg(app.theme.pin_slots[slot]),
+            )
+        } else if node.kind == "file" && node.discovered == Some(true) {
+            ('~', Style::default())
         } else {
-            '●'
+            ('●', Style::default())
         };
         if let Some(cell) = buf.cell_mut((node.x, node.y)) {
-            cell.set_char(glyph).set_style(Style::default());
+            cell.set_char(glyph).set_style(style);
         }
     }
 }
@@ -349,6 +354,21 @@ mod tests {
             .cell((placed.x + placed.w.saturating_sub(1), placed.y))
             .unwrap();
         assert_eq!(last.symbol(), "]", "compact mode closes with `]`");
+    }
+
+    #[test]
+    fn dot_mode_renders_pin_glyph_at_pinned_slot() {
+        let g = dag();
+        let mut app = AppState::new(&g);
+        app.density = crate::state::DensityMode::Dot;
+        app.pins.pin("unit:a:0");
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::DOT);
+        let buf = render(&layout, &app, &frame);
+
+        let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
+        let cell = buf.cell((placed.x, placed.y)).unwrap();
+        assert_eq!(cell.symbol(), "❶", "pinned dot in slot 0 renders ❶");
     }
 
     #[test]
