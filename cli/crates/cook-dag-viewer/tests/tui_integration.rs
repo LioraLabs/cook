@@ -110,3 +110,55 @@ fn m_cycles_density_mode() {
     assert_eq!(app.density, initial, "three presses complete the cycle");
     assert_ne!(app.density, after_one);
 }
+
+#[test]
+fn p_toggles_pin_on_selected_unit() {
+    let g = fixtures::three_wave_dag();
+    let layout = cook_dag_viewer::render::layout::compute(
+        &g,
+        cook_dag_viewer::render::layout::LayoutDims::FULL,
+    );
+    let mut app = cook_dag_viewer::state::AppState::new(&g);
+    let term = Rect::new(0, 0, 120, 40);
+
+    // Walk into the first unit (Wave 0 → cpp.compile → unit 0).
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('j'), term); // wave 0 row → first recipe
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('l'), term); // expand recipe
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('j'), term); // descend to unit 0
+
+    // Pin
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('p'), term);
+    assert_eq!(app.pins.slot_of("unit:cpp.compile:0"), Some(0));
+
+    // Unpin
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('p'), term);
+    assert_eq!(app.pins.slot_of("unit:cpp.compile:0"), None);
+}
+
+#[test]
+fn p_emits_full_message_when_slots_exhausted() {
+    let g = fixtures::three_wave_dag();
+    let layout = cook_dag_viewer::render::layout::compute(
+        &g,
+        cook_dag_viewer::render::layout::LayoutDims::FULL,
+    );
+    let mut app = cook_dag_viewer::state::AppState::new(&g);
+    let term = Rect::new(0, 0, 120, 40);
+
+    // Synthesise 9 pinned slots directly.
+    for i in 0..9 {
+        app.pins.pin(&format!("synth:{i}"));
+    }
+    assert!(app.pins.is_full());
+
+    // Walk to a unit and try to pin.
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('j'), term);
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('l'), term);
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('j'), term);
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('p'), term);
+
+    assert_eq!(
+        app.last_pin_message,
+        Some(cook_dag_viewer::state::PinMsg::Full),
+    );
+}

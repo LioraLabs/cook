@@ -265,6 +265,19 @@ impl AppState {
         me.theme = theme;
         me
     }
+
+    pub fn toggle_pin_selected(&mut self) {
+        let Some(node_id) = self.selection.node_id(&self.tree) else {
+            return;
+        };
+        let owned = node_id.to_string();
+        if self.pins.unpin(&owned) {
+            return;
+        }
+        if self.pins.pin(&owned).is_none() {
+            self.last_pin_message = Some(PinMsg::Full);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

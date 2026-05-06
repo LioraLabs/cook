@@ -91,6 +91,7 @@ fn normal_key(app: &mut AppState, key: &KeyEvent, layout: &Layout, pane: Rect) {
         (KeyCode::Char('m'), KeyModifiers::NONE) => {
             app.density = app.density.next();
         }
+        (KeyCode::Char('p'), KeyModifiers::NONE) => app.toggle_pin_selected(),
         (KeyCode::Char('/'), _) => app.mode = Mode::Search,
         (KeyCode::Char('?'), _) => app.mode = Mode::Help,
         (KeyCode::Char('v'), KeyModifiers::NONE) => app.mode = Mode::DetailOverlay,
