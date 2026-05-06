@@ -29,19 +29,19 @@ pub fn render<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F) -> Buffe
     let nodes_by_id: BTreeMap<&str, &PlacedNode> =
         layout.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
 
-    draw_edges(&nodes_by_id, frame.graph(), area, app, &mut buf);
-    draw_nodes(layout, area, app, &mut buf);
+    draw_edges(&nodes_by_id, frame.graph(), area, app, frame, &mut buf);
+    draw_nodes(layout, area, app, frame, &mut buf);
     buf
 }
 
-/// Build one Braille `Line` per real edge. Color is the theme's edge
-/// color for now; Task 8 swaps this to the source node's cache-status
-/// color.
-fn draw_edges(
+/// Build one Braille `Line` per real edge. Color is inherited from the
+/// source node's cache-status color so cache state propagates visually.
+fn draw_edges<F: ViewFrame>(
     nodes: &BTreeMap<&str, &PlacedNode>,
     graph: &WaveDagData,
     area: Rect,
     app: &AppState,
+    frame: &F,
     buf: &mut Buffer,
 ) {
     let mut pairs: Vec<(&PlacedNode, &PlacedNode)> = Vec::new();
@@ -62,7 +62,7 @@ fn draw_edges(
         }
     }
 
-    let edge_color: Color = app.theme.edge;
+    let theme = app.theme;
     let lines: Vec<Line> = pairs
         .iter()
         .map(|(s, t)| Line {
@@ -70,7 +70,7 @@ fn draw_edges(
             y1: flip_y(s.y, area.height) - s.h as f64 / 2.0,
             x2: t.x as f64 + t.w as f64 / 2.0,
             y2: flip_y(t.y, area.height) - t.h as f64 / 2.0,
-            color: edge_color,
+            color: node_color(s, frame, &theme),
         })
         .collect();
 
@@ -93,14 +93,33 @@ fn flip_y(y: u16, area_h: u16) -> f64 {
     (area_h as i32 - y as i32) as f64
 }
 
-fn draw_nodes(
+fn node_color<F: ViewFrame>(
+    node: &PlacedNode,
+    frame: &F,
+    theme: &crate::theme::Theme,
+) -> Color {
+    if node.kind == "file" {
+        return theme.file;
+    }
+    match frame.status_of(&node.id) {
+        crate::frame::NodeStatus::Cached => theme.badge_cached,
+        crate::frame::NodeStatus::Stale => theme.badge_stale,
+        crate::frame::NodeStatus::Modified => theme.badge_modified,
+        _ => Color::Reset,
+    }
+}
+
+fn draw_nodes<F: ViewFrame>(
     layout: &Layout,
     area: Rect,
     app: &AppState,
+    frame: &F,
     buf: &mut Buffer,
 ) {
     let style = app.glyph;
-    let color = app.theme.edge; // Task 8 swaps to per-node color.
+    let theme = app.theme;
+    let nodes = &layout.nodes;
+    let colors: Vec<Color> = nodes.iter().map(|n| node_color(n, frame, &theme)).collect();
 
     let w = area.width as f64;
     let h = area.height as f64;
@@ -113,7 +132,7 @@ fn draw_nodes(
         .x_bounds([0.0, w])
         .y_bounds([0.0, h])
         .paint(|ctx| {
-            for n in &layout.nodes {
+            for (n, color) in nodes.iter().zip(colors.iter()) {
                 // Compute the target cell center (in cell coordinates).
                 let cell_cx = n.x as f64 + n.w as f64 / 2.0;
                 let cell_cy_top = (n.y + n.h / 2) as f64; // row of center cell
@@ -128,7 +147,7 @@ fn draw_nodes(
                 let cx = target_dot_x * w / (res_x - 1.0);
                 let cy = h - target_dot_y * h / (res_y - 1.0);
                 let radius = (n.w.min(n.h) as f64) / 2.0;
-                draw_glyph(ctx, cx, cy, radius, style, color);
+                draw_glyph(ctx, cx, cy, radius, style, *color);
             }
         })
         .render(area, buf);
@@ -301,5 +320,25 @@ mod tests {
             }
         }
         assert!(any_braille, "expected at least one Braille glyph on the Flow canvas");
+    }
+
+    #[test]
+    fn flow_unit_node_uses_cache_status_color() {
+        let g = two_node_dag(); // unit:a:0 is cached
+        let mut app = AppState::new(&g);
+        app.glyph = crate::state::GlyphStyle::Dot;
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::FLOW);
+        let buf = render(&layout, &app, &frame);
+
+        let n = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
+        let cx = n.x + n.w / 2;
+        let cy = n.y + n.h / 2;
+        let cell = buf.cell((cx, cy)).unwrap();
+        assert_eq!(
+            cell.style().fg,
+            Some(app.theme.badge_cached),
+            "cached unit dot should use the cached badge color"
+        );
     }
 }

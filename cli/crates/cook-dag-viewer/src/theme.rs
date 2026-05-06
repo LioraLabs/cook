@@ -11,6 +11,7 @@ pub enum ThemeKind {
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {
     pub edge: Color,
+    pub file: Color,
     pub badge_cached: Color,
     pub badge_stale: Color,
     pub badge_modified: Color,
@@ -23,6 +24,7 @@ impl Theme {
     pub fn auto() -> Self {
         Self {
             edge: Color::DarkGray,
+            file: Color::Gray,
             badge_cached: Color::Green,
             badge_stale: Color::Red,
             badge_modified: Color::Yellow,
@@ -45,6 +47,7 @@ impl Theme {
     pub fn mono() -> Self {
         Self {
             edge: Color::Reset,
+            file: Color::Reset,
             badge_cached: Color::Reset,
             badge_stale: Color::Reset,
             badge_modified: Color::Reset,
