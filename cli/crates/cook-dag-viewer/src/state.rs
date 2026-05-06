@@ -292,6 +292,34 @@ impl AppState {
         self.last_pin_message = Some(PinMsg::ClearedAll(n));
     }
 
+    pub fn jump_to_pin_slot(&mut self, slot: usize) {
+        let Some(target_id) = self.pins.id_at(slot).map(|s| s.to_string()) else {
+            self.last_pin_message = Some(PinMsg::EmptySlot(slot));
+            return;
+        };
+        for (wi, wave) in self.tree.waves.iter().enumerate() {
+            for (ri, recipe) in wave.recipes.iter().enumerate() {
+                for (ui, unit) in recipe.units.iter().enumerate() {
+                    if unit.node_id == target_id {
+                        self.selection = Selection {
+                            wave: wi,
+                            recipe: Some(ri),
+                            unit: Some(ui),
+                        };
+                        // Mirror the search-jump expansion behaviour.
+                        if let Some(w) = self.tree.waves.get_mut(wi) {
+                            w.expanded = true;
+                            if let Some(r) = w.recipes.get_mut(ri) {
+                                r.expanded = true;
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     pub fn bulk_pin_recipe(&mut self, graph: &WaveDagData) {
         let Some(selected_id) = self.selection.node_id(&self.tree) else {
             self.last_pin_message = Some(PinMsg::OnFile);

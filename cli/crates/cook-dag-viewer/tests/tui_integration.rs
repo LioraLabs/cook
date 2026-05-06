@@ -299,3 +299,44 @@ fn capital_x_clears_all_pins() {
         Some(cook_dag_viewer::state::PinMsg::ClearedAll(2)),
     );
 }
+
+#[test]
+fn digit_jumps_selection_to_pin_slot() {
+    let g = fixtures::three_wave_dag();
+    let layout = cook_dag_viewer::render::layout::compute(
+        &g,
+        cook_dag_viewer::render::layout::LayoutDims::FULL,
+    );
+    let mut app = cook_dag_viewer::state::AppState::new(&g);
+    let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
+    let term = Rect::new(0, 0, 120, 40);
+
+    // Pin two nodes by ID.
+    app.pins.pin("unit:cpp.compile:0");
+    app.pins.pin("unit:cpp.link:0");
+
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('2'), term);
+    assert_eq!(
+        app.selection.node_id(&app.tree),
+        Some("unit:cpp.link:0"),
+        "pressing 2 should jump selection to the slot-1 pin (1-indexed)",
+    );
+}
+
+#[test]
+fn digit_emits_empty_slot_message_when_slot_unused() {
+    let g = fixtures::three_wave_dag();
+    let layout = cook_dag_viewer::render::layout::compute(
+        &g,
+        cook_dag_viewer::render::layout::LayoutDims::FULL,
+    );
+    let mut app = cook_dag_viewer::state::AppState::new(&g);
+    let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
+    let term = Rect::new(0, 0, 120, 40);
+
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('5'), term);
+    assert_eq!(
+        app.last_pin_message,
+        Some(cook_dag_viewer::state::PinMsg::EmptySlot(4)),
+    );
+}
