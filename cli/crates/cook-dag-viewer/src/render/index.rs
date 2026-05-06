@@ -10,7 +10,7 @@ use crate::state::{AppState, Selection};
 pub fn render<F: ViewFrame>(area: Rect, buf: &mut Buffer, app: &AppState, frame: &F) {
     let row_after_tree = render_tree(area, buf, app, frame);
 
-    if app.density == crate::state::DensityMode::Dot && !app.pins.is_empty() {
+    if app.density == crate::state::DensityMode::Flow && !app.pins.is_empty() {
         render_pinned_legend(area, buf, app, frame, row_after_tree);
     }
 }
@@ -279,7 +279,7 @@ mod tests {
             inter_wave_edges: vec![],
         };
         let mut app = AppState::new(&g);
-        app.density = crate::state::DensityMode::Dot;
+        app.density = crate::state::DensityMode::Flow;
         app.pins.pin("unit:compile:0");
         let frame = SnapshotFrame::new(g.clone());
         let area = Rect::new(0, 0, 28, 24);

@@ -17,7 +17,7 @@ pub fn render<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F) -> Buffe
 
     draw_edges(layout, area, &mut buf, &app.theme);
     match app.density {
-        crate::state::DensityMode::Dot => draw_dots(layout, app, frame, &mut buf),
+        crate::state::DensityMode::Flow => draw_dots(layout, app, frame, &mut buf),
         crate::state::DensityMode::Compact => draw_compact(layout, app, frame, &mut buf),
         crate::state::DensityMode::Full => draw_nodes(layout, area, &mut buf),
     }
@@ -343,10 +343,10 @@ mod tests {
     }
 
     #[test]
-    fn dot_mode_renders_single_cell_glyph_per_node() {
+    fn flow_mode_legacy_renders_single_cell_glyph_per_node() {
         let g = dag(); // existing fixture
         let mut app = AppState::new(&g);
-        app.density = crate::state::DensityMode::Dot;
+        app.density = crate::state::DensityMode::Flow;
         let frame = SnapshotFrame::new(g.clone());
         let layout = layout::compute(&g, layout::LayoutDims::DOT);
         let buf = render(&layout, &app, &frame);
@@ -377,10 +377,10 @@ mod tests {
     }
 
     #[test]
-    fn dot_mode_renders_pin_glyph_at_pinned_slot() {
+    fn flow_mode_legacy_renders_pin_glyph_at_pinned_slot() {
         let g = dag();
         let mut app = AppState::new(&g);
-        app.density = crate::state::DensityMode::Dot;
+        app.density = crate::state::DensityMode::Flow;
         app.pins.pin("unit:a:0");
         let frame = SnapshotFrame::new(g.clone());
         let layout = layout::compute(&g, layout::LayoutDims::DOT);
@@ -392,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn dot_mode_renders_tilde_for_discovered_file() {
+    fn flow_mode_legacy_renders_tilde_for_discovered_file() {
         let g = WaveDagData {
             schema_version: crate::VIEWER_SCHEMA_VERSION,
             target: "build".into(),
@@ -434,21 +434,21 @@ mod tests {
             inter_wave_edges: vec![],
         };
         let mut app = AppState::new(&g);
-        app.density = crate::state::DensityMode::Dot;
+        app.density = crate::state::DensityMode::Flow;
         let frame = SnapshotFrame::new(g.clone());
         let layout = layout::compute(&g, layout::LayoutDims::DOT);
         let buf = render(&layout, &app, &frame);
 
         let helpers = layout.nodes.iter().find(|n| n.id == "file:helpers.h").unwrap();
         let cell = buf.cell((helpers.x, helpers.y)).unwrap();
-        assert_eq!(cell.symbol(), "~", "discovered file in dot mode renders as ~");
+        assert_eq!(cell.symbol(), "~", "discovered file in flow mode renders as ~");
     }
 
     #[test]
-    fn dot_mode_unit_dot_inherits_cache_status_color() {
+    fn flow_mode_legacy_unit_dot_inherits_cache_status_color() {
         let g = dag();
         let mut app = AppState::new(&g);
-        app.density = crate::state::DensityMode::Dot;
+        app.density = crate::state::DensityMode::Flow;
         let frame = SnapshotFrame::new(g.clone());
         let layout = layout::compute(&g, layout::LayoutDims::DOT);
         let buf = render(&layout, &app, &frame);

@@ -6,16 +6,16 @@ use crate::dag_data::WaveDagData;
 pub enum DensityMode {
     Full,
     Compact,
-    Dot,
+    Flow,
 }
 
 impl DensityMode {
-    /// Cycle order for the `m` key: Dot → Compact → Full → Dot.
+    /// Cycle order for the `m` key: Flow → Compact → Full → Flow.
     pub fn next(self) -> Self {
         match self {
-            Self::Dot => Self::Compact,
+            Self::Flow => Self::Compact,
             Self::Compact => Self::Full,
-            Self::Full => Self::Dot,
+            Self::Full => Self::Flow,
         }
     }
 }
@@ -131,7 +131,7 @@ pub fn choose_initial_mode(g: &WaveDagData) -> DensityMode {
     match total {
         0..=20 => DensityMode::Full,
         21..=80 => DensityMode::Compact,
-        _ => DensityMode::Dot,
+        _ => DensityMode::Flow,
     }
 }
 
@@ -761,14 +761,14 @@ mod tests {
     }
 
     #[test]
-    fn density_mode_cycles_dot_compact_full_dot() {
-        let mut m = DensityMode::Dot;
+    fn density_mode_cycles_flow_compact_full_flow() {
+        let mut m = DensityMode::Flow;
         m = m.next();
         assert_eq!(m, DensityMode::Compact);
         m = m.next();
         assert_eq!(m, DensityMode::Full);
         m = m.next();
-        assert_eq!(m, DensityMode::Dot);
+        assert_eq!(m, DensityMode::Flow);
     }
 
     #[test]
@@ -784,9 +784,9 @@ mod tests {
     }
 
     #[test]
-    fn choose_initial_mode_picks_dot_for_big_graphs() {
+    fn choose_initial_mode_picks_flow_for_big_graphs() {
         let g = small_graph(200);
-        assert_eq!(choose_initial_mode(&g), DensityMode::Dot);
+        assert_eq!(choose_initial_mode(&g), DensityMode::Flow);
     }
 
     #[test]

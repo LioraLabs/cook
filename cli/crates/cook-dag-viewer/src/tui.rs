@@ -63,7 +63,7 @@ pub fn run_with_theme<F: ViewFrame>(
         let dims = match app.density {
             crate::state::DensityMode::Full => layout::LayoutDims::FULL,
             crate::state::DensityMode::Compact => layout::LayoutDims::COMPACT,
-            crate::state::DensityMode::Dot => layout::LayoutDims::DOT,
+            crate::state::DensityMode::Flow => layout::LayoutDims::DOT,
         };
         let layout = layout::compute(frame.graph(), dims);
         let canvas_buf = canvas::render(&layout, &app, &frame);
