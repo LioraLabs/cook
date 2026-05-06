@@ -500,7 +500,7 @@ mod tests {
     fn pan_camera_disables_follow() {
         let g = graph_2x2();
         let mut app = AppState::new(&g);
-        let layout = crate::render::layout::compute(&g);
+        let layout = crate::render::layout::compute(&g, crate::render::layout::LayoutDims::FULL);
         app.pan_camera(10, 10, &layout, ratatui::layout::Rect::new(0, 0, 80, 24));
         assert!(!app.follow);
     }
@@ -511,7 +511,7 @@ mod tests {
         let mut app = AppState::new(&g);
         app.tree.waves[0].recipes[0].expanded = true;
         app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
-        let layout = crate::render::layout::compute(&g);
+        let layout = crate::render::layout::compute(&g, crate::render::layout::LayoutDims::FULL);
         app.follow = false;
         app.recenter(&layout, ratatui::layout::Rect::new(0, 0, 80, 24));
         assert!(app.follow);

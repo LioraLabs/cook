@@ -39,7 +39,7 @@ fn special(code: KeyCode) -> Event {
 #[test]
 fn jjl_walks_into_first_unit() {
     let g = fixtures::three_wave_dag();
-    let layout = layout::compute(&g);
+    let layout = layout::compute(&g, layout::LayoutDims::FULL);
     let mut app = AppState::new(&g);
     let term = Rect::new(0, 0, 120, 40);
 
@@ -53,7 +53,7 @@ fn jjl_walks_into_first_unit() {
 #[test]
 fn capital_l_pans_camera_and_disables_follow() {
     let g = fixtures::three_wave_dag();
-    let layout = layout::compute(&g);
+    let layout = layout::compute(&g, layout::LayoutDims::FULL);
     let mut app = AppState::new(&g);
     let term = Rect::new(0, 0, 120, 40);
 
@@ -66,7 +66,7 @@ fn capital_l_pans_camera_and_disables_follow() {
 #[test]
 fn slash_then_typed_query_then_enter_jumps_to_match() {
     let g = fixtures::three_wave_dag();
-    let layout = layout::compute(&g);
+    let layout = layout::compute(&g, layout::LayoutDims::FULL);
     let mut app = AppState::new(&g);
     let term = Rect::new(0, 0, 120, 40);
 
@@ -83,7 +83,7 @@ fn slash_then_typed_query_then_enter_jumps_to_match() {
 #[test]
 fn q_quits() {
     let g = fixtures::three_wave_dag();
-    let layout = layout::compute(&g);
+    let layout = layout::compute(&g, layout::LayoutDims::FULL);
     let mut app = AppState::new(&g);
     let term = Rect::new(0, 0, 120, 40);
     input::handle(&mut app, &layout, &key('q'), term);

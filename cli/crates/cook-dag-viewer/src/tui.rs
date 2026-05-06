@@ -57,7 +57,7 @@ pub fn run_with_theme<F: ViewFrame>(
     let mut terminal: Terminal<CrosstermBackend<Stdout>> =
         Terminal::new(backend).map_err(|e| ViewerError::TerminalInit(e.to_string()))?;
 
-    let layout = layout::compute(frame.graph());
+    let layout = layout::compute(frame.graph(), layout::LayoutDims::FULL);
     let mut app = AppState::with_theme(frame.graph(), theme);
 
     loop {

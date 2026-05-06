@@ -10,8 +10,8 @@
 //!   3. **Crossing reduction.** Alternating top-down / bottom-up
 //!      barycenter sweeps, capped at `MAX_BARYCENTER_ITERS` or until the
 //!      ordering stabilises.
-//!   4. **Coordinate assignment.** Uniform grid: `x = layer * LAYER_WIDTH`,
-//!      `y = row * (NODE_H + ROW_PAD)`.
+//!   4. **Coordinate assignment.** Uniform grid: `x = layer * layer_width`,
+//!      `y = row * (node_h + row_pad)`.
 //!   5. **Edge routing.** Orthogonal polyline from right-anchor of source,
 //!      through each dummy centre, to left-anchor of target, with mid-x
 //!      bends inserted between control points whose `y` differs.
@@ -25,10 +25,22 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::dag_data::{NodeData, WaveDagData};
 
-pub const LAYER_WIDTH: u16 = 32;
-pub const NODE_W: u16 = 22;
-pub const NODE_H: u16 = 3;
-pub const ROW_PAD: u16 = 1;
+/// Geometry preset for one density mode. The renderer picks one of
+/// `LayoutDims::FULL`, `LayoutDims::COMPACT`, or `LayoutDims::DOT`
+/// based on `AppState.density`. See spec §4.2 / §5.2.
+#[derive(Debug, Clone, Copy)]
+pub struct LayoutDims {
+    pub layer_width: u16,
+    pub node_w: u16,
+    pub node_h: u16,
+    pub row_pad: u16,
+}
+
+impl LayoutDims {
+    pub const FULL: Self    = Self { layer_width: 32, node_w: 22, node_h: 3, row_pad: 1 };
+    pub const COMPACT: Self = Self { layer_width: 22, node_w: 18, node_h: 1, row_pad: 1 };
+    pub const DOT: Self     = Self { layer_width:  3, node_w:  1, node_h: 1, row_pad: 0 };
+}
 
 const MAX_BARYCENTER_ITERS: usize = 24;
 
@@ -72,13 +84,13 @@ pub struct Layout {
     pub canvas_h: u16,
 }
 
-pub fn compute(g: &WaveDagData) -> Layout {
+pub fn compute(g: &WaveDagData, dims: LayoutDims) -> Layout {
     let (real_nodes, ordered_ids) = collect_nodes(g);
     if ordered_ids.is_empty() {
         return Layout {
             nodes: Vec::new(),
             edges: Vec::new(),
-            canvas_w: LAYER_WIDTH,
+            canvas_w: dims.layer_width,
             canvas_h: 0,
         };
     }
@@ -89,9 +101,9 @@ pub fn compute(g: &WaveDagData) -> Layout {
     let mut order = group_by_layer(&layers, &ordered_ids, &dummies);
     barycenter_sweeps(&mut order, &chain_edges);
 
-    let positions = assign_coordinates(&order);
-    let canvas_w = canvas_width(&order);
-    let canvas_h = canvas_height(&order);
+    let positions = assign_coordinates(&order, dims);
+    let canvas_w = canvas_width(&order, dims);
+    let canvas_h = canvas_height(&order, dims);
 
     let placed_nodes: Vec<PlacedNode> = ordered_ids
         .iter()
@@ -104,8 +116,8 @@ pub fn compute(g: &WaveDagData) -> Layout {
                 label: n.label.clone(),
                 x,
                 y,
-                w: NODE_W,
-                h: NODE_H,
+                w: dims.node_w,
+                h: dims.node_h,
                 discovered: n.discovered,
             }
         })
@@ -114,7 +126,7 @@ pub fn compute(g: &WaveDagData) -> Layout {
     let edges: Vec<EdgeRoute> = chains
         .iter()
         .filter_map(|(from, to, chain)| {
-            route_chain(chain, &positions).map(|points| EdgeRoute {
+            route_chain(chain, &positions, dims).map(|points| EdgeRoute {
                 from: from.clone(),
                 to: to.clone(),
                 points,
@@ -377,30 +389,31 @@ fn reorder_by_barycenter(
 
 fn assign_coordinates(
     order: &BTreeMap<usize, Vec<String>>,
+    dims: LayoutDims,
 ) -> BTreeMap<String, (u16, u16)> {
     let mut out = BTreeMap::new();
     for (layer_idx, ids) in order {
-        let x = (*layer_idx as u16) * LAYER_WIDTH;
+        let x = (*layer_idx as u16) * dims.layer_width;
         for (i, id) in ids.iter().enumerate() {
-            let y = (i as u16) * (NODE_H + ROW_PAD);
+            let y = (i as u16) * (dims.node_h + dims.row_pad);
             out.insert(id.clone(), (x, y));
         }
     }
     out
 }
 
-fn canvas_width(order: &BTreeMap<usize, Vec<String>>) -> u16 {
+fn canvas_width(order: &BTreeMap<usize, Vec<String>>, dims: LayoutDims) -> u16 {
     let max_layer = order.keys().max().copied().unwrap_or(0) as u16;
-    (max_layer + 1).saturating_mul(LAYER_WIDTH)
+    (max_layer + 1).saturating_mul(dims.layer_width)
 }
 
-fn canvas_height(order: &BTreeMap<usize, Vec<String>>) -> u16 {
+fn canvas_height(order: &BTreeMap<usize, Vec<String>>, dims: LayoutDims) -> u16 {
     order
         .values()
         .map(|ids| ids.len() as u16)
         .max()
         .unwrap_or(0)
-        .saturating_mul(NODE_H + ROW_PAD)
+        .saturating_mul(dims.node_h + dims.row_pad)
 }
 
 /// Stitch the polyline for an original edge by walking the chain of
@@ -411,6 +424,7 @@ fn canvas_height(order: &BTreeMap<usize, Vec<String>>) -> u16 {
 fn route_chain(
     chain: &[String],
     positions: &BTreeMap<String, (u16, u16)>,
+    dims: LayoutDims,
 ) -> Option<Vec<(u16, u16)>> {
     if chain.len() < 2 {
         return None;
@@ -418,13 +432,13 @@ fn route_chain(
 
     let mut controls: Vec<(u16, u16)> = Vec::with_capacity(chain.len());
     let from_pos = positions.get(&chain[0]).copied()?;
-    controls.push((from_pos.0 + NODE_W, from_pos.1 + NODE_H / 2));
+    controls.push((from_pos.0 + dims.node_w, from_pos.1 + dims.node_h / 2));
     for id in &chain[1..chain.len() - 1] {
         let (x, y) = positions.get(id).copied()?;
-        controls.push((x + NODE_W / 2, y + NODE_H / 2));
+        controls.push((x + dims.node_w / 2, y + dims.node_h / 2));
     }
     let to_pos = positions.get(&chain[chain.len() - 1]).copied()?;
-    controls.push((to_pos.0, to_pos.1 + NODE_H / 2));
+    controls.push((to_pos.0, to_pos.1 + dims.node_h / 2));
 
     let mut points: Vec<(u16, u16)> = Vec::with_capacity(controls.len() * 2);
     points.push(controls[0]);
@@ -487,7 +501,7 @@ mod tests {
 
     fn layer_of(l: &Layout, id: &str) -> u16 {
         let n = l.nodes.iter().find(|n| n.id == id).unwrap();
-        n.x / LAYER_WIDTH
+        n.x / LayoutDims::FULL.layer_width
     }
 
     #[test]
@@ -515,11 +529,11 @@ mod tests {
                 to: "unit:b:0".into(),
             }],
         };
-        let l = compute(&g);
+        let l = compute(&g, LayoutDims::FULL);
         assert_eq!(layer_of(&l, "file:foo"), 0);
         assert_eq!(layer_of(&l, "unit:a:0"), 1);
         assert_eq!(layer_of(&l, "unit:b:0"), 2);
-        assert!(l.canvas_w >= 3 * LAYER_WIDTH);
+        assert!(l.canvas_w >= 3 * LayoutDims::FULL.layer_width);
     }
 
     #[test]
@@ -545,7 +559,7 @@ mod tests {
             }],
             inter_wave_edges: vec![],
         };
-        let l = compute(&g);
+        let l = compute(&g, LayoutDims::FULL);
         assert_eq!(layer_of(&l, "file:in"), 0);
         assert_eq!(layer_of(&l, "unit:r:0"), 1);
         assert_eq!(layer_of(&l, "unit:r:1"), 2);
@@ -578,7 +592,7 @@ mod tests {
             }],
             inter_wave_edges: vec![],
         };
-        let l = compute(&g);
+        let l = compute(&g, LayoutDims::FULL);
         assert_eq!(l.edges.len(), 1);
         let route = &l.edges[0].points;
         // Either a straight horizontal shot (2 points) or one mid-x bend
@@ -617,7 +631,7 @@ mod tests {
             }],
             inter_wave_edges: vec![],
         };
-        let l = compute(&g);
+        let l = compute(&g, LayoutDims::FULL);
         let f1 = l.nodes.iter().find(|n| n.id == "file:f1").unwrap();
         let f2 = l.nodes.iter().find(|n| n.id == "file:f2").unwrap();
         let x0 = l.nodes.iter().find(|n| n.id == "unit:x:0").unwrap();
@@ -643,7 +657,7 @@ mod tests {
             waves: vec![],
             inter_wave_edges: vec![],
         };
-        let l = compute(&g);
+        let l = compute(&g, LayoutDims::FULL);
         assert!(l.nodes.is_empty());
         assert!(l.edges.is_empty());
     }

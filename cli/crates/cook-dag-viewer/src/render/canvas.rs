@@ -146,7 +146,7 @@ mod tests {
         app.tree.waves[0].recipes[0].expanded = true;
         app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
         let frame = SnapshotFrame::new(g.clone());
-        let layout = layout::compute(&g);
+        let layout = layout::compute(&g, layout::LayoutDims::FULL);
         let buf = render(&layout, &app, &frame);
 
         let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
@@ -166,7 +166,7 @@ mod tests {
         app.tree.waves[0].recipes[0].expanded = true;
         app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
         let frame = SnapshotFrame::new(g.clone());
-        let layout = layout::compute(&g);
+        let layout = layout::compute(&g, layout::LayoutDims::FULL);
         let buf = render(&layout, &app, &frame);
         let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
         let cell = buf.cell((placed.x + 1, placed.y + 1)).unwrap();
@@ -223,7 +223,7 @@ mod tests {
         let g = dag_with_discovered_file();
         let app = AppState::new(&g);
         let frame = SnapshotFrame::new(g.clone());
-        let layout = layout::compute(&g);
+        let layout = layout::compute(&g, layout::LayoutDims::FULL);
         let buf = render(&layout, &app, &frame);
 
         let helpers = layout.nodes.iter().find(|n| n.id == "file:helpers.h").unwrap();
@@ -240,7 +240,7 @@ mod tests {
         let g = dag_with_discovered_file();
         let app = AppState::new(&g);
         let frame = SnapshotFrame::new(g.clone());
-        let layout = layout::compute(&g);
+        let layout = layout::compute(&g, layout::LayoutDims::FULL);
         let buf = render(&layout, &app, &frame);
 
         let helpers = layout.nodes.iter().find(|n| n.id == "file:helpers.h").unwrap();
