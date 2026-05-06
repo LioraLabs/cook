@@ -18,7 +18,7 @@ pub fn render<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F) -> Buffe
     draw_edges(layout, area, &mut buf, &app.theme);
     match app.density {
         crate::state::DensityMode::Dot => draw_dots(layout, app, &mut buf),
-        crate::state::DensityMode::Compact => draw_nodes(layout, area, &mut buf),
+        crate::state::DensityMode::Compact => draw_compact(layout, &mut buf),
         crate::state::DensityMode::Full => draw_nodes(layout, area, &mut buf),
     }
     if !matches!(app.density, crate::state::DensityMode::Dot) {
@@ -82,6 +82,55 @@ fn draw_dots(layout: &Layout, _app: &AppState, buf: &mut Buffer) {
         if let Some(cell) = buf.cell_mut((node.x, node.y)) {
             cell.set_char(glyph).set_style(Style::default());
         }
+    }
+}
+
+/// Render each node as a single-row bracketed label: `[label]`. The label
+/// is left-padded into the interior width (node_w - 2 cells); too-long
+/// labels truncate with an ellipsis.
+fn draw_compact(layout: &Layout, buf: &mut Buffer) {
+    for node in &layout.nodes {
+        let interior_w = node.w.saturating_sub(2) as usize;
+        let label = truncate_to(&node.label, interior_w);
+        let row_y = node.y;
+
+        // Left bracket
+        if let Some(cell) = buf.cell_mut((node.x, row_y)) {
+            cell.set_char('[').set_style(Style::default());
+        }
+        // Label
+        for (i, ch) in label.chars().enumerate() {
+            let x = node.x + 1 + i as u16;
+            if let Some(cell) = buf.cell_mut((x, row_y)) {
+                cell.set_char(ch).set_style(Style::default());
+            }
+        }
+        // Pad
+        for x in node.x + 1 + label.chars().count() as u16
+            ..node.x + node.w.saturating_sub(1)
+        {
+            if let Some(cell) = buf.cell_mut((x, row_y)) {
+                cell.set_char(' ').set_style(Style::default());
+            }
+        }
+        // Right bracket
+        if let Some(cell) = buf.cell_mut((node.x + node.w.saturating_sub(1), row_y)) {
+            cell.set_char(']').set_style(Style::default());
+        }
+    }
+}
+
+fn truncate_to(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else if max == 0 {
+        String::new()
+    } else if max == 1 {
+        "\u{2026}".to_string()
+    } else {
+        let mut out: String = s.chars().take(max - 1).collect();
+        out.push('\u{2026}');
+        out
     }
 }
 
@@ -280,6 +329,26 @@ mod tests {
         let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
         let cell = buf.cell((placed.x, placed.y)).unwrap();
         assert_eq!(cell.symbol(), "●", "dot mode should draw a single ● glyph");
+    }
+
+    #[test]
+    fn compact_mode_renders_bracketed_label_in_one_row() {
+        let g = dag();
+        let mut app = AppState::new(&g);
+        app.density = crate::state::DensityMode::Compact;
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::COMPACT);
+        let buf = render(&layout, &app, &frame);
+
+        let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
+        // First cell of the row is `[`
+        let first = buf.cell((placed.x, placed.y)).unwrap();
+        assert_eq!(first.symbol(), "[", "compact mode opens with `[`");
+        // Last cell of the row is `]`
+        let last = buf
+            .cell((placed.x + placed.w.saturating_sub(1), placed.y))
+            .unwrap();
+        assert_eq!(last.symbol(), "]", "compact mode closes with `]`");
     }
 
     #[test]
