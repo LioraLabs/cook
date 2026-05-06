@@ -26,7 +26,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::dag_data::{NodeData, WaveDagData};
 
 /// Geometry preset for one density mode. The renderer picks one of
-/// `LayoutDims::FULL`, `LayoutDims::COMPACT`, or `LayoutDims::DOT`
+/// `LayoutDims::FULL`, `LayoutDims::COMPACT`, `LayoutDims::DOT`, or
+/// `LayoutDims::FLOW`
 /// based on `AppState.density`. See spec §4.2 / §5.2.
 #[derive(Debug, Clone, Copy)]
 pub struct LayoutDims {
@@ -40,6 +41,7 @@ impl LayoutDims {
     pub const FULL: Self    = Self { layer_width: 32, node_w: 22, node_h: 3, row_pad: 1 };
     pub const COMPACT: Self = Self { layer_width: 22, node_w: 18, node_h: 1, row_pad: 1 };
     pub const DOT: Self     = Self { layer_width:  3, node_w:  1, node_h: 1, row_pad: 0 };
+    pub const FLOW: Self    = Self { layer_width:  6, node_w:  2, node_h: 2, row_pad: 1 };
 }
 
 const MAX_BARYCENTER_ITERS: usize = 24;
@@ -660,5 +662,14 @@ mod tests {
         let l = compute(&g, LayoutDims::FULL);
         assert!(l.nodes.is_empty());
         assert!(l.edges.is_empty());
+    }
+
+    #[test]
+    fn layout_flow_preset_uses_2x2_node_with_stride_6() {
+        let dims = LayoutDims::FLOW;
+        assert_eq!(dims.layer_width, 6);
+        assert_eq!(dims.node_w, 2);
+        assert_eq!(dims.node_h, 2);
+        assert_eq!(dims.row_pad, 1);
     }
 }
