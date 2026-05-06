@@ -88,7 +88,7 @@ pub fn run_with_theme<F: ViewFrame>(
             let evt = event::read().map_err(|e| ViewerError::TerminalInit(e.to_string()))?;
             let size = terminal.size().unwrap_or(Size::ZERO);
             let size_rect = Rect::new(0, 0, size.width, size.height);
-            input::handle(&mut app, &layout, &evt, size_rect);
+            input::handle(&mut app, &layout, &frame, &evt, size_rect);
             if app.follow {
                 let pane = graph_pane_rect_from_terminal(size_rect);
                 app.recenter(&layout, pane);

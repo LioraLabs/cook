@@ -285,6 +285,63 @@ impl AppState {
             self.last_pin_message = Some(PinMsg::Full);
         }
     }
+
+    pub fn bulk_pin_recipe(&mut self, graph: &WaveDagData) {
+        let Some(selected_id) = self.selection.node_id(&self.tree) else {
+            self.last_pin_message = Some(PinMsg::OnFile);
+            return;
+        };
+        let selected_owned = selected_id.to_string();
+
+        // Locate the selected node and confirm it's a unit with a recipe.
+        let mut recipe_name: Option<String> = None;
+        let mut wave_idx: Option<usize> = None;
+        for (wi, wave) in graph.waves.iter().enumerate() {
+            if let Some(node) = wave.nodes.iter().find(|n| n.id == selected_owned) {
+                if node.kind != "unit" {
+                    self.last_pin_message = Some(PinMsg::OnFile);
+                    return;
+                }
+                recipe_name = node.recipe.clone();
+                wave_idx = Some(wi);
+                break;
+            }
+        }
+        let Some(recipe) = recipe_name else {
+            self.last_pin_message = Some(PinMsg::OnFile);
+            return;
+        };
+        let Some(wi) = wave_idx else { return };
+
+        let wave_units: Vec<String> = graph.waves[wi]
+            .nodes
+            .iter()
+            .filter(|n| n.kind == "unit" && n.recipe.as_deref() == Some(&recipe))
+            .map(|n| n.id.clone())
+            .collect();
+        if wave_units.is_empty() {
+            return;
+        }
+
+        // If all units are already pinned, unpin them all.
+        if wave_units.iter().all(|id| self.pins.slot_of(id).is_some()) {
+            for id in &wave_units {
+                self.pins.unpin(id);
+            }
+            return;
+        }
+
+        // Otherwise pin missing ones; stop at first Full.
+        for id in wave_units {
+            if self.pins.slot_of(&id).is_some() {
+                continue;
+            }
+            if self.pins.pin(&id).is_none() {
+                self.last_pin_message = Some(PinMsg::Full);
+                return;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

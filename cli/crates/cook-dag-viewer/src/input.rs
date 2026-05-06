@@ -6,11 +6,17 @@ use ratatui::layout::Rect;
 use crate::render::layout::Layout;
 use crate::state::{AppState, Mode};
 
-pub fn handle(app: &mut AppState, layout: &Layout, event: &Event, size: Rect) {
+pub fn handle<F: crate::frame::ViewFrame>(
+    app: &mut AppState,
+    layout: &Layout,
+    frame: &F,
+    event: &Event,
+    size: Rect,
+) {
     let pane = graph_pane_rect(size);
     match event {
         Event::Key(key) => match app.mode {
-            Mode::Normal => normal_key(app, key, layout, pane),
+            Mode::Normal => normal_key(app, key, layout, pane, frame),
             Mode::EdgePicker => picker_key(app, key),
             Mode::Search => search_key(app, key),
             Mode::Help | Mode::DetailOverlay => overlay_key(app, key),
@@ -55,7 +61,13 @@ fn mouse(app: &mut AppState, layout: &Layout, m: &MouseEvent, pane: Rect) {
     }
 }
 
-fn normal_key(app: &mut AppState, key: &KeyEvent, layout: &Layout, pane: Rect) {
+fn normal_key<F: crate::frame::ViewFrame>(
+    app: &mut AppState,
+    key: &KeyEvent,
+    layout: &Layout,
+    pane: Rect,
+    frame: &F,
+) {
     let pane_w = pane.width;
     let pane_h = pane.height;
     match (key.code, key.modifiers) {
@@ -92,6 +104,7 @@ fn normal_key(app: &mut AppState, key: &KeyEvent, layout: &Layout, pane: Rect) {
             app.density = app.density.next();
         }
         (KeyCode::Char('p'), KeyModifiers::NONE) => app.toggle_pin_selected(),
+        (KeyCode::Char('P'), _) => app.bulk_pin_recipe(frame.graph()),
         (KeyCode::Char('/'), _) => app.mode = Mode::Search,
         (KeyCode::Char('?'), _) => app.mode = Mode::Help,
         (KeyCode::Char('v'), KeyModifiers::NONE) => app.mode = Mode::DetailOverlay,
