@@ -56,7 +56,8 @@ pub struct NodeData {
     pub modified: Option<bool>,
     /// `Some(true)` for file nodes whose path came from a `discovered_inputs`
     /// depfile rather than from `meta.input_paths`. `None` (omitted from JSON)
-    /// for declared file nodes and units. See
+    /// for declared file nodes and units. `Some(false)` is not emitted —
+    /// "not discovered" is always `None`, not an explicit boolean. See
     /// `docs/superpowers/specs/2026-05-06-dag-tui-discovered-deps-design.md` §4.1.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub discovered: Option<bool>,
