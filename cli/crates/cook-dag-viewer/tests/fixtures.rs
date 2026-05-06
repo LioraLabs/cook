@@ -27,6 +27,7 @@ pub fn three_wave_dag() -> WaveDagData {
                         dep_kind: None,
                         group_index: None,
                         modified: Some(false),
+                        discovered: None,
                     },
                     NodeData {
                         id: "unit:cpp.compile:0".into(),
@@ -39,6 +40,7 @@ pub fn three_wave_dag() -> WaveDagData {
                         dep_kind: Some("sequential".into()),
                         group_index: None,
                         modified: None,
+                        discovered: None,
                     },
                 ],
                 edges: vec![EdgeData {
@@ -59,6 +61,7 @@ pub fn three_wave_dag() -> WaveDagData {
                     dep_kind: Some("sequential".into()),
                     group_index: None,
                     modified: None,
+                    discovered: None,
                 }],
                 edges: vec![],
             },

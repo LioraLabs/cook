@@ -54,6 +54,12 @@ pub struct NodeData {
     pub group_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified: Option<bool>,
+    /// `Some(true)` for file nodes whose path came from a `discovered_inputs`
+    /// depfile rather than from `meta.input_paths`. `None` (omitted from JSON)
+    /// for declared file nodes and units. See
+    /// `docs/superpowers/specs/2026-05-06-dag-tui-discovered-deps-design.md` §4.1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovered: Option<bool>,
 }
 
 #[derive(Serialize, Clone)]
@@ -279,6 +285,7 @@ fn build_wave(
                 dep_kind: Some(dep_kind_str),
                 group_index,
                 modified: None,
+                discovered: None,
             });
 
             // --- File nodes + file→unit edges ---
@@ -328,6 +335,7 @@ fn build_wave(
                             dep_kind: None,
                             group_index: None,
                             modified: Some(modified),
+                            discovered: None,
                         });
                         file_node_ids.insert(path.clone(), file_id.clone());
                     }

@@ -92,6 +92,7 @@ mod tests {
             dep_kind: Some("sequential".into()),
             group_index: None,
             modified: None,
+            discovered: None,
         }
     }
 
@@ -107,6 +108,7 @@ mod tests {
             dep_kind: None,
             group_index: None,
             modified: Some(modified),
+            discovered: None,
         }
     }
 

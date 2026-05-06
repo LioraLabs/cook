@@ -343,6 +343,7 @@ mod tests {
             dep_kind: Some("sequential".into()),
             group_index: None,
             modified: None,
+            discovered: None,
         }
     }
 

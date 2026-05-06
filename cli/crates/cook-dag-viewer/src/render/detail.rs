@@ -155,6 +155,7 @@ mod tests {
                         dep_kind: None,
                         group_index: None,
                         modified: Some(false),
+                        discovered: None,
                     },
                     NodeData {
                         id: "unit:a:0".into(),
@@ -167,6 +168,7 @@ mod tests {
                         dep_kind: Some("sequential".into()),
                         group_index: None,
                         modified: None,
+                        discovered: None,
                     },
                 ],
                 edges: vec![EdgeData {

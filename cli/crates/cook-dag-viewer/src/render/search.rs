@@ -125,6 +125,7 @@ mod tests {
                         dep_kind: Some("sequential".into()),
                         group_index: None,
                         modified: None,
+                        discovered: None,
                     },
                     NodeData {
                         id: "unit:cpp.compile:1".into(),
@@ -137,6 +138,7 @@ mod tests {
                         dep_kind: Some("sequential".into()),
                         group_index: None,
                         modified: None,
+                        discovered: None,
                     },
                 ],
                 edges: vec![],
