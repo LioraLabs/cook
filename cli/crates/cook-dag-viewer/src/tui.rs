@@ -16,7 +16,6 @@ use ratatui::Terminal;
 use crate::frame::ViewFrame;
 use crate::input;
 use crate::render::canvas;
-use crate::render::layout;
 use crate::render::{self, RenderInputs};
 use crate::state::AppState;
 use crate::ViewerError;
@@ -60,12 +59,7 @@ pub fn run_with_theme<F: ViewFrame>(
     let mut app = AppState::with_theme(frame.graph(), theme);
 
     loop {
-        let dims = match app.density {
-            crate::state::DensityMode::Full => layout::LayoutDims::FULL,
-            crate::state::DensityMode::Compact => layout::LayoutDims::COMPACT,
-            crate::state::DensityMode::Flow => layout::LayoutDims::FLOW,
-        };
-        let layout = layout::compute(frame.graph(), dims);
+        let layout = render::pick_layout(&app, frame.graph());
         let canvas_buf = canvas::render(&layout, &app, &frame);
 
         terminal

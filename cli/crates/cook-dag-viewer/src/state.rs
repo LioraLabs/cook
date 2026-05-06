@@ -988,4 +988,41 @@ mod tests {
         assert_eq!(PinMsg::EmptySlot(0).render(), "slot 1 empty");
         assert_eq!(PinMsg::EmptySlot(8).render(), "slot 9 empty");
     }
+
+    #[test]
+    fn radial_toggle_then_layout_dispatch_picks_radial() {
+        use crate::dag_data::{EdgeData, NodeData, WaveData};
+        let g = WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "c".into(),
+            waves: vec![WaveData {
+                recipes: vec!["r".into()],
+                nodes: vec![
+                    NodeData { id: "a".into(), kind: "unit".into(), label: "a".into(),
+                        recipe: Some("r".into()), command: Some("c".into()), output: None,
+                        cached: Some(true), dep_kind: Some("sequential".into()),
+                        group_index: None, modified: None, discovered: None },
+                    NodeData { id: "b".into(), kind: "unit".into(), label: "b".into(),
+                        recipe: Some("r".into()), command: Some("c".into()), output: None,
+                        cached: Some(true), dep_kind: Some("sequential".into()),
+                        group_index: None, modified: None, discovered: None },
+                    NodeData { id: "c".into(), kind: "unit".into(), label: "c".into(),
+                        recipe: Some("r".into()), command: Some("c".into()), output: None,
+                        cached: Some(true), dep_kind: Some("sequential".into()),
+                        group_index: None, modified: None, discovered: None },
+                ],
+                edges: vec![
+                    EdgeData { from: "a".into(), to: "b".into() },
+                    EdgeData { from: "b".into(), to: "c".into() },
+                ],
+            }],
+            inter_wave_edges: vec![],
+        };
+        let mut app = AppState::new(&g);
+        app.density = DensityMode::Flow;
+        app.radial = true;
+        let layout = crate::render::pick_layout(&app, &g);
+        // Radial canvas is square.
+        assert_eq!(layout.canvas_w, layout.canvas_h);
+    }
 }

@@ -14,8 +14,25 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout as TuiLayout, Rect};
 use ratatui::style::Style;
 
+use crate::dag_data::WaveDagData;
 use crate::frame::ViewFrame;
-use crate::state::{AppState, Mode};
+use crate::state::{AppState, DensityMode, Mode};
+
+/// Choose the layout function based on density and radial state.
+/// Returns the same `Layout` shape regardless of which layout
+/// algorithm runs, so downstream renderers stay mode-agnostic.
+pub fn pick_layout(app: &AppState, graph: &WaveDagData) -> layout::Layout {
+    let dims = match app.density {
+        DensityMode::Full => layout::LayoutDims::FULL,
+        DensityMode::Compact => layout::LayoutDims::COMPACT,
+        DensityMode::Flow => layout::LayoutDims::FLOW,
+    };
+    if matches!(app.density, DensityMode::Flow) && app.radial {
+        layout_radial::compute(graph, dims)
+    } else {
+        layout::compute(graph, dims)
+    }
+}
 
 pub struct RenderInputs<'a> {
     pub canvas: &'a Buffer,
