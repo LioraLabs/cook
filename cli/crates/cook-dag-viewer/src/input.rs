@@ -1,6 +1,6 @@
 //! Keyboard + mouse event handling. Filled in across Tasks 10–14.
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
 use crate::render::layout::Layout;
@@ -8,12 +8,50 @@ use crate::state::{AppState, Mode};
 
 pub fn handle(app: &mut AppState, layout: &Layout, event: &Event, size: Rect) {
     let pane = graph_pane_rect(size);
-    let Event::Key(key) = event else { return };
-    match app.mode {
-        Mode::Normal => normal_key(app, key, layout, pane),
-        Mode::EdgePicker => picker_key(app, key),
-        Mode::Search => search_key(app, key),
-        Mode::Help | Mode::DetailOverlay => overlay_key(app, key),
+    match event {
+        Event::Key(key) => match app.mode {
+            Mode::Normal => normal_key(app, key, layout, pane),
+            Mode::EdgePicker => picker_key(app, key),
+            Mode::Search => search_key(app, key),
+            Mode::Help | Mode::DetailOverlay => overlay_key(app, key),
+        },
+        Event::Mouse(m) => mouse(app, layout, m, pane),
+        _ => {}
+    }
+}
+
+fn mouse(app: &mut AppState, layout: &Layout, m: &MouseEvent, pane: Rect) {
+    let in_pane = m.column >= pane.x
+        && m.column < pane.x + pane.width
+        && m.row >= pane.y
+        && m.row < pane.y + pane.height;
+    if !in_pane {
+        return;
+    }
+    match m.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let cx = (m.column - pane.x) as i32 + app.camera_x;
+            let cy = (m.row - pane.y) as i32 + app.camera_y;
+            for node in &layout.nodes {
+                let in_box = cx >= node.x as i32
+                    && cx < node.x as i32 + node.w as i32
+                    && cy >= node.y as i32
+                    && cy < node.y as i32 + node.h as i32;
+                if in_box {
+                    app.jump_to_node(&node.id);
+                    return;
+                }
+            }
+        }
+        MouseEventKind::ScrollUp if m.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.pan_camera(-(pane.width as i32) / 8, 0, layout, pane);
+        }
+        MouseEventKind::ScrollDown if m.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.pan_camera((pane.width as i32) / 8, 0, layout, pane);
+        }
+        MouseEventKind::ScrollUp => app.pan_camera(0, -(pane.height as i32) / 8, layout, pane),
+        MouseEventKind::ScrollDown => app.pan_camera(0, (pane.height as i32) / 8, layout, pane),
+        _ => {}
     }
 }
 
