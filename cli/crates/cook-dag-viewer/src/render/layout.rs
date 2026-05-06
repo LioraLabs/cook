@@ -54,6 +54,7 @@ pub struct PlacedNode {
     pub y: u16,
     pub w: u16,
     pub h: u16,
+    pub discovered: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +106,7 @@ pub fn compute(g: &WaveDagData) -> Layout {
                 y,
                 w: NODE_W,
                 h: NODE_H,
+                discovered: n.discovered,
             }
         })
         .collect();

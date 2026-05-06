@@ -52,9 +52,14 @@ fn draw_edges(layout: &Layout, area: Rect, buf: &mut Buffer, theme: &crate::them
 fn draw_nodes(layout: &Layout, _area: Rect, buf: &mut Buffer) {
     for node in &layout.nodes {
         let rect = Rect::new(node.x, node.y, node.w, node.h);
+        let border_type = if node.kind == "file" && node.discovered == Some(true) {
+            BorderType::Rounded
+        } else {
+            BorderType::Plain
+        };
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_type(BorderType::Plain);
+            .border_type(border_type);
         block.clone().render(rect, buf);
         let inner = block.inner(rect);
         Paragraph::new(node.label.clone()).render(inner, buf);
@@ -68,11 +73,15 @@ fn overlay_badges<F: ViewFrame>(
     theme: &crate::theme::Theme,
 ) {
     for node in &layout.nodes {
-        let badge = match frame.status_of(&node.id) {
-            NodeStatus::Cached => Some(('✓', theme.badge_cached)),
-            NodeStatus::Stale => Some(('✗', theme.badge_stale)),
-            NodeStatus::Modified => Some(('⚠', theme.badge_modified)),
-            _ => None,
+        let badge = if node.kind == "file" && node.discovered == Some(true) {
+            Some(('~', theme.badge_discovered))
+        } else {
+            match frame.status_of(&node.id) {
+                NodeStatus::Cached => Some(('✓', theme.badge_cached)),
+                NodeStatus::Stale => Some(('✗', theme.badge_stale)),
+                NodeStatus::Modified => Some(('⚠', theme.badge_modified)),
+                _ => None,
+            }
         };
         if let Some((ch, color)) = badge {
             let bx = node.x + node.w.saturating_sub(2);
@@ -162,5 +171,81 @@ mod tests {
         let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
         let cell = buf.cell((placed.x + 1, placed.y + 1)).unwrap();
         assert!(cell.style().add_modifier.contains(Modifier::REVERSED));
+    }
+
+    use crate::dag_data::EdgeData;
+
+    fn dag_with_discovered_file() -> WaveDagData {
+        WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["a".into()],
+                nodes: vec![
+                    NodeData {
+                        id: "file:helpers.h".into(),
+                        kind: "file".into(),
+                        label: "helpers.h".into(),
+                        recipe: None,
+                        command: None,
+                        output: None,
+                        cached: None,
+                        dep_kind: None,
+                        group_index: None,
+                        modified: None,
+                        discovered: Some(true),
+                    },
+                    NodeData {
+                        id: "unit:a:0".into(),
+                        kind: "unit".into(),
+                        label: "a0".into(),
+                        recipe: Some("a".into()),
+                        command: Some("c".into()),
+                        output: None,
+                        cached: Some(true),
+                        dep_kind: Some("sequential".into()),
+                        group_index: None,
+                        modified: None,
+                        discovered: None,
+                    },
+                ],
+                edges: vec![EdgeData {
+                    from: "file:helpers.h".into(),
+                    to: "unit:a:0".into(),
+                }],
+            }],
+            inter_wave_edges: vec![],
+        }
+    }
+
+    #[test]
+    fn discovered_file_node_uses_rounded_border() {
+        let g = dag_with_discovered_file();
+        let app = AppState::new(&g);
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g);
+        let buf = render(&layout, &app, &frame);
+
+        let helpers = layout.nodes.iter().find(|n| n.id == "file:helpers.h").unwrap();
+        let tl = buf.cell((helpers.x, helpers.y)).unwrap();
+        assert_eq!(tl.symbol(), "╭", "discovered file should use rounded top-left corner");
+
+        let unit = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
+        let unit_tl = buf.cell((unit.x, unit.y)).unwrap();
+        assert_eq!(unit_tl.symbol(), "┌", "unit should keep plain top-left corner");
+    }
+
+    #[test]
+    fn discovered_file_node_renders_tilde_badge() {
+        let g = dag_with_discovered_file();
+        let app = AppState::new(&g);
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g);
+        let buf = render(&layout, &app, &frame);
+
+        let helpers = layout.nodes.iter().find(|n| n.id == "file:helpers.h").unwrap();
+        let badge_x = helpers.x + helpers.w.saturating_sub(2);
+        let badge_cell = buf.cell((badge_x, helpers.y)).unwrap();
+        assert_eq!(badge_cell.symbol(), "~");
     }
 }

@@ -104,6 +104,7 @@ mod tests {
                 y: 50,
                 w: 22,
                 h: 3,
+                discovered: None,
             }],
             edges: vec![] as Vec<EdgeRoute>,
             canvas_w: 500,

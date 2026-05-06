@@ -14,6 +14,7 @@ pub struct Theme {
     pub badge_cached: Color,
     pub badge_stale: Color,
     pub badge_modified: Color,
+    pub badge_discovered: Color,
     pub kind: ThemeKind,
 }
 
@@ -24,6 +25,7 @@ impl Theme {
             badge_cached: Color::Green,
             badge_stale: Color::Red,
             badge_modified: Color::Yellow,
+            badge_discovered: Color::Cyan,
             kind: ThemeKind::Auto,
         }
     }
@@ -34,6 +36,7 @@ impl Theme {
             badge_cached: Color::Reset,
             badge_stale: Color::Reset,
             badge_modified: Color::Reset,
+            badge_discovered: Color::Reset,
             kind: ThemeKind::Mono,
         }
     }
