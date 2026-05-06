@@ -72,9 +72,11 @@ pub struct EdgeData {
 
 /// Read and parse the depfile a unit declares via `discovered_inputs`.
 ///
-/// On any error (missing file, I/O, malformed) returns an empty `Vec` and
-/// logs at `debug` level. The viewer is a tooling affordance; a stale or
-/// absent depfile must never fail rendering.
+/// On any error (missing file, I/O, malformed) returns an empty `Vec`. The
+/// viewer is a tooling affordance; a stale or absent depfile must never
+/// fail rendering. Errors are dropped silently for now — the crate has no
+/// `tracing` dep yet; if diagnostics prove useful later, swap the
+/// `unwrap_or_default()` for an `inspect_err` that emits at `debug`.
 fn read_discovered_paths(
     di: &DiscoveredInputs,
     source_path: Option<&str>,
@@ -82,10 +84,7 @@ fn read_discovered_paths(
 ) -> Vec<String> {
     let depfile = working_dir.join(&di.from);
     let source = source_path.unwrap_or("");
-    match cook_cache::parse_make_depfile(&depfile, source, working_dir) {
-        Ok(paths) => paths,
-        Err(_) => Vec::new(),
-    }
+    cook_cache::parse_make_depfile(&depfile, source, working_dir).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
