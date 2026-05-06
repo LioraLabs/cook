@@ -1,0 +1,44 @@
+---
+source: crates/cook-dag-viewer/tests/flow_snapshots.rs
+assertion_line: 79
+expression: buf_to_string(&buf)
+---
+                                                
+                                                
+                                                
+                                                
+                                                
+                                                
+                                                
+                                                
+                                                
+                                                
+                                                
+                                                
+                        ⡴⠲⡄                     
+                        ⡇ ⡇                     
+                        ⠙⠚⠁                     
+                                                
+                                                
+                                                
+                                                
+                                                
+                                                
+                                                
+                                                
+                                                
+            ⡴⠲⡄⣀⣀⣀⣀⣀⣀⣀⣀⣀⡴⠲⡄         ⡴⠲⡄         
+            ⡇ ⡇         ⡇ ⡇         ⡇ ⡇         
+            ⠙⠚⠁         ⠙⠚⠁         ⠙⠚⠁         
+                        ⢸                       
+                        ⢸                       
+                        ⢸                       
+                        ⢸                       
+                        ⢸                       
+                        ⢸                       
+                        ⢸                       
+                        ⢸                       
+                        ⢸                       
+                        ⡴⠲⡄                     
+                        ⡇ ⡇                     
+                        ⠙⠚⠁

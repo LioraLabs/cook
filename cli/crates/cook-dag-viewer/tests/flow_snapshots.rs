@@ -1,7 +1,7 @@
 //! Snapshot tests for flow-mode rendering.
 
 use cook_dag_viewer::frame::SnapshotFrame;
-use cook_dag_viewer::render::{flow, layout};
+use cook_dag_viewer::render::{flow, layout, layout_radial};
 use cook_dag_viewer::state::{AppState, DensityMode, GlyphStyle};
 
 mod fixtures;
@@ -62,6 +62,45 @@ fn flow_medium_dag_diamond() {
     app.glyph = GlyphStyle::Diamond;
     let frame = SnapshotFrame::new(g.clone());
     let layout = layout::compute(&g, layout::LayoutDims::FLOW);
+    let buf = flow::render(&layout, &app, &frame);
+    insta::assert_snapshot!(buf_to_string(&buf));
+}
+
+#[test]
+fn flow_small_dag_circle_radial() {
+    let g = fixtures::small_dag();
+    let mut app = AppState::new(&g);
+    app.density = DensityMode::Flow;
+    app.glyph = GlyphStyle::Circle;
+    app.radial = true;
+    let frame = SnapshotFrame::new(g.clone());
+    let layout = layout_radial::compute(&g, layout::LayoutDims::FLOW);
+    let buf = flow::render(&layout, &app, &frame);
+    insta::assert_snapshot!(buf_to_string(&buf));
+}
+
+#[test]
+fn flow_medium_dag_circle_radial() {
+    let g = fixtures::medium_dag();
+    let mut app = AppState::new(&g);
+    app.density = DensityMode::Flow;
+    app.glyph = GlyphStyle::Circle;
+    app.radial = true;
+    let frame = SnapshotFrame::new(g.clone());
+    let layout = layout_radial::compute(&g, layout::LayoutDims::FLOW);
+    let buf = flow::render(&layout, &app, &frame);
+    insta::assert_snapshot!(buf_to_string(&buf));
+}
+
+#[test]
+fn flow_wide_dag_circle_radial() {
+    let g = fixtures::wide_dag();
+    let mut app = AppState::new(&g);
+    app.density = DensityMode::Flow;
+    app.glyph = GlyphStyle::Circle;
+    app.radial = true;
+    let frame = SnapshotFrame::new(g.clone());
+    let layout = layout_radial::compute(&g, layout::LayoutDims::FLOW);
     let buf = flow::render(&layout, &app, &frame);
     insta::assert_snapshot!(buf_to_string(&buf));
 }
