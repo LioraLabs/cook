@@ -17,7 +17,7 @@ use crate::VIEWER_SCHEMA_VERSION;
 // Wave-grouped DAG data model
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct WaveDagData {
     /// Wire-format schema version. CS-0048: writers always emit
     /// `VIEWER_SCHEMA_VERSION`; the embedded JS viewer refuses payloads whose
@@ -28,14 +28,14 @@ pub struct WaveDagData {
     pub inter_wave_edges: Vec<EdgeData>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct WaveData {
     pub recipes: Vec<String>,
     pub nodes: Vec<NodeData>,
     pub edges: Vec<EdgeData>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct NodeData {
     pub id: String,
     pub kind: String,       // "file" or "unit"
@@ -56,7 +56,7 @@ pub struct NodeData {
     pub modified: Option<bool>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct EdgeData {
     pub from: String,
     pub to: String,
