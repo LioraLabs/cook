@@ -88,6 +88,9 @@ fn normal_key(app: &mut AppState, key: &KeyEvent, layout: &Layout, pane: Rect) {
         (KeyCode::Char('K'), _) => app.pan_camera(0, -(pane_h as i32) / 2, layout, pane),
         (KeyCode::Char('c'), KeyModifiers::NONE) => app.recenter(layout, pane),
         (KeyCode::Char('a'), KeyModifiers::NONE) => app.auto_fit(layout, pane),
+        (KeyCode::Char('m'), KeyModifiers::NONE) => {
+            app.density = app.density.next();
+        }
         (KeyCode::Char('/'), _) => app.mode = Mode::Search,
         (KeyCode::Char('?'), _) => app.mode = Mode::Help,
         (KeyCode::Char('v'), KeyModifiers::NONE) => app.mode = Mode::DetailOverlay,

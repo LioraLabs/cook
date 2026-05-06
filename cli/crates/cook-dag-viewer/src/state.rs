@@ -2,6 +2,34 @@
 
 use crate::dag_data::WaveDagData;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DensityMode {
+    Full,
+    Compact,
+    Dot,
+}
+
+impl DensityMode {
+    /// Cycle order for the `m` key: Dot → Compact → Full → Dot.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Dot => Self::Compact,
+            Self::Compact => Self::Full,
+            Self::Full => Self::Dot,
+        }
+    }
+}
+
+/// Pick a default density from the snapshot's node count. See spec §5.1.
+pub fn choose_initial_mode(g: &WaveDagData) -> DensityMode {
+    let total: usize = g.waves.iter().map(|w| w.nodes.len()).sum();
+    match total {
+        0..=20 => DensityMode::Full,
+        21..=80 => DensityMode::Compact,
+        _ => DensityMode::Dot,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitRow {
     pub node_id: String,
@@ -108,6 +136,7 @@ pub struct AppState {
     pub search: crate::render::search::SearchState,
     pub graph: std::sync::Arc<WaveDagData>,
     pub theme: crate::theme::Theme,
+    pub density: DensityMode,
 }
 
 impl AppState {
@@ -125,6 +154,7 @@ impl AppState {
             search: Default::default(),
             graph: arc,
             theme: Default::default(),
+            density: choose_initial_mode(graph),
         }
     }
 
@@ -515,5 +545,68 @@ mod tests {
         app.follow = false;
         app.recenter(&layout, ratatui::layout::Rect::new(0, 0, 80, 24));
         assert!(app.follow);
+    }
+
+    #[test]
+    fn density_mode_cycles_dot_compact_full_dot() {
+        let mut m = DensityMode::Dot;
+        m = m.next();
+        assert_eq!(m, DensityMode::Compact);
+        m = m.next();
+        assert_eq!(m, DensityMode::Full);
+        m = m.next();
+        assert_eq!(m, DensityMode::Dot);
+    }
+
+    #[test]
+    fn choose_initial_mode_picks_full_for_small_graphs() {
+        let g = small_graph(15);
+        assert_eq!(choose_initial_mode(&g), DensityMode::Full);
+    }
+
+    #[test]
+    fn choose_initial_mode_picks_compact_in_middle_band() {
+        let g = small_graph(50);
+        assert_eq!(choose_initial_mode(&g), DensityMode::Compact);
+    }
+
+    #[test]
+    fn choose_initial_mode_picks_dot_for_big_graphs() {
+        let g = small_graph(200);
+        assert_eq!(choose_initial_mode(&g), DensityMode::Dot);
+    }
+
+    #[test]
+    fn app_state_starts_with_density_chosen_from_node_count() {
+        let g = small_graph(15);
+        let app = AppState::new(&g);
+        assert_eq!(app.density, DensityMode::Full);
+    }
+
+    fn small_graph(n: usize) -> WaveDagData {
+        WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["a".into()],
+                nodes: (0..n)
+                    .map(|i| NodeData {
+                        id: format!("unit:a:{i}"),
+                        kind: "unit".into(),
+                        label: format!("u{i}"),
+                        recipe: Some("a".into()),
+                        command: Some("c".into()),
+                        output: None,
+                        cached: Some(true),
+                        dep_kind: Some("sequential".into()),
+                        group_index: None,
+                        modified: None,
+                        discovered: None,
+                    })
+                    .collect(),
+                edges: vec![],
+            }],
+            inter_wave_edges: vec![],
+        }
     }
 }

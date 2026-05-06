@@ -89,3 +89,24 @@ fn q_quits() {
     input::handle(&mut app, &layout, &key('q'), term);
     assert!(app.should_quit);
 }
+
+#[test]
+fn m_cycles_density_mode() {
+    let g = fixtures::three_wave_dag();
+    let layout = cook_dag_viewer::render::layout::compute(
+        &g,
+        cook_dag_viewer::render::layout::LayoutDims::FULL,
+    );
+    let mut app = cook_dag_viewer::state::AppState::new(&g);
+    let term = Rect::new(0, 0, 120, 40);
+
+    let initial = app.density;
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('m'), term);
+    assert_ne!(app.density, initial);
+    let after_one = app.density;
+
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('m'), term);
+    cook_dag_viewer::input::handle(&mut app, &layout, &key('m'), term);
+    assert_eq!(app.density, initial, "three presses complete the cycle");
+    assert_ne!(app.density, after_one);
+}
