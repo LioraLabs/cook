@@ -64,7 +64,13 @@ fn render_tree<F: ViewFrame>(
                     };
                     let style = sel_style(app.selection, Selection::file(wi, fi));
                     // Render glyph (kind_color) + space + label, then badge at right.
-                    let label_line = format!("{} {}", kind_glyph, file.label);
+                    // Reserve the rightmost 2 columns for the badge: 2 cells from the right edge
+                    // is where the badge writes. Subtract indent (4) + glyph (1) + space (1) from
+                    // that reserved span to bound the label.
+                    let max_label = area
+                        .width
+                        .saturating_sub(4 + 1 + 1 + 2) as usize;
+                    let label_line = format!("{} {}", kind_glyph, truncate_label(&file.label, max_label));
                     let glyph_style = match kind_color {
                         Some(c) => style.fg(c),
                         None => style,
@@ -502,5 +508,62 @@ mod tests {
         // Row 0 = wave header. Row 1 should be the recipe row (no Files header).
         let line = row_text(&buf, area, 1);
         assert!(!line.contains("Files"), "no Files header for empty-files wave");
+    }
+
+    #[test]
+    fn long_filename_truncates_with_ellipsis_before_badge() {
+        use crate::dag_data::EdgeData;
+        let g = WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["a".into()],
+                nodes: vec![
+                    NodeData {
+                        id: "file:include/platform/threading.h".into(),
+                        kind: "file".into(),
+                        label: "include/platform/threading.h".into(),
+                        recipe: None,
+                        command: None,
+                        output: None,
+                        cached: None,
+                        dep_kind: None,
+                        group_index: None,
+                        modified: Some(true),
+                        discovered: None,
+                    },
+                    unit("unit:a:0", "a", "a0", Some(true)),
+                ],
+                edges: vec![EdgeData {
+                    from: "file:include/platform/threading.h".into(),
+                    to: "unit:a:0".into(),
+                }],
+            }],
+            inter_wave_edges: vec![],
+        };
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].files_expanded = true;
+        let frame = SnapshotFrame::new(g);
+        let area = Rect::new(0, 0, 28, 6);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, &frame);
+
+        // Row 2 = the truncated file row. It must end with the badge `⚠` at
+        // the right edge, with `…` somewhere in the label rather than the
+        // tail of the filename being clobbered.
+        let file_row = row_text(&buf, area, 2);
+        assert!(
+            file_row.contains('…'),
+            "long filename must show the ellipsis truncation marker, got: `{file_row}`",
+        );
+        assert!(
+            file_row.contains('⚠'),
+            "badge must remain visible at right edge, got: `{file_row}`",
+        );
+        // The badge cell should not be clobbered by the label — confirm the
+        // last non-space character isn't a slash or letter from the filename.
+        let trimmed = file_row.trim_end();
+        let last_char = trimmed.chars().last().unwrap_or(' ');
+        assert_eq!(last_char, '⚠', "rightmost cell must be the badge, got: `{trimmed}`");
     }
 }
