@@ -28,6 +28,10 @@ pub fn pick_layout(app: &AppState, graph: &WaveDagData) -> layout::Layout {
         DensityMode::Compact => layout::LayoutDims::COMPACT,
         DensityMode::Flow => layout::LayoutDims::FLOW,
     };
+    if matches!(app.density, DensityMode::Compact) {
+        let focused = focus::focus_subgraph(graph, app);
+        return layout::compute(&focused, dims);
+    }
     if matches!(app.density, DensityMode::Flow) && app.radial {
         layout_radial::compute(graph, dims)
     } else {
