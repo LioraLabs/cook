@@ -31,8 +31,19 @@ fn focus_set(graph: &WaveDagData, app: &AppState) -> BTreeSet<String> {
             let recipe_name = wave.recipes.get(recipe).cloned();
             if let Some(name) = recipe_name {
                 if let Some(u) = unit {
-                    let unit_id = format!("unit:{}:{}", name, u);
-                    out.insert(unit_id);
+                    // Authoritative unit id from the IndexTree, not a format!()
+                    // that mirrors dag_data's encoding. Two sources of truth
+                    // would silently diverge if the encoding ever changed.
+                    if let Some(node_id) = app
+                        .tree
+                        .waves
+                        .get(wave_idx)
+                        .and_then(|w| w.recipes.get(recipe))
+                        .and_then(|r| r.units.get(u))
+                        .map(|u_row| u_row.node_id.clone())
+                    {
+                        out.insert(node_id);
+                    }
                 } else {
                     for n in &wave.nodes {
                         if n.kind == "unit" && n.recipe.as_deref() == Some(&name) {
