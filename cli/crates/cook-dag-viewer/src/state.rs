@@ -169,10 +169,21 @@ pub struct RecipeRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileRow {
+    pub node_id: String,
+    pub label: String,
+    /// Mirrors `NodeData.discovered == Some(true)`: file came from a
+    /// depfile rather than from any unit's `meta.input_paths`.
+    pub discovered: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WaveRow {
     pub label: String,
+    pub files: Vec<FileRow>,
     pub recipes: Vec<RecipeRow>,
     pub expanded: bool,
+    pub files_expanded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,26 +205,41 @@ impl IndexTree {
                 })
                 .collect();
 
+            let mut files: Vec<FileRow> = Vec::new();
+
             for n in &wave.nodes {
-                if n.kind != "unit" {
-                    continue;
+                match n.kind.as_str() {
+                    "unit" => {
+                        let Some(recipe) = n.recipe.as_deref() else {
+                            continue;
+                        };
+                        let Some(row) = recipes.iter_mut().find(|r| r.name == recipe) else {
+                            continue;
+                        };
+                        row.units.push(UnitRow {
+                            node_id: n.id.clone(),
+                            label: n.label.clone(),
+                        });
+                    }
+                    "file" => {
+                        files.push(FileRow {
+                            node_id: n.id.clone(),
+                            label: n.label.clone(),
+                            discovered: n.discovered == Some(true),
+                        });
+                    }
+                    _ => {}
                 }
-                let Some(recipe) = n.recipe.as_deref() else {
-                    continue;
-                };
-                let Some(row) = recipes.iter_mut().find(|r| r.name == recipe) else {
-                    continue;
-                };
-                row.units.push(UnitRow {
-                    node_id: n.id.clone(),
-                    label: n.label.clone(),
-                });
             }
+
+            files.sort_by(|a, b| a.label.cmp(&b.label));
 
             waves.push(WaveRow {
                 label: format!("Wave {} ({} recipes)", wi, recipes.len()),
+                files,
                 recipes,
-                expanded: wi == 0, // Wave 0 expanded by default.
+                expanded: wi == 0,
+                files_expanded: false,
             });
         }
         Self { waves }
@@ -221,22 +247,85 @@ impl IndexTree {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionLeaf {
+    /// Selection inside the recipe subtree of a wave. `unit = None` means
+    /// the recipe row itself is selected; `unit = Some(_)` means a unit row.
+    Recipe { recipe: usize, unit: Option<usize> },
+    /// Selection on a file row inside the wave's Files folder.
+    File(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {
     pub wave: usize,
-    pub recipe: Option<usize>,
-    pub unit: Option<usize>,
+    pub leaf: Option<SelectionLeaf>,
 }
 
 impl Selection {
     pub fn first() -> Self {
-        Self { wave: 0, recipe: None, unit: None }
+        Self { wave: 0, leaf: None }
+    }
+
+    /// Wave-level selection (no leaf).
+    pub fn wave_only(wave: usize) -> Self {
+        Self { wave, leaf: None }
+    }
+
+    /// Recipe row, no unit.
+    pub fn recipe(wave: usize, recipe: usize) -> Self {
+        Self {
+            wave,
+            leaf: Some(SelectionLeaf::Recipe { recipe, unit: None }),
+        }
+    }
+
+    /// Unit row inside a recipe.
+    pub fn unit(wave: usize, recipe: usize, unit: usize) -> Self {
+        Self {
+            wave,
+            leaf: Some(SelectionLeaf::Recipe { recipe, unit: Some(unit) }),
+        }
+    }
+
+    /// File row in the wave's Files folder.
+    pub fn file(wave: usize, file: usize) -> Self {
+        Self { wave, leaf: Some(SelectionLeaf::File(file)) }
+    }
+
+    pub fn recipe_index(&self) -> Option<usize> {
+        match self.leaf {
+            Some(SelectionLeaf::Recipe { recipe, .. }) => Some(recipe),
+            _ => None,
+        }
+    }
+
+    pub fn unit_index(&self) -> Option<usize> {
+        match self.leaf {
+            Some(SelectionLeaf::Recipe { unit, .. }) => unit,
+            _ => None,
+        }
+    }
+
+    pub fn file_index(&self) -> Option<usize> {
+        match self.leaf {
+            Some(SelectionLeaf::File(i)) => Some(i),
+            _ => None,
+        }
     }
 
     pub fn node_id<'a>(&self, tree: &'a IndexTree) -> Option<&'a str> {
         let w = tree.waves.get(self.wave)?;
-        let r = w.recipes.get(self.recipe?)?;
-        let u = r.units.get(self.unit?)?;
-        Some(&u.node_id)
+        match self.leaf? {
+            SelectionLeaf::Recipe { recipe, unit } => {
+                let r = w.recipes.get(recipe)?;
+                let u = r.units.get(unit?)?;
+                Some(&u.node_id)
+            }
+            SelectionLeaf::File(idx) => {
+                let f = w.files.get(idx)?;
+                Some(&f.node_id)
+            }
+        }
     }
 }
 
