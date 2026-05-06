@@ -20,6 +20,83 @@ impl DensityMode {
     }
 }
 
+pub const PIN_SLOTS: usize = 9;
+
+/// Up to 9 pinned node IDs, indexed by slot. Slot N holds the node ID
+/// pinned in that slot; `None` is an empty slot. See spec §4.3.
+#[derive(Debug, Clone)]
+pub struct PinState {
+    slots: [Option<String>; PIN_SLOTS],
+}
+
+impl Default for PinState {
+    fn default() -> Self {
+        Self {
+            slots: std::array::from_fn(|_| None),
+        }
+    }
+}
+
+impl PinState {
+    /// Pin `node_id` to the lowest empty slot. Returns the slot index
+    /// (0-indexed). Idempotent: re-pinning an already-pinned node
+    /// returns its existing slot. Returns `None` if all slots are full.
+    pub fn pin(&mut self, node_id: &str) -> Option<usize> {
+        if let Some(existing) = self.slot_of(node_id) {
+            return Some(existing);
+        }
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            if slot.is_none() {
+                *slot = Some(node_id.to_string());
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Unpin `node_id`. Returns `true` if it was pinned.
+    pub fn unpin(&mut self, node_id: &str) -> bool {
+        for slot in self.slots.iter_mut() {
+            if slot.as_deref() == Some(node_id) {
+                *slot = None;
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn slot_of(&self, node_id: &str) -> Option<usize> {
+        self.slots
+            .iter()
+            .position(|s| s.as_deref() == Some(node_id))
+    }
+
+    pub fn id_at(&self, slot: usize) -> Option<&str> {
+        self.slots.get(slot).and_then(|s| s.as_deref())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (usize, &str)> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.as_deref().map(|id| (i, id)))
+    }
+
+    pub fn clear(&mut self) {
+        for slot in self.slots.iter_mut() {
+            *slot = None;
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots.iter().all(|s| s.is_none())
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.slots.iter().all(|s| s.is_some())
+    }
+}
+
 /// Pick a default density from the snapshot's node count. See spec §5.1.
 pub fn choose_initial_mode(g: &WaveDagData) -> DensityMode {
     let total: usize = g.waves.iter().map(|w| w.nodes.len()).sum();
@@ -608,5 +685,100 @@ mod tests {
             }],
             inter_wave_edges: vec![],
         }
+    }
+
+    #[test]
+    fn pin_state_starts_empty() {
+        let p = PinState::default();
+        assert!(p.is_empty());
+        assert!(!p.is_full());
+        assert_eq!(p.iter().count(), 0);
+    }
+
+    #[test]
+    fn pin_returns_first_empty_slot() {
+        let mut p = PinState::default();
+        assert_eq!(p.pin("a"), Some(0));
+        assert_eq!(p.pin("b"), Some(1));
+        assert_eq!(p.pin("c"), Some(2));
+    }
+
+    #[test]
+    fn pin_is_idempotent_for_same_id() {
+        let mut p = PinState::default();
+        p.pin("a");
+        p.pin("b");
+        assert_eq!(p.pin("a"), Some(0), "re-pinning returns existing slot");
+    }
+
+    #[test]
+    fn pin_returns_none_when_full() {
+        let mut p = PinState::default();
+        for i in 0..PIN_SLOTS {
+            p.pin(&format!("n{i}"));
+        }
+        assert!(p.is_full());
+        assert_eq!(p.pin("overflow"), None);
+    }
+
+    #[test]
+    fn unpin_clears_slot_and_returns_true() {
+        let mut p = PinState::default();
+        p.pin("a");
+        assert_eq!(p.unpin("a"), true);
+        assert!(p.is_empty());
+    }
+
+    #[test]
+    fn unpin_returns_false_when_not_pinned() {
+        let mut p = PinState::default();
+        assert_eq!(p.unpin("nonesuch"), false);
+    }
+
+    #[test]
+    fn slot_of_finds_existing_pin() {
+        let mut p = PinState::default();
+        p.pin("a");
+        p.pin("b");
+        assert_eq!(p.slot_of("a"), Some(0));
+        assert_eq!(p.slot_of("b"), Some(1));
+        assert_eq!(p.slot_of("c"), None);
+    }
+
+    #[test]
+    fn id_at_returns_pinned_id() {
+        let mut p = PinState::default();
+        p.pin("a");
+        assert_eq!(p.id_at(0), Some("a"));
+        assert_eq!(p.id_at(1), None);
+    }
+
+    #[test]
+    fn iter_yields_pairs_in_slot_order_skipping_empty() {
+        let mut p = PinState::default();
+        p.pin("a");
+        p.pin("b");
+        p.pin("c");
+        p.unpin("b");
+        let pairs: Vec<(usize, &str)> = p.iter().collect();
+        assert_eq!(pairs, vec![(0, "a"), (2, "c")]);
+    }
+
+    #[test]
+    fn pin_after_unpin_reuses_freed_slot() {
+        let mut p = PinState::default();
+        p.pin("a");
+        p.pin("b");
+        p.unpin("a");
+        assert_eq!(p.pin("c"), Some(0), "should reuse the lowest empty slot");
+    }
+
+    #[test]
+    fn clear_empties_all_slots() {
+        let mut p = PinState::default();
+        p.pin("a");
+        p.pin("b");
+        p.clear();
+        assert!(p.is_empty());
     }
 }
