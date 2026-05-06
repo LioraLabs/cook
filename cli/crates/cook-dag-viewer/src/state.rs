@@ -97,6 +97,27 @@ impl PinState {
     }
 }
 
+/// One-shot footer messages from pin actions. The bottom hint bar
+/// shows the message for the next render frame, then clears it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinMsg {
+    Full,
+    OnFile,
+    EmptySlot(usize),
+    ClearedAll(usize),
+}
+
+impl PinMsg {
+    pub fn render(self) -> String {
+        match self {
+            Self::Full => "pin slots full — clear with X".to_string(),
+            Self::OnFile => "bulk-pin only applies to recipe units".to_string(),
+            Self::EmptySlot(n) => format!("slot {} empty", n + 1),
+            Self::ClearedAll(n) => format!("cleared {n} pin{}", if n == 1 { "" } else { "s" }),
+        }
+    }
+}
+
 /// Pick a default density from the snapshot's node count. See spec §5.1.
 pub fn choose_initial_mode(g: &WaveDagData) -> DensityMode {
     let total: usize = g.waves.iter().map(|w| w.nodes.len()).sum();
@@ -214,6 +235,8 @@ pub struct AppState {
     pub graph: std::sync::Arc<WaveDagData>,
     pub theme: crate::theme::Theme,
     pub density: DensityMode,
+    pub pins: PinState,
+    pub last_pin_message: Option<PinMsg>,
 }
 
 impl AppState {
@@ -232,6 +255,8 @@ impl AppState {
             graph: arc,
             theme: Default::default(),
             density: choose_initial_mode(graph),
+            pins: PinState::default(),
+            last_pin_message: None,
         }
     }
 
@@ -780,5 +805,26 @@ mod tests {
         p.pin("b");
         p.clear();
         assert!(p.is_empty());
+    }
+
+    #[test]
+    fn pin_msg_full_renders_clear_hint() {
+        assert_eq!(
+            PinMsg::Full.render(),
+            "pin slots full — clear with X"
+        );
+    }
+
+    #[test]
+    fn pin_msg_cleared_all_handles_singular_and_plural() {
+        assert_eq!(PinMsg::ClearedAll(1).render(), "cleared 1 pin");
+        assert_eq!(PinMsg::ClearedAll(3).render(), "cleared 3 pins");
+        assert_eq!(PinMsg::ClearedAll(0).render(), "cleared 0 pins");
+    }
+
+    #[test]
+    fn pin_msg_empty_slot_uses_one_indexed_label() {
+        assert_eq!(PinMsg::EmptySlot(0).render(), "slot 1 empty");
+        assert_eq!(PinMsg::EmptySlot(8).render(), "slot 9 empty");
     }
 }

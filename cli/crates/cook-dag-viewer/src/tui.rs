@@ -75,7 +75,7 @@ pub fn run_with_theme<F: ViewFrame>(
                 render::draw(
                     area,
                     buf,
-                    &app,
+                    &mut app,
                     &frame,
                     RenderInputs { canvas: &canvas_buf, layout: &layout },
                 );

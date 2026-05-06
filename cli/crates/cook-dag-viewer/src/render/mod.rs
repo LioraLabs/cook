@@ -23,7 +23,7 @@ pub struct RenderInputs<'a> {
 pub fn draw<F: ViewFrame>(
     area: Rect,
     buf: &mut Buffer,
-    app: &AppState,
+    app: &mut AppState,
     frame: &F,
     r: RenderInputs<'_>,
 ) {
@@ -35,8 +35,10 @@ pub fn draw<F: ViewFrame>(
         .split(area);
     draw_top_bar(chunks[0], buf, app, frame);
     draw_body(chunks[1], buf, app, frame, r);
-    draw_bottom_bar(chunks[2], buf, app);
 
+    // Overlays are rendered before draw_bottom_bar so that draw_bottom_bar
+    // (which takes &mut app to consume last_pin_message) runs last, after
+    // all immutable borrows of app fields are complete.
     match app.mode {
         Mode::EdgePicker => overlay::render_edge_picker(area, buf, &app.edge_picker),
         Mode::Help => overlay::render_help(area, buf),
@@ -44,6 +46,8 @@ pub fn draw<F: ViewFrame>(
         Mode::Search => search::render(area, buf, &app.search),
         Mode::Normal => {}
     }
+
+    draw_bottom_bar(chunks[2], buf, app);
 }
 
 fn draw_top_bar<F: ViewFrame>(area: Rect, buf: &mut Buffer, _app: &AppState, frame: &F) {
@@ -79,14 +83,19 @@ fn draw_body<F: ViewFrame>(
     detail::render(right[1], buf, app, frame);
 }
 
-fn draw_bottom_bar(area: Rect, buf: &mut Buffer, app: &AppState) {
+fn draw_bottom_bar(area: Rect, buf: &mut Buffer, app: &mut AppState) {
     let mode = if app.follow { "follow" } else { "free" };
-    let hint = match app.mode {
-        Mode::Search => " /search · esc cancel · enter jump",
-        Mode::EdgePicker => " 1-9 jump · esc cancel",
-        Mode::Help => " help · q close",
-        Mode::DetailOverlay => " esc close",
-        Mode::Normal => " ? help · / search · q quit · [/] up/down · HJKL pan · c center",
+    let pin_message = app.last_pin_message.take();
+    let hint = if let Some(msg) = pin_message {
+        msg.render()
+    } else {
+        match app.mode {
+            Mode::Search => " /search · esc cancel · enter jump".to_string(),
+            Mode::EdgePicker => " 1-9 jump · esc cancel".to_string(),
+            Mode::Help => " help · q close".to_string(),
+            Mode::DetailOverlay => " esc close".to_string(),
+            Mode::Normal => " ? help · / search · q quit · [/] up/down · HJKL pan · c center".to_string(),
+        }
     };
     let line = format!("{} [{}]", hint, mode);
     write_line(area, buf, area.y, &line);
