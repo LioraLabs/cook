@@ -107,6 +107,7 @@ pub struct AppState {
     pub edge_picker: EdgePicker,
     pub search: crate::render::search::SearchState,
     pub graph: std::sync::Arc<WaveDagData>,
+    pub theme: crate::theme::Theme,
 }
 
 impl AppState {
@@ -123,7 +124,14 @@ impl AppState {
             edge_picker: EdgePicker::default(),
             search: Default::default(),
             graph: arc,
+            theme: Default::default(),
         }
+    }
+
+    pub fn with_theme(graph: &WaveDagData, theme: crate::theme::Theme) -> Self {
+        let mut me = Self::new(graph);
+        me.theme = theme;
+        me
     }
 }
 

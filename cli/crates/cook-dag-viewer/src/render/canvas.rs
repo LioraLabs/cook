@@ -2,7 +2,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::widgets::canvas::{Canvas, Line};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
@@ -15,14 +15,14 @@ pub fn render<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F) -> Buffe
     let area = Rect::new(0, 0, layout.canvas_w.max(1), layout.canvas_h.max(1));
     let mut buf = Buffer::empty(area);
 
-    draw_edges(layout, area, &mut buf);
+    draw_edges(layout, area, &mut buf, &app.theme);
     draw_nodes(layout, area, &mut buf);
-    overlay_badges(layout, frame, &mut buf);
+    overlay_badges(layout, frame, &mut buf, &app.theme);
     overlay_selection(layout, app, &mut buf);
     buf
 }
 
-fn draw_edges(layout: &Layout, area: Rect, buf: &mut Buffer) {
+fn draw_edges(layout: &Layout, area: Rect, buf: &mut Buffer, theme: &crate::theme::Theme) {
     let lines: Vec<Line> = layout
         .edges
         .iter()
@@ -32,7 +32,7 @@ fn draw_edges(layout: &Layout, area: Rect, buf: &mut Buffer) {
                 y1: (area.height as i32 - w[0].1 as i32) as f64,
                 x2: w[1].0 as f64,
                 y2: (area.height as i32 - w[1].1 as i32) as f64,
-                color: Color::DarkGray,
+                color: theme.edge,
             })
         })
         .collect();
@@ -61,12 +61,17 @@ fn draw_nodes(layout: &Layout, _area: Rect, buf: &mut Buffer) {
     }
 }
 
-fn overlay_badges<F: ViewFrame>(layout: &Layout, frame: &F, buf: &mut Buffer) {
+fn overlay_badges<F: ViewFrame>(
+    layout: &Layout,
+    frame: &F,
+    buf: &mut Buffer,
+    theme: &crate::theme::Theme,
+) {
     for node in &layout.nodes {
         let badge = match frame.status_of(&node.id) {
-            NodeStatus::Cached => Some(('✓', Color::Green)),
-            NodeStatus::Stale => Some(('✗', Color::Red)),
-            NodeStatus::Modified => Some(('⚠', Color::Yellow)),
+            NodeStatus::Cached => Some(('✓', theme.badge_cached)),
+            NodeStatus::Stale => Some(('✗', theme.badge_stale)),
+            NodeStatus::Modified => Some(('⚠', theme.badge_modified)),
             _ => None,
         };
         if let Some((ch, color)) = badge {

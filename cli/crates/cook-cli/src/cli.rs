@@ -104,6 +104,10 @@ pub struct Cli {
     #[arg(long, default_value = "auto")]
     pub color: String,
 
+    /// DAG TUI theme: auto (default) or mono.
+    #[arg(long = "theme", default_value = "auto")]
+    pub theme: String,
+
     /// Output mode: auto (default), plain, json
     #[arg(long = "output", default_value = "auto")]
     pub output: String,

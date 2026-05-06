@@ -40,7 +40,14 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub fn run<F: ViewFrame>(mut frame: F) -> Result<(), ViewerError> {
+pub fn run<F: ViewFrame>(frame: F) -> Result<(), ViewerError> {
+    run_with_theme(frame, crate::theme::Theme::auto())
+}
+
+pub fn run_with_theme<F: ViewFrame>(
+    mut frame: F,
+    theme: crate::theme::Theme,
+) -> Result<(), ViewerError> {
     if !io::stdout().is_tty() {
         return print_fallback(&frame);
     }
@@ -51,7 +58,7 @@ pub fn run<F: ViewFrame>(mut frame: F) -> Result<(), ViewerError> {
         Terminal::new(backend).map_err(|e| ViewerError::TerminalInit(e.to_string()))?;
 
     let layout = layout::compute(frame.graph());
-    let mut app = AppState::new(frame.graph());
+    let mut app = AppState::with_theme(frame.graph(), theme);
 
     loop {
         let canvas_buf = canvas::render(&layout, &app, &frame);

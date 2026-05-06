@@ -38,6 +38,7 @@ pub struct DagViewerInputs<'a> {
     pub explicit_edges: &'a BTreeMap<String, Vec<String>>,
     pub inferred_deps: &'a BTreeMap<String, Vec<String>>,
     pub cache_managers: &'a BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+    pub theme: theme::Theme,
 }
 
 /// Entry point. Builds the snapshot and launches the TUI.
@@ -49,5 +50,5 @@ pub fn cmd_dag(inputs: &DagViewerInputs<'_>) -> Result<(), ViewerError> {
         inputs.inferred_deps,
         inputs.cache_managers,
     );
-    tui::run(SnapshotFrame::new(dag))
+    tui::run_with_theme(SnapshotFrame::new(dag), inputs.theme)
 }
