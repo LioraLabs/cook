@@ -16,8 +16,14 @@ pub fn render<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F) -> Buffe
     let mut buf = Buffer::empty(area);
 
     draw_edges(layout, area, &mut buf, &app.theme);
-    draw_nodes(layout, area, &mut buf);
-    overlay_badges(layout, frame, &mut buf, &app.theme);
+    match app.density {
+        crate::state::DensityMode::Dot => draw_dots(layout, app, &mut buf),
+        crate::state::DensityMode::Compact => draw_nodes(layout, area, &mut buf),
+        crate::state::DensityMode::Full => draw_nodes(layout, area, &mut buf),
+    }
+    if !matches!(app.density, crate::state::DensityMode::Dot) {
+        overlay_badges(layout, frame, &mut buf, &app.theme);
+    }
     overlay_selection(layout, app, &mut buf);
     buf
 }
@@ -63,6 +69,19 @@ fn draw_nodes(layout: &Layout, _area: Rect, buf: &mut Buffer) {
         block.clone().render(rect, buf);
         let inner = block.inner(rect);
         Paragraph::new(node.label.clone()).render(inner, buf);
+    }
+}
+
+fn draw_dots(layout: &Layout, _app: &AppState, buf: &mut Buffer) {
+    for node in &layout.nodes {
+        let glyph = if node.kind == "file" && node.discovered == Some(true) {
+            '~'
+        } else {
+            '●'
+        };
+        if let Some(cell) = buf.cell_mut((node.x, node.y)) {
+            cell.set_char(glyph).set_style(Style::default());
+        }
     }
 }
 
@@ -247,5 +266,72 @@ mod tests {
         let badge_x = helpers.x + helpers.w.saturating_sub(2);
         let badge_cell = buf.cell((badge_x, helpers.y)).unwrap();
         assert_eq!(badge_cell.symbol(), "~");
+    }
+
+    #[test]
+    fn dot_mode_renders_single_cell_glyph_per_node() {
+        let g = dag(); // existing fixture
+        let mut app = AppState::new(&g);
+        app.density = crate::state::DensityMode::Dot;
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::DOT);
+        let buf = render(&layout, &app, &frame);
+
+        let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
+        let cell = buf.cell((placed.x, placed.y)).unwrap();
+        assert_eq!(cell.symbol(), "●", "dot mode should draw a single ● glyph");
+    }
+
+    #[test]
+    fn dot_mode_renders_tilde_for_discovered_file() {
+        let g = WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["a".into()],
+                nodes: vec![
+                    NodeData {
+                        id: "file:helpers.h".into(),
+                        kind: "file".into(),
+                        label: "helpers.h".into(),
+                        recipe: None,
+                        command: None,
+                        output: None,
+                        cached: None,
+                        dep_kind: None,
+                        group_index: None,
+                        modified: None,
+                        discovered: Some(true),
+                    },
+                    NodeData {
+                        id: "unit:a:0".into(),
+                        kind: "unit".into(),
+                        label: "a0".into(),
+                        recipe: Some("a".into()),
+                        command: Some("c".into()),
+                        output: None,
+                        cached: Some(true),
+                        dep_kind: Some("sequential".into()),
+                        group_index: None,
+                        modified: None,
+                        discovered: None,
+                    },
+                ],
+                edges: vec![EdgeData {
+                    from: "file:helpers.h".into(),
+                    to: "unit:a:0".into(),
+                }],
+            }],
+            inter_wave_edges: vec![],
+        };
+        let mut app = AppState::new(&g);
+        app.density = crate::state::DensityMode::Dot;
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::DOT);
+        let buf = render(&layout, &app, &frame);
+
+        let helpers = layout.nodes.iter().find(|n| n.id == "file:helpers.h").unwrap();
+        let cell = buf.cell((helpers.x, helpers.y)).unwrap();
+        assert_eq!(cell.symbol(), "~", "discovered file in dot mode renders as ~");
     }
 }
