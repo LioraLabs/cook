@@ -17,15 +17,31 @@ pub fn render<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F) -> Buffe
 
     draw_edges(layout, area, &mut buf, &app.theme);
     match app.density {
-        crate::state::DensityMode::Dot => draw_dots(layout, app, &mut buf),
-        crate::state::DensityMode::Compact => draw_compact(layout, &mut buf),
+        crate::state::DensityMode::Dot => draw_dots(layout, app, frame, &mut buf),
+        crate::state::DensityMode::Compact => draw_compact(layout, app, frame, &mut buf),
         crate::state::DensityMode::Full => draw_nodes(layout, area, &mut buf),
     }
-    if !matches!(app.density, crate::state::DensityMode::Dot) {
+    // Badge overlay (✓ ✗ ⚠) is a Full-mode-only affordance: in Dot the dot
+    // glyph itself carries cache colour; in Compact the bracketed label
+    // is coloured per status, so a separate badge would clobber the last
+    // label cell.
+    if matches!(app.density, crate::state::DensityMode::Full) {
         overlay_badges(layout, frame, &mut buf, &app.theme);
     }
     overlay_selection(layout, app, &mut buf);
     buf
+}
+
+/// Map a node's `NodeStatus` to its theme colour. Returns `Color::Reset`
+/// for non-cache states (Done / Pending / Running / Failed) so the dot or
+/// label renders in the terminal default.
+fn status_color<F: ViewFrame>(node_id: &str, frame: &F, theme: &crate::theme::Theme) -> ratatui::style::Color {
+    match frame.status_of(node_id) {
+        NodeStatus::Cached => theme.badge_cached,
+        NodeStatus::Stale => theme.badge_stale,
+        NodeStatus::Modified => theme.badge_modified,
+        _ => ratatui::style::Color::Reset,
+    }
 }
 
 fn draw_edges(layout: &Layout, area: Rect, buf: &mut Buffer, theme: &crate::theme::Theme) {
@@ -72,42 +88,46 @@ fn draw_nodes(layout: &Layout, _area: Rect, buf: &mut Buffer) {
     }
 }
 
-fn draw_dots(layout: &Layout, app: &AppState, buf: &mut Buffer) {
+fn draw_dots<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F, buf: &mut Buffer) {
     for node in &layout.nodes {
-        let (glyph, style) = if let Some(slot) = app.pins.slot_of(&node.id) {
-            (
-                crate::state::pin_glyph(slot),
-                Style::default().fg(app.theme.pin_slots[slot]),
-            )
-        } else if node.kind == "file" && node.discovered == Some(true) {
-            ('~', Style::default())
+        let (glyph, color) = if let Some(slot) = app.pins.slot_of(&node.id) {
+            // Pinned: slot glyph wins; cache state is read off the legend card.
+            (crate::state::pin_glyph(slot), app.theme.pin_slots[slot])
         } else {
-            ('●', Style::default())
+            let glyph = if node.kind == "file" && node.discovered == Some(true) {
+                '~'
+            } else {
+                '●'
+            };
+            (glyph, status_color(&node.id, frame, &app.theme))
         };
         if let Some(cell) = buf.cell_mut((node.x, node.y)) {
-            cell.set_char(glyph).set_style(style);
+            cell.set_char(glyph).set_style(Style::default().fg(color));
         }
     }
 }
 
 /// Render each node as a single-row bracketed label: `[label]`. The label
 /// is left-padded into the interior width (node_w - 2 cells); too-long
-/// labels truncate with an ellipsis.
-fn draw_compact(layout: &Layout, buf: &mut Buffer) {
+/// labels truncate with an ellipsis. Brackets and label inherit the
+/// node's cache-status colour (Green / Red / Yellow), so Compact carries
+/// the same visual signal Full mode gets via the badge overlay.
+fn draw_compact<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F, buf: &mut Buffer) {
     for node in &layout.nodes {
         let interior_w = node.w.saturating_sub(2) as usize;
         let label = truncate_to(&node.label, interior_w);
         let row_y = node.y;
+        let style = Style::default().fg(status_color(&node.id, frame, &app.theme));
 
         // Left bracket
         if let Some(cell) = buf.cell_mut((node.x, row_y)) {
-            cell.set_char('[').set_style(Style::default());
+            cell.set_char('[').set_style(style);
         }
         // Label
         for (i, ch) in label.chars().enumerate() {
             let x = node.x + 1 + i as u16;
             if let Some(cell) = buf.cell_mut((x, row_y)) {
-                cell.set_char(ch).set_style(Style::default());
+                cell.set_char(ch).set_style(style);
             }
         }
         // Pad
@@ -115,12 +135,12 @@ fn draw_compact(layout: &Layout, buf: &mut Buffer) {
             ..node.x + node.w.saturating_sub(1)
         {
             if let Some(cell) = buf.cell_mut((x, row_y)) {
-                cell.set_char(' ').set_style(Style::default());
+                cell.set_char(' ').set_style(style);
             }
         }
         // Right bracket
         if let Some(cell) = buf.cell_mut((node.x + node.w.saturating_sub(1), row_y)) {
-            cell.set_char(']').set_style(Style::default());
+            cell.set_char(']').set_style(style);
         }
     }
 }
@@ -422,5 +442,42 @@ mod tests {
         let helpers = layout.nodes.iter().find(|n| n.id == "file:helpers.h").unwrap();
         let cell = buf.cell((helpers.x, helpers.y)).unwrap();
         assert_eq!(cell.symbol(), "~", "discovered file in dot mode renders as ~");
+    }
+
+    #[test]
+    fn dot_mode_unit_dot_inherits_cache_status_color() {
+        let g = dag();
+        let mut app = AppState::new(&g);
+        app.density = crate::state::DensityMode::Dot;
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::DOT);
+        let buf = render(&layout, &app, &frame);
+
+        let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
+        let cell = buf.cell((placed.x, placed.y)).unwrap();
+        assert_eq!(
+            cell.style().fg,
+            Some(app.theme.badge_cached),
+            "cached unit dot should pick up theme.badge_cached"
+        );
+    }
+
+    #[test]
+    fn compact_mode_label_inherits_cache_status_color() {
+        let g = dag();
+        let mut app = AppState::new(&g);
+        app.density = crate::state::DensityMode::Compact;
+        let frame = SnapshotFrame::new(g.clone());
+        let layout = layout::compute(&g, layout::LayoutDims::COMPACT);
+        let buf = render(&layout, &app, &frame);
+
+        let placed = layout.nodes.iter().find(|n| n.id == "unit:a:0").unwrap();
+        // Bracket cell carries the status colour.
+        let bracket = buf.cell((placed.x, placed.y)).unwrap();
+        assert_eq!(
+            bracket.style().fg,
+            Some(app.theme.badge_cached),
+            "cached unit's [ bracket should pick up theme.badge_cached"
+        );
     }
 }

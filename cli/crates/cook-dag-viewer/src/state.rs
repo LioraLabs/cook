@@ -118,7 +118,7 @@ impl PinMsg {
     pub fn render(self) -> String {
         match self {
             Self::Full => "pin slots full — clear with X".to_string(),
-            Self::OnFile => "bulk-pin only applies to recipe units".to_string(),
+            Self::OnFile => "bulk-pin needs a unit selection".to_string(),
             Self::EmptySlot(n) => format!("slot {} empty", n + 1),
             Self::ClearedAll(n) => format!("cleared {n} pin{}", if n == 1 { "" } else { "s" }),
         }
