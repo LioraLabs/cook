@@ -8,10 +8,23 @@ use crate::frame::{NodeStatus, ViewFrame};
 use crate::state::{AppState, Selection};
 
 pub fn render<F: ViewFrame>(area: Rect, buf: &mut Buffer, app: &AppState, frame: &F) {
+    let row_after_tree = render_tree(area, buf, app, frame);
+
+    if app.density == crate::state::DensityMode::Dot && !app.pins.is_empty() {
+        render_pinned_legend(area, buf, app, frame, row_after_tree);
+    }
+}
+
+fn render_tree<F: ViewFrame>(
+    area: Rect,
+    buf: &mut Buffer,
+    app: &AppState,
+    frame: &F,
+) -> u16 {
     let mut row = area.y;
-    for (wi, wave) in app.tree.waves.iter().enumerate() {
+    'outer: for (wi, wave) in app.tree.waves.iter().enumerate() {
         if row >= area.y + area.height {
-            return;
+            break;
         }
         let glyph = if wave.expanded { '▼' } else { '▶' };
         let line = format!("{} {}", glyph, wave.label);
@@ -24,7 +37,7 @@ pub fn render<F: ViewFrame>(area: Rect, buf: &mut Buffer, app: &AppState, frame:
         }
         for (ri, recipe) in wave.recipes.iter().enumerate() {
             if row >= area.y + area.height {
-                return;
+                break 'outer;
             }
             let glyph = if recipe.expanded { '▼' } else { '▶' };
             let line = format!("{} {}", glyph, recipe.name);
@@ -38,7 +51,7 @@ pub fn render<F: ViewFrame>(area: Rect, buf: &mut Buffer, app: &AppState, frame:
             }
             for (ui, unit) in recipe.units.iter().enumerate() {
                 if row >= area.y + area.height {
-                    return;
+                    break 'outer;
                 }
                 let badge = badge(frame.status_of(&unit.node_id));
                 let line = format!("● {}  {}", unit.label, badge);
@@ -50,6 +63,83 @@ pub fn render<F: ViewFrame>(area: Rect, buf: &mut Buffer, app: &AppState, frame:
                 row += 1;
             }
         }
+    }
+    row
+}
+
+fn render_pinned_legend<F: ViewFrame>(
+    area: Rect,
+    buf: &mut Buffer,
+    app: &AppState,
+    frame: &F,
+    start_y: u16,
+) {
+    if start_y >= area.y + area.height {
+        return;
+    }
+
+    let count = app.pins.iter().count();
+    let header = format!(" pinned ({}) ", count);
+    write_line(area, buf, start_y, 0, &header, Style::default());
+
+    let mut y = start_y + 1;
+    for (slot, node_id) in app.pins.iter() {
+        if y + 1 >= area.y + area.height {
+            break;
+        }
+        let Some(node) = find_legend_node(frame, node_id) else {
+            continue;
+        };
+        let glyph = crate::state::pin_glyph(slot);
+        let title = format!(" {} {}", glyph, truncate_label(&node.label, 22));
+        write_line(
+            area,
+            buf,
+            y,
+            0,
+            &title,
+            Style::default().fg(app.theme.pin_slots[slot]),
+        );
+        if y + 1 < area.y + area.height {
+            let context = format_legend_context(node);
+            let context_line = format!("   {}", context);
+            write_line(area, buf, y + 1, 0, &context_line, Style::default());
+        }
+        y += 2;
+    }
+}
+
+fn find_legend_node<'a, F: ViewFrame>(
+    frame: &'a F,
+    id: &str,
+) -> Option<&'a crate::dag_data::NodeData> {
+    frame
+        .graph()
+        .waves
+        .iter()
+        .flat_map(|w| w.nodes.iter())
+        .find(|n| n.id == id)
+}
+
+fn format_legend_context(node: &crate::dag_data::NodeData) -> String {
+    match (node.kind.as_str(), node.recipe.as_deref()) {
+        ("file", _) if node.discovered == Some(true) => "discovered".to_string(),
+        ("file", _) => "declared".to_string(),
+        ("unit", Some(r)) => r.to_string(),
+        ("unit", None) => "unit".to_string(),
+        _ => node.kind.clone(),
+    }
+}
+
+fn truncate_label(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else if max <= 1 {
+        "…".to_string()
+    } else {
+        let mut out: String = s.chars().take(max - 1).collect();
+        out.push('…');
+        out
     }
 }
 
@@ -162,5 +252,91 @@ mod tests {
         assert_eq!(cell_at(&buf, 2, 1), '▼');
         // Row 2 = unit a0 cached → ✓.
         assert_eq!(cell_at(&buf, 4, 2), '●');
+    }
+
+    #[test]
+    fn pinned_legend_renders_in_dot_mode_with_pins() {
+        let g = WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["compile".into()],
+                nodes: vec![NodeData {
+                    id: "unit:compile:0".into(),
+                    kind: "unit".into(),
+                    label: "bar.o".into(),
+                    recipe: Some("compile".into()),
+                    command: Some("c".into()),
+                    output: None,
+                    cached: Some(true),
+                    dep_kind: Some("sequential".into()),
+                    group_index: None,
+                    modified: None,
+                    discovered: None,
+                }],
+                edges: vec![],
+            }],
+            inter_wave_edges: vec![],
+        };
+        let mut app = AppState::new(&g);
+        app.density = crate::state::DensityMode::Dot;
+        app.pins.pin("unit:compile:0");
+        let frame = SnapshotFrame::new(g.clone());
+        let area = Rect::new(0, 0, 28, 24);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, &frame);
+
+        let any_row_has_glyph = (0..area.height).any(|y| {
+            (0..area.width).any(|x| {
+                buf.cell((x, y)).unwrap().symbol().contains('❶')
+            })
+        });
+        assert!(any_row_has_glyph, "legend should render ❶ for slot-0 pin");
+
+        let any_row_has_label = (0..area.height).any(|y| {
+            let line: String = (0..area.width)
+                .map(|x| buf.cell((x, y)).unwrap().symbol().to_string())
+                .collect();
+            line.contains("bar.o")
+        });
+        assert!(any_row_has_label, "legend should include the node label");
+    }
+
+    #[test]
+    fn pinned_legend_hidden_when_density_not_dot() {
+        let g = WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["compile".into()],
+                nodes: vec![NodeData {
+                    id: "unit:compile:0".into(),
+                    kind: "unit".into(),
+                    label: "bar.o".into(),
+                    recipe: Some("compile".into()),
+                    command: Some("c".into()),
+                    output: None,
+                    cached: Some(true),
+                    dep_kind: Some("sequential".into()),
+                    group_index: None,
+                    modified: None,
+                    discovered: None,
+                }],
+                edges: vec![],
+            }],
+            inter_wave_edges: vec![],
+        };
+        let mut app = AppState::new(&g);
+        app.density = crate::state::DensityMode::Full;
+        app.pins.pin("unit:compile:0");
+        let frame = SnapshotFrame::new(g.clone());
+        let area = Rect::new(0, 0, 28, 24);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, &frame);
+
+        let any_row_has_glyph = (0..area.height).any(|y| {
+            (0..area.width).any(|x| buf.cell((x, y)).unwrap().symbol().contains('❶'))
+        });
+        assert!(!any_row_has_glyph, "legend must not render outside Dot mode");
     }
 }
