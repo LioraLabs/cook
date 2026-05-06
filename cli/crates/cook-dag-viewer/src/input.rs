@@ -1,4 +1,4 @@
-//! Keyboard + mouse event handling. Filled in across Tasks 10–12, 14.
+//! Keyboard + mouse event handling. Filled in across Tasks 10–14.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
@@ -6,16 +6,19 @@ use ratatui::layout::Rect;
 use crate::render::layout::Layout;
 use crate::state::{AppState, Mode};
 
-pub fn handle(app: &mut AppState, _layout: &Layout, event: &Event, _size: Rect) {
+pub fn handle(app: &mut AppState, layout: &Layout, event: &Event, size: Rect) {
+    let pane = graph_pane_rect(size);
     let Event::Key(key) = event else { return };
     match app.mode {
-        Mode::Normal => normal_key(app, key),
+        Mode::Normal => normal_key(app, key, layout, pane),
         Mode::EdgePicker => picker_key(app, key),
-        _ => {} // search/help/detail handled in later tasks.
+        _ => {}
     }
 }
 
-fn normal_key(app: &mut AppState, key: &KeyEvent) {
+fn normal_key(app: &mut AppState, key: &KeyEvent, layout: &Layout, pane: Rect) {
+    let pane_w = pane.width;
+    let pane_h = pane.height;
     match (key.code, key.modifiers) {
         (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
             app.should_quit = true;
@@ -40,6 +43,12 @@ fn normal_key(app: &mut AppState, key: &KeyEvent) {
         (KeyCode::Char('['), KeyModifiers::NONE) => {
             app.open_edge_picker_for_selection(crate::state::PickerDir::Upstream);
         }
+        (KeyCode::Char('H'), _) => app.pan_camera(-(pane_w as i32) / 2, 0, layout, pane),
+        (KeyCode::Char('L'), _) => app.pan_camera((pane_w as i32) / 2, 0, layout, pane),
+        (KeyCode::Char('J'), _) => app.pan_camera(0, (pane_h as i32) / 2, layout, pane),
+        (KeyCode::Char('K'), _) => app.pan_camera(0, -(pane_h as i32) / 2, layout, pane),
+        (KeyCode::Char('c'), KeyModifiers::NONE) => app.recenter(layout, pane),
+        (KeyCode::Char('a'), KeyModifiers::NONE) => app.auto_fit(layout, pane),
         _ => {}
     }
 }
@@ -79,4 +88,11 @@ fn picker_key(app: &mut AppState, key: &KeyEvent) {
         }
         _ => {}
     }
+}
+
+fn graph_pane_rect(terminal: Rect) -> Rect {
+    let body_h = terminal.height.saturating_sub(2);
+    let detail_h = 6.min(body_h);
+    let graph_h = body_h.saturating_sub(detail_h);
+    Rect::new(28, 1, terminal.width.saturating_sub(28), graph_h)
 }

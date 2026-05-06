@@ -271,6 +271,51 @@ impl AppState {
     }
 }
 
+impl AppState {
+    pub fn pan_camera(
+        &mut self,
+        dx: i32,
+        dy: i32,
+        layout: &crate::render::layout::Layout,
+        pane: ratatui::layout::Rect,
+    ) {
+        use crate::render::camera::Camera;
+        let cam = Camera { x: self.camera_x, y: self.camera_y };
+        let panned = cam.pan(dx, dy, layout, pane);
+        self.camera_x = panned.x;
+        self.camera_y = panned.y;
+        self.follow = false;
+    }
+
+    pub fn recenter(
+        &mut self,
+        layout: &crate::render::layout::Layout,
+        pane: ratatui::layout::Rect,
+    ) {
+        use crate::render::camera::Camera;
+        if let Some(node_id) = self.selection.node_id(&self.tree) {
+            if let Some(node) = layout.nodes.iter().find(|n| n.id == node_id) {
+                let cam = Camera::center_on(node, pane);
+                self.camera_x = cam.x;
+                self.camera_y = cam.y;
+                self.follow = true;
+            }
+        }
+    }
+
+    pub fn auto_fit(
+        &mut self,
+        layout: &crate::render::layout::Layout,
+        pane: ratatui::layout::Rect,
+    ) {
+        use crate::render::camera::Camera;
+        let cam = Camera::auto_fit(layout, pane);
+        self.camera_x = cam.x;
+        self.camera_y = cam.y;
+        self.follow = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,5 +483,26 @@ mod tests {
         app.open_edge_picker(&g, PickerDir::Downstream);
         assert_eq!(app.mode, Mode::EdgePicker);
         assert_eq!(app.edge_picker.candidates.len(), 2);
+    }
+
+    #[test]
+    fn pan_camera_disables_follow() {
+        let g = graph_2x2();
+        let mut app = AppState::new(&g);
+        let layout = crate::render::layout::compute(&g);
+        app.pan_camera(10, 10, &layout, ratatui::layout::Rect::new(0, 0, 80, 24));
+        assert!(!app.follow);
+    }
+
+    #[test]
+    fn recenter_reengages_follow() {
+        let g = graph_2x2();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        let layout = crate::render::layout::compute(&g);
+        app.follow = false;
+        app.recenter(&layout, ratatui::layout::Rect::new(0, 0, 80, 24));
+        assert!(app.follow);
     }
 }

@@ -77,6 +77,10 @@ pub fn run<F: ViewFrame>(mut frame: F) -> Result<(), ViewerError> {
             let size = terminal.size().unwrap_or(Size::ZERO);
             let size_rect = Rect::new(0, 0, size.width, size.height);
             input::handle(&mut app, &layout, &evt, size_rect);
+            if app.follow {
+                let pane = graph_pane_rect_from_terminal(size_rect);
+                app.recenter(&layout, pane);
+            }
         }
 
         // Future: drain frame.poll_event() here for live mode.
@@ -88,6 +92,13 @@ pub fn run<F: ViewFrame>(mut frame: F) -> Result<(), ViewerError> {
     }
 
     Ok(())
+}
+
+fn graph_pane_rect_from_terminal(t: Rect) -> Rect {
+    let body_h = t.height.saturating_sub(2);
+    let detail_h = 6.min(body_h);
+    let graph_h = body_h.saturating_sub(detail_h);
+    Rect::new(28, 1, t.width.saturating_sub(28), graph_h)
 }
 
 fn print_fallback<F: ViewFrame>(frame: &F) -> Result<(), ViewerError> {
