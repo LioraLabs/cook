@@ -225,4 +225,69 @@ mod tests {
         assert!(edges.contains(&("unit:a:0", "unit:b:0")));
         assert!(sub.inter_wave_edges.is_empty());
     }
+
+    fn two_wave_dag() -> WaveDagData {
+        WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![
+                WaveData {
+                    recipes: vec!["a".into()],
+                    nodes: vec![
+                        file("file:foo.cpp", "foo.cpp"),
+                        unit("unit:a:0", "a", "a0"),
+                    ],
+                    edges: vec![EdgeData {
+                        from: "file:foo.cpp".into(),
+                        to: "unit:a:0".into(),
+                    }],
+                },
+                WaveData {
+                    recipes: vec!["b".into()],
+                    nodes: vec![unit("unit:b:0", "b", "b0")],
+                    edges: vec![],
+                },
+            ],
+            inter_wave_edges: vec![EdgeData {
+                from: "unit:a:0".into(),
+                to: "unit:b:0".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn wave_focus_returns_full_wave_no_inter_wave_edges() {
+        let g = two_wave_dag();
+        let app = AppState::new(&g);
+        // Default: wave_only(0).
+        assert_eq!(app.selection, Selection::wave_only(0));
+        let sub = focus_subgraph(&g, &app);
+        let ids: BTreeSet<&str> = sub.waves[0].nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("file:foo.cpp"));
+        assert!(ids.contains("unit:a:0"));
+        assert!(!ids.contains("unit:b:0"), "wave 0 selection must not pull in wave 1 node");
+    }
+
+    #[test]
+    fn unit_focus_in_wave_0_pulls_inter_wave_neighbor_from_wave_1() {
+        let g = two_wave_dag();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        app.selection = Selection::unit(0, 0, 0);
+        let sub = focus_subgraph(&g, &app);
+        let ids: BTreeSet<&str> = sub.waves[0].nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(
+            ids.contains("unit:b:0"),
+            "1-hop expansion must follow inter-wave edges into wave 1",
+        );
+        let edges: BTreeSet<(&str, &str)> = sub.waves[0]
+            .edges
+            .iter()
+            .map(|e| (e.from.as_str(), e.to.as_str()))
+            .collect();
+        assert!(
+            edges.contains(&("unit:a:0", "unit:b:0")),
+            "inter-wave edge must be merged into the synthetic wave",
+        );
+    }
 }
