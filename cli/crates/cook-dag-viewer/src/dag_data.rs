@@ -193,10 +193,18 @@ fn build_wave(
     // Deduplicated file nodes: path → node id.
     let mut file_node_ids: BTreeMap<String, String> = BTreeMap::new();
 
-    // Collect all unit output paths in this wave so we can skip creating
-    // file nodes for intermediate build artifacts (e.g. .o files that are
-    // both a unit's output and another unit's input).
+    // Wave preflight in a single pass: gather every unit's declared inputs
+    // and outputs across the wave.
+    //
+    // - `unit_output_paths` lets the per-unit emission skip making file nodes
+    //   for intermediate artifacts (e.g. .o files that are both one unit's
+    //   output and another's input — the unit→unit edge already encodes that).
+    // - `declared_input_paths` lets the discovered-inputs emission classify a
+    //   path as declared regardless of the order units are processed in
+    //   (spec §3.3): a path declared by *any* unit in the wave is rendered
+    //   declared, even if a depfile sees it first.
     let mut unit_output_paths: BTreeSet<String> = BTreeSet::new();
+    let mut declared_input_paths: BTreeSet<String> = BTreeSet::new();
     for recipe_name in recipe_names {
         if let Some(ru) = units_by_name.get(recipe_name.as_str()) {
             for unit in &ru.units {
@@ -204,19 +212,6 @@ fn build_wave(
                     for out in &meta.output_paths {
                         unit_output_paths.insert(out.clone());
                     }
-                }
-            }
-        }
-    }
-
-    // Wave preflight: every input path declared by any unit in this wave.
-    // Used by the discovered loop to pin a path's classification regardless
-    // of the order units are processed in. See spec §3.3.
-    let mut declared_input_paths: BTreeSet<String> = BTreeSet::new();
-    for recipe_name in recipe_names {
-        if let Some(ru) = units_by_name.get(recipe_name.as_str()) {
-            for unit in &ru.units {
-                if let Some(meta) = &unit.cache_meta {
                     for inp in &meta.input_paths {
                         declared_input_paths.insert(inp.clone());
                     }
