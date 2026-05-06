@@ -313,6 +313,13 @@ impl Selection {
         }
     }
 
+    /// Resolve the selection to a graph node id.
+    ///
+    /// Returns `None` for wave-only and recipe-only selections — they
+    /// are container rows, not single nodes. Compact mode's focus
+    /// subgraph fans those out (recipe = all units in recipe + 1-hop;
+    /// wave = full wave); callers that need a node id must guard
+    /// against `None` rather than expecting a synthetic id.
     pub fn node_id<'a>(&self, tree: &'a IndexTree) -> Option<&'a str> {
         let w = tree.waves.get(self.wave)?;
         match self.leaf? {
@@ -411,14 +418,20 @@ impl AppState {
             return;
         };
         for (wi, wave) in self.tree.waves.iter().enumerate() {
+            for (fi, file) in wave.files.iter().enumerate() {
+                if file.node_id == target_id {
+                    self.selection = Selection::file(wi, fi);
+                    if let Some(w) = self.tree.waves.get_mut(wi) {
+                        w.expanded = true;
+                        w.files_expanded = true;
+                    }
+                    return;
+                }
+            }
             for (ri, recipe) in wave.recipes.iter().enumerate() {
                 for (ui, unit) in recipe.units.iter().enumerate() {
                     if unit.node_id == target_id {
-                        self.selection = Selection {
-                            wave: wi,
-                            recipe: Some(ri),
-                            unit: Some(ui),
-                        };
+                        self.selection = Selection::unit(wi, ri, ui);
                         // Mirror the search-jump expansion behaviour.
                         if let Some(w) = self.tree.waves.get_mut(wi) {
                             w.expanded = true;
@@ -529,12 +542,20 @@ impl AppState {
 
     pub fn jump_to_node(&mut self, node_id: &str) {
         for (wi, wave) in self.tree.waves.iter_mut().enumerate() {
+            for (fi, file) in wave.files.iter().enumerate() {
+                if file.node_id == node_id {
+                    wave.expanded = true;
+                    wave.files_expanded = true;
+                    self.selection = Selection::file(wi, fi);
+                    return;
+                }
+            }
             for (ri, recipe) in wave.recipes.iter_mut().enumerate() {
                 for (ui, unit) in recipe.units.iter().enumerate() {
                     if unit.node_id == node_id {
                         wave.expanded = true;
                         recipe.expanded = true;
-                        self.selection = Selection { wave: wi, recipe: Some(ri), unit: Some(ui) };
+                        self.selection = Selection::unit(wi, ri, ui);
                         return;
                     }
                 }
@@ -578,29 +599,57 @@ impl AppState {
     }
 
     pub fn collapse_or_step_out(&mut self) {
-        match (self.selection.recipe, self.selection.unit) {
-            (Some(_), Some(_)) => {
-                self.selection.unit = None;
+        match self.selection.leaf {
+            Some(SelectionLeaf::Recipe { recipe, unit: Some(_) }) => {
+                self.selection.leaf = Some(SelectionLeaf::Recipe { recipe, unit: None });
             }
-            (Some(ri), None) => {
-                self.tree.waves[self.selection.wave].recipes[ri].expanded = false;
+            Some(SelectionLeaf::Recipe { recipe, unit: None }) => {
+                if let Some(w) = self.tree.waves.get_mut(self.selection.wave) {
+                    if let Some(r) = w.recipes.get_mut(recipe) {
+                        r.expanded = false;
+                    }
+                }
             }
-            (None, _) => {
-                self.tree.waves[self.selection.wave].expanded = false;
+            Some(SelectionLeaf::File(_)) => {
+                // Step out of a file row: collapse the Files folder and
+                // re-anchor selection at the wave row, since the folder
+                // header itself is not selectable.
+                if let Some(w) = self.tree.waves.get_mut(self.selection.wave) {
+                    w.files_expanded = false;
+                }
+                self.selection.leaf = None;
+            }
+            None => {
+                if let Some(w) = self.tree.waves.get_mut(self.selection.wave) {
+                    w.expanded = false;
+                }
             }
         }
     }
 
     pub fn expand_or_step_in(&mut self) {
-        match (self.selection.recipe, self.selection.unit) {
-            (None, _) => {
-                let w = self.selection.wave;
-                self.tree.waves[w].expanded = true;
+        match self.selection.leaf {
+            None => {
+                if let Some(w) = self.tree.waves.get_mut(self.selection.wave) {
+                    if !w.expanded {
+                        w.expanded = true;
+                    } else if !w.files.is_empty() && !w.files_expanded {
+                        // Wave already expanded — pressing l opens the Files
+                        // folder so the user can drill into file rows.
+                        w.files_expanded = true;
+                    }
+                }
             }
-            (Some(ri), None) => {
-                self.tree.waves[self.selection.wave].recipes[ri].expanded = true;
+            Some(SelectionLeaf::Recipe { recipe, unit: None }) => {
+                if let Some(w) = self.tree.waves.get_mut(self.selection.wave) {
+                    if let Some(r) = w.recipes.get_mut(recipe) {
+                        r.expanded = true;
+                    }
+                }
             }
-            (Some(_), Some(_)) => { /* already at leaf */ }
+            Some(SelectionLeaf::Recipe { unit: Some(_), .. }) | Some(SelectionLeaf::File(_)) => {
+                // Already at a leaf row.
+            }
         }
     }
 
@@ -619,17 +668,26 @@ impl AppState {
     fn visible_rows(&self) -> Vec<Selection> {
         let mut out = Vec::new();
         for (wi, wave) in self.tree.waves.iter().enumerate() {
-            out.push(Selection { wave: wi, recipe: None, unit: None });
+            out.push(Selection::wave_only(wi));
             if !wave.expanded {
                 continue;
             }
+            // Files folder appears above recipes when the wave has any files.
+            // The folder header itself is not a selectable row — only its
+            // children are. Pressing l on the wave row toggles
+            // files_expanded via expand_or_step_in (Step 4).
+            if !wave.files.is_empty() && wave.files_expanded {
+                for fi in 0..wave.files.len() {
+                    out.push(Selection::file(wi, fi));
+                }
+            }
             for (ri, recipe) in wave.recipes.iter().enumerate() {
-                out.push(Selection { wave: wi, recipe: Some(ri), unit: None });
+                out.push(Selection::recipe(wi, ri));
                 if !recipe.expanded {
                     continue;
                 }
                 for ui in 0..recipe.units.len() {
-                    out.push(Selection { wave: wi, recipe: Some(ri), unit: Some(ui) });
+                    out.push(Selection::unit(wi, ri, ui));
                 }
             }
         }
@@ -760,18 +818,15 @@ mod tests {
     #[test]
     fn selection_node_id_returns_unit_id_when_fully_qualified() {
         let t = IndexTree::from_graph(&graph_2x2());
-        let sel = Selection { wave: 0, recipe: Some(0), unit: Some(1) };
+        let sel = Selection::unit(0, 0, 1);
         assert_eq!(sel.node_id(&t), Some("unit:a:1"));
     }
 
     #[test]
     fn selection_node_id_is_none_at_wave_or_recipe_level() {
         let t = IndexTree::from_graph(&graph_2x2());
-        assert_eq!(Selection { wave: 0, recipe: None, unit: None }.node_id(&t), None);
-        assert_eq!(
-            Selection { wave: 0, recipe: Some(0), unit: None }.node_id(&t),
-            None
-        );
+        assert_eq!(Selection::wave_only(0).node_id(&t), None);
+        assert_eq!(Selection::recipe(0, 0).node_id(&t), None);
     }
 
     #[test]
@@ -788,13 +843,13 @@ mod tests {
         let mut app = AppState::new(&g);
         // Wave 0 expanded by default but recipes collapsed.
         // Visible: W0, recipe a, recipe b, W1.
-        assert_eq!(app.selection, Selection { wave: 0, recipe: None, unit: None });
+        assert_eq!(app.selection, Selection::wave_only(0));
         app.move_cursor(false);
-        assert_eq!(app.selection, Selection { wave: 0, recipe: Some(0), unit: None });
+        assert_eq!(app.selection, Selection::recipe(0, 0));
         app.move_cursor(false);
-        assert_eq!(app.selection, Selection { wave: 0, recipe: Some(1), unit: None });
+        assert_eq!(app.selection, Selection::recipe(0, 1));
         app.move_cursor(false);
-        assert_eq!(app.selection, Selection { wave: 1, recipe: None, unit: None });
+        assert_eq!(app.selection, Selection::wave_only(1));
     }
 
     #[test]
@@ -805,7 +860,7 @@ mod tests {
         app.expand_or_step_in();
         assert!(app.tree.waves[0].recipes[0].expanded);
         app.move_cursor(false); // first unit a0
-        assert_eq!(app.selection, Selection { wave: 0, recipe: Some(0), unit: Some(0) });
+        assert_eq!(app.selection, Selection::unit(0, 0, 0));
     }
 
     #[test]
@@ -813,7 +868,7 @@ mod tests {
         let g = graph_2x2();
         let mut app = AppState::new(&g);
         app.tree.waves[0].recipes[0].expanded = true;
-        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.selection = Selection::unit(0, 0, 0);
         app.open_edge_picker(&g, PickerDir::Downstream);
         assert_eq!(app.mode, Mode::Normal);
     }
@@ -827,7 +882,7 @@ mod tests {
         });
         let mut app = AppState::new(&g);
         app.tree.waves[0].recipes[0].expanded = true;
-        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.selection = Selection::unit(0, 0, 0);
         app.open_edge_picker(&g, PickerDir::Downstream);
         assert_eq!(app.mode, Mode::Normal);
         assert_eq!(app.selection.node_id(&app.tree), Some("unit:c:0"));
@@ -846,7 +901,7 @@ mod tests {
         });
         let mut app = AppState::new(&g);
         app.tree.waves[0].recipes[0].expanded = true;
-        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.selection = Selection::unit(0, 0, 0);
         app.open_edge_picker(&g, PickerDir::Downstream);
         assert_eq!(app.mode, Mode::EdgePicker);
         assert_eq!(app.edge_picker.candidates.len(), 2);
@@ -866,7 +921,7 @@ mod tests {
         let g = graph_2x2();
         let mut app = AppState::new(&g);
         app.tree.waves[0].recipes[0].expanded = true;
-        app.selection = Selection { wave: 0, recipe: Some(0), unit: Some(0) };
+        app.selection = Selection::unit(0, 0, 0);
         let layout = crate::render::layout::compute(&g, crate::render::layout::LayoutDims::FULL);
         app.follow = false;
         app.recenter(&layout, ratatui::layout::Rect::new(0, 0, 80, 24));
