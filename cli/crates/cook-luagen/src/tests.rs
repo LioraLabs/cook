@@ -682,6 +682,7 @@ fn test_test_step_codegen() {
             Step::Test {
                 step: TestStep {
                     body: UsingClause::ShellBlock(vec!["./$<in>".to_string()]),
+                    as_name: None,
                     timeout: None,
                     should_fail: false,
                 },
@@ -720,6 +721,7 @@ fn test_test_step_codegen_with_options() {
         vec![Step::Test {
             step: TestStep {
                 body: UsingClause::ShellBlock(vec!["echo run-tests".to_string()]),
+                as_name: None,
                 timeout: Some(30),
                 should_fail: true,
             },
@@ -820,6 +822,7 @@ fn test_test_step_wrapped_in_step_group() {
         vec![Step::Test {
             step: TestStep {
                 body: UsingClause::ShellBlock(vec!["echo run".to_string()]),
+                as_name: None,
                 timeout: None,
                 should_fail: false,
             },
@@ -1516,6 +1519,7 @@ fn test_accessor_placeholder_in_test_command_rejected() {
             vec![Step::Test {
                 step: TestStep {
                     body: UsingClause::ShellBlock(vec!["echo $<protos.stem>".to_string()]),
+                    as_name: None,
                     timeout: None,
                     should_fail: false,
                 },

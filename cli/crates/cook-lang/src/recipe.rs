@@ -281,6 +281,7 @@ pub(crate) fn parse_recipe(
                     steps.push(Step::Test {
                         step: TestStep {
                             body,
+                            as_name: None,
                             timeout: modifier_tail.timeout,
                             should_fail: modifier_tail.should_fail,
                         },
