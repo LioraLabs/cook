@@ -37,6 +37,30 @@ impl Camera {
         Self { x: mid_x.max(0), y: mid_y.max(0) }
     }
 
+    /// Center the bounding rect of the layout's placed nodes inside `pane`.
+    /// Returns the origin when the layout is empty. Negative results are
+    /// allowed — the blit step renders only positive-coord cells, so a
+    /// small bbox sits visually centered even when the camera coordinate
+    /// is negative.
+    pub fn fit_bounds(layout: &Layout, pane: Rect) -> Self {
+        let Some(first) = layout.nodes.first() else {
+            return Self::origin();
+        };
+        let mut min_x = first.x as i32;
+        let mut min_y = first.y as i32;
+        let mut max_x = first.x as i32 + first.w as i32;
+        let mut max_y = first.y as i32 + first.h as i32;
+        for n in &layout.nodes[1..] {
+            min_x = min_x.min(n.x as i32);
+            min_y = min_y.min(n.y as i32);
+            max_x = max_x.max(n.x as i32 + n.w as i32);
+            max_y = max_y.max(n.y as i32 + n.h as i32);
+        }
+        let cx = (min_x + max_x) / 2 - pane.width as i32 / 2;
+        let cy = (min_y + max_y) / 2 - pane.height as i32 / 2;
+        Self { x: cx, y: cy }
+    }
+
     /// Returns the side of the pane that contains the off-canvas selection,
     /// or None if the selection is fully visible.
     pub fn off_screen_side(&self, node: &PlacedNode, pane: Rect) -> Option<Side> {
@@ -145,6 +169,60 @@ mod tests {
         assert_eq!(cam.off_screen_side(&l.nodes[0], pane), Some(Side::Left));
         let cam = Camera { x: 90, y: 40 };
         assert_eq!(cam.off_screen_side(&l.nodes[0], pane), None);
+    }
+
+    fn placed(id: &str, x: u16, y: u16, w: u16, h: u16) -> PlacedNode {
+        PlacedNode {
+            id: id.into(),
+            kind: "unit".into(),
+            label: id.into(),
+            x,
+            y,
+            w,
+            h,
+            discovered: None,
+        }
+    }
+
+    #[test]
+    fn fit_bounds_centers_single_node_like_center_on() {
+        let l = layout_500x200();
+        let pane = Rect::new(0, 0, 80, 24);
+        let cam = Camera::fit_bounds(&l, pane);
+        let center_on = Camera::center_on(&l.nodes[0], pane);
+        assert_eq!(cam, center_on);
+    }
+
+    #[test]
+    fn fit_bounds_centers_bounding_rect_for_multiple_nodes() {
+        let l = Layout {
+            nodes: vec![
+                placed("a", 100, 50, 22, 3),  // bbox left/top corner
+                placed("b", 200, 80, 22, 3),  // bbox right/bottom corner
+            ],
+            edges: vec![] as Vec<EdgeRoute>,
+            canvas_w: 500,
+            canvas_h: 200,
+        };
+        let pane = Rect::new(0, 0, 80, 24);
+        let cam = Camera::fit_bounds(&l, pane);
+        // Bbox: min(100,50)..max(222,83) → center (161, 66).
+        // Pane half: (40, 12). Camera = (121, 54).
+        assert_eq!(cam.x, 121);
+        assert_eq!(cam.y, 54);
+    }
+
+    #[test]
+    fn fit_bounds_returns_origin_for_empty_layout() {
+        let l = Layout {
+            nodes: vec![],
+            edges: vec![] as Vec<EdgeRoute>,
+            canvas_w: 0,
+            canvas_h: 0,
+        };
+        let pane = Rect::new(0, 0, 80, 24);
+        let cam = Camera::fit_bounds(&l, pane);
+        assert_eq!(cam, Camera::origin());
     }
 
     #[test]

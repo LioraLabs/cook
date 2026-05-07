@@ -713,14 +713,10 @@ impl AppState {
         pane: ratatui::layout::Rect,
     ) {
         use crate::render::camera::Camera;
-        if let Some(node_id) = self.selection.node_id(&self.tree) {
-            if let Some(node) = layout.nodes.iter().find(|n| n.id == node_id) {
-                let cam = Camera::center_on(node, pane);
-                self.camera_x = cam.x;
-                self.camera_y = cam.y;
-                self.follow = true;
-            }
-        }
+        let cam = Camera::fit_bounds(layout, pane);
+        self.camera_x = cam.x;
+        self.camera_y = cam.y;
+        self.follow = true;
     }
 
     pub fn auto_fit(
