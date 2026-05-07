@@ -59,14 +59,24 @@ pub fn install_module(
                     continue;
                 }
                 ConflictAnswer::Quit => {
+                    // Already-renamed files in earlier iterations stay overwritten by design;
+                    // full rollback would require keeping backup copies of every previous
+                    // target, which is out of scope for v1. We only clean unflushed temps.
                     cleanup_temps(&temp_files_written);
                     return Err(PullError::AbortedByUser);
                 }
             }
         }
 
-        let tmp = target.with_extension("cook-pull-tmp");
-        write_atomic(&tmp, &target, entry, &mut temp_files_written)?;
+        let file_name = target
+            .file_name()
+            .expect("install target always has a final path component")
+            .to_string_lossy();
+        let tmp = target.with_file_name(format!(".{}.cook-pull-tmp", file_name));
+        if let Err(e) = write_atomic(&tmp, &target, entry, &mut temp_files_written) {
+            cleanup_temps(&temp_files_written);
+            return Err(e);
+        }
 
         if exists {
             stats.overwritten += 1;
@@ -268,5 +278,23 @@ mod tests {
             })
             .collect();
         assert!(leftover.is_empty(), "found stray temp files: {leftover:?}");
+    }
+
+    #[test]
+    fn same_stem_different_extension_does_not_collide() {
+        let dir = TempDir::new().unwrap();
+        let plan = plan_with(
+            "cpp",
+            &[
+                ("lib.lua", b"-- lua"),
+                ("lib.toml", b"# toml"),
+            ],
+        );
+        let mut prompter = ScriptedPrompter::new(vec![]);
+        let stats =
+            install_module(&plan, "cpp", dir.path(), &mut prompter, false).unwrap();
+        assert_eq!(stats.written, 2);
+        assert_eq!(fs::read(dir.path().join("cpp/lib.lua")).unwrap(), b"-- lua");
+        assert_eq!(fs::read(dir.path().join("cpp/lib.toml")).unwrap(), b"# toml");
     }
 }
