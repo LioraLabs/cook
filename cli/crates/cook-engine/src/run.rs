@@ -218,7 +218,12 @@ where
         };
 
     // ── Phase 3-5: Execute ───────────────────────────────────────────────────
-    let result = run_inner(
+    // In test mode, a cook-step failure should not short-circuit the run with
+    // EngineError::TaskFailures. Instead, execute_dag will have already pushed
+    // Blocked TestResult rows via cancel_subtree for every downstream test node.
+    // Those rows are carried in TaskFailures.partial_test_results so we can
+    // return Ok with the Blocked results rather than propagating the error.
+    let raw_result = run_inner(
         project_root,
         &recipe_infos,
         &targets,
@@ -227,7 +232,17 @@ where
         &inferred_deps,
         on_event,
         rerun_patterns,
-    )?;
+    );
+    let result = match raw_result {
+        Ok(r) => r,
+        Err(EngineError::TaskFailures { partial_test_results, .. }) => {
+            // Cook steps failed but downstream test nodes were captured as
+            // Blocked. Treat as a successful engine run — the reporter will
+            // detect Blocked rows and exit non-zero via its existing logic.
+            RunResult { test_results: partial_test_results }
+        }
+        Err(other) => return Err(other),
+    };
 
     // Post-execution: filter test_results by filter_patterns and rerun_failed_set.
     let test_results = result

@@ -322,6 +322,11 @@ pub fn execute_dag(
     let mut test_results: Vec<crate::TestResult> = Vec::new();
     // Collects TestResult entries synthesized from test-cache hits in process_ready.
     let mut cached_test_results: Vec<crate::TestResult> = Vec::new();
+    // Collects Blocked TestResult rows synthesized by cancel_subtree when a
+    // cook step fails and its downstream test nodes are cancelled. These are
+    // included in TaskFailures.partial_test_results so run_for_test_inner can
+    // return Ok with Blocked rows instead of propagating the error.
+    let mut blocked_results: Vec<crate::TestResult> = Vec::new();
 
     // ----- Recipe tracking -----
     let mut recipe_trackers: BTreeMap<String, RecipeTracker> = BTreeMap::new();
@@ -416,10 +421,9 @@ pub fn execute_dag(
     // `upstream_name` is the name of the failing node that triggered this
     // cancellation — used to populate TestBlocked.upstream for test-step nodes.
     //
-    // TODO(Phase 4/5): also push a crate::TestResult { outcome: Blocked } for
-    // each cancelled test node. Currently blocked by the fact that cancel_subtree
-    // is a nested fn without direct access to the outer test_results Vec.
-    // The TestBlocked event is emitted so Phase 4 reporters can track it.
+    // `blocked_results` accumulates a TestResult { outcome: Blocked } for every
+    // cancelled test node so that run_for_test_inner can report them even when
+    // execute_dag returns Err(TaskFailures) due to cook-step failures.
     fn cancel_subtree(
         dag: &Dag<WorkNode>,
         node_id: usize,
@@ -427,45 +431,69 @@ pub fn execute_dag(
         event_tx: &Option<mpsc::Sender<EngineEvent>>,
         trackers: &mut BTreeMap<String, RecipeTracker>,
         upstream_name: &str,
+        blocked_results: &mut Vec<crate::TestResult>,
     ) {
         if cancelled[node_id] {
             return;
         }
         cancelled[node_id] = true;
         let node = dag.node(node_id);
-        let node_name = node
-            .payload()
+        let work_node = node.payload();
+        let node_name = work_node
             .payload
             .as_ref()
             .map(|p| p.display_name())
-            .unwrap_or_else(|| node.payload().recipe_name.clone());
+            .unwrap_or_else(|| work_node.recipe_name.clone());
         emit(
             event_tx,
             EngineEvent::NodeSkipped {
-                recipe: node.payload().recipe_name.clone(),
+                recipe: work_node.recipe_name.clone(),
                 node_name: node_name.clone(),
             },
         );
-        // Emit TestBlocked for test-step nodes whose upstream cook step failed.
-        if matches!(node.payload().payload, Some(WorkPayload::Test { .. })) {
-            let test_id = crate::id::parse_test_id(&node_name);
+        // Emit TestBlocked and synthesize a Blocked TestResult for test-step nodes.
+        if let Some(WorkPayload::Test { test_name, should_fail, .. }) = &work_node.payload {
+            let test_id = crate::id::parse_test_id(&format!(
+                "{}:{}",
+                work_node.recipe_name,
+                test_name,
+            ));
             emit(
                 event_tx,
                 EngineEvent::TestBlocked {
-                    id: test_id,
+                    id: test_id.clone(),
                     upstream: upstream_name.to_string(),
                 },
             );
+            let namespace = crate::id::id_namespace(&test_id);
+            let recipe = crate::id::id_recipe(&test_id);
+            blocked_results.push(crate::TestResult {
+                id: test_id,
+                namespace,
+                recipe,
+                name: test_name.clone(),
+                suite: work_node.recipe_name.clone(),
+                iteration_item: None,
+                outcome: crate::TestOutcome::Blocked,
+                duration: std::time::Duration::ZERO,
+                from_cache: false,
+                stdout: String::new(),
+                stderr: String::new(),
+                fingerprint: None,
+                blocked_by: Some(upstream_name.to_string()),
+                should_fail: *should_fail,
+                timed_out: false,
+            });
         }
         finish_recipe_node(
             trackers,
-            &node.payload().recipe_name,
+            &work_node.recipe_name,
             false,
             false,
             event_tx,
         );
         for &dep_id in dag.node(node_id).dependents() {
-            cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &node_name);
+            cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &node_name, blocked_results);
         }
     }
 
@@ -541,6 +569,7 @@ pub fn execute_dag(
         fingerprint_by_node: &BTreeMap<usize, String>,
         cached_test_results: &mut Vec<crate::TestResult>,
         rerun_patterns: &[String],
+        blocked_results: &mut Vec<crate::TestResult>,
     ) -> usize {
         if cancelled[id] {
             *finished += 1;
@@ -585,6 +614,7 @@ pub fn execute_dag(
                         fingerprint_by_node,
                         cached_test_results,
                         rerun_patterns,
+                        blocked_results,
                     );
                 }
                 submitted
@@ -688,6 +718,7 @@ pub fn execute_dag(
                                     fingerprint_by_node,
                                     cached_test_results,
                                     rerun_patterns,
+                                    blocked_results,
                                 );
                             }
                             return submitted;
@@ -735,6 +766,7 @@ pub fn execute_dag(
                             fingerprint_by_node,
                             cached_test_results,
                             rerun_patterns,
+                            blocked_results,
                         );
                     }
                     return submitted;
@@ -783,7 +815,7 @@ pub fn execute_dag(
                     *finished += 1;
                     let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
                     for dep_id in dependents {
-                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name());
+                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name(), blocked_results);
                     }
                     return 0;
                 }
@@ -836,6 +868,7 @@ pub fn execute_dag(
                             fingerprint_by_node,
                             cached_test_results,
                             rerun_patterns,
+                            blocked_results,
                         );
                     }
                     return submitted;
@@ -898,7 +931,7 @@ pub fn execute_dag(
                     *finished += 1;
                     let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
                     for dep_id in dependents {
-                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name());
+                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name(), blocked_results);
                     }
                     return 0;
                 }
@@ -948,6 +981,7 @@ pub fn execute_dag(
             fingerprint_by_node,
             &mut cached_test_results,
             rerun_patterns,
+            &mut blocked_results,
         );
     }
 
@@ -1202,6 +1236,7 @@ pub fn execute_dag(
                             fingerprint_by_node,
                             &mut cached_test_results,
                             rerun_patterns,
+                            &mut blocked_results,
                         );
                     }
                 }
@@ -1301,6 +1336,7 @@ pub fn execute_dag(
                                 &event_tx,
                                 &mut recipe_trackers,
                                 &chore_recipe,
+                                &mut blocked_results,
                             );
                         }
                     }
@@ -1590,6 +1626,7 @@ pub fn execute_dag(
                                 fingerprint_by_node,
                                 &mut cached_test_results,
                                 rerun_patterns,
+                                &mut blocked_results,
                             );
                         }
                     } else {
@@ -1619,6 +1656,7 @@ pub fn execute_dag(
                                 &event_tx,
                                 &mut recipe_trackers,
                                 &node_name,
+                                &mut blocked_results,
                             );
                         }
                     }
@@ -1918,6 +1956,7 @@ pub fn execute_dag(
                     fingerprint_by_node,
                     &mut cached_test_results,
                     rerun_patterns,
+                    &mut blocked_results,
                 );
             }
         } else {
@@ -2035,6 +2074,7 @@ pub fn execute_dag(
                         fingerprint_by_node,
                         &mut cached_test_results,
                         rerun_patterns,
+                        &mut blocked_results,
                     );
                 }
             } else {
@@ -2060,6 +2100,7 @@ pub fn execute_dag(
                         &event_tx,
                         &mut recipe_trackers,
                         &result.node_name,
+                        &mut blocked_results,
                     );
                 }
             }
@@ -2080,9 +2121,16 @@ pub fn execute_dag(
         all.extend(test_results);
         Ok(all)
     } else {
+        // Build partial_test_results: everything accumulated so far (including
+        // Blocked rows from cancel_subtree) so that run_for_test_inner can
+        // return Ok with these rows instead of propagating the error.
+        let mut partial = cached_test_results;
+        partial.extend(test_results);
+        partial.extend(blocked_results);
         Err(EngineError::TaskFailures {
             count: failures.len(),
             failures,
+            partial_test_results: partial,
         })
     }
 }
@@ -2787,5 +2835,69 @@ mod tests {
 
         let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "got: {result:?}");
+    }
+
+    // SHI-173: a failing cook step must produce Blocked TestResult rows for
+    // downstream test nodes, not short-circuit to EngineError::TaskFailures
+    // with no test results.
+    //
+    // In cook-mode callers (run()) this error still propagates unchanged.
+    // In test-mode (run_for_test_inner()) the Blocked rows are extracted and
+    // the error is swallowed. This test verifies the executor side: that
+    // TaskFailures.partial_test_results contains the Blocked row.
+    #[test]
+    fn cook_failure_produces_blocked_test_result() {
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        let mut dag = Dag::new();
+        // Cook node that will always fail.
+        let cook = dag.add_node(
+            work_node(shell("false"), "blocked_by_build", wd.clone()),
+            &[],
+        ).unwrap();
+        // Test node downstream of the failing cook node.
+        dag.add_node(
+            work_node(
+                WorkPayload::Test {
+                    cmd: "true".to_string(),
+                    line: 1,
+                    timeout: 30,
+                    should_fail: false,
+                    suite_name: "blocked_by_build".to_string(),
+                    test_name: "my_test".to_string(),
+                },
+                "blocked_by_build",
+                wd.clone(),
+            ),
+            &[cook],
+        ).unwrap();
+
+        let result = execute_dag(
+            dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[],
+        );
+
+        // The cook node failed → EngineError::TaskFailures
+        let err = result.expect_err("expected TaskFailures due to failing cook node");
+        match err {
+            EngineError::TaskFailures { failures, partial_test_results, .. } => {
+                // One cook failure.
+                assert_eq!(failures.len(), 1, "expected 1 cook failure");
+                assert_eq!(failures[0].1, "blocked_by_build");
+                // Exactly one Blocked TestResult for the downstream test node.
+                assert_eq!(
+                    partial_test_results.len(), 1,
+                    "expected 1 Blocked TestResult in partial_test_results"
+                );
+                let blocked = &partial_test_results[0];
+                assert_eq!(blocked.outcome, crate::TestOutcome::Blocked);
+                assert_eq!(blocked.name, "my_test");
+                assert!(
+                    blocked.blocked_by.is_some(),
+                    "blocked_by should be populated"
+                );
+            }
+            other => panic!("expected TaskFailures, got: {other:?}"),
+        }
     }
 }

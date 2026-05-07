@@ -322,6 +322,10 @@ pub enum EngineError {
         count: usize,
         /// (node_id, recipe_name, error_message)
         failures: Vec<(usize, String, String)>,
+        /// Test results accumulated before the failure (includes Blocked rows for
+        /// any test nodes that were cancelled as a consequence of cook-step failures).
+        /// `run_for_test_inner` extracts these so it can return Ok instead of Err.
+        partial_test_results: Vec<TestResult>,
     },
 
     /// Dependency resolution found a cycle.

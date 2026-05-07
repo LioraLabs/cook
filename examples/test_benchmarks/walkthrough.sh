@@ -94,14 +94,15 @@ clean
 assert_grep "fail_partial reports 3 failed" "3 failed" "$COOK" --test fail_partial
 
 # ---------------------------------------------------------------------------
-# 6. Blocked by build step: the cook step runs `false` which causes an
-#    engine-level failure before any test runs. Cook exits 1.
-#    NOTE: This is an engine error ("engine: 1 task(s) failed"), not a
-#    TestBlocked event — the runner never gets a chance to report "blocked".
-#    Assertion is exit 1 only.
+# 6. Blocked by build step: the cook step runs `false`, which causes the
+#    downstream test to be reported as Blocked rather than producing a raw
+#    engine error. Cook exits 1, and "blocked" appears in the summary.
+#    (SHI-173: previously this produced "engine: 1 task(s) failed" and no
+#    Blocked row; the fix translates cook failures into Blocked TestResults.)
 # ---------------------------------------------------------------------------
 clean
 assert_exit "blocked_by_build exits 1" 1 "$COOK" --test blocked_by_build
+assert_grep "blocked_by_build reports blocked" "blocked" "$COOK" --test blocked_by_build
 
 # ---------------------------------------------------------------------------
 # 7. Timeout — slow_timeout runs `sleep 10` with a 1-second limit →
