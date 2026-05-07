@@ -1,6 +1,7 @@
 //! `cook pull` — fetch module subtrees from a configured HTTPS registry into
 //! the project-local `cook_modules/` directory.
 
+mod archive;
 mod args;
 mod errors;
 
