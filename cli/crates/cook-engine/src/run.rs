@@ -144,11 +144,45 @@ where
     };
 
     // ── Phase 2: Filter ──────────────────────────────────────────────────────
-    // We can't inspect test unit names without running registration first,
-    // so we run the engine for all candidate recipes and filter test_results
-    // post-execution. For Phase 4 this is acceptable; Phase 5 will add
-    // pre-registration fingerprint checks to skip tests up-front.
+    // Pre-filter: when filter_patterns are present, limit the target recipe set
+    // to those whose recipe name could plausibly match the glob (recipe-level
+    // matching). The glob pattern uses `<recipe>:<test_name>` format; we match
+    // the recipe portion by checking if any pattern matches `<recipe>:*`.
+    // This avoids running unrelated recipes whose build steps may fail hard
+    // (e.g., blocked_by_build running `false`) when we only care about specific tests.
     //
+    // Post-execution, we still apply the full per-TestId filter to handle the
+    // test_name portion of the glob.
+    let candidate_recipe_names: Vec<String> = if !filter_patterns.is_empty() {
+        candidate_recipe_names
+            .into_iter()
+            .filter(|recipe_name| {
+                filter_patterns.iter().any(|pat| {
+                    // Strip the `:test_name` suffix from the pattern to get the
+                    // recipe-level glob (e.g., "pass_basic:*" → "pass_basic").
+                    let recipe_pat = if let Some(colon_pos) = pat.find(':') {
+                        pat[..colon_pos].to_string()
+                    } else {
+                        // Pattern has no colon — treat as recipe-level glob.
+                        pat.clone()
+                    };
+                    // Match full `<recipe>:` against the full pattern.
+                    let wildcard_id_for_recipe = format!("{}:", recipe_name);
+                    let full_match = globset::Glob::new(pat)
+                        .map(|g| g.compile_matcher().is_match(&wildcard_id_for_recipe))
+                        .unwrap_or(false);
+                    // Also match just the recipe name against the recipe portion of pattern.
+                    let recipe_match = globset::Glob::new(&recipe_pat)
+                        .map(|g| g.compile_matcher().is_match(recipe_name.as_str()))
+                        .unwrap_or(false);
+                    full_match || recipe_match
+                })
+            })
+            .collect()
+    } else {
+        candidate_recipe_names
+    };
+
     // Build dependency edges for the candidate set.
     let targets: Vec<String> = candidate_recipe_names;
     if targets.is_empty() {
