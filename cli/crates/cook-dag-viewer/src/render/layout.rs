@@ -25,9 +25,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::dag_data::{NodeData, WaveDagData};
 
-/// Geometry preset for the layered layout. The renderer always uses
-/// `LayoutDims::FULL`; the type is kept as a struct so the layout
-/// engine remains parameterised on its dimensions for future presets.
+/// Geometry parameters for the layered layout. The renderer always
+/// uses `LayoutDims::FULL`; keeping the parameters in a struct lets
+/// the layout engine stay decoupled from the specific values.
 #[derive(Debug, Clone, Copy)]
 pub struct LayoutDims {
     pub layer_width: u16,

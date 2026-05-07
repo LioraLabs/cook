@@ -1,4 +1,4 @@
-//! Compact mode focus subgraph. See spec §3.
+//! Selection-driven focus subgraph. See `2026-05-06-dag-tui-always-focused-design.md` §3-4.
 
 use std::collections::BTreeSet;
 

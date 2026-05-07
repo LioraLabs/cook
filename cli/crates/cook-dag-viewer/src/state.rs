@@ -271,11 +271,12 @@ impl Selection {
 
     /// Resolve the selection to a graph node id.
     ///
-    /// Returns `None` for wave-only and recipe-only selections — they
-    /// are container rows, not single nodes. Compact mode's focus
-    /// subgraph fans those out (recipe = all units in recipe + 1-hop;
-    /// wave = full wave); callers that need a node id must guard
-    /// against `None` rather than expecting a synthetic id.
+    /// Returns `None` for wave-only, recipe-only, and files-folder
+    /// selections — they are container rows, not single nodes. The
+    /// focus subgraph fans those out (recipe = all units in recipe +
+    /// 1-hop; wave / files-folder = full wave); callers that need a
+    /// node id must guard against `None` rather than expecting a
+    /// synthetic id.
     pub fn node_id<'a>(&self, tree: &'a IndexTree) -> Option<&'a str> {
         let w = tree.waves.get(self.wave)?;
         match self.leaf? {
