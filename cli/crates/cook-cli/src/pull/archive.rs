@@ -62,7 +62,10 @@ pub fn parse_archive<R: Read>(reader: R) -> Result<ArchivePlan, PullError> {
                 reason: format!("archive contains link entry: {path}"),
             });
         }
-        if !etype.is_file() {
+        // `is_file()` is strict (Regular only). `is_contiguous()` covers POSIX
+        // typeflag 7 entries that some tools (e.g. `git archive`) emit and which
+        // are semantically regular files.
+        if !(etype.is_file() || etype.is_contiguous()) {
             // Directories etc. — skip silently. Directories are recreated implicitly.
             continue;
         }
@@ -74,23 +77,25 @@ pub fn parse_archive<R: Read>(reader: R) -> Result<ArchivePlan, PullError> {
             })?
             .into_owned();
 
-        // Strip any single leading <repo>-<sha>/ prefix that forge tarballs add.
-        let stripped = strip_forge_prefix(&path_in_tar);
-
-        // Reject path traversal and absolute paths.
-        for comp in stripped.components() {
+        // Reject path traversal and absolute paths on the raw tar path. Doing this
+        // before stripping the forge prefix means a path like `../etc/passwd` is
+        // rejected directly rather than relying on downstream filtering.
+        for comp in path_in_tar.components() {
             match comp {
                 Component::Normal(_) => {}
                 _ => {
                     return Err(PullError::BadArchive {
                         reason: format!(
-                            "rejected path component in '{}'",
-                            stripped.display()
+                            "rejected non-normal path component in '{}'",
+                            path_in_tar.display()
                         ),
                     });
                 }
             }
         }
+
+        // Strip any single leading <repo>-<sha>/ prefix that forge tarballs add.
+        let stripped = strip_forge_prefix(&path_in_tar);
 
         // Match modules/<name>/<rest...>.
         let (name, rel_path) = match split_module_path(&stripped) {
@@ -275,7 +280,15 @@ mod tests {
         }
 
         let err = parse_archive(&gz_buf[..]).unwrap_err();
-        assert!(matches!(err, PullError::BadArchive { .. }));
+        match err {
+            PullError::BadArchive { reason } => {
+                assert!(
+                    reason.contains("non-normal path component"),
+                    "expected component-rejection reason, got: {reason}"
+                );
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
     }
 
     #[test]
