@@ -56,6 +56,7 @@ pub fn render_help(area: Rect, buf: &mut Buffer) {
         " g/G  top / bottom of index                     ",
         " ]/[  jump downstream / upstream                ",
         " H J K L  pan camera (½-viewport)               ",
+        " ctrl+arrows  pan camera (½-viewport)           ",
         " c  re-center camera, re-engage follow          ",
         " a  auto-fit camera to canvas                   ",
         " /  fuzzy search                                ",

@@ -101,7 +101,7 @@ fn draw_bottom_bar(area: Rect, buf: &mut Buffer, app: &mut AppState) {
         msg.render()
     } else {
         match app.mode {
-            Mode::Search => " /search · esc cancel · enter jump".to_string(),
+            Mode::Search => " /search · ↑↓ select · enter jump · esc cancel".to_string(),
             Mode::EdgePicker => " 1-9 jump · esc cancel".to_string(),
             Mode::Help => " help · q close".to_string(),
             Mode::DetailOverlay => " esc close".to_string(),

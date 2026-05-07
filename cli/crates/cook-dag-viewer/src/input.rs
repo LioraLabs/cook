@@ -74,6 +74,18 @@ fn normal_key<F: crate::frame::ViewFrame>(
         (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
             app.should_quit = true;
         }
+        (KeyCode::Left, KeyModifiers::CONTROL) => {
+            app.pan_camera(-(pane_w as i32) / 2, 0, layout, pane);
+        }
+        (KeyCode::Right, KeyModifiers::CONTROL) => {
+            app.pan_camera((pane_w as i32) / 2, 0, layout, pane);
+        }
+        (KeyCode::Down, KeyModifiers::CONTROL) => {
+            app.pan_camera(0, (pane_h as i32) / 2, layout, pane);
+        }
+        (KeyCode::Up, KeyModifiers::CONTROL) => {
+            app.pan_camera(0, -(pane_h as i32) / 2, layout, pane);
+        }
         (KeyCode::Char('j'), KeyModifiers::NONE) | (KeyCode::Down, _) => app.move_cursor(false),
         (KeyCode::Char('k'), KeyModifiers::NONE) | (KeyCode::Up, _) => app.move_cursor(true),
         (KeyCode::Char('h'), KeyModifiers::NONE) | (KeyCode::Left, _) => {
@@ -109,7 +121,10 @@ fn normal_key<F: crate::frame::ViewFrame>(
             let slot = (c as u8 - b'1') as usize;
             app.jump_to_pin_slot(slot);
         }
-        (KeyCode::Char('/'), _) => app.mode = Mode::Search,
+        (KeyCode::Char('/'), _) => {
+            app.mode = Mode::Search;
+            app.search = Default::default();
+        }
         (KeyCode::Char('?'), _) => app.mode = Mode::Help,
         (KeyCode::Char('v'), KeyModifiers::NONE) => app.mode = Mode::DetailOverlay,
         (KeyCode::Char('n'), KeyModifiers::NONE) => {
@@ -179,10 +194,22 @@ fn search_key(app: &mut AppState, key: &KeyEvent) {
             app.search = Default::default();
         }
         KeyCode::Enter => {
-            if let Some(id) = app.search.matches.first().cloned() {
+            if let Some(id) = app.search.matches.get(app.search.cursor).cloned() {
                 app.jump_to_node(&id);
             }
             app.mode = Mode::Normal;
+        }
+        KeyCode::Down => {
+            let n = app.search.matches.len();
+            if n > 0 {
+                app.search.cursor = (app.search.cursor + 1) % n;
+            }
+        }
+        KeyCode::Up => {
+            let n = app.search.matches.len();
+            if n > 0 {
+                app.search.cursor = (app.search.cursor + n - 1) % n;
+            }
         }
         KeyCode::Backspace => {
             app.search.query.pop();
