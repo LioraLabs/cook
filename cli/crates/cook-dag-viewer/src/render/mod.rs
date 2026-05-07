@@ -75,7 +75,7 @@ fn draw_top_bar<F: ViewFrame>(area: Rect, buf: &mut Buffer, _app: &AppState, fra
 fn draw_body<F: ViewFrame>(
     area: Rect,
     buf: &mut Buffer,
-    app: &AppState,
+    app: &mut AppState,
     frame: &F,
     r: RenderInputs<'_>,
 ) {
@@ -83,6 +83,7 @@ fn draw_body<F: ViewFrame>(
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(28), Constraint::Min(1)])
         .split(area);
+    app.ensure_index_visible(cols[0].height as usize);
     index::render(cols[0], buf, app, frame);
     let right = TuiLayout::default()
         .direction(Direction::Vertical)

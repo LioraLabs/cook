@@ -317,6 +317,11 @@ pub struct AppState {
     pub theme: crate::theme::Theme,
     pub pins: PinState,
     pub last_pin_message: Option<PinMsg>,
+    /// First visible row in the index tree, as an index into
+    /// `visible_rows()`. Updated each render to keep the selection in
+    /// view; persisted in state so navigation feels sticky (the
+    /// viewport doesn't snap when the selection stays in range).
+    pub index_scroll: usize,
 }
 
 impl AppState {
@@ -336,6 +341,7 @@ impl AppState {
             theme: Default::default(),
             pins: PinState::default(),
             last_pin_message: None,
+            index_scroll: 0,
         }
     }
 
@@ -657,6 +663,26 @@ impl AppState {
         if let Some(last) = self.visible_rows().last() {
             self.selection = *last;
         }
+    }
+
+    /// Adjust `index_scroll` so the selected row sits in the visible
+    /// window of `available_rows`. Sticky: scroll only changes when the
+    /// selection would otherwise leave the viewport.
+    pub fn ensure_index_visible(&mut self, available_rows: usize) {
+        if available_rows == 0 {
+            return;
+        }
+        let visible = self.visible_rows();
+        let Some(idx) = visible.iter().position(|s| *s == self.selection) else {
+            return;
+        };
+        if idx < self.index_scroll {
+            self.index_scroll = idx;
+        } else if idx >= self.index_scroll + available_rows {
+            self.index_scroll = idx + 1 - available_rows;
+        }
+        let max_scroll = visible.len().saturating_sub(available_rows);
+        self.index_scroll = self.index_scroll.min(max_scroll);
     }
 
     pub fn visible_rows(&self) -> Vec<Selection> {
@@ -1275,5 +1301,81 @@ mod tests {
         // Recipe is collapsed by default.
         app.collapse_or_step_out();
         assert_eq!(app.selection, Selection::wave_only(0));
+    }
+
+    fn tall_graph(unit_count: usize) -> WaveDagData {
+        WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["a".into()],
+                nodes: (0..unit_count).map(|i| unit(&format!("unit:a:{i}"), "a", &format!("u{i}"))).collect(),
+                edges: vec![],
+            }],
+            inter_wave_edges: vec![],
+        }
+    }
+
+    #[test]
+    fn ensure_index_visible_keeps_in_view_selection_does_not_move_scroll() {
+        let g = tall_graph(20);
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        // Visible rows: wave_only, recipe(0), unit(0..20). Total 22 rows.
+        // Pretend the pane is 10 rows tall.
+        app.index_scroll = 5;
+        // Selection at row 8 — already in [5, 15).
+        app.selection = Selection::unit(0, 0, 6); // logical idx = 2 (wave) + 1 (recipe) + 6 = wait
+        // Visible rows order: wave_only(0)=0, recipe(0)=1, unit(0,0,0)=2 ... unit(0,0,19)=21.
+        // Selection unit(0,0,6) is at logical idx 2 + 6 = 8. In [5, 15). Should not move scroll.
+        app.ensure_index_visible(10);
+        assert_eq!(app.index_scroll, 5);
+    }
+
+    #[test]
+    fn ensure_index_visible_scrolls_down_when_selection_below_viewport() {
+        let g = tall_graph(20);
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        app.index_scroll = 0;
+        // Selection at unit(0,0,15) → logical idx 17. With pane height 10, viewport [0..10). 17 >= 10 → scroll = 17 + 1 - 10 = 8.
+        app.selection = Selection::unit(0, 0, 15);
+        app.ensure_index_visible(10);
+        assert_eq!(app.index_scroll, 8);
+    }
+
+    #[test]
+    fn ensure_index_visible_scrolls_up_when_selection_above_viewport() {
+        let g = tall_graph(20);
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        app.index_scroll = 10;
+        // Selection at unit(0,0,2) → logical idx 4. 4 < 10 → scroll = 4.
+        app.selection = Selection::unit(0, 0, 2);
+        app.ensure_index_visible(10);
+        assert_eq!(app.index_scroll, 4);
+    }
+
+    #[test]
+    fn ensure_index_visible_clamps_scroll_when_visible_rows_shrink() {
+        let g = tall_graph(20);
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        // 22 visible rows, pane 10 → max_scroll = 12.
+        app.index_scroll = 50; // bogus large value
+        app.selection = Selection::wave_only(0); // logical 0
+        app.ensure_index_visible(10);
+        // First the "selection above viewport" branch sets scroll = 0 (idx=0 < 50).
+        // Then clamp to max_scroll = 12. Result is 0 because 0.min(12) = 0.
+        assert_eq!(app.index_scroll, 0);
+    }
+
+    #[test]
+    fn ensure_index_visible_no_op_when_pane_height_is_zero() {
+        let g = tall_graph(20);
+        let mut app = AppState::new(&g);
+        app.index_scroll = 7;
+        app.ensure_index_visible(0);
+        assert_eq!(app.index_scroll, 7);
     }
 }

@@ -17,16 +17,31 @@ fn render_tree<F: ViewFrame>(
     app: &AppState,
     frame: &F,
 ) {
-    let mut row = area.y;
+    let scroll = app.index_scroll;
+    let visible_end = scroll + area.height as usize;
+    let mut logical: usize = 0;
+
+    // Translate a logical row index to a physical y coordinate, or
+    // None if the row is scrolled out (above the viewport) or below
+    // the viewport.
+    let phys_y = |logical: usize| -> Option<u16> {
+        if logical < scroll || logical >= visible_end {
+            return None;
+        }
+        Some(area.y + (logical - scroll) as u16)
+    };
+
     'outer: for (wi, wave) in app.tree.waves.iter().enumerate() {
-        if row >= area.y + area.height {
+        if logical >= visible_end {
             break;
         }
-        let glyph = if wave.expanded { '▼' } else { '▶' };
-        let line = format!("{} {}", glyph, wave.label);
-        let style = sel_style(app.selection, Selection::wave_only(wi));
-        write_line(area, buf, row, 0, &line, style);
-        row += 1;
+        if let Some(y) = phys_y(logical) {
+            let glyph = if wave.expanded { '▼' } else { '▶' };
+            let line = format!("{} {}", glyph, wave.label);
+            let style = sel_style(app.selection, Selection::wave_only(wi));
+            write_line(area, buf, y, 0, &line, style);
+        }
+        logical += 1;
 
         if !wave.expanded {
             continue;
@@ -34,85 +49,90 @@ fn render_tree<F: ViewFrame>(
 
         // Files folder (rendered only when the wave has any files).
         if !wave.files.is_empty() {
-            if row >= area.y + area.height {
+            if logical >= visible_end {
                 break 'outer;
             }
-            let glyph = if wave.files_expanded { '▼' } else { '▶' };
-            let line = format!("{} Files ({})", glyph, wave.files.len());
-            let style = sel_style(app.selection, Selection::files_folder(wi));
-            write_line(area, buf, row, 2, &line, style);
-            row += 1;
+            if let Some(y) = phys_y(logical) {
+                let glyph = if wave.files_expanded { '▼' } else { '▶' };
+                let line = format!("{} Files ({})", glyph, wave.files.len());
+                let style = sel_style(app.selection, Selection::files_folder(wi));
+                write_line(area, buf, y, 2, &line, style);
+            }
+            logical += 1;
 
             if wave.files_expanded {
                 for (fi, file) in wave.files.iter().enumerate() {
-                    if row >= area.y + area.height {
+                    if logical >= visible_end {
                         break 'outer;
                     }
-                    let (kind_glyph, kind_color) = if file.discovered {
-                        ('◇', Some(app.theme.badge_discovered))
-                    } else {
-                        ('▢', None)
-                    };
-                    let status = frame.status_of(&file.node_id);
-                    let badge = file_badge(status);
-                    let badge_color = match status {
-                        NodeStatus::Modified => Some(app.theme.badge_modified),
-                        _ => None,
-                    };
-                    let style = sel_style(app.selection, Selection::file(wi, fi));
-                    // Render glyph (kind_color) + space + label, then badge at right.
-                    // Reserve the rightmost 2 columns for the badge: 2 cells from the right edge
-                    // is where the badge writes. Subtract indent (4) + glyph (1) + space (1) from
-                    // that reserved span to bound the label.
-                    let max_label = area
-                        .width
-                        .saturating_sub(4 + 1 + 1 + 2) as usize;
-                    let label_line = format!("{} {}", kind_glyph, truncate_label(&file.label, max_label));
-                    let glyph_style = match kind_color {
-                        Some(c) => style.fg(c),
-                        None => style,
-                    };
-                    write_line(area, buf, row, 4, &label_line, glyph_style);
-                    // Badge at the right edge — overwrite the last 1 cell.
-                    let badge_x = area.x + area.width.saturating_sub(2);
-                    if let Some(cell) = buf.cell_mut((badge_x, row)) {
-                        let s = match badge_color {
+                    if let Some(y) = phys_y(logical) {
+                        let (kind_glyph, kind_color) = if file.discovered {
+                            ('◇', Some(app.theme.badge_discovered))
+                        } else {
+                            ('▢', None)
+                        };
+                        let status = frame.status_of(&file.node_id);
+                        let badge = file_badge(status);
+                        let badge_color = match status {
+                            NodeStatus::Modified => Some(app.theme.badge_modified),
+                            _ => None,
+                        };
+                        let style = sel_style(app.selection, Selection::file(wi, fi));
+                        // Render glyph (kind_color) + space + label, then badge at right.
+                        // Reserve the rightmost 2 columns for the badge: 2 cells from the right edge
+                        // is where the badge writes. Subtract indent (4) + glyph (1) + space (1) from
+                        // that reserved span to bound the label.
+                        let max_label = area
+                            .width
+                            .saturating_sub(4 + 1 + 1 + 2) as usize;
+                        let label_line =
+                            format!("{} {}", kind_glyph, truncate_label(&file.label, max_label));
+                        let glyph_style = match kind_color {
                             Some(c) => style.fg(c),
                             None => style,
                         };
-                        cell.set_char(badge).set_style(s);
+                        write_line(area, buf, y, 4, &label_line, glyph_style);
+                        // Badge at the right edge — overwrite the last 1 cell.
+                        let badge_x = area.x + area.width.saturating_sub(2);
+                        if let Some(cell) = buf.cell_mut((badge_x, y)) {
+                            let s = match badge_color {
+                                Some(c) => style.fg(c),
+                                None => style,
+                            };
+                            cell.set_char(badge).set_style(s);
+                        }
                     }
-                    row += 1;
+                    logical += 1;
                 }
             }
         }
 
         for (ri, recipe) in wave.recipes.iter().enumerate() {
-            if row >= area.y + area.height {
+            if logical >= visible_end {
                 break 'outer;
             }
-            let glyph = if recipe.expanded { '▼' } else { '▶' };
-            let line = format!("{} {}", glyph, recipe.name);
-            let style =
-                sel_style(app.selection, Selection::recipe(wi, ri));
-            write_line(area, buf, row, 2, &line, style);
-            row += 1;
+            if let Some(y) = phys_y(logical) {
+                let glyph = if recipe.expanded { '▼' } else { '▶' };
+                let line = format!("{} {}", glyph, recipe.name);
+                let style = sel_style(app.selection, Selection::recipe(wi, ri));
+                write_line(area, buf, y, 2, &line, style);
+            }
+            logical += 1;
 
             if !recipe.expanded {
                 continue;
             }
             for (ui, unit) in recipe.units.iter().enumerate() {
-                if row >= area.y + area.height {
+                if logical >= visible_end {
                     break 'outer;
                 }
-                let badge = badge(frame.status_of(&unit.node_id));
-                let line = format!("● {}  {}", unit.label, badge);
-                let style = sel_style(
-                    app.selection,
-                    Selection::unit(wi, ri, ui),
-                );
-                write_line(area, buf, row, 4, &line, style);
-                row += 1;
+                if let Some(y) = phys_y(logical) {
+                    let badge = badge(frame.status_of(&unit.node_id));
+                    let line = format!("● {}  {}", unit.label, badge);
+                    let style = sel_style(app.selection, Selection::unit(wi, ri, ui));
+                    write_line(area, buf, y, 4, &line, style);
+                }
+                logical += 1;
             }
         }
     }
@@ -373,6 +393,42 @@ mod tests {
             cell.style().add_modifier.contains(Modifier::REVERSED),
             "expected folder-header glyph to be REVERSED when selected"
         );
+    }
+
+    #[test]
+    fn scrolled_view_skips_rows_above_the_offset() {
+        // Wave 0 expanded with one recipe expanded → many unit rows.
+        let mut nodes: Vec<NodeData> = Vec::new();
+        for i in 0..10 {
+            nodes.push(unit(&format!("unit:a:{i}"), "a", &format!("u{i}"), Some(true)));
+        }
+        let g = WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["a".into()],
+                nodes,
+                edges: vec![],
+            }],
+            inter_wave_edges: vec![],
+        };
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].recipes[0].expanded = true;
+        // Visible rows: wave_only=0, recipe(0)=1, unit(0..10)=2..11. Total 12.
+        // Scroll past the wave + recipe rows → unit u0 should be the first row.
+        app.index_scroll = 2;
+        let frame = SnapshotFrame::new(g);
+        let area = Rect::new(0, 0, 28, 5);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, &frame);
+
+        // Row 0 must NOT be the wave header.
+        let r0 = row_text(&buf, area, 0);
+        assert!(!r0.contains("Wave 0"), "row 0 should be scrolled past wave header, got: `{r0}`");
+        assert!(r0.contains("u0"), "row 0 should be unit u0, got: `{r0}`");
+        // Row 1 should be u1.
+        let r1 = row_text(&buf, area, 1);
+        assert!(r1.contains("u1"), "row 1 should be unit u1, got: `{r1}`");
     }
 
     #[test]
