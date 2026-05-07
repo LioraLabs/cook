@@ -84,8 +84,8 @@ fn run_for_test_inner<F>(
 where
     F: Fn(EngineEvent) + Send + Sync,
 {
-    // Phase 5 stub: cache wiring deferred.
-    let _ = rerun_patterns;
+    // rerun_patterns is plumbed to execute_dag below; it gates per-test cache
+    // lookup so matching tests force-rerun even if a cache entry exists.
 
     // ── Phase 1: Discover ────────────────────────────────────────────────────
     // Load the workspace so we have both the recipe_infos and the registries.
@@ -226,6 +226,7 @@ where
         num_jobs,
         &inferred_deps,
         on_event,
+        rerun_patterns,
     )?;
 
     // Post-execution: filter test_results by filter_patterns and rerun_failed_set.
@@ -313,6 +314,7 @@ pub fn run(
         num_jobs,
         inferred_deps,
         &on_event,
+        &[],
     );
     on_event(EngineEvent::Finished {
         elapsed: started.elapsed(),
@@ -329,6 +331,7 @@ fn run_inner<F>(
     num_jobs: usize,
     inferred_deps: &BTreeMap<String, Vec<String>>,
     on_event: &F,
+    rerun_patterns: &[String],
 ) -> Result<RunResult, EngineError>
 where
     F: Fn(EngineEvent) + Send + Sync,
@@ -600,6 +603,7 @@ where
                         cache_ctx.clone(),
                         Some(&test_cache),
                         &fingerprint_by_node,
+                        rerun_patterns,
                     );
 
                     // Drop the sender end is handled by execute_dag returning

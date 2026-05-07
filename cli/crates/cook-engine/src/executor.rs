@@ -196,6 +196,22 @@ fn run_interactive_on_main(
 // iso8601_now — minimal RFC-3339 timestamp without chrono / time deps
 // ---------------------------------------------------------------------------
 
+/// Match a test identity string (`<recipe>:<name>`) against a list of
+/// `--rerun PATTERN` globs. Returns `true` if any pattern matches; `false`
+/// otherwise (including the empty-list case — no rerun patterns means no
+/// force-rerun).
+fn rerun_matches(test_id: &str, patterns: &[String]) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+    patterns.iter().any(|pat| {
+        match globset::Glob::new(pat) {
+            Ok(g) => g.compile_matcher().is_match(test_id),
+            Err(_) => false,
+        }
+    })
+}
+
 fn iso8601_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -269,6 +285,7 @@ pub fn execute_dag(
     cache_ctx: Arc<CacheContext>,
     test_cache: Option<&TestCache>,
     fingerprint_by_node: &BTreeMap<usize, String>,
+    rerun_patterns: &[String],
 ) -> Result<Vec<crate::TestResult>, EngineError> {
     // Install the depfile parser pointer so cook-fingerprint's pre-check
     // augmentation can call back into cook-cache without a runtime dep cycle.
@@ -523,6 +540,7 @@ pub fn execute_dag(
         test_cache: Option<&TestCache>,
         fingerprint_by_node: &BTreeMap<usize, String>,
         cached_test_results: &mut Vec<crate::TestResult>,
+        rerun_patterns: &[String],
     ) -> usize {
         if cancelled[id] {
             *finished += 1;
@@ -566,6 +584,7 @@ pub fn execute_dag(
                         test_cache,
                         fingerprint_by_node,
                         cached_test_results,
+                        rerun_patterns,
                     );
                 }
                 submitted
@@ -592,7 +611,14 @@ pub fn execute_dag(
                 // (cached=true) events and mark the node done without dispatch.
                 if let Some(tc) = test_cache {
                     if let Some(fp) = fingerprint_by_node.get(&id) {
-                        if let Some(entry) = tc.lookup(fp) {
+                        // Force-rerun: if the test id matches any --rerun pattern,
+                        // skip cache lookup. Cache write still occurs after the
+                        // test runs (executor's success-path write site below),
+                        // so a forced re-run refreshes the cached entry.
+                        let test_id_str = format!("{}:{}", work_node.recipe_name, test_name);
+                        let force_rerun = rerun_matches(&test_id_str, rerun_patterns);
+                        let cached_entry = if force_rerun { None } else { tc.lookup(fp) };
+                        if let Some(entry) = cached_entry {
                             // Cache hit — synthesize events and skip execution.
                             ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                             let test_id = crate::id::parse_test_id(&format!(
@@ -661,6 +687,7 @@ pub fn execute_dag(
                                     test_cache,
                                     fingerprint_by_node,
                                     cached_test_results,
+                                    rerun_patterns,
                                 );
                             }
                             return submitted;
@@ -707,6 +734,7 @@ pub fn execute_dag(
                             test_cache,
                             fingerprint_by_node,
                             cached_test_results,
+                            rerun_patterns,
                         );
                     }
                     return submitted;
@@ -807,6 +835,7 @@ pub fn execute_dag(
                             test_cache,
                             fingerprint_by_node,
                             cached_test_results,
+                            rerun_patterns,
                         );
                     }
                     return submitted;
@@ -918,6 +947,7 @@ pub fn execute_dag(
             test_cache,
             fingerprint_by_node,
             &mut cached_test_results,
+            rerun_patterns,
         );
     }
 
@@ -1171,6 +1201,7 @@ pub fn execute_dag(
                             test_cache,
                             fingerprint_by_node,
                             &mut cached_test_results,
+                            rerun_patterns,
                         );
                     }
                 }
@@ -1558,6 +1589,7 @@ pub fn execute_dag(
                                 test_cache,
                                 fingerprint_by_node,
                                 &mut cached_test_results,
+                                rerun_patterns,
                             );
                         }
                     } else {
@@ -1885,6 +1917,7 @@ pub fn execute_dag(
                     test_cache,
                     fingerprint_by_node,
                     &mut cached_test_results,
+                    rerun_patterns,
                 );
             }
         } else {
@@ -2001,6 +2034,7 @@ pub fn execute_dag(
                         test_cache,
                         fingerprint_by_node,
                         &mut cached_test_results,
+                        rerun_patterns,
                     );
                 }
             } else {
@@ -2121,7 +2155,7 @@ mod tests {
         let mut dag = Dag::new();
         dag.add_node(work_node(shell("true"), "single", wd), &[]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -2141,7 +2175,7 @@ mod tests {
             &[a],
         ).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -2163,7 +2197,7 @@ mod tests {
             &[a],
         ).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_err());
         match result.unwrap_err() {
             EngineError::TaskFailures { failures, .. } => {
@@ -2189,7 +2223,7 @@ mod tests {
         }
 
         let start = std::time::Instant::now();
-        let result = execute_dag(dag, 4, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 4, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         let elapsed = start.elapsed();
 
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -2207,7 +2241,7 @@ mod tests {
         let (_wd, _tmp) = tmp_dir();
         let cache_ctx = make_cache_ctx(&_tmp);
         let dag: Dag<WorkNode> = Dag::new();
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok());
     }
 
@@ -2222,7 +2256,7 @@ mod tests {
         let b = dag.add_node(presatisfied_node("cached_b", wd.clone()), &[a]).unwrap();
         dag.add_node(work_node(shell("true"), "real_work", wd), &[b]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -2238,7 +2272,7 @@ mod tests {
         // B is independent, should succeed
         dag.add_node(work_node(shell("true"), "ok_b", wd), &[]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_err());
         match result.unwrap_err() {
             EngineError::TaskFailures { failures, .. } => {
@@ -2271,7 +2305,7 @@ mod tests {
             &[a],
         ).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -2300,7 +2334,7 @@ mod tests {
         );
 
         let (tx, rx) = mpsc::channel::<EngineEvent>();
-        let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
         let mut got_stdout = false;
@@ -2377,7 +2411,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
         let out = wd.join("build/out/foo.txt");
@@ -2411,7 +2445,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         let err = result.expect_err("expected failure when parent is a regular file");
         match err {
             EngineError::TaskFailures { failures, .. } => {
@@ -2464,7 +2498,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
         assert!(wd.join("build/foo.txt").exists());
     }
@@ -2510,7 +2544,7 @@ mod tests {
             &[b]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "got: {result:?}");
 
         let events: Vec<_> = rx.try_iter().collect();
@@ -2563,7 +2597,7 @@ mod tests {
             &[b]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
+        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
 
         let events: Vec<_> = rx.try_iter().collect();
         let node_failed: Vec<_> = events.iter().filter(|e| matches!(e, EngineEvent::NodeFailed { .. })).collect();
@@ -2603,7 +2637,7 @@ mod tests {
             &[]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
+        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
 
         let events: Vec<_> = rx.try_iter().collect();
         let starts = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveStart { .. })).count();
@@ -2656,7 +2690,7 @@ mod tests {
             &[b]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "got: {result:?}");
 
         let events: Vec<_> = rx.try_iter().collect();
@@ -2711,7 +2745,7 @@ mod tests {
             &[a]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "got: {result:?}");
 
         let events: Vec<_> = rx.try_iter().collect();
@@ -2751,7 +2785,7 @@ mod tests {
                 "regular_lua", wd),
             &[]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
         assert!(result.is_ok(), "got: {result:?}");
     }
 }
