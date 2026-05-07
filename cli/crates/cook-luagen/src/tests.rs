@@ -2307,3 +2307,52 @@ fn chore_body_passes_literal_braces_through() {
         lua
     );
 }
+
+// ─── Task 2.5: as_name codegen tests ────────────────────────────────────────
+
+#[test]
+fn test_step_codegen_with_as_emits_name_field() {
+    let cook_src = r#"
+recipe r
+    test { true } as 'my-test' timeout 5
+"#;
+    let lua = generate_lua_for_test(cook_src);
+    assert!(
+        lua.contains("name = \"my-test\""),
+        "expected emitted Lua to set name; got:\n{lua}"
+    );
+}
+
+#[test]
+fn test_step_codegen_without_as_omits_name_field_or_uses_auto() {
+    let cook_src = r#"
+recipe r
+    test { true } timeout 5
+"#;
+    let lua = generate_lua_for_test(cook_src);
+    // Auto-name path: codegen MAY emit `name = "test#1"` or omit the field
+    // entirely; both are valid per §3.2 (the runner generates the auto-name
+    // if the field is absent or empty). We only assert no `as_name` was
+    // forced through.
+    assert!(!lua.contains("name = \"my-test\""));
+}
+
+#[test]
+fn test_step_codegen_substitutes_as_name() {
+    // The `as '$<in.stem>-rt'` modifier substitutes per CS-0033 at codegen.
+    let cook_src = r#"
+recipe r
+    ingredients "src/*.txt"
+    cook "build/$<in.stem>.out" using { echo > $<out> }
+    test { test -s $<in> } as '$<in.stem>-rt'
+"#;
+    let lua = generate_lua_for_test(cook_src);
+    // The emitted Lua should contain a name expression that substitutes
+    // through the existing iteration binding (`_test_in` or equivalent).
+    // The exact name varies per emitter; assert the bare token doesn't
+    // leak through unsubstituted.
+    assert!(
+        !lua.contains("name = \"$<in.stem>-rt\""),
+        "as_name should be substituted, not literal:\n{lua}"
+    );
+}

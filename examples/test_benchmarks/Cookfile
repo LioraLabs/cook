@@ -25,7 +25,7 @@ recipe pass_iterated
 # (3) should_fail test whose body exits non-zero. Pins should_fail
 #     semantics survive caching.
 recipe pass_should_fail
-    test { exit 1 } should_fail timeout 5
+    test { exit 1 } timeout 5 should_fail
 
 # (4) One-shot test that fails. Pins failure capture, never-cached invariant.
 recipe fail_basic
@@ -60,14 +60,13 @@ recipe slow_timeout
     test { sleep 10 } timeout 1
 
 # (8) `as` modifier. Pins name override surface.
-#     COMMENTED OUT until Phase 2.5 lands `as` parsing — uncomment in Task 2.5.
-# recipe named_test
-#     ingredients "src/inputs/*.txt"
-#     cook "build/named_test/$<in.stem>.out" using {
-#         mkdir -p build/named_test
-#         echo "ok" > $<out>
-#     }
-#     test { test -s $<in> } as 'non-empty' timeout 5
+recipe named_test
+    ingredients "src/inputs/*.txt"
+    cook "build/named_test/$<in.stem>.out" using {
+        mkdir -p build/named_test
+        echo "ok" > $<out>
+    }
+    test { test -s $<in> } as 'non-empty' timeout 5
 
 # (9) Cache replay. Pins cache hit on second run.
 recipe cached_replay

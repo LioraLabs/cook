@@ -1059,6 +1059,8 @@ CS-0051 makes the single-drain semantic normative for chore bodies. A conforming
 
 **Summary.** Adds an optional `as STRING` leading modifier to `test_step`. The modifier sets the test's display name in runner reports. Without it, the implementation assigns an auto-generated identity. The `STRING` admits `$<IDENT>` placeholder substitution (CS-0033) at register-time codegen; the display name is metadata and is not part of the test's cache fingerprint. Modifier order is fixed: `as → timeout → should_fail`; out-of-order sequences are rejected with a diagnostic naming the offending modifier. The `as` modifier is test-step-only; `cook_step` and `plate_step` reject it.
 
+**Codegen normative rule (§4.8, added in Task 2.5).** When `as STRING` is present, the code generator MUST emit `name = <substituted-expr>` in the `cook.add_test` call. When absent, no `name` field is emitted.
+
 **Grammar change.** `test_modifiers ::= ("as" STRING)? ("timeout" NUMBER)? "should_fail"?` (was: `("timeout" NUMBER)? "should_fail"?`).
 
 **Reference:** the CS-0061 commits on `feature/test-runner-v1`.

@@ -373,6 +373,8 @@ The `as STRING` modifier sets the test's **display name** for reporting. Without
 
 The `STRING` argument admits the same placeholder substitution (`$<IDENT>`) as the body (CS-0033). Substitution occurs at register-time codegen. The display name is metadata — it is **not** part of the test's cache fingerprint; renaming a test does not bust its cache.
 
+**Codegen mapping.** When `as STRING` is present, the conforming code generator MUST emit a `name = <substituted-expr>` field in the `cook.add_test` call that registers the unit. The `<substituted-expr>` is the result of applying placeholder substitution to `STRING` under the same binding context as the step body (§{lua.shell-placeholders-plate-test}): `_test_in` for one-to-one mode, the collected-inputs table for many-to-one mode, and the empty string for one-shot mode. When `as STRING` is absent, the code generator MUST NOT emit a `name` field; the runner assigns an auto-generated identity.
+
 The `as` modifier is **only valid on `test_step`**. A conforming implementation MUST reject `as` on `cook_step` or `plate_step` with a diagnostic identifying the modifier and the step kind.
 
 ### Example 4.8.1
