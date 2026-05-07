@@ -53,6 +53,11 @@ fn focus_set(graph: &WaveDagData, app: &AppState) -> BTreeSet<String> {
                 }
             }
         }
+        Some(SelectionLeaf::FilesFolder) => {
+            for n in &wave.nodes {
+                out.insert(n.id.clone());
+            }
+        }
         Some(SelectionLeaf::File(fi)) => {
             if let Some(file) = app.tree.waves.get(wave_idx).and_then(|w| w.files.get(fi)) {
                 out.insert(file.node_id.clone());

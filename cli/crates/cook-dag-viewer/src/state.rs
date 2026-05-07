@@ -218,6 +218,9 @@ pub enum SelectionLeaf {
     /// Selection inside the recipe subtree of a wave. `unit = None` means
     /// the recipe row itself is selected; `unit = Some(_)` means a unit row.
     Recipe { recipe: usize, unit: Option<usize> },
+    /// Selection on the wave's `Files (N)` folder header row. Container
+    /// row — has no resolvable graph node id, focuses on the whole wave.
+    FilesFolder,
     /// Selection on a file row inside the wave's Files folder.
     File(usize),
 }
@@ -251,6 +254,14 @@ impl Selection {
         Self {
             wave,
             leaf: Some(SelectionLeaf::Recipe { recipe, unit: Some(unit) }),
+        }
+    }
+
+    /// Files folder header row inside a wave.
+    pub fn files_folder(wave: usize) -> Self {
+        Self {
+            wave,
+            leaf: Some(SelectionLeaf::FilesFolder),
         }
     }
 
@@ -295,6 +306,7 @@ impl Selection {
                 let u = r.units.get(unit?)?;
                 Some(&u.node_id)
             }
+            SelectionLeaf::FilesFolder => None,
             SelectionLeaf::File(idx) => {
                 let f = w.files.get(idx)?;
                 Some(&f.node_id)
@@ -582,7 +594,7 @@ impl AppState {
                 }
                 self.selection.leaf = None;
             }
-            None => {
+            Some(SelectionLeaf::FilesFolder) | None => {
                 if let Some(w) = self.tree.waves.get_mut(self.selection.wave) {
                     w.expanded = false;
                 }
@@ -610,7 +622,9 @@ impl AppState {
                     }
                 }
             }
-            Some(SelectionLeaf::Recipe { unit: Some(_), .. }) | Some(SelectionLeaf::File(_)) => {
+            Some(SelectionLeaf::Recipe { unit: Some(_), .. })
+            | Some(SelectionLeaf::FilesFolder)
+            | Some(SelectionLeaf::File(_)) => {
                 // Already at a leaf row.
             }
         }
@@ -1177,5 +1191,19 @@ mod tests {
         app.bulk_pin_recipe(&g);
         assert_eq!(app.last_pin_message, Some(PinMsg::OnFile));
         assert!(app.pins.is_empty());
+    }
+
+    #[test]
+    fn files_folder_constructor_builds_expected_selection() {
+        let sel = Selection::files_folder(2);
+        assert_eq!(sel.wave, 2);
+        assert!(matches!(sel.leaf, Some(SelectionLeaf::FilesFolder)));
+    }
+
+    #[test]
+    fn selection_node_id_returns_none_for_files_folder() {
+        let g = graph_with_files();
+        let app = AppState::new(&g);
+        assert_eq!(Selection::files_folder(0).node_id(&app.tree), None);
     }
 }
