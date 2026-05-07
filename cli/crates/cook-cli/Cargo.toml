@@ -21,6 +21,12 @@ cook-dag-viewer = { path = "../cook-dag-viewer", optional = true }
 clap = { version = "4", features = ["derive"] }
 notify = "7"
 glob = "0.3"
+ureq = { version = "2", features = ["tls", "json"] }
+flate2 = "1"
+tar = "0.4"
+dirs = "5"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
 
 [features]
 default = []
@@ -32,3 +38,4 @@ viewer = ["dep:cook-dag-viewer"]
 
 [dev-dependencies]
 tempfile = "3"
+mockito = "1"
