@@ -44,9 +44,10 @@ fn jjl_walks_into_first_unit() {
     let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
     let term = Rect::new(0, 0, 120, 40);
 
-    input::handle(&mut app, &layout, &frame, &key('j'), term); // down to recipe
+    input::handle(&mut app, &layout, &frame, &key('j'), term); // wave_only(0) → files_folder(0)
+    input::handle(&mut app, &layout, &frame, &key('j'), term); // files_folder(0) → recipe(0, 0)
     input::handle(&mut app, &layout, &frame, &key('l'), term); // expand recipe
-    input::handle(&mut app, &layout, &frame, &key('j'), term); // down into first unit
+    input::handle(&mut app, &layout, &frame, &key('j'), term); // descend into first unit
 
     assert_eq!(app.selection, Selection::unit(0, 0, 0));
 }
@@ -105,8 +106,9 @@ fn p_toggles_pin_on_selected_unit() {
     let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
     let term = Rect::new(0, 0, 120, 40);
 
-    // Walk into the first unit (Wave 0 → cpp.compile → unit 0).
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // wave 0 row → first recipe
+    // Walk into the first unit (Wave 0 → files_folder → cpp.compile → unit 0).
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // wave_only(0) → files_folder(0)
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // files_folder(0) → recipe(0, 0)
     cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('l'), term); // expand recipe
     cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // descend to unit 0
 
@@ -137,9 +139,10 @@ fn p_emits_full_message_when_slots_exhausted() {
     assert!(app.pins.is_full());
 
     // Walk to a unit and try to pin.
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term);
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('l'), term);
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term);
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // wave_only(0) → files_folder(0)
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // files_folder(0) → recipe(0, 0)
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('l'), term); // expand recipe
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // descend to unit 0
     cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('p'), term);
 
     assert_eq!(
@@ -159,9 +162,10 @@ fn capital_p_pins_every_unit_in_selected_recipe() {
     let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
     let term = Rect::new(0, 0, 120, 40);
 
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term);
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('l'), term);
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term);
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // wave_only(0) → files_folder(0)
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // files_folder(0) → recipe(0, 0)
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('l'), term); // expand recipe
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // descend to unit 0
 
     cook_dag_viewer::input::handle(
         &mut app,
@@ -187,9 +191,10 @@ fn capital_p_unpins_when_all_recipe_units_pinned() {
     let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
     let term = Rect::new(0, 0, 120, 40);
 
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term);
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('l'), term);
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term);
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // wave_only(0) → files_folder(0)
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // files_folder(0) → recipe(0, 0)
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('l'), term); // expand recipe
+    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('j'), term); // descend to unit 0
 
     // First press pins the one unit in the recipe.
     cook_dag_viewer::input::handle(
