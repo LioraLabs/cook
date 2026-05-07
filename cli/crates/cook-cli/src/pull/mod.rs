@@ -3,6 +3,7 @@
 
 mod archive;
 mod args;
+mod config;
 mod errors;
 mod install;
 mod prompt;
