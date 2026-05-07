@@ -81,7 +81,7 @@ pub struct Cli {
     #[arg(long = "emit-lua")]
     pub emit_lua: bool,
 
-    /// Visualize the build DAG in a browser
+    /// Visualize the build DAG in a TUI viewer
     #[arg(
         long = "dag",
         conflicts_with_all = ["menu", "init", "serve", "logs"]
@@ -103,6 +103,10 @@ pub struct Cli {
     /// Color output mode
     #[arg(long, default_value = "auto")]
     pub color: String,
+
+    /// DAG TUI theme: auto (default) or mono.
+    #[arg(long = "theme", default_value = "auto")]
+    pub theme: String,
 
     /// Output mode: auto (default), plain, json
     #[arg(long = "output", default_value = "auto")]

@@ -725,6 +725,7 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         explicit_edges: &units.explicit_edges,
         inferred_deps: &units.inferred_deps,
         cache_managers: &units.cache_managers,
+        theme: cook_dag_viewer::theme::Theme::from_str(&cli.theme),
     })
     .map_err(|e| CookError::Other(e.to_string()))
 }
