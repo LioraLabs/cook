@@ -37,11 +37,11 @@ impl Camera {
         Self { x: mid_x.max(0), y: mid_y.max(0) }
     }
 
-    /// Center the bounding rect of the layout's placed nodes inside `pane`.
-    /// Returns the origin when the layout is empty. Negative results are
-    /// allowed — the blit step renders only positive-coord cells, so a
-    /// small bbox sits visually centered even when the camera coordinate
-    /// is negative.
+    /// Align the bounding rect of the layout's placed nodes to the top
+    /// of `pane`, centered horizontally. Returns the origin when the
+    /// layout is empty. Negative x is allowed so a narrow bbox sits
+    /// visually centered even when the camera coordinate is negative;
+    /// the blit step renders only positive-coord cells.
     pub fn fit_bounds(layout: &Layout, pane: Rect) -> Self {
         let Some(first) = layout.nodes.first() else {
             return Self::origin();
@@ -49,16 +49,13 @@ impl Camera {
         let mut min_x = first.x as i32;
         let mut min_y = first.y as i32;
         let mut max_x = first.x as i32 + first.w as i32;
-        let mut max_y = first.y as i32 + first.h as i32;
         for n in &layout.nodes[1..] {
             min_x = min_x.min(n.x as i32);
             min_y = min_y.min(n.y as i32);
             max_x = max_x.max(n.x as i32 + n.w as i32);
-            max_y = max_y.max(n.y as i32 + n.h as i32);
         }
         let cx = (min_x + max_x) / 2 - pane.width as i32 / 2;
-        let cy = (min_y + max_y) / 2 - pane.height as i32 / 2;
-        Self { x: cx, y: cy }
+        Self { x: cx, y: min_y }
     }
 
     /// Returns the side of the pane that contains the off-canvas selection,
@@ -185,20 +182,23 @@ mod tests {
     }
 
     #[test]
-    fn fit_bounds_centers_single_node_like_center_on() {
+    fn fit_bounds_centers_single_node_horizontally_and_aligns_top() {
         let l = layout_500x200();
         let pane = Rect::new(0, 0, 80, 24);
         let cam = Camera::fit_bounds(&l, pane);
-        let center_on = Camera::center_on(&l.nodes[0], pane);
-        assert_eq!(cam, center_on);
+        // Single node at (100, 50) size 22x3.
+        // Horizontal: center of bbox is x=111; pane half is 40 → cam.x = 71.
+        // Vertical: bbox top is y=50 → cam.y = 50 (no centering).
+        assert_eq!(cam.x, 71);
+        assert_eq!(cam.y, 50);
     }
 
     #[test]
-    fn fit_bounds_centers_bounding_rect_for_multiple_nodes() {
+    fn fit_bounds_centers_bounding_rect_horizontally_aligns_top_for_multiple_nodes() {
         let l = Layout {
             nodes: vec![
-                placed("a", 100, 50, 22, 3),  // bbox left/top corner
-                placed("b", 200, 80, 22, 3),  // bbox right/bottom corner
+                placed("a", 100, 50, 22, 3),  // bbox top is y=50
+                placed("b", 200, 80, 22, 3),  // bbox right edge is x=222
             ],
             edges: vec![] as Vec<EdgeRoute>,
             canvas_w: 500,
@@ -206,10 +206,10 @@ mod tests {
         };
         let pane = Rect::new(0, 0, 80, 24);
         let cam = Camera::fit_bounds(&l, pane);
-        // Bbox: min(100,50)..max(222,83) → center (161, 66).
-        // Pane half: (40, 12). Camera = (121, 54).
+        // Horizontal: bbox spans x=100..222, center=161, pane half=40 → cam.x=121.
+        // Vertical: bbox top is y=50.
         assert_eq!(cam.x, 121);
-        assert_eq!(cam.y, 54);
+        assert_eq!(cam.y, 50);
     }
 
     #[test]
