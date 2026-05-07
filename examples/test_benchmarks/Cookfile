@@ -1,0 +1,101 @@
+# CS-NNNN test-runner conformance fixture: every shape of test the runner handles.
+#
+# This Cookfile is paired with examples/test_benchmarks/walkthrough.sh which
+# pins the runner's behavior across the recipes below. Each recipe targets a
+# specific runner contract; the recipe name names the contract.
+
+config
+    env.SLEEP = "0.1"
+
+# (1) Green path, one-shot. Pins terminal output, cache write.
+recipe pass_basic
+    test { true } timeout 5
+
+# (2) One-to-one over 12 inputs. Pins per-iteration discriminator,
+#     12 separate cache entries.
+recipe pass_iterated
+    ingredients "src/inputs/*.txt"
+    cook "build/pass_iterated/$<in.stem>.out" using {
+        mkdir -p build/pass_iterated
+        sleep $<SLEEP>
+        echo "ok" > $<out>
+    }
+    test { test -s $<in> } timeout 5
+
+# (3) should_fail test whose body exits non-zero. Pins should_fail
+#     semantics survive caching.
+recipe pass_should_fail
+    test { exit 1 } should_fail timeout 5
+
+# (4) One-shot test that fails. Pins failure capture, never-cached invariant.
+recipe fail_basic
+    test { exit 1 } timeout 5
+
+# (5) One-to-one over 12 inputs where 3 fail (those whose stem ends in 3, 6, 9).
+#     Pins continue-past-failure and mixed pass/fail aggregation.
+recipe fail_partial
+    ingredients "src/inputs/*.txt"
+    cook "build/fail_partial/$<in.stem>.out" using {
+        mkdir -p build/fail_partial
+        sleep $<SLEEP>
+        echo "ok" > $<out>
+    }
+    test {
+        case "$<in.stem>" in
+            *3|*6|*9) exit 1 ;;
+            *) exit 0 ;;
+        esac
+    } timeout 5
+
+# (6) Test whose preceding cook step calls false. Pins blocked status.
+recipe blocked_by_build
+    cook "build/blocked_by_build/never.out" using {
+        mkdir -p build/blocked_by_build
+        false
+    }
+    test { test -f $<in> } timeout 5
+
+# (7) Test that times out. Pins timed_out outcome.
+recipe slow_timeout
+    test { sleep 10 } timeout 1
+
+# (8) `as` modifier. Pins name override surface.
+#     COMMENTED OUT until Phase 2.5 lands `as` parsing — uncomment in Task 2.5.
+# recipe named_test
+#     ingredients "src/inputs/*.txt"
+#     cook "build/named_test/$<in.stem>.out" using {
+#         mkdir -p build/named_test
+#         echo "ok" > $<out>
+#     }
+#     test { test -s $<in> } as 'non-empty' timeout 5
+
+# (9) Cache replay. Pins cache hit on second run.
+recipe cached_replay
+    ingredients "src/inputs/*.txt"
+    cook "build/cached_replay/$<in.stem>.out" using {
+        mkdir -p build/cached_replay
+        sleep $<SLEEP>
+        echo "ok" > $<out>
+    }
+    test { true } timeout 5
+
+# (10) Used by walkthrough --rerun-failed cycle.
+#      First run: tests #1, #2 fail. Second run with --rerun-failed: only
+#      those two re-run.
+recipe rerun_failed_set
+    ingredients "src/inputs/*.txt"
+    cook "build/rerun_failed_set/$<in.stem>.out" using {
+        mkdir -p build/rerun_failed_set
+        sleep $<SLEEP>
+        echo "$<in.stem>" > $<out>
+    }
+    test {
+        # First two iteration items fail; rest pass.
+        case "$<in.stem>" in
+            input_01|input_02) exit 1 ;;
+            *) exit 0 ;;
+        esac
+    } timeout 5
+
+chore clean
+    rm -rf build .cook
