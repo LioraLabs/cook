@@ -5,6 +5,7 @@ mod archive;
 mod args;
 mod config;
 mod errors;
+mod fetch;
 mod install;
 mod prompt;
 mod trust;
