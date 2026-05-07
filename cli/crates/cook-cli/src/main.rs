@@ -8,11 +8,18 @@ mod progress;
 mod watcher;
 
 use clap::CommandFactory;
+use cook_cli::pull;
 
 use cli::Cli;
 use pipeline::{cmd_dag, cmd_init, cmd_menu, cmd_run, cmd_serve};
 
 fn main() {
+    let raw_argv: Vec<String> = std::env::args().collect();
+    if raw_argv.get(1).map(String::as_str) == Some("pull") {
+        let pull_argv: Vec<String> = raw_argv.iter().skip(1).cloned().collect();
+        std::process::exit(pull::run_from_argv(&pull_argv));
+    }
+
     let version_string: &'static str = Box::leak(Box::new(format!(
         "{} (Cook Standard v{})",
         env!("CARGO_PKG_VERSION"),
