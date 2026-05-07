@@ -105,7 +105,7 @@ fn draw_bottom_bar(area: Rect, buf: &mut Buffer, app: &mut AppState) {
             Mode::Help => " help · q close".to_string(),
             Mode::DetailOverlay => " esc close".to_string(),
             Mode::Normal => {
-                " ? help · / · q · [/] · HJKL · m mode · p pin · 1-9 jump · X clear".to_string()
+                " ? help · / · q · [/] · HJKL · p pin · 1-9 jump · X clear".to_string()
             }
         }
     };

@@ -100,9 +100,6 @@ fn normal_key<F: crate::frame::ViewFrame>(
         (KeyCode::Char('K'), _) => app.pan_camera(0, -(pane_h as i32) / 2, layout, pane),
         (KeyCode::Char('c'), KeyModifiers::NONE) => app.recenter(layout, pane),
         (KeyCode::Char('a'), KeyModifiers::NONE) => app.auto_fit(layout, pane),
-        (KeyCode::Char('m'), KeyModifiers::NONE) => {
-            app.density = app.density.next();
-        }
         (KeyCode::Char('p'), KeyModifiers::NONE) => app.toggle_pin_selected(),
         (KeyCode::Char('P'), _) => app.bulk_pin_recipe(frame.graph()),
         (KeyCode::Char('X'), _) => app.clear_all_pins(),
