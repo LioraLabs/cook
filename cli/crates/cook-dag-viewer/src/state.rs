@@ -603,28 +603,46 @@ impl AppState {
     }
 
     pub fn expand_or_step_in(&mut self) {
+        let wi = self.selection.wave;
         match self.selection.leaf {
             None => {
-                if let Some(w) = self.tree.waves.get_mut(self.selection.wave) {
-                    if !w.expanded {
-                        w.expanded = true;
-                    } else if !w.files.is_empty() && !w.files_expanded {
-                        // Wave already expanded — pressing l opens the Files
-                        // folder so the user can drill into file rows.
-                        w.files_expanded = true;
-                    }
+                let Some(w) = self.tree.waves.get_mut(wi) else { return };
+                if !w.expanded {
+                    w.expanded = true;
+                    return;
+                }
+                if !w.files.is_empty() {
+                    self.selection = Selection::files_folder(wi);
+                    return;
+                }
+                if !w.recipes.is_empty() {
+                    self.selection = Selection::recipe(wi, 0);
+                }
+            }
+            Some(SelectionLeaf::FilesFolder) => {
+                let Some(w) = self.tree.waves.get_mut(wi) else { return };
+                if !w.files_expanded {
+                    w.files_expanded = true;
+                    return;
+                }
+                if !w.files.is_empty() {
+                    self.selection = Selection::file(wi, 0);
                 }
             }
             Some(SelectionLeaf::Recipe { recipe, unit: None }) => {
-                if let Some(w) = self.tree.waves.get_mut(self.selection.wave) {
+                if let Some(w) = self.tree.waves.get_mut(wi) {
                     if let Some(r) = w.recipes.get_mut(recipe) {
-                        r.expanded = true;
+                        if !r.expanded {
+                            r.expanded = true;
+                            return;
+                        }
+                        if !r.units.is_empty() {
+                            self.selection = Selection::unit(wi, recipe, 0);
+                        }
                     }
                 }
             }
-            Some(SelectionLeaf::Recipe { unit: Some(_), .. })
-            | Some(SelectionLeaf::FilesFolder)
-            | Some(SelectionLeaf::File(_)) => {
+            Some(SelectionLeaf::Recipe { unit: Some(_), .. }) | Some(SelectionLeaf::File(_)) => {
                 // Already at a leaf row.
             }
         }
@@ -1126,19 +1144,6 @@ mod tests {
     }
 
     #[test]
-    fn expand_step_in_on_wave_opens_files_folder_when_already_expanded() {
-        let g = graph_with_files();
-        let mut app = AppState::new(&g);
-        // Wave 0 is auto-expanded by default (AppState::new).
-        assert!(app.tree.waves[0].expanded);
-        // First press of `l` is consumed by AppState::expand_or_step_in.
-        // Since wave is already expanded and has files, it should open the
-        // Files folder rather than no-op.
-        app.expand_or_step_in();
-        assert!(app.tree.waves[0].files_expanded);
-    }
-
-    #[test]
     fn move_cursor_walks_through_file_rows_when_folder_expanded() {
         let g = graph_with_files();
         let mut app = AppState::new(&g);
@@ -1250,6 +1255,48 @@ mod tests {
         assert_eq!(app.selection, Selection::files_folder(0));
         app.move_cursor(false);
         // files_expanded is still false, so next row is the recipe.
+        assert_eq!(app.selection, Selection::recipe(0, 0));
+    }
+
+    #[test]
+    fn expand_step_in_on_wave_with_files_steps_into_folder_row() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        // Wave 0 already expanded by default. Selection = wave_only(0).
+        app.expand_or_step_in();
+        // New behavior: stepping into an already-expanded wave with files
+        // moves selection to the folder row (does NOT toggle files_expanded).
+        assert_eq!(app.selection, Selection::files_folder(0));
+        assert!(!app.tree.waves[0].files_expanded);
+    }
+
+    #[test]
+    fn expand_step_in_on_files_folder_collapsed_expands_it() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.selection = Selection::files_folder(0);
+        app.expand_or_step_in();
+        assert!(app.tree.waves[0].files_expanded);
+        // Selection stays on the folder row after expansion.
+        assert_eq!(app.selection, Selection::files_folder(0));
+    }
+
+    #[test]
+    fn expand_step_in_on_files_folder_expanded_steps_into_first_file() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].files_expanded = true;
+        app.selection = Selection::files_folder(0);
+        app.expand_or_step_in();
+        assert_eq!(app.selection, Selection::file(0, 0));
+    }
+
+    #[test]
+    fn expand_step_in_on_wave_with_no_files_steps_into_first_recipe() {
+        let g = graph_2x2();
+        let mut app = AppState::new(&g);
+        // Wave 0 expanded by default, no files.
+        app.expand_or_step_in();
         assert_eq!(app.selection, Selection::recipe(0, 0));
     }
 }
