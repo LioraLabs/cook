@@ -20,6 +20,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use serde::{Serialize, Deserialize};
 use cook_engine::{TestId, TestOutcome, TestResult};
+use crate::iso8601::now_iso8601;
 
 const STATE_FILE: &str = ".cook/test-state.json";
 const SCHEMA_VERSION: u32 = 1;
@@ -109,43 +110,7 @@ fn outcome_to_str(o: TestOutcome) -> &'static str {
     }
 }
 
-fn now_iso8601() -> String {
-    // Manually format SystemTime as YYYY-MM-DDTHH:MM:SSZ without a chrono dep.
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let days = secs / 86400;
-    let rem = secs % 86400;
-    let hour = rem / 3600;
-    let min = (rem % 3600) / 60;
-    let sec = rem % 60;
-    let (year, month, day) = days_to_ymd(days as i64);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        year, month, day, hour, min, sec
-    )
-}
-
-fn days_to_ymd(days_since_epoch: i64) -> (i32, u32, u32) {
-    // Algorithm from Howard Hinnant's "date" library (public domain).
-    let days = days_since_epoch + 719_468;
-    let era = if days >= 0 {
-        days / 146_097
-    } else {
-        (days - 146_096) / 146_097
-    };
-    let doe = (days - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = (yoe as i64) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y as i32, m as u32, d as u32)
-}
+// now_iso8601 is imported from crate::iso8601 (see top-level use).
 
 #[cfg(test)]
 mod tests {

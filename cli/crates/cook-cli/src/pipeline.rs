@@ -566,8 +566,12 @@ pub fn cmd_test(cli: &crate::cli::Cli) -> Result<(), crate::error::CookError> {
     // Phase 7 stub: persist last-run state (no-op)
     let _ = crate::test_state::save(&project_root, &result.test_results);
 
-    // Phase 8 stub: write JSON/JUnit sidecars (no-op stubs)
-    let _ = crate::test_reporter::write_json_sidecar(&project_root, cli, &result.test_results);
+    // Phase 8: write JSON/JUnit sidecars.
+    let _ = crate::test_reporter::write_json_sidecar(
+        &project_root,
+        cli.report_json.as_deref(),
+        &result.test_results,
+    );
     if let Some(path) = &cli.report_junit {
         let _ = crate::test_reporter::write_junit_sidecar(path, &result.test_results);
     }

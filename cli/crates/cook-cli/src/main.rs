@@ -3,6 +3,7 @@
 mod cli;
 mod cmd_logs;
 mod error;
+mod iso8601;
 mod pipeline;
 mod progress;
 mod test_reporter;
