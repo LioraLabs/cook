@@ -259,6 +259,94 @@ end)
     }
 }
 
+/// CS-0061 §3.2: `suite` defaults to the enclosing recipe's qualified name
+/// when the caller omits the field. Exercises the engine path (current_recipe
+/// is set by Registry::register_recipe, not by the unit-level helper).
+#[test]
+fn test_add_test_defaults_suite_to_recipe_name_via_engine() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("my_tests", {}, function()
+    cook.add_test({
+        command = "./run",
+        name = "t",
+    })
+end)
+"#;
+    let result = rt.register_recipe(lua_src, "my_tests", None).unwrap();
+    assert_eq!(result.units.len(), 1);
+    match &result.units[0].payload {
+        WorkPayload::Test { suite_name, .. } => {
+            assert_eq!(suite_name, "my_tests",
+                "suite should default to recipe name when omitted");
+        }
+        _ => panic!("expected Test payload"),
+    }
+}
+
+/// CS-0061 §3.2: qualified prefix is included in the default suite name.
+#[test]
+fn test_add_test_defaults_suite_includes_qualified_prefix() {
+    use crate::dep_output_api::SharedTerminalOutputs;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    let dir = TempDir::new().unwrap();
+    let shared: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
+    let lua_src = r#"
+cook.recipe("tests", {}, function()
+    cook.add_test({
+        command = "./run",
+        name = "t",
+    })
+end)
+"#;
+    let rt = Registry::new(dir.path().to_path_buf(), HashMap::new())
+        .with_shared_terminal_outputs(shared)
+        .with_qualified_prefix("mylib".to_string());
+    let result = rt.register_recipe(lua_src, "tests", None).unwrap();
+    match &result.units[0].payload {
+        WorkPayload::Test { suite_name, .. } => {
+            assert_eq!(suite_name, "mylib.tests",
+                "suite default must include the qualified prefix");
+        }
+        _ => panic!("expected Test payload"),
+    }
+}
+
+/// CS-0061 §3.2: empty command is rejected at register time.
+#[test]
+fn test_add_test_rejects_empty_command_via_engine() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("r", {}, function()
+    cook.add_test({ command = "" })
+end)
+"#;
+    let result = rt.register_recipe(lua_src, "r", None);
+    assert!(result.is_err(), "empty command must be rejected");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("command"), "error should mention 'command', got: {err}");
+}
+
+/// CS-0061 §3.2: timeout = 0 is rejected at register time.
+#[test]
+fn test_add_test_rejects_zero_timeout_via_engine() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("r", {}, function()
+    cook.add_test({ command = "true", timeout = 0 })
+end)
+"#;
+    let result = rt.register_recipe(lua_src, "r", None);
+    assert!(result.is_err(), "timeout = 0 must be rejected");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("timeout"), "error should mention 'timeout', got: {err}");
+}
+
 #[test]
 fn test_resolve_ingredients_api() {
     use std::fs;

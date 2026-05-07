@@ -1063,4 +1063,13 @@ CS-0051 makes the single-drain semantic normative for chore bodies. A conforming
 
 **Grammar change.** `test_modifiers ::= ("as" STRING)? ("timeout" NUMBER)? "should_fail"?` (was: `("timeout" NUMBER)? "should_fail"?`).
 
+**cook.add_test field defaults and validation (§6.3.5, added in Task 2.6).** CS-0061 also nails down the register-phase field contract for `cook.add_test`:
+
+- `suite` defaults to the enclosing recipe's fully-qualified name (e.g. `"lib.tests"`) when absent or empty. Pre-Task 2.6 the default was the empty string.
+- `command` is required and MUST be non-empty; a missing or empty value MUST raise a register-phase Lua error whose message identifies the field.
+- `timeout` MUST be a positive integer; `0` or less MUST raise a register-phase Lua error identifying the field.
+- `name` and `should_fail` are unchanged: `name` defaults to `""`, `should_fail` defaults to `false`.
+
+The enclosing recipe's qualified name is tracked on the register-phase capture state and set by the register engine immediately before invoking the recipe body function; it is cleared after the body returns.
+
 **Reference:** the CS-0061 commits on `feature/test-runner-v1`.

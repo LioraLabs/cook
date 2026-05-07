@@ -79,6 +79,12 @@ pub struct CaptureState {
     /// `cook.add_unit` raises a Lua error if `cache = true` is passed
     /// while this flag is set (§{chores.no-caching}).
     pub current_chore_active: bool,
+    /// The fully-qualified name of the recipe currently executing in
+    /// the register phase (e.g. "lib.build" for an imported recipe).
+    /// Set just before the recipe body function is called; cleared after.
+    /// Used by `cook.add_test` to default `suite` to the enclosing
+    /// recipe's name when the caller omits the field (CS-0061 §3.2).
+    pub current_recipe: Option<String>,
 }
 
 impl CaptureState {
@@ -95,6 +101,7 @@ impl CaptureState {
             step_group_dep_refs: Vec::new(),
             step_group_dep_input_paths: Vec::new(),
             current_chore_active: false,
+            current_recipe: None,
         }
     }
 }

@@ -225,9 +225,24 @@ impl Registry {
         // Run recipe context setup (ingredient resolution, etc.)
         setup_recipe_context(&lua, recipe, &self.working_dir)?;
 
+        // Compute the fully-qualified recipe name used for dep-output storage and
+        // for defaulting cook.add_test's suite field (CS-0061 §3.2).
+        let qualified_name = if self.qualified_prefix.is_empty() {
+            recipe_name.to_string()
+        } else {
+            format!("{}.{}", self.qualified_prefix, recipe_name)
+        };
+
+        // Track the currently-executing recipe so cook.add_test can default
+        // the suite field to the enclosing recipe's name (CS-0061 §3.2).
+        capture_state.borrow_mut().current_recipe = Some(qualified_name.clone());
+
         // Execute recipe function — capture_state gets populated
         let func: LuaFunction = lua.registry_value(&recipe.function)?;
         func.call::<()>(())?;
+
+        // Clear the recipe tracking now that the body has finished.
+        capture_state.borrow_mut().current_recipe = None;
 
         // Flush module caches
         module_state.borrow().flush_all();
@@ -238,15 +253,6 @@ impl Registry {
         let cap = capture_state.borrow();
 
         let terminal_outputs_list = cap.last_cook_step_outputs.clone();
-
-        // Store terminal outputs so downstream recipes can call cook.dep_output().
-        // Key is the fully-qualified name so cross-Cookfile lookups succeed
-        // (e.g. "lib.lib_build" for a recipe in the "lib" Registry).
-        let qualified_name = if self.qualified_prefix.is_empty() {
-            recipe_name.to_string()
-        } else {
-            format!("{}.{}", self.qualified_prefix, recipe_name)
-        };
         self.terminal_outputs
             .lock()
             .expect("terminal_outputs mutex poisoned")
