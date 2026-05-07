@@ -33,14 +33,25 @@ pub fn resolve_registry_url(
     config_path: &Path,
 ) -> Result<String, PullError> {
     let raw = match (flag_url, env_value) {
-        (Some(s), _) => s.to_string(),
-        (None, Some(s)) if !s.is_empty() => s.to_string(),
+        (Some(s), _) => {
+            validate_url(s).map_err(|reason| PullError::BadArgs { reason })?;
+            s.to_string()
+        }
+        (None, Some(s)) if !s.is_empty() => {
+            validate_url(s).map_err(|reason| PullError::BadArgs { reason })?;
+            s.to_string()
+        }
         _ => match read_config(config_path)? {
-            Some(s) => s,
+            Some(s) => {
+                validate_url(&s).map_err(|reason| PullError::BadConfig {
+                    path: config_path.to_path_buf(),
+                    reason,
+                })?;
+                s
+            }
             None => DEFAULT_REGISTRY_URL.to_string(),
         },
     };
-    validate_url(&raw)?;
     Ok(strip_trailing_slash(&raw))
 }
 
@@ -59,22 +70,15 @@ fn read_config(path: &Path) -> Result<Option<String>, PullError> {
     Ok(parsed.registry.and_then(|r| r.url))
 }
 
-fn validate_url(s: &str) -> Result<(), PullError> {
+fn validate_url(s: &str) -> Result<(), String> {
     if !(s.starts_with("https://") || s.starts_with("http://")) {
-        return Err(PullError::BadConfig {
-            path: Path::new("<registry url>").to_path_buf(),
-            reason: format!("must be http(s):// URL, got: {s}"),
-        });
+        return Err(format!("must be http(s):// URL, got: {s}"));
     }
     Ok(())
 }
 
 fn strip_trailing_slash(s: &str) -> String {
-    if let Some(stripped) = s.strip_suffix('/') {
-        stripped.to_string()
-    } else {
-        s.to_string()
-    }
+    s.trim_end_matches('/').to_string()
 }
 
 #[cfg(test)]
@@ -141,11 +145,34 @@ mod tests {
     }
 
     #[test]
-    fn non_http_url_rejected() {
+    fn non_http_url_from_flag_is_bad_args() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("cook.toml");
         let err = resolve_registry_url(Some("file:///etc/passwd"), None, &path).unwrap_err();
-        assert!(matches!(err, PullError::BadConfig { .. }));
+        assert!(matches!(err, PullError::BadArgs { .. }));
+    }
+
+    #[test]
+    fn non_http_url_from_config_is_bad_config() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cook.toml");
+        fs::write(&path, "[registry]\nurl = \"file:///etc/passwd\"").unwrap();
+        let err = resolve_registry_url(None, None, &path).unwrap_err();
+        match err {
+            PullError::BadConfig { path: p, .. } => {
+                assert_eq!(p, path); // real path, not "<registry url>" placeholder
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn config_without_url_falls_through_to_default() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cook.toml");
+        fs::write(&path, "[registry]\n").unwrap();
+        let url = resolve_registry_url(None, None, &path).unwrap();
+        assert_eq!(url, strip_trailing_slash(DEFAULT_REGISTRY_URL));
     }
 
     #[test]
