@@ -22,7 +22,7 @@ fn focus_set(graph: &WaveDagData, app: &AppState) -> BTreeSet<String> {
         return out;
     };
     match app.selection.leaf {
-        None => {
+        None | Some(SelectionLeaf::FilesFolder) => {
             for n in &wave.nodes {
                 out.insert(n.id.clone());
             }
@@ -53,11 +53,6 @@ fn focus_set(graph: &WaveDagData, app: &AppState) -> BTreeSet<String> {
                 }
             }
         }
-        Some(SelectionLeaf::FilesFolder) => {
-            for n in &wave.nodes {
-                out.insert(n.id.clone());
-            }
-        }
         Some(SelectionLeaf::File(fi)) => {
             if let Some(file) = app.tree.waves.get(wave_idx).and_then(|w| w.files.get(fi)) {
                 out.insert(file.node_id.clone());
@@ -73,8 +68,12 @@ fn expand_one_hop(
     app: &AppState,
 ) -> BTreeSet<String> {
     let mut visible = focus.clone();
-    // Wave-level focus does not expand: spec §3.1.
-    if app.selection.leaf.is_none() {
+    // Wave-level and files-folder focus do not expand: they already
+    // include every node in the wave.
+    if matches!(
+        app.selection.leaf,
+        None | Some(SelectionLeaf::FilesFolder)
+    ) {
         return visible;
     }
     for wave in &graph.waves {
@@ -327,5 +326,79 @@ mod tests {
         assert!(ids.contains("unit:a:0"), "file's consumer must be visible");
         assert!(!ids.contains("unit:b:0"), "non-consumer must be filtered");
         assert!(!ids.contains("file:noise.h"));
+    }
+
+    #[test]
+    fn focus_subgraph_for_files_folder_matches_wave_only() {
+        let g = WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["a".into()],
+                nodes: vec![
+                    NodeData {
+                        id: "file:foo.h".into(),
+                        kind: "file".into(),
+                        label: "foo.h".into(),
+                        recipe: None,
+                        command: None,
+                        output: None,
+                        cached: None,
+                        dep_kind: None,
+                        group_index: None,
+                        modified: Some(false),
+                        discovered: None,
+                    },
+                    NodeData {
+                        id: "unit:a:0".into(),
+                        kind: "unit".into(),
+                        label: "a0".into(),
+                        recipe: Some("a".into()),
+                        command: Some("c".into()),
+                        output: None,
+                        cached: Some(true),
+                        dep_kind: Some("sequential".into()),
+                        group_index: None,
+                        modified: None,
+                        discovered: None,
+                    },
+                ],
+                edges: vec![EdgeData {
+                    from: "file:foo.h".into(),
+                    to: "unit:a:0".into(),
+                }],
+            }],
+            inter_wave_edges: vec![],
+        };
+
+        let mut wave_app = AppState::new(&g);
+        wave_app.selection = Selection::wave_only(0);
+        let wave_sub = focus_subgraph(&g, &wave_app);
+
+        let mut folder_app = AppState::new(&g);
+        folder_app.selection = Selection::files_folder(0);
+        let folder_sub = focus_subgraph(&g, &folder_app);
+
+        assert_eq!(wave_sub.waves.len(), folder_sub.waves.len());
+
+        let wave_node_ids: BTreeSet<&str> =
+            wave_sub.waves[0].nodes.iter().map(|n| n.id.as_str()).collect();
+        let folder_node_ids: BTreeSet<&str> =
+            folder_sub.waves[0].nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(wave_node_ids, folder_node_ids);
+
+        let wave_edges: BTreeSet<(&str, &str)> = wave_sub.waves[0]
+            .edges
+            .iter()
+            .map(|e| (e.from.as_str(), e.to.as_str()))
+            .collect();
+        let folder_edges: BTreeSet<(&str, &str)> = folder_sub.waves[0]
+            .edges
+            .iter()
+            .map(|e| (e.from.as_str(), e.to.as_str()))
+            .collect();
+        assert_eq!(wave_edges, folder_edges);
+
+        assert_eq!(wave_sub.inter_wave_edges.len(), folder_sub.inter_wave_edges.len());
     }
 }
