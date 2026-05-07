@@ -1215,6 +1215,16 @@ mod tests {
     }
 
     #[test]
+    fn bulk_pin_recipe_on_files_folder_selection_emits_on_file() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.selection = Selection::files_folder(0);
+        app.bulk_pin_recipe(&g);
+        assert_eq!(app.last_pin_message, Some(PinMsg::OnFile));
+        assert!(app.pins.is_empty());
+    }
+
+    #[test]
     fn files_folder_constructor_builds_expected_selection() {
         let sel = Selection::files_folder(2);
         assert_eq!(sel.wave, 2);
