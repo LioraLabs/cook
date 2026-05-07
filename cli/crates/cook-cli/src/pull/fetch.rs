@@ -24,17 +24,16 @@ pub fn fetch_archive(archive_url: &str) -> Result<Box<dyn Read + Send + Sync>, P
     let resp = agent
         .get(archive_url)
         .call()
-        .map_err(|e| PullError::Network {
-            url: archive_url.to_string(),
-            source: Box::new(e),
+        .map_err(|e| match e {
+            ureq::Error::Status(status, _) => PullError::Network {
+                url: archive_url.to_string(),
+                source: format!("HTTP {status}").into(),
+            },
+            other => PullError::Network {
+                url: archive_url.to_string(),
+                source: Box::new(other),
+            },
         })?;
-
-    if resp.status() < 200 || resp.status() >= 300 {
-        return Err(PullError::Network {
-            url: archive_url.to_string(),
-            source: format!("HTTP {}", resp.status()).into(),
-        });
-    }
 
     Ok(resp.into_reader())
 }
