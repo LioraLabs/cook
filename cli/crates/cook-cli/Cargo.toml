@@ -8,6 +8,10 @@ description = "User-facing binary for the Cook build system"
 name = "cook"
 path = "src/main.rs"
 
+[lib]
+name = "cook_cli"
+path = "src/lib.rs"
+
 [dependencies]
 # cook-cli is the thin CLI shell. Heavy lifting (parse, workspace, registry
 # assembly, dep inference, execution) lives in cook-engine; cook-cli depends

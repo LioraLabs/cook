@@ -121,16 +121,14 @@ fn run(args: PullArgs) -> Result<i32, PullError> {
     }
 
     // One prompter shared across modules so that "all-yes" sticks.
-    let mut prompter: Box<dyn ConflictPrompter> = if args.force {
+    // In non-interactive mode without --force we already scanned for conflicts
+    // above and would have returned early if any existed.  A ForceYesPrompter
+    // is safe here because install_module short-circuits before calling prompt()
+    // when there is nothing to overwrite.
+    let mut prompter: Box<dyn ConflictPrompter> = if args.force || !interactive {
         Box::new(ForceYesPrompter)
-    } else if interactive {
-        Box::new(StdinPrompter::new(io::stdin().lock(), io::stderr()))
     } else {
-        debug_assert!(
-            false,
-            "non-interactive + no-force should have errored at scan_conflicts"
-        );
-        Box::new(ForceYesPrompter)
+        Box::new(StdinPrompter::new(io::stdin().lock(), io::stderr()))
     };
 
     for name in &names {

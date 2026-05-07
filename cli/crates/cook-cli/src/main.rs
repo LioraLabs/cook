@@ -5,10 +5,10 @@ mod cmd_logs;
 mod error;
 mod pipeline;
 mod progress;
-mod pull;
 mod watcher;
 
 use clap::CommandFactory;
+use cook_cli::pull;
 
 use cli::Cli;
 use pipeline::{cmd_dag, cmd_init, cmd_menu, cmd_run, cmd_serve};
