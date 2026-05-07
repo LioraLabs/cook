@@ -13,7 +13,10 @@ pub fn run_from_argv(argv: &[String]) -> i32 {
     let args = match args::parse(&pull_argv) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("cook pull: {e}");
+            // BadArgs with empty reason means clap already printed a diagnostic.
+            if !matches!(&e, PullError::BadArgs { reason } if reason.is_empty()) {
+                eprintln!("cook pull: {e}");
+            }
             return e.exit_code();
         }
     };

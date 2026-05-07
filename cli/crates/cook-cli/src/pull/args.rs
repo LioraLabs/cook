@@ -64,7 +64,7 @@ pub fn parse(argv: &[String]) -> Result<PullArgs, PullError> {
             }
             e.print().ok();
             return Err(PullError::BadArgs {
-                reason: "invalid arguments".into(),
+                reason: String::new(),
             });
         }
     };
@@ -158,6 +158,13 @@ mod tests {
     fn force_and_accept_trust_independent() {
         let a = parse(&args(&["--force", "--accept-trust", "cpp"])).unwrap();
         assert!(a.force && a.accept_trust);
+    }
+
+    #[test]
+    fn non_interactive_flag_parsed() {
+        let a = parse(&args(&["--non-interactive", "cpp"])).unwrap();
+        assert!(a.non_interactive);
+        assert_eq!(a.names, vec!["cpp"]);
     }
 
     #[test]
