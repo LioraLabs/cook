@@ -355,6 +355,7 @@ dependencies = [
  "mockito",
  "notify",
  "serde",
+ "serde_json",
  "tar",
  "tempfile",
  "toml",
