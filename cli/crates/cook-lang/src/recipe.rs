@@ -125,49 +125,119 @@ pub(crate) fn parse_config_block_lua(
 }
 
 struct TestModifierTail {
+    as_name: Option<String>,
     timeout: Option<u64>,
     should_fail: bool,
 }
 
+/// Parse a single-quoted string from the beginning of `s`.
+/// Returns `(content, rest_after_closing_quote)` on success.
+fn parse_single_quoted(s: &str, line: usize) -> Result<(String, &str), ParseError> {
+    // `s` should start with `'`
+    let inner = &s[1..];
+    match inner.find('\'') {
+        Some(end) => Ok((inner[..end].to_string(), &inner[end + 1..])),
+        None => Err(ParseError::Parse {
+            line,
+            message: "test: unterminated single-quoted string in `as` modifier".to_string(),
+        }),
+    }
+}
+
 /// Parse the trailing modifier suffix on a `test` line — the text that
-/// follows the closing brace of the body. Accepts:
+/// follows the closing brace of the body. Accepts (canonical order per §4.8):
+///     as 'NAME'
 ///     timeout N
 ///     should_fail
-///     timeout N should_fail
-///     <empty>
-/// Only the four §4.8 forms are valid; anything else is rejected.
+///     as 'NAME' timeout N should_fail
+///     (and all valid subsets in canonical order)
+/// Out-of-order sequences are rejected.
 fn parse_test_modifier_tail(line_text: &str, line: usize) -> Result<TestModifierTail, ParseError> {
     let suffix = match line_text.rfind('}') {
         Some(idx) => &line_text[idx + 1..],
         None => "",
     };
-    let trimmed = suffix.trim();
+    let mut rest = suffix.trim();
 
-    let mut timeout: Option<u64> = None;
-    let mut should_fail = false;
-    let mut tokens = trimmed.split_whitespace().peekable();
-
-    while let Some(tok) = tokens.next() {
-        if tok == "timeout" {
-            let n = tokens.next().ok_or_else(|| ParseError::Parse {
-                line,
-                message: "test: `timeout` requires a numeric argument".to_string(),
-            })?;
-            timeout = Some(n.parse().map_err(|_| ParseError::Parse {
-                line,
-                message: format!("test: invalid timeout value: {}", n),
-            })?);
-        } else if tok == "should_fail" {
-            should_fail = true;
-        } else {
+    // ── as 'NAME' ────────────────────────────────────────────────────
+    let as_name = if rest.starts_with("as") && rest[2..].starts_with(|c: char| c.is_whitespace() || c == '\'') {
+        let after_as = rest[2..].trim_start();
+        if !after_as.starts_with('\'') {
             return Err(ParseError::Parse {
                 line,
-                message: format!("test: unexpected modifier `{}`", tok),
+                message: "test: `as` requires a single-quoted string argument".to_string(),
+            });
+        }
+        let (name, remaining) = parse_single_quoted(after_as, line)?;
+        rest = remaining.trim_start();
+        Some(name)
+    } else {
+        None
+    };
+
+    // ── timeout N ────────────────────────────────────────────────────
+    let timeout = if rest.starts_with("timeout") && rest[7..].starts_with(|c: char| c.is_whitespace() || c.is_ascii_digit()) {
+        // Check `as` is not lurking after timeout (order enforcement handled below)
+        let after_timeout = rest[7..].trim_start();
+        let (num_str, remaining) = match after_timeout.split_once(|c: char| c.is_whitespace()) {
+            Some((n, r)) => (n, r.trim_start()),
+            None => (after_timeout, ""),
+        };
+        let n = num_str.parse::<u64>().map_err(|_| ParseError::Parse {
+            line,
+            message: format!("test: invalid timeout value: {}", num_str),
+        })?;
+        rest = remaining;
+        Some(n)
+    } else {
+        None
+    };
+
+    // Reject `as` appearing after `timeout` (canonical order violation).
+    if rest.starts_with("as") && (rest.len() == 2 || rest[2..].starts_with(|c: char| c.is_whitespace() || c == '\'')) {
+        return Err(ParseError::Parse {
+            line,
+            message: "test: modifier `as` must precede `timeout` in test_step \
+                      (canonical order: as → timeout → should_fail)".to_string(),
+        });
+    }
+
+    // ── should_fail ──────────────────────────────────────────────────
+    let should_fail = if rest == "should_fail" || rest.starts_with("should_fail ") {
+        let remaining = rest["should_fail".len()..].trim_start();
+        rest = remaining;
+        true
+    } else {
+        false
+    };
+
+    // Reject `as` or `timeout` appearing after `should_fail` (order violations).
+    if should_fail {
+        if rest.starts_with("as") && (rest.len() == 2 || rest[2..].starts_with(|c: char| c.is_whitespace() || c == '\'')) {
+            return Err(ParseError::Parse {
+                line,
+                message: "test: modifier `as` must precede `should_fail` in test_step \
+                          (canonical order: as → timeout → should_fail)".to_string(),
+            });
+        }
+        if rest.starts_with("timeout") && (rest.len() == 7 || rest[7..].starts_with(|c: char| c.is_whitespace())) {
+            return Err(ParseError::Parse {
+                line,
+                message: "test: modifier `timeout` must precede `should_fail` in test_step \
+                          (canonical order: as → timeout → should_fail)".to_string(),
             });
         }
     }
 
-    Ok(TestModifierTail { timeout, should_fail })
+    // ── Reject anything remaining ────────────────────────────────────
+    if !rest.is_empty() {
+        return Err(ParseError::Parse {
+            line,
+            message: format!("test: unexpected modifier `{}`", rest.split_whitespace().next().unwrap_or(rest)),
+        });
+    }
+
+    Ok(TestModifierTail { as_name, timeout, should_fail })
 }
 
 pub(crate) fn parse_recipe(
@@ -281,7 +351,7 @@ pub(crate) fn parse_recipe(
                     steps.push(Step::Test {
                         step: TestStep {
                             body,
-                            as_name: None,
+                            as_name: modifier_tail.as_name,
                             timeout: modifier_tail.timeout,
                             should_fail: modifier_tail.should_fail,
                         },

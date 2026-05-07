@@ -112,7 +112,7 @@ shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
 plate_step            ::= "plate" body NEWLINE
 test_step             ::= "test"  body test_modifiers NEWLINE
 body                  ::= shell_block | using_lua_block
-test_modifiers        ::= ("timeout" NUMBER)? "should_fail"?
+test_modifiers        ::= ("as" STRING)? ("timeout" NUMBER)? "should_fail"?
 
 lua_line              ::= ">" LUA_LINE_CONTENT? NEWLINE
 lua_block             ::= ">{" LUA_BLOCK_CONTENT "}" NEWLINE

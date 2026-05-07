@@ -1048,3 +1048,17 @@ CS-0051 makes the single-drain semantic normative for chore bodies. A conforming
 **Migration.** This is a breaking user-visible change for anyone scripting around the old browser behaviour — for example, a wrapper that read the `127.0.0.1` port number from `cook --dag`'s stderr and curl'd the viewer JSON, or a CI step that asserted on the browser-launch side effect. Such callers SHOULD migrate to consuming the `WaveDagData` JSON directly via the existing in-tree codegen path, or to the non-TTY fallback (`cook --dag | less`, which prints the wave/recipe/unit tree and exits). There is no deprecation period for the HTML viewer — it is removed in this release; the rationale for skipping a deprecation cycle is that the viewer feature was opt-in (CS-0047), the affected user population is therefore narrow, and the new TUI is feature-equivalent for the inspection use cases the HTML viewer served.
 
 **Reference:** the CS-0060 commit on the `feature/dag-tui-viewer` branch.
+
+## CS-0061 — `as STRING` display-name modifier on `test_step` [#changes.cs-0061]
+
+**Date:** 2026-05-07
+
+**Version:** v1.0
+
+**Sections affected:** §4.8 (`test` step), App. A (grammar — `test_modifiers`), App. A (normative constraints — `as` rejected on non-test steps).
+
+**Summary.** Adds an optional `as STRING` leading modifier to `test_step`. The modifier sets the test's display name in runner reports. Without it, the implementation assigns an auto-generated identity. The `STRING` admits `$<IDENT>` placeholder substitution (CS-0033) at register-time codegen; the display name is metadata and is not part of the test's cache fingerprint. Modifier order is fixed: `as → timeout → should_fail`; out-of-order sequences are rejected with a diagnostic naming the offending modifier. The `as` modifier is test-step-only; `cook_step` and `plate_step` reject it.
+
+**Grammar change.** `test_modifiers ::= ("as" STRING)? ("timeout" NUMBER)? "should_fail"?` (was: `("timeout" NUMBER)? "should_fail"?`).
+
+**Reference:** the CS-0061 commits on `feature/test-runner-v1`.

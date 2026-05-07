@@ -1243,3 +1243,54 @@ recipe emit
         other => panic!("expected Cook step, got {:?}", other),
     }
 }
+
+// ── Task 2.2: as STRING modifier ───────────────────────────────────
+
+#[test]
+fn test_step_parses_as_modifier() {
+    let src = r#"
+recipe r
+    test { foo $<in> } as 'name' timeout 30 should_fail
+"#;
+    let recipes = parse(src).expect("parse").recipes;
+    let step = match &recipes[0].steps[0] {
+        Step::Test { step, .. } => step,
+        other => panic!("expected test_step, got {:?}", other),
+    };
+    assert_eq!(step.as_name.as_deref(), Some("name"));
+    assert_eq!(step.timeout, Some(30));
+    assert!(step.should_fail);
+}
+
+#[test]
+fn test_step_as_only() {
+    let src = r#"
+recipe r
+    test { foo } as 'just-as'
+"#;
+    let recipes = parse(src).expect("parse").recipes;
+    let step = match &recipes[0].steps[0] {
+        Step::Test { step, .. } => step,
+        _ => panic!(),
+    };
+    assert_eq!(step.as_name.as_deref(), Some("just-as"));
+    assert_eq!(step.timeout, None);
+    assert!(!step.should_fail);
+}
+
+#[test]
+fn test_step_as_with_substitution_string() {
+    let src = r#"
+recipe r
+    ingredients "src/*.txt"
+    cook "build/$<in.stem>.out" using { echo > $<out> }
+    test { foo $<in> } as '$<in.stem>-roundtrip' timeout 10
+"#;
+    let recipes = parse(src).expect("parse").recipes;
+    let test = recipes[0].steps.iter().find_map(|s| match s {
+        Step::Test { step, .. } => Some(step),
+        _ => None,
+    }).unwrap();
+    // Parser preserves the literal string; substitution happens at codegen.
+    assert_eq!(test.as_name.as_deref(), Some("$<in.stem>-roundtrip"));
+}
