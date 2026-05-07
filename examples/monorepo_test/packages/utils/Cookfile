@@ -1,0 +1,10 @@
+# Shared utility package. One passing test.
+
+recipe build
+    cook "build/utils.lib" using {
+        mkdir -p build
+        echo "utils library" > $<out>
+    }
+
+recipe unit: build
+    test { test -s $<build> } timeout 5

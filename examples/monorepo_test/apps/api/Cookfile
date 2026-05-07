@@ -1,0 +1,11 @@
+# Backend project. All passing.
+
+recipe build
+    cook "build/api.bin" using {
+        mkdir -p build
+        echo "api binary" > $<out>
+    }
+
+recipe unit: build
+    test { true } timeout 5
+    test { test -s $<build> } timeout 5
