@@ -1,0 +1,12 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="r" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Test body=LuaBlock("        cook.add_test { command = \"true\" }              -- default suite = \"r\"\n        cook.add_test { command = \"true\", suite = \"x\" } -- explicit suite = \"x\"") timeout=None should_fail=false
+  chores:

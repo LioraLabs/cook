@@ -1,0 +1,12 @@
+# CS-0061 §3.4 — pass/fail interpretation table.
+recipe pass_zero_no_should_fail
+    test { exit 0 } timeout 5
+
+recipe pass_nonzero_with_should_fail
+    test { exit 1 } timeout 5 should_fail
+
+recipe fail_zero_with_should_fail
+    test { exit 0 } timeout 5 should_fail
+
+recipe fail_nonzero_no_should_fail
+    test { exit 1 } timeout 5
