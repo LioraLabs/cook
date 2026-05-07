@@ -70,11 +70,13 @@ impl<R: BufRead, W: Write> ConflictPrompter for StdinPrompter<R, W> {
 }
 
 /// Test implementation: scripted answers, one per call. Panics if exhausted.
+#[cfg(test)]
 pub struct ScriptedPrompter {
     answers: std::vec::IntoIter<ConflictAnswer>,
     pub asked: Vec<std::path::PathBuf>,
 }
 
+#[cfg(test)]
 impl ScriptedPrompter {
     pub fn new(answers: Vec<ConflictAnswer>) -> Self {
         Self {
@@ -84,6 +86,7 @@ impl ScriptedPrompter {
     }
 }
 
+#[cfg(test)]
 impl ConflictPrompter for ScriptedPrompter {
     fn prompt(&mut self, path: &Path) -> ConflictAnswer {
         self.asked.push(path.to_path_buf());

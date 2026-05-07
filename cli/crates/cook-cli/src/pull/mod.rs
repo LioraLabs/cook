@@ -62,7 +62,8 @@ fn run(args: PullArgs) -> Result<i32, PullError> {
         &cook_toml,
     )?;
 
-    let trust_mode = resolve_trust_mode(&args);
+    let is_tty = io::stdin().is_terminal();
+    let trust_mode = resolve_trust_mode(&args, is_tty);
     let mut stdin_for_trust = io::stdin().lock();
     let mut stderr_for_trust = io::stderr().lock();
     trust::ensure_trusted(
@@ -109,7 +110,7 @@ fn run(args: PullArgs) -> Result<i32, PullError> {
         }
     }
 
-    let interactive = !args.non_interactive && io::stdin().is_terminal();
+    let interactive = !args.non_interactive && is_tty;
 
     if !args.force && !interactive {
         // Pre-scan for conflicts; non-interactive without --force cannot prompt.
@@ -125,7 +126,10 @@ fn run(args: PullArgs) -> Result<i32, PullError> {
     } else if interactive {
         Box::new(StdinPrompter::new(io::stdin().lock(), io::stderr()))
     } else {
-        // Unreachable: the pre-scan above would have errored. Defensive default.
+        debug_assert!(
+            false,
+            "non-interactive + no-force should have errored at scan_conflicts"
+        );
         Box::new(ForceYesPrompter)
     };
 
@@ -149,10 +153,10 @@ fn config_dir() -> Result<PathBuf, PullError> {
     Ok(base.join("cook"))
 }
 
-fn resolve_trust_mode(args: &PullArgs) -> TrustMode {
+fn resolve_trust_mode(args: &PullArgs, is_tty: bool) -> TrustMode {
     if args.accept_trust {
         TrustMode::Accept
-    } else if args.non_interactive || !io::stdin().is_terminal() {
+    } else if args.non_interactive || !is_tty {
         TrustMode::NonInteractive
     } else {
         TrustMode::Interactive
