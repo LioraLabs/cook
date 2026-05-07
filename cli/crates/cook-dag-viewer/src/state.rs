@@ -574,28 +574,50 @@ impl AppState {
     }
 
     pub fn collapse_or_step_out(&mut self) {
+        let wi = self.selection.wave;
         match self.selection.leaf {
             Some(SelectionLeaf::Recipe { recipe, unit: Some(_) }) => {
                 self.selection.leaf = Some(SelectionLeaf::Recipe { recipe, unit: None });
             }
             Some(SelectionLeaf::Recipe { recipe, unit: None }) => {
-                if let Some(w) = self.tree.waves.get_mut(self.selection.wave) {
+                let collapsed = if let Some(w) = self.tree.waves.get_mut(wi) {
                     if let Some(r) = w.recipes.get_mut(recipe) {
-                        r.expanded = false;
+                        if r.expanded {
+                            r.expanded = false;
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
                     }
+                } else {
+                    false
+                };
+                if !collapsed {
+                    self.selection.leaf = None;
                 }
             }
             Some(SelectionLeaf::File(_)) => {
-                // Step out of a file row: collapse the Files folder and
-                // re-anchor selection at the wave row, since the folder
-                // header itself is not selectable.
-                if let Some(w) = self.tree.waves.get_mut(self.selection.wave) {
-                    w.files_expanded = false;
-                }
-                self.selection.leaf = None;
+                self.selection = Selection::files_folder(wi);
             }
-            Some(SelectionLeaf::FilesFolder) | None => {
-                if let Some(w) = self.tree.waves.get_mut(self.selection.wave) {
+            Some(SelectionLeaf::FilesFolder) => {
+                let collapsed = if let Some(w) = self.tree.waves.get_mut(wi) {
+                    if w.files_expanded {
+                        w.files_expanded = false;
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if !collapsed {
+                    self.selection.leaf = None;
+                }
+            }
+            None => {
+                if let Some(w) = self.tree.waves.get_mut(wi) {
                     w.expanded = false;
                 }
             }
@@ -1163,17 +1185,6 @@ mod tests {
     }
 
     #[test]
-    fn collapse_step_out_on_file_collapses_folder_and_returns_to_wave() {
-        let g = graph_with_files();
-        let mut app = AppState::new(&g);
-        app.tree.waves[0].files_expanded = true;
-        app.selection = Selection::file(0, 0);
-        app.collapse_or_step_out();
-        assert_eq!(app.selection, Selection::wave_only(0));
-        assert!(!app.tree.waves[0].files_expanded);
-    }
-
-    #[test]
     fn jump_to_node_on_file_lands_on_file_row_and_expands_folder() {
         let g = graph_with_files();
         let mut app = AppState::new(&g);
@@ -1298,5 +1309,49 @@ mod tests {
         // Wave 0 expanded by default, no files.
         app.expand_or_step_in();
         assert_eq!(app.selection, Selection::recipe(0, 0));
+    }
+
+    #[test]
+    fn collapse_step_out_on_file_returns_to_folder_row() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].files_expanded = true;
+        app.selection = Selection::file(0, 0);
+        app.collapse_or_step_out();
+        assert_eq!(app.selection, Selection::files_folder(0));
+        // Folder stays expanded; we only step the cursor up one level.
+        assert!(app.tree.waves[0].files_expanded);
+    }
+
+    #[test]
+    fn collapse_step_out_on_files_folder_expanded_collapses_folder() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.tree.waves[0].files_expanded = true;
+        app.selection = Selection::files_folder(0);
+        app.collapse_or_step_out();
+        assert!(!app.tree.waves[0].files_expanded);
+        // Selection stays on the folder row after collapse.
+        assert_eq!(app.selection, Selection::files_folder(0));
+    }
+
+    #[test]
+    fn collapse_step_out_on_files_folder_collapsed_returns_to_wave() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.selection = Selection::files_folder(0);
+        assert!(!app.tree.waves[0].files_expanded);
+        app.collapse_or_step_out();
+        assert_eq!(app.selection, Selection::wave_only(0));
+    }
+
+    #[test]
+    fn collapse_step_out_on_collapsed_recipe_row_returns_to_wave() {
+        let g = graph_2x2();
+        let mut app = AppState::new(&g);
+        app.selection = Selection::recipe(0, 0);
+        // Recipe is collapsed by default.
+        app.collapse_or_step_out();
+        assert_eq!(app.selection, Selection::wave_only(0));
     }
 }
