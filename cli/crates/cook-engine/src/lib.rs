@@ -14,6 +14,7 @@ pub mod run;
 pub mod wave_grouper;
 
 pub use registry_entry::RegistryEntry;
+pub use run::{run_for_test, RunResult, TestScope};
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

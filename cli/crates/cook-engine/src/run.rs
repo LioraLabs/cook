@@ -17,6 +17,195 @@ use cook_fingerprint::{CacheBackend, EnvDenylist, ExecutionContext};
 use crate::analyzer::{self, GraphError};
 use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent, RecipeKind, RegistryEntry};
 
+// ---------------------------------------------------------------------------
+// TestScope — how to scope a `cook --test` invocation
+// ---------------------------------------------------------------------------
+
+/// How to scope a `cook --test` invocation.
+#[derive(Debug, Clone)]
+pub enum TestScope {
+    /// `cook --test <recipe>` — scope to a single recipe and its dep closure.
+    Recipe(String),
+    /// `cook --test <namespace>` — scope to an import alias's tree.
+    Namespace(String),
+}
+
+// ---------------------------------------------------------------------------
+// run_for_test — test-mode engine entry point
+// ---------------------------------------------------------------------------
+
+/// Test-mode engine entry point.
+///
+/// 5-phase pipeline:
+///   1. Discover: workspace-wide recipe registration (or target-driven if scope is Some).
+///   2. Filter: filter_patterns + rerun_failed_set.
+///   3. Reverse-closure: build the cook-unit slice from test units.
+///   4. (Phase 5) fingerprint + cache lookup — stub here, every test runs.
+///   5. Execute & report — emit test events + populate RunResult.
+pub fn run_for_test(
+    project_root: &Path,
+    scope: Option<TestScope>,
+    filter_patterns: &[String],
+    rerun_failed_set: Option<&BTreeSet<crate::TestId>>,
+    rerun_patterns: &[String],
+    fail_fast: bool,
+    num_jobs: usize,
+    on_event: impl Fn(EngineEvent) + Send + Sync,
+) -> Result<RunResult, EngineError> {
+    let started = std::time::Instant::now();
+    let result = run_for_test_inner(
+        project_root,
+        scope,
+        filter_patterns,
+        rerun_failed_set,
+        rerun_patterns,
+        fail_fast,
+        num_jobs,
+        &on_event,
+    );
+    on_event(EngineEvent::Finished {
+        elapsed: started.elapsed(),
+        success: result.is_ok(),
+    });
+    result
+}
+
+fn run_for_test_inner<F>(
+    project_root: &Path,
+    scope: Option<TestScope>,
+    filter_patterns: &[String],
+    rerun_failed_set: Option<&BTreeSet<crate::TestId>>,
+    rerun_patterns: &[String],
+    _fail_fast: bool,
+    num_jobs: usize,
+    on_event: &F,
+) -> Result<RunResult, EngineError>
+where
+    F: Fn(EngineEvent) + Send + Sync,
+{
+    // Phase 5 stub: cache wiring deferred.
+    let _ = rerun_patterns;
+
+    // ── Phase 1: Discover ────────────────────────────────────────────────────
+    // Load the workspace so we have both the recipe_infos and the registries.
+    let cookfile_path = project_root.join("Cookfile");
+    let workspace = crate::pipeline::workspace::Workspace::load(
+        &cookfile_path,
+        project_root,
+        &[],
+    )
+    .map_err(|e| EngineError::RegistrationFailed {
+        recipe: "<workspace>".to_string(),
+        message: e.to_string(),
+    })?;
+
+    // Build recipe_infos from the workspace.
+    let recipe_infos: BTreeMap<String, analyzer::RecipeInfo> = {
+        use crate::pipeline::recipe_info::build_workspace_recipe_info;
+        if workspace.imports.is_empty() {
+            crate::pipeline::recipe_info::build_single_recipe_infos(&workspace.root.cookfile)
+        } else {
+            build_workspace_recipe_info(&workspace)
+        }
+    };
+
+    // Build registries from the workspace.
+    let registries: BTreeMap<String, RegistryEntry> =
+        crate::pipeline::registries::build_workspace_registries(&workspace, None, &[])
+            .map_err(|e| EngineError::RegistrationFailed {
+                recipe: "<workspace>".to_string(),
+                message: e.to_string(),
+            })?;
+
+    // Determine the set of candidate recipe names to build based on scope.
+    let candidate_recipe_names: Vec<String> = match &scope {
+        None => recipe_infos.keys().cloned().collect(),
+        Some(TestScope::Recipe(name)) => {
+            // Include just this recipe and its transitive deps.
+            analyzer::dependency_edges(&recipe_infos, name)
+                .map_err(|e| match e {
+                    GraphError::CycleDetected(s) => EngineError::CycleDetected(s),
+                    GraphError::UnknownRecipe(s) => EngineError::UnknownRecipe(s),
+                    e => EngineError::CycleDetected(e.to_string()),
+                })?
+                .keys()
+                .cloned()
+                .collect()
+        }
+        Some(TestScope::Namespace(ns)) => {
+            // Include all recipes whose name starts with "<ns>."
+            let prefix = format!("{ns}.");
+            recipe_infos
+                .keys()
+                .filter(|n| n.starts_with(&prefix) || *n == ns)
+                .cloned()
+                .collect()
+        }
+    };
+
+    // ── Phase 2: Filter ──────────────────────────────────────────────────────
+    // We can't inspect test unit names without running registration first,
+    // so we run the engine for all candidate recipes and filter test_results
+    // post-execution. For Phase 4 this is acceptable; Phase 5 will add
+    // pre-registration fingerprint checks to skip tests up-front.
+    //
+    // Build dependency edges for the candidate set.
+    let targets: Vec<String> = candidate_recipe_names;
+    if targets.is_empty() {
+        return Ok(RunResult { test_results: vec![] });
+    }
+
+    // Compute inferred deps for the workspace.
+    let inferred_deps: BTreeMap<String, Vec<String>> =
+        if workspace.imports.is_empty() {
+            crate::pipeline::inferred_deps::compute_single_inferred_deps(&workspace.root.cookfile)
+        } else {
+            crate::pipeline::inferred_deps::compute_workspace_inferred_deps(&workspace)
+        };
+
+    // ── Phase 3-5: Execute ───────────────────────────────────────────────────
+    let result = run_inner(
+        project_root,
+        &recipe_infos,
+        &targets,
+        &registries,
+        num_jobs,
+        &inferred_deps,
+        on_event,
+    )?;
+
+    // Post-execution: filter test_results by filter_patterns and rerun_failed_set.
+    let test_results = result
+        .test_results
+        .into_iter()
+        .filter(|r| {
+            let id_matches = if filter_patterns.is_empty() {
+                true
+            } else {
+                matches_any(&r.id, filter_patterns)
+            };
+            let rerun_matches = if let Some(failed_set) = rerun_failed_set {
+                failed_set.contains(&r.id)
+            } else {
+                true
+            };
+            id_matches && rerun_matches
+        })
+        .collect();
+
+    Ok(RunResult { test_results })
+}
+
+/// Returns true if `id` matches any of the glob `patterns`.
+fn matches_any(id: &crate::TestId, patterns: &[String]) -> bool {
+    patterns.iter().any(|pat| {
+        match globset::Glob::new(pat) {
+            Ok(g) => g.compile_matcher().is_match(&id.0),
+            Err(_) => false,
+        }
+    })
+}
+
 /// The result of a successful engine run.
 #[derive(Debug)]
 pub struct RunResult {

@@ -15,6 +15,7 @@ cook-cache = { path = "../cook-cache" }
 cook-fingerprint = { path = "../cook-fingerprint" }
 thiserror = "2"
 dirs = "5"
+globset = "0.4"
 dotenvy = "0.15"
 pathdiff = "0.2"
 serde = { version = "1", features = ["derive"] }
