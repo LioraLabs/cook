@@ -12,9 +12,6 @@ use crate::render::layout::Layout;
 use crate::state::AppState;
 
 pub fn render<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F) -> Buffer {
-    if matches!(app.density, crate::state::DensityMode::Flow) {
-        return crate::render::flow::render(layout, app, frame);
-    }
     let area = Rect::new(0, 0, layout.canvas_w.max(1), layout.canvas_h.max(1));
     let mut buf = Buffer::empty(area);
 
@@ -22,12 +19,10 @@ pub fn render<F: ViewFrame>(layout: &Layout, app: &AppState, frame: &F) -> Buffe
     match app.density {
         crate::state::DensityMode::Compact => draw_compact(layout, app, frame, &mut buf),
         crate::state::DensityMode::Full => draw_nodes(layout, area, &mut buf),
-        crate::state::DensityMode::Flow => unreachable!(),
     }
-    // Badge overlay (✓ ✗ ⚠) is a Full-mode-only affordance: in Flow the
-    // glyph itself carries cache colour; in Compact the bracketed label
-    // is coloured per status, so a separate badge would clobber the last
-    // label cell.
+    // Badge overlay (✓ ✗ ⚠) is a Full-mode-only affordance: in Compact the
+    // bracketed label is coloured per status, so a separate badge would clobber
+    // the last label cell.
     if matches!(app.density, crate::state::DensityMode::Full) {
         overlay_badges(layout, frame, &mut buf, &app.theme);
     }

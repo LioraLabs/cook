@@ -6,48 +6,19 @@ use crate::dag_data::WaveDagData;
 pub enum DensityMode {
     Full,
     Compact,
-    Flow,
 }
 
 impl DensityMode {
-    /// Cycle order for the `m` key: Flow → Compact → Full → Flow.
+    /// Cycle order for the `m` key: Full → Compact → Full.
     pub fn next(self) -> Self {
         match self {
-            Self::Flow => Self::Compact,
+            Self::Full => Self::Compact,
             Self::Compact => Self::Full,
-            Self::Full => Self::Flow,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GlyphStyle {
-    Dot,
-    Circle,
-    Diamond,
-    Square,
-}
-
-impl GlyphStyle {
-    /// Cycle for the `s` key: Dot → Circle → Diamond → Square → Dot.
-    pub fn next(self) -> Self {
-        match self {
-            Self::Dot => Self::Circle,
-            Self::Circle => Self::Diamond,
-            Self::Diamond => Self::Square,
-            Self::Square => Self::Dot,
         }
     }
 }
 
 pub const PIN_SLOTS: usize = 9;
-
-/// Numbered-circle glyph for pin slot N (0-indexed). Slot 0 → `❶`.
-/// Out-of-range slots return `'●'`.
-pub fn pin_glyph(slot: usize) -> char {
-    const GLYPHS: [char; PIN_SLOTS] = ['❶', '❷', '❸', '❹', '❺', '❻', '❼', '❽', '❾'];
-    GLYPHS.get(slot).copied().unwrap_or('●')
-}
 
 /// Up to 9 pinned node IDs, indexed by slot. Slot N holds the node ID
 /// pinned in that slot; `None` is an empty slot. See spec §4.3.
@@ -148,11 +119,7 @@ impl PinMsg {
 /// Pick a default density from the snapshot's node count. See spec §5.1.
 pub fn choose_initial_mode(g: &WaveDagData) -> DensityMode {
     let total: usize = g.waves.iter().map(|w| w.nodes.len()).sum();
-    match total {
-        0..=20 => DensityMode::Full,
-        21..=80 => DensityMode::Compact,
-        _ => DensityMode::Flow,
-    }
+    if total <= 20 { DensityMode::Full } else { DensityMode::Compact }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -358,8 +325,6 @@ pub struct AppState {
     pub graph: std::sync::Arc<WaveDagData>,
     pub theme: crate::theme::Theme,
     pub density: DensityMode,
-    pub glyph: GlyphStyle,
-    pub radial: bool,
     pub pins: PinState,
     pub last_pin_message: Option<PinMsg>,
 }
@@ -380,8 +345,6 @@ impl AppState {
             graph: arc,
             theme: Default::default(),
             density: choose_initial_mode(graph),
-            glyph: GlyphStyle::Circle,
-            radial: false,
             pins: PinState::default(),
             last_pin_message: None,
         }
@@ -929,40 +892,12 @@ mod tests {
     }
 
     #[test]
-    fn density_mode_cycles_flow_compact_full_flow() {
-        let mut m = DensityMode::Flow;
+    fn density_mode_cycles_full_compact_full() {
+        let mut m = DensityMode::Full;
         m = m.next();
         assert_eq!(m, DensityMode::Compact);
         m = m.next();
         assert_eq!(m, DensityMode::Full);
-        m = m.next();
-        assert_eq!(m, DensityMode::Flow);
-    }
-
-    #[test]
-    fn glyph_style_cycles_dot_circle_diamond_square_dot() {
-        let mut g = GlyphStyle::Dot;
-        g = g.next();
-        assert_eq!(g, GlyphStyle::Circle);
-        g = g.next();
-        assert_eq!(g, GlyphStyle::Diamond);
-        g = g.next();
-        assert_eq!(g, GlyphStyle::Square);
-        g = g.next();
-        assert_eq!(g, GlyphStyle::Dot);
-    }
-
-    #[test]
-    fn app_state_default_glyph_is_circle_radial_off() {
-        let g = WaveDagData {
-            schema_version: crate::VIEWER_SCHEMA_VERSION,
-            target: "t".into(),
-            waves: vec![],
-            inter_wave_edges: vec![],
-        };
-        let app = AppState::new(&g);
-        assert_eq!(app.glyph, GlyphStyle::Circle);
-        assert!(!app.radial);
     }
 
     #[test]
@@ -978,9 +913,9 @@ mod tests {
     }
 
     #[test]
-    fn choose_initial_mode_picks_flow_for_big_graphs() {
+    fn choose_initial_mode_picks_compact_for_big_graphs() {
         let g = small_graph(200);
-        assert_eq!(choose_initial_mode(&g), DensityMode::Flow);
+        assert_eq!(choose_initial_mode(&g), DensityMode::Compact);
     }
 
     #[test]
@@ -1131,43 +1066,6 @@ mod tests {
     fn pin_msg_empty_slot_uses_one_indexed_label() {
         assert_eq!(PinMsg::EmptySlot(0).render(), "slot 1 empty");
         assert_eq!(PinMsg::EmptySlot(8).render(), "slot 9 empty");
-    }
-
-    #[test]
-    fn radial_toggle_then_layout_dispatch_picks_radial() {
-        use crate::dag_data::{EdgeData, NodeData, WaveData};
-        let g = WaveDagData {
-            schema_version: crate::VIEWER_SCHEMA_VERSION,
-            target: "c".into(),
-            waves: vec![WaveData {
-                recipes: vec!["r".into()],
-                nodes: vec![
-                    NodeData { id: "a".into(), kind: "unit".into(), label: "a".into(),
-                        recipe: Some("r".into()), command: Some("c".into()), output: None,
-                        cached: Some(true), dep_kind: Some("sequential".into()),
-                        group_index: None, modified: None, discovered: None },
-                    NodeData { id: "b".into(), kind: "unit".into(), label: "b".into(),
-                        recipe: Some("r".into()), command: Some("c".into()), output: None,
-                        cached: Some(true), dep_kind: Some("sequential".into()),
-                        group_index: None, modified: None, discovered: None },
-                    NodeData { id: "c".into(), kind: "unit".into(), label: "c".into(),
-                        recipe: Some("r".into()), command: Some("c".into()), output: None,
-                        cached: Some(true), dep_kind: Some("sequential".into()),
-                        group_index: None, modified: None, discovered: None },
-                ],
-                edges: vec![
-                    EdgeData { from: "a".into(), to: "b".into() },
-                    EdgeData { from: "b".into(), to: "c".into() },
-                ],
-            }],
-            inter_wave_edges: vec![],
-        };
-        let mut app = AppState::new(&g);
-        app.density = DensityMode::Flow;
-        app.radial = true;
-        let layout = crate::render::pick_layout(&app, &g);
-        // Radial canvas is square.
-        assert_eq!(layout.canvas_w, layout.canvas_h);
     }
 
     fn graph_with_files() -> WaveDagData {

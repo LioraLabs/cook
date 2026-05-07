@@ -3,11 +3,9 @@
 pub mod camera;
 pub mod canvas;
 pub mod detail;
-pub mod flow;
 pub mod focus;
 pub mod index;
 pub mod layout;
-pub mod layout_radial;
 pub mod overlay;
 pub mod search;
 
@@ -19,24 +17,19 @@ use crate::dag_data::WaveDagData;
 use crate::frame::ViewFrame;
 use crate::state::{AppState, DensityMode, Mode};
 
-/// Choose the layout function based on density and radial state.
+/// Choose the layout function based on density.
 /// Returns the same `Layout` shape regardless of which layout
 /// algorithm runs, so downstream renderers stay mode-agnostic.
 pub fn pick_layout(app: &AppState, graph: &WaveDagData) -> layout::Layout {
     let dims = match app.density {
         DensityMode::Full => layout::LayoutDims::FULL,
         DensityMode::Compact => layout::LayoutDims::COMPACT,
-        DensityMode::Flow => layout::LayoutDims::FLOW,
     };
     if matches!(app.density, DensityMode::Compact) {
         let focused = focus::focus_subgraph(graph, app);
         return layout::compute(&focused, dims);
     }
-    if matches!(app.density, DensityMode::Flow) && app.radial {
-        layout_radial::compute(graph, dims)
-    } else {
-        layout::compute(graph, dims)
-    }
+    layout::compute(graph, dims)
 }
 
 pub struct RenderInputs<'a> {
@@ -119,11 +112,7 @@ fn draw_bottom_bar(area: Rect, buf: &mut Buffer, app: &mut AppState) {
             Mode::Help => " help · q close".to_string(),
             Mode::DetailOverlay => " esc close".to_string(),
             Mode::Normal => {
-                if matches!(app.density, crate::state::DensityMode::Flow) {
-                    " ? help · / · q · [/] · HJKL · m mode · s shape · R radial · p pin · 1-9 jump · X clear".to_string()
-                } else {
-                    " ? help · / · q · [/] · HJKL · m mode · p pin · 1-9 jump · X clear".to_string()
-                }
+                " ? help · / · q · [/] · HJKL · m mode · p pin · 1-9 jump · X clear".to_string()
             }
         }
     };

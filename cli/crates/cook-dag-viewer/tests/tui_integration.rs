@@ -108,12 +108,9 @@ fn m_cycles_density_mode() {
     let initial = app.density;
     cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('m'), term);
     assert_ne!(app.density, initial);
-    let after_one = app.density;
 
     cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('m'), term);
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('m'), term);
-    assert_eq!(app.density, initial, "three presses complete the cycle");
-    assert_ne!(app.density, after_one);
+    assert_eq!(app.density, initial, "two presses complete the Full↔Compact cycle");
 }
 
 #[test]
