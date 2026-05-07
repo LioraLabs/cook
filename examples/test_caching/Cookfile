@@ -28,7 +28,7 @@ recipe iterated
 
 # should_fail — caches as a pass when the body exits non-zero.
 recipe should_fail_caches
-    test { exit 1 } should_fail timeout 5
+    test { exit 1 } timeout 5 should_fail
 
 chore clean
     rm -rf build .cook src

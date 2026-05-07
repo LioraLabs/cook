@@ -10,9 +10,10 @@ use std::sync::Arc;
 
 use cook_cache::{
     backend::LocalBackend, cache_ctx::CacheContext, cloud_backend::CloudBackend,
-    cloud_config::CloudConfig, ThreadSafeCacheManager,
+    cloud_config::CloudConfig, TestCache, ThreadSafeCacheManager,
 };
-use cook_fingerprint::{CacheBackend, EnvDenylist, ExecutionContext};
+use cook_contracts::WorkPayload;
+use cook_fingerprint::{CacheBackend, EnvDenylist, ExecutionContext, FingerprintInputs};
 
 use crate::analyzer::{self, GraphError};
 use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent, RecipeKind, RegistryEntry};
@@ -117,11 +118,28 @@ where
                 message: e.to_string(),
             })?;
 
+    // Build the set of chore names so they can be excluded from test candidates.
+    // Chores are excluded from `cook --test` because they are destructive by
+    // design (e.g., `cook clean` deletes build artefacts and caches) and have
+    // no test steps. Including them would cause unintentional side-effects.
+    let chore_names: BTreeSet<String> = {
+        let mut names = BTreeSet::new();
+        for chore in &workspace.root.cookfile.chores {
+            names.insert(chore.name.clone());
+        }
+        for (_, loaded) in &workspace.imports {
+            for chore in &loaded.cookfile.chores {
+                names.insert(chore.name.clone());
+            }
+        }
+        names
+    };
+
     // Determine the set of candidate recipe names to build based on scope.
     let candidate_recipe_names: Vec<String> = match &scope {
-        None => recipe_infos.keys().cloned().collect(),
+        None => recipe_infos.keys().filter(|n| !chore_names.contains(*n)).cloned().collect(),
         Some(TestScope::Recipe(name)) => {
-            // Include just this recipe and its transitive deps.
+            // Include just this recipe and its transitive deps (chores excluded).
             analyzer::dependency_edges(&recipe_infos, name)
                 .map_err(|e| match e {
                     GraphError::CycleDetected(s) => EngineError::CycleDetected(s),
@@ -129,14 +147,16 @@ where
                     e => EngineError::CycleDetected(e.to_string()),
                 })?
                 .keys()
+                .filter(|n| !chore_names.contains(*n))
                 .cloned()
                 .collect()
         }
         Some(TestScope::Namespace(ns)) => {
-            // Include all recipes whose name starts with "<ns>."
+            // Include all recipes whose name starts with "<ns>." (chores excluded).
             let prefix = format!("{ns}.");
             recipe_infos
                 .keys()
+                .filter(|n| !chore_names.contains(*n))
                 .filter(|n| n.starts_with(&prefix) || *n == ns)
                 .cloned()
                 .collect()
@@ -510,6 +530,54 @@ where
         }
 
         if !dag.is_empty() {
+            // Phase 5: build per-node fingerprints for Test nodes in this wave's DAG.
+            // We scan all nodes; non-Test nodes produce no entry and are skipped.
+            // The fingerprint inputs use:
+            //   - cook_outputs / dep_outputs: stubbed empty (Phase 5 v1 known gap)
+            //   - env_keys: recipe-level env vars filtered through the denylist
+            //   - tool_hashes: declared tools from cache_ctx.exec_ctx
+            let test_cache = TestCache::new(project_root.join(".cook"));
+            let fingerprint_by_node: BTreeMap<usize, String> = {
+                let mut fp_map = BTreeMap::new();
+                for node_idx in 0..dag.len() {
+                    let work_node = dag.node(node_idx).payload();
+                    if let Some(WorkPayload::Test { .. }) = &work_node.payload {
+                        // Build FingerprintInputs using available data.
+                        // env_keys: recipe-level env vars filtered through the denylist.
+                        let env_keys: Vec<(String, String)> = work_node
+                            .env_vars
+                            .iter()
+                            .filter(|(k, _)| !cache_ctx.denylist.is_ignored(k))
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        // tool_hashes: declared tools from cache_ctx.exec_ctx.
+                        let tool_hashes: Vec<(String, String)> = cache_ctx
+                            .exec_ctx
+                            .declared_tools
+                            .iter()
+                            .map(|(name, path)| {
+                                let hash = cook_fingerprint::hash_file(path)
+                                    .map(|h| format!("{h:x}"))
+                                    .unwrap_or_else(|| "0".to_string());
+                                (name.clone(), hash)
+                            })
+                            .collect();
+                        let inputs = FingerprintInputs {
+                            cook_outputs: vec![],  // Phase 5 v1 stub
+                            dep_outputs: vec![],   // Phase 5 v1 stub
+                            env_keys,
+                            tool_hashes,
+                        };
+                        let fp = cook_fingerprint::compute_test_fingerprint(
+                            work_node.payload.as_ref().expect("checked above"),
+                            &inputs,
+                        );
+                        fp_map.insert(node_idx, fp);
+                    }
+                }
+                fp_map
+            };
+
             // Bridge on_event through an mpsc channel so executor can use its
             // existing Option<Sender<EngineEvent>> interface.
             let (event_tx, event_rx) = mpsc::channel::<EngineEvent>();
@@ -530,6 +598,8 @@ where
                         wave_cache_managers,
                         Some(event_tx),
                         cache_ctx.clone(),
+                        Some(&test_cache),
+                        &fingerprint_by_node,
                     );
 
                     // Drop the sender end is handled by execute_dag returning

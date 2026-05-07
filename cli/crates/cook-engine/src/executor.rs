@@ -10,11 +10,11 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cook_cache::{CacheContext, ThreadSafeCacheManager};
+use cook_cache::{CacheContext, TestCache, TestCacheEntry, TestCacheOutcome, ThreadSafeCacheManager};
 use cook_contracts::WorkPayload;
 use cook_fingerprint::{
-    artifact_key, cloud_key, needs_rebuild_cook, ArtifactMeta, CloudKeyInputs, RebuildResult,
-    RestoreCtx, CACHE_VERSION,
+    artifact_key, cloud_key, needs_rebuild_cook, ArtifactMeta, CloudKeyInputs,
+    RebuildResult, RestoreCtx, CACHE_VERSION,
 };
 use cook_dag::Dag;
 use cook_luaotp::{WorkItem, WorkerPool};
@@ -193,6 +193,52 @@ fn run_interactive_on_main(
 }
 
 // ---------------------------------------------------------------------------
+// iso8601_now — minimal RFC-3339 timestamp without chrono / time deps
+// ---------------------------------------------------------------------------
+
+fn iso8601_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Convert unix timestamp to YYYY-MM-DDTHH:MM:SSZ.
+    // Best-effort formatter — accuracy to ±1 second is sufficient
+    // for the `recorded_at` diagnostic field in TestCacheEntry.
+    let secs_in_day: u64 = 86400;
+    let secs_in_hour: u64 = 3600;
+    let secs_in_min: u64 = 60;
+    let h = (secs % secs_in_day) / secs_in_hour;
+    let m = (secs % secs_in_hour) / secs_in_min;
+    let sec = secs % secs_in_min;
+
+    // Simplified date computation from days since 1970-01-01.
+    let days = secs / secs_in_day;
+    let mut y = 1970u64;
+    let mut d = days;
+    loop {
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366u64 } else { 365u64 };
+        if d < days_in_year { break; }
+        d -= days_in_year;
+        y += 1;
+    }
+    let year = y;
+    let day_of_year = d;
+
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let month_days: [u64; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut rem = day_of_year;
+    let mut month = 1u64;
+    for &md in &month_days {
+        if rem < md { break; }
+        rem -= md;
+        month += 1;
+    }
+    let day = rem + 1;
+    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{sec:02}Z")
+}
+
+// ---------------------------------------------------------------------------
 // execute_dag
 // ---------------------------------------------------------------------------
 
@@ -206,12 +252,23 @@ fn run_interactive_on_main(
 /// Returns `Ok(test_results)` with all test results from this DAG if every node
 /// completed successfully (or was pre-satisfied), or `Err(EngineError)` listing
 /// each failed node.
+///
+/// `test_cache` — when `Some`, test nodes check the content-addressed cache
+/// before dispatch. Hits emit synthesized `TestPassed { cached: true }` events
+/// and do not submit to the worker pool. Passing executions write cache entries.
+///
+/// `fingerprint_by_node` — maps dag node id → pre-computed test fingerprint.
+/// Only node ids whose `WorkPayload` is `Test` need entries; other ids are
+/// ignored. When empty or `None` for a given node, caching is skipped for
+/// that node.
 pub fn execute_dag(
     dag: Dag<WorkNode>,
     num_workers: usize,
     cache_managers: BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     event_tx: Option<mpsc::Sender<EngineEvent>>,
     cache_ctx: Arc<CacheContext>,
+    test_cache: Option<&TestCache>,
+    fingerprint_by_node: &BTreeMap<usize, String>,
 ) -> Result<Vec<crate::TestResult>, EngineError> {
     // Install the depfile parser pointer so cook-fingerprint's pre-check
     // augmentation can call back into cook-cache without a runtime dep cycle.
@@ -246,6 +303,8 @@ pub fn execute_dag(
     let mut pending: usize = 0; // how many work results we're waiting for
     let mut failures: Vec<(usize, String, String)> = Vec::new();
     let mut test_results: Vec<crate::TestResult> = Vec::new();
+    // Collects TestResult entries synthesized from test-cache hits in process_ready.
+    let mut cached_test_results: Vec<crate::TestResult> = Vec::new();
 
     // ----- Recipe tracking -----
     let mut recipe_trackers: BTreeMap<String, RecipeTracker> = BTreeMap::new();
@@ -461,6 +520,9 @@ pub fn execute_dag(
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
         failures: &mut Vec<(usize, String, String)>,
+        test_cache: Option<&TestCache>,
+        fingerprint_by_node: &BTreeMap<usize, String>,
+        cached_test_results: &mut Vec<crate::TestResult>,
     ) -> usize {
         if cancelled[id] {
             *finished += 1;
@@ -501,6 +563,9 @@ pub fn execute_dag(
                         cache_managers,
                         cache_ctx,
                         failures,
+                        test_cache,
+                        fingerprint_by_node,
+                        cached_test_results,
                     );
                 }
                 submitted
@@ -519,6 +584,194 @@ pub fn execute_dag(
                 // the controlling terminal).
                 interactive_queue.push(id);
                 0
+            }
+            Some(WorkPayload::Test { test_name, should_fail, .. }) => {
+                // Phase 5: test-result cache lookup.
+                // Check the content-addressed test cache before submitting to
+                // the pool. On a hit, synthesize TestStarted + TestPassed
+                // (cached=true) events and mark the node done without dispatch.
+                if let Some(tc) = test_cache {
+                    if let Some(fp) = fingerprint_by_node.get(&id) {
+                        if let Some(entry) = tc.lookup(fp) {
+                            // Cache hit — synthesize events and skip execution.
+                            ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                            let test_id = crate::id::parse_test_id(&format!(
+                                "{}:{}",
+                                work_node.recipe_name,
+                                test_name,
+                            ));
+                            let duration = std::time::Duration::from_secs_f64(entry.duration_secs);
+                            emit(event_tx, EngineEvent::TestStarted {
+                                id: test_id.clone(),
+                                recipe: work_node.recipe_name.clone(),
+                                name: test_name.clone(),
+                            });
+                            emit(event_tx, EngineEvent::TestPassed {
+                                id: test_id.clone(),
+                                duration,
+                                cached: true,
+                                stdout: entry.stdout.clone(),
+                                stderr: entry.stderr.clone(),
+                            });
+                            // Emit NodeCompleted so the recipe tracker counts this node.
+                            emit(event_tx, EngineEvent::NodeCompleted {
+                                recipe: work_node.recipe_name.clone(),
+                                node_name: test_name.clone(),
+                                elapsed: duration,
+                                kind: NodeKind::Test,
+                            });
+                            finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
+
+                            let namespace = crate::id::id_namespace(&test_id);
+                            let recipe = crate::id::id_recipe(&test_id);
+                            cached_test_results.push(crate::TestResult {
+                                id: test_id,
+                                namespace,
+                                recipe,
+                                name: test_name.clone(),
+                                suite: work_node.recipe_name.clone(),
+                                iteration_item: None,
+                                outcome: crate::TestOutcome::Passed,
+                                duration,
+                                from_cache: true,
+                                stdout: entry.stdout,
+                                stderr: entry.stderr,
+                                fingerprint: Some(fp.clone()),
+                                blocked_by: None,
+                                should_fail: entry.should_fail_observed,
+                                timed_out: false,
+                            });
+
+                            *finished += 1;
+                            let newly_ready = dag.complete(id);
+                            let mut submitted = 0;
+                            for nid in newly_ready {
+                                submitted += process_ready(
+                                    dag,
+                                    nid,
+                                    pool,
+                                    cancelled,
+                                    finished,
+                                    interactive_queue,
+                                    event_tx,
+                                    trackers,
+                                    cache_managers,
+                                    cache_ctx,
+                                    failures,
+                                    test_cache,
+                                    fingerprint_by_node,
+                                    cached_test_results,
+                                );
+                            }
+                            return submitted;
+                        }
+                    }
+                }
+                // Cache miss (or caching disabled) — fall through to normal dispatch.
+                // Reuse the generic Some(payload) path below.
+                let payload = match &work_node.payload {
+                    Some(p) => p,
+                    None => unreachable!(),
+                };
+                // Check artifact cache before executing (no-op for Test nodes since they
+                // have no cache_meta, but kept for structural symmetry).
+                if check_node_cache(work_node, cache_managers, cache_ctx) {
+                    ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                    emit(
+                        event_tx,
+                        EngineEvent::NodeCacheHit {
+                            recipe: work_node.recipe_name.clone(),
+                            node_name: payload.display_name(),
+                            artifact: work_node.cache_meta.as_ref()
+                                .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
+                        },
+                    );
+                    finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
+
+                    *finished += 1;
+                    let newly_ready = dag.complete(id);
+                    let mut submitted = 0;
+                    for nid in newly_ready {
+                        submitted += process_ready(
+                            dag,
+                            nid,
+                            pool,
+                            cancelled,
+                            finished,
+                            interactive_queue,
+                            event_tx,
+                            trackers,
+                            cache_managers,
+                            cache_ctx,
+                            failures,
+                            test_cache,
+                            fingerprint_by_node,
+                            cached_test_results,
+                        );
+                    }
+                    return submitted;
+                }
+
+                ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                emit(
+                    event_tx,
+                    EngineEvent::NodeStarted {
+                        recipe: work_node.recipe_name.clone(),
+                        node_name: payload.display_name(),
+                        artifact: work_node.cache_meta.as_ref()
+                            .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
+                        fallback_label: payload.display_name(),
+                        kind: node_kind_for_payload(payload),
+                    },
+                );
+                // Emit TestStarted for this test-step node.
+                emit(
+                    event_tx,
+                    EngineEvent::TestStarted {
+                        id: crate::id::parse_test_id(&format!(
+                            "{}:{}",
+                            work_node.recipe_name,
+                            test_name,
+                        )),
+                        recipe: work_node.recipe_name.clone(),
+                        name: test_name.clone(),
+                    },
+                );
+
+                // CS-0050: ensure parent dirs for cook-step outputs.
+                // Test nodes have no cache_meta, so this is a no-op.
+                if let Err(err_msg) = ensure_output_parent_dirs(work_node) {
+                    emit(
+                        event_tx,
+                        EngineEvent::NodeFailed {
+                            recipe: work_node.recipe_name.clone(),
+                            node_name: payload.display_name(),
+                            elapsed: std::time::Duration::ZERO,
+                            error: err_msg.clone(),
+                        },
+                    );
+                    failures.push((id, work_node.recipe_name.clone(), err_msg));
+                    finish_recipe_node(trackers, &work_node.recipe_name, false, true, event_tx);
+                    *finished += 1;
+                    let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
+                    for dep_id in dependents {
+                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name());
+                    }
+                    return 0;
+                }
+
+                let env_vars_hashmap: std::collections::HashMap<String, String> =
+                    work_node.env_vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let _ = should_fail; // used in the TestPassed path via TestOutput
+                pool.submit(WorkItem {
+                    id,
+                    payload: payload.clone(),
+                    recipe_name: work_node.recipe_name.clone(),
+                    working_dir: work_node.working_dir.clone(),
+                    env_vars: env_vars_hashmap,
+                    project_root: cache_ctx.project_root.clone(),
+                });
+                1
             }
             Some(payload) => {
                 // Check cache before executing
@@ -551,6 +804,9 @@ pub fn execute_dag(
                             cache_managers,
                             cache_ctx,
                             failures,
+                            test_cache,
+                            fingerprint_by_node,
+                            cached_test_results,
                         );
                     }
                     return submitted;
@@ -659,6 +915,9 @@ pub fn execute_dag(
             &cache_managers,
             &cache_ctx,
             &mut failures,
+            test_cache,
+            fingerprint_by_node,
+            &mut cached_test_results,
         );
     }
 
@@ -909,6 +1168,9 @@ pub fn execute_dag(
                             &cache_managers,
                             &cache_ctx,
                             &mut failures,
+                            test_cache,
+                            fingerprint_by_node,
+                            &mut cached_test_results,
                         );
                     }
                 }
@@ -1293,6 +1555,9 @@ pub fn execute_dag(
                                 &cache_managers,
                                 &cache_ctx,
                                 &mut failures,
+                                test_cache,
+                                fingerprint_by_node,
+                                &mut cached_test_results,
                             );
                         }
                     } else {
@@ -1554,6 +1819,9 @@ pub fn execute_dag(
                 let namespace = crate::id::id_namespace(&id);
                 let recipe = crate::id::id_recipe(&id);
                 let duration = Duration::from_secs_f64(to.duration);
+                // Look up the pre-computed fingerprint for this node so we can
+                // populate TestResult.fingerprint and write the cache entry.
+                let fp_opt = fingerprint_by_node.get(&result.id).cloned();
                 emit(
                     &event_tx,
                     EngineEvent::TestPassed {
@@ -1574,13 +1842,30 @@ pub fn execute_dag(
                     outcome: crate::TestOutcome::Passed,
                     duration,
                     from_cache: false,
-                    stdout: to.stdout,
-                    stderr: to.stderr,
-                    fingerprint: None,
+                    stdout: to.stdout.clone(),
+                    stderr: to.stderr.clone(),
+                    fingerprint: fp_opt.clone(),
                     blocked_by: None,
                     should_fail: to.should_fail,
                     timed_out: false,
                 });
+
+                // Write passing test result to the content-addressed cache.
+                if let (Some(tc), Some(fp)) = (test_cache, fp_opt) {
+                    let entry = TestCacheEntry {
+                        schema_version: 1,
+                        fingerprint: fp.clone(),
+                        outcome: TestCacheOutcome::Passed,
+                        stdout: to.stdout.clone(),
+                        stderr: to.stderr.clone(),
+                        duration_secs: to.duration,
+                        should_fail_observed: to.should_fail,
+                        recorded_at: iso8601_now(),
+                    };
+                    if let Err(e) = tc.store(&fp, &entry) {
+                        tracing::warn!("test cache write failed for {fp}: {e}");
+                    }
+                }
             }
 
             let newly_ready = dag.complete(result.id);
@@ -1597,6 +1882,9 @@ pub fn execute_dag(
                     &cache_managers,
                     &cache_ctx,
                     &mut failures,
+                    test_cache,
+                    fingerprint_by_node,
+                    &mut cached_test_results,
                 );
             }
         } else {
@@ -1710,6 +1998,9 @@ pub fn execute_dag(
                         &cache_managers,
                         &cache_ctx,
                         &mut failures,
+                        test_cache,
+                        fingerprint_by_node,
+                        &mut cached_test_results,
                     );
                 }
             } else {
@@ -1749,7 +2040,11 @@ pub fn execute_dag(
     }
 
     if failures.is_empty() {
-        Ok(test_results)
+        // Merge cached_test_results (from test cache hits synthesized during
+        // process_ready) with test_results (from actual executions).
+        let mut all = cached_test_results;
+        all.extend(test_results);
+        Ok(all)
     } else {
         Err(EngineError::TaskFailures {
             count: failures.len(),
@@ -1826,7 +2121,7 @@ mod tests {
         let mut dag = Dag::new();
         dag.add_node(work_node(shell("true"), "single", wd), &[]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -1846,7 +2141,7 @@ mod tests {
             &[a],
         ).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -1868,7 +2163,7 @@ mod tests {
             &[a],
         ).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         assert!(result.is_err());
         match result.unwrap_err() {
             EngineError::TaskFailures { failures, .. } => {
@@ -1894,7 +2189,7 @@ mod tests {
         }
 
         let start = std::time::Instant::now();
-        let result = execute_dag(dag, 4, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 4, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         let elapsed = start.elapsed();
 
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -1912,7 +2207,7 @@ mod tests {
         let (_wd, _tmp) = tmp_dir();
         let cache_ctx = make_cache_ctx(&_tmp);
         let dag: Dag<WorkNode> = Dag::new();
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok());
     }
 
@@ -1927,7 +2222,7 @@ mod tests {
         let b = dag.add_node(presatisfied_node("cached_b", wd.clone()), &[a]).unwrap();
         dag.add_node(work_node(shell("true"), "real_work", wd), &[b]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -1943,7 +2238,7 @@ mod tests {
         // B is independent, should succeed
         dag.add_node(work_node(shell("true"), "ok_b", wd), &[]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         assert!(result.is_err());
         match result.unwrap_err() {
             EngineError::TaskFailures { failures, .. } => {
@@ -1976,7 +2271,7 @@ mod tests {
             &[a],
         ).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -2005,7 +2300,7 @@ mod tests {
         );
 
         let (tx, rx) = mpsc::channel::<EngineEvent>();
-        let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx);
+        let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
         let mut got_stdout = false;
@@ -2082,7 +2377,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
         let out = wd.join("build/out/foo.txt");
@@ -2116,7 +2411,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         let err = result.expect_err("expected failure when parent is a regular file");
         match err {
             EngineError::TaskFailures { failures, .. } => {
@@ -2169,7 +2464,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
         assert!(wd.join("build/foo.txt").exists());
     }
@@ -2215,7 +2510,7 @@ mod tests {
             &[b]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx);
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok(), "got: {result:?}");
 
         let events: Vec<_> = rx.try_iter().collect();
@@ -2268,7 +2563,7 @@ mod tests {
             &[b]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx);
+        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
 
         let events: Vec<_> = rx.try_iter().collect();
         let node_failed: Vec<_> = events.iter().filter(|e| matches!(e, EngineEvent::NodeFailed { .. })).collect();
@@ -2308,7 +2603,7 @@ mod tests {
             &[]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx);
+        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
 
         let events: Vec<_> = rx.try_iter().collect();
         let starts = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveStart { .. })).count();
@@ -2361,7 +2656,7 @@ mod tests {
             &[b]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx);
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok(), "got: {result:?}");
 
         let events: Vec<_> = rx.try_iter().collect();
@@ -2416,7 +2711,7 @@ mod tests {
             &[a]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx);
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok(), "got: {result:?}");
 
         let events: Vec<_> = rx.try_iter().collect();
@@ -2456,7 +2751,7 @@ mod tests {
                 "regular_lua", wd),
             &[]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new());
         assert!(result.is_ok(), "got: {result:?}");
     }
 }
