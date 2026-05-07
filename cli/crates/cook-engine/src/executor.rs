@@ -336,30 +336,51 @@ pub fn execute_dag(
     }
 
     // ----- helper: cancel a node and all its transitive dependents -----
+    //
+    // `upstream_name` is the name of the failing node that triggered this
+    // cancellation — used to populate TestBlocked.upstream for test-step nodes.
+    //
+    // TODO(Phase 4/5): also push a crate::TestResult { outcome: Blocked } for
+    // each cancelled test node. Currently blocked by the fact that cancel_subtree
+    // is a nested fn without direct access to the outer test_results Vec.
+    // The TestBlocked event is emitted so Phase 4 reporters can track it.
     fn cancel_subtree(
         dag: &Dag<WorkNode>,
         node_id: usize,
         cancelled: &mut Vec<bool>,
         event_tx: &Option<mpsc::Sender<EngineEvent>>,
         trackers: &mut BTreeMap<String, RecipeTracker>,
+        upstream_name: &str,
     ) {
         if cancelled[node_id] {
             return;
         }
         cancelled[node_id] = true;
         let node = dag.node(node_id);
+        let node_name = node
+            .payload()
+            .payload
+            .as_ref()
+            .map(|p| p.display_name())
+            .unwrap_or_else(|| node.payload().recipe_name.clone());
         emit(
             event_tx,
             EngineEvent::NodeSkipped {
                 recipe: node.payload().recipe_name.clone(),
-                node_name: node
-                    .payload()
-                    .payload
-                    .as_ref()
-                    .map(|p| p.display_name())
-                    .unwrap_or_else(|| node.payload().recipe_name.clone()),
+                node_name: node_name.clone(),
             },
         );
+        // Emit TestBlocked for test-step nodes whose upstream cook step failed.
+        if matches!(node.payload().payload, Some(WorkPayload::Test { .. })) {
+            let test_id = crate::id::parse_test_id(&node_name);
+            emit(
+                event_tx,
+                EngineEvent::TestBlocked {
+                    id: test_id,
+                    upstream: upstream_name.to_string(),
+                },
+            );
+        }
         finish_recipe_node(
             trackers,
             &node.payload().recipe_name,
@@ -368,7 +389,7 @@ pub fn execute_dag(
             event_tx,
         );
         for &dep_id in dag.node(node_id).dependents() {
-            cancel_subtree(dag, dep_id, cancelled, event_tx, trackers);
+            cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &node_name);
         }
     }
 
@@ -547,6 +568,23 @@ pub fn execute_dag(
                         kind: node_kind_for_payload(payload),
                     },
                 );
+                // Emit TestStarted for test-step nodes so Phase 4 reporters can
+                // track in-flight tests.
+                if let WorkPayload::Test { test_name, .. } = payload {
+                    let test_id = crate::id::parse_test_id(&format!(
+                        "{}:{}",
+                        work_node.recipe_name,
+                        test_name
+                    ));
+                    emit(
+                        event_tx,
+                        EngineEvent::TestStarted {
+                            id: test_id,
+                            recipe: work_node.recipe_name.clone(),
+                            name: test_name.clone(),
+                        },
+                    );
+                }
 
                 // CS-0050: ensure parent directories of declared cook-step
                 // outputs exist before the shell text runs. No-op for
@@ -575,7 +613,7 @@ pub fn execute_dag(
                     *finished += 1;
                     let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
                     for dep_id in dependents {
-                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers);
+                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name());
                     }
                     return 0;
                 }
@@ -969,6 +1007,7 @@ pub fn execute_dag(
                                 &mut cancelled,
                                 &event_tx,
                                 &mut recipe_trackers,
+                                &chore_recipe,
                             );
                         }
                     }
@@ -1282,6 +1321,7 @@ pub fn execute_dag(
                                 &mut cancelled,
                                 &event_tx,
                                 &mut recipe_trackers,
+                                &node_name,
                             );
                         }
                     }
@@ -1640,6 +1680,7 @@ pub fn execute_dag(
                     &mut cancelled,
                     &event_tx,
                     &mut recipe_trackers,
+                    &result.node_name,
                 );
             }
         }
