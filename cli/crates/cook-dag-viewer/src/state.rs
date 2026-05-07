@@ -642,20 +642,22 @@ impl AppState {
         }
     }
 
-    fn visible_rows(&self) -> Vec<Selection> {
+    pub fn visible_rows(&self) -> Vec<Selection> {
         let mut out = Vec::new();
         for (wi, wave) in self.tree.waves.iter().enumerate() {
             out.push(Selection::wave_only(wi));
             if !wave.expanded {
                 continue;
             }
-            // Files folder appears above recipes when the wave has any files.
-            // The folder header itself is not a selectable row — only its
-            // children are. Pressing l on the wave row toggles
-            // files_expanded via expand_or_step_in (Step 4).
-            if !wave.files.is_empty() && wave.files_expanded {
-                for fi in 0..wave.files.len() {
-                    out.push(Selection::file(wi, fi));
+            // Files folder header is selectable whenever the wave has any files.
+            // Its presence in visible_rows does not depend on files_expanded;
+            // only whether the file leaf rows below it are present does.
+            if !wave.files.is_empty() {
+                out.push(Selection::files_folder(wi));
+                if wave.files_expanded {
+                    for fi in 0..wave.files.len() {
+                        out.push(Selection::file(wi, fi));
+                    }
                 }
             }
             for (ri, recipe) in wave.recipes.iter().enumerate() {
@@ -1143,9 +1145,12 @@ mod tests {
         app.tree.waves[0].files_expanded = true;
         // Visible rows in order:
         //   wave_only(0)
+        //   files_folder(0)
         //   file(0, 0)            ← foo.cpp
         //   recipe(0, 0)
         assert_eq!(app.selection, Selection::wave_only(0));
+        app.move_cursor(false);
+        assert_eq!(app.selection, Selection::files_folder(0));
         app.move_cursor(false);
         assert_eq!(app.selection, Selection::file(0, 0));
         app.move_cursor(false);
@@ -1205,5 +1210,46 @@ mod tests {
         let g = graph_with_files();
         let app = AppState::new(&g);
         assert_eq!(Selection::files_folder(0).node_id(&app.tree), None);
+    }
+
+    #[test]
+    fn visible_rows_includes_files_folder_when_wave_expanded_and_has_files() {
+        let g = graph_with_files();
+        let app = AppState::new(&g);
+        // graph_with_files() has wave 0 with one file (foo.cpp) and one unit.
+        // Wave 0 is expanded by default. files_expanded is false by default.
+        let rows = app.visible_rows();
+        // Expected order:
+        //   wave_only(0)
+        //   files_folder(0)            ← new: present even when files collapsed
+        //   recipe(0, 0)
+        assert_eq!(rows[0], Selection::wave_only(0));
+        assert_eq!(rows[1], Selection::files_folder(0));
+        assert_eq!(rows[2], Selection::recipe(0, 0));
+    }
+
+    #[test]
+    fn visible_rows_omits_files_folder_when_wave_has_no_files() {
+        let g = graph_2x2(); // no files in either wave
+        let app = AppState::new(&g);
+        let rows = app.visible_rows();
+        // Wave 0 expanded, two recipes collapsed, then wave 1 collapsed.
+        assert_eq!(rows[0], Selection::wave_only(0));
+        assert_eq!(rows[1], Selection::recipe(0, 0));
+        assert_eq!(rows[2], Selection::recipe(0, 1));
+        assert_eq!(rows[3], Selection::wave_only(1));
+        assert!(!rows.iter().any(|s| matches!(s.leaf, Some(SelectionLeaf::FilesFolder))));
+    }
+
+    #[test]
+    fn move_cursor_lands_on_files_folder_after_wave() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        assert_eq!(app.selection, Selection::wave_only(0));
+        app.move_cursor(false);
+        assert_eq!(app.selection, Selection::files_folder(0));
+        app.move_cursor(false);
+        // files_expanded is still false, so next row is the recipe.
+        assert_eq!(app.selection, Selection::recipe(0, 0));
     }
 }
