@@ -7,7 +7,10 @@ use std::path::PathBuf;
 #[derive(Debug)]
 pub enum PullError {
     /// HTTP / network failure during archive fetch.
-    Network { url: String, source: String },
+    Network {
+        url: String,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
     /// Trust not established and the caller could not prompt.
     TrustRefused { url: String },
     /// Module name was not present under `modules/<name>/` in the archive.
@@ -81,7 +84,15 @@ impl fmt::Display for PullError {
     }
 }
 
-impl std::error::Error for PullError {}
+impl std::error::Error for PullError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PullError::Io { source, .. } => Some(source),
+            PullError::Network { source, .. } => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -92,7 +103,7 @@ mod tests {
         assert_eq!(
             PullError::Network {
                 url: "u".into(),
-                source: "s".into()
+                source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "s")),
             }
             .exit_code(),
             1
@@ -118,13 +129,36 @@ mod tests {
             .exit_code(),
             64
         );
+        assert_eq!(
+            PullError::BadArchive { reason: "x".into() }.exit_code(),
+            1
+        );
+        assert_eq!(
+            PullError::Io {
+                context: "ctx".into(),
+                source: std::io::Error::new(std::io::ErrorKind::Other, "x"),
+            }
+            .exit_code(),
+            1
+        );
+        assert_eq!(
+            PullError::BadConfig {
+                path: std::path::PathBuf::from("/x"),
+                reason: "x".into(),
+            }
+            .exit_code(),
+            1
+        );
     }
 
     #[test]
     fn display_includes_url_in_network_error() {
         let e = PullError::Network {
             url: "https://example.test".into(),
-            source: "timeout".into(),
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "timeout",
+            )),
         };
         let s = format!("{e}");
         assert!(s.contains("https://example.test"));
