@@ -607,6 +607,8 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
             cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
                 CookError::RecipeNotFound(name)
             }
+            // Io/Parse cannot be produced by topological_sort (pure graph op).
+            e => CookError::Other(e.to_string()),
         })?;
 
     let globs = CookWatcher::collect_globs_for_recipes(&parsed.cookfile, &order);

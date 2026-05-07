@@ -274,6 +274,75 @@ fn connected(graph: &BTreeMap<String, BTreeSet<String>>, a: &str, b: &str) -> bo
     false
 }
 
+/// Compute the minimal set of unit indices required to execute every test
+/// unit in `units`. Test units themselves are always included; non-test units
+/// (cook/shell/lua) are included only if at least one test (transitively)
+/// depends on them via `dep_edges`.
+///
+/// `dep_edges` is a slice of `(unit_index, output_path)` tuples meaning:
+/// "unit at `unit_index` depends on the output at `output_path`". A
+/// non-test unit that produces `output_path` is pulled into the slice.
+///
+/// Phase 3 of the runner pipeline per
+/// docs/superpowers/specs/2026-05-07-test-runner-design.md §4.3.
+pub fn build_test_slice(
+    units: &[cook_contracts::CapturedUnit],
+    dep_edges: &[(usize, String)],
+) -> Vec<usize> {
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
+    use cook_contracts::WorkPayload;
+
+    // Build output_path -> producing unit index from LuaChunk outputs and
+    // CacheMeta output_paths (both can declare outputs).
+    let mut producer_by_output: BTreeMap<String, usize> = BTreeMap::new();
+    for (i, u) in units.iter().enumerate() {
+        match &u.payload {
+            WorkPayload::LuaChunk { outputs, .. } => {
+                for out in outputs {
+                    producer_by_output.insert(out.clone(), i);
+                }
+            }
+            _ => {}
+        }
+        // Also index CacheMeta output_paths (covers shell/cook steps with cache info).
+        if let Some(meta) = &u.cache_meta {
+            for out in &meta.output_paths {
+                producer_by_output.insert(out.clone(), i);
+            }
+        }
+    }
+
+    // BFS backward from every test unit, following dep_edges.
+    let mut visited: BTreeSet<usize> = BTreeSet::new();
+    let mut queue: VecDeque<usize> = units
+        .iter()
+        .enumerate()
+        .filter(|(_, u)| matches!(u.payload, WorkPayload::Test { .. }))
+        .map(|(i, _)| i)
+        .collect();
+
+    while let Some(id) = queue.pop_front() {
+        if !visited.insert(id) {
+            continue;
+        }
+        // Find all dep_edges for this unit and enqueue their producers.
+        for (uid, dep_output) in dep_edges {
+            if *uid != id {
+                continue;
+            }
+            if let Some(&producer) = producer_by_output.get(dep_output) {
+                if !visited.contains(&producer) {
+                    queue.push_back(producer);
+                }
+            }
+        }
+    }
+
+    let mut slice: Vec<usize> = visited.into_iter().collect();
+    slice.sort();
+    slice
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -678,5 +747,102 @@ mod tests {
         };
         let dag = build_dag(vec![a, b]).expect("distinct outputs OK");
         assert_eq!(dag.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod test_slice_tests {
+    use super::*;
+    use cook_contracts::{CapturedUnit, DepKind, StepKind, WorkPayload};
+    use std::collections::BTreeSet;
+
+    /// Build a LuaChunk unit that declares the given output paths.
+    /// Used as the "cook step" stand-in since WorkPayload has no Cook variant;
+    /// LuaChunk is the payload emitted for declarative cook steps.
+    fn mk_cook(outputs: &[&str]) -> CapturedUnit {
+        CapturedUnit {
+            payload: WorkPayload::LuaChunk {
+                code: "cook.sh(\"echo > \" .. output)".into(),
+                inputs: vec![],
+                outputs: outputs.iter().map(|s| s.to_string()).collect(),
+                ingredient_groups: vec![],
+                step_kind: StepKind::Cook,
+                is_chore: false,
+            },
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+        }
+    }
+
+    fn mk_test() -> CapturedUnit {
+        CapturedUnit {
+            payload: WorkPayload::Test {
+                cmd: "true".into(),
+                line: 1,
+                timeout: 30,
+                should_fail: false,
+                suite_name: "r".into(),
+                test_name: "t".into(),
+            },
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+        }
+    }
+
+    #[test]
+    fn build_test_slice_excludes_unrelated_cook_units() {
+        // Units:
+        //   #0: cook produces "needed.bin"  (test #2 depends on this)
+        //   #1: cook produces "unrelated.bin" (no test depends)
+        //   #2: test depends on "needed.bin" via dep_edges
+        //   #3: test (one-shot, no deps)
+        let units = vec![
+            mk_cook(&["needed.bin"]),
+            mk_cook(&["unrelated.bin"]),
+            mk_test(),
+            mk_test(),
+        ];
+        let dep_edges = vec![(2usize, "needed.bin".to_string())];
+
+        let slice = build_test_slice(&units, &dep_edges);
+        let s: BTreeSet<_> = slice.iter().copied().collect();
+        assert!(s.contains(&0), "cook needed by a test must be in slice");
+        assert!(s.contains(&2), "test units always in slice");
+        assert!(s.contains(&3), "one-shot test always in slice");
+        assert!(!s.contains(&1), "unrelated cook must be excluded");
+    }
+
+    #[test]
+    fn build_test_slice_handles_transitive_deps() {
+        // #0 cook produces "a.out"
+        // #1 cook produces "b.out", depends on "a.out"
+        // #2 test depends on "b.out"
+        let units = vec![
+            mk_cook(&["a.out"]),
+            mk_cook(&["b.out"]),
+            mk_test(),
+        ];
+        let dep_edges = vec![
+            (1usize, "a.out".to_string()),
+            (2usize, "b.out".to_string()),
+        ];
+        let slice = build_test_slice(&units, &dep_edges);
+        assert_eq!(slice.len(), 3, "transitive cook deps must be included; got: {slice:?}");
+    }
+
+    #[test]
+    fn build_test_slice_empty_when_no_tests() {
+        let units = vec![mk_cook(&["x.out"])];
+        let dep_edges = vec![];
+        let slice = build_test_slice(&units, &dep_edges);
+        assert!(slice.is_empty(), "no test units => empty slice");
+    }
+
+    #[test]
+    fn build_test_slice_all_tests_no_deps() {
+        let units = vec![mk_test(), mk_test(), mk_test()];
+        let dep_edges = vec![];
+        let slice = build_test_slice(&units, &dep_edges);
+        assert_eq!(slice, vec![0, 1, 2], "all test units with no deps");
     }
 }
