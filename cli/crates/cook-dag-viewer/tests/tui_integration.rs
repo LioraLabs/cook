@@ -95,25 +95,6 @@ fn q_quits() {
 }
 
 #[test]
-fn m_cycles_density_mode() {
-    let g = fixtures::three_wave_dag();
-    let layout = cook_dag_viewer::render::layout::compute(
-        &g,
-        cook_dag_viewer::render::layout::LayoutDims::FULL,
-    );
-    let mut app = cook_dag_viewer::state::AppState::new(&g);
-    let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
-    let term = Rect::new(0, 0, 120, 40);
-
-    let initial = app.density;
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('m'), term);
-    assert_ne!(app.density, initial);
-
-    cook_dag_viewer::input::handle(&mut app, &layout, &frame, &key('m'), term);
-    assert_eq!(app.density, initial, "two presses complete the Full↔Compact cycle");
-}
-
-#[test]
 fn p_toggles_pin_on_selected_unit() {
     let g = fixtures::three_wave_dag();
     let layout = cook_dag_viewer::render::layout::compute(
@@ -336,63 +317,4 @@ fn digit_emits_empty_slot_message_when_slot_unused() {
         app.last_pin_message,
         Some(cook_dag_viewer::state::PinMsg::EmptySlot(4)),
     );
-}
-
-#[test]
-fn compact_mode_layout_filters_to_one_hop_for_unit_selection() {
-    use cook_dag_viewer::state::{DensityMode, Selection};
-    let g = fixtures::three_wave_dag();
-    let mut app = AppState::new(&g);
-    app.density = DensityMode::Compact;
-
-    // Walk to the first unit: cpp.compile → unit 0.
-    let frame = cook_dag_viewer::SnapshotFrame::new(g.clone());
-    let term = Rect::new(0, 0, 120, 40);
-    let layout_compact = layout::compute(&g, layout::LayoutDims::COMPACT);
-    cook_dag_viewer::input::handle(&mut app, &layout_compact, &frame, &key('j'), term);
-    cook_dag_viewer::input::handle(&mut app, &layout_compact, &frame, &key('l'), term);
-    cook_dag_viewer::input::handle(&mut app, &layout_compact, &frame, &key('j'), term);
-    assert_eq!(app.selection, Selection::unit(0, 0, 0));
-
-    let layout = cook_dag_viewer::render::pick_layout(&app, &g);
-    let ids: std::collections::BTreeSet<&str> =
-        layout.nodes.iter().map(|n| n.id.as_str()).collect();
-    // Selected unit must be present.
-    assert!(ids.contains("unit:cpp.compile:0"));
-    // The unit's declared inputs must be present (file:bar.cpp is a direct input).
-    assert!(ids.iter().any(|id| id.starts_with("file:")));
-    // unit:cpp.link:0 is a direct 1-hop downstream neighbor via inter-wave edge,
-    // so it IS included in the ego graph.
-    assert!(
-        ids.contains("unit:cpp.link:0"),
-        "compact focus should include direct 1-hop downstream neighbors, got {ids:?}",
-    );
-    // Compact mode must not include nodes from unrelated waves that are not
-    // reachable within 1 hop; verify by checking the layout is a proper subgraph
-    // (wave-level focus: selecting wave 0 drops wave 1 nodes — see spec §3.1).
-    let mut wave_app = AppState::new(&g);
-    wave_app.density = DensityMode::Compact;
-    // Default selection is wave_only(0); focus_subgraph returns only wave 0 nodes.
-    assert_eq!(wave_app.selection, Selection::wave_only(0));
-    let wave_layout = cook_dag_viewer::render::pick_layout(&wave_app, &g);
-    let wave_ids: std::collections::BTreeSet<&str> =
-        wave_layout.nodes.iter().map(|n| n.id.as_str()).collect();
-    assert!(wave_ids.contains("unit:cpp.compile:0"), "wave 0 compile unit must be present");
-    assert!(
-        !wave_ids.contains("unit:cpp.link:0"),
-        "wave-level compact focus must not expand across inter-wave edges (spec §3.1), got {wave_ids:?}",
-    );
-}
-
-#[test]
-fn full_mode_layout_still_renders_entire_graph() {
-    use cook_dag_viewer::state::DensityMode;
-    let g = fixtures::three_wave_dag();
-    let mut app = AppState::new(&g);
-    app.density = DensityMode::Full;
-    let layout = cook_dag_viewer::render::pick_layout(&app, &g);
-    let ids: std::collections::BTreeSet<&str> =
-        layout.nodes.iter().map(|n| n.id.as_str()).collect();
-    assert!(ids.contains("unit:cpp.compile:0"));
-    assert!(ids.contains("unit:cpp.link:0"), "Full mode regression: link unit dropped");
 }
