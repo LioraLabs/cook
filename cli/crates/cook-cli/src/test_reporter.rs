@@ -95,7 +95,8 @@ impl Reporter {
             println!();
             println!("Failures:");
             for r in &failures {
-                println!("  {} > {}", recipe_of(&r.id), r.name);
+                let display_name = if r.name.is_empty() { "(unnamed)" } else { r.name.as_str() };
+                println!("  {} > {}", recipe_of(&r.id), display_name);
                 if !r.stdout.is_empty() {
                     for line in r.stdout.lines().take(20) {
                         println!("    {}", line);
@@ -118,8 +119,9 @@ impl Reporter {
         if !blocked.is_empty() {
             println!("Blocked:");
             for r in &blocked {
+                let display_name = if r.name.is_empty() { "(unnamed)" } else { r.name.as_str() };
                 let cause = r.blocked_by.as_deref().unwrap_or("upstream cook step");
-                println!("  {} > {}  (build failed: {})", recipe_of(&r.id), r.name, cause);
+                println!("  {} > {}  (build failed: {})", recipe_of(&r.id), display_name, cause);
             }
             println!();
         }
