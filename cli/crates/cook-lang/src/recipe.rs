@@ -240,6 +240,31 @@ fn parse_test_modifier_tail(line_text: &str, line: usize) -> Result<TestModifier
     Ok(TestModifierTail { as_name, timeout, should_fail })
 }
 
+/// Check that no `as` modifier follows the closing `}` of a cook or plate
+/// step body.  Returns an error if `as` is found; the modifier is only valid
+/// on `test_step` (CS-0061 §3.1.3).
+fn reject_as_modifier_on_non_test(
+    line_text: &str,
+    step_keyword: &str,
+    line: usize,
+) -> Result<(), ParseError> {
+    let suffix = match line_text.rfind('}') {
+        Some(idx) => &line_text[idx + 1..],
+        None => "",
+    };
+    let trimmed = suffix.trim();
+    if trimmed.starts_with("as") && (trimmed.len() == 2 || trimmed[2..].starts_with(|c: char| c.is_whitespace() || c == '\'')) {
+        return Err(ParseError::Parse {
+            line,
+            message: format!(
+                "{}: modifier `as` is only valid on test_step (CS-0061 §3.1.3)",
+                step_keyword
+            ),
+        });
+    }
+    Ok(())
+}
+
 pub(crate) fn parse_recipe(
     name: String,
     deps: Vec<String>,
@@ -313,6 +338,16 @@ pub(crate) fn parse_recipe(
                     }
                     let (cook_step, new_pos) =
                         parse_cook_line(rest, tok.line, tokens, pos, source_lines)?;
+                    // Reject `as` modifier on cook_step (CS-0061 §3.1.3).
+                    let close_line_text = if new_pos > 0 {
+                        match tokens.get(new_pos - 1) {
+                            Some(t) => source_lines.get(t.line.saturating_sub(1)).copied().unwrap_or(""),
+                            None => "",
+                        }
+                    } else {
+                        source_lines.get(tok.line.saturating_sub(1)).copied().unwrap_or("")
+                    };
+                    reject_as_modifier_on_non_test(close_line_text, "cook", tok.line)?;
                     steps.push(Step::Cook {
                         step: cook_step,
                         line: tok.line,
@@ -326,6 +361,16 @@ pub(crate) fn parse_recipe(
                     let (body, new_pos) = crate::cook_line::parse_body_payload(
                         rest, tok.line, tokens, pos, source_lines, "plate",
                     )?;
+                    // Reject `as` modifier on plate_step (CS-0061 §3.1.3).
+                    let close_line_text = if new_pos > 0 {
+                        match tokens.get(new_pos - 1) {
+                            Some(t) => source_lines.get(t.line.saturating_sub(1)).copied().unwrap_or(""),
+                            None => "",
+                        }
+                    } else {
+                        source_lines.get(tok.line.saturating_sub(1)).copied().unwrap_or("")
+                    };
+                    reject_as_modifier_on_non_test(close_line_text, "plate", tok.line)?;
                     steps.push(Step::Plate {
                         step: PlateStep { body },
                         line: tok.line,

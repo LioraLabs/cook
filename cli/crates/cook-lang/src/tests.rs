@@ -1244,6 +1244,31 @@ recipe emit
     }
 }
 
+// ── Task 2.4: `as` rejected on cook_step and plate_step ───────────
+
+#[test]
+fn test_as_rejected_on_cook_step() {
+    let src = r#"
+recipe r
+    cook "out.txt" using { echo > $<out> } as 'foo'
+"#;
+    let err = parse(src).expect_err("must reject");
+    let msg = err.to_string();
+    assert!(msg.contains("`as`"));
+    assert!(msg.contains("test_step") || msg.contains("test-step") || msg.contains("test"));
+}
+
+#[test]
+fn test_as_rejected_on_plate_step() {
+    let src = r#"
+recipe r
+    cook "out.txt" using { echo > $<out> }
+    plate { cp $<in> /tmp } as 'foo'
+"#;
+    let err = parse(src).expect_err("must reject");
+    assert!(err.to_string().contains("`as`"));
+}
+
 // ── Task 2.3: out-of-order modifier rejection ─────────────────────
 
 #[test]

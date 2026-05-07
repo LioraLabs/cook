@@ -147,6 +147,8 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
 
 **Plate/test source presence (CS-0024).** A `plate_step` or `test_step` in one-to-one or many-to-one mode MUST have a non-empty iteration source — that is, the recipe must contain a preceding `cook_step` whose output list is non-empty, or an `ingredients_step` whose resolved path list is non-empty. A conforming implementation MUST reject a `plate_step` or `test_step` whose mode requires source consultation but whose recipe provides none. A `plate_step` or `test_step` in one-shot mode does not consult the source and MAY appear in a recipe with neither.
 
+**`as` modifier is test_step-only (CS-0061).** The `as STRING` modifier is syntactically valid only on `test_step`. A conforming implementation MUST reject `as` appearing after the body of a `cook_step` or `plate_step`, with a diagnostic naming the modifier and identifying it as `test_step`-only.
+
 **`using >>{` is rejected.** A `using_clause` MUST NOT use the `>>{` (register-phase Lua block) prefix. The using clause produces work for execute, not register-phase orchestration; a register-phase Lua block in this position is incoherent. A conforming implementation MUST reject `cook STR using >>{ … }`.
 
 **`using` dispatch order (normative).** After the keyword `using`, a conforming implementation checks in this order: `>>{` (rejected as above), `>{` (Lua block), `{` (shell block). The `>>{` test is present so the diagnostic for the rejected form is sharp; the first matching admitted alternative wins for the others. The bare-`STRING` form is no longer admitted (CS-0022).
