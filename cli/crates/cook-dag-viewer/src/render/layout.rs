@@ -415,10 +415,12 @@ fn canvas_height(order: &BTreeMap<usize, Vec<String>>, dims: LayoutDims) -> u16 
 }
 
 /// Stitch the polyline for an original edge by walking the chain of
-/// real-and-dummy nodes between its endpoints. Source and target anchor
-/// on the right and left edges of their boxes; dummies are passed through
-/// at their centres. Mid-x bends are inserted between control points
-/// whose y-coordinate differs, keeping every segment orthogonal.
+/// real-and-dummy nodes between its endpoints. Source anchors on its
+/// right edge, target anchors on its left edge, and each dummy
+/// contributes BOTH its left-edge and right-edge anchors so the
+/// traversal across the dummy's column is a clean horizontal step.
+/// Mid-x bends only appear in the gap *between* columns, never inside
+/// one — that keeps multi-tier edges from cutting through real nodes.
 fn route_chain(
     chain: &[String],
     positions: &BTreeMap<String, (u16, u16)>,
@@ -428,12 +430,14 @@ fn route_chain(
         return None;
     }
 
-    let mut controls: Vec<(u16, u16)> = Vec::with_capacity(chain.len());
+    let mut controls: Vec<(u16, u16)> = Vec::with_capacity(chain.len() * 2);
     let from_pos = positions.get(&chain[0]).copied()?;
     controls.push((from_pos.0 + dims.node_w, from_pos.1 + dims.node_h / 2));
     for id in &chain[1..chain.len() - 1] {
         let (x, y) = positions.get(id).copied()?;
-        controls.push((x + dims.node_w / 2, y + dims.node_h / 2));
+        let row_y = y + dims.node_h / 2;
+        controls.push((x, row_y));
+        controls.push((x + dims.node_w, row_y));
     }
     let to_pos = positions.get(&chain[chain.len() - 1]).copied()?;
     controls.push((to_pos.0, to_pos.1 + dims.node_h / 2));
@@ -645,6 +649,66 @@ mod tests {
             f1_first, y0_first,
             "barycenter should align file order with unit order to remove crossings",
         );
+    }
+
+    #[test]
+    fn multi_tier_edge_bends_in_gaps_not_inside_a_layer_column() {
+        // file:in spans 2 layers to unit:r:1, with unit:r:0 occupying
+        // layer 1 row 0 in the same column the dummy passes through.
+        // The polyline must not cross unit:r:0's bounding box: every
+        // bend must sit in the gap between two columns, never inside
+        // the [layer_x, layer_x + node_w) span of any layer.
+        let g = WaveDagData {
+            schema_version: crate::VIEWER_SCHEMA_VERSION,
+            target: "build".into(),
+            waves: vec![WaveData {
+                recipes: vec!["r".into()],
+                nodes: vec![
+                    file("file:in", "in"),
+                    unit("unit:r:0", "r", "a"),
+                    unit("unit:r:1", "r", "c"),
+                ],
+                edges: vec![
+                    EdgeData { from: "file:in".into(), to: "unit:r:0".into() },
+                    EdgeData { from: "unit:r:0".into(), to: "unit:r:1".into() },
+                    EdgeData { from: "file:in".into(), to: "unit:r:1".into() },
+                ],
+            }],
+            inter_wave_edges: vec![],
+        };
+        let l = compute(&g, LayoutDims::FULL);
+        let dims = LayoutDims::FULL;
+        let long = l
+            .edges
+            .iter()
+            .find(|e| e.from == "file:in" && e.to == "unit:r:1")
+            .expect("file→unit:r:1 should be routed");
+
+        // Every horizontal segment that doesn't sit on a column anchor
+        // (the source's right edge or target's left edge) must run only
+        // in the gap between layers. A bend point inside a column's
+        // interior is the bug we're guarding against.
+        let layer_w = dims.layer_width;
+        let node_w = dims.node_w;
+        for &(x, _y) in &long.points {
+            let col = x / layer_w;
+            let col_start = col * layer_w;
+            let col_interior_end = col_start + node_w;
+            // Allow points exactly at column anchors (col_start = left
+            // edge, col_interior_end = right edge). Disallow strictly
+            // interior points unless the point is on a dummy's row.
+            // Dummies don't render, so an interior point at a dummy's
+            // y is fine — but we use the simpler test that ALL points
+            // must land at a column edge or in the gap.
+            let in_gap = x >= col_interior_end || x == col_start;
+            assert!(
+                in_gap,
+                "polyline point ({x}, _) sits inside layer-{col} column \
+                 ({col_start}..{col_interior_end}); bends must go in gaps. \
+                 Full route: {:?}",
+                long.points,
+            );
+        }
     }
 
     #[test]
