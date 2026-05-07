@@ -324,6 +324,12 @@ fn bridge_engine_to_progress_events(
                 cook_engine::EngineEvent::Finished { success, .. } => {
                     cook_progress::ProgressEvent::Finished { success }
                 }
+                // Phase 4 will wire real progress handlers for test events.
+                cook_engine::EngineEvent::TestStarted { .. }
+                | cook_engine::EngineEvent::TestPassed { .. }
+                | cook_engine::EngineEvent::TestFailed { .. }
+                | cook_engine::EngineEvent::TestBlocked { .. }
+                | cook_engine::EngineEvent::TestTimedOut { .. } => continue,
             };
             let is_finished = matches!(pe, cook_progress::ProgressEvent::Finished { .. });
             let _ = progress_tx.send(pe);

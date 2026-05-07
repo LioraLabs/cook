@@ -219,6 +219,40 @@ pub enum EngineEvent {
         elapsed: Duration,
         success: bool,
     },
+    /// A test unit has started executing.
+    TestStarted {
+        id: TestId,
+        recipe: String,
+        name: String,
+    },
+    /// A test unit passed.
+    TestPassed {
+        id: TestId,
+        duration: std::time::Duration,
+        cached: bool,
+        stdout: String,
+        stderr: String,
+    },
+    /// A test unit failed.
+    TestFailed {
+        id: TestId,
+        duration: std::time::Duration,
+        stdout: String,
+        stderr: String,
+        reason: TestFailureReason,
+    },
+    /// A test unit was blocked because an upstream cook step failed.
+    TestBlocked {
+        id: TestId,
+        upstream: String,
+    },
+    /// A test unit timed out.
+    TestTimedOut {
+        id: TestId,
+        timeout: std::time::Duration,
+        stdout: String,
+        stderr: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
