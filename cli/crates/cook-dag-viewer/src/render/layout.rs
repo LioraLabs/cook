@@ -25,9 +25,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::dag_data::{NodeData, WaveDagData};
 
-/// Geometry preset for one density mode. The renderer picks one of
-/// `LayoutDims::FULL` or `LayoutDims::COMPACT` based on `AppState.density`.
-/// See spec §4.2 / §5.2.
+/// Geometry preset for the layered layout. The renderer always uses
+/// `LayoutDims::FULL`; the type is kept as a struct so the layout
+/// engine remains parameterised on its dimensions for future presets.
 #[derive(Debug, Clone, Copy)]
 pub struct LayoutDims {
     pub layer_width: u16,
@@ -37,8 +37,7 @@ pub struct LayoutDims {
 }
 
 impl LayoutDims {
-    pub const FULL: Self    = Self { layer_width: 32, node_w: 22, node_h: 3, row_pad: 1 };
-    pub const COMPACT: Self = Self { layer_width: 22, node_w: 18, node_h: 1, row_pad: 1 };
+    pub const FULL: Self = Self { layer_width: 32, node_w: 22, node_h: 3, row_pad: 1 };
 }
 
 const MAX_BARYCENTER_ITERS: usize = 24;
