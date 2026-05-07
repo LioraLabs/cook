@@ -4,12 +4,12 @@ The Cookfile parser: text in, AST out. The current reference implementation of t
 
 ## Cook Standard claim
 
-This crate claims **Cook Standard v0.7**.
+This crate claims **Cook Standard v0.8**.
 
 The claim lives in `src/lib.rs`:
 
 ```rust
-pub const COOK_STANDARD_VERSION: &str = "0.7";
+pub const COOK_STANDARD_VERSION: &str = "0.8";
 ```
 
 To verify the claim, run the conformance harness:
