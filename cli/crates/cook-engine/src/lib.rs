@@ -6,6 +6,7 @@
 pub mod analyzer;
 pub mod dag_builder;
 pub mod executor;
+pub mod id;
 pub mod pipeline;
 pub mod recipe_dag;
 pub mod registry_entry;
@@ -218,6 +219,59 @@ pub enum EngineEvent {
         elapsed: Duration,
         success: bool,
     },
+}
+
+// ---------------------------------------------------------------------------
+// TestId, TestOutcome, TestFailureReason, TestResult
+// ---------------------------------------------------------------------------
+
+/// Stable identity for one test unit. Format: `<namespace>.<recipe>:<name>[<discriminator>]`.
+/// The discriminator is empty for one-shot tests; for iteration modes it is the
+/// iteration item (typically the input filename's basename).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct TestId(pub String);
+
+impl std::fmt::Display for TestId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Outcome of one test unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestOutcome {
+    Passed,
+    Failed,
+    Blocked,
+    TimedOut,
+}
+
+/// Reason for a test failure (when outcome is Failed).
+#[derive(Debug, Clone)]
+pub enum TestFailureReason {
+    ExitStatusMismatch { expected_success: bool, observed_success: bool },
+    SignalKilled(i32),
+    SpawnError(String),
+}
+
+/// One row in `RunResult.test_results`.
+#[derive(Debug, Clone)]
+pub struct TestResult {
+    pub id: TestId,
+    pub namespace: String,
+    pub recipe: String,
+    pub name: String,
+    pub suite: String,
+    pub iteration_item: Option<String>,
+    pub outcome: TestOutcome,
+    pub duration: std::time::Duration,
+    pub from_cache: bool,
+    pub stdout: String,
+    pub stderr: String,
+    pub fingerprint: Option<String>,
+    pub blocked_by: Option<String>,
+    pub should_fail: bool,
+    pub timed_out: bool,
 }
 
 // ---------------------------------------------------------------------------
