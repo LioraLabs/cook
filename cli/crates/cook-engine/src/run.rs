@@ -175,6 +175,8 @@ where
     let edges = analyzer::dependency_edges_multi(recipe_infos, targets).map_err(|e| match e {
         GraphError::CycleDetected(s) => EngineError::CycleDetected(s),
         GraphError::UnknownRecipe(s) => EngineError::UnknownRecipe(s),
+        // Io/Parse cannot be produced by dependency_edges_multi (pure graph op).
+        e => EngineError::CycleDetected(e.to_string()),
     })?;
 
     // 2. Compute waves using the two-tier grouping algorithm.

@@ -47,6 +47,8 @@ pub fn collect_dag_units(
             PipelineError::Other(format!("dependency cycle involving: {s}"))
         }
         GraphError::UnknownRecipe(s) => PipelineError::Other(format!("unknown recipe: {s}")),
+        // Io/Parse cannot be produced by dependency_edges_multi (pure graph op).
+        e => PipelineError::Other(e.to_string()),
     })?;
 
     // Save explicit edges before merging inferred deps (needed for wave grouping).

@@ -19,6 +19,10 @@ pub enum GraphError {
     CycleDetected(String),
     #[error("unknown recipe: {0}")]
     UnknownRecipe(String),
+    #[error("io error: {0}")]
+    Io(String),
+    #[error("parse error: {0}")]
+    Parse(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -320,6 +324,266 @@ pub fn find_full_prefix(
 
     segments.reverse();
     segments.join(".")
+}
+
+// ---------------------------------------------------------------------------
+// Workspace-wide recipe registration for `cook --test`
+// ---------------------------------------------------------------------------
+
+/// Register every recipe in every imported Cookfile in the workspace,
+/// regardless of whether it is reachable from any target.
+///
+/// Used by `cook --test` to discover all test_step units across the
+/// workspace per docs/superpowers/specs/2026-05-07-test-runner-design.md §4.1.
+pub fn register_workspace_for_test(
+    project_root: &Path,
+) -> Result<BTreeMap<String, RecipeInfo>, GraphError> {
+    let synthetic_targets = collect_all_recipe_names_in_workspace(project_root)?;
+    // Build a RecipeInfo map for every recipe discovered.  We populate
+    // `requires` from the AST `deps` field so cross-recipe ordering is
+    // preserved for the slice computation in Phase 4, but `ingredients`
+    // and `serves` are left empty — the test runner only needs the names
+    // and dependency graph, not file-path metadata.
+    build_recipe_info_for_targets(project_root, &synthetic_targets)
+}
+
+/// Collect every fully-qualified recipe name reachable from `project_root/Cookfile`,
+/// walking imports recursively (BFS, dedup by canonical path).
+///
+/// Tree-relative imports (`./path`) resolve relative to the importing directory.
+/// Sigil-anchored imports (`//path`) resolve relative to `project_root`.
+fn collect_all_recipe_names_in_workspace(
+    project_root: &Path,
+) -> Result<Vec<String>, GraphError> {
+    let root_canon = std::fs::canonicalize(project_root)
+        .map_err(|e| GraphError::Io(format!("cannot resolve project root: {e}")))?;
+
+    let mut all_targets: Vec<String> = Vec::new();
+    // Stack entries: (dotted prefix for this Cookfile, canonical dir path)
+    let mut to_visit: Vec<(String, PathBuf)> = vec![(String::new(), root_canon.clone())];
+    let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
+
+    while let Some((prefix, dir)) = to_visit.pop() {
+        if !visited.insert(dir.clone()) {
+            continue;
+        }
+        let cookfile_path = dir.join("Cookfile");
+        if !cookfile_path.exists() {
+            continue;
+        }
+        let source = std::fs::read_to_string(&cookfile_path)
+            .map_err(|e| GraphError::Io(format!("cannot read {}: {e}", cookfile_path.display())))?;
+        let parsed = cook_lang::parse(&source)
+            .map_err(|e| GraphError::Parse(format!("{}: {e}", cookfile_path.display())))?;
+
+        // Collect recipe names with the current prefix.
+        for recipe in &parsed.recipes {
+            let qualified = if prefix.is_empty() {
+                recipe.name.clone()
+            } else {
+                format!("{}.{}", prefix, recipe.name)
+            };
+            all_targets.push(qualified);
+        }
+
+        // Enqueue imports.
+        for imp in &parsed.imports {
+            let import_dir = match &imp.path {
+                cook_lang::ast::ImportPath::Tree(p) => dir.join(p),
+                cook_lang::ast::ImportPath::Sigil(p) => root_canon.join(p),
+            };
+            let import_canon = match std::fs::canonicalize(&import_dir) {
+                Ok(c) => c,
+                Err(_) => continue, // best-effort; missing dirs are ignored
+            };
+            let import_prefix = if prefix.is_empty() {
+                imp.name.clone()
+            } else {
+                format!("{}.{}", prefix, imp.name)
+            };
+            to_visit.push((import_prefix, import_canon));
+        }
+    }
+
+    Ok(all_targets)
+}
+
+/// Build a `BTreeMap<String, RecipeInfo>` for every qualified name in
+/// `targets`.  Dependencies are resolved from the AST so that the
+/// topological sort / slice computation in Phase 4 works correctly.
+///
+/// This is a second, focused pass: we re-walk the import graph to find
+/// each recipe's raw deps, then namespace-qualify them the same way
+/// `build_workspace_recipe_info` does.
+fn build_recipe_info_for_targets(
+    project_root: &Path,
+    targets: &[String],
+) -> Result<BTreeMap<String, RecipeInfo>, GraphError> {
+    // Collect all recipe infos (name → deps) from the full import walk.
+    let root_canon = std::fs::canonicalize(project_root)
+        .map_err(|e| GraphError::Io(format!("cannot resolve project root: {e}")))?;
+
+    let mut result: BTreeMap<String, RecipeInfo> = BTreeMap::new();
+    let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
+    // namespace_map: (parent_canonical, import_name, imported_canonical)
+    let mut namespace_map: Vec<(PathBuf, String, PathBuf)> = Vec::new();
+
+    // First pass: collect namespace_map and raw recipe deps.
+    let mut raw_entries: Vec<(String, Vec<String>)> = Vec::new(); // (qualified_name, raw_deps)
+
+    let mut stack: Vec<(String, PathBuf)> = vec![(String::new(), root_canon.clone())];
+    while let Some((prefix, dir)) = stack.pop() {
+        if !visited.insert(dir.clone()) {
+            continue;
+        }
+        let cookfile_path = dir.join("Cookfile");
+        if !cookfile_path.exists() {
+            continue;
+        }
+        let source = std::fs::read_to_string(&cookfile_path)
+            .map_err(|e| GraphError::Io(format!("cannot read {}: {e}", cookfile_path.display())))?;
+        let parsed = cook_lang::parse(&source)
+            .map_err(|e| GraphError::Parse(format!("{}: {e}", cookfile_path.display())))?;
+
+        for recipe in &parsed.recipes {
+            let qualified = if prefix.is_empty() {
+                recipe.name.clone()
+            } else {
+                format!("{}.{}", prefix, recipe.name)
+            };
+            raw_entries.push((qualified, recipe.deps.clone()));
+        }
+
+        for imp in &parsed.imports {
+            let import_dir = match &imp.path {
+                cook_lang::ast::ImportPath::Tree(p) => dir.join(p),
+                cook_lang::ast::ImportPath::Sigil(p) => root_canon.join(p),
+            };
+            let import_canon = match std::fs::canonicalize(&import_dir) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            namespace_map.push((dir.clone(), imp.name.clone(), import_canon.clone()));
+            let import_prefix = if prefix.is_empty() {
+                imp.name.clone()
+            } else {
+                format!("{}.{}", prefix, imp.name)
+            };
+            stack.push((import_prefix, import_canon));
+        }
+    }
+
+    // Build the set of requested targets for fast lookup.
+    let target_set: BTreeSet<&str> = targets.iter().map(|s| s.as_str()).collect();
+
+    // Second pass: for each (qualified_name, raw_deps), resolve the raw deps
+    // into fully-qualified names.  We use `build_workspace_recipe_info`'s
+    // approach: walk namespace_map to resolve alias.recipe references.
+    for (qualified, raw_deps) in &raw_entries {
+        if !target_set.contains(qualified.as_str()) {
+            continue;
+        }
+        // Determine the dir that owns this recipe so we can namespace-resolve
+        // its raw deps correctly.
+        let prefix = if let Some(dot) = qualified.rfind('.') {
+            &qualified[..dot]
+        } else {
+            ""
+        };
+        let owner_dir = find_dir_for_prefix(&namespace_map, &root_canon, prefix);
+
+        let resolved_deps: Vec<String> = raw_deps
+            .iter()
+            .map(|dep| {
+                resolve_dep_namespace(&namespace_map, &root_canon, &owner_dir, dep, prefix)
+            })
+            .collect();
+
+        result.insert(
+            qualified.clone(),
+            RecipeInfo {
+                ingredients: vec![],
+                serves: vec![],
+                requires: resolved_deps,
+            },
+        );
+    }
+
+    Ok(result)
+}
+
+/// Find the canonical directory for a given dotted prefix by walking the
+/// namespace map from the root.  Returns `root_canon` for the empty prefix.
+fn find_dir_for_prefix(
+    namespace_map: &[(PathBuf, String, PathBuf)],
+    root_canon: &Path,
+    prefix: &str,
+) -> PathBuf {
+    if prefix.is_empty() {
+        return root_canon.to_path_buf();
+    }
+    let segments: Vec<&str> = prefix.split('.').collect();
+    let mut current = root_canon.to_path_buf();
+    for seg in &segments {
+        let mut found = false;
+        for (parent, name, target) in namespace_map {
+            if parent == &current && name.as_str() == *seg {
+                current = target.clone();
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            // Prefix not found in namespace_map — return current best guess.
+            break;
+        }
+    }
+    current
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+
+    #[test]
+    fn register_workspace_for_test_includes_all_recipes_across_imports() {
+        use std::collections::BTreeSet;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        std::fs::write(root.join("Cookfile"), "\
+import sub ./sub\n\
+recipe build\n\
+    cook \"build/r.txt\" using { echo > $<out> }\n\
+").unwrap();
+
+        std::fs::create_dir(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/Cookfile"), "\
+recipe inner\n\
+    cook \"build/i.txt\" using { echo > $<out> }\n\
+recipe test_only\n\
+    test { true } timeout 5\n\
+").unwrap();
+
+        let result = register_workspace_for_test(root).expect("must succeed");
+        let names: BTreeSet<_> = result.keys().cloned().collect();
+        assert!(names.contains("build"), "root recipe must be present");
+        assert!(names.contains("sub.inner"), "imported recipe must be present");
+        assert!(
+            names.contains("sub.test_only"),
+            "test_only is not referenced by any target but must still be registered; got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn register_workspace_for_test_root_only_no_imports() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("Cookfile"), "recipe alpha\nrecipe beta\n").unwrap();
+        let result = register_workspace_for_test(root).expect("must succeed");
+        assert!(result.contains_key("alpha"));
+        assert!(result.contains_key("beta"));
+    }
 }
 
 #[cfg(test)]
