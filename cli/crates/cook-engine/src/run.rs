@@ -20,7 +20,7 @@ use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent, Recip
 /// The result of a successful engine run.
 #[derive(Debug)]
 pub struct RunResult {
-    pub test_outputs: Vec<cook_luaotp::TestOutput>,
+    pub test_results: Vec<crate::TestResult>,
 }
 
 /// Split a namespaced recipe name into (prefix, local_name).
@@ -212,7 +212,7 @@ where
         });
     }
 
-    let all_test_outputs: Vec<cook_luaotp::TestOutput> = Vec::new();
+    let mut all_test_results: Vec<crate::TestResult> = Vec::new();
 
     // 3. Wave loop: iterate over pre-computed waves, register, build DAG, execute.
     for wave in &waves {
@@ -315,12 +315,13 @@ where
                 })
             };
 
-            bridge_handle?;
+            let wave_results = bridge_handle?;
+            all_test_results.extend(wave_results);
         }
     }
 
     Ok(RunResult {
-        test_outputs: all_test_outputs,
+        test_results: all_test_results,
     })
 }
 
@@ -394,7 +395,7 @@ mod tests {
         // Empty targets means no edges, so the wave loop exits immediately.
         let result = run(&dummy_project_root(), &recipes, &[], &registries, 1, &inferred, |_| {});
         assert!(result.is_ok());
-        assert!(result.unwrap().test_outputs.is_empty());
+        assert!(result.unwrap().test_results.is_empty());
     }
 
     #[test]
