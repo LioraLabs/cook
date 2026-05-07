@@ -23,11 +23,30 @@ impl Camera {
     }
 
     pub fn pan(&self, dx: i32, dy: i32, layout: &Layout, pane: Rect) -> Self {
-        let max_x = (layout.canvas_w as i32 - pane.width as i32).max(0);
-        let max_y = (layout.canvas_h as i32 - pane.height as i32).max(0);
+        let Some(first) = layout.nodes.first() else {
+            return *self;
+        };
+        let mut min_x = first.x as i32;
+        let mut min_y = first.y as i32;
+        let mut max_x = first.x as i32 + first.w as i32;
+        let mut max_y = first.y as i32 + first.h as i32;
+        for n in &layout.nodes[1..] {
+            min_x = min_x.min(n.x as i32);
+            min_y = min_y.min(n.y as i32);
+            max_x = max_x.max(n.x as i32 + n.w as i32);
+            max_y = max_y.max(n.y as i32 + n.h as i32);
+        }
+        // Camera bounds keep at least one row/column of the bbox in view.
+        // Range is bbox-derived, not canvas-derived, so the camera can sit
+        // wherever fit_bounds places it (which may be negative for small
+        // bboxes the renderer centers horizontally).
+        let cam_min_x = min_x - pane.width as i32 + 1;
+        let cam_max_x = max_x - 1;
+        let cam_min_y = min_y - pane.height as i32 + 1;
+        let cam_max_y = max_y - 1;
         Self {
-            x: (self.x + dx).clamp(0, max_x),
-            y: (self.y + dy).clamp(0, max_y),
+            x: (self.x + dx).clamp(cam_min_x, cam_max_x),
+            y: (self.y + dy).clamp(cam_min_y, cam_max_y),
         }
     }
 
@@ -144,16 +163,43 @@ mod tests {
     }
 
     #[test]
-    fn pan_clamps_to_canvas_bounds() {
+    fn pan_clamps_to_bbox_keeping_at_least_one_cell_visible() {
         let l = layout_500x200();
         let pane = Rect::new(0, 0, 80, 24);
-        let cam = Camera { x: 10, y: 10 };
+        let cam = Camera { x: 50, y: 40 };
+        // Single node at (100, 50, 22, 3). bbox = (100..122, 50..53).
+        // cam_min = (100 - 80 + 1, 50 - 24 + 1) = (21, 27).
+        // cam_max = (122 - 1, 53 - 1) = (121, 52).
         let panned = cam.pan(-9999, -9999, &l, pane);
-        assert_eq!(panned.x, 0);
-        assert_eq!(panned.y, 0);
+        assert_eq!(panned.x, 21);
+        assert_eq!(panned.y, 27);
         let panned = cam.pan(9999, 9999, &l, pane);
-        assert_eq!(panned.x, 500 - 80);
-        assert_eq!(panned.y, 200 - 24);
+        assert_eq!(panned.x, 121);
+        assert_eq!(panned.y, 52);
+    }
+
+    #[test]
+    fn pan_does_not_snap_a_centered_camera_back_to_canvas_origin() {
+        // Regression: when fit_bounds returns a camera position outside
+        // the old canvas-based [0, canvas-pane] range (e.g. negative x
+        // for a horizontally-centered narrow bbox), pan must not yank
+        // the camera back to that range on the first key press.
+        let l = Layout {
+            nodes: vec![placed("a", 10, 10, 22, 3)],
+            edges: vec![] as Vec<EdgeRoute>,
+            canvas_w: 40,
+            canvas_h: 20,
+        };
+        let pane = Rect::new(0, 0, 80, 24);
+        // fit_bounds: bbox center x = 21, pane half = 40, cam.x = -19.
+        let cam = Camera::fit_bounds(&l, pane);
+        assert_eq!(cam.x, -19);
+        // Pan by zero: camera stays put.
+        let same = cam.pan(0, 0, &l, pane);
+        assert_eq!(same, cam);
+        // Small pan right: camera moves; does not snap to 0.
+        let nudged = cam.pan(5, 0, &l, pane);
+        assert_eq!(nudged.x, -14);
     }
 
     #[test]
