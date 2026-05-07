@@ -8,7 +8,7 @@ use super::errors::PullError;
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "cook pull",
-    about = "Pull cook_modules from a configured HTTPS registry.",
+    about = "Pull cook_modules from a configured HTTP(S) registry.",
     override_usage = "cook pull [OPTIONS] [NAME]..."
 )]
 pub struct PullArgs {
