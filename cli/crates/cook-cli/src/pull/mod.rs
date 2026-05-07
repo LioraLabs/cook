@@ -6,6 +6,7 @@ mod args;
 mod errors;
 mod install;
 mod prompt;
+mod trust;
 
 pub use errors::PullError;
 
