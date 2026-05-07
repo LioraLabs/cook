@@ -39,7 +39,8 @@ fn render_tree<F: ViewFrame>(
             }
             let glyph = if wave.files_expanded { '▼' } else { '▶' };
             let line = format!("{} Files ({})", glyph, wave.files.len());
-            write_line(area, buf, row, 2, &line, Style::default());
+            let style = sel_style(app.selection, Selection::files_folder(wi));
+            write_line(area, buf, row, 2, &line, style);
             row += 1;
 
             if wave.files_expanded {
@@ -353,6 +354,38 @@ mod tests {
         // Row 0 = wave header. Row 1 should be the recipe row (no Files header).
         let line = row_text(&buf, area, 1);
         assert!(!line.contains("Files"), "no Files header for empty-files wave");
+    }
+
+    #[test]
+    fn files_folder_header_is_reversed_when_selected() {
+        let g = graph_with_files();
+        let mut app = AppState::new(&g);
+        app.selection = Selection::files_folder(0);
+        let frame = SnapshotFrame::new(g);
+        let area = Rect::new(0, 0, 28, 6);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, &frame);
+
+        // Row 1 = Files folder header. The first non-blank cell (the ▶/▼ glyph
+        // at indent 2) must carry REVERSED.
+        let cell = buf.cell((2, 1)).unwrap();
+        assert!(
+            cell.style().add_modifier.contains(Modifier::REVERSED),
+            "expected folder-header glyph to be REVERSED when selected"
+        );
+    }
+
+    #[test]
+    fn files_folder_header_is_not_reversed_when_unselected() {
+        let g = graph_with_files();
+        let app = AppState::new(&g); // default selection = wave_only(0)
+        let frame = SnapshotFrame::new(g);
+        let area = Rect::new(0, 0, 28, 6);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, &frame);
+
+        let cell = buf.cell((2, 1)).unwrap();
+        assert!(!cell.style().add_modifier.contains(Modifier::REVERSED));
     }
 
     #[test]
