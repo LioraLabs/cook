@@ -497,6 +497,113 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
 }
 
 // ---------------------------------------------------------------------------
+// cmd_test
+// ---------------------------------------------------------------------------
+
+pub fn cmd_test(cli: &crate::cli::Cli) -> Result<(), crate::error::CookError> {
+    use cook_engine::{run_for_test, TestScope};
+    use std::sync::{Arc, Mutex};
+
+    let project_root = std::env::current_dir()
+        .map_err(|e| crate::error::CookError::Other(e.to_string()))?;
+
+    // Determine scope from positional `recipe` argument.
+    let scope: Option<TestScope> = match cli.recipe.as_deref() {
+        None => None,
+        Some(name) => Some(resolve_test_scope(name)),
+    };
+
+    // Phase 7 stub for --rerun-failed
+    let rerun_failed_set = if cli.rerun_failed {
+        match crate::test_state::load_failed_set(&project_root) {
+            Ok(set) if !set.is_empty() => Some(set),
+            Ok(_) => {
+                eprintln!("cook: warning: no previously-failed tests recorded");
+                eprintln!("cook: hint: run `cook --test` first to populate state");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("cook: warning: {e}");
+                eprintln!("cook: hint: run `cook --test` first to populate state");
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+
+    let rerun_patterns: Vec<String> = cli.rerun.clone().unwrap_or_default();
+    let num_jobs = resolve_num_jobs(cli);
+
+    let reporter = Arc::new(Mutex::new(crate::test_reporter::Reporter::new(cli)));
+    let reporter_for_cb = reporter.clone();
+
+    let on_event = move |evt: cook_engine::EngineEvent| {
+        if let Ok(mut r) = reporter_for_cb.lock() {
+            r.on_event(evt);
+        }
+    };
+
+    let result = run_for_test(
+        &project_root,
+        scope,
+        &cli.filter,
+        rerun_failed_set.as_ref(),
+        &rerun_patterns,
+        cli.fail_fast,
+        num_jobs,
+        on_event,
+    )
+    .map_err(|e| crate::error::CookError::Other(format!("{e}")))?;
+
+    // SAFETY: on_event closure was moved into run_for_test (and it captured the
+    // clone); run_for_test has returned, so no other Arc references remain.
+    let mut reporter = Arc::try_unwrap(reporter)
+        .unwrap_or_else(|_| panic!("reporter Arc still has other references after run_for_test returned"))
+        .into_inner()
+        .expect("reporter Mutex is poisoned");
+
+    // Phase 7 stub: persist last-run state (no-op)
+    let _ = crate::test_state::save(&project_root, &result.test_results);
+
+    // Phase 8 stub: write JSON/JUnit sidecars (no-op stubs)
+    let _ = crate::test_reporter::write_json_sidecar(&project_root, cli, &result.test_results);
+    if let Some(path) = &cli.report_junit {
+        let _ = crate::test_reporter::write_junit_sidecar(path, &result.test_results);
+    }
+
+    let any_failed = result.test_results.iter().any(|r| {
+        matches!(
+            r.outcome,
+            cook_engine::TestOutcome::Failed
+                | cook_engine::TestOutcome::Blocked
+                | cook_engine::TestOutcome::TimedOut
+        )
+    });
+
+    reporter.finish(&result.test_results);
+
+    if any_failed {
+        Err(crate::error::CookError::TestFailure(
+            "one or more tests failed".to_string(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn resolve_test_scope(name: &str) -> cook_engine::TestScope {
+    // For v1: if name contains a dot, treat it as a Recipe reference — the engine's
+    // analyzer handles qualified names transparently. If it's a bare name, also
+    // default to Recipe; the engine errors clearly on mismatch.
+    if name.contains('.') {
+        cook_engine::TestScope::Recipe(name.to_string())
+    } else {
+        cook_engine::TestScope::Recipe(name.to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // cmd_menu
 // ---------------------------------------------------------------------------
 

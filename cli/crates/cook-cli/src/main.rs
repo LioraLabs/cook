@@ -5,13 +5,15 @@ mod cmd_logs;
 mod error;
 mod pipeline;
 mod progress;
+mod test_reporter;
+mod test_state;
 mod watcher;
 
 use clap::CommandFactory;
 use cook_cli::pull;
 
 use cli::Cli;
-use pipeline::{cmd_dag, cmd_init, cmd_menu, cmd_run, cmd_serve};
+use pipeline::{cmd_dag, cmd_init, cmd_menu, cmd_run, cmd_serve, cmd_test};
 
 fn main() {
     let raw_argv: Vec<String> = std::env::args().collect();
@@ -33,7 +35,9 @@ fn main() {
     let recipe = cli.recipe.clone().unwrap_or_else(|| "build".to_string());
     let config = cli.config.clone();
 
-    let result = if cli.dag {
+    let result = if cli.test {
+        cmd_test(&cli)
+    } else if cli.dag {
         cmd_dag(&cli, &recipe, config.as_deref())
     } else if cli.init {
         cmd_init()

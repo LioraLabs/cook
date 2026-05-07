@@ -1542,7 +1542,15 @@ pub fn execute_dag(
 
             // Translate test output to a TestResult and emit TestPassed event.
             if let Some(to) = result.test_output {
-                let id = crate::id::parse_test_id(&result.node_name);
+                // Build the TestId in `<recipe>:<test_name>` format so the
+                // reporter can extract the recipe portion. `result.node_name`
+                // is the raw display_name (= test_name alone); `recipe_name`
+                // carries the fully-qualified recipe name.
+                let id = crate::id::parse_test_id(&format!(
+                    "{}:{}",
+                    recipe_name,
+                    to.test_name,
+                ));
                 let namespace = crate::id::id_namespace(&id);
                 let recipe = crate::id::id_recipe(&id);
                 let duration = Duration::from_secs_f64(to.duration);
@@ -1606,7 +1614,12 @@ pub fn execute_dag(
 
             // Translate test output to a TestResult and emit TestFailed/TestTimedOut event.
             if let Some(ref to) = result.test_output {
-                let id = crate::id::parse_test_id(&result.node_name);
+                // Build the TestId in `<recipe>:<test_name>` format (same as TestStarted).
+                let id = crate::id::parse_test_id(&format!(
+                    "{}:{}",
+                    recipe_name,
+                    to.test_name,
+                ));
                 let namespace = crate::id::id_namespace(&id);
                 let recipe = crate::id::id_recipe(&id);
                 let duration = Duration::from_secs_f64(to.duration);
@@ -1660,28 +1673,70 @@ pub fn execute_dag(
                 .error
                 .unwrap_or_else(|| "unknown error".to_string());
 
-            emit(
-                &event_tx,
-                EngineEvent::NodeFailed {
-                    recipe: recipe_name.clone(),
-                    node_name: result.node_name.clone(),
-                    elapsed: Duration::ZERO,
-                    error: err_msg.clone(),
-                },
-            );
-
-            failures.push((result.id, recipe_name.clone(), err_msg));
-            finish_recipe_node(&mut recipe_trackers, &recipe_name, false, true, &event_tx);
-
-            for &dep_id in dag.node(result.id).dependents() {
-                cancel_subtree(
-                    &dag,
-                    dep_id,
-                    &mut cancelled,
+            // Test semantic failures (result.test_output.is_some()) are "soft":
+            // the outcome is already recorded in test_results as TestOutcome::Failed
+            // or TestOutcome::TimedOut. We do NOT add them to the hard `failures`
+            // list — that list is for infrastructure failures (spawn errors, etc.).
+            // Dependents of failed tests are NOT cancelled: a test failing does not
+            // block sibling or downstream tests.
+            //
+            // Hard failures (test_output is None for a Test payload, or any non-Test
+            // payload failure) go into `failures` as before and cancel dependents.
+            let is_test_semantic_failure = result.test_output.is_some();
+            if is_test_semantic_failure {
+                // Soft failure: emit NodeFailed for observability but don't escalate.
+                emit(
                     &event_tx,
-                    &mut recipe_trackers,
-                    &result.node_name,
+                    EngineEvent::NodeFailed {
+                        recipe: recipe_name.clone(),
+                        node_name: result.node_name.clone(),
+                        elapsed: Duration::ZERO,
+                        error: err_msg.clone(),
+                    },
                 );
+                finish_recipe_node(&mut recipe_trackers, &recipe_name, false, false, &event_tx);
+                // Complete the node in the DAG so dependents can proceed.
+                let newly_ready = dag.complete(result.id);
+                for id in newly_ready {
+                    pending += process_ready(
+                        &dag,
+                        id,
+                        &pool,
+                        &mut cancelled,
+                        &mut finished,
+                        &mut interactive_queue,
+                        &event_tx,
+                        &mut recipe_trackers,
+                        &cache_managers,
+                        &cache_ctx,
+                        &mut failures,
+                    );
+                }
+            } else {
+                // Hard failure: infrastructure error.
+                emit(
+                    &event_tx,
+                    EngineEvent::NodeFailed {
+                        recipe: recipe_name.clone(),
+                        node_name: result.node_name.clone(),
+                        elapsed: Duration::ZERO,
+                        error: err_msg.clone(),
+                    },
+                );
+
+                failures.push((result.id, recipe_name.clone(), err_msg));
+                finish_recipe_node(&mut recipe_trackers, &recipe_name, false, true, &event_tx);
+
+                for &dep_id in dag.node(result.id).dependents() {
+                    cancel_subtree(
+                        &dag,
+                        dep_id,
+                        &mut cancelled,
+                        &event_tx,
+                        &mut recipe_trackers,
+                        &result.node_name,
+                    );
+                }
             }
         }
     }
