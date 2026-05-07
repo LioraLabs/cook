@@ -13,6 +13,7 @@
   "using"
   "timeout"
   "should_fail"
+  "as"
 ] @keyword
 
 ; ── Recipe headers ──────────────────────────────────────────────
@@ -66,6 +67,9 @@
 
 (test_step
   timeout: (number) @number)
+
+(test_step
+  as_name: (string) @string.special)
 
 (ingredients_step
   (string) @string)
