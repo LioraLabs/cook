@@ -1244,6 +1244,42 @@ recipe emit
     }
 }
 
+// ── Task 2.3: out-of-order modifier rejection ─────────────────────
+
+#[test]
+fn test_step_rejects_as_after_timeout() {
+    let src = r#"
+recipe r
+    test { foo } timeout 30 as 'name'
+"#;
+    let err = parse(src).expect_err("must reject");
+    assert!(
+        err.to_string().contains("`as`") && err.to_string().contains("must precede"),
+        "diagnostic should name `as` and `must precede`, got: {err}"
+    );
+}
+
+#[test]
+fn test_step_rejects_should_fail_before_timeout() {
+    let src = r#"
+recipe r
+    test { foo } should_fail timeout 30
+"#;
+    let err = parse(src).expect_err("must reject");
+    assert!(err.to_string().contains("`timeout`"));
+}
+
+#[test]
+fn test_step_rejects_should_fail_before_as() {
+    let src = r#"
+recipe r
+    test { foo } should_fail as 'name'
+"#;
+    let err = parse(src).expect_err("must reject");
+    let msg = err.to_string();
+    assert!(msg.contains("`as`") || msg.contains("`should_fail`"));
+}
+
 // ── Task 2.2: as STRING modifier ───────────────────────────────────
 
 #[test]
