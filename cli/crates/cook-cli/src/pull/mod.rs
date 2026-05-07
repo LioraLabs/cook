@@ -4,6 +4,7 @@
 mod archive;
 mod args;
 mod errors;
+mod install;
 mod prompt;
 
 pub use errors::PullError;
