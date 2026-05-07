@@ -12,16 +12,19 @@ pub enum ConflictAnswer {
     Quit,
 }
 
-/// Asks the user what to do about a conflicting file. Implementations are
-/// allowed to remember "All" answers and short-circuit subsequent prompts.
+/// Asks the user what to do about a conflicting file. The caller invokes
+/// `prompt` once per conflicting path. When an implementation returns `All`,
+/// it MAY short-circuit subsequent calls and return `Yes` without further
+/// I/O — `StdinPrompter` does this. Callers that want fresh prompts after
+/// `All` should construct a new prompter.
 pub trait ConflictPrompter {
     fn prompt(&mut self, path: &Path) -> ConflictAnswer;
 }
 
 /// Production implementation backed by stdin / stderr.
 pub struct StdinPrompter<R: BufRead, W: Write> {
-    pub stdin: R,
-    pub stderr: W,
+    stdin: R,
+    stderr: W,
     all_yes_sticky: bool,
 }
 
