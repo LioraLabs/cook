@@ -198,6 +198,23 @@ A Lua body that references both `input` and `inputs` is making contradictory cla
 
 The scan is whole-word, identifier-position. A property-name suffix (`cook.input`, `obj:input(...)`) is not a reference to the binding because the Lua grammar resolves the name as a field access. The scan respects the existing string/comment/long-string ignore rules of §{lexical.brace-blocks}.
 
+### B.4.22. Why `as STRING` and not `name STRING` [#rationale.test-as-not-name]
+`as` reads as natural English ("this test, as 'parses-config'") and aligns with SQL's `AS` aliasing posture. `name` would collide with the table-field `name` in `cook.add_test` (§{lua.cook-add-test}), creating two ways to spell the same concept with subtly different timing — the modifier substitutes at register time, whereas the `name` field is constructed when the table is assembled at execute time. Choosing distinct surface tokens for the two surfaces makes the timing difference legible.
+
+### B.4.23. Why the modifier order is fixed [#rationale.test-modifier-order-fixed]
+LL(1) parsability is a hard constraint for the Cook parser (`cook-lang`'s recursive-descent shape). Free-order modifiers either require backtracking or a peek/look-ahead that the parser does not currently support. The fixed order also produces canonical reading order in source: identity (`as`) → constraint (`timeout`) → interpretation (`should_fail`). Authors who reach for a different order are flagged immediately rather than silently parsed differently.
+
+### B.4.24. Why test caching is universal in the Standard [#rationale.test-caching-universal]
+The alternative was caching as an implementation choice with no Standard contract. That posture works for v0.x but creates a portability hazard at v1.0: a Cookfile that passes on cloud-cache machine A and fails on machine B — because A cached a test and B did not — is a contract violation only if the Standard says so. Specifying the cache key inputs and the recordable-outcomes rule (§{exec.cache.test-unit}) means cross-machine cache replay is correct or it is a Standard violation. Without a contract, the cloud-cache feature degrades to "works on machines configured the same way," which is the wrong promise for a build-system test runner.
+
+### B.4.25. Why no per-step `volatile` modifier [#rationale.test-no-volatile]
+A `volatile` modifier teaches authors that hidden inputs are normal. The right answer for tests with filesystem inputs Cook cannot see (vitest reading `.test.ts`, pytest reading `.py`) is the existing `discovered_inputs` mechanism (§{exec.cache.discovered-inputs}) plus depfile emission. The right answer for tests with non-filesystem hidden inputs (network, clock, `$RANDOM`) is the operator-side `cook --test --rerun [PATTERN]` flag, applied per-invocation. A persistent per-step opt-out would convert "I know this is non-deterministic" into "I'm too lazy to declare my inputs," and the cache becomes a sieve.
+
+The CLI escape hatch costs nothing in language surface and pushes authors toward correct input declaration; the language escape hatch costs spec breadth and grants permission for sloppiness. The trade is in favour of the CLI form.
+
+### B.4.26. Why timed-out + `should_fail` is "timed out", not "passed" [#rationale.test-timeout-not-passed]
+A timeout is not an exit status; it is a runtime intervention. Treating it as failure-equivalent for the purpose of `should_fail` would mean any sufficiently slow test passes any `should_fail` claim, which destroys the modifier's diagnostic value. The dedicated "timed out" outcome (§{exec.cache.test-unit}) preserves the runner's ability to flag timeouts distinctly in the report.
+
 ## B.5. On §{exec} Execution model [#rationale.exec]
 The execution model in §{exec} is organised around a two-phase design: every recipe is evaluated once to discover its work (the register phase) and then arranged for execution (the execute phase). This split is not cosmetic. It is the mechanism by which the Standard turns a scripting-flavoured surface syntax — arbitrary Lua embedded in a recipe body — into a dependency graph that can be reasoned about, parallelised, and cached. The rationale subsections below record why several load-bearing decisions in §{exec} are the way they are.
 

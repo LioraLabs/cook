@@ -232,6 +232,31 @@ A unit whose declaration carries `discovered_inputs` (§{lua.add-unit-discovered
 
 The `"make"` discovery format is the Make rule format produced by GCC's `-MMD` flag and equivalent compiler options. The conforming parser MUST: strip the leading target text up to and including the first `:`; join continuation lines (`\\\n` and `\\\r\n`); ignore entries beginning with `/`; ignore the unit's first declared input; ignore entries whose paths do not exist on disk.
 
+### 8.6.4. Test-unit caching [#exec.cache.test-unit]
+
+A conforming implementation MAY cache the result of a `test_step` unit (§{recipes.test-step}). When caching is implemented, the following rules MUST hold.
+
+1. **Cache key inputs.** A test unit's cache key MUST be a content-addressed digest derived from at least the following inputs:
+   - The unit's substituted command text. For shell-block tests this is the command string after sigil-placeholder substitution (§{lua.shell-placeholders-plate-test}); for Lua-block tests this is the Lua source body string with bindings resolved per §{lua.using-block-globals-plate-test}.
+   - The content fingerprints of every cook-step output the test consumes via §{recipes.iteration-mode-plate-test} source-list flattening.
+   - The content fingerprints of every recipe output the test references via `cook.dep_output(NAME)` or `$<NAME>` cross-recipe substitution (§{xref.string-substitution}).
+   - The deterministic env-key set as filtered through the implementation's `EnvDenylist` (the existing fingerprint mechanism for cook units per §{exec.cache}).
+   - The tool-binary hash set per §{exec.cache} Note 8.6.2.
+   - The `timeout` modifier value.
+   - The `should_fail` modifier value.
+
+   The cache key MUST NOT include the test's display name (§{recipes.test-step}), the `suite` field (§{lua.cook-add-test}), the recipe name, or the step's source position. Renaming a test, moving it within a recipe, or moving a recipe between Cookfiles MUST NOT bust its cache.
+
+2. **Recordable outcomes.** A conforming implementation MAY record a test result for replay only when the unit's outcome is **passed**. A test is **passed** when:
+   - The body's exit status is success and `should_fail` is false; or
+   - The body's exit status is failure and `should_fail` is true.
+
+   A test that is **failed** (the dual of passed), **timed out**, or **blocked** (its build dependency failed) MUST NOT be cached. The implementation MAY discard a previously-cached entry whose corresponding test is observed to fail in a subsequent run.
+
+3. **Replayed payload.** A cache hit MUST produce, for reporting purposes, the originally-recorded `(stdout, stderr, duration_secs, success)` quadruple. The duration value of a cache replay is the recorded original duration, not the wall-clock cost of the cache lookup.
+
+4. **Cross-machine portability.** A test result recorded on machine A MUST be a cache hit for the same fingerprint on machine B, given identical inputs.
+
 ## 8.7. Output path materialisation [#exec.output-materialisation]
 Before invoking the shell text of a `cook` step, a conforming implementation MUST ensure that the parent directory of every output path declared by the step exists, creating it (and any missing ancestors) if necessary. The creation MUST be idempotent: it is not an error if the directory already exists. The creation MUST NOT proceed if the parent path resolves to a non-directory (regular file, symbolic link to a regular file, etc.); in that case the implementation MUST surface a clear diagnostic naming the output path and the offending parent, and MUST NOT execute the step's shell text.
 
