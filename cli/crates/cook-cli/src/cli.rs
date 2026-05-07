@@ -56,6 +56,39 @@ pub struct Cli {
     )]
     pub logs: bool,
 
+    /// Run tests in the workspace (or scoped to a recipe/namespace).
+    #[arg(
+        long = "test",
+        help_heading = "Built-in commands",
+        conflicts_with_all = ["menu", "init", "serve", "logs", "dag", "emit_lua"]
+    )]
+    pub test: bool,
+
+    // ===== --test sub-args =====
+    /// Filter tests by glob against `<namespace>.<recipe>:<name>`. Repeatable.
+    #[arg(long = "filter", num_args = 1, requires = "test")]
+    pub filter: Vec<String>,
+
+    /// Cancel queued tests on first failure.
+    #[arg(long = "fail-fast", requires = "test")]
+    pub fail_fast: bool,
+
+    /// Force re-run of tests matching glob (or all if no pattern).
+    #[arg(long = "rerun", num_args = 0..=1, default_missing_value = "*", requires = "test")]
+    pub rerun: Option<Vec<String>>,
+
+    /// Re-run only tests that failed (or were blocked / timed out) last run.
+    #[arg(long = "rerun-failed", requires = "test")]
+    pub rerun_failed: bool,
+
+    /// Write JSON test report to the given path (default: .cook/test-report.json).
+    #[arg(long = "report-json", num_args = 1, requires = "test")]
+    pub report_json: Option<std::path::PathBuf>,
+
+    /// Write JUnit XML test report to the given path.
+    #[arg(long = "report-junit", num_args = 1, requires = "test")]
+    pub report_junit: Option<std::path::PathBuf>,
+
     // ===== --logs sub-args =====
     /// Specific build id
     #[arg(long, help_heading = "Logs options (with --logs)", requires = "logs")]
