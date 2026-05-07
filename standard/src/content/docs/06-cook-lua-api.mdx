@@ -181,6 +181,22 @@ The body of a module loaded into the execute-phase VM MUST NOT call register-onl
 
 Additional `cook.*` helpers — notably `cook.env`, `cook.platform`, `cook.cache`, `cook.export`, `cook.import`, `cook.dep_output`, and `cook.dep_output_list` — are part of the runtime but are specified in §{modules} (modules and configuration), not here. §{lua} defines only the work-unit surface and the two phase-split helper families.
 
+### 6.3.5. `cook.add_test` [#lua.cook-add-test]
+**Signature.** `cook.add_test(spec: table) -> nil`
+**Phase.** Register-phase only.
+
+`cook.add_test` records a single test work unit. The code generator lowers each `test_step` (§{recipes.test-step}) to exactly one `cook.add_test` call. The table argument `spec` accepts the following fields:
+
+| Field | Type | Required | Default | Constraint |
+|---|---|---|---|---|
+| `command` | string | yes | — | MUST be non-empty; a missing or empty `command` MUST raise a register-phase Lua error. |
+| `suite` | string | no | enclosing recipe's qualified name | If absent or empty, a conforming implementation MUST substitute the fully-qualified name of the recipe currently executing in the register phase (e.g. `"lib.tests"` for a recipe `tests` imported under prefix `lib`). |
+| `name` | string | no | `""` | The display name for this test in runner reports. Set by an `as STRING` modifier (§{recipes.test-step}, CS-0061). |
+| `timeout` | integer | no | `300` | Timeout in seconds. MUST be a positive integer (strictly greater than zero); a value of `0` or less MUST raise a register-phase Lua error. |
+| `should_fail` | boolean | no | `false` | When `true`, the test is expected to exit non-zero; a zero exit code is treated as a failure. |
+
+A conforming implementation MUST apply the field defaults and raise register-phase Lua errors for invalid field values at the time `cook.add_test` is called, not deferred to execute time. Error messages MUST identify the offending field by name.
+
 ## 6.4. Using-block globals [#lua.using-block-globals]
 **Phase.** Execute-phase only.
 

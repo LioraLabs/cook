@@ -1,0 +1,21 @@
+# CS-NNNN test-runner conformance fixture: monorepo workspace test discovery.
+#
+# Workspace has three imported Cookfiles. Bare `cook --test` at this root
+# discovers tests in all three. `cook --test apps.web` scopes to the web
+# namespace. `cook --test apps.web.unit` scopes to a single recipe.
+
+import apps.web ./apps/web
+import apps.api ./apps/api
+import shared //packages/utils
+
+# Convenience aggregator: building this builds every project. Used to verify
+# that --test does NOT depend on this aggregator existing — workspace
+# discovery is independent of any aggregator recipe.
+recipe build: apps.web.build apps.api.build shared.build
+    cook "build/all.txt" using {
+        mkdir -p build
+        echo "all" > $<out>
+    }
+
+chore clean
+    rm -rf build .cook apps/*/build apps/*/.cook packages/*/build packages/*/.cook

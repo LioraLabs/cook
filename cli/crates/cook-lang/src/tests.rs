@@ -1243,3 +1243,115 @@ recipe emit
         other => panic!("expected Cook step, got {:?}", other),
     }
 }
+
+// ── Task 2.4: `as` rejected on cook_step and plate_step ───────────
+
+#[test]
+fn test_as_rejected_on_cook_step() {
+    let src = r#"
+recipe r
+    cook "out.txt" using { echo > $<out> } as 'foo'
+"#;
+    let err = parse(src).expect_err("must reject");
+    let msg = err.to_string();
+    assert!(msg.contains("`as`"));
+    assert!(msg.contains("test_step") || msg.contains("test-step") || msg.contains("test"));
+}
+
+#[test]
+fn test_as_rejected_on_plate_step() {
+    let src = r#"
+recipe r
+    cook "out.txt" using { echo > $<out> }
+    plate { cp $<in> /tmp } as 'foo'
+"#;
+    let err = parse(src).expect_err("must reject");
+    assert!(err.to_string().contains("`as`"));
+}
+
+// ── Task 2.3: out-of-order modifier rejection ─────────────────────
+
+#[test]
+fn test_step_rejects_as_after_timeout() {
+    let src = r#"
+recipe r
+    test { foo } timeout 30 as 'name'
+"#;
+    let err = parse(src).expect_err("must reject");
+    assert!(
+        err.to_string().contains("`as`") && err.to_string().contains("must precede"),
+        "diagnostic should name `as` and `must precede`, got: {err}"
+    );
+}
+
+#[test]
+fn test_step_rejects_should_fail_before_timeout() {
+    let src = r#"
+recipe r
+    test { foo } should_fail timeout 30
+"#;
+    let err = parse(src).expect_err("must reject");
+    assert!(err.to_string().contains("`timeout`"));
+}
+
+#[test]
+fn test_step_rejects_should_fail_before_as() {
+    let src = r#"
+recipe r
+    test { foo } should_fail as 'name'
+"#;
+    let err = parse(src).expect_err("must reject");
+    let msg = err.to_string();
+    assert!(msg.contains("`as`") || msg.contains("`should_fail`"));
+}
+
+// ── Task 2.2: as STRING modifier ───────────────────────────────────
+
+#[test]
+fn test_step_parses_as_modifier() {
+    let src = r#"
+recipe r
+    test { foo $<in> } as 'name' timeout 30 should_fail
+"#;
+    let recipes = parse(src).expect("parse").recipes;
+    let step = match &recipes[0].steps[0] {
+        Step::Test { step, .. } => step,
+        other => panic!("expected test_step, got {:?}", other),
+    };
+    assert_eq!(step.as_name.as_deref(), Some("name"));
+    assert_eq!(step.timeout, Some(30));
+    assert!(step.should_fail);
+}
+
+#[test]
+fn test_step_as_only() {
+    let src = r#"
+recipe r
+    test { foo } as 'just-as'
+"#;
+    let recipes = parse(src).expect("parse").recipes;
+    let step = match &recipes[0].steps[0] {
+        Step::Test { step, .. } => step,
+        _ => panic!(),
+    };
+    assert_eq!(step.as_name.as_deref(), Some("just-as"));
+    assert_eq!(step.timeout, None);
+    assert!(!step.should_fail);
+}
+
+#[test]
+fn test_step_as_with_substitution_string() {
+    let src = r#"
+recipe r
+    ingredients "src/*.txt"
+    cook "build/$<in.stem>.out" using { echo > $<out> }
+    test { foo $<in> } as '$<in.stem>-roundtrip' timeout 10
+"#;
+    let recipes = parse(src).expect("parse").recipes;
+    let test = recipes[0].steps.iter().find_map(|s| match s {
+        Step::Test { step, .. } => Some(step),
+        _ => None,
+    }).unwrap();
+    // Parser preserves the literal string; substitution happens at codegen.
+    assert_eq!(test.as_name.as_deref(), Some("$<in.stem>-roundtrip"));
+}

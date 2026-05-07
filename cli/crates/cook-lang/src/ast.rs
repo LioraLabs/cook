@@ -92,6 +92,7 @@ pub struct PlateStep {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestStep {
     pub body: Body,
+    pub as_name: Option<String>,
     pub timeout: Option<u64>,
     pub should_fail: bool,
 }

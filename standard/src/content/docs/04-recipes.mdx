@@ -346,25 +346,36 @@ A `plate_step` body is the explicit "ship outside the project" surface and runs 
 A conforming implementation MUST run a `plate_step`'s body without applying the §{lua.fs-sandbox} confinement. Authors who want the confinement on a non-cacheable side-effect step SHOULD use a `chore` instead, which IS sandboxed (chores are non-cacheable but hermetic-by-intent — the sandbox catches accidental escapes without blocking the deliberate ones plate covers).
 
 ## 4.8. `test` step [#recipes.test-step]
-A `test_step` (§{grammar-appendix.steps}, `test_step`) has the same body grammar as a `plate_step` (§{recipes.plate-step}) and additionally admits two trailing modifiers:
+A `test_step` (§{grammar-appendix.steps}, `test_step`) has the same body grammar as a `plate_step` (§{recipes.plate-step}) and additionally admits three trailing modifiers:
 
 ```ebnf
 test_step      ::= "test" body test_modifiers NEWLINE
-test_modifiers ::= ("timeout" NUMBER)? "should_fail"?
+test_modifiers ::= ("as" STRING)? ("timeout" NUMBER)? "should_fail"?
 ```
 
 The body and iteration-mode rules of §{recipes.plate-step} apply verbatim. A `test_step` registers work units that report pass/fail rather than producing artifacts; iteration source, mode determination, placeholder vocabulary, and §{xref.string-substitution} cross-recipe substitution are identical to `plate_step`.
 
-The optional modifiers MUST appear in the order shown above. A conforming implementation MUST accept all four permutations:
+The optional modifiers MUST appear in the fixed canonical order shown above: `as` → `timeout` → `should_fail`. A conforming implementation MUST reject any out-of-order modifier sequence with a diagnostic that names the offending modifier and its canonical position.
 
 | Form | Behaviour |
 |---|---|
 | `test BODY` | Run the body unit; expect success (no Lua error, no non-zero `cook.sh`/`cook.exec`); no time bound. |
+| `test BODY as 'NAME'` | Same, with display name `NAME` in test reports. |
 | `test BODY timeout N` | Run the body unit; expect success within `N` seconds. |
+| `test BODY as 'NAME' timeout N` | Same, with display name and time bound. |
 | `test BODY should_fail` | Run the body unit; expect failure (a Lua error or a non-zero `cook.sh`/`cook.exec` return); no time bound. |
 | `test BODY timeout N should_fail` | Run the body unit; expect failure within `N` seconds. |
+| `test BODY as 'NAME' timeout N should_fail` | Same, with display name. |
 
 `NUMBER` is the `NUMBER` token class of §{lexical.numbers}. The upper bound on representable timeouts is implementation-defined.
+
+The `as STRING` modifier sets the test's **display name** for reporting. Without it, the implementation assigns an auto-generated identity (typically `test#N` with an iteration discriminator suffix in non-one-shot modes). With it, the auto-generated identity is replaced by the supplied string; the iteration-discriminator suffix is still appended in iteration modes unless the substituted name already varies per iteration.
+
+The `STRING` argument admits the same placeholder substitution (`$<IDENT>`) as the body (CS-0033). Substitution occurs at register-time codegen. The display name is metadata — it is **not** part of the test's cache fingerprint; renaming a test does not bust its cache.
+
+**Codegen mapping.** When `as STRING` is present, the conforming code generator MUST emit a `name = <substituted-expr>` field in the `cook.add_test` call that registers the unit. The `<substituted-expr>` is the result of applying placeholder substitution to `STRING` under the same binding context as the step body (§{lua.shell-placeholders-plate-test}): `_test_in` for one-to-one mode, the collected-inputs table for many-to-one mode, and the empty string for one-shot mode. When `as STRING` is absent, the code generator MUST NOT emit a `name` field; the runner assigns an auto-generated identity.
+
+The `as` modifier is **only valid on `test_step`**. A conforming implementation MUST reject `as` on `cook_step` or `plate_step` with a diagnostic identifying the modifier and the step kind.
 
 ### Example 4.8.1
 
@@ -392,9 +403,20 @@ recipe coverage
 
 The Lua body references `inputs` (no `input`); the step is many-to-one and runs once with all test binaries visible as `inputs`.
 
+### Example 4.8.3
+
+```cook
+recipe roundtrip
+    ingredients "src/*.txt"
+    cook "build/$<in.stem>.out" using { echo > $<out> }
+    test { diff $<in> $<out> } as '$<in.stem>-roundtrip' timeout 10
+```
+
+The `as` modifier includes a placeholder; each iteration gets a unique display name (e.g., `foo-roundtrip`, `bar-roundtrip`).
+
 ### Note 4.8.1
 
-`should_fail` is a bare word, not a quoted string. It is recognised only as the trailing modifier on a `test` line; elsewhere it has no syntactic meaning and is not a reserved word (§{lexical.keywords}). The same posture applies to `timeout`.
+`should_fail` is a bare word, not a quoted string. It is recognised only as the trailing modifier on a `test` line; elsewhere it has no syntactic meaning and is not a reserved word (§{lexical.keywords}). The same posture applies to `timeout` and `as`.
 
 A `test_step` in one-to-one mode that runs a Lua body where `cook.sh`/`cook.exec` returns non-zero fails by the same rule as a Lua error; `should_fail` inverts the pass/fail decision.
 

@@ -217,6 +217,7 @@ module.exports = grammar({
       seq(
         "test",
         field("body", choice($.shell_block, $.using_lua_block)),
+        field("as_name", optional(seq("as", $.string))),
         optional(seq("timeout", field("timeout", $.number))),
         optional(field("should_fail", "should_fail")),
         $._newline,

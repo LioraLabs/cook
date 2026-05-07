@@ -203,15 +203,16 @@ fn run_interactive_on_main(
 /// workers. Interactive nodes are queued and run on the main thread after the
 /// pool drains. If any node fails, all transitive dependents are cancelled.
 ///
-/// Returns `Ok(())` if every node completed successfully (or was pre-satisfied),
-/// or `Err(EngineError)` listing each failed node.
+/// Returns `Ok(test_results)` with all test results from this DAG if every node
+/// completed successfully (or was pre-satisfied), or `Err(EngineError)` listing
+/// each failed node.
 pub fn execute_dag(
     dag: Dag<WorkNode>,
     num_workers: usize,
     cache_managers: BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     event_tx: Option<mpsc::Sender<EngineEvent>>,
     cache_ctx: Arc<CacheContext>,
-) -> Result<(), EngineError> {
+) -> Result<Vec<crate::TestResult>, EngineError> {
     // Install the depfile parser pointer so cook-fingerprint's pre-check
     // augmentation can call back into cook-cache without a runtime dep cycle.
     {
@@ -227,7 +228,7 @@ pub fn execute_dag(
 
     // Empty DAG — nothing to do.
     if dag.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     // Defensive cycle check before spawning any workers. The work-DAG
@@ -244,6 +245,7 @@ pub fn execute_dag(
     let mut cancelled = vec![false; total];
     let mut pending: usize = 0; // how many work results we're waiting for
     let mut failures: Vec<(usize, String, String)> = Vec::new();
+    let mut test_results: Vec<crate::TestResult> = Vec::new();
 
     // ----- Recipe tracking -----
     let mut recipe_trackers: BTreeMap<String, RecipeTracker> = BTreeMap::new();
@@ -334,30 +336,51 @@ pub fn execute_dag(
     }
 
     // ----- helper: cancel a node and all its transitive dependents -----
+    //
+    // `upstream_name` is the name of the failing node that triggered this
+    // cancellation — used to populate TestBlocked.upstream for test-step nodes.
+    //
+    // TODO(Phase 4/5): also push a crate::TestResult { outcome: Blocked } for
+    // each cancelled test node. Currently blocked by the fact that cancel_subtree
+    // is a nested fn without direct access to the outer test_results Vec.
+    // The TestBlocked event is emitted so Phase 4 reporters can track it.
     fn cancel_subtree(
         dag: &Dag<WorkNode>,
         node_id: usize,
         cancelled: &mut Vec<bool>,
         event_tx: &Option<mpsc::Sender<EngineEvent>>,
         trackers: &mut BTreeMap<String, RecipeTracker>,
+        upstream_name: &str,
     ) {
         if cancelled[node_id] {
             return;
         }
         cancelled[node_id] = true;
         let node = dag.node(node_id);
+        let node_name = node
+            .payload()
+            .payload
+            .as_ref()
+            .map(|p| p.display_name())
+            .unwrap_or_else(|| node.payload().recipe_name.clone());
         emit(
             event_tx,
             EngineEvent::NodeSkipped {
                 recipe: node.payload().recipe_name.clone(),
-                node_name: node
-                    .payload()
-                    .payload
-                    .as_ref()
-                    .map(|p| p.display_name())
-                    .unwrap_or_else(|| node.payload().recipe_name.clone()),
+                node_name: node_name.clone(),
             },
         );
+        // Emit TestBlocked for test-step nodes whose upstream cook step failed.
+        if matches!(node.payload().payload, Some(WorkPayload::Test { .. })) {
+            let test_id = crate::id::parse_test_id(&node_name);
+            emit(
+                event_tx,
+                EngineEvent::TestBlocked {
+                    id: test_id,
+                    upstream: upstream_name.to_string(),
+                },
+            );
+        }
         finish_recipe_node(
             trackers,
             &node.payload().recipe_name,
@@ -366,7 +389,7 @@ pub fn execute_dag(
             event_tx,
         );
         for &dep_id in dag.node(node_id).dependents() {
-            cancel_subtree(dag, dep_id, cancelled, event_tx, trackers);
+            cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &node_name);
         }
     }
 
@@ -545,6 +568,23 @@ pub fn execute_dag(
                         kind: node_kind_for_payload(payload),
                     },
                 );
+                // Emit TestStarted for test-step nodes so Phase 4 reporters can
+                // track in-flight tests.
+                if let WorkPayload::Test { test_name, .. } = payload {
+                    let test_id = crate::id::parse_test_id(&format!(
+                        "{}:{}",
+                        work_node.recipe_name,
+                        test_name
+                    ));
+                    emit(
+                        event_tx,
+                        EngineEvent::TestStarted {
+                            id: test_id,
+                            recipe: work_node.recipe_name.clone(),
+                            name: test_name.clone(),
+                        },
+                    );
+                }
 
                 // CS-0050: ensure parent directories of declared cook-step
                 // outputs exist before the shell text runs. No-op for
@@ -573,7 +613,7 @@ pub fn execute_dag(
                     *finished += 1;
                     let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
                     for dep_id in dependents {
-                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers);
+                        cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name());
                     }
                     return 0;
                 }
@@ -967,6 +1007,7 @@ pub fn execute_dag(
                                 &mut cancelled,
                                 &event_tx,
                                 &mut recipe_trackers,
+                                &chore_recipe,
                             );
                         }
                     }
@@ -1280,6 +1321,7 @@ pub fn execute_dag(
                                 &mut cancelled,
                                 &event_tx,
                                 &mut recipe_trackers,
+                                &node_name,
                             );
                         }
                     }
@@ -1498,6 +1540,41 @@ pub fn execute_dag(
 
             finish_recipe_node(&mut recipe_trackers, &recipe_name, false, false, &event_tx);
 
+            // Translate test output to a TestResult and emit TestPassed event.
+            if let Some(to) = result.test_output {
+                let id = crate::id::parse_test_id(&result.node_name);
+                let namespace = crate::id::id_namespace(&id);
+                let recipe = crate::id::id_recipe(&id);
+                let duration = Duration::from_secs_f64(to.duration);
+                emit(
+                    &event_tx,
+                    EngineEvent::TestPassed {
+                        id: id.clone(),
+                        duration,
+                        cached: false,
+                        stdout: to.stdout.clone(),
+                        stderr: to.stderr.clone(),
+                    },
+                );
+                test_results.push(crate::TestResult {
+                    id,
+                    namespace,
+                    recipe,
+                    name: to.test_name.clone(),
+                    suite: to.suite_name.clone(),
+                    iteration_item: None,
+                    outcome: crate::TestOutcome::Passed,
+                    duration,
+                    from_cache: false,
+                    stdout: to.stdout,
+                    stderr: to.stderr,
+                    fingerprint: None,
+                    blocked_by: None,
+                    should_fail: to.should_fail,
+                    timed_out: false,
+                });
+            }
+
             let newly_ready = dag.complete(result.id);
             for id in newly_ready {
                 pending += process_ready(
@@ -1527,6 +1604,58 @@ pub fn execute_dag(
                 );
             }
 
+            // Translate test output to a TestResult and emit TestFailed/TestTimedOut event.
+            if let Some(ref to) = result.test_output {
+                let id = crate::id::parse_test_id(&result.node_name);
+                let namespace = crate::id::id_namespace(&id);
+                let recipe = crate::id::id_recipe(&id);
+                let duration = Duration::from_secs_f64(to.duration);
+                let outcome = if to.timed_out {
+                    emit(
+                        &event_tx,
+                        EngineEvent::TestTimedOut {
+                            id: id.clone(),
+                            timeout: duration,
+                            stdout: to.stdout.clone(),
+                            stderr: to.stderr.clone(),
+                        },
+                    );
+                    crate::TestOutcome::TimedOut
+                } else {
+                    emit(
+                        &event_tx,
+                        EngineEvent::TestFailed {
+                            id: id.clone(),
+                            duration,
+                            stdout: to.stdout.clone(),
+                            stderr: to.stderr.clone(),
+                            reason: crate::TestFailureReason::ExitStatusMismatch {
+                                expected_success: !to.should_fail,
+                                observed_success: to.exit_success,
+                            },
+                        },
+                    );
+                    crate::TestOutcome::Failed
+                };
+                test_results.push(crate::TestResult {
+                    id,
+                    namespace,
+                    recipe,
+                    name: to.test_name.clone(),
+                    suite: to.suite_name.clone(),
+                    iteration_item: None,
+                    outcome,
+                    duration,
+                    from_cache: false,
+                    stdout: to.stdout.clone(),
+                    stderr: to.stderr.clone(),
+                    fingerprint: None,
+                    blocked_by: None,
+                    should_fail: to.should_fail,
+                    timed_out: to.timed_out,
+                });
+            }
+
             let err_msg = result
                 .error
                 .unwrap_or_else(|| "unknown error".to_string());
@@ -1551,6 +1680,7 @@ pub fn execute_dag(
                     &mut cancelled,
                     &event_tx,
                     &mut recipe_trackers,
+                    &result.node_name,
                 );
             }
         }
@@ -1564,7 +1694,7 @@ pub fn execute_dag(
     }
 
     if failures.is_empty() {
-        Ok(())
+        Ok(test_results)
     } else {
         Err(EngineError::TaskFailures {
             count: failures.len(),

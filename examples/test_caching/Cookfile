@@ -1,0 +1,34 @@
+# CS-NNNN test-runner conformance fixture: test-result caching.
+#
+# Three recipes pin distinct cache shapes. Walkthrough runs cook --test
+# twice and asserts cache hits on the second run; runs --rerun and asserts
+# bust; touches a source file and asserts targeted invalidation.
+
+config
+    env.SLEEP = "0.1"
+
+# Deterministic test — should cache cleanly across runs.
+recipe deterministic
+    cook "build/deterministic.out" using {
+        mkdir -p build
+        sleep $<SLEEP>
+        echo "stable" > $<out>
+    }
+    test { test -s $<in> } timeout 5
+
+# Iterated test — should cache N entries (one per iteration).
+recipe iterated
+    ingredients "src/*.txt"
+    cook "build/iterated/$<in.stem>.out" using {
+        mkdir -p build/iterated
+        sleep $<SLEEP>
+        cat $<in> > $<out>
+    }
+    test { grep -q "stable" $<in> } timeout 5
+
+# should_fail — caches as a pass when the body exits non-zero.
+recipe should_fail_caches
+    test { exit 1 } should_fail timeout 5
+
+chore clean
+    rm -rf build .cook src

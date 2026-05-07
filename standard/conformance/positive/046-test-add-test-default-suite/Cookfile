@@ -1,0 +1,7 @@
+# CS-0061 §3.2 — `suite` defaults to recipe name when omitted.
+# Also: explicit suite overrides default.
+recipe r
+    test >{
+        cook.add_test { command = "true" }              -- default suite = "r"
+        cook.add_test { command = "true", suite = "x" } -- explicit suite = "x"
+    }

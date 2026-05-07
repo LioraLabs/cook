@@ -13,10 +13,34 @@ pub fn register_test_api(lua: &Lua, capture_state: SharedCaptureState) -> LuaRes
 
     let cs = capture_state.clone();
     let add_test_fn = lua.create_function(move |_, tbl: LuaTable| {
-        let command: String = tbl.get::<String>("command").unwrap_or_default();
-        let suite_name: String = tbl.get::<String>("suite").unwrap_or_default();
-        let test_name: String = tbl.get::<String>("name").unwrap_or_default();
+        // CS-0061 §3.2: `command` is required and must be non-empty.
+        let command: String = tbl
+            .get::<Option<String>>("command")?
+            .ok_or_else(|| mlua::Error::external("cook.add_test: command field is required"))?;
+        if command.is_empty() {
+            return Err(mlua::Error::external(
+                "cook.add_test: command field is required and must be a non-empty string",
+            ));
+        }
+
+        // CS-0061 §3.2: `timeout` must be a positive integer; default 300.
         let timeout: u64 = tbl.get::<Option<u64>>("timeout")?.unwrap_or(300);
+        if timeout == 0 {
+            return Err(mlua::Error::external(
+                "cook.add_test: timeout must be a positive number, got 0",
+            ));
+        }
+
+        // CS-0061 §3.2: `suite` defaults to the enclosing recipe's name.
+        let suite_name: String = match tbl.get::<Option<String>>("suite")? {
+            Some(s) if !s.is_empty() => s,
+            _ => {
+                let cs_borrow = cs.borrow();
+                cs_borrow.current_recipe.clone().unwrap_or_default()
+            }
+        };
+
+        let test_name: String = tbl.get::<Option<String>>("name")?.unwrap_or_default();
         let should_fail: bool = tbl.get::<Option<bool>>("should_fail")?.unwrap_or(false);
 
         let payload = WorkPayload::Test {
@@ -153,5 +177,82 @@ mod tests {
             }
             _ => panic!("expected Test payload"),
         }
+    }
+
+    // -----------------------------------------------------------------
+    // CS-0061 §3.2 field-defaults contract tests
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn add_test_defaults_suite_to_recipe_name() {
+        let (lua, capture_state) = make_lua_with_test_api();
+        capture_state.borrow_mut().current_recipe = Some("frontend.unit".to_string());
+
+        lua.load(r#"
+            cook.add_test({ command = "true" })
+        "#).exec().unwrap();
+
+        let state = capture_state.borrow();
+        assert_eq!(state.units.len(), 1);
+        let payload = match &state.units[0].payload {
+            WorkPayload::Test { suite_name, .. } => suite_name,
+            _ => panic!("expected Test payload"),
+        };
+        assert_eq!(payload, "frontend.unit");
+    }
+
+    #[test]
+    fn add_test_rejects_empty_command() {
+        let (lua, capture_state) = make_lua_with_test_api();
+        capture_state.borrow_mut().current_recipe = Some("r".to_string());
+
+        let res = lua.load(r#"
+            cook.add_test({ command = "" })
+        "#).exec();
+
+        assert!(res.is_err(), "empty command must be rejected");
+        assert!(format!("{:?}", res).contains("command"));
+    }
+
+    #[test]
+    fn add_test_rejects_missing_command() {
+        let (lua, capture_state) = make_lua_with_test_api();
+        capture_state.borrow_mut().current_recipe = Some("r".to_string());
+
+        let res = lua.load(r#"
+            cook.add_test({ name = "x" })
+        "#).exec();
+
+        assert!(res.is_err(), "missing command must be rejected");
+    }
+
+    #[test]
+    fn add_test_rejects_non_positive_timeout() {
+        let (lua, capture_state) = make_lua_with_test_api();
+        capture_state.borrow_mut().current_recipe = Some("r".to_string());
+
+        let res = lua.load(r#"
+            cook.add_test({ command = "true", timeout = 0 })
+        "#).exec();
+
+        assert!(res.is_err());
+        assert!(format!("{:?}", res).contains("timeout"));
+    }
+
+    #[test]
+    fn add_test_explicit_suite_overrides_default() {
+        let (lua, capture_state) = make_lua_with_test_api();
+        capture_state.borrow_mut().current_recipe = Some("r".to_string());
+
+        lua.load(r#"
+            cook.add_test({ command = "true", suite = "explicit" })
+        "#).exec().unwrap();
+
+        let state = capture_state.borrow();
+        let suite = match &state.units[0].payload {
+            WorkPayload::Test { suite_name, .. } => suite_name,
+            _ => panic!(),
+        };
+        assert_eq!(suite, "explicit");
     }
 }

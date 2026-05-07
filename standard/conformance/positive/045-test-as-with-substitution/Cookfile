@@ -1,0 +1,5 @@
+# CS-0061 §3.1 — $<...> substitution in as_name.
+recipe r
+    ingredients "src/*.txt"
+    cook "build/$<in.stem>.out" using { echo > $<out> }
+    test { test -s $<in> } as '$<in.stem>-roundtrip'

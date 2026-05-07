@@ -1,0 +1,18 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="alpha" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Test body=ShellBlock(["test 1 -eq 1"]) timeout=Some(5) should_fail=false
+    Recipe name="beta" line=6
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Test body=ShellBlock(["test 1 -eq 1"]) timeout=Some(5) should_fail=false
+  chores:

@@ -1,0 +1,15 @@
+# Frontend project. Two test recipes — one passing, one mixed.
+
+recipe build
+    cook "build/web.bundle" using {
+        mkdir -p build
+        echo "web bundle" > $<out>
+    }
+
+recipe unit: build
+    test { true } timeout 5
+    test { echo "unit ok"; true } timeout 5
+
+recipe e2e: build
+    test { test -s $<build> } timeout 5
+    test { exit 1 } timeout 5

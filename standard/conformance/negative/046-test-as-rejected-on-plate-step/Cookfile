@@ -1,0 +1,3 @@
+recipe r
+    cook "out.txt" using { echo hi }
+    plate { cp $<in> /tmp } as 'bar'

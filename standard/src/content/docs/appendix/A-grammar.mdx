@@ -112,7 +112,7 @@ shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
 plate_step            ::= "plate" body NEWLINE
 test_step             ::= "test"  body test_modifiers NEWLINE
 body                  ::= shell_block | using_lua_block
-test_modifiers        ::= ("timeout" NUMBER)? "should_fail"?
+test_modifiers        ::= ("as" STRING)? ("timeout" NUMBER)? "should_fail"?
 
 lua_line              ::= ">" LUA_LINE_CONTENT? NEWLINE
 lua_block             ::= ">{" LUA_BLOCK_CONTENT "}" NEWLINE
@@ -146,6 +146,8 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
 **Plate/test mode coherence (CS-0024).** A `plate_step` or `test_step` body MUST NOT contain both an iteration-item placeholder/binding and a batched-source placeholder/binding. For shell-block bodies, this means a body MUST NOT contain both `{in}` (or `{in.ACCESSOR}`) and `{all}`. For Lua-block bodies, the body MUST NOT reference both `input` and `inputs` (free-identifier scan, ignoring strings/comments/long-strings per §{lexical.brace-blocks}). A conforming implementation MUST reject a body that violates this rule with a diagnostic naming both tokens. See §{recipes.iteration-mode-plate-test}.
 
 **Plate/test source presence (CS-0024).** A `plate_step` or `test_step` in one-to-one or many-to-one mode MUST have a non-empty iteration source — that is, the recipe must contain a preceding `cook_step` whose output list is non-empty, or an `ingredients_step` whose resolved path list is non-empty. A conforming implementation MUST reject a `plate_step` or `test_step` whose mode requires source consultation but whose recipe provides none. A `plate_step` or `test_step` in one-shot mode does not consult the source and MAY appear in a recipe with neither.
+
+**`as` modifier is test_step-only (CS-0061).** The `as STRING` modifier is syntactically valid only on `test_step`. A conforming implementation MUST reject `as` appearing after the body of a `cook_step` or `plate_step`, with a diagnostic naming the modifier and identifying it as `test_step`-only.
 
 **`using >>{` is rejected.** A `using_clause` MUST NOT use the `>>{` (register-phase Lua block) prefix. The using clause produces work for execute, not register-phase orchestration; a register-phase Lua block in this position is incoherent. A conforming implementation MUST reject `cook STR using >>{ … }`.
 
