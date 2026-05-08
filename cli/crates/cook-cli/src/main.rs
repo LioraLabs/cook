@@ -1,6 +1,7 @@
 //! cook — the user-facing binary for the Cook build system.
 
 mod cli;
+mod cli_next;
 mod cmd_logs;
 mod error;
 mod iso8601;

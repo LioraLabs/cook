@@ -10,13 +10,13 @@ mod install;
 mod prompt;
 mod trust;
 
+pub use args::PullArgs;
 pub use errors::PullError;
 
 use std::collections::BTreeSet;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
-use args::PullArgs;
 use prompt::{ConflictAnswer, ConflictPrompter, StdinPrompter};
 use trust::TrustMode;
 
