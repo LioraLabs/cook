@@ -232,6 +232,7 @@ pub enum EngineEvent {
         id: TestId,
         duration: std::time::Duration,
         cached: bool,
+        should_fail: bool,
         stdout: String,
         stderr: String,
         line: u32,

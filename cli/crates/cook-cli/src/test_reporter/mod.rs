@@ -9,164 +9,152 @@ pub mod style;
 pub mod summary;
 
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::collections::BTreeSet;
+use std::io::IsTerminal;
 use cook_engine::{EngineEvent, TestId, TestOutcome, TestResult};
 use crate::cli::Cli;
 
 pub struct Reporter {
-    by_recipe: BTreeMap<String, RecipeStats>,
     started: std::time::Instant,
     verbose: bool,
+    style: style::Style,
+    namespaces_seen: BTreeSet<String>,
+    label_meta: BTreeMap<String, LabelMeta>,
+    header_printed: bool,
 }
 
-#[derive(Default, Clone)]
-struct RecipeStats {
-    passed: usize,
-    failed: usize,
-    blocked: usize,
-    timed_out: usize,
-    cached: usize,
-    duration: Duration,
+#[derive(Clone)]
+struct LabelMeta {
+    recipe: String,
+    name: String,
+    line: u32,
+    iteration_item: Option<String>,
 }
 
 impl Reporter {
     pub fn new(cli: &Cli) -> Self {
+        let no_color_env = std::env::var("NO_COLOR").ok();
+        let is_tty = std::io::stdout().is_terminal();
+        let colored = style::resolve_color_choice(
+            cli.color.as_str(),
+            no_color_env.as_deref(),
+            is_tty,
+        );
         Self {
-            by_recipe: BTreeMap::new(),
             started: std::time::Instant::now(),
             verbose: cli.verbose,
+            style: style::Style::new(colored),
+            namespaces_seen: BTreeSet::new(),
+            label_meta: BTreeMap::new(),
+            header_printed: false,
         }
     }
 
     pub fn on_event(&mut self, evt: EngineEvent) {
         match evt {
-            EngineEvent::TestStarted { id, .. } => {
+            EngineEvent::TestStarted { id, recipe, name, line } => {
+                if !self.header_printed {
+                    println!("{}", self.style.bold("running tests"));
+                    self.header_printed = true;
+                }
+                if id.0.contains('.') {
+                    if let Some(ns) = id.0.split('.').next() {
+                        self.namespaces_seen.insert(ns.to_string());
+                    }
+                }
+                self.label_meta.insert(id.0.clone(), LabelMeta {
+                    recipe: recipe.clone(),
+                    name: name.clone(),
+                    line,
+                    iteration_item: None,
+                });
                 if self.verbose {
-                    println!("    test {} ...", id);
+                    println!("    test {} ...", self.label_for(&id.0));
                 }
             }
-            EngineEvent::TestPassed { id, duration, cached, .. } => {
-                let recipe = recipe_of(&id);
-                let s = self.by_recipe.entry(recipe).or_default();
-                s.passed += 1;
-                if cached { s.cached += 1; }
-                s.duration += duration;
+            EngineEvent::TestPassed { id, cached, should_fail, .. } => {
+                let lbl = self.label_for(&id.0);
+                println!("{}", live::outcome_line(
+                    &lbl, live::Outcome::Ok, cached, should_fail, &self.style,
+                ));
             }
-            EngineEvent::TestFailed { id, duration, .. } => {
-                let recipe = recipe_of(&id);
-                let s = self.by_recipe.entry(recipe).or_default();
-                s.failed += 1;
-                s.duration += duration;
+            EngineEvent::TestFailed { id, .. } => {
+                let lbl = self.label_for(&id.0);
+                println!("{}", live::outcome_line(
+                    &lbl, live::Outcome::Failed, false, false, &self.style,
+                ));
+            }
+            EngineEvent::TestTimedOut { id, .. } => {
+                let lbl = self.label_for(&id.0);
+                println!("{}", live::outcome_line(
+                    &lbl, live::Outcome::Timeout, false, false, &self.style,
+                ));
             }
             EngineEvent::TestBlocked { id, .. } => {
-                let recipe = recipe_of(&id);
-                self.by_recipe.entry(recipe).or_default().blocked += 1;
-            }
-            EngineEvent::TestTimedOut { id, timeout, .. } => {
-                let recipe = recipe_of(&id);
-                let s = self.by_recipe.entry(recipe).or_default();
-                s.timed_out += 1;
-                s.duration += timeout;
+                let lbl = self.label_for(&id.0);
+                println!("{}", live::outcome_line(
+                    &lbl, live::Outcome::Blocked, false, false, &self.style,
+                ));
             }
             _ => {}
         }
     }
 
     pub fn finish(&mut self, results: &[TestResult]) {
-        // Per-recipe lines
-        for (recipe, s) in &self.by_recipe {
-            let icon = if s.failed > 0 || s.blocked > 0 || s.timed_out > 0 {
-                "FAIL"
-            } else if s.cached == s.passed && s.passed > 0 {
-                "CACHED"
-            } else {
-                "PASS"
-            };
-            print!("[{}] {:<25}", icon, recipe);
-            let mut parts = Vec::new();
-            if s.passed > 0 { parts.push(format!("{} passed", s.passed)); }
-            if s.failed > 0 { parts.push(format!("{} failed", s.failed)); }
-            if s.blocked > 0 { parts.push(format!("{} blocked", s.blocked)); }
-            if s.timed_out > 0 { parts.push(format!("{} timed out", s.timed_out)); }
-            if s.cached > 0 { parts.push(format!("{} cached", s.cached)); }
-            print!(" {}", parts.join(", "));
-            println!("  ({:.1}s)", s.duration.as_secs_f64());
+        let multi_ns = self.namespaces_seen.len() > 1;
+        // Pre-build labels keyed by TestId.0 so the failure renderer doesn't
+        // need to reach into self.
+        let labels: BTreeMap<String, String> = results.iter()
+            .map(|r| {
+                let meta = self.label_meta.get(&r.id.0);
+                let recipe = meta.map(|m| m.recipe.clone()).unwrap_or_else(|| r.recipe.clone());
+                let nm = meta.map(|m| m.name.clone()).unwrap_or_else(|| r.name.clone());
+                let ln = meta.map(|m| m.line).unwrap_or(r.line);
+                let it = meta.and_then(|m| m.iteration_item.clone()).or(r.iteration_item.clone());
+                let lbl = label::label(&recipe, &nm, ln, it.as_deref(), multi_ns);
+                (r.id.0.clone(), lbl)
+            })
+            .collect();
+
+        let failure_block = failures::render(
+            results,
+            &|id| labels.get(id).cloned().unwrap_or_else(|| id.to_string()),
+            &self.style,
+        );
+        if !failure_block.is_empty() {
+            print!("{failure_block}");
         }
 
-        // Failures section
-        let failures: Vec<&TestResult> = results.iter()
-            .filter(|r| matches!(r.outcome, TestOutcome::Failed | TestOutcome::TimedOut))
-            .collect();
-        if !failures.is_empty() {
-            println!();
-            println!("Failures:");
-            for r in &failures {
-                let display_name = if r.name.is_empty() { "(unnamed)" } else { r.name.as_str() };
-                println!("  {} > {}", recipe_of(&r.id), display_name);
-                if !r.stdout.is_empty() {
-                    for line in r.stdout.lines().take(20) {
-                        println!("    {}", line);
-                    }
-                }
-                if !r.stderr.is_empty() {
-                    println!("    [ stderr ]");
-                    for line in r.stderr.lines().take(20) {
-                        println!("    {}", line);
-                    }
-                }
-                println!();
+        // Tally from the authoritative TestResults
+        let mut tally = summary::Tally::default();
+        for r in results {
+            match r.outcome {
+                TestOutcome::Passed => tally.passed += 1,
+                TestOutcome::Failed => tally.failed += 1,
+                TestOutcome::Blocked => tally.blocked += 1,
+                TestOutcome::TimedOut => tally.timed_out += 1,
+            }
+            if r.from_cache {
+                tally.cached += 1;
             }
         }
 
-        // Blocked section
-        let blocked: Vec<&TestResult> = results.iter()
-            .filter(|r| matches!(r.outcome, TestOutcome::Blocked))
-            .collect();
-        if !blocked.is_empty() {
-            println!("Blocked:");
-            for r in &blocked {
-                let display_name = if r.name.is_empty() { "(unnamed)" } else { r.name.as_str() };
-                let cause = r.blocked_by.as_deref().unwrap_or("upstream cook step");
-                println!("  {} > {}  (build failed: {})", recipe_of(&r.id), display_name, cause);
-            }
-            println!();
-        }
+        let summary_line = summary::render(&tally, self.started.elapsed(), &self.style);
+        println!();
+        println!("{summary_line}");
+    }
 
-        // Summary
-        let total_passed: usize = self.by_recipe.values().map(|s| s.passed).sum();
-        let total_failed: usize = self.by_recipe.values().map(|s| s.failed).sum();
-        let total_blocked: usize = self.by_recipe.values().map(|s| s.blocked).sum();
-        let total_to: usize = self.by_recipe.values().map(|s| s.timed_out).sum();
-        let total_cached: usize = self.by_recipe.values().map(|s| s.cached).sum();
-        let wall = self.started.elapsed();
-        let cache_savings: Duration = results.iter()
-            .filter(|r| r.from_cache)
-            .map(|r| r.duration)
-            .sum();
-
-        let mut parts = Vec::new();
-        if total_passed > 0 { parts.push(format!("{} passed", total_passed)); }
-        if total_failed > 0 { parts.push(format!("{} failed", total_failed)); }
-        if total_blocked > 0 { parts.push(format!("{} blocked", total_blocked)); }
-        if total_to > 0 { parts.push(format!("{} timed out", total_to)); }
-        if total_cached > 0 { parts.push(format!("{} cached", total_cached)); }
-        if parts.is_empty() {
-            println!("Summary: no tests ran  --  {:.1}s wall", wall.as_secs_f64());
-        } else {
-            println!(
-                "Summary: {}  --  {:.1}s wall ({:.1}s saved by cache)",
-                parts.join(", "),
-                wall.as_secs_f64(),
-                cache_savings.as_secs_f64()
-            );
-        }
-
-        // Footer hint when there are failures
-        if total_failed > 0 || total_blocked > 0 || total_to > 0 {
-            println!();
-            println!("Failed tests:");
-            println!("  cook --test --rerun-failed         # re-run only these");
-            println!("  cat .cook/test-report.json | jq    # full structured report");
+    fn label_for(&self, test_id: &str) -> String {
+        let multi_ns = self.namespaces_seen.len() > 1;
+        match self.label_meta.get(test_id) {
+            Some(meta) => label::label(
+                &meta.recipe,
+                &meta.name,
+                meta.line,
+                meta.iteration_item.as_deref(),
+                multi_ns,
+            ),
+            None => test_id.to_string(),
         }
     }
 }
@@ -604,5 +592,17 @@ mod tests {
         assert!(escaped.contains("&gt;"));
         assert!(escaped.contains("&quot;"));
         assert!(!escaped.contains('&') || escaped.contains("&amp;"));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Reporter unit tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn reporter_label_for_unknown_id_returns_id() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["cook", "--test"]);
+        let r = Reporter::new(&cli);
+        assert_eq!(r.label_for("orphan:t"), "orphan:t");
     }
 }
