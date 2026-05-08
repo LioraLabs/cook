@@ -19,15 +19,15 @@ use crate::analyzer::{self, GraphError};
 use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent, RecipeKind, RegistryEntry};
 
 // ---------------------------------------------------------------------------
-// TestScope — how to scope a `cook --test` invocation
+// TestScope — how to scope a `cook test` invocation
 // ---------------------------------------------------------------------------
 
-/// How to scope a `cook --test` invocation.
+/// How to scope a `cook test` invocation.
 #[derive(Debug, Clone)]
 pub enum TestScope {
-    /// `cook --test <recipe>` — scope to a single recipe and its dep closure.
+    /// `cook test <recipe>` — scope to a single recipe and its dep closure.
     Recipe(String),
-    /// `cook --test <namespace>` — scope to an import alias's tree.
+    /// `cook test <namespace>` — scope to an import alias's tree.
     Namespace(String),
 }
 
@@ -119,7 +119,7 @@ where
             })?;
 
     // Build the set of chore names so they can be excluded from test candidates.
-    // Chores are excluded from `cook --test` because they are destructive by
+    // Chores are excluded from `cook test` because they are destructive by
     // design (e.g., `cook clean` deletes build artefacts and caches) and have
     // no test steps. Including them would cause unintentional side-effects.
     let chore_names: BTreeSet<String> = {

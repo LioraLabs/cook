@@ -1,6 +1,6 @@
 # CS-NNNN test-runner conformance fixture: test-result caching.
 #
-# Three recipes pin distinct cache shapes. Walkthrough runs cook --test
+# Three recipes pin distinct cache shapes. Walkthrough runs cook test
 # twice and asserts cache hits on the second run; runs --rerun and asserts
 # bust; touches a source file and asserts targeted invalidation.
 
