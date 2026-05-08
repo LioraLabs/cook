@@ -3,6 +3,7 @@
 //! Per docs/superpowers/specs/2026-05-07-test-runner-design.md §6.5.
 
 pub mod label;
+pub mod style;
 
 use std::collections::BTreeMap;
 use std::time::Duration;
