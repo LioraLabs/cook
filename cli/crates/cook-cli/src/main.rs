@@ -53,7 +53,11 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("cook: {e}");
+        // TestFailure: the summary line already conveys the failure count;
+        // printing the error message again would be noise (spec §3.4).
+        if !matches!(e, crate::error::CookError::TestFailure(_)) {
+            eprintln!("cook: {e}");
+        }
         std::process::exit(e.exit_code());
     }
 }

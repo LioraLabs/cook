@@ -42,10 +42,11 @@ pub fn register_test_api(lua: &Lua, capture_state: SharedCaptureState) -> LuaRes
 
         let test_name: String = tbl.get::<Option<String>>("name")?.unwrap_or_default();
         let should_fail: bool = tbl.get::<Option<bool>>("should_fail")?.unwrap_or(false);
+        let line: usize = tbl.get::<Option<i64>>("line")?.unwrap_or(0).max(0) as usize;
 
         let payload = WorkPayload::Test {
             cmd: command,
-            line: 0,
+            line,
             timeout,
             should_fail,
             suite_name,
