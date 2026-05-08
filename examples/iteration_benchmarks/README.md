@@ -69,10 +69,10 @@ cores). Set `SLEEP` to 0.5s (the default) and compare `-j 1` vs `-j 8`:
 
 ```sh
 cook clean
-time cook -j 8 benchmarks --no-ui  # parallel
+time cook -j 8 benchmarks --output=plain  # parallel
 
 cook clean
-time cook -j 1 benchmarks --no-ui  # serial
+time cook -j 1 benchmarks --output=plain  # serial
 ```
 
 ### Measured timings (this machine, SLEEP=0.5, N=8 inputs)
@@ -100,7 +100,7 @@ Breakdown for `-j 8`:
 The `--dag` flag opens an interactive DAG viewer in your browser:
 
 ```sh
-cook --dag benchmarks
+cook dag benchmarks
 # cook: DAG viewer at http://127.0.0.1:<port>
 # press Ctrl+C to stop
 ```
@@ -108,8 +108,8 @@ cook --dag benchmarks
 To see the work units and the generated Lua without executing:
 
 ```sh
-cook --emit-lua benchmarks | head -80
-cook --menu
+cook emit-lua benchmarks | head -80
+cook menu
 ```
 
 `--menu` lists every recipe with its ingredient patterns, output patterns, and

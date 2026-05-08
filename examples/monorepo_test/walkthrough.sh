@@ -1,5 +1,5 @@
 #!/bin/bash
-# walkthrough.sh — pin v1.0 cook --test against a monorepo workspace with
+# walkthrough.sh — pin v1.0 cook test against a monorepo workspace with
 # three imported Cookfiles (apps.web, apps.api, shared).
 #
 # Replaces the Phase 8 stub. Covers workspace discovery, recipe-scoped runs,
@@ -64,34 +64,34 @@ assert_not_grep() {
 }
 
 # ---------------------------------------------------------------------------
-# 1. Bare cook --test discovers tests in all imported Cookfiles
+# 1. Bare cook test discovers tests in all imported Cookfiles
 # ---------------------------------------------------------------------------
 clean
-out_all=$("$COOK" --test 2>&1 || true)
+out_all=$("$COOK" test 2>&1 || true)
 
 if echo "$out_all" | grep -qF "apps.web"; then
-    echo "PASS: bare --test discovers apps.web recipes"
+    echo "PASS: bare test discovers apps.web recipes"
     pass=$((pass + 1))
 else
-    echo "FAIL: apps.web recipes not found in bare --test output"
+    echo "FAIL: apps.web recipes not found in bare test output"
     echo "$out_all"
     fail=$((fail + 1))
 fi
 
 if echo "$out_all" | grep -qF "apps.api"; then
-    echo "PASS: bare --test discovers apps.api recipes"
+    echo "PASS: bare test discovers apps.api recipes"
     pass=$((pass + 1))
 else
-    echo "FAIL: apps.api recipes not found in bare --test output"
+    echo "FAIL: apps.api recipes not found in bare test output"
     echo "$out_all"
     fail=$((fail + 1))
 fi
 
 if echo "$out_all" | grep -qF "shared"; then
-    echo "PASS: bare --test discovers shared recipes"
+    echo "PASS: bare test discovers shared recipes"
     pass=$((pass + 1))
 else
-    echo "FAIL: shared recipes not found in bare --test output"
+    echo "FAIL: shared recipes not found in bare test output"
     echo "$out_all"
     fail=$((fail + 1))
 fi
@@ -101,7 +101,7 @@ fi
 #    (apps.api and shared do not appear in the output)
 # ---------------------------------------------------------------------------
 clean
-out_web=$("$COOK" --test apps.web.unit 2>&1 || true)
+out_web=$("$COOK" test apps.web.unit 2>&1 || true)
 
 if echo "$out_web" | grep -qF "apps.web"; then
     echo "PASS: recipe scope shows apps.web in output"
@@ -135,13 +135,13 @@ fi
 # ---------------------------------------------------------------------------
 clean
 assert_grep "apps.api.unit recipe scope shows apps.api.unit" "apps.api.unit" \
-    "$COOK" --test apps.api.unit
+    "$COOK" test apps.api.unit
 
 # ---------------------------------------------------------------------------
 # 4. JSON sidecar is written at .cook/test-report.json
 # ---------------------------------------------------------------------------
 clean
-"$COOK" --test > /dev/null 2>&1 || true
+"$COOK" test > /dev/null 2>&1 || true
 if [ -f .cook/test-report.json ]; then
     echo "PASS: JSON sidecar written at .cook/test-report.json"
     pass=$((pass + 1))

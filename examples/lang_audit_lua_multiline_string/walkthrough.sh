@@ -1,7 +1,7 @@
 #!/bin/bash
 # CS-0035 audit walkthrough — multi-line Lua long strings.
 #
-# Asserts that `cook --emit-lua` parses a Cookfile whose `>{ ... }` Lua
+# Asserts that `cook emit-lua` parses a Cookfile whose `>{ ... }` Lua
 # block contains a multi-line `[[ ... ]]` and `[==[ ... ]==]` long string,
 # each with `}` bytes interior to the string. Pre-CS-0035 the parser
 # rejected this with "unclosed Lua block".
@@ -25,9 +25,9 @@ echo "=== lang_audit_lua_multiline_string (CS-0035) ==="
 echo
 
 # Scenario 1: parse succeeds.
-out=$("$COOK" --emit-lua 2>&1)
+out=$("$COOK" emit-lua 2>&1)
 rc=$?
-printf "  [1] %-60s " "cook --emit-lua exits 0 (parser accepts)"
+printf "  [1] %-60s " "cook emit-lua exits 0 (parser accepts)"
 if [ "$rc" -eq 0 ]; then
     echo "PASS"
     pass=$((pass + 1))
