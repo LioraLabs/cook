@@ -6,6 +6,7 @@ pub mod failures;
 pub mod label;
 pub mod live;
 pub mod style;
+pub mod summary;
 
 use std::collections::BTreeMap;
 use std::time::Duration;
