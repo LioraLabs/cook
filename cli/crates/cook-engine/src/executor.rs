@@ -452,12 +452,12 @@ pub fn execute_dag(
             },
         );
         // Emit TestBlocked and synthesize a Blocked TestResult for test-step nodes.
-        if let Some(WorkPayload::Test { test_name, should_fail, line, .. }) = &work_node.payload {
-            let test_id = crate::id::parse_test_id(&format!(
-                "{}:{}",
-                work_node.recipe_name,
-                test_name,
-            ));
+        if let Some(WorkPayload::Test { test_name, should_fail, line, iteration_item, .. }) = &work_node.payload {
+            let id_str = match iteration_item {
+                Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
+                _ => format!("{}:{}", work_node.recipe_name, test_name),
+            };
+            let test_id = crate::id::parse_test_id(&id_str);
             emit(
                 event_tx,
                 EngineEvent::TestBlocked {
@@ -474,7 +474,7 @@ pub fn execute_dag(
                 recipe,
                 name: test_name.clone(),
                 suite: work_node.recipe_name.clone(),
-                iteration_item: None,
+                iteration_item: iteration_item.clone(),
                 outcome: crate::TestOutcome::Blocked,
                 duration: std::time::Duration::ZERO,
                 from_cache: false,
@@ -637,7 +637,7 @@ pub fn execute_dag(
                 interactive_queue.push(id);
                 0
             }
-            Some(WorkPayload::Test { test_name, should_fail, line, .. }) => {
+            Some(WorkPayload::Test { test_name, should_fail, line, iteration_item, .. }) => {
                 // Phase 5: test-result cache lookup.
                 // Check the content-addressed test cache before submitting to
                 // the pool. On a hit, synthesize TestStarted + TestPassed
@@ -648,23 +648,23 @@ pub fn execute_dag(
                         // skip cache lookup. Cache write still occurs after the
                         // test runs (executor's success-path write site below),
                         // so a forced re-run refreshes the cached entry.
-                        let test_id_str = format!("{}:{}", work_node.recipe_name, test_name);
+                        let test_id_str = match iteration_item {
+                            Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
+                            _ => format!("{}:{}", work_node.recipe_name, test_name),
+                        };
                         let force_rerun = rerun_matches(&test_id_str, rerun_patterns);
                         let cached_entry = if force_rerun { None } else { tc.lookup(fp) };
                         if let Some(entry) = cached_entry {
                             // Cache hit — synthesize events and skip execution.
                             ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
-                            let test_id = crate::id::parse_test_id(&format!(
-                                "{}:{}",
-                                work_node.recipe_name,
-                                test_name,
-                            ));
+                            let test_id = crate::id::parse_test_id(&test_id_str);
                             let duration = std::time::Duration::from_secs_f64(entry.duration_secs);
                             emit(event_tx, EngineEvent::TestStarted {
                                 id: test_id.clone(),
                                 recipe: work_node.recipe_name.clone(),
                                 name: test_name.clone(),
                                 line: *line as u32,
+                                iteration_item: iteration_item.clone(),
                             });
                             emit(event_tx, EngineEvent::TestPassed {
                                 id: test_id.clone(),
@@ -692,7 +692,7 @@ pub fn execute_dag(
                                 recipe,
                                 name: test_name.clone(),
                                 suite: work_node.recipe_name.clone(),
-                                iteration_item: None,
+                                iteration_item: iteration_item.clone(),
                                 outcome: crate::TestOutcome::Passed,
                                 duration,
                                 from_cache: true,
@@ -793,17 +793,18 @@ pub fn execute_dag(
                     },
                 );
                 // Emit TestStarted for this test-step node.
+                let test_id_str = match iteration_item {
+                    Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
+                    _ => format!("{}:{}", work_node.recipe_name, test_name),
+                };
                 emit(
                     event_tx,
                     EngineEvent::TestStarted {
-                        id: crate::id::parse_test_id(&format!(
-                            "{}:{}",
-                            work_node.recipe_name,
-                            test_name,
-                        )),
+                        id: crate::id::parse_test_id(&test_id_str),
                         recipe: work_node.recipe_name.clone(),
                         name: test_name.clone(),
                         line: *line as u32,
+                        iteration_item: iteration_item.clone(),
                     },
                 );
 
@@ -897,12 +898,12 @@ pub fn execute_dag(
                 );
                 // Emit TestStarted for test-step nodes so Phase 4 reporters can
                 // track in-flight tests.
-                if let WorkPayload::Test { test_name, line, .. } = payload {
-                    let test_id = crate::id::parse_test_id(&format!(
-                        "{}:{}",
-                        work_node.recipe_name,
-                        test_name
-                    ));
+                if let WorkPayload::Test { test_name, line, iteration_item, .. } = payload {
+                    let test_id_str = match iteration_item {
+                        Some(item) if !item.is_empty() => format!("{}:{}[{}]", work_node.recipe_name, test_name, item),
+                        _ => format!("{}:{}", work_node.recipe_name, test_name),
+                    };
+                    let test_id = crate::id::parse_test_id(&test_id_str);
                     emit(
                         event_tx,
                         EngineEvent::TestStarted {
@@ -910,6 +911,7 @@ pub fn execute_dag(
                             recipe: work_node.recipe_name.clone(),
                             name: test_name.clone(),
                             line: *line as u32,
+                            iteration_item: iteration_item.clone(),
                         },
                     );
                 }
@@ -1887,25 +1889,23 @@ pub fn execute_dag(
 
             // Translate test output to a TestResult and emit TestPassed event.
             if let Some(to) = result.test_output {
-                // Build the TestId in `<recipe>:<test_name>` format so the
+                // Build the TestId in `<recipe>:<test_name>[<item>]` format so the
                 // reporter can extract the recipe portion. `result.node_name`
                 // is the raw display_name (= test_name alone); `recipe_name`
                 // carries the fully-qualified recipe name.
-                let id = crate::id::parse_test_id(&format!(
-                    "{}:{}",
-                    recipe_name,
-                    to.test_name,
-                ));
+                let fp_opt = fingerprint_by_node.get(&result.id).cloned();
+                let (line_no, iteration_item_opt) = match &dag.node(result.id).payload().payload {
+                    Some(WorkPayload::Test { line, iteration_item, .. }) => (*line as u32, iteration_item.clone()),
+                    _ => (0, None),
+                };
+                let id_str = match &iteration_item_opt {
+                    Some(item) if !item.is_empty() => format!("{}:{}[{}]", recipe_name, to.test_name, item),
+                    _ => format!("{}:{}", recipe_name, to.test_name),
+                };
+                let id = crate::id::parse_test_id(&id_str);
                 let namespace = crate::id::id_namespace(&id);
                 let recipe = crate::id::id_recipe(&id);
                 let duration = Duration::from_secs_f64(to.duration);
-                // Look up the pre-computed fingerprint for this node so we can
-                // populate TestResult.fingerprint and write the cache entry.
-                let fp_opt = fingerprint_by_node.get(&result.id).cloned();
-                let line_no: u32 = match &dag.node(result.id).payload().payload {
-                    Some(WorkPayload::Test { line, .. }) => *line as u32,
-                    _ => 0,
-                };
                 emit(
                     &event_tx,
                     EngineEvent::TestPassed {
@@ -1924,7 +1924,7 @@ pub fn execute_dag(
                     recipe,
                     name: to.test_name.clone(),
                     suite: to.suite_name.clone(),
-                    iteration_item: None,
+                    iteration_item: iteration_item_opt,
                     outcome: crate::TestOutcome::Passed,
                     duration,
                     from_cache: false,
@@ -1992,19 +1992,19 @@ pub fn execute_dag(
 
             // Translate test output to a TestResult and emit TestFailed/TestTimedOut event.
             if let Some(ref to) = result.test_output {
-                // Build the TestId in `<recipe>:<test_name>` format (same as TestStarted).
-                let id = crate::id::parse_test_id(&format!(
-                    "{}:{}",
-                    recipe_name,
-                    to.test_name,
-                ));
+                // Build the TestId in `<recipe>:<test_name>[<item>]` format (same as TestStarted).
+                let (line_no, iteration_item_opt) = match &dag.node(result.id).payload().payload {
+                    Some(WorkPayload::Test { line, iteration_item, .. }) => (*line as u32, iteration_item.clone()),
+                    _ => (0, None),
+                };
+                let id_str = match &iteration_item_opt {
+                    Some(item) if !item.is_empty() => format!("{}:{}[{}]", recipe_name, to.test_name, item),
+                    _ => format!("{}:{}", recipe_name, to.test_name),
+                };
+                let id = crate::id::parse_test_id(&id_str);
                 let namespace = crate::id::id_namespace(&id);
                 let recipe = crate::id::id_recipe(&id);
                 let duration = Duration::from_secs_f64(to.duration);
-                let line_no: u32 = match &dag.node(result.id).payload().payload {
-                    Some(WorkPayload::Test { line, .. }) => *line as u32,
-                    _ => 0,
-                };
                 let outcome = if to.timed_out {
                     emit(
                         &event_tx,
@@ -2041,7 +2041,7 @@ pub fn execute_dag(
                     recipe,
                     name: to.test_name.clone(),
                     suite: to.suite_name.clone(),
-                    iteration_item: None,
+                    iteration_item: iteration_item_opt,
                     outcome,
                     duration,
                     from_cache: false,
@@ -2893,6 +2893,7 @@ mod tests {
                     should_fail: false,
                     suite_name: "blocked_by_build".to_string(),
                     test_name: "my_test".to_string(),
+                    iteration_item: None,
                 },
                 "blocked_by_build",
                 wd.clone(),
@@ -2946,6 +2947,7 @@ mod tests {
                     should_fail: false,
                     suite_name: "my_recipe".to_string(),
                     test_name: "my_test".to_string(),
+                    iteration_item: None,
                 },
                 "my_recipe",
                 wd,
@@ -2981,6 +2983,64 @@ mod tests {
         match passed {
             EngineEvent::TestPassed { line, .. } => {
                 assert_eq!(*line, 17, "TestPassed.line should be 17");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_iteration_item_propagates() {
+        use std::sync::mpsc;
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        let mut dag = Dag::new();
+        dag.add_node(
+            work_node(
+                WorkPayload::Test {
+                    cmd: "true".to_string(),
+                    line: 17,
+                    timeout: 30,
+                    should_fail: false,
+                    suite_name: "my_recipe".to_string(),
+                    test_name: "my_test".to_string(),
+                    iteration_item: Some("a.cpp".into()),
+                },
+                "my_recipe",
+                wd,
+            ),
+            &[],
+        ).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
+        let test_results = result.expect("test node should pass");
+
+        // TestResult.iteration_item must carry "a.cpp".
+        assert_eq!(test_results.len(), 1, "expected exactly one TestResult");
+        assert_eq!(
+            test_results[0].iteration_item,
+            Some("a.cpp".into()),
+            "TestResult.iteration_item should be Some(\"a.cpp\")"
+        );
+        // TestResult.id must end with "[a.cpp]".
+        assert!(
+            test_results[0].id.0.ends_with("[a.cpp]"),
+            "TestResult.id should end with [a.cpp], got: {}",
+            test_results[0].id.0
+        );
+
+        // The TestStarted event must carry iteration_item = Some("a.cpp").
+        let events: Vec<_> = rx.try_iter().collect();
+        let started = events.iter().find(|e| matches!(e, EngineEvent::TestStarted { .. }))
+            .expect("expected a TestStarted event");
+        match started {
+            EngineEvent::TestStarted { iteration_item, .. } => {
+                assert_eq!(
+                    *iteration_item,
+                    Some("a.cpp".into()),
+                    "TestStarted.iteration_item should be Some(\"a.cpp\")"
+                );
             }
             _ => unreachable!(),
         }

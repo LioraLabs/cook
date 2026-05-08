@@ -52,7 +52,7 @@ impl Reporter {
 
     pub fn on_event(&mut self, evt: EngineEvent) {
         match evt {
-            EngineEvent::TestStarted { id, recipe, name, line } => {
+            EngineEvent::TestStarted { id, recipe, name, line, iteration_item } => {
                 if !self.header_printed {
                     println!("{}", self.style.bold("running tests"));
                     self.header_printed = true;
@@ -66,7 +66,7 @@ impl Reporter {
                     recipe: recipe.clone(),
                     name: name.clone(),
                     line,
-                    iteration_item: None,
+                    iteration_item: iteration_item.clone(),
                 });
                 if self.verbose {
                     println!("    test {} ...", self.label_for(&id.0));

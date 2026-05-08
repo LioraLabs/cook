@@ -612,7 +612,7 @@ fn execute_work_item(
                 output_lines: Vec::new(),
             }
         }
-        WorkPayload::Test { cmd, line, timeout, should_fail, suite_name, test_name } => {
+        WorkPayload::Test { cmd, line, timeout, should_fail, suite_name, test_name, .. } => {
             execute_test(work.id, cmd, *line, *timeout, *should_fail, suite_name, test_name, working_dir, env_vars, node_name)
         }
         // `WorkPayload` is `#[non_exhaustive]` so the reference implementation

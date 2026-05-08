@@ -226,6 +226,7 @@ pub enum EngineEvent {
         recipe: String,
         name: String,
         line: u32,
+        iteration_item: Option<String>,
     },
     /// A test unit passed.
     TestPassed {
@@ -403,6 +404,7 @@ mod test_result_tests {
             recipe: "r".into(),
             name: "t".into(),
             line: 7,
+            iteration_item: None,
         };
         if let EngineEvent::TestStarted { line, .. } = evt {
             assert_eq!(line, 7);

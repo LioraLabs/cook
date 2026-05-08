@@ -43,6 +43,8 @@ pub fn register_test_api(lua: &Lua, capture_state: SharedCaptureState) -> LuaRes
         let test_name: String = tbl.get::<Option<String>>("name")?.unwrap_or_default();
         let should_fail: bool = tbl.get::<Option<bool>>("should_fail")?.unwrap_or(false);
         let line: usize = tbl.get::<Option<i64>>("line")?.unwrap_or(0).max(0) as usize;
+        let iteration_item: Option<String> = tbl.get::<Option<String>>("iteration_item")?
+            .filter(|s| !s.is_empty());
 
         let payload = WorkPayload::Test {
             cmd: command,
@@ -51,6 +53,7 @@ pub fn register_test_api(lua: &Lua, capture_state: SharedCaptureState) -> LuaRes
             should_fail,
             suite_name,
             test_name,
+            iteration_item,
         };
 
         let mut state = cs.borrow_mut();

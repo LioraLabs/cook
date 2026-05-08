@@ -783,6 +783,7 @@ mod test_slice_tests {
                 should_fail: false,
                 suite_name: "r".into(),
                 test_name: "t".into(),
+                iteration_item: None,
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,

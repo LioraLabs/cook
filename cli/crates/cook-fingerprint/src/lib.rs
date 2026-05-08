@@ -188,6 +188,7 @@ mod tests {
             should_fail,
             suite_name: suite_name.into(),
             test_name: test_name.into(),
+            iteration_item: None,
         }
     }
 

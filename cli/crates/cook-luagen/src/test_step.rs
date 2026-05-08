@@ -64,7 +64,7 @@ pub(crate) fn generate_test_step(
             let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_test_in", "{}", &mut consulted);
             let name_field = fmt_name_field(as_name_oto.as_deref());
             out.push_str(&format!(
-                "    for _, _test_in in ipairs({}) do\n        cook.add_test({{command = {}, {}timeout = {}, should_fail = {}, line = {}, consulted_env_keys = {}}})\n    end\n",
+                "    for _, _test_in in ipairs({}) do\n        cook.add_test({{command = {}, {}timeout = {}, should_fail = {}, line = {}, iteration_item = _test_in, consulted_env_keys = {}}})\n    end\n",
                 source_expr, cmd_expr, name_field, timeout, should_fail, line, consulted.to_lua_table()
             ));
         }
@@ -74,7 +74,7 @@ pub(crate) fn generate_test_step(
             let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &source_expr, &mut consulted);
             let name_field = fmt_name_field(as_name_mto.as_deref());
             out.push_str(&format!(
-                "    cook.add_test({{command = {}, {}timeout = {}, should_fail = {}, line = {}, consulted_env_keys = {}}})\n",
+                "    cook.add_test({{command = {}, {}timeout = {}, should_fail = {}, line = {}, iteration_item = nil, consulted_env_keys = {}}})\n",
                 cmd_expr, name_field, timeout, should_fail, line, consulted.to_lua_table()
             ));
         }
@@ -84,7 +84,7 @@ pub(crate) fn generate_test_step(
             let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", "{}", &mut consulted);
             let name_field = fmt_name_field(as_name_oneshot.as_deref());
             out.push_str(&format!(
-                "    cook.add_test({{command = {}, {}timeout = {}, should_fail = {}, line = {}, consulted_env_keys = {}}})\n",
+                "    cook.add_test({{command = {}, {}timeout = {}, should_fail = {}, line = {}, iteration_item = nil, consulted_env_keys = {}}})\n",
                 cmd_expr, name_field, timeout, should_fail, line, consulted.to_lua_table()
             ));
         }
@@ -96,7 +96,7 @@ pub(crate) fn generate_test_step(
             ));
             // Binding convention: build lua_code at register time with `local input = <value>`.
             out.push_str(&format!(
-                "        cook.add_test({{lua_code = (\"local input = \" .. string.format(\"%q\", _test_in) .. \"\\n\") .. {}, {}timeout = {}, should_fail = {}, line = {}, consulted_env_keys = \"*\"}})\n",
+                "        cook.add_test({{lua_code = (\"local input = \" .. string.format(\"%q\", _test_in) .. \"\\n\") .. {}, {}timeout = {}, should_fail = {}, line = {}, iteration_item = _test_in, consulted_env_keys = \"*\"}})\n",
                 lua_chunk_literal(code), name_field, timeout, should_fail, line
             ));
             out.push_str("    end\n");
@@ -105,14 +105,14 @@ pub(crate) fn generate_test_step(
             let name_field = fmt_name_field(as_name_mto.as_deref());
             // Serialise the inputs table at register time into the lua_code string.
             out.push_str(&format!(
-                "    cook.add_test({{lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), {}timeout = {}, should_fail = {}, line = {}, consulted_env_keys = \"*\"}})\n",
+                "    cook.add_test({{lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), {}timeout = {}, should_fail = {}, line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
                 source_expr, lua_chunk_literal(code), name_field, timeout, should_fail, line
             ));
         }
         (Body::LuaBlock(code), PlateTestMode::OneShot) => {
             let name_field = fmt_name_field(as_name_oneshot.as_deref());
             out.push_str(&format!(
-                "    cook.add_test({{lua_code = {}, {}timeout = {}, should_fail = {}, line = {}, consulted_env_keys = \"*\"}})\n",
+                "    cook.add_test({{lua_code = {}, {}timeout = {}, should_fail = {}, line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
                 lua_chunk_literal(code), name_field, timeout, should_fail, line
             ));
         }

@@ -195,6 +195,7 @@ Additional `cook.*` helpers — notably `cook.env`, `cook.platform`, `cook.cache
 | `timeout` | integer | no | `300` | Timeout in seconds. MUST be a positive integer (strictly greater than zero); a value of `0` or less MUST raise a register-phase Lua error. |
 | `should_fail` | boolean | no | `false` | When `true`, the test is expected to exit non-zero; a zero exit code is treated as a failure. |
 | `line` | integer | no | `0` | Source line number of the originating `test_step` in the Cookfile, used in diagnostic output and test labels (e.g. `recipe@2`). The code generator MUST populate this field; a conforming implementation MUST NOT require it to be non-zero. |
+| `iteration_item` | string or nil | no | `nil` | For OneToOne test steps, the current iteration input path (e.g. `_test_in`). When non-nil and non-empty, a conforming implementation MUST include it as a discriminator in the test identity (e.g. `recipe:name[item]`) and in the displayed label (e.g. `recipe@line [item]`). For ManyToOne and OneShot test steps, the code generator MUST pass `nil`. |
 
 A conforming implementation MUST apply the field defaults and raise register-phase Lua errors for invalid field values at the time `cook.add_test` is called, not deferred to execute time. Error messages MUST identify the offending field by name.
 

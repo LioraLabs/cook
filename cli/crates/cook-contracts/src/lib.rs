@@ -94,6 +94,7 @@ pub enum WorkPayload {
         should_fail: bool,
         suite_name: String,
         test_name: String,
+        iteration_item: Option<String>,
     },
 }
 
@@ -277,6 +278,7 @@ mod tests {
             should_fail: false,
             suite_name: "unit".into(),
             test_name: "test_foo".into(),
+            iteration_item: None,
         };
         assert!(matches!(p, WorkPayload::Test { timeout: 30, should_fail: false, .. }));
     }
