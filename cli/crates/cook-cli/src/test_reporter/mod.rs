@@ -2,6 +2,8 @@
 //!
 //! Per docs/superpowers/specs/2026-05-07-test-runner-design.md §6.5.
 
+pub mod label;
+
 use std::collections::BTreeMap;
 use std::time::Duration;
 use cook_engine::{EngineEvent, TestId, TestOutcome, TestResult};
