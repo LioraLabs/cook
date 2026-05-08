@@ -463,6 +463,7 @@ pub fn execute_dag(
                 EngineEvent::TestBlocked {
                     id: test_id.clone(),
                     upstream: upstream_name.to_string(),
+                    line: 0,
                 },
             );
             let namespace = crate::id::id_namespace(&test_id);
@@ -662,6 +663,7 @@ pub fn execute_dag(
                                 id: test_id.clone(),
                                 recipe: work_node.recipe_name.clone(),
                                 name: test_name.clone(),
+                                line: 0,
                             });
                             emit(event_tx, EngineEvent::TestPassed {
                                 id: test_id.clone(),
@@ -669,6 +671,7 @@ pub fn execute_dag(
                                 cached: true,
                                 stdout: entry.stdout.clone(),
                                 stderr: entry.stderr.clone(),
+                                line: 0,
                             });
                             // Emit NodeCompleted so the recipe tracker counts this node.
                             emit(event_tx, EngineEvent::NodeCompleted {
@@ -797,6 +800,7 @@ pub fn execute_dag(
                         )),
                         recipe: work_node.recipe_name.clone(),
                         name: test_name.clone(),
+                        line: 0,
                     },
                 );
 
@@ -902,6 +906,7 @@ pub fn execute_dag(
                             id: test_id,
                             recipe: work_node.recipe_name.clone(),
                             name: test_name.clone(),
+                            line: 0,
                         },
                     );
                 }
@@ -1902,6 +1907,7 @@ pub fn execute_dag(
                         cached: false,
                         stdout: to.stdout.clone(),
                         stderr: to.stderr.clone(),
+                        line: 0,
                     },
                 );
                 test_results.push(crate::TestResult {
@@ -1994,6 +2000,7 @@ pub fn execute_dag(
                             timeout: duration,
                             stdout: to.stdout.clone(),
                             stderr: to.stderr.clone(),
+                            line: 0,
                         },
                     );
                     crate::TestOutcome::TimedOut
@@ -2009,6 +2016,7 @@ pub fn execute_dag(
                                 expected_success: !to.should_fail,
                                 observed_success: to.exit_success,
                             },
+                            line: 0,
                         },
                     );
                     crate::TestOutcome::Failed

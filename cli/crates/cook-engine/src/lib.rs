@@ -225,6 +225,7 @@ pub enum EngineEvent {
         id: TestId,
         recipe: String,
         name: String,
+        line: u32,
     },
     /// A test unit passed.
     TestPassed {
@@ -233,6 +234,7 @@ pub enum EngineEvent {
         cached: bool,
         stdout: String,
         stderr: String,
+        line: u32,
     },
     /// A test unit failed.
     TestFailed {
@@ -241,11 +243,13 @@ pub enum EngineEvent {
         stdout: String,
         stderr: String,
         reason: TestFailureReason,
+        line: u32,
     },
     /// A test unit was blocked because an upstream cook step failed.
     TestBlocked {
         id: TestId,
         upstream: String,
+        line: u32,
     },
     /// A test unit timed out.
     TestTimedOut {
@@ -253,6 +257,7 @@ pub enum EngineEvent {
         timeout: std::time::Duration,
         stdout: String,
         stderr: String,
+        line: u32,
     },
 }
 
@@ -382,5 +387,20 @@ mod test_result_tests {
             line: 42,
         };
         assert_eq!(r.line, 42);
+    }
+
+    #[test]
+    fn test_started_event_carries_line() {
+        let evt = EngineEvent::TestStarted {
+            id: TestId("r:t".into()),
+            recipe: "r".into(),
+            name: "t".into(),
+            line: 7,
+        };
+        if let EngineEvent::TestStarted { line, .. } = evt {
+            assert_eq!(line, 7);
+        } else {
+            panic!("wrong variant");
+        }
     }
 }
