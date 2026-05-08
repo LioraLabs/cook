@@ -436,6 +436,7 @@ mod tests {
             should_fail: false,
             timed_out: false,
             line: 0,
+            exit_code: None,
         }
     }
 

@@ -289,7 +289,11 @@ pub enum TestOutcome {
 /// Reason for a test failure (when outcome is Failed).
 #[derive(Debug, Clone)]
 pub enum TestFailureReason {
-    ExitStatusMismatch { expected_success: bool, observed_success: bool },
+    ExitStatusMismatch {
+        expected_success: bool,
+        observed_success: bool,
+        exit_code: Option<i32>,
+    },
     SignalKilled(i32),
     SpawnError(String),
 }
@@ -313,6 +317,7 @@ pub struct TestResult {
     pub should_fail: bool,
     pub timed_out: bool,
     pub line: u32,
+    pub exit_code: Option<i32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -385,6 +390,7 @@ mod test_result_tests {
             should_fail: false,
             timed_out: false,
             line: 42,
+            exit_code: None,
         };
         assert_eq!(r.line, 42);
     }

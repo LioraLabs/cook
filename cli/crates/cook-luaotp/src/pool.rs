@@ -35,6 +35,7 @@ pub struct TestOutput {
     pub timed_out: bool,
     pub should_fail: bool,
     pub exit_success: bool,
+    pub exit_code: Option<i32>,
 }
 
 pub struct WorkResult {
@@ -808,6 +809,7 @@ fn execute_test(
                     timed_out: false,
                     should_fail,
                     exit_success: false,
+                    exit_code: None,
                 }),
                 node_name,
                 output_lines: Vec::new(),
@@ -837,11 +839,13 @@ fn execute_test(
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let timed_out;
     let exit_success;
+    let exit_code: Option<i32>;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
                 timed_out = false;
                 exit_success = status.success();
+                exit_code = status.code();
                 break;
             }
             Ok(None) => {
@@ -850,6 +854,7 @@ fn execute_test(
                     let _ = child.wait();
                     timed_out = true;
                     exit_success = false;
+                    exit_code = None;
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10));
@@ -857,6 +862,7 @@ fn execute_test(
             Err(_) => {
                 timed_out = false;
                 exit_success = false;
+                exit_code = None;
                 break;
             }
         }
@@ -892,6 +898,7 @@ fn execute_test(
             timed_out,
             should_fail,
             exit_success,
+            exit_code,
         }),
         node_name,
         output_lines,
@@ -1278,5 +1285,21 @@ mod tests {
             weak.upgrade().is_none(),
             "queue Arc still alive after pool drop — workers were not joined"
         );
+    }
+
+    #[test]
+    fn test_output_carries_exit_code() {
+        let to = TestOutput {
+            suite_name: "s".into(),
+            test_name: "t".into(),
+            stdout: String::new(),
+            stderr: String::new(),
+            duration: 0.0,
+            timed_out: false,
+            should_fail: false,
+            exit_success: false,
+            exit_code: Some(7),
+        };
+        assert_eq!(to.exit_code, Some(7));
     }
 }

@@ -485,6 +485,7 @@ pub fn execute_dag(
                 should_fail: *should_fail,
                 timed_out: false,
                 line: *line as u32,
+                exit_code: None,
             });
         }
         finish_recipe_node(
@@ -701,6 +702,7 @@ pub fn execute_dag(
                                 should_fail: entry.should_fail_observed,
                                 timed_out: false,
                                 line: *line as u32,
+                                exit_code: None,
                             });
 
                             *finished += 1;
@@ -1931,6 +1933,7 @@ pub fn execute_dag(
                     should_fail: to.should_fail,
                     timed_out: false,
                     line: line_no,
+                    exit_code: to.exit_code,
                 });
 
                 // Write passing test result to the content-addressed cache.
@@ -2023,6 +2026,7 @@ pub fn execute_dag(
                             reason: crate::TestFailureReason::ExitStatusMismatch {
                                 expected_success: !to.should_fail,
                                 observed_success: to.exit_success,
+                                exit_code: to.exit_code,
                             },
                             line: line_no,
                         },
@@ -2046,6 +2050,7 @@ pub fn execute_dag(
                     should_fail: to.should_fail,
                     timed_out: to.timed_out,
                     line: line_no,
+                    exit_code: to.exit_code,
                 });
             }
 
