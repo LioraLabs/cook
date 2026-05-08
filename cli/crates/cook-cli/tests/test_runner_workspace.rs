@@ -52,10 +52,13 @@ fn cook_test_discovers_workspace_recipes() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let combined = format!("{stdout}{stderr}");
 
-    // Engine workspace discovery should pick up sub.pass and sub.fail_one
+    // Engine workspace discovery should pick up the recipes from sub/Cookfile.
+    // New label rule strips the namespace prefix when only one namespace is touched,
+    // so we look for the bare recipe names (`pass`, `fail_one`) in the streamed
+    // `test ... ok|FAILED` lines.
     assert!(
-        combined.contains("sub.pass") || combined.contains("sub.fail_one") || combined.contains("sub"),
-        "expected sub recipes in combined output; stdout:\n{stdout}\nstderr:\n{stderr}"
+        combined.contains("test pass@") && combined.contains("test fail_one@"),
+        "expected sub recipes pass and fail_one in test output; stdout:\n{stdout}\nstderr:\n{stderr}"
     );
     // exit non-zero because sub.fail_one fails
     assert_ne!(
