@@ -97,7 +97,7 @@ Breakdown for `-j 8`:
 
 ## Observing the DAG
 
-The `--dag` flag opens an interactive DAG viewer in your browser:
+The `dag` subcommand opens an interactive DAG viewer in your browser:
 
 ```sh
 cook dag benchmarks
@@ -112,7 +112,7 @@ cook emit-lua benchmarks | head -80
 cook menu
 ```
 
-`--menu` lists every recipe with its ingredient patterns, output patterns, and
+The `menu` subcommand lists every recipe with its ingredient patterns, output patterns, and
 declared dependencies — a quick structural overview.
 
 ## Verifying the wart-fix (CS-0022 §3.5)
