@@ -1,6 +1,6 @@
 //! Integration tests: workspace discovery + recipe-level scope + JSON sidecar.
 //!
-//! Exercises `cook --test` against a two-Cookfile workspace (root + sub/).
+//! Exercises `cook test` against a two-Cookfile workspace (root + sub/).
 //! Tests run in isolated tempdirs so they don't share cache state.
 
 use std::fs;
@@ -44,7 +44,7 @@ fn cook_test_discovers_workspace_recipes() {
     write_workspace(tmp.path());
 
     let out = Command::new(cook_binary())
-        .arg("--test")
+        .arg("test")
         .current_dir(tmp.path())
         .output()
         .unwrap();
@@ -74,7 +74,7 @@ fn cook_test_recipe_scope_pass() {
     write_workspace(tmp.path());
 
     let out = Command::new(cook_binary())
-        .args(["--test", "sub.pass"])
+        .args(["test", "sub.pass"])
         .current_dir(tmp.path())
         .output()
         .unwrap();
@@ -94,7 +94,7 @@ fn cook_test_recipe_scope_fail() {
     write_workspace(tmp.path());
 
     let out = Command::new(cook_binary())
-        .args(["--test", "sub.fail_one"])
+        .args(["test", "sub.fail_one"])
         .current_dir(tmp.path())
         .output()
         .unwrap();
@@ -115,7 +115,7 @@ fn cook_test_writes_json_sidecar() {
 
     // Run (may fail — we only care that the sidecar is written)
     let _ = Command::new(cook_binary())
-        .arg("--test")
+        .arg("test")
         .current_dir(tmp.path())
         .output()
         .unwrap();

@@ -1,16 +1,10 @@
 //! Argument parsing for `cook pull`. `PullArgs` is parsed from `argv[1..]`
 //! (i.e. without the `pull` token); use [`parse`].
 
-use clap::Parser;
-
 use super::errors::PullError;
 
-#[derive(Parser, Debug, Clone)]
-#[command(
-    name = "cook pull",
-    about = "Pull cook_modules from a configured HTTP(S) registry.",
-    override_usage = "cook pull [OPTIONS] [NAME]..."
-)]
+#[derive(clap::Args, Debug, Clone)]
+#[command(about = "Pull cook_modules from a configured HTTP(S) registry.")]
 pub struct PullArgs {
     /// Module names to pull (empty when --all or --list is used).
     #[arg(value_name = "NAME")]
@@ -51,7 +45,16 @@ pub fn parse(argv: &[String]) -> Result<PullArgs, PullError> {
     let mut full: Vec<String> = vec!["cook pull".to_string()];
     full.extend_from_slice(argv);
 
-    let args = match PullArgs::try_parse_from(full) {
+    // Wrap PullArgs in a top-level Parser so try_parse_from still works for
+    // the integration-test helper. The wrapper is private to this function.
+    #[derive(clap::Parser)]
+    #[command(name = "cook pull")]
+    struct PullParser {
+        #[command(flatten)]
+        inner: PullArgs,
+    }
+    use clap::Parser as _;
+    let args = match PullParser::try_parse_from(full).map(|p| p.inner) {
         Ok(a) => a,
         Err(e) => {
             // For --help and --version, let clap's own exit-cleanly path handle it.

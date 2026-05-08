@@ -35,7 +35,7 @@ pub fn render(t: &Tally, wall: Duration, style: &Style) -> String {
         );
         line.push_str(&format!(
             "\n\n  {}\n",
-            style.dim("rerun: cook --test --rerun-failed"),
+            style.dim("rerun: cook test --rerun-failed"),
         ));
         line
     } else {
@@ -85,7 +85,7 @@ mod tests {
         assert!(line.starts_with(
             "test result: FAILED. 46 passed; 6 failed; 1 timed out; 1 blocked; 1 cached; finished in 1.1s"
         ), "{line}");
-        assert!(line.contains("rerun: cook --test --rerun-failed"), "{line}");
+        assert!(line.contains("rerun: cook test --rerun-failed"), "{line}");
     }
 
     #[test]

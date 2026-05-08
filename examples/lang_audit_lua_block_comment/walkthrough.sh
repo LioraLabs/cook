@@ -1,7 +1,7 @@
 #!/bin/bash
 # CS-0035 audit walkthrough — multi-line Lua block comments.
 #
-# Asserts that `cook --emit-lua` parses a Cookfile whose `>{ ... }` Lua
+# Asserts that `cook emit-lua` parses a Cookfile whose `>{ ... }` Lua
 # block contains a multi-line `--[[ ... ]]` and `--[==[ ... ]==]` block
 # comment, each with `}` bytes interior to the comment. Pre-CS-0035 the
 # parser rejected this with "unclosed Lua block".
@@ -24,9 +24,9 @@ fail=0
 echo "=== lang_audit_lua_block_comment (CS-0035) ==="
 echo
 
-out=$("$COOK" --emit-lua 2>&1)
+out=$("$COOK" emit-lua 2>&1)
 rc=$?
-printf "  [1] %-60s " "cook --emit-lua exits 0 (parser accepts)"
+printf "  [1] %-60s " "cook emit-lua exits 0 (parser accepts)"
 if [ "$rc" -eq 0 ]; then
     echo "PASS"
     pass=$((pass + 1))

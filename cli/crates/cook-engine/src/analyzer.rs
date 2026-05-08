@@ -327,13 +327,13 @@ pub fn find_full_prefix(
 }
 
 // ---------------------------------------------------------------------------
-// Workspace-wide recipe registration for `cook --test`
+// Workspace-wide recipe registration for `cook test`
 // ---------------------------------------------------------------------------
 
 /// Register every recipe in every imported Cookfile in the workspace,
 /// regardless of whether it is reachable from any target.
 ///
-/// Used by `cook --test` to discover all test_step units across the
+/// Used by `cook test` to discover all test_step units across the
 /// workspace per docs/superpowers/specs/2026-05-07-test-runner-design.md §4.1.
 pub fn register_workspace_for_test(
     project_root: &Path,

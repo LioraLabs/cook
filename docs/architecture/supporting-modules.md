@@ -1,6 +1,6 @@
 # Supporting Modules: Analyzer, Watcher, Env, Progress
 
-Four focused modules that underpin Cook's build pipeline. The analyzer runs before any recipe executes; the watcher powers `cook --serve`; the env loader feeds the five-layer variable resolution system; and the progress crate renders build output to the terminal and persists build logs for post-hoc inspection.
+Four focused modules that underpin Cook's build pipeline. The analyzer runs before any recipe executes; the watcher powers `cook serve`; the env loader feeds the five-layer variable resolution system; and the progress crate renders build output to the terminal and persists build logs for post-hoc inspection.
 
 ---
 
@@ -8,7 +8,7 @@ Four focused modules that underpin Cook's build pipeline. The analyzer runs befo
 
 ### Purpose
 
-The analyzer determines which recipes to run and in what order. It is called early in every recipe run and `cook --serve` invocation — before any recipe execution begins — and returns an ordered list of recipe names that the scheduler then enqueues.
+The analyzer determines which recipes to run and in what order. It is called early in every recipe run and `cook serve` invocation — before any recipe execution begins — and returns an ordered list of recipe names that the scheduler then enqueues.
 
 Entry point: `src/analyzer/mod.rs:35` `resolve_execution_order(cookfile, target)` → `Vec<String>`.
 
@@ -81,7 +81,7 @@ These errors are mapped to user-facing `CookError` variants in `src/cli/mod.rs:2
 
 ### Purpose
 
-The watcher powers `cook --serve` — the continuous rebuild mode. It watches ingredient directories and the Cookfile for changes, debounces rapid file system events, and invokes a callback that triggers a rebuild.
+The watcher powers `cook serve` — the continuous rebuild mode. It watches ingredient directories and the Cookfile for changes, debounces rapid file system events, and invokes a callback that triggers a rebuild.
 
 ---
 
@@ -129,7 +129,7 @@ An event is ignored entirely if no changed path matches either the Cookfile or a
 
 ### Interactive Step Rejection
 
-`cook --serve` rejects any recipe that contains an `@`-prefixed interactive step. This check is enforced in `src/cli/mod.rs` before the watcher is started, not inside the watcher itself. See `src/cli/mod.rs` `cmd_serve` for the validation logic.
+`cook serve` rejects any recipe that contains an `@`-prefixed interactive step. This check is enforced in `src/cli/mod.rs` before the watcher is started, not inside the watcher itself. See `src/cli/mod.rs` `cmd_serve` for the validation logic.
 
 ---
 
@@ -265,16 +265,16 @@ Recipe and node names are sanitized to `[a-zA-Z0-9._-]` when used as path compon
 
 ---
 
-### `cook --logs` built-in
+### `cook logs` built-in
 
 Text-only reader of `.cook/logs/`. No TUI.
 
 ```
-cook --logs                          # list recent builds (newest first)
-cook --logs <recipe>                 # dump every node log for a recipe from most recent build
-cook --logs <recipe>:<node>          # dump one node's log
-cook --logs <selector> --build <id>  # pick a specific build
-cook --logs --failed                 # grep events.jsonl for "node-failed" entries
+cook logs                          # list recent builds (newest first)
+cook logs <recipe>                 # dump every node log for a recipe from most recent build
+cook logs <recipe>:<node>          # dump one node's log
+cook logs <selector> --build <id>  # pick a specific build
+cook logs --failed                 # grep events.jsonl for "node-failed" entries
 ```
 
 ---

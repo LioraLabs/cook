@@ -1,7 +1,7 @@
 #!/bin/bash
 # CS-0035 audit walkthrough — shell heredocs with `}` braces in body.
 #
-# Asserts that `cook --emit-lua` parses a Cookfile whose `using { ... }`
+# Asserts that `cook emit-lua` parses a Cookfile whose `using { ... }`
 # shell block contains POSIX heredocs in three forms (bare, single-quoted
 # delimiter, dash form) and that `}` bytes on heredoc-body lines do not
 # prematurely close the surrounding shell block.
@@ -24,9 +24,9 @@ fail=0
 echo "=== lang_audit_shell_heredoc_brace (CS-0035) ==="
 echo
 
-out=$("$COOK" --emit-lua 2>&1)
+out=$("$COOK" emit-lua 2>&1)
 rc=$?
-printf "  [1] %-60s " "cook --emit-lua exits 0 (parser accepts)"
+printf "  [1] %-60s " "cook emit-lua exits 0 (parser accepts)"
 if [ "$rc" -eq 0 ]; then
     echo "PASS"
     pass=$((pass + 1))

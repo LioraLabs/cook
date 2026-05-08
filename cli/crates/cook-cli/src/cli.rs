@@ -1,155 +1,326 @@
 //! Clap argument parsing for the `cook` binary.
 //!
-//! Built-in commands (`--menu`, `--init`, `--serve`, `--logs`) are flag-form so
-//! the bare positional namespace stays free for recipe names. Anything that
-//! isn't a built-in flag is treated as a recipe target.
+//! Top-level shape:
+//!     cook [GLOBALS]
+//!     cook [GLOBALS] [+]<RECIPE> [CONFIG]
+//!     cook [GLOBALS] <SUBCOMMAND> [SUBCOMMAND-ARGS...]
+//!
+//! Bare positional that doesn't match a reserved subcommand name dispatches
+//! to a recipe via `Cmd::Recipe`. A leading `+` on the first positional
+//! forces recipe lookup (escape hatch for recipes whose names collide with
+//! reserved subcommands).
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-#[derive(Parser)]
+use crate::pull::PullArgs;
+
+#[derive(Parser, Debug)]
 #[command(
     name = "cook",
     about = "A modern build system with Lua",
-    override_usage = "cook [OPTIONS] [RECIPE] [CONFIG]",
     after_help = "Run `cook <recipe>` to execute a recipe (defaults to 'build').\n\
-                  Built-in commands: --menu, --init, --serve, --logs."
+                  Use `cook +<recipe>` to invoke a recipe whose name collides with a built-in subcommand."
 )]
 pub struct Cli {
-    /// Recipe to run (default: 'build'). Also used as the target for --serve
-    /// and as the selector for --logs.
-    pub recipe: Option<String>,
+    #[command(flatten)]
+    pub globals: Globals,
 
-    /// Config preset to use
-    pub config: Option<String>,
+    #[command(subcommand)]
+    pub cmd: Option<Cmd>,
+}
 
-    // ===== built-in commands =====
-    /// List all recipes
-    #[arg(
-        long = "menu",
-        help_heading = "Built-in commands",
-        conflicts_with_all = ["init", "serve", "logs"]
-    )]
-    pub menu: bool,
-
-    /// Generate a starter Cookfile
-    #[arg(
-        long = "init",
-        help_heading = "Built-in commands",
-        conflicts_with_all = ["menu", "serve", "logs"]
-    )]
-    pub init: bool,
-
-    /// Watch ingredients and re-run on change. Uses RECIPE/CONFIG positionals.
-    #[arg(
-        long = "serve",
-        help_heading = "Built-in commands",
-        conflicts_with_all = ["menu", "init", "logs"]
-    )]
-    pub serve: bool,
-
-    /// Show logs for past builds. Uses RECIPE positional as selector.
-    #[arg(
-        long = "logs",
-        help_heading = "Built-in commands",
-        conflicts_with_all = ["menu", "init", "serve"]
-    )]
-    pub logs: bool,
-
-    /// Run tests in the workspace (or scoped to a recipe/namespace).
-    #[arg(
-        long = "test",
-        help_heading = "Built-in commands",
-        conflicts_with_all = ["menu", "init", "serve", "logs", "dag", "emit_lua"]
-    )]
-    pub test: bool,
-
-    // ===== --test sub-args =====
-    /// Filter tests by glob against `<namespace>.<recipe>:<name>`. Repeatable.
-    #[arg(long = "filter", num_args = 1, requires = "test")]
-    pub filter: Vec<String>,
-
-    /// Cancel queued tests on first failure.
-    #[arg(long = "fail-fast", requires = "test")]
-    pub fail_fast: bool,
-
-    /// Force re-run of tests matching glob (or all if no pattern).
-    #[arg(long = "rerun", num_args = 0..=1, default_missing_value = "*", requires = "test")]
-    pub rerun: Option<Vec<String>>,
-
-    /// Re-run only tests that failed (or were blocked / timed out) last run.
-    #[arg(long = "rerun-failed", requires = "test")]
-    pub rerun_failed: bool,
-
-    /// Write JSON test report to the given path (default: .cook/test-report.json).
-    #[arg(long = "report-json", num_args = 1, requires = "test")]
-    pub report_json: Option<std::path::PathBuf>,
-
-    /// Write JUnit XML test report to the given path.
-    #[arg(long = "report-junit", num_args = 1, requires = "test")]
-    pub report_junit: Option<std::path::PathBuf>,
-
-    // ===== --logs sub-args =====
-    /// Specific build id
-    #[arg(long, help_heading = "Logs options (with --logs)", requires = "logs")]
-    pub build: Option<String>,
-
-    /// Dump failed nodes from the most recent build
-    #[arg(long, help_heading = "Logs options (with --logs)", requires = "logs")]
-    pub failed: bool,
-
-    // ===== global options =====
+#[derive(clap::Args, Debug, Default, Clone)]
+pub struct Globals {
     /// Path to Cookfile
-    #[arg(short = 'f', long = "file", default_value = "Cookfile")]
+    #[arg(short = 'f', long = "file", default_value = "Cookfile", global = true)]
     pub file: PathBuf,
 
     /// Override workspace root resolution. When supplied, the workspace root is
     /// taken to be this directory; the invoked Cookfile MUST be at or below it.
-    /// When omitted, the workspace root is determined per §7.6 (marker file →
-    /// tree-import inference → self-root or reject).
-    #[arg(long = "root")]
+    #[arg(long = "root", global = true)]
     pub root: Option<PathBuf>,
 
-    /// Print transpiled Lua instead of executing
-    #[arg(long = "emit-lua")]
-    pub emit_lua: bool,
-
-    /// Visualize the build DAG in a TUI viewer
-    #[arg(
-        long = "dag",
-        conflicts_with_all = ["menu", "init", "serve", "logs"]
-    )]
-    pub dag: bool,
-
     /// Suppress Cook output
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     pub quiet: bool,
 
     /// Stream per-node output (stdout + stderr) inline with [recipe/node] prefix.
-    #[arg(short = 'v', long)]
+    #[arg(short = 'v', long, global = true)]
     pub verbose: bool,
 
     /// Number of parallel jobs (default: number of CPU cores)
-    #[arg(short = 'j', long = "jobs")]
+    #[arg(short = 'j', long = "jobs", global = true)]
     pub jobs: Option<usize>,
 
     /// Color output mode
-    #[arg(long, default_value = "auto")]
+    #[arg(long, default_value = "auto", global = true)]
     pub color: String,
+
+    /// Output mode: auto (default), plain, json
+    #[arg(long = "output", default_value = "auto", global = true)]
+    pub output: String,
+
+    /// Override a variable (KEY=VALUE), repeatable.
+    #[arg(long = "set", num_args = 1, global = true)]
+    pub set: Vec<String>,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum Cmd {
+    /// Generate a starter Cookfile in the current directory.
+    Init,
+
+    /// List all recipes (and chores) in the workspace.
+    Menu,
+
+    /// Pull cook_modules from a configured HTTP(S) registry.
+    Pull(PullArgs),
+
+    /// Run tests in the workspace (or scoped to a recipe/namespace).
+    Test(TestArgs),
+
+    /// Visualize the build DAG in a TUI viewer.
+    Dag(DagArgs),
+
+    /// Show logs for past builds.
+    Logs(LogsArgs),
+
+    /// Watch ingredients and re-run on change.
+    Serve(ServeArgs),
+
+    /// Print transpiled Lua for the current Cookfile (file-level, not recipe-scoped).
+    #[command(name = "emit-lua")]
+    EmitLua,
+
+    /// Run a recipe by name. Captured for any first positional that does not
+    /// match a reserved subcommand. The first element is the recipe name
+    /// (with a leading `+` stripped if present); the optional second element
+    /// is the config preset.
+    #[command(external_subcommand)]
+    Recipe(Vec<String>),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct TestArgs {
+    /// Optional recipe scope (e.g. `apps.web` or `apps.web.unit`).
+    pub scope: Option<String>,
+
+    /// Filter tests by glob against `<namespace>.<recipe>:<name>`. Repeatable.
+    #[arg(long = "filter", num_args = 1)]
+    pub filter: Vec<String>,
+
+    /// Cancel queued tests on first failure.
+    #[arg(long = "fail-fast")]
+    pub fail_fast: bool,
+
+    /// Force re-run of tests matching glob (or all if no pattern).
+    #[arg(long = "rerun", num_args = 0..=1, default_missing_value = "*")]
+    pub rerun: Option<Vec<String>>,
+
+    /// Re-run only tests that failed (or were blocked / timed out) last run.
+    #[arg(long = "rerun-failed")]
+    pub rerun_failed: bool,
+
+    /// Write JSON test report to the given path (default: .cook/test-report.json).
+    #[arg(long = "report-json", num_args = 1)]
+    pub report_json: Option<PathBuf>,
+
+    /// Write JUnit XML test report to the given path.
+    #[arg(long = "report-junit", num_args = 1)]
+    pub report_junit: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct DagArgs {
+    /// Recipe to visualize (default: 'build').
+    pub recipe: Option<String>,
+
+    /// Config preset.
+    pub config: Option<String>,
 
     /// DAG TUI theme: auto (default) or mono.
     #[arg(long = "theme", default_value = "auto")]
     pub theme: String,
+}
 
-    /// Output mode: auto (default), plain, json
-    #[arg(long = "output", default_value = "auto")]
-    pub output: String,
+#[derive(clap::Args, Debug, Clone)]
+pub struct LogsArgs {
+    /// Recipe selector (or 'recipe:node'). Omit to list recent build ids.
+    pub selector: Option<String>,
 
-    /// Force plain output even on a TTY (synonym for --output=plain)
-    #[arg(long = "no-ui")]
-    pub no_ui: bool,
+    /// Specific build id.
+    #[arg(long)]
+    pub build: Option<String>,
 
-    /// Override a variable (KEY=VALUE), repeatable.
-    #[arg(long = "set", num_args = 1)]
-    pub set: Vec<String>,
+    /// Dump failed nodes from the most recent build.
+    #[arg(long)]
+    pub failed: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct ServeArgs {
+    /// Recipe to watch (default: 'build').
+    pub recipe: Option<String>,
+
+    /// Config preset.
+    pub config: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(argv: &[&str]) -> Cli {
+        let mut full = vec!["cook"];
+        full.extend_from_slice(argv);
+        Cli::try_parse_from(full).expect("parse should succeed")
+    }
+
+    #[test]
+    fn no_args_yields_no_subcommand() {
+        let cli = parse(&[]);
+        assert!(cli.cmd.is_none());
+    }
+
+    #[test]
+    fn bare_recipe_captured_as_external() {
+        let cli = parse(&["deploy"]);
+        match cli.cmd {
+            Some(Cmd::Recipe(parts)) => assert_eq!(parts, vec!["deploy".to_string()]),
+            other => panic!("expected Cmd::Recipe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recipe_with_config_captured_as_external() {
+        let cli = parse(&["deploy", "prod"]);
+        match cli.cmd {
+            Some(Cmd::Recipe(parts)) => {
+                assert_eq!(parts, vec!["deploy".to_string(), "prod".to_string()])
+            }
+            other => panic!("expected Cmd::Recipe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plus_escape_captured_as_external() {
+        let cli = parse(&["+test"]);
+        match cli.cmd {
+            Some(Cmd::Recipe(parts)) => assert_eq!(parts, vec!["+test".to_string()]),
+            other => panic!("expected Cmd::Recipe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn init_subcommand() {
+        assert!(matches!(parse(&["init"]).cmd, Some(Cmd::Init)));
+    }
+
+    #[test]
+    fn menu_subcommand() {
+        assert!(matches!(parse(&["menu"]).cmd, Some(Cmd::Menu)));
+    }
+
+    #[test]
+    fn emit_lua_subcommand() {
+        assert!(matches!(parse(&["emit-lua"]).cmd, Some(Cmd::EmitLua)));
+    }
+
+    #[test]
+    fn test_subcommand_with_filter() {
+        let cli = parse(&["test", "--filter", "alpha:*"]);
+        match cli.cmd {
+            Some(Cmd::Test(args)) => {
+                assert!(args.scope.is_none());
+                assert_eq!(args.filter, vec!["alpha:*".to_string()]);
+            }
+            other => panic!("expected Cmd::Test, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_subcommand_with_scope() {
+        let cli = parse(&["test", "sub.pass"]);
+        match cli.cmd {
+            Some(Cmd::Test(args)) => assert_eq!(args.scope.as_deref(), Some("sub.pass")),
+            other => panic!("expected Cmd::Test, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dag_subcommand_with_theme() {
+        let cli = parse(&["dag", "host", "--theme", "mono"]);
+        match cli.cmd {
+            Some(Cmd::Dag(args)) => {
+                assert_eq!(args.recipe.as_deref(), Some("host"));
+                assert_eq!(args.theme, "mono");
+            }
+            other => panic!("expected Cmd::Dag, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn logs_subcommand_with_failed_flag() {
+        let cli = parse(&["logs", "--failed"]);
+        match cli.cmd {
+            Some(Cmd::Logs(args)) => {
+                assert!(args.failed);
+                assert!(args.selector.is_none());
+            }
+            other => panic!("expected Cmd::Logs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn serve_subcommand_with_recipe() {
+        let cli = parse(&["serve", "host", "prod"]);
+        match cli.cmd {
+            Some(Cmd::Serve(args)) => {
+                assert_eq!(args.recipe.as_deref(), Some("host"));
+                assert_eq!(args.config.as_deref(), Some("prod"));
+            }
+            other => panic!("expected Cmd::Serve, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pull_subcommand_with_names() {
+        let cli = parse(&["pull", "cpp", "rust"]);
+        match cli.cmd {
+            Some(Cmd::Pull(args)) => assert_eq!(args.names, vec!["cpp", "rust"]),
+            other => panic!("expected Cmd::Pull, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn globals_apply_with_subcommand() {
+        let cli = parse(&["-v", "test"]);
+        assert!(cli.globals.verbose);
+        assert!(matches!(cli.cmd, Some(Cmd::Test(_))));
+    }
+
+    #[test]
+    fn globals_apply_after_subcommand() {
+        // Symmetric to globals_apply_with_subcommand: when a subcommand
+        // is present, a `global = true` flag attached to it must still
+        // populate Globals via the flatten propagation.
+        let cli = parse(&["test", "-v"]);
+        assert!(cli.globals.verbose);
+        assert!(matches!(cli.cmd, Some(Cmd::Test(_))));
+    }
+
+    #[test]
+    fn globals_apply_without_subcommand() {
+        let cli = parse(&["-v", "deploy"]);
+        assert!(cli.globals.verbose);
+        assert!(matches!(cli.cmd, Some(Cmd::Recipe(_))));
+    }
+
+    #[test]
+    fn old_flag_form_rejected() {
+        // Sanity: --test should no longer parse as a built-in invocation.
+        let result = Cli::try_parse_from(["cook", "--test"]);
+        assert!(result.is_err(), "--test should be rejected after the redesign");
+    }
 }

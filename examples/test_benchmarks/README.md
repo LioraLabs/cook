@@ -19,5 +19,5 @@ Recipes:
 | `cached_replay` | Cache hit on second run |
 | `rerun_failed_set` | `--rerun-failed` selection |
 
-Run: `cook --test` (after Phase 4) — see `walkthrough.sh` for the full
+Run: `cook test` (after Phase 4) — see `walkthrough.sh` for the full
 conformance assertions.

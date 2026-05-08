@@ -109,7 +109,7 @@ fn graph_pane_rect_from_terminal(t: Rect) -> Rect {
 
 fn print_fallback<F: ViewFrame>(frame: &F) -> Result<(), ViewerError> {
     let g = frame.graph();
-    println!("cook --dag (non-TTY fallback) — target {}", g.target);
+    println!("cook dag (non-TTY fallback) — target {}", g.target);
     for (wi, wave) in g.waves.iter().enumerate() {
         println!("Wave {}", wi);
         for recipe in &wave.recipes {

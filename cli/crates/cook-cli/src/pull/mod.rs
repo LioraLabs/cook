@@ -10,13 +10,13 @@ mod install;
 mod prompt;
 mod trust;
 
+pub use args::PullArgs;
 pub use errors::PullError;
 
 use std::collections::BTreeSet;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
-use args::PullArgs;
 use prompt::{ConflictAnswer, ConflictPrompter, StdinPrompter};
 use trust::TrustMode;
 
@@ -35,7 +35,7 @@ pub fn run_from_argv(argv: &[String]) -> i32 {
         }
     };
 
-    match run(args) {
+    match run_inner(args) {
         Ok(code) => code,
         Err(e) => {
             eprintln!("cook pull: {e}");
@@ -44,7 +44,20 @@ pub fn run_from_argv(argv: &[String]) -> i32 {
     }
 }
 
-fn run(args: PullArgs) -> Result<i32, PullError> {
+/// Direct entry for `Cmd::Pull(PullArgs)` dispatch from main.rs.
+/// Returns the process exit code; the caller is responsible for
+/// `std::process::exit`.
+pub fn run(args: PullArgs) -> i32 {
+    match run_inner(args) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("cook pull: {e}");
+            e.exit_code()
+        }
+    }
+}
+
+fn run_inner(args: PullArgs) -> Result<i32, PullError> {
     let cwd = std::env::current_dir().map_err(|e| PullError::Io {
         context: "current_dir".into(),
         source: e,

@@ -1,6 +1,6 @@
 //! Integration test: upstream cook failure produces Blocked test results.
 //!
-//! SHI-173: `cook --test` was short-circuiting to `EngineError::TaskFailures`
+//! SHI-173: `cook test` was short-circuiting to `EngineError::TaskFailures`
 //! when a cook step in a test's upstream closure failed, instead of reporting
 //! the test as Blocked.
 //!
@@ -50,7 +50,7 @@ fn upstream_cook_failure_reports_blocked_not_engine_error() {
     write_broken_cookfile(tmp.path());
 
     let out = Command::new(cook_binary())
-        .arg("--test")
+        .arg("test")
         .current_dir(tmp.path())
         .output()
         .unwrap();

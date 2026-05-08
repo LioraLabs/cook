@@ -41,7 +41,7 @@ struct StateEntry {
 }
 
 /// Load the set of test IDs that failed (or were blocked/timed-out) during the
-/// most recent `cook --test` run.
+/// most recent `cook test` run.
 ///
 /// Returns `Err(NotFound)` when no state file exists yet.
 /// Returns an empty set (with a warning) when the schema version doesn't match.

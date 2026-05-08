@@ -36,7 +36,7 @@ humantime = "2"
 
 [features]
 default = []
-# Embeds the browser-based DAG viewer used by `cook --dag`. Pulls in the
+# Embeds the browser-based DAG viewer used by `cook dag`. Pulls in the
 # `cook-dag-viewer` crate (which carries `tiny_http`, `open`, and the embedded
 # HTML asset). Off by default so vanilla `cook` builds stay slim and free of
 # an HTTP-server dependency. CS-0047 documents the rationale.

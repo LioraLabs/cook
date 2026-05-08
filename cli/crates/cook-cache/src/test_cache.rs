@@ -1,7 +1,7 @@
 //! Content-addressed test-result cache (CS-0061 §3.3).
 //!
 //! Only `Passed` outcomes are persisted. Failed / timed-out / blocked results
-//! are excluded so a subsequent `cook --test` always re-runs them.
+//! are excluded so a subsequent `cook test` always re-runs them.
 //!
 //! Layout on disk:
 //! ```text
