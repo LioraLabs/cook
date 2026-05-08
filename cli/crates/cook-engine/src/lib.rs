@@ -307,6 +307,7 @@ pub struct TestResult {
     pub blocked_by: Option<String>,
     pub should_fail: bool,
     pub timed_out: bool,
+    pub line: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -355,4 +356,31 @@ pub enum EngineError {
         path: PathBuf,
         recipes: Vec<String>,
     },
+}
+
+#[cfg(test)]
+mod test_result_tests {
+    use super::*;
+    #[test]
+    fn test_result_carries_line() {
+        let r = TestResult {
+            id: TestId("r:t".into()),
+            namespace: String::new(),
+            recipe: "r".into(),
+            name: "t".into(),
+            suite: String::new(),
+            iteration_item: None,
+            outcome: TestOutcome::Passed,
+            duration: std::time::Duration::ZERO,
+            from_cache: false,
+            stdout: String::new(),
+            stderr: String::new(),
+            fingerprint: None,
+            blocked_by: None,
+            should_fail: false,
+            timed_out: false,
+            line: 42,
+        };
+        assert_eq!(r.line, 42);
+    }
 }

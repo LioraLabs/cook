@@ -483,6 +483,7 @@ pub fn execute_dag(
                 blocked_by: Some(upstream_name.to_string()),
                 should_fail: *should_fail,
                 timed_out: false,
+                line: 0,
             });
         }
         finish_recipe_node(
@@ -696,6 +697,7 @@ pub fn execute_dag(
                                 blocked_by: None,
                                 should_fail: entry.should_fail_observed,
                                 timed_out: false,
+                                line: 0,
                             });
 
                             *finished += 1;
@@ -1918,6 +1920,7 @@ pub fn execute_dag(
                     blocked_by: None,
                     should_fail: to.should_fail,
                     timed_out: false,
+                    line: 0,
                 });
 
                 // Write passing test result to the content-addressed cache.
@@ -2026,6 +2029,7 @@ pub fn execute_dag(
                     blocked_by: None,
                     should_fail: to.should_fail,
                     timed_out: to.timed_out,
+                    line: 0,
                 });
             }
 

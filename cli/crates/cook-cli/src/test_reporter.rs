@@ -435,6 +435,7 @@ mod tests {
             blocked_by: None,
             should_fail: false,
             timed_out: false,
+            line: 0,
         }
     }
 
