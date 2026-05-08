@@ -37,7 +37,7 @@ fn filter_restricts_test_set() {
 
     // Filter to only the `alpha_suite` recipe using recipe-level glob
     let out = Command::new(cook_binary())
-        .args(["--test", "--filter", "alpha_suite:*"])
+        .args(["test", "--filter", "alpha_suite:*"])
         .current_dir(tmp.path())
         .output()
         .unwrap();
@@ -73,7 +73,7 @@ fn filter_with_zero_matches_exits_zero() {
 
     // Pattern that matches no recipe names
     let out = Command::new(cook_binary())
-        .args(["--test", "--filter", "nonexistent_recipe:*"])
+        .args(["test", "--filter", "nonexistent_recipe:*"])
         .current_dir(tmp.path())
         .output()
         .unwrap();

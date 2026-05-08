@@ -12,8 +12,6 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::IsTerminal;
 use cook_engine::{EngineEvent, TestId, TestOutcome, TestResult};
-use crate::cli::Cli;
-
 pub struct Reporter {
     started: std::time::Instant,
     verbose: bool,
@@ -32,17 +30,17 @@ struct LabelMeta {
 }
 
 impl Reporter {
-    pub fn new(cli: &Cli) -> Self {
+    pub fn new(globals: &crate::cli::Globals) -> Self {
         let no_color_env = std::env::var("NO_COLOR").ok();
         let is_tty = std::io::stdout().is_terminal();
         let colored = style::resolve_color_choice(
-            cli.color.as_str(),
+            globals.color.as_str(),
             no_color_env.as_deref(),
             is_tty,
         );
         Self {
             started: std::time::Instant::now(),
-            verbose: cli.verbose,
+            verbose: globals.verbose,
             style: style::Style::new(colored),
             namespaces_seen: BTreeSet::new(),
             label_meta: BTreeMap::new(),
@@ -616,9 +614,8 @@ mod tests {
 
     #[test]
     fn reporter_label_for_unknown_id_returns_id() {
-        use clap::Parser;
-        let cli = Cli::parse_from(["cook", "--test"]);
-        let r = Reporter::new(&cli);
+        let globals = crate::cli::Globals::default();
+        let r = Reporter::new(&globals);
         assert_eq!(r.label_for("orphan:t"), "orphan:t");
     }
 }

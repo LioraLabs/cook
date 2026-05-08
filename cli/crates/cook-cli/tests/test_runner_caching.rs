@@ -34,7 +34,7 @@ fn passing_test_caches_and_replays() {
 
     // First run — primes the cache
     let out1 = Command::new(cook_binary())
-        .arg("--test")
+        .arg("test")
         .current_dir(tmp.path())
         .output()
         .unwrap();
@@ -46,7 +46,7 @@ fn passing_test_caches_and_replays() {
 
     // Second run — should replay from cache
     let out2 = Command::new(cook_binary())
-        .arg("--test")
+        .arg("test")
         .current_dir(tmp.path())
         .output()
         .unwrap();
@@ -73,14 +73,14 @@ fn failing_test_is_not_cached() {
 
     // First run
     let _ = Command::new(cook_binary())
-        .arg("--test")
+        .arg("test")
         .current_dir(tmp.path())
         .output()
         .unwrap();
 
     // Second run — failed tests must NOT be cached
     let out2 = Command::new(cook_binary())
-        .arg("--test")
+        .arg("test")
         .current_dir(tmp.path())
         .output()
         .unwrap();
@@ -107,14 +107,14 @@ fn rerun_busts_cache() {
 
     // Prime the cache
     let _ = Command::new(cook_binary())
-        .arg("--test")
+        .arg("test")
         .current_dir(tmp.path())
         .output()
         .unwrap();
 
     // --rerun should bypass the cache
     let out2 = Command::new(cook_binary())
-        .args(["--test", "--rerun"])
+        .args(["test", "--rerun"])
         .current_dir(tmp.path())
         .output()
         .unwrap();

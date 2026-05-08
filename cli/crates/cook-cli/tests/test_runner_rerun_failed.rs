@@ -33,14 +33,14 @@ fn rerun_failed_runs_only_previously_failed() {
 
     // First run: both recipes execute; `fail` fails
     let _ = Command::new(cook_binary())
-        .arg("--test")
+        .arg("test")
         .current_dir(tmp.path())
         .output()
         .unwrap();
 
     // Second run: --rerun-failed should re-run only `fail`
     let out2 = Command::new(cook_binary())
-        .args(["--test", "--rerun-failed"])
+        .args(["test", "--rerun-failed"])
         .current_dir(tmp.path())
         .output()
         .unwrap();
@@ -78,7 +78,7 @@ fn rerun_failed_with_no_state_warns_and_exits_zero() {
 
     // No prior run — no state file exists
     let out = Command::new(cook_binary())
-        .args(["--test", "--rerun-failed"])
+        .args(["test", "--rerun-failed"])
         .current_dir(tmp.path())
         .output()
         .unwrap();

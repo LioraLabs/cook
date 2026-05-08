@@ -2,7 +2,7 @@
 //!
 //! Heavy lifting (parse, workspace load, registry assembly, dep inference)
 //! lives in `cook_engine::pipeline`. This module owns CLI-specific glue:
-//!   * mapping `--menu` / `--init` / `--serve` / `--dag` flags to the right
+//!   * mapping `menu` / `init` / `serve` / `dag` subcommands to the right
 //!     engine entry point
 //!   * bridging `cook_engine::EngineEvent` to `cook_progress::ProgressEvent`
 //!     and wiring the renderer into a background thread
@@ -17,7 +17,7 @@ use std::sync::mpsc;
 
 use cook_engine::pipeline::{self, ParsedCookfile, PipelineError, Workspace};
 
-use crate::cli::Cli;
+use crate::cli::Globals;
 use crate::error::CookError;
 use crate::progress::spawn_new_renderer;
 use crate::watcher::CookWatcher;
@@ -46,8 +46,8 @@ fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
 ///
 /// Thin convenience wrapper: the engine returns warnings as data; the CLI
 /// is responsible for surfacing them in the human-output channel.
-fn read_and_parse(cli: &Cli) -> Result<ParsedCookfile, CookError> {
-    let parsed = pipeline::read_and_parse(&cli.file).map_err(pipeline_error_to_cook_error)?;
+fn read_and_parse(globals: &Globals) -> Result<ParsedCookfile, CookError> {
+    let parsed = pipeline::read_and_parse(&globals.file).map_err(pipeline_error_to_cook_error)?;
     for w in &parsed.warnings {
         eprintln!("cook: warning: {w}");
     }
@@ -394,7 +394,7 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
 
 /// Run the engine with progress rendering wired up.
 fn run_with_progress(
-    cli: &Cli,
+    globals: &Globals,
     recipe_infos: &BTreeMap<String, cook_engine::analyzer::RecipeInfo>,
     targets: &[String],
     registries: &BTreeMap<String, cook_engine::RegistryEntry>,
@@ -403,7 +403,7 @@ fn run_with_progress(
 ) -> Result<cook_engine::run::RunResult, CookError> {
     let project_root = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
     let (progress_tx, progress_rx) = mpsc::channel::<cook_progress::ProgressEvent>();
-    let render_thread = spawn_new_renderer(cli, project_root.clone(), progress_rx);
+    let render_thread = spawn_new_renderer(globals, project_root.clone(), progress_rx);
 
     let bridge_tx = progress_tx.clone();
     let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
@@ -431,9 +431,9 @@ fn run_with_progress(
     result.map_err(engine_error_to_cook_error)
 }
 
-/// Resolve num_jobs from CLI or system parallelism.
-fn resolve_num_jobs(cli: &Cli) -> usize {
-    cli.jobs.unwrap_or_else(|| {
+/// Resolve num_jobs from globals or system parallelism.
+fn resolve_num_jobs(globals: &Globals) -> usize {
+    globals.jobs.unwrap_or_else(|| {
         std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1)
@@ -444,43 +444,38 @@ fn resolve_num_jobs(cli: &Cli) -> usize {
 // cmd_run
 // ---------------------------------------------------------------------------
 
-pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
-    let parsed = read_and_parse(cli)?;
+pub fn cmd_run(globals: &Globals, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
+    let parsed = read_and_parse(globals)?;
     pipeline::validate_selected_config(&parsed.cookfile, config)
         .map_err(pipeline_error_to_cook_error)?;
 
-    if cli.emit_lua {
-        println!("{}", parsed.lua_source);
-        return Ok(());
-    }
-
-    let num_jobs = resolve_num_jobs(cli);
+    let num_jobs = resolve_num_jobs(globals);
     let targets = vec![recipe_name.to_string()];
 
     if !parsed.cookfile.imports.is_empty() {
         let workspace_root =
-            pipeline::resolve_workspace_root(&cli.file, cli.root.clone())
+            pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
                 .map_err(pipeline_error_to_cook_error)?;
-        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)
+        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
         let recipe_infos = pipeline::build_workspace_recipe_info(&workspace);
-        let registries = pipeline::build_workspace_registries(&workspace, config, &cli.set)
+        let registries = pipeline::build_workspace_registries(&workspace, config, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
 
         let inferred_deps = pipeline::compute_workspace_inferred_deps(&workspace);
         print_dep_conflicts(&pipeline::workspace_dep_conflicts(&workspace, &inferred_deps));
 
-        run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
+        run_with_progress(globals, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
     } else {
         // Single Cookfile build
-        let cookfile_dir = cli.file.parent().unwrap_or(std::path::Path::new("."));
+        let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
         let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
             std::path::Path::new(".")
         } else {
             cookfile_dir
         };
         let dotenv_vars = pipeline::load_env(cookfile_dir);
-        let env_vars = pipeline::resolve_env(config, dotenv_vars, &cli.set)
+        let env_vars = pipeline::resolve_env(config, dotenv_vars, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
 
         let recipe_infos = pipeline::build_single_recipe_infos(&parsed.cookfile);
@@ -490,9 +485,19 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         let registries =
             pipeline::build_single_registries(cookfile_dir, env_vars, parsed.lua_source, config);
 
-        run_with_progress(cli, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
+        run_with_progress(globals, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
     }
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// cmd_emit_lua
+// ---------------------------------------------------------------------------
+
+pub fn cmd_emit_lua(globals: &Globals) -> Result<(), CookError> {
+    let parsed = read_and_parse(globals)?;
+    println!("{}", parsed.lua_source);
     Ok(())
 }
 
@@ -500,31 +505,34 @@ pub fn cmd_run(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
 // cmd_test
 // ---------------------------------------------------------------------------
 
-pub fn cmd_test(cli: &crate::cli::Cli) -> Result<(), crate::error::CookError> {
+pub fn cmd_test(
+    globals: &Globals,
+    args: &crate::cli::TestArgs,
+) -> Result<(), crate::error::CookError> {
     use cook_engine::{run_for_test, TestScope};
     use std::sync::{Arc, Mutex};
 
     let project_root = std::env::current_dir()
         .map_err(|e| crate::error::CookError::Other(e.to_string()))?;
 
-    // Determine scope from positional `recipe` argument.
-    let scope: Option<TestScope> = match cli.recipe.as_deref() {
+    // Determine scope from positional `scope` argument.
+    let scope: Option<TestScope> = match args.scope.as_deref() {
         None => None,
         Some(name) => Some(resolve_test_scope(name)),
     };
 
     // Phase 7 stub for --rerun-failed
-    let rerun_failed_set = if cli.rerun_failed {
+    let rerun_failed_set = if args.rerun_failed {
         match crate::test_state::load_failed_set(&project_root) {
             Ok(set) if !set.is_empty() => Some(set),
             Ok(_) => {
                 eprintln!("cook: warning: no previously-failed tests recorded");
-                eprintln!("cook: hint: run `cook --test` first to populate state");
+                eprintln!("cook: hint: run `cook test` first to populate state");
                 return Ok(());
             }
             Err(e) => {
                 eprintln!("cook: warning: {e}");
-                eprintln!("cook: hint: run `cook --test` first to populate state");
+                eprintln!("cook: hint: run `cook test` first to populate state");
                 return Ok(());
             }
         }
@@ -532,10 +540,10 @@ pub fn cmd_test(cli: &crate::cli::Cli) -> Result<(), crate::error::CookError> {
         None
     };
 
-    let rerun_patterns: Vec<String> = cli.rerun.clone().unwrap_or_default();
-    let num_jobs = resolve_num_jobs(cli);
+    let rerun_patterns: Vec<String> = args.rerun.clone().unwrap_or_default();
+    let num_jobs = resolve_num_jobs(globals);
 
-    let reporter = Arc::new(Mutex::new(crate::test_reporter::Reporter::new(cli)));
+    let reporter = Arc::new(Mutex::new(crate::test_reporter::Reporter::new(globals)));
     let reporter_for_cb = reporter.clone();
 
     let on_event = move |evt: cook_engine::EngineEvent| {
@@ -547,10 +555,10 @@ pub fn cmd_test(cli: &crate::cli::Cli) -> Result<(), crate::error::CookError> {
     let result = run_for_test(
         &project_root,
         scope,
-        &cli.filter,
+        &args.filter,
         rerun_failed_set.as_ref(),
         &rerun_patterns,
-        cli.fail_fast,
+        args.fail_fast,
         num_jobs,
         on_event,
     )
@@ -569,10 +577,10 @@ pub fn cmd_test(cli: &crate::cli::Cli) -> Result<(), crate::error::CookError> {
     // Phase 8: write JSON/JUnit sidecars.
     let _ = crate::test_reporter::write_json_sidecar(
         &project_root,
-        cli.report_json.as_deref(),
+        args.report_json.as_deref(),
         &result.test_results,
     );
-    if let Some(path) = &cli.report_junit {
+    if let Some(path) = &args.report_junit {
         let _ = crate::test_reporter::write_junit_sidecar(path, &result.test_results);
     }
 
@@ -611,8 +619,8 @@ fn resolve_test_scope(name: &str) -> cook_engine::TestScope {
 // cmd_menu
 // ---------------------------------------------------------------------------
 
-pub fn cmd_menu(cli: &Cli) -> Result<(), CookError> {
-    let parsed = read_and_parse(cli)?;
+pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
+    let parsed = read_and_parse(globals)?;
 
     for recipe in &parsed.cookfile.recipes {
         let mut desc = format!("  recipe {}", recipe.name);
@@ -640,9 +648,9 @@ pub fn cmd_menu(cli: &Cli) -> Result<(), CookError> {
 
     if !parsed.cookfile.imports.is_empty() {
         let workspace_root =
-            pipeline::resolve_workspace_root(&cli.file, cli.root.clone())
+            pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
                 .map_err(pipeline_error_to_cook_error)?;
-        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)
+        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
         for (canonical_path, loaded) in &workspace.imports {
             let prefix = pipeline::find_full_prefix(&workspace, canonical_path);
@@ -686,12 +694,16 @@ pub fn cmd_init() -> Result<(), CookError> {
 // cmd_serve
 // ---------------------------------------------------------------------------
 
-pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
-    let parsed = read_and_parse(cli)?;
+pub fn cmd_serve(
+    globals: &Globals,
+    recipe_name: &str,
+    config: Option<&str>,
+) -> Result<(), CookError> {
+    let parsed = read_and_parse(globals)?;
     pipeline::validate_selected_config(&parsed.cookfile, config)
         .map_err(pipeline_error_to_cook_error)?;
 
-    // Check for interactive steps -- not supported under cook --serve
+    // Check for interactive steps -- not supported under cook serve
     for recipe in &parsed.cookfile.recipes {
         for step in &recipe.steps {
             if let cook_lang::ast::Step::Shell {
@@ -701,7 +713,7 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
             } = step
             {
                 return Err(CookError::Other(format!(
-                    "line {}: interactive '@' steps are not supported under 'cook --serve'",
+                    "line {}: interactive '@' steps are not supported under 'cook serve'",
                     line
                 )));
             }
@@ -729,7 +741,7 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
         ));
     }
 
-    let cookfile_path = std::fs::canonicalize(&cli.file)
+    let cookfile_path = std::fs::canonicalize(&globals.file)
         .map_err(|e| CookError::Other(format!("cannot resolve Cookfile path: {e}")))?;
 
     let mut cookfile_paths = vec![cookfile_path];
@@ -737,9 +749,9 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
     // If imports exist, collect all imported Cookfile paths for watching
     if !parsed.cookfile.imports.is_empty() {
         let workspace_root =
-            pipeline::resolve_workspace_root(&cli.file, cli.root.clone())
+            pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
                 .map_err(pipeline_error_to_cook_error)?;
-        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)
+        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
         for (_canonical_path, loaded) in &workspace.imports {
             let import_cookfile = loaded.dir.join("Cookfile");
@@ -751,16 +763,16 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
 
     let watcher = CookWatcher::new(globs, cookfile_paths);
 
-    eprintln!("cook --serve: initial build...");
-    let _ = cmd_run(cli, recipe_name, config);
+    eprintln!("cook serve: initial build...");
+    let _ = cmd_run(globals, recipe_name, config);
 
-    eprintln!("cook --serve: watching for changes...");
+    eprintln!("cook serve: watching for changes...");
     watcher
         .watch(|cookfile_changed| {
             if cookfile_changed {
-                eprintln!("cook --serve: Cookfile changed, rebuilding...");
+                eprintln!("cook serve: Cookfile changed, rebuilding...");
             }
-            cmd_run(cli, recipe_name, config).map_err(|e| e.to_string())?;
+            cmd_run(globals, recipe_name, config).map_err(|e| e.to_string())?;
             Ok(())
         })
         .map_err(|e| CookError::Other(e.to_string()))?;
@@ -772,7 +784,7 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
 // cmd_dag — feature-gated
 // ---------------------------------------------------------------------------
 //
-// The DAG viewer (`cook --dag`) lives in the `cook-dag-viewer` crate and is
+// The DAG viewer (`cook dag`) lives in the `cook-dag-viewer` crate and is
 // pulled in only when the `viewer` cargo feature is enabled (see
 // `Cargo.toml`). When the feature is off, `cmd_dag` short-circuits with a
 // helpful error so users learn which build flag they need. The reference-
@@ -780,9 +792,9 @@ pub fn cmd_serve(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(
 // `standard/src/content/docs/appendix/D-changes.mdx#changes-cs-0047`.
 
 #[cfg(not(feature = "viewer"))]
-pub fn cmd_dag(_cli: &Cli, _recipe_name: &str, _config: Option<&str>) -> Result<(), CookError> {
+pub fn cmd_dag(_globals: &Globals, _args: &crate::cli::DagArgs) -> Result<(), CookError> {
     Err(CookError::Other(
-        "the `cook --dag` viewer is not built into this binary; rebuild with \
+        "the `cook dag` viewer is not built into this binary; rebuild with \
          `cargo build --features viewer` (or pass `--features viewer` when \
          running `cargo install`)"
             .to_string(),
@@ -790,8 +802,10 @@ pub fn cmd_dag(_cli: &Cli, _recipe_name: &str, _config: Option<&str>) -> Result<
 }
 
 #[cfg(feature = "viewer")]
-pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
-    let parsed = read_and_parse(cli)?;
+pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), CookError> {
+    let parsed = read_and_parse(globals)?;
+    let recipe_name = args.recipe.as_deref().unwrap_or("build");
+    let config = args.config.as_deref();
     pipeline::validate_selected_config(&parsed.cookfile, config)
         .map_err(pipeline_error_to_cook_error)?;
 
@@ -803,13 +817,13 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
     // dispatch cook_engine::run::run does internally).
     let units = if !parsed.cookfile.imports.is_empty() {
         let workspace_root =
-            pipeline::resolve_workspace_root(&cli.file, cli.root.clone())
+            pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
                 .map_err(pipeline_error_to_cook_error)?;
-        let workspace = Workspace::load(&cli.file, &workspace_root, &cli.set)
+        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
 
         let recipe_infos = pipeline::build_workspace_recipe_info(&workspace);
-        let registries = pipeline::build_workspace_registries(&workspace, config, &cli.set)
+        let registries = pipeline::build_workspace_registries(&workspace, config, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
         let inferred_deps = pipeline::compute_workspace_inferred_deps(&workspace);
         print_dep_conflicts(&pipeline::workspace_dep_conflicts(&workspace, &inferred_deps));
@@ -818,14 +832,14 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
             .map_err(pipeline_error_to_cook_error)?
     } else {
         // Single-Cookfile branch.
-        let cookfile_dir = cli.file.parent().unwrap_or(std::path::Path::new("."));
+        let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
         let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
             std::path::Path::new(".")
         } else {
             cookfile_dir
         };
         let dotenv_vars = pipeline::load_env(cookfile_dir);
-        let env_vars = pipeline::resolve_env(config, dotenv_vars, &cli.set)
+        let env_vars = pipeline::resolve_env(config, dotenv_vars, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
 
         let recipe_infos = pipeline::build_single_recipe_infos(&parsed.cookfile);
@@ -844,7 +858,7 @@ pub fn cmd_dag(cli: &Cli, recipe_name: &str, config: Option<&str>) -> Result<(),
         explicit_edges: &units.explicit_edges,
         inferred_deps: &units.inferred_deps,
         cache_managers: &units.cache_managers,
-        theme: cook_dag_viewer::theme::Theme::from_str(&cli.theme),
+        theme: cook_dag_viewer::theme::Theme::from_str(&args.theme),
     })
     .map_err(|e| CookError::Other(e.to_string()))
 }

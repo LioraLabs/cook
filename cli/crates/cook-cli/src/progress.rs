@@ -13,28 +13,26 @@ pub enum OutputMode {
 }
 
 impl OutputMode {
-    pub fn from_cli(cli: &crate::cli::Cli) -> Self {
-        if cli.output == "json" {
-            return Self::Json;
+    pub fn from_globals(globals: &crate::cli::Globals) -> Self {
+        match globals.output.as_str() {
+            "json" => Self::Json,
+            "plain" => Self::Plain,
+            _ => Self::Auto,
         }
-        if cli.output == "plain" || cli.no_ui {
-            return Self::Plain;
-        }
-        Self::Auto
     }
 }
 
 /// Spawn the cook-progress Driver reading from `rx`. Returns a JoinHandle that
 /// yields the build success flag when the driver's run loop exits.
 pub fn spawn_new_renderer(
-    cli: &crate::cli::Cli,
+    globals: &crate::cli::Globals,
     project_root: std::path::PathBuf,
     rx: std::sync::mpsc::Receiver<cook_progress::ProgressEvent>,
 ) -> std::thread::JoinHandle<bool> {
-    let mode = OutputMode::from_cli(cli);
-    let quiet = cli.quiet;
-    let verbose = cli.verbose;
-    let cli_color = cli.color.clone();
+    let mode = OutputMode::from_globals(globals);
+    let quiet = globals.quiet;
+    let verbose = globals.verbose;
+    let cli_color = globals.color.clone();
     let no_progress = std::env::var("NO_PROGRESS").is_ok();
 
     std::thread::spawn(move || {
