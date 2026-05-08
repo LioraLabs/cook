@@ -452,7 +452,7 @@ pub fn execute_dag(
             },
         );
         // Emit TestBlocked and synthesize a Blocked TestResult for test-step nodes.
-        if let Some(WorkPayload::Test { test_name, should_fail, .. }) = &work_node.payload {
+        if let Some(WorkPayload::Test { test_name, should_fail, line, .. }) = &work_node.payload {
             let test_id = crate::id::parse_test_id(&format!(
                 "{}:{}",
                 work_node.recipe_name,
@@ -463,7 +463,7 @@ pub fn execute_dag(
                 EngineEvent::TestBlocked {
                     id: test_id.clone(),
                     upstream: upstream_name.to_string(),
-                    line: 0,
+                    line: *line as u32,
                 },
             );
             let namespace = crate::id::id_namespace(&test_id);
@@ -484,7 +484,7 @@ pub fn execute_dag(
                 blocked_by: Some(upstream_name.to_string()),
                 should_fail: *should_fail,
                 timed_out: false,
-                line: 0,
+                line: *line as u32,
             });
         }
         finish_recipe_node(
@@ -636,7 +636,7 @@ pub fn execute_dag(
                 interactive_queue.push(id);
                 0
             }
-            Some(WorkPayload::Test { test_name, should_fail, .. }) => {
+            Some(WorkPayload::Test { test_name, should_fail, line, .. }) => {
                 // Phase 5: test-result cache lookup.
                 // Check the content-addressed test cache before submitting to
                 // the pool. On a hit, synthesize TestStarted + TestPassed
@@ -663,7 +663,7 @@ pub fn execute_dag(
                                 id: test_id.clone(),
                                 recipe: work_node.recipe_name.clone(),
                                 name: test_name.clone(),
-                                line: 0,
+                                line: *line as u32,
                             });
                             emit(event_tx, EngineEvent::TestPassed {
                                 id: test_id.clone(),
@@ -671,7 +671,7 @@ pub fn execute_dag(
                                 cached: true,
                                 stdout: entry.stdout.clone(),
                                 stderr: entry.stderr.clone(),
-                                line: 0,
+                                line: *line as u32,
                             });
                             // Emit NodeCompleted so the recipe tracker counts this node.
                             emit(event_tx, EngineEvent::NodeCompleted {
@@ -700,7 +700,7 @@ pub fn execute_dag(
                                 blocked_by: None,
                                 should_fail: entry.should_fail_observed,
                                 timed_out: false,
-                                line: 0,
+                                line: *line as u32,
                             });
 
                             *finished += 1;
@@ -800,7 +800,7 @@ pub fn execute_dag(
                         )),
                         recipe: work_node.recipe_name.clone(),
                         name: test_name.clone(),
-                        line: 0,
+                        line: *line as u32,
                     },
                 );
 
@@ -894,7 +894,7 @@ pub fn execute_dag(
                 );
                 // Emit TestStarted for test-step nodes so Phase 4 reporters can
                 // track in-flight tests.
-                if let WorkPayload::Test { test_name, .. } = payload {
+                if let WorkPayload::Test { test_name, line, .. } = payload {
                     let test_id = crate::id::parse_test_id(&format!(
                         "{}:{}",
                         work_node.recipe_name,
@@ -906,7 +906,7 @@ pub fn execute_dag(
                             id: test_id,
                             recipe: work_node.recipe_name.clone(),
                             name: test_name.clone(),
-                            line: 0,
+                            line: *line as u32,
                         },
                     );
                 }
@@ -1899,6 +1899,10 @@ pub fn execute_dag(
                 // Look up the pre-computed fingerprint for this node so we can
                 // populate TestResult.fingerprint and write the cache entry.
                 let fp_opt = fingerprint_by_node.get(&result.id).cloned();
+                let line_no: u32 = match &dag.node(result.id).payload().payload {
+                    Some(WorkPayload::Test { line, .. }) => *line as u32,
+                    _ => 0,
+                };
                 emit(
                     &event_tx,
                     EngineEvent::TestPassed {
@@ -1907,7 +1911,7 @@ pub fn execute_dag(
                         cached: false,
                         stdout: to.stdout.clone(),
                         stderr: to.stderr.clone(),
-                        line: 0,
+                        line: line_no,
                     },
                 );
                 test_results.push(crate::TestResult {
@@ -1926,7 +1930,7 @@ pub fn execute_dag(
                     blocked_by: None,
                     should_fail: to.should_fail,
                     timed_out: false,
-                    line: 0,
+                    line: line_no,
                 });
 
                 // Write passing test result to the content-addressed cache.
@@ -1992,6 +1996,10 @@ pub fn execute_dag(
                 let namespace = crate::id::id_namespace(&id);
                 let recipe = crate::id::id_recipe(&id);
                 let duration = Duration::from_secs_f64(to.duration);
+                let line_no: u32 = match &dag.node(result.id).payload().payload {
+                    Some(WorkPayload::Test { line, .. }) => *line as u32,
+                    _ => 0,
+                };
                 let outcome = if to.timed_out {
                     emit(
                         &event_tx,
@@ -2000,7 +2008,7 @@ pub fn execute_dag(
                             timeout: duration,
                             stdout: to.stdout.clone(),
                             stderr: to.stderr.clone(),
-                            line: 0,
+                            line: line_no,
                         },
                     );
                     crate::TestOutcome::TimedOut
@@ -2016,7 +2024,7 @@ pub fn execute_dag(
                                 expected_success: !to.should_fail,
                                 observed_success: to.exit_success,
                             },
-                            line: 0,
+                            line: line_no,
                         },
                     );
                     crate::TestOutcome::Failed
@@ -2037,7 +2045,7 @@ pub fn execute_dag(
                     blocked_by: None,
                     should_fail: to.should_fail,
                     timed_out: to.timed_out,
-                    line: 0,
+                    line: line_no,
                 });
             }
 
@@ -2910,6 +2918,64 @@ mod tests {
                 );
             }
             other => panic!("expected TaskFailures, got: {other:?}"),
+        }
+    }
+
+    // SHI-line: WorkPayload::Test { line } must propagate into TestStarted and
+    // TestResult.line rather than remaining 0.
+    #[test]
+    fn test_line_number_propagates_from_payload_to_events() {
+        use std::sync::mpsc;
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        let mut dag = Dag::new();
+        dag.add_node(
+            work_node(
+                WorkPayload::Test {
+                    cmd: "true".to_string(),
+                    line: 17,
+                    timeout: 30,
+                    should_fail: false,
+                    suite_name: "my_recipe".to_string(),
+                    test_name: "my_test".to_string(),
+                },
+                "my_recipe",
+                wd,
+            ),
+            &[],
+        ).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
+        let test_results = result.expect("test node should pass");
+
+        // TestResult.line must carry 17.
+        assert_eq!(test_results.len(), 1, "expected exactly one TestResult");
+        assert_eq!(
+            test_results[0].line, 17,
+            "TestResult.line should be 17 (from WorkPayload::Test {{ line: 17 }})"
+        );
+
+        // The TestStarted event must also carry line 17.
+        let events: Vec<_> = rx.try_iter().collect();
+        let started = events.iter().find(|e| matches!(e, EngineEvent::TestStarted { .. }))
+            .expect("expected a TestStarted event");
+        match started {
+            EngineEvent::TestStarted { line, .. } => {
+                assert_eq!(*line, 17, "TestStarted.line should be 17");
+            }
+            _ => unreachable!(),
+        }
+
+        // The TestPassed event must also carry line 17.
+        let passed = events.iter().find(|e| matches!(e, EngineEvent::TestPassed { .. }))
+            .expect("expected a TestPassed event");
+        match passed {
+            EngineEvent::TestPassed { line, .. } => {
+                assert_eq!(*line, 17, "TestPassed.line should be 17");
+            }
+            _ => unreachable!(),
         }
     }
 }
