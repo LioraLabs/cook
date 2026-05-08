@@ -270,6 +270,8 @@ pub fn write_json_sidecar(
             "stdout": r.stdout,
             "stderr": r.stderr,
             "fingerprint": r.fingerprint,
+            "line": r.line,
+            "exit_code": r.exit_code,
             "blocked_by": r.blocked_by,
         })).collect::<Vec<_>>(),
     });
@@ -493,6 +495,20 @@ mod tests {
         let ran_at = v["ran_at"].as_str().unwrap();
         assert_eq!(ran_at.len(), 20);
         assert!(ran_at.ends_with('Z'));
+    }
+
+    #[test]
+    fn json_sidecar_includes_line_and_exit_code() {
+        let tmp = tempdir().unwrap();
+        let mut r = mk("recipe:t", TestOutcome::Failed);
+        r.line = 17;
+        r.exit_code = Some(2);
+        write_json_sidecar(tmp.path(), None, &[r]).unwrap();
+        let bytes = std::fs::read(tmp.path().join(".cook/test-report.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let row = &v["tests"][0];
+        assert_eq!(row["line"], 17);
+        assert_eq!(row["exit_code"], 2);
     }
 
     // ---------------------------------------------------------------------------
