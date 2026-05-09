@@ -54,11 +54,22 @@ fn package_produces_correct_tarball_layout() {
     let (out_path, sha256_hex) = run(&args, dist_dir.path()).unwrap();
 
     // Tarball must exist and have non-zero size
-    assert!(out_path.exists(), "tarball not created: {}", out_path.display());
-    assert!(fs::metadata(&out_path).unwrap().len() > 0, "tarball is empty");
+    assert!(
+        out_path.exists(),
+        "tarball not created: {}",
+        out_path.display()
+    );
+    assert!(
+        fs::metadata(&out_path).unwrap().len() > 0,
+        "tarball is empty"
+    );
 
     // sha256 must be a 64-char hex string
-    assert_eq!(sha256_hex.len(), 64, "SHA-256 hex digest should be 64 chars");
+    assert_eq!(
+        sha256_hex.len(),
+        64,
+        "SHA-256 hex digest should be 64 chars"
+    );
     assert!(
         sha256_hex.chars().all(|c| c.is_ascii_hexdigit()),
         "SHA-256 digest is not hex: {sha256_hex}"

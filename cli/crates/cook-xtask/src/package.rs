@@ -112,8 +112,8 @@ pub fn run(args: &PackageArgs, workspace_root: &Path) -> Result<(PathBuf, String
         .with_context(|| format!("failed to create dist dir: {}", dist_dir.display()))?;
 
     let out_path = dist_dir.join(&filename);
-    let out_file =
-        fs::File::create(&out_path).with_context(|| format!("cannot create {}", out_path.display()))?;
+    let out_file = fs::File::create(&out_path)
+        .with_context(|| format!("cannot create {}", out_path.display()))?;
 
     let gz = GzEncoder::new(out_file, Compression::default());
     let mut ar = Builder::new(gz);
@@ -129,8 +129,8 @@ pub fn run(args: &PackageArgs, workspace_root: &Path) -> Result<(PathBuf, String
 
     // Write ./bin/cook — the cook binary, executable
     let binary_path = &args.binary;
-    let binary_data =
-        fs::read(binary_path).with_context(|| format!("cannot read binary: {}", binary_path.display()))?;
+    let binary_data = fs::read(binary_path)
+        .with_context(|| format!("cannot read binary: {}", binary_path.display()))?;
 
     let mut bin_header = tar::Header::new_gnu();
     bin_header.set_size(binary_data.len() as u64);
@@ -144,7 +144,8 @@ pub fn run(args: &PackageArgs, workspace_root: &Path) -> Result<(PathBuf, String
     gz_inner.finish().context("failed to finish gzip stream")?;
 
     // SHA-256 over the written file
-    let tarball_bytes = fs::read(&out_path).with_context(|| format!("cannot re-read {}", out_path.display()))?;
+    let tarball_bytes =
+        fs::read(&out_path).with_context(|| format!("cannot re-read {}", out_path.display()))?;
     let digest = Sha256::digest(&tarball_bytes);
     let hex_digest = hex::encode(digest);
 
@@ -224,12 +225,18 @@ mod tests {
     #[test]
     fn tarball_name_format() {
         let t = parse_target("x86_64-unknown-linux-gnu").unwrap();
-        assert_eq!(tarball_name("v0.0.1-dev", &t), "cook-v0.0.1-dev-linux-amd64.tar.gz");
+        assert_eq!(
+            tarball_name("v0.0.1-dev", &t),
+            "cook-v0.0.1-dev-linux-amd64.tar.gz"
+        );
     }
 
     #[test]
     fn tarball_name_darwin_arm64() {
         let t = parse_target("aarch64-apple-darwin").unwrap();
-        assert_eq!(tarball_name("v1.2.3", &t), "cook-v1.2.3-darwin-arm64.tar.gz");
+        assert_eq!(
+            tarball_name("v1.2.3", &t),
+            "cook-v1.2.3-darwin-arm64.tar.gz"
+        );
     }
 }
