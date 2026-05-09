@@ -2,10 +2,8 @@
 //!
 //! Invoked via `cargo xtask <subcommand>` (alias defined in cli/.cargo/config.toml).
 
-mod package;
-
 use clap::Parser;
-use package::PackageArgs;
+use cook_xtask::package::PackageArgs;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -35,7 +33,7 @@ fn main() -> anyhow::Result<()> {
                 .and_then(|p| p.parent()) // cli/
                 .expect("unexpected directory layout for cook-xtask");
 
-            let (out_path, sha256) = package::run(&args, workspace_root)?;
+            let (out_path, sha256) = cook_xtask::package::run(&args, workspace_root)?;
             let filename = out_path
                 .file_name()
                 .and_then(|n| n.to_str())
