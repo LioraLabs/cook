@@ -10,6 +10,13 @@
 #                       files + tree-sitter-cook grammar.js header, package.json
 #                       description, tree-sitter.json description). Routes
 #                       through cook_modules/release.lua.
+#   cook release      — cut a Phase 1 host-target release: build cook, package
+#                       via cook-xtask, tag, push to Gitea (mirrors to GitHub),
+#                       and upload artifacts to LioraLabs/cook GitHub release.
+#                       Idempotent: re-running on the same VERSION from another
+#                       host appends that host's tarball + checksum line to the
+#                       existing release. Routes through cook_modules/release.lua.
+#                       Usage: cook --set VERSION=v0.0.1-m1 release
 #
 # Sub-project chores are reachable via their import alias:
 #   cli.build            cli.test            cli.conformance
@@ -33,6 +40,9 @@ use release
 
 chore bump-claim
     > release.bump_claim(cook.env.VERSION)
+
+chore release
+    > release.cut(cook.env.VERSION)
 
 # ── Common workflow aliases ────────────────────────────────
 # Forward the most-used commands to their qualified targets so the
