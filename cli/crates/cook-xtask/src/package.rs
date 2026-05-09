@@ -63,7 +63,10 @@ pub fn parse_target(triple: &str) -> Result<TargetParts> {
     } else if triple.contains("-apple-darwin") {
         Os::Darwin
     } else {
-        bail!("Phase 1 supports only linux and darwin.")
+        bail!(
+            "unsupported OS in target triple {:?}; Phase 1 supports linux and darwin",
+            triple
+        )
     };
 
     let arch = if triple.starts_with("x86_64-") {
@@ -71,7 +74,7 @@ pub fn parse_target(triple: &str) -> Result<TargetParts> {
     } else if triple.starts_with("aarch64-") {
         Arch::Arm64
     } else {
-        bail!("Phase 1 supports only amd64 and arm64.")
+        bail!("unsupported arch in target triple {:?}; Phase 1 supports amd64 (x86_64) and arm64 (aarch64)", triple)
     };
 
     Ok(TargetParts { os, arch })
@@ -118,7 +121,6 @@ pub fn run(args: &PackageArgs, workspace_root: &Path) -> Result<(PathBuf, String
     let gz = GzEncoder::new(out_file, Compression::default());
     let mut ar = Builder::new(gz);
 
-    // Write ./VERSION — version string + newline
     let version_bytes = format!("{}\n", args.version).into_bytes();
     let mut version_header = tar::Header::new_gnu();
     version_header.set_size(version_bytes.len() as u64);
@@ -127,7 +129,6 @@ pub fn run(args: &PackageArgs, workspace_root: &Path) -> Result<(PathBuf, String
     ar.append_data(&mut version_header, "./VERSION", version_bytes.as_slice())
         .context("failed to append VERSION to tarball")?;
 
-    // Write ./bin/cook — the cook binary, executable
     let binary_path = &args.binary;
     let binary_data = fs::read(binary_path)
         .with_context(|| format!("cannot read binary: {}", binary_path.display()))?;
@@ -139,11 +140,9 @@ pub fn run(args: &PackageArgs, workspace_root: &Path) -> Result<(PathBuf, String
     ar.append_data(&mut bin_header, "./bin/cook", binary_data.as_slice())
         .context("failed to append bin/cook to tarball")?;
 
-    // Flush and finish the gzip stream
     let gz_inner = ar.into_inner().context("failed to finish tar archive")?;
     gz_inner.finish().context("failed to finish gzip stream")?;
 
-    // SHA-256 over the written file
     let tarball_bytes =
         fs::read(&out_path).with_context(|| format!("cannot re-read {}", out_path.display()))?;
     let digest = Sha256::digest(&tarball_bytes);
@@ -207,8 +206,13 @@ mod tests {
     #[test]
     fn parse_unsupported_os_errors() {
         let err = parse_target("x86_64-pc-windows-msvc").unwrap_err();
+        let err_msg = err.to_string();
         assert!(
-            err.to_string().contains("linux and darwin"),
+            err_msg.contains("x86_64-pc-windows-msvc"),
+            "unexpected message: {err}"
+        );
+        assert!(
+            err_msg.contains("linux and darwin"),
             "unexpected message: {err}"
         );
     }
@@ -216,8 +220,13 @@ mod tests {
     #[test]
     fn parse_unsupported_arch_errors() {
         let err = parse_target("riscv64gc-unknown-linux-gnu").unwrap_err();
+        let err_msg = err.to_string();
         assert!(
-            err.to_string().contains("amd64 and arm64"),
+            err_msg.contains("riscv64gc-unknown-linux-gnu"),
+            "unexpected message: {err}"
+        );
+        assert!(
+            err_msg.contains("amd64 (x86_64) and arm64 (aarch64)"),
             "unexpected message: {err}"
         );
     }

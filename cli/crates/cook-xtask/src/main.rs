@@ -31,13 +31,20 @@ fn main() -> anyhow::Result<()> {
             let workspace_root = manifest_dir
                 .parent() // crates/
                 .and_then(|p| p.parent()) // cli/
-                .expect("unexpected directory layout for cook-xtask");
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "cook-xtask must live at cli/crates/cook-xtask/; got: {}",
+                        manifest_dir.display()
+                    )
+                })?;
 
             let (out_path, sha256) = cook_xtask::package::run(&args, workspace_root)?;
             let filename = out_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .expect("output path always has a UTF-8 filename");
+                .ok_or_else(|| {
+                    anyhow::anyhow!("output path has no UTF-8 filename: {}", out_path.display())
+                })?;
 
             println!("{sha256}  {filename}");
         }

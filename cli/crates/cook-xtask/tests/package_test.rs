@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Integration tests for `cargo xtask package`.
 //!
 //! These tests exercise the full package::run() path: they create a tiny
@@ -39,7 +40,7 @@ fn create_dummy_binary(dir: &TempDir) -> std::path::PathBuf {
 #[test]
 fn package_produces_correct_tarball_layout() {
     let binary_dir = TempDir::new().unwrap();
-    let dist_dir = TempDir::new().unwrap();
+    let workspace_dir = TempDir::new().unwrap();
 
     let dummy_bin = create_dummy_binary(&binary_dir);
     let version = "v0.0.1-dev";
@@ -51,7 +52,7 @@ fn package_produces_correct_tarball_layout() {
         target: target.clone(),
     };
 
-    let (out_path, sha256_hex) = run(&args, dist_dir.path()).unwrap();
+    let (out_path, sha256_hex) = run(&args, workspace_dir.path()).unwrap();
 
     // Tarball must exist and have non-zero size
     assert!(
@@ -134,7 +135,7 @@ fn package_produces_correct_tarball_layout() {
 #[test]
 fn package_checksum_file_is_written() {
     let binary_dir = TempDir::new().unwrap();
-    let dist_dir = TempDir::new().unwrap();
+    let workspace_dir = TempDir::new().unwrap();
 
     let dummy_bin = create_dummy_binary(&binary_dir);
     let args = PackageArgs {
@@ -143,9 +144,9 @@ fn package_checksum_file_is_written() {
         target: host_target(),
     };
 
-    let (_, sha256_hex) = run(&args, dist_dir.path()).unwrap();
+    let (_, sha256_hex) = run(&args, workspace_dir.path()).unwrap();
 
-    let checksums_path = dist_dir
+    let checksums_path = workspace_dir
         .path()
         .join("target")
         .join("dist")
