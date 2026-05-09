@@ -497,6 +497,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cook-xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "flate2",
+ "hex",
+ "sha2",
+ "tar",
+ "tempfile",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
