@@ -1,4 +1,4 @@
-//! M3.1 — `cook.toml` `[modules]` and `[registry].indexes` parsing.
+//! `cook.toml` `[modules]` and `[registry].indexes` parsing.
 //!
 //! `[modules]` is a flat TOML table mapping rock names to luarocks version
 //! constraints. Cook does not invent constraint grammar — values pass through
@@ -7,10 +7,12 @@
 //! its blessed `cook_*` modules so they are valid Lua identifiers and bare
 //! TOML keys.
 //!
-//! `[registry].indexes` is the new Phase 3 array distinct from the legacy
-//! Phase 1 `[registry].url` (which `cook pull` still consumes). Empty or
-//! missing `indexes` falls through to `ManifestRegistry::default()`, which
-//! M3.7 fills in with `["https://rocks.usecook.com", "https://luarocks.org"]`.
+//! `[registry].indexes` lists the rocks indexes in resolution order. Empty
+//! or missing `indexes` falls through to `ManifestRegistry::default()`,
+//! which is `["https://rocks.usecook.com", "https://luarocks.org"]`.
+//! Unknown keys inside `[registry]` (e.g. a historical `url` field from
+//! pre-Phase-3 cook.toml files) are silently ignored for forward-
+//! compatibility.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -52,10 +54,6 @@ struct CookToml {
 
 #[derive(Deserialize)]
 struct RegistryRaw {
-    // `url` is the Phase 1 legacy field consumed by `cook pull`. We deserialize
-    // and discard it here so a cook.toml that has both forms still parses.
-    #[allow(dead_code)]
-    url: Option<String>,
     #[serde(default)]
     indexes: Option<Vec<String>>,
 }
@@ -150,9 +148,9 @@ indexes = []
     }
 
     #[test]
-    fn legacy_url_present_alongside_indexes() {
-        // Phase 3 leaves `[registry].url` untouched; Phase 4 collapses these.
-        // `cook modules` ignores `url` (only `cook pull` consumes it).
+    fn unknown_registry_keys_are_silently_ignored() {
+        // Forward-compat with old cook.toml files that still carry the
+        // historical [registry].url field from pre-Phase-3 cook.toml.
         let f = write_cook_toml(
             r#"
 [registry]

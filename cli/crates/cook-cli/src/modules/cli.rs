@@ -1,11 +1,11 @@
-//! M3.4 — `cook modules` clap subcommand surface.
+//! `cook modules` clap subcommand surface.
 //!
 //! Wires `install`, `remove`, `update`, `list`, `search` into the cook
-//! binary's subcommand dispatch (mirroring `cook pull`'s shape — see
-//! cli/crates/cook-cli/src/main.rs and cli/crates/cook-cli/src/pull/).
+//! binary's subcommand dispatch (one variant per subcommand).
 //!
-//! This module is the orchestration layer: it reads cook.toml via M3.1,
-//! reads/writes cook.lock via M3.2, drives ~/.cook/bin/luarocks via M3.3.
+//! This module is the orchestration layer: it reads cook.toml via the
+//! manifest module, reads/writes cook.lock via the lockfile module, and
+//! drives ~/.cook/bin/luarocks via the driver module.
 
 use std::path::PathBuf;
 
