@@ -754,6 +754,68 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
 }
 
 // ---------------------------------------------------------------------------
+// cmd_list
+// ---------------------------------------------------------------------------
+
+/// Print recipe and chore names, one per line, with no decoration.
+///
+/// This is the machine-readable counterpart of `cmd_menu`: each line is
+/// exactly the name a user would pass back to `cook` (qualified with the
+/// import alias for workspace imports). Designed for shell pipelines such
+/// as `cook list | fzf | xargs -r cook`.
+///
+/// `--recipes-only` and `--chores-only` filter the output. They are
+/// mutually exclusive at the clap layer; this function trusts that.
+pub fn cmd_list(globals: &Globals, args: &crate::cli::ListArgs) -> Result<(), CookError> {
+    // Defensive: clap enforces this with `conflicts_with`, but if a future
+    // refactor changes the dispatch the error here is still meaningful.
+    if args.recipes_only && args.chores_only {
+        return Err(CookError::Other(
+            "--recipes-only and --chores-only are mutually exclusive".to_string(),
+        ));
+    }
+
+    let parsed = read_and_parse(globals)?;
+
+    let want_recipes = !args.chores_only;
+    let want_chores = !args.recipes_only;
+
+    if want_recipes {
+        for recipe in &parsed.cookfile.recipes {
+            println!("{}", recipe.name);
+        }
+    }
+    if want_chores {
+        for chore in &parsed.cookfile.chores {
+            println!("{}", chore.name);
+        }
+    }
+
+    if !parsed.cookfile.imports.is_empty() {
+        let workspace_root =
+            pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
+                .map_err(pipeline_error_to_cook_error)?;
+        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
+            .map_err(pipeline_error_to_cook_error)?;
+        for (canonical_path, loaded) in &workspace.imports {
+            let prefix = pipeline::find_full_prefix(&workspace, canonical_path);
+            if want_recipes {
+                for recipe in &loaded.cookfile.recipes {
+                    println!("{}.{}", prefix, recipe.name);
+                }
+            }
+            if want_chores {
+                for chore in &loaded.cookfile.chores {
+                    println!("{}.{}", prefix, chore.name);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // cmd_init
 // ---------------------------------------------------------------------------
 

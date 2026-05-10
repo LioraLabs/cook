@@ -15,7 +15,7 @@ use cook_cli::modules;
 
 use cli::{Cli, Cmd};
 use error::CookError;
-use pipeline::{cmd_dag, cmd_emit_lua, cmd_init, cmd_menu, cmd_run, cmd_serve, cmd_test};
+use pipeline::{cmd_dag, cmd_emit_lua, cmd_init, cmd_list, cmd_menu, cmd_run, cmd_serve, cmd_test};
 
 fn main() {
     let version_string: &'static str = Box::leak(Box::new(format!(
@@ -46,6 +46,7 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         None => cmd_run(&globals, "build", None),
         Some(Cmd::Init) => cmd_init(),
         Some(Cmd::Menu) => cmd_menu(&globals),
+        Some(Cmd::List(args)) => cmd_list(&globals, &args),
         Some(Cmd::Modules(args)) => std::process::exit(modules::run(args)),
         Some(Cmd::Test(args)) => cmd_test(&globals, &args),
         Some(Cmd::Dag(args)) => cmd_dag(&globals, &args),

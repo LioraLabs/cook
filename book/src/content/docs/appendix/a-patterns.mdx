@@ -160,8 +160,10 @@ cook serve test
 
 ```cook
 chore pick
-    @cook menu | fzf | xargs -r cook
+    @cook list | fzf | xargs -r cook
 ```
+
+`cook list` is the machine-readable counterpart of `cook menu`: one name per line, no decoration, no kind prefix — exactly what `xargs -r cook` wants. (`cook menu` formats for humans; piping it into `xargs` ships padding and the `recipe`/`chore` prefix into the recipe-name slot.)
 
 The `@` prefix is required: a chore body line that starts with the bare word `cook` is parsed as the (forbidden) `cook` step keyword and rejected. `@` forces the line to be classified as an interactive shell step, so the parser sees one shell step whose contents happen to invoke the `cook` binary.
 

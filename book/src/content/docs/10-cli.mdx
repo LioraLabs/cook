@@ -54,16 +54,31 @@ Drop a starter `Cookfile` (one trivial `recipe build`) and a `.gitignore` into t
 cook menu
 ```
 
-List every recipe and chore in the workspace. Reads the Cookfile (and any imports), prints recipe names and their declared dependencies. Pair it with `fzf` for a recipe picker:
+List every recipe and chore in the workspace. Reads the Cookfile (and any imports), prints recipe names and their declared dependencies. The output is human-formatted (kind prefix, padding); for shell pipelines use `cook list` (§10.4) instead.
+
+## 10.4. `cook list`
+
+```bash
+cook list
+cook list --recipes-only
+cook list --chores-only
+```
+
+The machine-readable counterpart of `cook menu`: one name per line, no decoration, no kind prefix, no column padding. Each line is exactly the name you'd type back to `cook` (qualified with the import alias for workspace imports). Built for shell pipelines:
 
 ```cook
 chore pick
-    @cook menu | fzf | xargs -r cook
+    @cook list | fzf | xargs -r cook
 ```
 
 (The `@` is required because a chore body line that starts with the bare word `cook` would otherwise be parsed as the forbidden `cook` step keyword. See chapter 6 §6.6.)
 
-## 10.4. `cook test`
+| Flag               | Effect                                                    |
+|--------------------|-----------------------------------------------------------|
+| `--recipes-only`   | Print recipe names only.                                  |
+| `--chores-only`    | Print chore names only. Mutually exclusive with the above.|
+
+## 10.5. `cook test`
 
 ```bash
 cook test
@@ -73,7 +88,7 @@ cook test apps.web.unit
 
 Run every recipe that contains a `test` step. With a *scope* argument, narrow to recipes under that namespace. Output is aggregated per-test: a unit failure doesn't cancel sibling tests, and the summary at the end lists every failure.
 
-## 10.5. `cook dag`
+## 10.6. `cook dag`
 
 ```bash
 cook dag
@@ -85,7 +100,7 @@ Open a TUI viewer for the build DAG. Default target is `build`; pass any recipe 
 
 Quit with `q`. Inside the TUI, arrow keys navigate, `enter` expands a node, `c` toggles the cache view.
 
-## 10.6. `cook serve`
+## 10.7. `cook serve`
 
 ```bash
 cook serve
@@ -96,7 +111,7 @@ Watch the recipe's ingredient set; re-run on change. This is your fast-iteration
 
 `cook serve` respects the same `--set` and `--output` flags as everything else, so you can `cook serve test --set DEBUG=1` and have a live test loop with debug output enabled.
 
-## 10.7. `cook logs`
+## 10.8. `cook logs`
 
 ```bash
 cook logs              # list recent build IDs
@@ -108,7 +123,7 @@ Cook keeps a per-build log archive under `.cook/logs/`. `cook logs` is your way 
 
 Particularly useful when `--quiet` was on during the build and you want to see what happened.
 
-## 10.8. `cook modules`
+## 10.9. `cook modules`
 
 The module manager. Subcommands:
 
@@ -130,7 +145,7 @@ Useful flags:
 | `--non-interactive`  | Error on prompts instead of asking (CI-safe).         |
 | `--accept-trust`     | TOFU consent for new index hosts (CI-safe).           |
 
-## 10.9. `cook emit-lua`
+## 10.10. `cook emit-lua`
 
 ```bash
 cook emit-lua
@@ -141,7 +156,7 @@ Print the Lua program your Cookfile compiles to. Read-only; no work runs. This i
 
 Useful for debugging modules: if a module call doesn't seem to be doing what you expect, run `cook emit-lua` and read the generated registration.
 
-## 10.10. Recipe selectors
+## 10.11. Recipe selectors
 
 Wherever a subcommand takes a recipe name, you can use the dotted form:
 
@@ -153,7 +168,7 @@ cook logs apps.web:run
 
 Same resolution rules as inside a Cookfile — the literal name wins, then the import-alias split (chapter 9).
 
-## 10.11. Environment overrides
+## 10.12. Environment overrides
 
 Two ways to pass values into a build:
 
@@ -164,13 +179,14 @@ TARGET=arm64 cook build                     # via shell env (only consulted if d
 
 CLI `--set` always wins (it's reapplied on top of `cook.env` after the config block runs). Process env is used to *initialize* `cook.env` before the config block runs — the config block can read it (`env.TARGET` inside the body sees the process value) but a bare `env.TARGET = "x86_64-linux"` will overwrite it. For env-var-overridable defaults, use the read-modify form: `env.TARGET = env.TARGET or "x86_64-linux"`. Every consulted key is part of the cache key, so swapping `TARGET` cleanly busts only the relevant units.
 
-## 10.12. Cheatsheet
+## 10.13. Cheatsheet
 
 ```
 # everyday
 cook                       run the build recipe
 cook RECIPE                run a specific recipe
-cook menu                  list recipes
+cook menu                  list recipes (human-readable)
+cook list                  list recipe/chore names (one per line, scriptable)
 cook test                  run all tests
 cook serve                 watch + rerun on change
 
