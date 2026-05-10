@@ -1,6 +1,6 @@
 -- Default LuaRocks config for the bundled cook luarocks launcher.
 --
--- The launcher script (cook_modules/luarocks_phase2.lua → LAUNCHER_SCRIPT)
+-- The launcher script (cook_modules/dist.lua → LAUNCHER_SCRIPT)
 -- exports COOK_PREFIX as the absolute path of the staged install root
 -- (the parent of bin/luarocks). LuaRocks loads this file via the
 -- LUAROCKS_CONFIG env var, and we splice COOK_PREFIX into the variables
