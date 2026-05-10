@@ -561,14 +561,16 @@ cargo test -p cook-lang --test conformance 2>&1 | tail -10
 
 Expected: green.
 
-- [ ] **Step 3: Final `rg` sweep — no `cook pull` outside the superseded spec**
+- [ ] **Step 3: Final `rg` sweep — no `cook pull` in active source/docs**
 
 ```bash
 cd ~/dev/cook
-rg 'cook pull|pull_registry|cook_pull' cli/ standard/ docs/ scripts/ README.md CONTRIBUTING.md 2>/dev/null
+rg 'cook pull|pull_registry|cook_pull' cli/ standard/ scripts/ README.md CONTRIBUTING.md 2>/dev/null
 ```
 
-Expected: matches **only** in `docs/superpowers/specs/2026-05-07-cook-pull-registry-design.md`, and only on the supersession line. No matches in source, tests, fixtures, or other docs.
+Expected: zero matches.
+
+Historical references in `docs/superpowers/specs/*.md` (Phase 3 spec, decomposition spec, original `2026-05-07-cook-pull-registry-design.md`, etc.) are deliberately preserved as design history and are **not** part of the sweep. Only the `2026-05-07-cook-pull-registry-design.md` design gets the `Status: Superseded` marker (Task B.7); the other historical mentions stay as-is.
 
 - [ ] **Step 4: Confirm `pull/` directory is gone**
 
@@ -1331,10 +1333,10 @@ Expected: all three green. If `cook check` fails on `standard.lint` or any sub-c
 
 ```bash
 cd ~/dev/cook
-rg 'cook pull|pull_registry|cook_pull' cli/ standard/ docs/ scripts/ README.md CONTRIBUTING.md 2>/dev/null
+rg 'cook pull|pull_registry|cook_pull' cli/ standard/ scripts/ README.md CONTRIBUTING.md 2>/dev/null
 ```
 
-Expected: matches **only** in `docs/superpowers/specs/2026-05-07-cook-pull-registry-design.md`, on the supersession line. No matches elsewhere.
+Expected: zero matches. Historical mentions in `docs/superpowers/specs/*.md` are out of scope for this sweep — they're preserved design history. Confirm `2026-05-07-cook-pull-registry-design.md` carries the `Status: Superseded` marker from Task B.7.
 
 - [ ] **Step 3: Build a Cookfile fixture using a stub**
 
