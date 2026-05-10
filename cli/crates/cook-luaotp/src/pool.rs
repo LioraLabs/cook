@@ -270,8 +270,8 @@ fn worker_loop(
                     *sb = policy;
                 }
 
-                // Refresh package.path so `require` resolves cook_modules/
-                // relative to this unit's source Cookfile (CS-0017).
+                // Refresh package.path and package.cpath so `require` resolves
+                // cook_modules/ relative to this unit's source Cookfile (CS-0062).
                 let _ = refresh_package_search_paths(&lua, &work.working_dir);
 
                 // Run the work item under `catch_unwind`. A Rust panic
@@ -1483,9 +1483,12 @@ mod search_path_tests {
         let cwd = PathBuf::from("/tmp/fake-project");
         refresh_package_search_paths(&lua, &cwd).expect("first");
         let pkg: mlua::Table = lua.globals().get("package").unwrap();
-        let first: String = pkg.get("path").unwrap();
+        let first_path: String = pkg.get("path").unwrap();
+        let first_cpath: String = pkg.get("cpath").unwrap();
         refresh_package_search_paths(&lua, &cwd).expect("second");
-        let second: String = pkg.get("path").unwrap();
-        assert_eq!(first, second, "path must not grow on repeated refresh");
+        let second_path: String = pkg.get("path").unwrap();
+        let second_cpath: String = pkg.get("cpath").unwrap();
+        assert_eq!(first_path, second_path, "path must not grow on repeated refresh");
+        assert_eq!(first_cpath, second_cpath, "cpath must not grow on repeated refresh");
     }
 }
