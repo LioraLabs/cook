@@ -447,8 +447,204 @@ rm -rf %s
     print(string.format("[package] built %s (+ .sha256)", tarball))
 end
 
+-- ── M2.4: gate_m2 ─────────────────────────────────────────────────────────
+-- Acceptance gate that proves the Phase 2 stage tree is real.
+--
+-- Part A: build a hand-rolled Lua C extension (tests/fixtures/c-ext-hello/
+-- cook_hello.c) against the bundled headers, place the resulting .so on
+-- package.cpath, run the staged cook against a Cookfile that requires it,
+-- and assert the function returns 42. This is the "rdynamic exports work"
+-- check — the .so has unresolved lua_*/luaL_* references that must
+-- resolve at dlopen time against cook's exported symbol table.
+--
+-- Part B: install lua-cjson via the bundled luarocks into a fresh tree,
+-- run the staged cook against a Cookfile that requires("cjson"), and
+-- assert a JSON encode/decode round-trip succeeds. This is the
+-- macOS two-level-namespace regression catcher: luarocks's bundled
+-- -undefined dynamic_lookup default makes lua_* symbols in the C rock
+-- resolve at dlopen time against cook's flat-namespace exports.
+--
+-- Both parts depend on `cook package` having staged target/cook-stage/
+-- (the chore "gate-m2: package" dep wires this).
+
+local function gate_platform()
+    local os_id = cook.platform.os
+    if os_id == "linux" or os_id == "macos" then return os_id
+    else error("gate_m2: unsupported platform: " .. tostring(os_id))
+    end
+end
+
+-- Resolve `rel` to an absolute path. readlink -f works on Linux coreutils;
+-- the (cd && pwd) fallback covers BSD/macOS where readlink may lack -f.
+local function abspath(rel)
+    local out = cook.sh("readlink -f " .. rel .. " 2>/dev/null || (cd " .. rel .. " && pwd)")
+    return (out:gsub("\n+$", ""))
+end
+
+-- Allocate a fresh scratch dir under target/. CS-0045 confines fs.* and
+-- path-bearing APIs in chore step Lua bodies to paths under the project
+-- root, so /tmp is off-limits — use the build tree instead. Each invocation
+-- gets a fresh stamp suffix so re-runs don't collide. Returns an absolute
+-- path so downstream concatenations don't depend on cwd.
+local function tmpdir()
+    local rel = cook.sh("mktemp -d -p target cook-gate-m2-XXXXXX")
+    rel = (rel:gsub("\n+$", ""))
+    local abs = cook.sh("readlink -f " .. rel .. " 2>/dev/null || (cd " .. rel .. " && pwd)")
+    return (abs:gsub("\n+$", ""))
+end
+
 function M.gate_m2()
-    error("M2.4 not yet implemented")
+    local plat = gate_platform()
+    print("[gate-m2] platform: " .. plat)
+
+    -- The `: package` chore dep guarantees the stage tree exists.
+    if not fs.exists(STAGE .. "/bin/cook") then
+        error("gate_m2: " .. STAGE .. "/bin/cook missing — `cook package` must run first")
+    end
+    if not fs.exists(STAGE .. "/bin/luarocks") then
+        error("gate_m2: " .. STAGE .. "/bin/luarocks missing — `cook package` must run first")
+    end
+
+    local cook_prefix = abspath(STAGE)
+    local fixture_c = abspath("tests/fixtures/c-ext-hello") .. "/cook_hello.c"
+    if not fs.exists(fixture_c) then
+        error("gate_m2: fixture missing: " .. fixture_c)
+    end
+
+    local td = tmpdir()
+    local proj = td .. "/proj"
+    local proj_modules = proj .. "/cook_modules"
+    print("[gate-m2] tmpdir: " .. td)
+    print("[gate-m2] cook_prefix: " .. cook_prefix)
+
+    cook.exec(string.format([[
+set -euo pipefail
+mkdir -p %s
+]], proj_modules), 0)
+
+    -- Common env prefix for invoking the staged cook: COOK_PREFIX so the
+    -- launcher's relocatable-resolution works, and PATH set so any
+    -- $(cook) sub-invocation finds the staged binaries first. Inline-prefix
+    -- form: cook.exec runs via /bin/sh -c, so VAR=val cmd works.
+    local env_prefix = string.format(
+        "COOK_PREFIX=%s PATH=%s/bin:$PATH ",
+        cook_prefix, cook_prefix
+    )
+
+    -- ── Part A: hand-rolled Lua C extension ───────────────────────────
+    print("[gate-m2] Part A: building cook_hello.so")
+
+    -- Compile the fixture against the staged Lua headers. macOS needs
+    -- -undefined dynamic_lookup so the lua_* references in the .so
+    -- resolve at dlopen time (against cook's -Wl,-export_dynamic exports)
+    -- rather than at link time. Linux ld leaves shared-lib unresolved
+    -- references unresolved by default, so no extra flag is required.
+    local so_path = proj_modules .. "/cook_hello.so"
+    local cc_cmd
+    if plat == "macos" then
+        cc_cmd = string.format(
+            "MACOSX_DEPLOYMENT_TARGET=11.0 cc -O2 -fPIC -bundle -undefined dynamic_lookup -I%s/include/lua5.4 -o %s %s",
+            cook_prefix, so_path, fixture_c
+        )
+    else
+        cc_cmd = string.format(
+            "cc -O2 -fPIC -shared -I%s/include/lua5.4 -o %s %s",
+            cook_prefix, so_path, fixture_c
+        )
+    end
+    cook.exec(cc_cmd, 0)
+    if not fs.exists(so_path) then
+        error("gate_m2: Part A compile produced no .so at " .. so_path)
+    end
+
+    -- Phase-2-only workaround: the chore body must prepend package.cpath
+    -- before require("cook_hello"). Phase 3 will land runtime cpath
+    -- wiring that makes this implicit (cook will auto-include
+    -- <cwd>/cook_modules/?.so on the search path).
+    local cookfile_a_path = proj .. "/Cookfile-a"
+    local cookfile_a = string.format([[
+chore gate-a
+    >{
+        -- Phase 2: prepend cook_modules/?.so manually. Phase 3 lands
+        -- runtime cpath wiring that makes this implicit.
+        package.cpath = "%s/?.so;" .. package.cpath
+        local cook_hello = require("cook_hello")
+        print("PART_A_VALUE=" .. tostring(cook_hello.value()))
+    }
+]], proj_modules)
+    fs.write(cookfile_a_path, cookfile_a)
+
+    -- Run the staged cook against Cookfile-a and capture stdout.
+    local out_a = cook.exec(env_prefix .. string.format(
+        "%s/bin/cook -f %s gate-a 2>&1",
+        cook_prefix, cookfile_a_path
+    ), 0)
+    print("[gate-m2] Part A output:\n" .. out_a)
+    if not out_a:find("PART_A_VALUE=42", 1, true) then
+        error("gate_m2: Part A did not print PART_A_VALUE=42 (cook executable's lua exports may be missing). Output:\n" .. out_a)
+    end
+    print("[gate-m2] Part A: OK (cook_hello.value() == 42)")
+
+    -- ── Part B: lua-cjson via bundled luarocks ────────────────────────
+    print("[gate-m2] Part B: installing lua-cjson via bundled luarocks")
+
+    -- Install lua-cjson into the proj cook_modules tree. luarocks emits
+    -- progress to stderr even on success; rely on exit code (cook.exec
+    -- raises on non-zero) and on the staged file appearing.
+    cook.exec(env_prefix .. string.format(
+        "%s/bin/luarocks install lua-cjson --tree %s --server https://luarocks.org 2>&1",
+        cook_prefix, proj_modules
+    ), 0)
+
+    -- Verify the rock landed where we expect. luarocks --tree <td>/cook_modules
+    -- writes shared libs under lib/lua/5.4/.
+    local cjson_so = proj_modules .. "/lib/lua/5.4/cjson.so"
+    if not fs.exists(cjson_so) then
+        error("gate_m2: Part B luarocks install did not produce " .. cjson_so)
+    end
+
+    -- Phase-2-only workaround: same package.path/cpath wiring as Part A.
+    -- luarocks --tree puts modules under share/lua/5.4 and lib/lua/5.4;
+    -- prepend both so require("cjson") resolves the freshly-installed rock.
+    local cookfile_b_path = proj .. "/Cookfile-b"
+    local cookfile_b = string.format([[
+chore gate-b
+    >{
+        -- Phase 2: prepend cook_modules tree manually. Phase 3 lands
+        -- runtime cpath wiring that makes this implicit.
+        package.path = "%s/share/lua/5.4/?.lua;%s/share/lua/5.4/?/init.lua;" .. package.path
+        package.cpath = "%s/lib/lua/5.4/?.so;" .. package.cpath
+        local cjson = require("cjson")
+        local encoded = cjson.encode({ hello = "world", n = 42 })
+        print("ENCODED=" .. encoded)
+        local decoded = cjson.decode(encoded)
+        if decoded.hello == "world" and decoded.n == 42 then
+            print("PART_B_ROUND_TRIP=ok")
+        else
+            print("PART_B_ROUND_TRIP=fail")
+        end
+    }
+]], proj_modules, proj_modules, proj_modules)
+    fs.write(cookfile_b_path, cookfile_b)
+
+    local out_b = cook.exec(env_prefix .. string.format(
+        "%s/bin/cook -f %s gate-b 2>&1",
+        cook_prefix, cookfile_b_path
+    ), 0)
+    print("[gate-m2] Part B output:\n" .. out_b)
+    if not out_b:find('"hello":"world"', 1, true) then
+        error("gate_m2: Part B encoded output missing \"hello\":\"world\". Output:\n" .. out_b)
+    end
+    if not out_b:find("PART_B_ROUND_TRIP=ok", 1, true) then
+        error("gate_m2: Part B round-trip failed. Output:\n" .. out_b)
+    end
+    print("[gate-m2] Part B: OK (cjson encode/decode round-trip)")
+
+    -- Best-effort cleanup. Don't error if rm -rf fails; the tmpdir is
+    -- under /tmp and will be reaped by the OS eventually.
+    cook.exec("rm -rf " .. td, 0)
+
+    print("[gate-m2] BOTH PARTS PASS on " .. plat)
 end
 
 return M
