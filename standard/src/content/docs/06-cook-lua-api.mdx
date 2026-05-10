@@ -63,6 +63,8 @@ Within the body of a `config_block` (§{grammar.config-blocks}), the bare global
 
 **Output-field exclusivity.** A conforming implementation MUST reject `spec` if both `output` and `outputs` are set, raising a Lua runtime error.
 
+**Path-shape restriction.** Every entry in `inputs`, `output`, and `outputs` is a *file* path. A conforming implementation MUST raise a Lua runtime error at register time when any path in `inputs` resolves (relative to the recipe's working directory) to an existing directory, and when any path in `output`/`outputs` resolves to an existing directory. Non-existent output paths MUST be accepted (declared outputs are typically not yet built at register time); non-existent input paths MAY be accepted at register time and surfaced later by the cache or input-iteration layer. The diagnostic MUST contain the substring `is a directory` and the offending path. Cook's cache hashes file content, so silently accepting a directory would produce an incomplete cache record and the unit would re-run on every invocation.
+
 **Payload selection.** A conforming implementation MUST classify the recorded unit as follows:
 
 1. If `lua_code` is present, the unit is a **Lua-code unit**; `inputs`, `outputs`, and `ingredient_groups` are carried on the payload and used by §{lua.using-block-globals} bindings at execute time.

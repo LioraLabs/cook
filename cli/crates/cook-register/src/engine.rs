@@ -188,6 +188,7 @@ impl Registry {
             capture_state.clone(),
             recipe_name,
             self.terminal_outputs.clone(),
+            self.working_dir.clone(),
         )?;
         crate::export_api::register_export_api(&lua, self.export_store.clone())?;
         crate::test_api::register_test_api(&lua, capture_state.clone())?;

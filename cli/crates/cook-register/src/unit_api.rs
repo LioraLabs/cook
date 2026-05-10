@@ -1,16 +1,92 @@
 use mlua::prelude::*;
+use std::path::{Path, PathBuf};
 use cook_contracts::{CacheMeta, CapturedUnit, DepKind, WorkPayload};
 
 use crate::dep_output_api::SharedTerminalOutputs;
 use crate::{hash_str, SharedCaptureState};
 
+/// Validate that a path string supplied as a `cook.add_unit` input does not
+/// resolve to a directory. Cook's cache hashing layer reads files, not
+/// directories — silently accepting a directory produces an empty cache
+/// record and the unit re-runs every invocation. Reject at register time
+/// with a clear, actionable diagnostic.
+///
+/// Inputs MUST exist (per add_unit semantics — the input contributes to the
+/// cache key), so a non-existent path is also rejected here.
+fn validate_input_not_directory(working_dir: &Path, path: &str) -> Result<(), String> {
+    let resolved: PathBuf = if Path::new(path).is_absolute() {
+        PathBuf::from(path)
+    } else {
+        working_dir.join(path)
+    };
+    let meta = match std::fs::symlink_metadata(&resolved) {
+        Ok(m) => m,
+        Err(_) => {
+            // Don't error here on missing inputs — other layers (cache
+            // record_completion, _cook_in iteration) already produce focused
+            // diagnostics for missing files. We only reject directories.
+            return Ok(());
+        }
+    };
+    // Resolve symlinks to a concrete file type so a symlink-to-directory is
+    // also rejected.
+    let final_meta = if meta.file_type().is_symlink() {
+        match std::fs::metadata(&resolved) {
+            Ok(m) => m,
+            Err(_) => return Ok(()),
+        }
+    } else {
+        meta
+    };
+    if final_meta.is_dir() {
+        return Err(format!(
+            "cook.add_unit: input '{path}' is a directory; cook does not support directory inputs (use a glob like 'dir/*' or list specific files)"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate that a path string supplied as a `cook.add_unit` output does not
+/// already exist as a directory. Output paths are typically not yet created
+/// at register time, so a missing path is fine; what we reject is the case
+/// where the path is occupied by a directory (which the cache cannot hash).
+fn validate_output_not_directory(working_dir: &Path, path: &str) -> Result<(), String> {
+    let resolved: PathBuf = if Path::new(path).is_absolute() {
+        PathBuf::from(path)
+    } else {
+        working_dir.join(path)
+    };
+    let meta = match std::fs::symlink_metadata(&resolved) {
+        Ok(m) => m,
+        Err(_) => return Ok(()),
+    };
+    let final_meta = if meta.file_type().is_symlink() {
+        match std::fs::metadata(&resolved) {
+            Ok(m) => m,
+            Err(_) => return Ok(()),
+        }
+    } else {
+        meta
+    };
+    if final_meta.is_dir() {
+        return Err(format!(
+            "cook.add_unit: output '{path}' is a directory; cook does not support directory outputs (declare a specific file path)"
+        ));
+    }
+    Ok(())
+}
+
 /// Register `cook.add_unit(table)`, `cook.step_group(fn)`, `cook._enter_chore()`,
 /// and `cook._exit_chore()` on the cook table.
+///
+/// `working_dir` is the recipe's working directory; it's used to resolve
+/// relative input/output paths for the directory-rejection check.
 pub fn register_unit_api(
     lua: &Lua,
     capture_state: SharedCaptureState,
     recipe_name: &str,
     terminal_outputs: SharedTerminalOutputs,
+    working_dir: PathBuf,
 ) -> LuaResult<()> {
     let cook: LuaTable = lua.globals().get("cook")?;
 
@@ -33,6 +109,7 @@ pub fn register_unit_api(
     // cook.add_unit(table)
     let cs = capture_state.clone();
     let rname = recipe_name.to_string();
+    let wd_for_add_unit = working_dir.clone();
     // terminal_outputs is no longer consulted in add_unit; dep_output_api.rs
     // now accumulates importer-relative rewritten paths in
     // capture_state.step_group_dep_input_paths so that cache_meta.input_paths
@@ -109,6 +186,22 @@ pub fn register_unit_api(
             Vec::new()
         };
         let outputs_for_tracking = output_paths.clone();
+
+        // Reject directory inputs/outputs at register time. Cook's cache
+        // hashing layer reads files; silently accepting a directory
+        // produces an empty cache record (only `_source_hash`) and the
+        // unit re-runs every invocation. Catching it here gives the user
+        // an actionable diagnostic instead of mysterious cache misses.
+        for inp in &inputs {
+            if let Err(msg) = validate_input_not_directory(&wd_for_add_unit, inp) {
+                return Err(LuaError::RuntimeError(msg));
+            }
+        }
+        for out in &output_paths {
+            if let Err(msg) = validate_output_not_directory(&wd_for_add_unit, out) {
+                return Err(LuaError::RuntimeError(msg));
+            }
+        }
 
         // 2026-05-02 addendum spec §4.3: cross-recipe dep refs accumulated by
         // cook.dep_output / cook.dep_output_list calls within this step_group
@@ -420,7 +513,18 @@ mod tests {
         let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
         let terminal_outputs: SharedTerminalOutputs =
             Arc::new(Mutex::new(BTreeMap::new()));
-        register_unit_api(&lua, capture_state.clone(), recipe_name, terminal_outputs).unwrap();
+        // Tests reference paths like "main.c" that don't exist; the
+        // directory-rejection check skips non-existent paths, so any
+        // working_dir is fine here.
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        register_unit_api(
+            &lua,
+            capture_state.clone(),
+            recipe_name,
+            terminal_outputs,
+            working_dir,
+        )
+        .unwrap();
         (lua, capture_state)
     }
 
@@ -767,7 +871,15 @@ mod tests {
         let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
         let terminal_outputs: SharedTerminalOutputs =
             std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
-        register_unit_api(&lua, capture_state.clone(), "my_recipe", terminal_outputs).unwrap();
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        register_unit_api(
+            &lua,
+            capture_state.clone(),
+            "my_recipe",
+            terminal_outputs,
+            working_dir,
+        )
+        .unwrap();
 
         lua.set_app_data(fake_cache_ctx());
         lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
@@ -812,11 +924,13 @@ mod tests {
             .lock().unwrap()
             .insert("util".into(), vec!["build/util.o".into()]);
 
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         register_unit_api(
             &lua,
             capture_state.clone(),
             "demo",
             terminal_outputs.clone(),
+            working_dir,
         )
         .unwrap();
         crate::dep_output_api::register_dep_output_api(
@@ -1019,5 +1133,188 @@ mod tests {
 
         let err = result.expect_err("expected error for '..' path").to_string();
         assert!(err.contains(".."), "diagnostic must contain '..'; got: {err}");
+    }
+
+    /// Regression: `cook.add_unit` MUST reject directory inputs at register
+    /// time. The cache hashing layer reads files; passing a directory used
+    /// to silently produce an empty cache record (only `_source_hash`),
+    /// causing the unit to re-run on every invocation. We now fail fast
+    /// with a clear, actionable diagnostic instead.
+    #[test]
+    fn add_unit_rejects_directory_input() {
+        use std::sync::{Arc, Mutex};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Build a real directory the recipe will (mistakenly) declare as
+        // an input.
+        let upstream = tmp.path().join("upstream").join("lib");
+        std::fs::create_dir_all(&upstream).expect("mkdir upstream/lib");
+        std::fs::write(upstream.join("a.txt"), b"a").expect("write a.txt");
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("cook", lua.create_table().unwrap())
+            .unwrap();
+        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        let terminal_outputs: SharedTerminalOutputs =
+            Arc::new(Mutex::new(BTreeMap::new()));
+        register_unit_api(
+            &lua,
+            capture_state.clone(),
+            "vendor",
+            terminal_outputs,
+            tmp.path().to_path_buf(),
+        )
+        .unwrap();
+
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value(
+            "__cook_cookfile_path",
+            "Cookfile".to_string(),
+        )
+        .expect("set");
+
+        let result = lua
+            .load(
+                r#"
+                cook.add_unit({
+                    command = "cp -a upstream/lib build/lib",
+                    inputs = { "upstream/lib" },
+                    output = "build/lib.stamp",
+                })
+            "#,
+            )
+            .exec();
+
+        let err = result
+            .expect_err("expected error for directory input")
+            .to_string();
+        assert!(
+            err.contains("is a directory"),
+            "diagnostic must contain 'is a directory'; got: {err}"
+        );
+        assert!(
+            err.contains("upstream/lib"),
+            "diagnostic must name the offending path; got: {err}"
+        );
+        assert!(
+            err.contains("glob") || err.contains("specific files"),
+            "diagnostic must suggest a fix (glob or list specific files); got: {err}"
+        );
+        // No unit must have been recorded.
+        assert!(
+            capture_state.borrow().units.is_empty(),
+            "rejected add_unit must not record a unit"
+        );
+    }
+
+    /// Files (existing or not) MUST still pass through. Verifies the
+    /// directory-rejection check doesn't accidentally reject valid file
+    /// inputs (the common case).
+    #[test]
+    fn add_unit_accepts_file_inputs() {
+        use std::sync::{Arc, Mutex};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("upstream").join("lib");
+        std::fs::create_dir_all(&src).expect("mkdir upstream/lib");
+        std::fs::write(src.join("a.txt"), b"a").expect("write a.txt");
+        std::fs::write(src.join("b.txt"), b"b").expect("write b.txt");
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("cook", lua.create_table().unwrap())
+            .unwrap();
+        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        let terminal_outputs: SharedTerminalOutputs =
+            Arc::new(Mutex::new(BTreeMap::new()));
+        register_unit_api(
+            &lua,
+            capture_state.clone(),
+            "vendor",
+            terminal_outputs,
+            tmp.path().to_path_buf(),
+        )
+        .unwrap();
+
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value(
+            "__cook_cookfile_path",
+            "Cookfile".to_string(),
+        )
+        .expect("set");
+
+        // Real file (exists) and a not-yet-built output (does not exist).
+        lua.load(
+            r#"
+            cook.add_unit({
+                command = "cp upstream/lib/a.txt build/a.txt",
+                inputs = { "upstream/lib/a.txt" },
+                output = "build/a.txt",
+            })
+        "#,
+        )
+        .exec()
+        .expect("file input must be accepted");
+
+        assert_eq!(capture_state.borrow().units.len(), 1);
+    }
+
+    /// `outputs` (plural) is also covered: declaring a directory as a
+    /// declared output is rejected.
+    #[test]
+    fn add_unit_rejects_directory_in_outputs_plural() {
+        use std::sync::{Arc, Mutex};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("build").join("artifacts");
+        std::fs::create_dir_all(&dir).expect("mkdir build/artifacts");
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("cook", lua.create_table().unwrap())
+            .unwrap();
+        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        let terminal_outputs: SharedTerminalOutputs =
+            Arc::new(Mutex::new(BTreeMap::new()));
+        register_unit_api(
+            &lua,
+            capture_state.clone(),
+            "build",
+            terminal_outputs,
+            tmp.path().to_path_buf(),
+        )
+        .unwrap();
+
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value(
+            "__cook_cookfile_path",
+            "Cookfile".to_string(),
+        )
+        .expect("set");
+
+        let result = lua
+            .load(
+                r#"
+                cook.add_unit({
+                    command = "mkdir -p build/artifacts && touch build/a.o build/b.o",
+                    inputs = {},
+                    outputs = { "build/a.o", "build/artifacts" },
+                })
+            "#,
+            )
+            .exec();
+
+        let err = result
+            .expect_err("expected error for directory output")
+            .to_string();
+        assert!(
+            err.contains("is a directory"),
+            "diagnostic must contain 'is a directory'; got: {err}"
+        );
+        assert!(
+            err.contains("build/artifacts"),
+            "diagnostic must name the offending path; got: {err}"
+        );
     }
 }

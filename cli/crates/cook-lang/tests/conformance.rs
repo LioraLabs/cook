@@ -250,6 +250,14 @@ fn negative_conformance_corpus() {
         if !expected_path.exists() && case.join("codegen_error.txt").exists() {
             continue;
         }
+        // Fixtures that carry only a `register_error.txt` assert a
+        // register-phase rejection (e.g. `cook.add_unit` directory input
+        // rejection, § 6.2). The parser-only harness skips them; the
+        // companion harness in `cook-register/tests/conformance.rs`
+        // consumes them.
+        if !expected_path.exists() && case.join("register_error.txt").exists() {
+            continue;
+        }
 
         let input = fs::read_to_string(&input_path)
             .unwrap_or_else(|e| panic!("read {}: {}", input_path.display(), e));
