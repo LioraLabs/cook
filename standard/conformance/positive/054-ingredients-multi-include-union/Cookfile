@@ -1,0 +1,18 @@
+# Standard §4.3: an ingredients line with multiple includes and excludes
+# resolves to (union of includes) \ (union of excludes), order-independent.
+# Pinned here because the codegen used to hardcode `recipe.ingredients[1]`
+# as the iteration source, silently dropping every include glob past the
+# first. This Cookfile parses cleanly and codegens; the codegen-positive
+# harness asserts the latter.
+
+recipe build
+    ingredients "src/*.c" "include/*.h" !"src/skip.c" !"include/skip.h"
+    cook "build/$<in.stem>.o" using { touch $<out> }
+
+recipe show
+    ingredients "src/*.c" "include/*.h"
+    plate { echo "$<in>" }
+
+recipe check
+    ingredients "tests/*.sh" "extra/*.sh"
+    test { bash "$<in>" } timeout 5

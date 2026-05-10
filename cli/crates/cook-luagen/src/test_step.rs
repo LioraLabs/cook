@@ -32,10 +32,14 @@ pub(crate) fn generate_test_step(
         return Err(CodegenError::EmptySource { line });
     }
 
+    // Iteration source per Standard §4.8.1: same fallback chain as
+    // plate (preceding cook step's outputs, or the resolved ingredient
+    // set). The `ingredients` local emitted by `recipe.rs` carries the
+    // §4.3 union; `recipe.ingredients[1]` would drop globs 2..N.
     let source_expr = if let Some(idx) = last_cook_index {
         format!("_cook_outputs_{}", idx)
     } else {
-        "recipe.ingredients[1]".to_string()
+        "ingredients".to_string()
     };
     let timeout = test_step.timeout.unwrap_or(300);
     let should_fail = if test_step.should_fail { "true" } else { "false" };

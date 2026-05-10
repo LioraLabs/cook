@@ -161,7 +161,11 @@ fn test_cook_step_one_to_one() {
     let output = generate(&cookfile);
     assert!(output.contains("cook.step_group(function()"), "missing cook.step_group");
     assert!(output.contains("local _cook_outputs_1 = {}"));
-    assert!(output.contains("for _, _cook_in in ipairs(recipe.ingredients[1]) do"));
+    // Iteration source is the flat resolved set (Standard §4.3 union),
+    // emitted as the local `ingredients` by `recipe.rs`. Reading
+    // `recipe.ingredients[1]` here would silently drop every glob past
+    // the first.
+    assert!(output.contains("for _, _cook_in in ipairs(ingredients) do"));
     // CS-0022: output pattern $<in.stem> expands directly to path.stem(_cook_in)
     assert!(output.contains("local _cook_out = \"build/\" .. path.stem(_cook_in) .. \".o\""),
         "output pattern should expand $<in.stem> to path.stem(_cook_in), got:\n{output}");
@@ -2354,6 +2358,162 @@ recipe r
     assert!(
         !lua.contains("name = \"$<in.stem>-rt\""),
         "as_name should be substituted, not literal:\n{lua}"
+    );
+}
+
+// ── Standard §4.3: ingredients is union(includes) \ union(excludes) ──
+
+#[test]
+fn cook_step_iterates_union_of_all_include_globs() {
+    // Regression for the silent-drop bug: with multiple include globs,
+    // codegen used to hardcode `recipe.ingredients[1]` as the iteration
+    // source, ignoring globs 2..N entirely. The fix routes through the
+    // local `ingredients` (= cook.resolve_ingredients(...)) which is
+    // the Standard-correct union.
+    let cookfile = make_cookfile(vec![make_recipe(
+        "build",
+        vec![],
+        vec!["src/*.c", "include/*.h"],
+        vec![Step::Cook {
+            step: CookStep {
+                outputs: vec!["build/$<in.stem>.o".to_string()],
+                using_clause: Some(UsingClause::ShellBlock(
+                    vec!["touch $<out>".to_string()],
+                )),
+            },
+            line: 3,
+        }],
+    )]);
+    let output = generate(&cookfile);
+    // Iteration source is the merged local, NOT the per-pattern table.
+    assert!(
+        output.contains("for _, _cook_in in ipairs(ingredients) do"),
+        "cook step must iterate the merged `ingredients` local, got:\n{output}"
+    );
+    assert!(
+        !output.contains("ipairs(recipe.ingredients[1])"),
+        "cook step must NOT iterate recipe.ingredients[1] (silently drops globs 2..N), got:\n{output}"
+    );
+    // The cook.resolve_ingredients call carries both globs.
+    assert!(
+        output.contains("cook.resolve_ingredients({\"src/*.c\", \"include/*.h\"}, {})"),
+        "ingredients local must aggregate every include glob, got:\n{output}"
+    );
+}
+
+#[test]
+fn cook_step_many_to_one_iterates_union_too() {
+    // Many-to-one steps (literal output, $<all> body) used the same
+    // hardcoded `recipe.ingredients[1]` as the iteration source. The
+    // fix applies uniformly across iteration modes.
+    let cookfile = make_cookfile(vec![make_recipe(
+        "build",
+        vec![],
+        vec!["src/*.c", "include/*.h"],
+        vec![Step::Cook {
+            step: CookStep {
+                outputs: vec!["build/app".to_string()],
+                using_clause: Some(UsingClause::ShellBlock(
+                    vec!["echo $<all>".to_string()],
+                )),
+            },
+            line: 3,
+        }],
+    )]);
+    let output = generate(&cookfile);
+    assert!(
+        output.contains("table.concat(ingredients, \" \")"),
+        "many-to-one $<all> must concat the merged `ingredients` local, got:\n{output}"
+    );
+    assert!(
+        !output.contains("table.concat(recipe.ingredients[1]"),
+        "many-to-one must NOT concat recipe.ingredients[1] only, got:\n{output}"
+    );
+}
+
+#[test]
+fn plate_step_iterates_union_of_all_include_globs() {
+    // Plate steps fall back to the recipe's resolved ingredient set
+    // (Standard §4.7.1) when no preceding cook step exists. The fallback
+    // must read the merged `ingredients` local, not `recipe.ingredients[1]`.
+    let cookfile = make_cookfile(vec![make_recipe(
+        "show",
+        vec![],
+        vec!["src/*.c", "include/*.h"],
+        vec![Step::Plate {
+            step: PlateStep {
+                body: Body::ShellBlock(vec!["echo $<in>".to_string()]),
+            },
+            line: 3,
+        }],
+    )]);
+    let output = generate(&cookfile);
+    assert!(
+        output.contains("for _, _plate_in in ipairs(ingredients) do"),
+        "plate must iterate the merged `ingredients` local, got:\n{output}"
+    );
+    assert!(
+        !output.contains("ipairs(recipe.ingredients[1])"),
+        "plate must NOT iterate recipe.ingredients[1] only, got:\n{output}"
+    );
+}
+
+#[test]
+fn test_step_iterates_union_of_all_include_globs() {
+    // Test steps share plate's iteration-source fallback (Standard §4.8.1).
+    let cookfile = make_cookfile(vec![make_recipe(
+        "check",
+        vec![],
+        vec!["tests/*.sh", "extra/*.sh"],
+        vec![Step::Test {
+            step: TestStep {
+                body: Body::ShellBlock(vec!["bash $<in>".to_string()]),
+                timeout: Some(5),
+                should_fail: false,
+                as_name: None,
+            },
+            line: 3,
+        }],
+    )]);
+    let output = generate(&cookfile);
+    assert!(
+        output.contains("ipairs(ingredients)"),
+        "test step must iterate the merged `ingredients` local, got:\n{output}"
+    );
+    assert!(
+        !output.contains("ipairs(recipe.ingredients[1])"),
+        "test step must NOT iterate recipe.ingredients[1] only, got:\n{output}"
+    );
+}
+
+#[test]
+fn cook_step_excludes_threaded_through_resolve_ingredients() {
+    // !"glob" exclude items have always reached cook.resolve_ingredients;
+    // pin that the fix doesn't regress this path. The exclude appears in
+    // the second slot of the resolve_ingredients call.
+    let recipe = Recipe {
+        name: "build".to_string(),
+        deps: vec![],
+        ingredients: vec!["src/*.c".to_string(), "include/*.h".to_string()],
+        excludes: vec!["src/skip.c".to_string()],
+        steps: vec![Step::Cook {
+            step: CookStep {
+                outputs: vec!["build/$<in.stem>.o".to_string()],
+                using_clause: Some(UsingClause::ShellBlock(
+                    vec!["touch $<out>".to_string()],
+                )),
+            },
+            line: 3,
+        }],
+        line: 1,
+    };
+    let cookfile = make_cookfile(vec![recipe]);
+    let output = generate(&cookfile);
+    assert!(
+        output.contains(
+            "cook.resolve_ingredients({\"src/*.c\", \"include/*.h\"}, {\"src/skip.c\"})"
+        ),
+        "exclude must appear in the resolve_ingredients call, got:\n{output}"
     );
 }
 

@@ -116,10 +116,19 @@ pub(crate) fn generate_cook_step(
     let iter_mode = cook_mode_to_iter_mode(&mode);
     let output_shape = count_to_output_shape(cook_step.outputs.len());
 
+    // Iteration source per Standard §4.3: the recipe's resolved ingredient
+    // set is the union of include globs minus the union of excludes — a
+    // single flat list. `recipe.rs` emits that list as the local
+    // `ingredients` (via `cook.resolve_ingredients(...)`) at the top of
+    // every recipe with ingredients, so we read it here. The
+    // `recipe.ingredients[N]` Lua table-of-tables (per-pattern groups)
+    // remains available to Lua bodies via the `recipe` global, but is the
+    // wrong shape for cook-step iteration — using it here would silently
+    // drop every glob past the first.
     let input_source = if let Some(prev) = prev_cook_index {
         format!("_cook_outputs_{}", prev)
     } else if !ingredients.is_empty() {
-        "recipe.ingredients[1]".to_string()
+        "ingredients".to_string()
     } else {
         "{}".to_string()
     };

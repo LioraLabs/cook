@@ -31,10 +31,16 @@ pub(crate) fn generate_plate_step(
         return Err(CodegenError::EmptySource { line });
     }
 
+    // Iteration source per Standard §4.7.1: the preceding `cook` step's
+    // output list, or — falling back — the recipe's resolved ingredient
+    // set (Standard §4.3 union of includes minus union of excludes).
+    // `recipe.rs` emits the resolved set as the local `ingredients`;
+    // reading `recipe.ingredients[1]` here would silently drop every
+    // glob past the first.
     let source_expr = if let Some(idx) = last_cook_index {
         format!("_cook_outputs_{}", idx)
     } else {
-        "recipe.ingredients[1]".to_string()
+        "ingredients".to_string()
     };
 
     match (&plate_step.body, mode) {
