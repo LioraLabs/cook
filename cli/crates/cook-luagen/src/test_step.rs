@@ -122,6 +122,13 @@ pub(crate) fn generate_test_step(
         }
     }
 
+    // Standard §5.4.1: a `test` step's output is a passthrough of its
+    // input list — independent of how the body uses (or ignores) the
+    // source. Same source-availability guard as plate.
+    if last_cook_index.is_some() || has_ingredients {
+        out.push_str(&format!("    cook.passthrough({})\n", source_expr));
+    }
+
     Ok(())
 }
 

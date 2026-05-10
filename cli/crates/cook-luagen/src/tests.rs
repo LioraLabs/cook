@@ -2459,6 +2459,136 @@ fn plate_step_iterates_union_of_all_include_globs() {
 }
 
 #[test]
+fn plate_step_emits_passthrough_after_iteration() {
+    // Standard §5.4.1: a `plate` step's output is its input list,
+    // forwarded as the recipe's terminal outputs so `$<recipe>` refs
+    // expand to the plate's ingredients (or the preceding cook step's
+    // outputs). The codegen calls `cook.passthrough(<source>)` after
+    // the iteration loop, inside the enclosing step_group.
+    let cookfile = make_cookfile(vec![make_recipe(
+        "greet",
+        vec![],
+        vec!["Cookfile"],
+        vec![Step::Plate {
+            step: PlateStep {
+                body: Body::ShellBlock(vec!["echo \"$<in>\"".to_string()]),
+            },
+            line: 3,
+        }],
+    )]);
+    let output = generate(&cookfile);
+    assert!(
+        output.contains("cook.passthrough(ingredients)"),
+        "plate must emit cook.passthrough(ingredients) so its input list \
+         flows out as the recipe's terminal outputs, got:\n{output}"
+    );
+}
+
+#[test]
+fn plate_step_oneshot_with_ingredients_still_passthroughs() {
+    // The Standard rule applies even when the plate body doesn't use
+    // $<in>/$<all> (OneShot mode) — the input list is still the plate's
+    // output. A bare `plate { echo "hi" }` after `ingredients "Cookfile"`
+    // therefore emits a passthrough, and downstream `$<greet>` sees
+    // `Cookfile` (not the empty string).
+    let cookfile = make_cookfile(vec![make_recipe(
+        "greet",
+        vec![],
+        vec!["Cookfile"],
+        vec![Step::Plate {
+            step: PlateStep {
+                body: Body::ShellBlock(vec!["echo hello".to_string()]),
+            },
+            line: 3,
+        }],
+    )]);
+    let output = generate(&cookfile);
+    assert!(
+        output.contains("cook.passthrough(ingredients)"),
+        "OneShot plate with ingredients must still passthrough, got:\n{output}"
+    );
+}
+
+#[test]
+fn plate_step_with_no_source_omits_passthrough() {
+    // A recipe with no ingredients and no preceding cook step has no
+    // input list to pass through; emitting `cook.passthrough(...)` would
+    // reference an undefined Lua local. Codegen skips the call in this
+    // shape; the recipe's terminal outputs stay empty.
+    let cookfile = make_cookfile(vec![make_recipe(
+        "greet",
+        vec![],
+        vec![],
+        vec![Step::Plate {
+            step: PlateStep {
+                body: Body::ShellBlock(vec!["echo hello".to_string()]),
+            },
+            line: 3,
+        }],
+    )]);
+    let output = generate(&cookfile);
+    assert!(
+        !output.contains("cook.passthrough"),
+        "a plate with no source must not emit cook.passthrough, got:\n{output}"
+    );
+}
+
+#[test]
+fn plate_step_after_cook_passthroughs_cook_outputs() {
+    // When a plate follows a cook step, the source is the cook step's
+    // outputs (`_cook_outputs_N`), not the recipe's ingredients.
+    let cookfile = make_cookfile(vec![make_recipe(
+        "build",
+        vec![],
+        vec!["src/*.c"],
+        vec![
+            Step::Cook {
+                step: CookStep {
+                    outputs: vec!["out/$<in.stem>.o".to_string()],
+                    using_clause: Some(UsingClause::ShellBlock(vec!["touch $<out>".to_string()])),
+                },
+                line: 3,
+            },
+            Step::Plate {
+                step: PlateStep {
+                    body: Body::ShellBlock(vec!["echo $<in>".to_string()]),
+                },
+                line: 4,
+            },
+        ],
+    )]);
+    let output = generate(&cookfile);
+    assert!(
+        output.contains("cook.passthrough(_cook_outputs_1)"),
+        "plate after cook step 1 must passthrough _cook_outputs_1, got:\n{output}"
+    );
+}
+
+#[test]
+fn test_step_emits_passthrough() {
+    // Standard §5.4.1 lists `test` alongside `plate` as passthrough.
+    let cookfile = make_cookfile(vec![make_recipe(
+        "check",
+        vec![],
+        vec!["tests/*.sh"],
+        vec![Step::Test {
+            step: TestStep {
+                body: Body::ShellBlock(vec!["bash $<in>".to_string()]),
+                timeout: Some(5),
+                should_fail: false,
+                as_name: None,
+            },
+            line: 3,
+        }],
+    )]);
+    let output = generate(&cookfile);
+    assert!(
+        output.contains("cook.passthrough(ingredients)"),
+        "test step must emit cook.passthrough(ingredients), got:\n{output}"
+    );
+}
+
+#[test]
 fn test_step_iterates_union_of_all_include_globs() {
     // Test steps share plate's iteration-source fallback (Standard §4.8.1).
     let cookfile = make_cookfile(vec![make_recipe(

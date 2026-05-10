@@ -97,18 +97,43 @@ recipe build
 
 The surface `cook` step routes through `step_group` automatically — all per-input units in one step are siblings.
 
-## 8.5. `cook.exec` and the shell helpers
+## 8.5. Shelling out: `cook.sh` and `cook.exec`
 
-For one-off shell work without going through `add_unit`, the API exposes shell helpers. These are useful in chores and execute-phase Lua:
+There are two Lua-side ways to run a shell command, and the choice tells Cook *what kind of work it is*:
+
+| Helper | Phase | What it does | Returns |
+|---|---|---|---|
+| `cook.sh(cmd)` | both | Runs `cmd` immediately via `/bin/sh -c`, raises on non-zero. | The captured stdout (a string). |
+| `cook.exec(cmd, line)` | register only | *Records* a shell unit to be run at execute time. Caching is disabled. | The empty string (so concatenation doesn't break). |
+| `cook.interactive(cmd, line)` | register only | Same as `cook.exec` but the recorded unit runs interactively. | The empty string. |
+
+Use **`cook.sh`** when you need the output *now*, in your Lua code — feature detection at register time, reading a version file, asking `git rev-parse HEAD` for a build tag. It's the same call in both phases; the surrounding scheduling is what differs:
 
 ```cook
-chore deploy
-    > cook.exec("rsync -a build/ deploy:/var/www/")
+config
+    -- register-time feature detection: ask git for a tag,
+    -- fall back if we're not in a worktree.
+    env.VERSION = (function()
+        local ok, out = pcall(cook.sh, "git rev-parse --short HEAD 2>/dev/null")
+        if ok then return (out:gsub("%s+$", "")) end
+        return "dev"
+    end)()
 ```
 
-`cook.exec` runs synchronously, returns the captured stdout, and raises a Lua error on non-zero exit. There are also `cook.exec_status` (returns exit code instead of raising) and `cook.exec_quiet` (suppresses output capture).
+Use **`cook.exec`** when you want to register a shell step from Lua — typically inside a module or in a body that's building units conditionally. It's the Lua counterpart of writing a bare shell line in a recipe body, with caching off:
 
-Inside a register-phase context (`>>`), `cook.exec` *records* a shell unit and returns an empty string — it doesn't actually shell out until execute time. Same call, two phases, two behaviours. *(Standard §8.1.1.)*
+```cook
+recipe deploy
+    >>{
+        for _, host in ipairs({ "web1", "web2", "web3" }) do
+            cook.exec("rsync -a build/ " .. host .. ":/var/www/", 0)
+        end
+    }
+```
+
+Each `cook.exec` call records one unit; at execute time, Cook runs them in the same step group. A chore body that *just wants to shell out* doesn't need either helper — the shell command is already a step kind, so `chore deploy / rsync -a build/ web:/var/www/` is the natural form. Reach for `cook.exec` only when you're generating the commands programmatically.
+
+> **Note — `cook.exec` is register-only.** Calling `cook.exec` from execute-phase Lua (a `>` line, a `>{ ... }` block, or a `using >{ ... }` body) raises a Lua runtime error per Standard §6.3.2. The "I want to shell out from inside an execute-phase body" use case is `cook.sh`. *(Standard §6.3.1, §6.3.2.)*
 
 ## 8.6. The `recipe` global (register phase)
 

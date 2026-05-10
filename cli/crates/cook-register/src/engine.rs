@@ -39,6 +39,10 @@ pub struct Registry {
     /// Shared between the Lua-env-construction call and the config-block
     /// evaluation call so both sides see the same Rc-backed set.
     env_keyset: EnvKeyset,
+    /// (recipe, env-var) shadowing pairs we've already warned about, so
+    /// we don't repeat the diagnostic on every recipe-register call within
+    /// a single Cookfile load.
+    shadow_warnings_emitted: Rc<RefCell<std::collections::BTreeSet<(String, String)>>>,
 }
 
 impl Registry {
@@ -54,6 +58,7 @@ impl Registry {
             alias_dirs: BTreeMap::new(),
             alias_qualified_prefixes: BTreeMap::new(),
             env_keyset: EnvKeyset::new(),
+            shadow_warnings_emitted: Rc::new(RefCell::new(std::collections::BTreeSet::new())),
         }
     }
 
@@ -232,6 +237,33 @@ impl Registry {
                 for pair in env_tbl.pairs::<String, String>() {
                     let (k, v) = pair?;
                     env_map.insert(k, v);
+                }
+            }
+
+            // Standard §5.2.3: when a placeholder name resolves to both a
+            // recipe and a declared env var, the recipe wins, and a
+            // conforming implementation MUST emit a warning naming both.
+            // We compute the intersection of (registered recipes) ∩
+            // (declared env keyset) here, after the keyset is frozen,
+            // and emit one diagnostic per offending name (deduped across
+            // recipe-register calls within this Cookfile load).
+            let declared_env: std::collections::BTreeSet<String> =
+                self.env_keyset.declared_list().into_iter().collect();
+            let recipe_names: std::collections::BTreeSet<String> = recipes
+                .borrow()
+                .iter()
+                .map(|r| r.name.clone())
+                .collect();
+            let mut emitted = self.shadow_warnings_emitted.borrow_mut();
+            for name in recipe_names.intersection(&declared_env) {
+                let key = (name.clone(), name.clone());
+                if emitted.insert(key) {
+                    eprintln!(
+                        "cook: warning: recipe '{name}' shadows declared env var \
+                         'env.{name}': $<{name}> resolves to the recipe (Standard \
+                         §5.2.3). Use $<env.{name}> for the env-var value, or \
+                         rename one of them."
+                    );
                 }
             }
 

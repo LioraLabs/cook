@@ -196,4 +196,4 @@ cook shout
 Observe:
 - The first run uses the default `"hello"`.
 - The second uses `"hi"` from `--set` and busts the cache (CLI overrides win over config-block defaults — see §7.7).
-- `shout` references `$<greet>`, which expands to `greet`'s output list. Note: in the current implementation the `plate` passthrough output is the empty list, so `$<greet>` substitutes to the empty string; the Standard says it should be the input list (`Cookfile`). Treat that mismatch as an open implementation bug while the audit lands.
+- `shout` references `$<greet>`, which expands to `greet`'s output list. Because `plate` is a passthrough step (Standard §5.4.1), `greet`'s "output" is its ingredient list — the single file `Cookfile`.

@@ -117,6 +117,17 @@ pub(crate) fn generate_plate_step(
         }
     }
 
+    // Standard §5.4.1: a `plate` step's output is a passthrough of its
+    // input list — independent of how the body uses (or ignores) the
+    // source. The passthrough fires whenever there's a meaningful source
+    // to forward: a preceding `cook` step's outputs, or the recipe's
+    // resolved ingredient set. A recipe with neither has no input list
+    // for the plate to pass through, so we skip the call (and the
+    // recipe's terminal outputs stay empty).
+    if last_cook_index.is_some() || has_ingredients {
+        out.push_str(&format!("    cook.passthrough({})\n", source_expr));
+    }
+
     Ok(())
 }
 

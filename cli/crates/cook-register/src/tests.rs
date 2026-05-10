@@ -505,6 +505,36 @@ cook.recipe("build", {}, function() end)
     assert_eq!(units.env_vars.get("DECLARED").map(|s| s.as_str()), Some("yes"));
 }
 
+#[test]
+fn test_recipe_shadows_env_var_does_not_panic() {
+    // Standard §5.2.3: when a recipe and a declared env var share a name,
+    // the recipe wins and a warning is emitted to stderr. We can't easily
+    // capture stderr from the integration-shaped test here, so we just
+    // confirm that registering succeeds (no panic, no error returned) when
+    // a recipe shadows an env var. The end-to-end smoke test in the CLI
+    // covers the actual diagnostic text. The dedup of the warning across
+    // multiple recipe-register calls is also exercised end-to-end.
+    let lua_source = r#"
+function __cook_run_config_blocks(selected_name)
+    env.foo = "shadowed"
+    env.bar = "also_shadowed"
+    env.kept = "no_recipe_with_this_name"
+end
+
+cook.recipe("foo", {}, function() end)
+cook.recipe("bar", {}, function() end)
+cook.recipe("standalone", {}, function() end)
+"#;
+
+    let tmp = TempDir::new().unwrap();
+    let registry = Registry::new(tmp.path().to_path_buf(), HashMap::new());
+    // Multiple register calls (would have emitted duplicate warnings before
+    // the dedup fix); just assert each succeeds.
+    registry.register_recipe(lua_source, "foo", None).expect("foo register");
+    registry.register_recipe(lua_source, "bar", None).expect("bar register");
+    registry.register_recipe(lua_source, "standalone", None).expect("standalone register");
+}
+
 // -----------------------------------------------------------------------
 // Chore registration tests (CS-0020)
 // -----------------------------------------------------------------------

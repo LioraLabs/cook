@@ -16,9 +16,15 @@ The fastest way is the install script:
 curl -fsSL https://getcook.sh | sh
 ```
 
-This drops `cook` into `~/.local/bin/cook` (or `$COOK_INSTALL/bin/cook` if you set that). Re-run the script any time you want to update.
+This installs the entire bundled tree under `~/.cook/` and puts `cook` on your `PATH` via `~/.cook/bin`. Re-run the script any time you want to update.
 
-If you'd rather grab a tarball by hand, releases live on the [GitHub releases page](https://github.com/LioraLabs/cook/releases). Each release ships a tarball per host target plus matching `.sha256` files.
+To install somewhere else, set `COOK_INSTALL_DIR`:
+
+```bash
+COOK_INSTALL_DIR=/opt/cook curl -fsSL https://getcook.sh | sh
+```
+
+If you'd rather grab a tarball by hand, releases live on the [GitHub releases page](https://github.com/LioraLabs/cook/releases). Each release ships a tarball per host target plus matching `.sha256` files; the tarball is the same `~/.cook/`-shaped tree, ready to extract anywhere.
 
 ## 1.2. Verify the install
 
@@ -27,20 +33,31 @@ cook --version
 cook --help
 ```
 
-You should see the version banner and a list of subcommands. If `cook: command not found`, your shell hasn't picked up `~/.local/bin` yet — open a new terminal or add it to your `PATH`.
+You should see the version banner and a list of subcommands. If `cook: command not found`, your shell hasn't picked up `~/.cook/bin` yet — open a new terminal or add it to your `PATH`.
 
 ## 1.3. What got installed
 
-`cook` ships as a self-contained tree under `~/.local/share/cook/` (or your install prefix):
+`cook` ships as a self-contained, relocatable tree:
 
 ```
-~/.local/
+~/.cook/
+├── VERSION
 ├── bin/
-│   └── cook                # the binary you actually invoke
+│   ├── cook                # the binary you actually invoke
+│   ├── lua                 # bundled Lua 5.4 interpreter
+│   ├── luac                # bundled Lua compiler
+│   └── luarocks            # launcher for the bundled LuaRocks
+├── include/lua5.4/         # Lua headers (rocks build against these)
+├── lib/
+│   ├── liblua5.4.so        # bundled Lua shared library
+│   └── lua/5.4/            # LuaRocks install destination
 └── share/cook/
-    ├── lua/                # bundled Lua 5.4 runtime
-    └── luarocks/           # bundled LuaRocks for module installs
+    ├── default-rocks-config.lua
+    ├── luarocks-driver.lua
+    └── v0.1.0/             # versioned bundled data
 ```
+
+The tree is **relocatable**: at runtime the bundled LuaRocks launcher derives its install root from its own location (exposed as the `COOK_PREFIX` env var) and writes nothing into your home directory beyond this tree. Move `~/.cook/` to `/opt/cook/` and it still works.
 
 You don't usually need to think about this layout. The one time it matters is when you run `cook modules install` (chapter 9) — that command shells out to the bundled LuaRocks, not whatever `lua` and `luarocks` happen to be on your `PATH`.
 
@@ -56,17 +73,29 @@ You don't usually need to think about this layout. The one time it matters is wh
 curl -fsSL https://getcook.sh | sh
 ```
 
-Same command as the install. The script is idempotent — it checks the latest release, downloads only if you're behind, and replaces the binary atomically.
+Same command as the install. The script is idempotent — it checks the latest release, downloads only if you're behind, and replaces the tree atomically.
 
-## 1.5. Uninstalling
+## 1.5. Where state lives
 
-`cook` doesn't write outside its install prefix and `~/.cache/cook/` (per-build caches). To remove it cleanly:
+| Path | Owner | What's there |
+|---|---|---|
+| `~/.cook/` (or `$COOK_INSTALL_DIR`) | the install tree | binary + bundled Lua + LuaRocks. Never touched at build time. |
+| `<project>/.cook/cache/` | per project | content-hashed cache for `cook` step outputs. Safe to delete; rebuild repopulates. |
+| `<project>/.cook/logs/` | per project | per-build log archive (`cook logs` reads these). |
+
+`cook init` writes a `.gitignore` that excludes `<project>/.cook/` for you.
+
+## 1.6. Uninstalling
+
+`cook` doesn't write outside its install tree and per-project `.cook/` directories. To remove the install:
 
 ```bash
-rm -rf ~/.local/bin/cook ~/.local/share/cook ~/.cache/cook
+rm -rf ~/.cook
 ```
 
-## 1.6. Try it
+(Plus whatever per-project `.cook/` directories you want to wipe — they'll regenerate on the next build.)
+
+## 1.7. Try it
 
 Pick a scratch directory, run:
 
@@ -76,11 +105,14 @@ cook init
 cook build
 ```
 
-You should see something like:
+You should see something close to:
 
 ```
-✓ build (1 unit)
+  build                    queued  (0 nodes)
+  build/lua                                     0.00s
+  build                    done     (1/1)                    0.00s
+cook done in 0.00s (0 nodes, 0 cached recipes, 1 done)
 Hello from Cook!
 ```
 
-That's it — you've run your first Cookfile. The next chapter explains exactly what just happened.
+The exact spacing varies but the shape doesn't: a queued line, a per-step progress line, a recipe summary, a build summary, then your shell command's output. That's it — you've run your first Cookfile. The next chapter explains exactly what just happened.

@@ -307,6 +307,33 @@ pub fn register_unit_api(
     })?;
     cook.set("add_unit", add_unit_fn)?;
 
+    // cook.passthrough(list) — declare the current step's "outputs" as a
+    // copy of the given input list, without recording an emitting unit.
+    // This is the register-side hook that implements Standard §5.4.1's
+    // passthrough rule for `plate`, `test`, and bare shell steps: those
+    // step kinds don't write files, but a downstream `$<recipe>` reference
+    // (or another plate/test step that falls back to the recipe's
+    // last-step outputs) needs the input list to be visible as the
+    // recipe's terminal outputs.
+    //
+    // Codegen calls this once per plate/test/shell step, inside the
+    // enclosing `cook.step_group`, with the same source expression the
+    // step iterates over (`ingredients`, `_cook_outputs_N`, or a literal
+    // list). The `step_group` close-out then drains the pushed values
+    // into `last_cook_step_outputs` per the normal flow.
+    let cs_pt = capture_state.clone();
+    let passthrough_fn = lua.create_function(move |_, list: LuaTable| {
+        let mut state = cs_pt.borrow_mut();
+        for pair in list.sequence_values::<String>() {
+            let item = pair.map_err(|e| {
+                mlua::Error::runtime(format!("cook.passthrough: bad list element: {e}"))
+            })?;
+            state.current_step_outputs.push(item);
+        }
+        Ok(())
+    })?;
+    cook.set("passthrough", passthrough_fn)?;
+
     // cook.step_group(fn)
     let cs2 = capture_state.clone();
     let step_group_fn = lua.create_function(move |_, func: LuaFunction| {

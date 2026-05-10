@@ -1,0 +1,18 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="greet" line=8
+      deps: []
+      ingredients: ["Cookfile"]
+      excludes: []
+      steps:
+        Plate body=ShellBlock(["echo \"hello\""])
+    Recipe name="shout" line=12
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Shell interactive=true command="echo \"shout sees $<greet>\""
+  chores:

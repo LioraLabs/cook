@@ -117,10 +117,14 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
         let cached = state.totals.cached;
         let total = state.totals.total_nodes;
         let elapsed = fmt_secs(state.elapsed());
+        // The summary line used to say "cook build done ..." regardless of
+        // which recipe ran (`cook greet` would still print "cook build done");
+        // confusing for non-build entrypoints. Drop the recipe label — the
+        // per-row progress lines above already named what ran.
         if ok {
-            writeln!(self.out, "cook build done in {elapsed} ({total} nodes, {cached} cached recipes, {done} done)")?;
+            writeln!(self.out, "cook done in {elapsed} ({total} nodes, {cached} cached recipes, {done} done)")?;
         } else {
-            writeln!(self.out, "cook build FAILED after {elapsed}")?;
+            writeln!(self.out, "cook FAILED after {elapsed}")?;
         }
         self.out.flush()
     }
