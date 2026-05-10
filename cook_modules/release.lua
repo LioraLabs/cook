@@ -223,9 +223,15 @@ else
     git push origin "${VERSION}"
 fi
 
-# 7. Reconcile the release-wide checksums file
-MERGED_SUMS=$(mktemp)
-trap 'rm -f "${MERGED_SUMS}"' EXIT
+# 7. Reconcile the release-wide checksums file. The merged file is written
+#    into a tempdir under its canonical basename so the upload preserves
+#    the right asset name — `gh release upload path#label` sets the asset
+#    LABEL, not its filename, so a bare `mktemp` path leaks into the
+#    release as `tmp.XXXXXX` and the installer (which fetches by name)
+#    404s.
+SUMS_DIR=$(mktemp -d)
+trap 'rm -rf "${SUMS_DIR}"' EXIT
+MERGED_SUMS="${SUMS_DIR}/${SUMS_NAME}"
 
 if gh release view "${VERSION}" --repo "${REPO}" >/dev/null 2>&1; then
     echo "[release.cut] release exists; merging into existing artifacts"
@@ -240,7 +246,7 @@ if gh release view "${VERSION}" --repo "${REPO}" >/dev/null 2>&1; then
     sort -k 2 "${MERGED_SUMS}" -o "${MERGED_SUMS}"
     gh release upload "${VERSION}" --repo "${REPO}" --clobber \
         "${DIST}/${TARBALL_NAME}" \
-        "${MERGED_SUMS}#${SUMS_NAME}"
+        "${MERGED_SUMS}"
 else
     echo "[release.cut] creating release ${VERSION}"
     echo "${HOST_SUMS_LINE}" > "${MERGED_SUMS}"
@@ -248,7 +254,7 @@ else
         --title "cook ${VERSION}" \
         --notes "Phase 1 install layout. Host targets uploaded as cuts arrive from each machine; remaining targets land via CI follow-up (see SHI-176 M1.2b)." \
         "${DIST}/${TARBALL_NAME}" \
-        "${MERGED_SUMS}#${SUMS_NAME}"
+        "${MERGED_SUMS}"
 fi
 
 echo "[release.cut] done: ${TARBALL_NAME} on ${REPO}@${VERSION}"
