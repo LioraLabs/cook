@@ -437,6 +437,9 @@ end
 
 -- ── package (the only public entrypoint) ───────────────────────────────────
 
+-- Defined here (above M.package) rather than after it: Lua does not hoist
+-- `local function` definitions, so they must be in scope at the textual
+-- point where M.package's body references them.
 local function host_target()
     local out = cook.sh("rustc -vV")
     return out:match("host: ([^\n]+)")
@@ -476,11 +479,39 @@ function M.package(version, target)
     stage_luarocks()
 
     -- Build cook itself. Cargo's incremental build makes this idempotent.
-    cook.sh(string.format(
-        "cargo build --release --manifest-path cli/Cargo.toml --target=%s -p cook-cli",
-        target))
-
-    local built_bin = string.format("cli/target/%s/release/cook", target)
+    --
+    -- TWO interlocking gotchas drive the shape of this section, both around
+    -- cli/.cargo/config.toml's `-rdynamic` (Linux) / `-Wl,-export_dynamic`
+    -- (macOS) link-arg, which is required for C rocks to dlopen the
+    -- lua_*/luaL_* symbols out of the cook binary at runtime:
+    --
+    --   1. `--manifest-path cli/Cargo.toml` from the workspace root does
+    --      NOT pick up cli/.cargo/config.toml. Cargo searches for
+    --      .cargo/config.toml upward from the *current working directory*,
+    --      not from the manifest's directory. So we must run cargo from
+    --      inside cli/ for the config to load.
+    --
+    --   2. Passing `--target=<host triple>` puts cargo into cross-compile
+    --      mode and silently skips the [target.'cfg(target_os = "...")']
+    --      conditional rustflags from any config that does load.
+    --
+    -- Together: build from cli/ AND, when target == host, omit --target.
+    -- Phase 1 always cuts releases from the actual host, so this branch
+    -- (target == host) is the only path exercised today; the --target
+    -- branch below is preserved for future real cross-compile work but
+    -- would also need the rustflags problem solved another way (e.g.
+    -- RUSTFLAGS env var or a [build] rustflags fallback).
+    local host_triple = host_target()
+    local built_bin
+    if target == host_triple then
+        cook.sh("(cd cli && cargo build --release -p cook-cli)")
+        built_bin = "cli/target/release/cook"
+    else
+        cook.sh(string.format(
+            "(cd cli && cargo build --release --target=%s -p cook-cli)",
+            target))
+        built_bin = string.format("cli/target/%s/release/cook", target)
+    end
     if not fs.exists(built_bin) then
         error("dist.package: cargo did not produce " .. built_bin)
     end
