@@ -1,8 +1,9 @@
 import type { Root, Text } from 'mdast';
 import { visit, SKIP } from 'unist-util-visit';
 
-// Slug grammar: chapter.leaf, lowercase kebab-case, optional namespace dot.
-const SLUG_RE = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)?$/;
+// Slug grammar: chapter.leaf, lowercase kebab-case, one or more dotted
+// segments (bare chapter also accepted).
+const SLUG_RE = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$/;
 
 // MDX parses `§{slug}` as two nodes: a trailing `§` in a text node, followed
 // by an mdxTextExpression (or mdxFlowExpression in block position) whose

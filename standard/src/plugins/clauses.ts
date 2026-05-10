@@ -14,10 +14,11 @@ export interface ClauseInfo {
 }
 
 // Canonical slug grammar: chapter.leaf or bare word, all lowercase-kebab.
-const SLUG_SHAPE_RE = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)?$/;
+const SLUG_SHAPE_RE = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$/;
 
 // Matches clause-numbered heading text that carries a valid [#slug] marker:
-//   <NUM>. <TITLE>. [#<slug>]
+//   <NUM>. <TITLE> [#<slug>]                  ← canonical form
+//   Note <NUM> — <TITLE> [#<slug>]            ← note form (em-dash separator)
 // where NUM is a digit run (optionally followed by a single lowercase letter,
 // e.g. "4a" for interstitial chapters), or a single uppercase letter (appendix),
 // with an optional .M[.K] numeric sub-number. TITLE is any run up to the [#,
@@ -27,12 +28,19 @@ const SLUG_SHAPE_RE = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)?$/;
 //   2 = mid   (digits, optional)
 //   3 = bot   (digits, optional)
 //   4 = title (non-greedy)
-//   5 = slug  (chapter.leaf grammar)
+//   5 = slug  (chapter.leaf grammar — one or more dotted segments)
 const HEADING_RE =
-  /^(?:#+)\s+([0-9]+[a-z]?|[A-Z])(?:\.([0-9]+)(?:\.([0-9]+))?)?\.\s+(.+?)\s+\[#([a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)?)\]\s*$/gm;
+  /^(?:#+)\s+(?:Note\s+)?([0-9]+[a-z]?|[A-Z])(?:\.([0-9]+)(?:\.([0-9]+))?)?(?:\.|\s+—)\s+(.+?)\s+\[#([a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*)\]\s*$/gm;
 
 // Matches any clause-numbered heading line regardless of whether it has a marker.
 // Capture group 1 = everything after the number-and-period prefix.
+//
+// Intentionally strict: does NOT match the "Note <NUM> — TITLE" form because
+// notes without slug markers (the common case) are allowed to be link-free —
+// requiring a slug on every note would force inventing slugs for purely
+// expository asides. The harvester (HEADING_RE above) DOES match the note
+// form when a slug marker is present, so notes that need to be xref'd can
+// opt in by adding [#slug].
 const NUMBERED_HEADING_RE =
   /^#+\s+(?:[0-9]+[a-z]?|[A-Z])(?:\.[0-9]+(?:\.[0-9]+)?)?\.\s+(.+)$/gm;
 
@@ -133,7 +141,7 @@ function assertAllNumberedHeadingsSlugged(
       const slug = markerMatch[1];
       if (!SLUG_SHAPE_RE.test(slug)) {
         throw new Error(
-          `invalid slug "${slug}" in ${rel}: "${heading}" — expected [a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)?`,
+          `invalid slug "${slug}" in ${rel}: "${heading}" — expected [a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*`,
         );
       }
     }

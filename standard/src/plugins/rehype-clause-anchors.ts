@@ -6,9 +6,9 @@ import { visit } from 'unist-util-visit';
 const CLAUSE_RE = /^([0-9]+|[A-Z])(?:\.[0-9]+(?:\.[0-9]+)?)?\.(\s|$)/;
 
 // Trailing [#slug] marker. Slug grammar: chapter.leaf with dash-separated
-// words; single level (bare chapter) also accepted.
+// words; one or more dotted segments (bare chapter also accepted).
 const MARKER_RE = /\s+\[#([^\]]+)\]\s*$/;
-const SLUG_RE = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)?$/;
+const SLUG_RE = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$/;
 
 function extractText(el: Element): string {
   let out = '';
@@ -55,7 +55,7 @@ export function rehypeClauseAnchors() {
       const slug = markerMatch[1];
       if (!SLUG_RE.test(slug)) {
         throw new Error(
-          `invalid slug "${slug}" in heading "${text}" — must match [a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)?`,
+          `invalid slug "${slug}" in heading "${text}" — must match [a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*`,
         );
       }
       if (seen.has(slug)) {

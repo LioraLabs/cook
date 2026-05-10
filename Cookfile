@@ -43,7 +43,7 @@ import ts ./tree-sitter-cook
 use dist
 use release
 
-chore check: cli.build cli.test cli.conformance ts.test ts.conformance standard.build standard.lint
+chore check: cli.build cli.test cli.conformance ts.generate ts.test ts.conformance standard.build standard.lint
 
 chore package
     > dist.package(cook.env.VERSION, cook.env.TARGET)
