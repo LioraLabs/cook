@@ -34,6 +34,8 @@ toml = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 humantime = "2"
+base64 = "0.22"
+sha2 = "0.10"
 
 [features]
 default = []
@@ -47,5 +49,4 @@ viewer = ["dep:cook-dag-viewer"]
 tempfile = "3"
 mockito = "1"
 cargo_metadata = "0.18"
-sha2 = "0.10"
 walkdir = "2"

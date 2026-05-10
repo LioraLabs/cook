@@ -376,6 +376,7 @@ name = "cook-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "cargo_metadata",
  "clap",
  "cook-dag-viewer",
