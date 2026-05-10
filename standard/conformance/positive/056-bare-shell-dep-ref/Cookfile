@@ -1,0 +1,19 @@
+# Standard §5.5: a `$<NAME>` bare reference in a bare `shell_command`
+# body MUST substitute by the space-joined concatenation of the named
+# recipe's output list. Pinned here because the bundled-shell lowering
+# used to ship `cook.dep_output(...)` to the worker VM (which has no
+# such function), crashing at execute time with
+# `attempt to call a nil value (field 'dep_output')`.
+#
+# This fixture parses cleanly and codegens; the codegen-positive harness
+# asserts the latter. Runtime behaviour (substitution at register time,
+# worker sees a literal `cook.sh("echo ... <output> ...")`) is pinned by
+# the cook-luagen unit test
+# `test_bare_shell_dep_ref_lowers_to_register_time_eval`.
+
+recipe greet
+    ingredients "Cookfile"
+    plate { echo "hello" }
+
+recipe shout: greet
+    echo "shout sees: $<greet>"

@@ -997,6 +997,139 @@ fn test_env_var_still_works_when_not_recipe() {
 }
 
 #[test]
+fn test_bare_shell_dep_ref_lowers_to_register_time_eval() {
+    // Regression: Standard §5.5 requires `$<NAME>` (bare recipe ref) to
+    // substitute in any bare `shell_command` body. Bare-shell bodies are
+    // bundled into a `lua_code = ...` payload that the worker VM evaluates,
+    // but the worker VM has no `cook.dep_output` (only the register VM does).
+    // The fix: emit the resolved shell command via Lua-string concatenation
+    // so the `cook.dep_output(...)` call runs at register time and the
+    // worker only ever sees a literal `cook.sh("...")` argument.
+    //
+    // Pre-fix: `lua_code = [[io.write(cook.sh("set -e\n" .. "echo " .. cook.dep_output("greet")))]]`
+    //   → worker crashes: `attempt to call a nil value (field 'dep_output')`.
+    // Post-fix: `lua_code = "io.write(cook.sh(" .. string.format("%q", "set -e\n" .. ("echo " .. cook.dep_output("greet"))) .. "))\n"`
+    //   → register VM resolves `cook.dep_output("greet")`, splices the result
+    //   into a `%q`-quoted literal, sends a literal `cook.sh("...")` to worker.
+    let names: std::collections::BTreeSet<String> =
+        ["greet"].iter().map(|s| s.to_string()).collect();
+    let cookfile = make_cookfile(vec![
+        make_recipe(
+            "greet",
+            vec![],
+            vec!["Cookfile"],
+            vec![],
+        ),
+        make_recipe(
+            "shout",
+            vec!["greet"],
+            vec![],
+            vec![Step::Shell {
+                command: "echo \"shout sees: $<greet>\"".to_string(),
+                line: 6,
+                interactive: false,
+            }],
+        ),
+    ]);
+    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    // The lua_code value must be built by Lua-string concat (so cook.dep_output
+    // runs at register time) — NOT a single long-string that ships the call to
+    // the worker. Marker: `string.format("%q"` is the pre-quoting bridge.
+    assert!(
+        output.contains("string.format(\"%q\""),
+        "bare-shell body with $<dep> must use string.format(%%q, ...) to bake \
+         register-time-resolved command into worker chunk, got:\n{output}"
+    );
+    // The cook.dep_output call must appear OUTSIDE a long-string literal —
+    // i.e. directly in the register-phase Lua source, not inside `[[ ... ]]`.
+    let dep_call_pos = output
+        .find(r#"cook.dep_output("greet")"#)
+        .expect("expected cook.dep_output(\"greet\") call");
+    let preceding = &output[..dep_call_pos];
+    let opens: usize = preceding.matches("[[").count();
+    let closes: usize = preceding.matches("]]").count();
+    assert_eq!(
+        opens, closes,
+        "cook.dep_output must not be inside a [[ … ]] long string \
+         (otherwise it ships to the worker VM where dep_output is not \
+         registered), got:\n{output}"
+    );
+}
+
+#[test]
+fn test_bare_shell_env_ref_lowers_to_register_time_eval() {
+    // Same regression as the dep-ref case for `cook.require_env`:
+    // both helpers are register-VM-only.
+    let names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let cookfile = make_cookfile(vec![make_recipe(
+        "shout",
+        vec![],
+        vec![],
+        vec![Step::Shell {
+            command: "echo \"home is: $<HOME>\"".to_string(),
+            line: 2,
+            interactive: false,
+        }],
+    )]);
+    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    let req_call_pos = output
+        .find(r#"cook.require_env("HOME")"#)
+        .expect("expected cook.require_env(\"HOME\") call");
+    let preceding = &output[..req_call_pos];
+    let opens: usize = preceding.matches("[[").count();
+    let closes: usize = preceding.matches("]]").count();
+    assert_eq!(
+        opens, closes,
+        "cook.require_env must not be inside a [[ … ]] long string in a bare \
+         shell body — register VM is the only one with require_env, got:\n{output}"
+    );
+}
+
+#[test]
+fn test_bare_shell_no_sigil_keeps_long_string_shape() {
+    // Pre-fix shape preservation: a bare shell with no sigil placeholders
+    // continues to emit as `lua_code = [[ io.write(cook.sh([[...]])) ]]`
+    // (a single long-string literal) so existing snapshots / fixtures
+    // remain byte-stable for the common case.
+    let names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let cookfile = make_cookfile(vec![make_recipe(
+        "shout",
+        vec![],
+        vec![],
+        vec![Step::Shell {
+            command: "echo hello".to_string(),
+            line: 2,
+            interactive: false,
+        }],
+    )]);
+    let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
+    // Match `lua_code = [` followed by zero-or-more `=` and another `[` —
+    // i.e., a Lua long-string literal at any bracket level (`[[`, `[=[`, `[==[`, …).
+    let has_long_string_lua_code = output
+        .split("lua_code = ")
+        .skip(1)
+        .any(|s| {
+            let bytes = s.as_bytes();
+            if bytes.first() != Some(&b'[') {
+                return false;
+            }
+            let mut i = 1usize;
+            while i < bytes.len() && bytes[i] == b'=' {
+                i += 1;
+            }
+            i < bytes.len() && bytes[i] == b'['
+        });
+    assert!(
+        has_long_string_lua_code,
+        "no-sigil bare shell should still use a single long-string lua_code, got:\n{output}"
+    );
+    assert!(
+        !output.contains("string.format(\"%q\""),
+        "no-sigil bare shell should NOT bring in the register-time concat path, got:\n{output}"
+    );
+}
+
+#[test]
 fn test_dep_ref_in_plate_command() {
     // CS-0024: plate bodies may not reference {out}; use {app} dep-ref instead.
     let names: std::collections::BTreeSet<String> =

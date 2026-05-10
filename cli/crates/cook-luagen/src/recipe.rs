@@ -349,6 +349,27 @@ fn is_bundleable(step: &Step) -> bool {
     )
 }
 
+/// One contiguous piece of an execute-phase body unit's `lua_code` chunk.
+///
+/// `Static` pieces are raw Lua source text that the worker VM evaluates
+/// directly; they wrap into a long-string literal in the emitted register-phase
+/// Lua. `RegisterTimeShellCmd` pieces hold a Lua expression that resolves at
+/// register time to a *shell command string* — typically because the original
+/// shell command contained a `$<NAME>` recipe ref or a `$<HOME>` env ref that
+/// lowered to `cook.dep_output(...)` / `cook.require_env(...)`. Those calls
+/// only exist on the register VM, so we evaluate them at register time and
+/// bake the resolved string back into the worker's chunk as a literal.
+enum ChunkPiece {
+    /// A block of static Lua source. Will appear inside a `[[ ... ]]` long
+    /// string in the emitted register-phase Lua.
+    Static(String),
+    /// A Lua expression evaluated at register time that yields a shell command
+    /// (e.g. `"echo " .. cook.dep_output("greet")`). The emitted register-phase
+    /// Lua wraps this with `"io.write(cook.sh(" .. string.format("%q", <expr>) .. "))\n"`
+    /// so the worker only ever sees a literal `io.write(cook.sh("..."))` chunk.
+    RegisterTimeShellCmd(String),
+}
+
 /// Emit one execute-phase body unit for a bundle of imperative-region
 /// steps. The bundle is assumed to contain only bundleable steps
 /// (§{recipes.body-bundling}). Adjacent non-interactive shell lines
@@ -359,8 +380,13 @@ fn is_bundleable(step: &Step) -> bool {
 /// Shell commands undergo sigil substitution (CS-0033): any `$<IDENT>`
 /// placeholder in a command is expanded at codegen time. Commands with no
 /// sigil placeholders are coalesced into a raw shell-text `cook.sh` call;
-/// commands with sigil placeholders are emitted as Lua expression `cook.sh`
-/// calls with the resolved values substituted in.
+/// commands with sigil placeholders are split into a `RegisterTimeShellCmd`
+/// piece so that any `cook.dep_output(...)` or `cook.require_env(...)` call
+/// in the resolved Lua expression evaluates on the register VM (where those
+/// helpers are installed). Cook Standard §5.5 requires `$<NAME>` to substitute
+/// in any bare `shell_command` body; the worker VM has no `cook.dep_output` /
+/// `cook.require_env`, so resolving at register time is the only place these
+/// calls can succeed.
 ///
 /// The chunk is prefixed with `local <alias> = cook.load_module("<name>")`
 /// per `use` declaration in the source Cookfile (CS-0017,
@@ -371,20 +397,24 @@ fn emit_body_unit_with_names(
     uses: &[UseStatement],
     recipe_names: &BTreeSet<String>,
 ) {
-    let mut chunk = String::new();
+    let mut pieces: Vec<ChunkPiece> = Vec::new();
     // Raw shell lines (no sigils) coalesced for cook.sh(long-string).
     let mut shell_run: Vec<String> = Vec::new();
+    // Buffer of static Lua source text (use-stmts, raw-shell flushes,
+    // Lua-step bodies). Flushed into `pieces` whenever we hit a
+    // RegisterTimeShellCmd boundary.
+    let mut static_buf = String::new();
 
     for use_stmt in uses {
         let lua_name = use_stmt.module_name.replace('-', "_");
-        chunk.push_str(&format!(
+        static_buf.push_str(&format!(
             "local {} = cook.load_module(\"{}\")\n",
             lua_name,
             escape_lua_string(&use_stmt.module_name),
         ));
     }
 
-    fn flush_raw(chunk: &mut String, run: &mut Vec<String>) {
+    fn flush_raw_into_static(static_buf: &mut String, run: &mut Vec<String>) {
         if run.is_empty() {
             return;
         }
@@ -396,15 +426,14 @@ fn emit_body_unit_with_names(
             joined.push_str(line);
         }
         let wrapped = wrap_lua_string(&joined);
-        chunk.push_str(&format!("io.write(cook.sh({}))\n", wrapped));
+        static_buf.push_str(&format!("io.write(cook.sh({}))\n", wrapped));
         run.clear();
     }
 
-    fn flush_sigil_cmd(chunk: &mut String, lua_expr: &str) {
-        // A sigil-expanded command: emit as cook.sh(lua_expr) inline.
-        // Prepend "set -e\n" so fail-fast semantics hold.
-        let sh_arg = format!("\"set -e\\n\" .. {}", lua_expr);
-        chunk.push_str(&format!("io.write(cook.sh({}))\n", sh_arg));
+    fn flush_static(pieces: &mut Vec<ChunkPiece>, static_buf: &mut String) {
+        if !static_buf.is_empty() {
+            pieces.push(ChunkPiece::Static(std::mem::take(static_buf)));
+        }
     }
 
     for step in bundle {
@@ -412,9 +441,13 @@ fn emit_body_unit_with_names(
             Step::Shell { command, interactive: false, .. } => {
                 let has_sigils = !crate::sigil::scan(command).is_empty();
                 if has_sigils {
-                    // Flush any accumulated raw lines before this sigil command.
-                    flush_raw(&mut chunk, &mut shell_run);
-                    // Expand sigil template and emit as a Lua expression.
+                    // Flush any accumulated raw lines (into static_buf) so they
+                    // run before this sigil command.
+                    flush_raw_into_static(&mut static_buf, &mut shell_run);
+                    // Expand sigil template; the result is a Lua expression that
+                    // may reference `cook.dep_output(...)` / `cook.require_env(...)`
+                    // — both register-VM-only. Ship it as a RegisterTimeShellCmd
+                    // piece so it evaluates on the right VM.
                     let ctx = ResolveCtx {
                         mode: IterMode::OneShot,
                         outputs: OutputShape::None,
@@ -425,43 +458,93 @@ fn emit_body_unit_with_names(
                         Ok(e) => e,
                         Err(e) => format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string())),
                     };
-                    flush_sigil_cmd(&mut chunk, &lua_expr);
+                    // Prepend "set -e\n" so per-line halt-on-failure semantics
+                    // match raw-shell flushes.
+                    let with_set_e = format!("\"set -e\\n\" .. ({})", lua_expr);
+                    flush_static(&mut pieces, &mut static_buf);
+                    pieces.push(ChunkPiece::RegisterTimeShellCmd(with_set_e));
                 } else {
                     // No sigils — accumulate as raw shell text (old behavior).
                     shell_run.push(command.clone());
                 }
             }
             Step::Lua { code, .. } => {
-                flush_raw(&mut chunk, &mut shell_run);
-                chunk.push_str(code);
+                flush_raw_into_static(&mut static_buf, &mut shell_run);
+                static_buf.push_str(code);
                 if !code.ends_with('\n') {
-                    chunk.push('\n');
+                    static_buf.push('\n');
                 }
             }
             Step::LuaBlock { code, .. } => {
-                flush_raw(&mut chunk, &mut shell_run);
-                chunk.push_str(code);
+                flush_raw_into_static(&mut static_buf, &mut shell_run);
+                static_buf.push_str(code);
                 if !code.ends_with('\n') {
-                    chunk.push('\n');
+                    static_buf.push('\n');
                 }
             }
             _ => unreachable!("emit_body_unit called with non-bundleable step"),
         }
     }
-    flush_raw(&mut chunk, &mut shell_run);
+    flush_raw_into_static(&mut static_buf, &mut shell_run);
+    flush_static(&mut pieces, &mut static_buf);
 
-    if chunk.is_empty() {
+    if pieces.is_empty() {
         return;
     }
 
-    let wrapped = wrap_lua_string(&chunk);
+    let lua_code_expr = render_chunk_pieces(&pieces);
     // cache = false: consulted_env_keys is a cache-keying hint, omitted for
     // units that are never cached. The cacheable cook-step path in
     // cook_step.rs is the only emission site that includes it.
     out.push_str(&format!(
         "    cook.add_unit({{lua_code = {}, cache = false}})\n",
-        wrapped
+        lua_code_expr
     ));
+}
+
+/// Render a sequence of `ChunkPiece`s into a single Lua expression suitable
+/// for use as the `lua_code = ...` value in an `cook.add_unit` call.
+///
+/// All-Static sequences emit as a single long-string literal (preserving the
+/// pre-fix output shape for the common case). Mixed sequences emit as a
+/// concatenation: each `Static` piece becomes a long-string literal, each
+/// `RegisterTimeShellCmd(expr)` becomes
+/// `"io.write(cook.sh(" .. string.format("%q", expr) .. "))\n"`. The worker
+/// VM therefore receives a chunk where every `cook.sh(...)` call has a
+/// pre-resolved string literal as its argument.
+fn render_chunk_pieces(pieces: &[ChunkPiece]) -> String {
+    let all_static = pieces.iter().all(|p| matches!(p, ChunkPiece::Static(_)));
+    if all_static {
+        // Single concatenated static buffer — keep the pre-fix long-string
+        // shape so existing snapshots / conformance fixtures stay byte-stable.
+        let mut buf = String::new();
+        for p in pieces {
+            if let ChunkPiece::Static(s) = p {
+                buf.push_str(s);
+            }
+        }
+        return wrap_lua_string(&buf);
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for p in pieces {
+        match p {
+            ChunkPiece::Static(s) if s.is_empty() => {}
+            ChunkPiece::Static(s) => {
+                parts.push(wrap_lua_string(s));
+            }
+            ChunkPiece::RegisterTimeShellCmd(expr) => {
+                // Wrap the resolved shell command into an `io.write(cook.sh("..."))`
+                // line. `string.format("%q", s)` returns a Lua-quoted literal
+                // (handles embedded quotes / backslashes / newlines), so the
+                // result is a safe drop-in inside the `cook.sh(...)` call.
+                parts.push(format!(
+                    "\"io.write(cook.sh(\" .. string.format(\"%q\", {}) .. \"))\\n\"",
+                    expr
+                ));
+            }
+        }
+    }
+    parts.join(" .. ")
 }
 
 fn collect_drivers(
