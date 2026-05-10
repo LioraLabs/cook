@@ -6,16 +6,24 @@ The reference implementation in [`cli/crates/cook-lang/`](cli/crates/cook-lang/)
 
 First-time setup: `cargo install --locked --path cli/crates/cook-cli`. After that, `cook install` updates in place; `cook check` runs the full verification suite.
 
-## Pulling community modules
+## Installing community modules
 
-Cook ships with a small built-in registry of `cook_modules` you can drop into your project:
+Cook resolves `cook_modules` through LuaRocks against [`rocks.usecook.com`](https://rocks.usecook.com) (and `luarocks.org` as fallback). Declare what you want in `cook.toml`:
 
-```sh
-cook pull --list           # see what's available
-cook pull cpp              # pull the cpp module into ./cook_modules/cpp
-cook pull cpp rust         # pull multiple
+```toml
+[modules]
+cook_cpp = "*"
+cook_rust = "*"
 ```
 
-The first time you pull from a given registry, cook prints a one-time disclaimer (the modules are Lua code that `cook` will execute) and records your consent in `~/.config/cook/trust.toml`. Pulled modules are written into your project's `cook_modules/` directory; from then on they're tracked by your project's git, just like any other source file. To update a module, re-run `cook pull <name>`.
+then realise them with:
 
-To use a different registry: `cook pull --registry https://my.registry/r ...` or set `COOK_REGISTRY_URL` / `[registry].url` in `~/.config/cook/cook.toml`.
+```sh
+cook modules install                  # install everything declared in cook.toml; pins cook.lock
+cook modules install cook_cpp         # add a single dependency
+cook modules install cook_cpp cook_rust  # add multiple
+cook modules update                   # bump within manifest constraints
+cook modules remove cook_cpp          # drop a dependency
+```
+
+Modules land in `./cook_modules/` (the local LuaRocks tree). `cook.lock` pins exact versions for reproducible installs and should be committed. To use a different rocks index, edit `cook.toml`'s `[registry].indexes` list — see Cook Standard §7 for resolution order.
