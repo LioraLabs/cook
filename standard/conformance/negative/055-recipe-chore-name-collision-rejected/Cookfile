@@ -1,0 +1,5 @@
+recipe play
+    echo recipe-side
+
+chore play
+    echo chore-side

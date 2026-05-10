@@ -40,6 +40,14 @@ config_body           ::= LUA_SOURCE
 
 **Recipe / chore declaration names — no dots.** The `name` of a `recipe_header` or `chore_header` MUST NOT contain `.` (dot). A conforming implementation MUST reject a top-level declaration `recipe NAME` or `chore NAME` whose `NAME` (whether bare or quoted) contains a dot, at parse time. Diagnostic: `recipe name 'NAME': dotted recipe names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing`. Namespacing across Cookfiles is achieved exclusively via `import_declaration` (§{modules.import-declaration}); a dotted reference appearing in a `dependency_list` or in a `$<...>` placeholder resolves through an `import` alias per §{modules.qualified-refs}.
 
+**Duplicate recipe / chore declaration name rule.** Recipes and chores share a single callable namespace within a Cookfile. The `name` of every `recipe_header` and `chore_header` MUST be unique across the union of recipe and chore declarations. A conforming implementation MUST reject, at parse time, a Cookfile that contains:
+
+1. two `recipe_header` declarations with the same `name` (recipe-vs-recipe collision); or
+2. two `chore_header` declarations with the same `name` (chore-vs-chore collision); or
+3. one `recipe_header` and one `chore_header` with the same `name` (recipe-vs-chore collision).
+
+Names compare verbatim — bare and quoted forms of the same name (e.g. `recipe build` and `recipe "build"`) refer to the same callable and therefore collide. The diagnostic MUST identify the offending kind, the colliding name, and the source line of the prior declaration. The recommended diagnostic form is `KIND 'NAME': duplicate declaration (already declared as PRIOR_KIND at line N)`, where `KIND` is the kind of the second declaration and `PRIOR_KIND` is the kind of the first. Cross-Cookfile namespacing for callables that would otherwise collide is achieved via `import_declaration` aliases per §{modules.import-declaration}.
+
 **Reserved recipe name identifiers.** A recipe or chore declaration name MUST NOT equal one of the reserved identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`. (Combined with the no-dots rule above, this is the entirety of the reserved-name constraint at the declaration site.) The same eight identifiers MUST NOT appear as the *final* dot-separated segment of a `dependency_list` entry or a `$<...>` placeholder, and `env` MUST NOT appear as the *first* dot-separated segment of either. This reserves the `env.` prefix for the explicit env-var-lookup form (§{xref.env-namespace}).
 
 ## A.3. Recipes [#grammar-appendix.recipes]

@@ -19,6 +19,7 @@ pub const COOK_STANDARD_VERSION: &str = "0.8";
 use ast::*;
 use lexer::*;
 use recipe::{parse_chore, parse_config_block_lua, parse_recipe};
+use std::collections::BTreeMap;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -81,6 +82,49 @@ fn path_contains_dotdot_segment(path: &str) -> bool {
     path.split('/').any(|seg| seg == "..")
 }
 
+/// Kind of a callable declaration, recorded in the duplicate-name map.
+///
+/// Recipes and chores share a single callable namespace (App. A.2,
+/// "Duplicate recipe / chore declaration name rule"): two declarations of
+/// either kind that share a name are rejected at parse time, including
+/// recipe-vs-chore collisions.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum CallableKind {
+    Recipe,
+    Chore,
+}
+
+impl CallableKind {
+    fn label(self) -> &'static str {
+        match self {
+            CallableKind::Recipe => "recipe",
+            CallableKind::Chore => "chore",
+        }
+    }
+}
+
+/// Build the App. A.2 duplicate-declaration diagnostic, naming the kind and
+/// line of the prior declaration. Same wording for all three collision modes
+/// (recipe-vs-recipe, chore-vs-chore, recipe-vs-chore).
+fn duplicate_callable_error(
+    new_kind: CallableKind,
+    name: &str,
+    new_line: usize,
+    prior_kind: CallableKind,
+    prior_line: usize,
+) -> ParseError {
+    ParseError::Parse {
+        line: new_line,
+        message: format!(
+            "{} '{}': duplicate declaration (already declared as {} at line {})",
+            new_kind.label(),
+            name,
+            prior_kind.label(),
+            prior_line,
+        ),
+    }
+}
+
 pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
     let tokens = tokenize(source)?;
     let source_lines: Vec<&str> = source.lines().collect();
@@ -91,6 +135,11 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
     let mut uses = Vec::new();
     let mut imports = Vec::new();
     let mut seen_recipe = false;
+    // App. A.2 "Duplicate recipe / chore declaration name rule": recipes and
+    // chores share a single callable namespace. Track every declaration so
+    // we can reject any subsequent collision (recipe-vs-recipe,
+    // chore-vs-chore, recipe-vs-chore) with a diagnostic naming both lines.
+    let mut callable_decls: BTreeMap<String, (CallableKind, usize)> = BTreeMap::new();
 
     while pos < tokens.len() {
         let tok = &tokens[pos];
@@ -140,6 +189,16 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 let recipe_line = tok.line;
                 let name = name.clone();
                 let deps = deps.clone();
+                if let Some(&(prior_kind, prior_line)) = callable_decls.get(&name) {
+                    return Err(duplicate_callable_error(
+                        CallableKind::Recipe,
+                        &name,
+                        recipe_line,
+                        prior_kind,
+                        prior_line,
+                    ));
+                }
+                callable_decls.insert(name.clone(), (CallableKind::Recipe, recipe_line));
                 pos += 1;
                 let (recipe, new_pos) =
                     parse_recipe(name, deps, recipe_line, &tokens, pos, &source_lines)?;
@@ -151,6 +210,16 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 let chore_line = tok.line;
                 let name = name.clone();
                 let deps = deps.clone();
+                if let Some(&(prior_kind, prior_line)) = callable_decls.get(&name) {
+                    return Err(duplicate_callable_error(
+                        CallableKind::Chore,
+                        &name,
+                        chore_line,
+                        prior_kind,
+                        prior_line,
+                    ));
+                }
+                callable_decls.insert(name.clone(), (CallableKind::Chore, chore_line));
                 pos += 1;
                 let (chore, new_pos) =
                     parse_chore(name, deps, chore_line, &tokens, pos, &source_lines)?;

@@ -1,0 +1,5 @@
+recipe foo
+    echo first
+
+recipe foo
+    echo second

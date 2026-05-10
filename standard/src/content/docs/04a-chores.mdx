@@ -13,6 +13,8 @@ The keyword `chore` MUST be followed by a separator — whitespace, a tab, or a 
 
 The reserved-segment rule of §{grammar-appendix.declarations} applies: a conforming implementation MUST reject a chore whose name's final dot-separated segment is one of `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`.
 
+The **duplicate-name rule** of §{grammar-appendix.declarations} also applies: chores share the callable namespace with recipes, so a chore whose name matches that of an earlier `chore` or `recipe` declaration in the same Cookfile MUST be rejected at parse time. The diagnostic identifies both the offending declaration and the source line of the prior declaration.
+
 A chore body is terminated by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, or `import`, or end-of-file (whichever comes first).
 
 ### Example 4a.1.1

@@ -13,6 +13,8 @@ The keyword `recipe` MUST be followed by a separator — whitespace, a tab, or a
 
 The reserved-segment rule of §{grammar-appendix.declarations} applies: a conforming implementation MUST reject a recipe whose name's final dot-separated segment is one of `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`.
 
+The **duplicate-name rule** of §{grammar-appendix.declarations} also applies: recipes and chores share a single callable namespace, so a recipe whose name matches that of an earlier `recipe` or `chore` declaration in the same Cookfile MUST be rejected at parse time. The diagnostic identifies both the offending declaration and the source line of the prior declaration. Cross-Cookfile composition that would otherwise collide is achieved via `import` aliases (§{modules.import-declaration}), not by re-declaring under the same name.
+
 ### Example 4.1.1
 
 ```cook

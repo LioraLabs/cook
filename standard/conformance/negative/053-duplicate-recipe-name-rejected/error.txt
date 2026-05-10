@@ -1,0 +1,1 @@
+recipe 'foo': duplicate declaration (already declared as recipe at line 1)

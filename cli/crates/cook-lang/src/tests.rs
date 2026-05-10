@@ -1355,3 +1355,90 @@ recipe r
     // Parser preserves the literal string; substitution happens at codegen.
     assert_eq!(test.as_name.as_deref(), Some("$<in.stem>-roundtrip"));
 }
+
+// ── App. A.2: duplicate recipe / chore declaration name rule ───────
+//
+// Recipes and chores share a single callable namespace. Two declarations
+// of either kind that share a name MUST be rejected at parse time.
+
+#[test]
+fn test_duplicate_recipe_name_rejected() {
+    let src = "\
+recipe foo
+    echo first
+
+recipe foo
+    echo second
+";
+    let err = parse(src).expect_err("expected duplicate-recipe rejection").to_string();
+    assert!(
+        err.contains("recipe 'foo'") && err.contains("duplicate declaration") && err.contains("line 1"),
+        "diagnostic should name the colliding name and the prior declaration line; got: {err}"
+    );
+}
+
+#[test]
+fn test_duplicate_chore_name_rejected() {
+    let src = "\
+chore tidy
+    echo first
+
+chore tidy
+    echo second
+";
+    let err = parse(src).expect_err("expected duplicate-chore rejection").to_string();
+    assert!(
+        err.contains("chore 'tidy'") && err.contains("duplicate declaration") && err.contains("line 1"),
+        "diagnostic should name the colliding name and the prior declaration line; got: {err}"
+    );
+}
+
+#[test]
+fn test_recipe_then_chore_same_name_rejected() {
+    let src = "\
+recipe play
+    echo r
+
+chore play
+    echo c
+";
+    let err = parse(src).expect_err("expected recipe-vs-chore collision rejection").to_string();
+    // Second declaration is the chore; diagnostic names it as the duplicate
+    // and points back at the recipe's line 1.
+    assert!(
+        err.contains("chore 'play'") && err.contains("recipe at line 1"),
+        "diagnostic should identify the new chore and the prior recipe line; got: {err}"
+    );
+}
+
+#[test]
+fn test_chore_then_recipe_same_name_rejected() {
+    let src = "\
+chore play
+    echo c
+
+recipe play
+    echo r
+";
+    let err = parse(src).expect_err("expected chore-vs-recipe collision rejection").to_string();
+    assert!(
+        err.contains("recipe 'play'") && err.contains("chore at line 1"),
+        "diagnostic should identify the new recipe and the prior chore line; got: {err}"
+    );
+}
+
+#[test]
+fn test_duplicate_quoted_recipe_name_rejected() {
+    // Quoted form on either side still collides — names compare verbatim.
+    let src = "\
+recipe \"build\"
+    echo first
+recipe build
+    echo second
+";
+    let err = parse(src).expect_err("expected duplicate rejection across quote forms").to_string();
+    assert!(
+        err.contains("recipe 'build'") && err.contains("duplicate declaration"),
+        "got: {err}"
+    );
+}
