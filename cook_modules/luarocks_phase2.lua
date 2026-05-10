@@ -426,27 +426,24 @@ function M.package(version, target)
     -- rather than at first dlopen of a C rock by a downstream user.
     M.check_exports()
 
-    -- Rename the wrapping dir for the tarball, then tar. We copy rather
-    -- than relying on tar's --transform because GNU tar's --transform is
-    -- not available on macOS BSD tar. sha256sum (Linux coreutils) falls
-    -- back to shasum (BSD/macOS) so the same shell pipeline works on
-    -- both Phase 1 hosts.
+    -- Tar the stage tree contents directly (no wrapping dir) so the
+    -- installer can extract straight into INSTALL_DIR — `bin/cook`,
+    -- `share/`, `VERSION` land at the prefix root. This matches the
+    -- M1.2 (`cargo xtask package`) contract that getcook.sh consumes.
+    -- sha256sum (Linux coreutils) falls back to shasum (BSD/macOS) so
+    -- the same shell pipeline works on both Phase 1 hosts.
     cook.exec(string.format([[
 set -euo pipefail
 mkdir -p cli/target/dist
-rm -rf cli/target/dist/%s
-cp -a target/cook-stage cli/target/dist/%s
-cd cli/target/dist
-tar -czf %s.tar.gz %s
+cd target/cook-stage
+tar -czf ../../cli/target/dist/%s.tar.gz .
+cd ../../cli/target/dist
 sha256sum %s.tar.gz > %s.tar.gz.sha256 2>/dev/null \
   || shasum -a 256 %s.tar.gz > %s.tar.gz.sha256
-rm -rf %s
 ]],
+        stage_name,
         stage_name, stage_name,
-        stage_name, stage_name,
-        stage_name, stage_name,
-        stage_name, stage_name,
-        stage_name
+        stage_name, stage_name
     ), 0)
 
     print(string.format("[package] built %s (+ .sha256)", tarball))
