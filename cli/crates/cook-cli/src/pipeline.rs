@@ -522,9 +522,20 @@ pub fn cmd_test(
         .map_err(|e| crate::error::CookError::Other(e.to_string()))?;
 
     // Determine scope from positional `scope` argument.
+    //
+    // To distinguish a recipe name from a namespace prefix we need the set of
+    // fully-qualified recipe names known to the workspace. Loading the workspace
+    // here is cheap relative to running the test suite, and the engine will load
+    // it again — `run_for_test` is the source of truth for the live recipe set.
+    // We tolerate workspace-load failures here (fall back to the raw arg as a
+    // Recipe scope) so a malformed Cookfile still gets a single, recognisable
+    // error from the engine instead of a duplicated diagnostic from the CLI.
     let scope: Option<TestScope> = match args.scope.as_deref() {
         None => None,
-        Some(name) => Some(resolve_test_scope(name)),
+        Some(name) => {
+            let recipe_names = collect_workspace_recipe_names(globals).unwrap_or_default();
+            Some(resolve_test_scope(name, &recipe_names)?)
+        }
     };
 
     // Phase 7 stub for --rerun-failed
@@ -610,15 +621,85 @@ pub fn cmd_test(
     }
 }
 
-fn resolve_test_scope(name: &str) -> cook_engine::TestScope {
-    // For v1: if name contains a dot, treat it as a Recipe reference — the engine's
-    // analyzer handles qualified names transparently. If it's a bare name, also
-    // default to Recipe; the engine errors clearly on mismatch.
-    if name.contains('.') {
-        cook_engine::TestScope::Recipe(name.to_string())
-    } else {
-        cook_engine::TestScope::Recipe(name.to_string())
+/// Resolve a `cook test <scope>` argument against the known recipe set.
+///
+/// Resolution order:
+///   1. Exact match against a fully-qualified recipe name → `TestScope::Recipe`.
+///   2. Otherwise, if any recipe name starts with `<scope>.` → `TestScope::Namespace`.
+///   3. Otherwise, return a useful diagnostic that mentions both options and
+///      the `--filter` escape hatch.
+///
+/// The recipe set passed in is the engine's view: dotted, fully-qualified
+/// names (e.g. `apps.web.build`). For an empty recipe set (e.g. workspace
+/// failed to load) the function still treats the arg as a Recipe so the
+/// engine's "unknown recipe" path produces the canonical error.
+fn resolve_test_scope(
+    name: &str,
+    recipe_names: &std::collections::BTreeSet<String>,
+) -> Result<cook_engine::TestScope, crate::error::CookError> {
+    use cook_engine::TestScope;
+
+    // Empty set → defer to the engine, which has the authoritative diagnostic.
+    if recipe_names.is_empty() {
+        return Ok(TestScope::Recipe(name.to_string()));
     }
+
+    // 1. Recipe match wins (preserves existing behaviour for `sub.pass` etc.)
+    if recipe_names.contains(name) {
+        return Ok(TestScope::Recipe(name.to_string()));
+    }
+
+    // 2. Namespace match: any recipe under `<name>.`
+    let ns_prefix = format!("{name}.");
+    if recipe_names.iter().any(|r| r.starts_with(&ns_prefix)) {
+        return Ok(TestScope::Namespace(name.to_string()));
+    }
+
+    // 3. Neither — produce a diagnostic that explains the two valid forms
+    // and points at `--filter` for glob-shaped arguments.
+    let mut suggestions: Vec<String> = recipe_names
+        .iter()
+        .filter(|r| r.starts_with(name) || r.contains(name))
+        .take(5)
+        .cloned()
+        .collect();
+    suggestions.sort();
+    suggestions.dedup();
+
+    let mut msg = format!(
+        "unknown test scope: '{name}'\n\
+         hint: scope must be a recipe name (e.g. `cook test apps.web.build`)\n\
+         hint: or an import-namespace prefix (e.g. `cook test apps.web`)\n\
+         hint: for glob patterns use --filter (e.g. `cook test --filter '{name}.*'`)"
+    );
+    if !suggestions.is_empty() {
+        msg.push_str("\nsimilar recipes:");
+        for s in &suggestions {
+            msg.push_str("\n  - ");
+            msg.push_str(s);
+        }
+    }
+    Err(crate::error::CookError::Other(msg))
+}
+
+/// Load the workspace and return the set of fully-qualified recipe names
+/// (recipes only, not chores — chores are filtered from `cook test` anyway).
+///
+/// Returns `None` when the workspace cannot be loaded so the caller can fall
+/// back to deferring to the engine's diagnostic path.
+fn collect_workspace_recipe_names(
+    globals: &Globals,
+) -> Option<std::collections::BTreeSet<String>> {
+    let parsed = pipeline::read_and_parse(&globals.file).ok()?;
+    let recipe_infos = if parsed.cookfile.imports.is_empty() {
+        pipeline::build_single_recipe_infos(&parsed.cookfile)
+    } else {
+        let workspace_root =
+            pipeline::resolve_workspace_root(&globals.file, globals.root.clone()).ok()?;
+        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set).ok()?;
+        pipeline::build_workspace_recipe_info(&workspace)
+    };
+    Some(recipe_infos.into_keys().collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -836,6 +917,104 @@ mod cmd_init_tests {
             }
             other => panic!("expected Appended, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod resolve_test_scope_tests {
+    use super::*;
+    use cook_engine::TestScope;
+    use std::collections::BTreeSet;
+
+    fn names(items: &[&str]) -> BTreeSet<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn empty_recipe_set_defers_to_engine_as_recipe() {
+        // When the workspace can't be loaded we treat the arg as a recipe so
+        // the engine's canonical "unknown recipe" diagnostic surfaces.
+        let scope = resolve_test_scope("anything", &BTreeSet::new()).unwrap();
+        match scope {
+            TestScope::Recipe(n) => assert_eq!(n, "anything"),
+            other => panic!("expected Recipe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exact_recipe_match_returns_recipe() {
+        let set = names(&["build", "sub.pass", "sub.fail_one"]);
+        let scope = resolve_test_scope("sub.pass", &set).unwrap();
+        match scope {
+            TestScope::Recipe(n) => assert_eq!(n, "sub.pass"),
+            other => panic!("expected Recipe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bare_recipe_match_returns_recipe() {
+        let set = names(&["build", "sub.pass"]);
+        let scope = resolve_test_scope("build", &set).unwrap();
+        match scope {
+            TestScope::Recipe(n) => assert_eq!(n, "build"),
+            other => panic!("expected Recipe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn single_segment_namespace_match_returns_namespace() {
+        // Reproduction case from the bug report: `cook test web` with
+        // `web.build` defined under `import web ./web` MUST resolve as
+        // a Namespace, not a (failing) Recipe lookup.
+        let set = names(&["build", "web.build", "web.test"]);
+        let scope = resolve_test_scope("web", &set).unwrap();
+        match scope {
+            TestScope::Namespace(n) => assert_eq!(n, "web"),
+            other => panic!("expected Namespace, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_namespace_match_returns_namespace() {
+        let set = names(&["apps.web.build", "apps.web.unit", "apps.api.build"]);
+        let scope = resolve_test_scope("apps.web", &set).unwrap();
+        match scope {
+            TestScope::Namespace(n) => assert_eq!(n, "apps.web"),
+            other => panic!("expected Namespace, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recipe_match_wins_over_namespace_match() {
+        // If both a recipe `foo` and recipes `foo.bar` exist (which can happen
+        // with deeply-nested imports), prefer the exact recipe match.
+        let set = names(&["foo", "foo.bar", "foo.baz"]);
+        let scope = resolve_test_scope("foo", &set).unwrap();
+        match scope {
+            TestScope::Recipe(n) => assert_eq!(n, "foo"),
+            other => panic!("expected Recipe (exact match wins), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_scope_errors_with_useful_diagnostic() {
+        let set = names(&["build", "web.build", "web.test"]);
+        let err = resolve_test_scope("xyz", &set).expect_err("unknown scope must error");
+        let msg = format!("{err}");
+        assert!(msg.contains("unknown test scope: 'xyz'"), "message: {msg}");
+        assert!(msg.contains("recipe name"), "message: {msg}");
+        assert!(msg.contains("namespace"), "message: {msg}");
+        assert!(msg.contains("--filter"), "message: {msg}");
+    }
+
+    #[test]
+    fn unknown_scope_does_not_swallow_partial_namespace_typo() {
+        // `webs` doesn't match the recipe `web.build` exactly nor the
+        // namespace `webs.` — we must error rather than silently widening.
+        let set = names(&["web.build", "web.test"]);
+        let err = resolve_test_scope("webs", &set).expect_err("typo must error");
+        let msg = format!("{err}");
+        assert!(msg.contains("unknown test scope: 'webs'"), "message: {msg}");
     }
 }
 
