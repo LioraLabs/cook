@@ -11,8 +11,9 @@
 #                       description, tree-sitter.json description). Routes
 #                       through cook_modules/release.lua.
 #   cook release      — cut a Phase 1 host-target release: build cook, package
-#                       via cook-xtask, tag, push to Gitea (mirrors to GitHub),
-#                       and upload artifacts to LioraLabs/cook GitHub release.
+#                       via `cook package`, tag, push to Gitea (mirrors to
+#                       GitHub), and upload artifacts to LioraLabs/cook GitHub
+#                       release.
 #                       Idempotent: re-running on the same VERSION from another
 #                       host appends that host's tarball + checksum line to the
 #                       existing release. Routes through cook_modules/release.lua.

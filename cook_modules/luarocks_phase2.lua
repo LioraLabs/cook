@@ -352,8 +352,99 @@ cp -a %s %s/share/cook/default-rocks-config.lua
     print("[bundle-luarocks] staged " .. launcher_path)
 end
 
+-- ── M2.5: package ─────────────────────────────────────────────────────────
+-- Assemble cook-${version}-${os}-${arch}.tar.gz from target/cook-stage.
+-- Replaces M1.2's `cargo xtask package`. The OS+arch substring matches the
+-- naming pattern locked by SHI-182.
+--
+-- This function does NOT order the build-lua / bundle-luarocks chores —
+-- the caller (chore "package") is responsible for ordering. The function
+-- builds cook itself (idempotent under cargo), copies the cook binary into
+-- the already-staged tree, runs check_exports as a final guard, then
+-- tarballs and computes a sha256 sibling.
+
+-- io.popen is blocked in chore step bodies (CS-0045); cook.sh is the
+-- supported command-stdout-capture channel.
+local function host_target()
+    local out = cook.sh("rustc -vV")
+    return out:match("host: ([^\n]+)")
+end
+
+local function target_to_os_arch(triple)
+    local os_part, arch_part
+    if triple:find("apple%-darwin") then os_part = "darwin"
+    elseif triple:find("linux") then os_part = "linux"
+    else error("package: unsupported OS in target triple: " .. triple) end
+    if triple:find("^x86_64%-") then arch_part = "amd64"
+    elseif triple:find("^aarch64%-") then arch_part = "arm64"
+    else error("package: unsupported arch in target triple: " .. triple) end
+    return os_part, arch_part
+end
+
 function M.package(version, target)
-    error("M2.5 not yet implemented")
+    if not version or version == "" then
+        error("package: missing VERSION (pass --set VERSION=vX.Y.Z)")
+    end
+    target = (target ~= nil and target ~= "") and target or host_target()
+    local os_part, arch_part = target_to_os_arch(target)
+    local stage_name = string.format("cook-%s-%s-%s", version, os_part, arch_part)
+    local tarball = string.format("cli/target/dist/%s.tar.gz", stage_name)
+
+    print(string.format("[package] version=%s target=%s -> %s", version, target, tarball))
+
+    -- Build cook itself (caller may have done this; cargo's incremental
+    -- build makes this idempotent).
+    cook.exec(string.format(
+        "cd cli && cargo build --release --target=%s -p cook-cli",
+        target
+    ), 0)
+
+    -- build-lua + bundle-luarocks must have produced the stage tree already
+    -- (chore deps wire this); verify before proceeding.
+    if not fs.exists(STAGE .. "/lib") or not fs.exists(STAGE .. "/share/luarocks") then
+        error("package: stage tree missing pieces; run `cook build-lua bundle-luarocks` first")
+    end
+
+    -- Copy the freshly-built cook binary into the stage.
+    local built_bin = string.format("cli/target/%s/release/cook", target)
+    if not fs.exists(built_bin) then
+        error("package: cargo did not produce " .. built_bin)
+    end
+    cook.exec(string.format("cp %s %s/bin/cook", built_bin, STAGE), 0)
+    cook.exec("chmod 0755 " .. STAGE .. "/bin/cook", 0)
+
+    -- VERSION marker file (Phase 1 contract).
+    fs.write(STAGE .. "/VERSION", version .. "\n")
+
+    -- Final symbol-export guard. Re-uses the M2.2 sentinel set so a
+    -- regression in cli/.cargo/config.toml is caught at packaging time
+    -- rather than at first dlopen of a C rock by a downstream user.
+    M.check_exports()
+
+    -- Rename the wrapping dir for the tarball, then tar. We copy rather
+    -- than relying on tar's --transform because GNU tar's --transform is
+    -- not available on macOS BSD tar. sha256sum (Linux coreutils) falls
+    -- back to shasum (BSD/macOS) so the same shell pipeline works on
+    -- both Phase 1 hosts.
+    cook.exec(string.format([[
+set -euo pipefail
+mkdir -p cli/target/dist
+rm -rf cli/target/dist/%s
+cp -a target/cook-stage cli/target/dist/%s
+cd cli/target/dist
+tar -czf %s.tar.gz %s
+sha256sum %s.tar.gz > %s.tar.gz.sha256 2>/dev/null \
+  || shasum -a 256 %s.tar.gz > %s.tar.gz.sha256
+rm -rf %s
+]],
+        stage_name, stage_name,
+        stage_name, stage_name,
+        stage_name, stage_name,
+        stage_name, stage_name,
+        stage_name
+    ), 0)
+
+    print(string.format("[package] built %s (+ .sha256)", tarball))
 end
 
 function M.gate_m2()
