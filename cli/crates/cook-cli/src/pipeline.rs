@@ -726,7 +726,6 @@ const COOK_GITIGNORE_MARKER: &str = "# Cook artifacts (added by cook init)";
 const COOK_GITIGNORE_SECTION: &str = "\
 # Cook artifacts (added by cook init)
 # .cook/ holds caches and per-project state; cloud.toml is the one tracked
-# file (project_id, cache.ignore_env per spec §9).
 .cook/**
 **/.cook/**
 !**/.cook/
