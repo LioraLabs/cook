@@ -10,6 +10,9 @@
 # `against-tag` reads VERSION from
 #   cook standard.against-tag --set VERSION=X.Y
 # and defaults to the current contents of standard/VERSION.
+#
+# `preview` builds the docs and starts the dev server. Long-running:
+# Ctrl-C to stop the server.
 
 use checks
 
@@ -22,6 +25,10 @@ chore lint
 chore host
     @pnpm host
 
+chore preview
+    pnpm build
+    @pnpm host
+
 chore against-tag
     >{
         local version = cook.env.VERSION
@@ -30,6 +37,3 @@ chore against-tag
         end
         checks.against_tag(version)
     }
-
-chore retag
-    V="${VERSION:-$(cat VERSION)}" && git tag --force "cs-standard/v$V" HEAD
