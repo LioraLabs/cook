@@ -31,7 +31,88 @@ local function platform()
 end
 
 local LUA_SRC_DIR = "cli/vendored/lua-5.4.7"
+local LUAROCKS_SRC_DIR = "cli/vendored/luarocks-3.11.0"
+local CONFIG_TEMPLATE = "cli/crates/cook-cli/templates/default-rocks-config.lua"
 local STAGE = "target/cook-stage"
+
+-- Relocatable shell launcher for the bundled luarocks. Derives COOK_PREFIX
+-- from $0 (the launcher's own location) so the install can be moved on disk
+-- without baking absolute paths. Sets LUA_PATH so the staged
+-- share/luarocks/ tree is on the package search path, exports
+-- LUAROCKS_CONFIG to the committed default config template (which itself
+-- splices COOK_PREFIX into LUA_BINDIR / LUA_INCDIR / LUA_LIBDIR), then
+-- execs the bundled bin/lua against the cook-authored driver staged at
+-- share/cook/luarocks-driver.lua.
+local LAUNCHER_SCRIPT = [[#!/bin/sh
+# Relocatable luarocks launcher for cook bundles.
+set -eu
+COOK_PREFIX="$(cd "$(dirname "$0")/.." && pwd)"
+export COOK_PREFIX
+export LUAROCKS_CONFIG="$COOK_PREFIX/share/cook/default-rocks-config.lua"
+export LUA_PATH="$COOK_PREFIX/share/?.lua;$COOK_PREFIX/share/?/init.lua;;"
+export LUA_CPATH="$COOK_PREFIX/lib/lua/5.4/?.so;;"
+exec "$COOK_PREFIX/bin/lua" "$COOK_PREFIX/share/cook/luarocks-driver.lua" "$@"
+]]
+
+-- Cook-authored luarocks driver. Mirrors the upstream src/bin/luarocks
+-- body (the commands table and the cmd.run_command call), with one
+-- difference: --version is pre-empted to print the canonical
+-- "LuaRocks <version>" banner. Upstream's --version action prints
+-- "<program-path> <version>" via util.this_program, which would leak
+-- the staged path into the output and make the version banner depend
+-- on where the bundle lives on disk. Cook-side bundles want a stable
+-- banner that's relocation-independent.
+local LUAROCKS_DRIVER = [[-- Cook-staged LuaRocks driver (M2.3, bundle_luarocks).
+-- See cook_modules/luarocks_phase2.lua → LUAROCKS_DRIVER for rationale.
+
+-- Pre-empt --version BEFORE loading cfg: upstream prints "<full-path> <ver>"
+-- via util.this_program(), which embeds the staged install path in the
+-- output. Cook bundles want a stable "LuaRocks <ver>" banner that's
+-- relocation-independent. The version literal is pinned to the
+-- vendored luarocks tarball (see cli/vendored/luarocks-3.11.0/README.md);
+-- bumping it requires updating both this string and LUAROCKS_SRC_DIR
+-- in cook_modules/luarocks_phase2.lua.
+for _, a in ipairs(arg) do
+    if a == "--version" then
+        print("LuaRocks 3.11.0")
+        os.exit(0)
+    end
+end
+
+-- Load cfg first so that the loader knows it is running inside LuaRocks.
+local cfg = require("luarocks.core.cfg")
+
+local loader = require("luarocks.loader")
+local cmd = require("luarocks.cmd")
+
+local description = "LuaRocks main command-line interface"
+
+local commands = {
+    init = "luarocks.cmd.init",
+    pack = "luarocks.cmd.pack",
+    unpack = "luarocks.cmd.unpack",
+    build = "luarocks.cmd.build",
+    install = "luarocks.cmd.install",
+    search = "luarocks.cmd.search",
+    list = "luarocks.cmd.list",
+    remove = "luarocks.cmd.remove",
+    make = "luarocks.cmd.make",
+    download = "luarocks.cmd.download",
+    path = "luarocks.cmd.path",
+    show = "luarocks.cmd.show",
+    new_version = "luarocks.cmd.new_version",
+    lint = "luarocks.cmd.lint",
+    write_rockspec = "luarocks.cmd.write_rockspec",
+    purge = "luarocks.cmd.purge",
+    doc = "luarocks.cmd.doc",
+    upload = "luarocks.cmd.upload",
+    config = "luarocks.cmd.config",
+    which = "luarocks.cmd.which",
+    test = "luarocks.cmd.test",
+}
+
+cmd.run_command(description, commands, "luarocks.cmd.external", ...)
+]]
 
 -- All .c files except lua.c and luac.c form the library translation units.
 -- These names mirror Lua's own Makefile (LIB_O + CORE_O minus lua.o/luac.o).
@@ -222,8 +303,53 @@ function M.check_exports()
     print(string.format("[check-exports] OK — %d/%d sentinels present", #SENTINELS, #SENTINELS))
 end
 
+-- ── M2.3: bundle_luarocks ─────────────────────────────────────────────────
+-- Stage the vendored LuaRocks 3.11.0 sources into target/cook-stage:
+--   - share/luarocks/                     ← cp -a cli/vendored/luarocks-3.11.0/src/luarocks/
+--   - share/cook/luarocks-driver.lua      ← cook-authored, from LUAROCKS_DRIVER
+--   - share/cook/default-rocks-config.lua ← committed template
+--   - bin/luarocks                        ← relocatable shell launcher, from LAUNCHER_SCRIPT
+-- Assumes `cook build-lua` has already produced bin/lua and lib/.
+
 function M.bundle_luarocks()
-    error("M2.3 not yet implemented")
+    -- The launcher invokes $COOK_PREFIX/bin/lua, which build_lua produces.
+    -- Bail loudly if that didn't happen first.
+    if not fs.exists(STAGE .. "/bin/lua") then
+        error("bundle_luarocks: " .. STAGE .. "/bin/lua missing — run `cook build-lua` first")
+    end
+
+    print("[bundle-luarocks] staging luarocks 3.11.0 → " .. STAGE)
+
+    -- Stage the pure-Lua library tree and the default rocks config
+    -- template. Use cp -a to preserve mode + symlinks (the upstream tree is
+    -- verbatim from the release tarball). Wipe any prior share/luarocks/
+    -- first so this chore is idempotent across re-runs.
+    cook.exec(string.format([[
+set -euo pipefail
+mkdir -p %s/share %s/share/cook
+rm -rf %s/share/luarocks
+cp -a %s/src/luarocks %s/share/luarocks
+cp -a %s %s/share/cook/default-rocks-config.lua
+]],
+        STAGE, STAGE,
+        STAGE,
+        LUAROCKS_SRC_DIR, STAGE,
+        CONFIG_TEMPLATE, STAGE
+    ), 0)
+
+    -- Write the cook-authored driver script (mirrors upstream src/bin/luarocks
+    -- body, with --version pre-empted). It's authored cook-side rather than
+    -- copied verbatim because upstream prints the program path in its
+    -- --version output, which would leak staged install paths.
+    fs.write(STAGE .. "/share/cook/luarocks-driver.lua", LUAROCKS_DRIVER)
+
+    -- Write the relocatable launcher and make it executable. fs.write
+    -- creates the file with default 0644, so chmod 0755 is required.
+    local launcher_path = STAGE .. "/bin/luarocks"
+    fs.write(launcher_path, LAUNCHER_SCRIPT)
+    cook.exec("chmod 0755 " .. launcher_path, 0)
+
+    print("[bundle-luarocks] staged " .. launcher_path)
 end
 
 function M.package(version, target)
