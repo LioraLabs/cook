@@ -1,0 +1,5 @@
+use cook_smoke
+
+recipe smoke
+    > local s = require("cook_smoke")
+    > print(s.value())

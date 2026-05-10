@@ -1,0 +1,5 @@
+[registry]
+indexes = ["https://rocks.usecook.com", "https://luarocks.org"]
+
+[modules]
+cook_smoke = "*"

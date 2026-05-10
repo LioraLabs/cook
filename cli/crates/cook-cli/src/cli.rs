@@ -13,6 +13,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use crate::modules::cli::ModulesArgs;
 use crate::pull::PullArgs;
 
 #[derive(Parser, Debug)]
@@ -76,6 +77,9 @@ pub enum Cmd {
 
     /// Pull cook_modules from a configured HTTP(S) registry.
     Pull(PullArgs),
+
+    /// Manage cook modules — install, remove, update, list, search rocks.
+    Modules(ModulesArgs),
 
     /// Run tests in the workspace (or scoped to a recipe/namespace).
     Test(TestArgs),

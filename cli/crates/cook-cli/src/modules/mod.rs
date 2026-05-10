@@ -9,6 +9,9 @@
 //! Shared invariant: `BTreeMap`/`BTreeSet` for any serialised collection
 //! (deterministic output per project conventions).
 
+pub mod cli;
 pub mod driver;
 pub mod lockfile;
 pub mod manifest;
+
+pub use cli::{run, ModulesArgs};
