@@ -40,3 +40,8 @@ docs/superpowers/
 
 # luarocks pack outputs (Phase 3 cook_smoke fixture and future rocks)
 rocks/*/*-*.src.rock
+
+# Project-local luarocks tree populated by `cook modules add`. Pinned by
+# cook.lock + the registry, so this is build output, not source. Top-level
+# user-authored lua files in cook_modules/ stay tracked.
+cook_modules/lib/

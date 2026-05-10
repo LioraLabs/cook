@@ -671,8 +671,8 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
 // ---------------------------------------------------------------------------
 
 pub fn cmd_init() -> Result<(), CookError> {
-    let path = std::path::Path::new("Cookfile");
-    if path.exists() {
+    let cookfile_path = std::path::Path::new("Cookfile");
+    if cookfile_path.exists() {
         return Err(CookError::Other("Cookfile already exists".to_string()));
     }
     // CS-0019 dropped `end`: recipe bodies are indented and terminated by the
@@ -680,14 +680,153 @@ pub fn cmd_init() -> Result<(), CookError> {
     // template; under the current grammar that line parses as a literal
     // shell command and the build fails with exit 127.
     std::fs::write(
-        path,
+        cookfile_path,
         r#"recipe build
     echo "Hello from Cook!"
 "#,
     )
     .map_err(|e| CookError::Other(format!("failed to write Cookfile: {e}")))?;
     println!("Created Cookfile");
+
+    let gitignore_path = std::path::Path::new(".gitignore");
+    let existing = match std::fs::read_to_string(gitignore_path) {
+        Ok(s) => Some(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(CookError::Other(format!(
+                "failed to read .gitignore: {e}"
+            )));
+        }
+    };
+    match merge_cook_gitignore_section(existing.as_deref()) {
+        GitignoreMerge::Unchanged => {
+            println!(".gitignore already has Cook entries");
+        }
+        GitignoreMerge::Created(content) => {
+            std::fs::write(gitignore_path, content)
+                .map_err(|e| CookError::Other(format!("failed to write .gitignore: {e}")))?;
+            println!("Created .gitignore");
+        }
+        GitignoreMerge::Appended(content) => {
+            std::fs::write(gitignore_path, content)
+                .map_err(|e| CookError::Other(format!("failed to write .gitignore: {e}")))?;
+            println!("Updated .gitignore with Cook entries");
+        }
+    }
     Ok(())
+}
+
+/// Marker line that identifies a Cook-managed `.gitignore` section. Used to
+/// keep `cook init` idempotent across re-runs.
+const COOK_GITIGNORE_MARKER: &str = "# Cook artifacts (added by cook init)";
+
+/// The Cook-managed `.gitignore` block. Only entries that are unambiguously
+/// Cook-specific go here — language/toolchain ignores (target/, node_modules/)
+/// are the user's call.
+const COOK_GITIGNORE_SECTION: &str = "\
+# Cook artifacts (added by cook init)
+# .cook/ holds caches and per-project state; cloud.toml is the one tracked
+# file (project_id, cache.ignore_env per spec §9).
+.cook/**
+**/.cook/**
+!**/.cook/
+!**/.cook/cloud.toml
+# Project-local luarocks tree populated by `cook modules add`. Pinned by
+# cook.lock + the registry, so it's build output, not source. Top-level
+# user-authored lua files in cook_modules/ stay tracked.
+cook_modules/lib/
+";
+
+#[derive(Debug, PartialEq, Eq)]
+enum GitignoreMerge {
+    Unchanged,
+    Created(String),
+    Appended(String),
+}
+
+/// Pure helper: given the current contents of `.gitignore` (or `None` if
+/// missing), decide what the file should look like after `cook init`. The
+/// result is a [`GitignoreMerge`] the caller can act on.
+fn merge_cook_gitignore_section(existing: Option<&str>) -> GitignoreMerge {
+    match existing {
+        None => GitignoreMerge::Created(COOK_GITIGNORE_SECTION.to_string()),
+        Some(s) if s.contains(COOK_GITIGNORE_MARKER) => GitignoreMerge::Unchanged,
+        Some(s) => {
+            let mut out = String::with_capacity(s.len() + COOK_GITIGNORE_SECTION.len() + 2);
+            out.push_str(s);
+            if !s.is_empty() && !s.ends_with('\n') {
+                out.push('\n');
+            }
+            if !s.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(COOK_GITIGNORE_SECTION);
+            GitignoreMerge::Appended(out)
+        }
+    }
+}
+
+#[cfg(test)]
+mod cmd_init_tests {
+    use super::*;
+
+    #[test]
+    fn merge_creates_section_when_no_gitignore() {
+        let merged = merge_cook_gitignore_section(None);
+        match merged {
+            GitignoreMerge::Created(content) => {
+                assert!(content.contains(COOK_GITIGNORE_MARKER));
+                assert!(content.contains("cook_modules/lib/"));
+                assert!(content.contains(".cook/**"));
+                assert!(content.ends_with('\n'));
+            }
+            other => panic!("expected Created, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn merge_is_idempotent_when_marker_present() {
+        let existing = format!("target/\n\n{COOK_GITIGNORE_SECTION}");
+        assert_eq!(
+            merge_cook_gitignore_section(Some(&existing)),
+            GitignoreMerge::Unchanged,
+        );
+    }
+
+    #[test]
+    fn merge_appends_with_blank_line_separator() {
+        let existing = "target/\nnode_modules/\n";
+        match merge_cook_gitignore_section(Some(existing)) {
+            GitignoreMerge::Appended(content) => {
+                assert!(content.starts_with("target/\nnode_modules/\n\n"));
+                assert!(content.contains(COOK_GITIGNORE_MARKER));
+                assert!(content.contains("cook_modules/lib/"));
+            }
+            other => panic!("expected Appended, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn merge_normalizes_missing_trailing_newline_before_appending() {
+        let existing = "target/";
+        match merge_cook_gitignore_section(Some(existing)) {
+            GitignoreMerge::Appended(content) => {
+                assert!(content.starts_with("target/\n\n"));
+                assert!(content.contains(COOK_GITIGNORE_MARKER));
+            }
+            other => panic!("expected Appended, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn merge_treats_empty_file_like_creation() {
+        match merge_cook_gitignore_section(Some("")) {
+            GitignoreMerge::Appended(content) => {
+                assert!(content.starts_with(COOK_GITIGNORE_MARKER));
+            }
+            other => panic!("expected Appended, got {other:?}"),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
