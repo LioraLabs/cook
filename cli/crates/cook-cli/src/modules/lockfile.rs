@@ -30,8 +30,29 @@ pub struct LockedModule {
     pub name: String,
     pub version: String,
     pub source: String,
+    /// SHA-256 of the cached source rock, in `"sha256-<standard-base64>"` form
+    /// (similar to W3C SRI but with standard padded base64). The sentinel
+    /// `INTEGRITY_UNKNOWN` (`"sha256-unknown"`) marks rocks whose source rock
+    /// was not in the cache at introspection time. Use
+    /// `LockedModule::has_known_integrity()` before calling
+    /// `verify_integrity()`.
     pub integrity: String,
     pub direct: bool,
+}
+
+/// The string `compute_integrity` returns for a `LockedModule` whose source
+/// rock is not present in the cache (e.g., installed from a local path or
+/// a pre-existing tree). `verify_integrity` MUST NOT be called on a
+/// `LockedModule` with this integrity value — use `LockedModule::has_known_integrity()`
+/// to gate the verification.
+pub const INTEGRITY_UNKNOWN: &str = "sha256-unknown";
+
+impl LockedModule {
+    /// True iff `integrity` is a real hash (not the `"sha256-unknown"` sentinel).
+    /// Callers (M3.4) should gate `verify_integrity` calls on this.
+    pub fn has_known_integrity(&self) -> bool {
+        self.integrity != INTEGRITY_UNKNOWN
+    }
 }
 
 impl Lockfile {
@@ -70,6 +91,14 @@ pub fn write(path: &Path, lock: &Lockfile) -> Result<()> {
 /// `cache_dir` is `cook_modules/lib/luarocks/cache/` — the directory luarocks
 /// caches downloaded source rocks into.
 pub fn verify_integrity(locked: &LockedModule, cache_dir: &Path) -> Result<()> {
+    if !locked.has_known_integrity() {
+        return Err(anyhow!(
+            "verify_integrity called on {}-{} with unknown integrity; \
+             callers must gate on LockedModule::has_known_integrity",
+            locked.name,
+            locked.version,
+        ));
+    }
     let filename = format!("{}-{}.src.rock", locked.name, locked.version);
     let path = cache_dir.join(&filename);
     let bytes = std::fs::read(&path)
@@ -143,17 +172,35 @@ pub fn introspect_closure(modules_dir: &Path, manifest: &ManifestModules) -> Res
             direct,
         });
     }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
+    // by_name is a BTreeMap, so the for loop above pushed entries in
+    // name-sorted order. No additional sort needed.
     Ok(Lockfile::new(out))
 }
 
 fn parse_rockspec_source_url(path: &Path) -> Result<String> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("read {}", path.display()))?;
-    // Rockspecs are Lua, not TOML. We do a minimal text scrape for the
-    // `source = { url = "..." }` field; full Lua eval would be overkill.
+    // Rockspecs are Lua, not TOML. We do a minimal scrape that locates
+    // `source = {` and then finds the first `url = "..."` line inside that
+    // block. luarocks writes installed rockspecs in canonical multi-line
+    // table form, which this matcher targets. The single-line form
+    // `source = { url = "..." }` is not supported — it never appears in
+    // luarocks-emitted rockspecs that cook reads.
+    let mut in_source = false;
+    let mut depth: i32 = 0;
     for line in raw.lines() {
         let trimmed = line.trim();
+        if !in_source {
+            // Look for the opening `source = {` on its own line.
+            if trimmed.starts_with("source") && trimmed.contains('{') {
+                in_source = true;
+                depth = trimmed.matches('{').count() as i32 - trimmed.matches('}').count() as i32;
+            }
+            continue;
+        }
+        // Inside the source block — track brace depth and look for `url = "..."`.
+        depth += trimmed.matches('{').count() as i32;
+        depth -= trimmed.matches('}').count() as i32;
         if let Some(rest) = trimmed.strip_prefix("url") {
             let rest = rest.trim_start();
             if let Some(rest) = rest.strip_prefix('=') {
@@ -163,9 +210,13 @@ fn parse_rockspec_source_url(path: &Path) -> Result<String> {
                 return Ok(rest.to_string());
             }
         }
+        if depth <= 0 {
+            // Closed the source block without finding a url line.
+            break;
+        }
     }
     Err(anyhow!(
-        "rockspec at {} has no top-level `url = \"...\"` line",
+        "rockspec at {} has no `source = {{ url = \"...\" }}` block",
         path.display()
     ))
 }
@@ -176,7 +227,7 @@ fn compute_integrity(cache_dir: &Path, name: &str, version: &str) -> Result<Stri
         // No cached source rock — luarocks installed from a local path or
         // a pre-existing tree. Mark as unknown integrity; the lockfile is
         // honest about gaps.
-        return Ok("sha256-unknown".to_string());
+        return Ok(INTEGRITY_UNKNOWN.to_string());
     }
     let bytes = std::fs::read(&path)
         .with_context(|| format!("read {}", path.display()))?;
@@ -302,5 +353,48 @@ mod tests {
             .expect("introspect");
         assert!(lock.modules.is_empty());
         assert_eq!(lock.schema, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn parse_rockspec_url_skips_description_url() {
+        // Some rockspecs put a non-standard `url` inside `description` before
+        // `source`. The scraper must skip past it and return the source url.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("foo-1.0-1.rockspec");
+        std::fs::write(
+            &path,
+            r#"package = "foo"
+version = "1.0-1"
+description = {
+   url = "https://homepage.example",
+   summary = "x",
+}
+source = {
+   url = "https://rocks.usecook.com/foo-1.0-1.src.rock",
+}
+"#,
+        )
+        .expect("write");
+        let url = parse_rockspec_source_url(&path).expect("parse");
+        assert_eq!(url, "https://rocks.usecook.com/foo-1.0-1.src.rock");
+    }
+
+    #[test]
+    fn integrity_unknown_predicate_and_guard() {
+        let mut locked = LockedModule {
+            name: "foo".into(),
+            version: "1.0-1".into(),
+            source: "https://example/foo.src.rock".into(),
+            integrity: INTEGRITY_UNKNOWN.to_string(),
+            direct: true,
+        };
+        assert!(!locked.has_known_integrity());
+        let cache = fixture_root().join("lib/luarocks/cache");
+        let err = verify_integrity(&locked, &cache).expect_err("must fail");
+        assert!(format!("{:#}", err).contains("unknown integrity"));
+
+        // With a real hash, the predicate is true.
+        locked.integrity = "sha256-aaaa".to_string();
+        assert!(locked.has_known_integrity());
     }
 }
