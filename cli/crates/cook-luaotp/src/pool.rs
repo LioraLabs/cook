@@ -346,17 +346,11 @@ fn register_worker_cook_table(
     })?;
     cook.set("sh", sh_fn)?;
 
-    // cook.exec(cmd, line) -> stdout string
-    let wd2 = Arc::clone(current_working_dir);
-    let env2 = Arc::clone(current_env_vars);
-    let recipe2 = Arc::clone(current_recipe);
-    let exec_fn = lua.create_function(move |_, (cmd, line): (String, usize)| {
-        let recipe_name = recipe2.lock().expect("recipe name lock").clone();
-        let working_dir = wd2.lock().expect("working_dir lock").clone();
-        let env_vars = env2.lock().expect("env_vars lock").clone();
-        run_shell_in_worker(&cmd, &working_dir, &env_vars, &recipe_name, line)
-    })?;
-    cook.set("exec", exec_fn)?;
+    // Note: `cook.exec`, `cook.interactive`, `cook.add_unit`,
+    // `cook.step_group`, and `cook.recipe` are register-only API
+    // (Standard §6.3.2). On the worker (execute-phase) VM they are
+    // installed as error-raising guards near the bottom of this
+    // function — see `install_register_only_guard`.
 
     // cook.env — use a metatable __index so reads always reflect current env_vars
     let env_table = lua.create_table()?;
@@ -487,7 +481,84 @@ fn register_worker_cook_table(
     })?;
     cook.set("load_module", load_module_fn)?;
 
+    // Register-only API guards (Standard §6.3.2).
+    //
+    // `cook.exec`, `cook.interactive`, `cook.add_unit`, `cook.step_group`,
+    // and `cook.recipe` are register-phase-only (§6.3.2, §6.3.3, §6.3.6,
+    // and §B.4.12 rationale). A conforming implementation MUST raise a Lua
+    // runtime error when any of them is called from execute-phase Lua (a
+    // `lua_line`, a `lua_block`, or a `using >{ … }` payload).
+    //
+    // The worker VM is the execute-phase VM, so we install error-raising
+    // stubs that supersede the partial-implementation `cook.exec` set
+    // above (which silently aliased to a shell-out — non-conformant with
+    // §6.3.2) and the entirely-absent `cook.interactive` / `cook.add_unit`
+    // / `cook.step_group` / `cook.recipe` (which previously surfaced as
+    // `attempt to call a nil value`, an incidentally-compliant but
+    // shape-wrong diagnostic).
+    //
+    // The register-phase VM is built separately by cook-register
+    // (`cook-register/src/{capture,unit_api}.rs`) — those call sites set
+    // up the real recording implementations on a different VM, so this
+    // guard does not affect them.
+    install_register_only_guard(
+        lua,
+        &cook,
+        "exec",
+        "cook.exec: register-only API called from execute-phase Lua (Standard §6.3.2). \
+         Use cook.sh(cmd) to shell out from a lua_line / lua_block / using >{ … } payload.",
+    )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        "interactive",
+        "cook.interactive: register-only API called from execute-phase Lua (Standard §6.3.2). \
+         Interactive steps must be recorded during the register phase; they cannot be \
+         scheduled from a lua_line / lua_block / using >{ … } payload.",
+    )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        "add_unit",
+        "cook.add_unit: register-only API called from execute-phase Lua (Standard §6.3.2). \
+         Work units are recorded during the register phase; the DAG is closed before \
+         execute-phase Lua runs.",
+    )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        "step_group",
+        "cook.step_group: register-only API called from execute-phase Lua (Standard §6.3.2). \
+         Step groups are recorded during the register phase; they cannot be opened from a \
+         lua_line / lua_block / using >{ … } payload.",
+    )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        "recipe",
+        "cook.recipe: register-only API called from execute-phase Lua (Standard §6.3.2). \
+         Recipes are registered during the register phase; they cannot be declared from a \
+         lua_line / lua_block / using >{ … } payload.",
+    )?;
+
     lua.globals().set("cook", cook)?;
+    Ok(())
+}
+
+/// Install a Lua function under `cook.<field>` that raises
+/// `mlua::Error::RuntimeError(message)` when called. Used to surface
+/// register-only Cook Lua API helpers as Standard §6.3.2 diagnostics on
+/// the worker (execute-phase) VM.
+fn install_register_only_guard(
+    lua: &mlua::Lua,
+    cook: &mlua::Table,
+    field: &'static str,
+    message: &'static str,
+) -> mlua::Result<()> {
+    let f = lua.create_function(move |_, _: mlua::MultiValue| -> mlua::Result<()> {
+        Err(mlua::Error::RuntimeError(message.to_string()))
+    })?;
+    cook.set(field, f)?;
     Ok(())
 }
 
@@ -1451,6 +1522,103 @@ mod tests {
         );
         // Cap plus a small fixed overhead — well under twice the cap.
         assert!(msg.len() < COOK_CMD_FAIL_STREAM_CAP + 1024);
+    }
+
+    // -----------------------------------------------------------------
+    // Standard §6.3.2 regression tests: register-only Cook Lua API
+    // helpers must raise a §6.3.2-shaped diagnostic when called from
+    // execute-phase Lua (lua_line / lua_block / using >{ … } payload).
+    // -----------------------------------------------------------------
+
+    /// Submit a single LuaChunk work item that runs `code` on a worker VM,
+    /// then return the resulting `WorkResult` for inspection.
+    fn run_lua_chunk_in_worker(code: &str) -> WorkResult {
+        let dir = TempDir::new().unwrap();
+        let (pool, rx) = WorkerPool::spawn(1);
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::LuaChunk {
+                code: code.to_string(),
+                inputs: vec![],
+                outputs: vec![],
+                ingredient_groups: vec![],
+                step_kind: cook_contracts::StepKind::Cook,
+                is_chore: false,
+            },
+            recipe_name: "rec".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
+        });
+        let result = rx.recv().unwrap();
+        pool.shutdown();
+        result
+    }
+
+    fn assert_register_only_diagnostic(result: &WorkResult, fn_name: &str) {
+        assert!(
+            !result.success,
+            "expected register-only-API call to fail; got success"
+        );
+        let err = result.error.as_deref().unwrap_or("");
+        let needle_fn = format!("cook.{fn_name}");
+        assert!(
+            err.contains(&needle_fn),
+            "diagnostic must name the function `{needle_fn}`; got: {err}"
+        );
+        assert!(
+            err.contains("Standard §6.3.2"),
+            "diagnostic must cite Standard §6.3.2; got: {err}"
+        );
+        assert!(
+            err.contains("execute-phase Lua"),
+            "diagnostic must identify the calling step kind as execute-phase Lua; got: {err}"
+        );
+    }
+
+    #[test]
+    fn cook_exec_from_execute_phase_raises_section_6_3_2_diagnostic() {
+        let result = run_lua_chunk_in_worker(r#"cook.exec("echo hi", 0)"#);
+        assert_register_only_diagnostic(&result, "exec");
+    }
+
+    #[test]
+    fn cook_interactive_from_execute_phase_raises_section_6_3_2_diagnostic() {
+        let result = run_lua_chunk_in_worker(r#"cook.interactive("echo hi", 0)"#);
+        assert_register_only_diagnostic(&result, "interactive");
+    }
+
+    #[test]
+    fn cook_add_unit_from_execute_phase_raises_section_6_3_2_diagnostic() {
+        let result =
+            run_lua_chunk_in_worker(r#"cook.add_unit({command = "echo hi"})"#);
+        assert_register_only_diagnostic(&result, "add_unit");
+    }
+
+    #[test]
+    fn cook_step_group_from_execute_phase_raises_section_6_3_2_diagnostic() {
+        let result = run_lua_chunk_in_worker(r#"cook.step_group("g")"#);
+        assert_register_only_diagnostic(&result, "step_group");
+    }
+
+    #[test]
+    fn cook_recipe_from_execute_phase_raises_section_6_3_2_diagnostic() {
+        let result =
+            run_lua_chunk_in_worker(r#"cook.recipe("inner", {}, function() end)"#);
+        assert_register_only_diagnostic(&result, "recipe");
+    }
+
+    /// `cook.sh` is the both-phase shell-out helper (§6.3.1) and MUST
+    /// continue to work on the worker VM. Guard against accidentally
+    /// classifying it as register-only.
+    #[test]
+    fn cook_sh_from_execute_phase_still_works() {
+        let result = run_lua_chunk_in_worker(r#"cook.sh("true")"#);
+        assert!(
+            result.success,
+            "cook.sh must remain callable in execute phase; got error: {:?}",
+            result.error
+        );
     }
 }
 
