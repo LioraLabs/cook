@@ -12,7 +12,6 @@ mod watcher;
 
 use clap::CommandFactory;
 use cook_cli::modules;
-use cook_cli::pull;
 
 use cli::{Cli, Cmd};
 use error::CookError;
@@ -47,7 +46,6 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         None => cmd_run(&globals, "build", None),
         Some(Cmd::Init) => cmd_init(),
         Some(Cmd::Menu) => cmd_menu(&globals),
-        Some(Cmd::Pull(args)) => std::process::exit(pull::run(args)),
         Some(Cmd::Modules(args)) => std::process::exit(modules::run(args)),
         Some(Cmd::Test(args)) => cmd_test(&globals, &args),
         Some(Cmd::Dag(args)) => cmd_dag(&globals, &args),

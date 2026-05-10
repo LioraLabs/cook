@@ -14,7 +14,6 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use crate::modules::cli::ModulesArgs;
-use crate::pull::PullArgs;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -74,9 +73,6 @@ pub enum Cmd {
 
     /// List all recipes (and chores) in the workspace.
     Menu,
-
-    /// Pull cook_modules from a configured HTTP(S) registry.
-    Pull(PullArgs),
 
     /// Manage cook modules — install, remove, update, list, search rocks.
     Modules(ModulesArgs),
@@ -285,15 +281,6 @@ mod tests {
                 assert_eq!(args.config.as_deref(), Some("prod"));
             }
             other => panic!("expected Cmd::Serve, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn pull_subcommand_with_names() {
-        let cli = parse(&["pull", "cpp", "rust"]);
-        match cli.cmd {
-            Some(Cmd::Pull(args)) => assert_eq!(args.names, vec!["cpp", "rust"]),
-            other => panic!("expected Cmd::Pull, got {other:?}"),
         }
     }
 
