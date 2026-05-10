@@ -2,4 +2,5 @@
 //! product; this lib exists so integration tests can drive `pull::run_from_argv`
 //! without spawning a subprocess.
 
+pub mod modules;
 pub mod pull;
