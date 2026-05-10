@@ -1,3 +1,14 @@
 [alias]
 # `cargo xtask <args>` dispatches to the cook-xtask binary.
 xtask = "run -p cook-xtask --"
+
+# Export Lua C API symbols from the cook executable so C rocks loaded via
+# luarocks can dlopen-resolve `lua_*` / `luaL_*` at runtime. Without these
+# flags, dlopen succeeds but symbol lookup fails with confusing errors.
+#   - Linux:  -rdynamic               (binutils ld / lld spelling)
+#   - macOS:  -Wl,-export_dynamic     (ld64 spelling, with underscore)
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-rdynamic"]
+
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-export_dynamic"]

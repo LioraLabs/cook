@@ -146,8 +146,80 @@ mkdir -p %s/lib %s/bin %s/include/lua5.4 target/build-lua-obj
     print("[build-lua] artifacts staged at " .. STAGE)
 end
 
+-- ── M2.2: check_exports ───────────────────────────────────────────────────
+-- Verify the cook executable exports lua_*/luaL_* symbols (proves -rdynamic /
+-- -Wl,-export_dynamic landed and works). Sentinels chosen to cover both the
+-- raw Lua C API and the auxiliary library, since both are used by C rocks.
+
+-- Sentinels are real exported symbols, not preprocessor-macro names. In
+-- Lua 5.4 `lua_pcall` is `#define`'d as `lua_pcallk(...,0,NULL)` and
+-- `luaL_checkstring` expands to `luaL_checklstring(...,NULL)`, so the
+-- linker only sees the K-variant / l-variant. C rocks compile against
+-- the headers and have the macros expanded at their compile time, so
+-- verifying the K/l symbols is the load-bearing dlopen check.
+local SENTINELS = {
+    "lua_pushstring", "lua_pcallk", "lua_close", "lua_newstate",
+    "luaL_newstate", "luaL_loadstring", "luaL_openlibs", "luaL_checklstring",
+}
+
+local function find_cook_binary()
+    -- Prefer release build; fall back to debug.
+    for _, p in ipairs({"cli/target/release/cook", "cli/target/debug/cook"}) do
+        if fs.exists(p) then return p end
+    end
+    error("check_exports: no cook binary found at cli/target/{release,debug}/cook; run `cook build` first")
+end
+
+-- io.popen is blocked in chore step bodies (CS-0045). cook.platform.os is
+-- the canonical host-detection API and is what M.build_lua() uses.
+local function check_exports_platform()
+    local os_id = cook.platform.os
+    if os_id == "linux" or os_id == "macos" then return os_id
+    else error("check_exports: unsupported platform: " .. tostring(os_id))
+    end
+end
+
 function M.check_exports()
-    error("M2.2 not yet implemented")
+    local bin = find_cook_binary()
+    local plat = check_exports_platform()
+    local nm_cmd
+    if plat == "linux" then
+        nm_cmd = "nm -D --defined-only " .. bin
+    else
+        nm_cmd = "nm -gU " .. bin
+    end
+    print("[check-exports] inspecting " .. bin)
+
+    -- cook.sh runs the command and returns stdout as a string. CS-0045
+    -- prohibits io.popen in chore bodies; cook.sh is the supported channel.
+    local output = cook.sh(nm_cmd)
+
+    local missing = {}
+    for _, sym in ipairs(SENTINELS) do
+        -- nm output lines look like "0000000... T lua_pushstring" (Linux) or
+        -- "0000000... T _lua_pushstring" (macOS, leading underscore). Match
+        -- both forms.
+        if not output:match("[%s_]" .. sym .. "$") and not output:match("[%s_]" .. sym .. "\n") then
+            table.insert(missing, sym)
+        end
+    end
+
+    if #missing > 0 then
+        io.stderr:write(string.format(
+            "[check-exports] FAIL: missing %d/%d sentinel symbol(s):\n",
+            #missing, #SENTINELS
+        ))
+        for _, s in ipairs(missing) do
+            io.stderr:write("    " .. s .. "\n")
+        end
+        io.stderr:write(string.format(
+            "[check-exports] cause: cli/.cargo/config.toml is missing the\n"
+            .. "    -rdynamic (Linux) / -Wl,-export_dynamic (macOS) link-arg.\n"
+        ))
+        error("check_exports failed: " .. #missing .. " missing symbol(s)")
+    end
+
+    print(string.format("[check-exports] OK — %d/%d sentinels present", #SENTINELS, #SENTINELS))
 end
 
 function M.bundle_luarocks()
