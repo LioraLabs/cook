@@ -330,6 +330,8 @@ Built-in modules are resolved before `cook_modules/` (§{lua.use-env}) so that a
 
 The choice of `cook_modules/` — an adjacent directory, resolved only relative to the enclosing Cookfile — rather than a global registry or a walk up through ancestor directories is a deliberate choice for locality. A Cookfile's modules are the ones it ships with; they travel with the project, they are the ones code review sees, and they are the ones `git clone` reproduces. A global registry would require side-channel installation; an ancestor walk would make module resolution sensitive to where on disk the project happened to live. Both are costs the Standard declines to pay.
 
+The §7 search-path order adopts the LuaRocks tree layout (`share/lua/<ver>/`, `lib/lua/<ver>/`) as the on-disk shape so cook can interoperate with luarocks.org rockspecs without forking layout policy. Hand-vendored top-level files retain highest priority so authors can override a rock-installed version by dropping a file at `cook_modules/<name>.lua`; the LuaRocks tree is searched second.
+
 ### B.7.1. Why duplicate-`import` is a parse-time error rather than last-wins [#rationale.duplicate-import-parse-time]
 A "last-wins" override is tempting because it is what most language include-systems do for simple `#include` and because it composes cleanly with machine-generated fragments. The Standard rejects it for two reasons.
 

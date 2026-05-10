@@ -272,7 +272,7 @@ fn worker_loop(
 
                 // Refresh package.path so `require` resolves cook_modules/
                 // relative to this unit's source Cookfile (CS-0017).
-                let _ = refresh_package_path(&lua, &work.working_dir);
+                let _ = refresh_package_search_paths(&lua, &work.working_dir);
 
                 // Run the work item under `catch_unwind`. A Rust panic
                 // anywhere in execute_work_item (e.g. an unexpected
@@ -491,20 +491,37 @@ fn register_worker_cook_table(
     Ok(())
 }
 
-/// Refresh `package.path` for the upcoming work unit so `require("foo")`
-/// finds `<cwd>/cook_modules/foo.lua` (CS-0017). Called per-unit from the
-/// worker loop because `cwd` is per-Cookfile and each body unit may come
-/// from a different one.
-fn refresh_package_path(lua: &mlua::Lua, cwd: &PathBuf) -> mlua::Result<()> {
+/// Refresh `package.path` and `package.cpath` for the upcoming work unit so
+/// `require("foo")` finds rocks under `<cwd>/cook_modules/`. Called per-unit
+/// from the worker loop because `cwd` is per-Cookfile and each body unit may
+/// come from a different one.
+///
+/// Search-path order (Standard §7):
+///
+///   package.path:
+///     <cwd>/cook_modules/?.lua                          hand-vendored, single file
+///     <cwd>/cook_modules/?/init.lua                     hand-vendored, dir module
+///     <cwd>/cook_modules/share/lua/5.4/?.lua            LuaRocks pure Lua
+///     <cwd>/cook_modules/share/lua/5.4/?/init.lua       LuaRocks pure Lua
+///     <original>
+///
+///   package.cpath:
+///     <cwd>/cook_modules/?.<so-ext>                     hand-vendored, top level
+///     <cwd>/cook_modules/lib/lua/5.4/?.<so-ext>         LuaRocks-installed C
+///     <original>
+///
+/// `<so-ext>` is `.so` on Linux/macOS (Lua's loader convention; LuaRocks emits
+/// `.so` on macOS too) and `.dll` on Windows. The original suffixes are stashed
+/// once so per-unit refresh is idempotent across calls.
+fn refresh_package_search_paths(lua: &mlua::Lua, cwd: &PathBuf) -> mlua::Result<()> {
     let cook_modules = cwd.join("cook_modules");
     let pkg: mlua::Table = match lua.globals().get::<mlua::Value>("package")? {
         mlua::Value::Table(t) => t,
         _ => return Ok(()),
     };
-    // Hold onto the original (OS-default) suffix so we don't grow it
-    // per-unit. We stash it on the package table itself the first time we
-    // see it.
-    let original: String = match pkg.get::<mlua::Value>("_cook_original_path")? {
+
+    // Stash originals on first call so subsequent calls don't grow the suffix.
+    let original_path: String = match pkg.get::<mlua::Value>("_cook_original_path")? {
         mlua::Value::String(s) => s.to_str()?.to_string(),
         _ => {
             let cur: String = pkg.get::<String>("path").unwrap_or_default();
@@ -512,12 +529,32 @@ fn refresh_package_path(lua: &mlua::Lua, cwd: &PathBuf) -> mlua::Result<()> {
             cur
         }
     };
+    let original_cpath: String = match pkg.get::<mlua::Value>("_cook_original_cpath")? {
+        mlua::Value::String(s) => s.to_str()?.to_string(),
+        _ => {
+            let cur: String = pkg.get::<String>("cpath").unwrap_or_default();
+            pkg.set("_cook_original_cpath", cur.clone())?;
+            cur
+        }
+    };
+
+    let cm = cook_modules.display().to_string();
+    let so_ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
+
     let new_path = format!(
-        "{cm}/?.lua;{cm}/?/init.lua;{orig}",
-        cm = cook_modules.display(),
-        orig = original,
+        "{cm}/?.lua;{cm}/?/init.lua;{cm}/share/lua/5.4/?.lua;{cm}/share/lua/5.4/?/init.lua;{orig}",
+        cm = cm,
+        orig = original_path,
     );
+    let new_cpath = format!(
+        "{cm}/?.{ext};{cm}/lib/lua/5.4/?.{ext};{orig}",
+        cm = cm,
+        ext = so_ext,
+        orig = original_cpath,
+    );
+
     pkg.set("path", new_path)?;
+    pkg.set("cpath", new_cpath)?;
     Ok(())
 }
 
@@ -1414,5 +1451,41 @@ mod tests {
         );
         // Cap plus a small fixed overhead — well under twice the cap.
         assert!(msg.len() < COOK_CMD_FAIL_STREAM_CAP + 1024);
+    }
+}
+
+#[cfg(test)]
+mod search_path_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn refresh_sets_path_and_cpath_with_rock_tree_entries() {
+        let lua = mlua::Lua::new();
+        let cwd = PathBuf::from("/tmp/fake-project");
+        refresh_package_search_paths(&lua, &cwd).expect("refresh");
+        let pkg: mlua::Table = lua.globals().get("package").unwrap();
+        let path: String = pkg.get("path").unwrap();
+        let cpath: String = pkg.get("cpath").unwrap();
+
+        assert!(path.contains("/tmp/fake-project/cook_modules/?.lua"));
+        assert!(path.contains("/tmp/fake-project/cook_modules/?/init.lua"));
+        assert!(path.contains("/tmp/fake-project/cook_modules/share/lua/5.4/?.lua"));
+        assert!(path.contains("/tmp/fake-project/cook_modules/share/lua/5.4/?/init.lua"));
+
+        assert!(cpath.contains("/tmp/fake-project/cook_modules/?."));
+        assert!(cpath.contains("/tmp/fake-project/cook_modules/lib/lua/5.4/?."));
+    }
+
+    #[test]
+    fn refresh_is_idempotent() {
+        let lua = mlua::Lua::new();
+        let cwd = PathBuf::from("/tmp/fake-project");
+        refresh_package_search_paths(&lua, &cwd).expect("first");
+        let pkg: mlua::Table = lua.globals().get("package").unwrap();
+        let first: String = pkg.get("path").unwrap();
+        refresh_package_search_paths(&lua, &cwd).expect("second");
+        let second: String = pkg.get("path").unwrap();
+        assert_eq!(first, second, "path must not grow on repeated refresh");
     }
 }

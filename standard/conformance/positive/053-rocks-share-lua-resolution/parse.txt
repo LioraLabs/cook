@@ -1,0 +1,13 @@
+Cookfile
+  uses: [UseStatement module_name="rockmod" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="smoke" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Lua code="local m = require(\"rockmod\")"
+        Lua code="print(m.value)"
+  chores:

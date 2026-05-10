@@ -67,6 +67,8 @@ A `use` declaration's alias is scoped to its **declaring Cookfile** and is not v
 
 For an execute-phase work unit, "the calling work unit's source Cookfile" (§{lua.cook-load-module}) is the Cookfile that contained the recipe whose body unit is being evaluated. A conforming implementation MUST resolve `cook.load_module(name)` and `require(name)` against that Cookfile's `cook_modules/` directory and MUST NOT fall back to a sibling Cookfile's `cook_modules/`.
 
+A conforming implementation MUST configure `package.path` and `package.cpath` for an execute-phase work unit such that the calling Cookfile's `cook_modules/` is searched in the following order: (1) `cook_modules/?.lua` and `cook_modules/?/init.lua` (hand-vendored, top level); (2) `cook_modules/share/lua/<lua-version>/?.lua` and `cook_modules/share/lua/<lua-version>/?/init.lua` (LuaRocks-installed pure Lua); for native modules: (a) `cook_modules/?.<so-ext>` (hand-vendored, top level); (b) `cook_modules/lib/lua/<lua-version>/?.<so-ext>` (LuaRocks-installed). `<lua-version>` is the embedded Lua's MAJOR.MINOR (currently `5.4`). `<so-ext>` is the platform's loadable-module extension (`.so` on Linux/macOS, `.dll` on Windows).
+
 Cross-Cookfile composition is at the **recipe** level via qualified name references (§{modules.qualified-refs}), not at the **module** level. Sharing module code between Cookfiles happens via the filesystem (a vendored copy, a symlink, or a shared parent) — the cook runtime treats each Cookfile's `cook_modules/` as an independent search root.
 
 ### Example 7.4.1

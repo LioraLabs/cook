@@ -1075,3 +1075,13 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 **tree-sitter implementation (Task 2.11).** `tree-sitter-cook/grammar.js` gains the `as_name` optional field in the `test_step` rule (before `timeout`); `queries/highlights.scm` adds `"as"` to the keyword list and promotes `as_name: (string)` to `@string.special`. Three corpus fixtures pin the double-quoted shape (the tree-sitter grammar does not yet support single-quoted strings — tracked under CS-0002; conformance/positive/044-045/048 remain as accepted-with-note failures for that reason). All CS-0061 negative ordering constraints (negative/043-048) parse-reject correctly.
 
 **Reference:** the CS-0061 commits on `feature/test-runner-v1`.
+
+## CS-0062 — Search-path order within `cook_modules/` [#changes.cs-0062]
+
+**Summary.** §7 grows a new normative clause defining the search-path order an implementation MUST configure for `package.path` and `package.cpath` per execute-phase work unit. The order is: hand-vendored top-level files first (`cook_modules/?.lua`, `cook_modules/?/init.lua`, `cook_modules/?.<so-ext>`), then the LuaRocks-installed tree (`cook_modules/share/lua/<lua-version>/?.lua`, `cook_modules/share/lua/<lua-version>/?/init.lua`, `cook_modules/lib/lua/<lua-version>/?.<so-ext>`), then the original interpreter defaults.
+
+**Rationale.** SHI-176 Phase 3 lands the `cook modules` CLI on top of Phase 2's bundled LuaRocks. The on-disk shape adopted is LuaRocks-native (`share/lua/<ver>/`, `lib/lua/<ver>/`) so cook can install rocks from luarocks.org without forking layout policy. Hand-vendored top-level files retain highest priority so authors can override a rock-installed version by dropping a file at `cook_modules/<name>.lua`; the LuaRocks tree is searched second. App. B-rationale §B.7 records the layout choice in detail.
+
+**Conformance impact.** A conforming implementation MUST configure both `package.path` and `package.cpath` per the order above for every execute-phase work unit. The order is normative; reordering it is a conformance bug. The `<lua-version>` and `<so-ext>` variables are platform-derived: `5.4` is the current Lua MAJOR.MINOR pinned by mlua; `<so-ext>` is `.so` on Linux/macOS, `.dll` on Windows.
+
+**Reference:** the CS-0062 commits on `feature/luarocks-modules` (SHI-176 Phase 3 M3.5 + M3.6).

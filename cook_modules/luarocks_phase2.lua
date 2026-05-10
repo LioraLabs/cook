@@ -455,8 +455,8 @@ end
 -- ── M2.4: gate_m2 ─────────────────────────────────────────────────────────
 -- Acceptance gate that proves the Phase 2 stage tree is real.
 --
--- Part A: build a hand-rolled Lua C extension (tests/fixtures/c-ext-hello/
--- cook_hello.c) against the bundled headers, place the resulting .so on
+-- Part A: build a hand-rolled Lua C extension (cli/crates/cook-engine/
+-- tests/fixtures/c-rock/cook_hello.c) against the bundled headers, place the resulting .so on
 -- package.cpath, run the staged cook against a Cookfile that requires it,
 -- and assert the function returns 42. This is the "rdynamic exports work"
 -- check — the .so has unresolved lua_*/luaL_* references that must
@@ -511,7 +511,7 @@ function M.gate_m2()
     end
 
     local cook_prefix = abspath(STAGE)
-    local fixture_c = abspath("tests/fixtures/c-ext-hello") .. "/cook_hello.c"
+    local fixture_c = abspath("cli/crates/cook-engine/tests/fixtures/c-rock") .. "/cook_hello.c"
     if not fs.exists(fixture_c) then
         error("gate_m2: fixture missing: " .. fixture_c)
     end
@@ -562,21 +562,17 @@ mkdir -p %s
         error("gate_m2: Part A compile produced no .so at " .. so_path)
     end
 
-    -- Phase-2-only workaround: the chore body must prepend package.cpath
-    -- before require("cook_hello"). Phase 3 will land runtime cpath
-    -- wiring that makes this implicit (cook will auto-include
-    -- <cwd>/cook_modules/?.so on the search path).
+    -- Phase 3: runtime cpath wiring (CS-0062, M3.5) auto-includes
+    -- <cwd>/cook_modules/?.so on package.cpath, so the chore body just
+    -- requires the module without manually fiddling with package.*.
     local cookfile_a_path = proj .. "/Cookfile-a"
-    local cookfile_a = string.format([[
+    local cookfile_a = [[
 chore gate-a
     >{
-        -- Phase 2: prepend cook_modules/?.so manually. Phase 3 lands
-        -- runtime cpath wiring that makes this implicit.
-        package.cpath = "%s/?.so;" .. package.cpath
         local cook_hello = require("cook_hello")
         print("PART_A_VALUE=" .. tostring(cook_hello.value()))
     }
-]], proj_modules)
+]]
     fs.write(cookfile_a_path, cookfile_a)
 
     -- Run the staged cook against Cookfile-a and capture stdout.
@@ -609,17 +605,14 @@ chore gate-a
         error("gate_m2: Part B luarocks install did not produce " .. cjson_so)
     end
 
-    -- Phase-2-only workaround: same package.path/cpath wiring as Part A.
-    -- luarocks --tree puts modules under share/lua/5.4 and lib/lua/5.4;
-    -- prepend both so require("cjson") resolves the freshly-installed rock.
+    -- Phase 3: runtime path/cpath wiring (CS-0062, M3.5) auto-includes
+    -- <cwd>/cook_modules/{share,lib}/lua/5.4/?.{lua,so} on
+    -- package.{path,cpath}, so require("cjson") resolves the
+    -- freshly-installed rock without further fiddling.
     local cookfile_b_path = proj .. "/Cookfile-b"
-    local cookfile_b = string.format([[
+    local cookfile_b = [[
 chore gate-b
     >{
-        -- Phase 2: prepend cook_modules tree manually. Phase 3 lands
-        -- runtime cpath wiring that makes this implicit.
-        package.path = "%s/share/lua/5.4/?.lua;%s/share/lua/5.4/?/init.lua;" .. package.path
-        package.cpath = "%s/lib/lua/5.4/?.so;" .. package.cpath
         local cjson = require("cjson")
         local encoded = cjson.encode({ hello = "world", n = 42 })
         print("ENCODED=" .. encoded)
@@ -630,7 +623,7 @@ chore gate-b
             print("PART_B_ROUND_TRIP=fail")
         end
     }
-]], proj_modules, proj_modules, proj_modules)
+]]
     fs.write(cookfile_b_path, cookfile_b)
 
     local out_b = cook.exec(env_prefix .. string.format(
