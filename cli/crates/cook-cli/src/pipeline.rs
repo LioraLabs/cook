@@ -736,7 +736,7 @@ const COOK_GITIGNORE_SECTION: &str = "\
 **/.cook/**
 !**/.cook/
 !**/.cook/cloud.toml
-# Project-local luarocks tree populated by `cook modules add`. Pinned by
+# Project-local luarocks tree populated by `cook modules install`. Pinned by
 # cook.lock + the registry, so it's build output, not source. Top-level
 # user-authored lua files in cook_modules/ stay tracked.
 cook_modules/lib/
@@ -784,6 +784,11 @@ mod cmd_init_tests {
                 assert!(content.contains("cook_modules/lib/"));
                 assert!(content.contains(".cook/**"));
                 assert!(content.ends_with('\n'));
+                // Guard against drift: the comment must reference the
+                // current subcommand name, not the renamed-and-removed
+                // `cook modules add`.
+                assert!(content.contains("cook modules install"));
+                assert!(!content.contains("cook modules add"));
             }
             other => panic!("expected Created, got {other:?}"),
         }
