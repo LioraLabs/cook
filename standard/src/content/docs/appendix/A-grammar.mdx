@@ -145,7 +145,7 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
 
 **Plate/test mode coherence (CS-0024).** A `plate_step` or `test_step` body MUST NOT contain both an iteration-item placeholder/binding and a batched-source placeholder/binding. For shell-block bodies, this means a body MUST NOT contain both `{in}` (or `{in.ACCESSOR}`) and `{all}`. For Lua-block bodies, the body MUST NOT reference both `input` and `inputs` (free-identifier scan, ignoring strings/comments/long-strings per §{lexical.brace-blocks}). A conforming implementation MUST reject a body that violates this rule with a diagnostic naming both tokens. See §{recipes.iteration-mode-plate-test}.
 
-**Plate/test source presence (CS-0024).** A `plate_step` or `test_step` in one-to-one or many-to-one mode MUST have a non-empty iteration source — that is, the recipe must contain a preceding `cook_step` whose output list is non-empty, or an `ingredients_step` whose resolved path list is non-empty. A conforming implementation MUST reject a `plate_step` or `test_step` whose mode requires source consultation but whose recipe provides none. A `plate_step` or `test_step` in one-shot mode does not consult the source and MAY appear in a recipe with neither.
+**Plate/test source presence (CS-0024).** A `plate_step` or `test_step` in one-to-one or many-to-one mode MUST have a non-empty iteration source — that is, the recipe MUST contain a preceding `cook_step` whose output list is non-empty, or an `ingredients_step` whose resolved path list is non-empty. A conforming implementation MUST reject a `plate_step` or `test_step` whose mode requires source consultation but whose recipe provides none. A `plate_step` or `test_step` in one-shot mode does not consult the source and MAY appear in a recipe with neither.
 
 **`as` modifier is test_step-only (CS-0061).** The `as STRING` modifier is syntactically valid only on `test_step`. A conforming implementation MUST reject `as` appearing after the body of a `cook_step` or `plate_step`, with a diagnostic naming the modifier and identifying it as `test_step`-only.
 
@@ -232,11 +232,11 @@ ALPHA                   ::= "a"…"z" | "A"…"Z" | "_"
 DIGIT                   ::= "0"…"9"
 ```
 
-The `ACCESSOR` production is defined above. The `sigil_placeholder` production may appear inside `output_pattern`, `SHELL_BLOCK_CONTENT`, `SHELL_LINE_CONTENT`, and `plate_test_shell_block_body` text. Resolution is defined by §{xref.resolution} and §{lua.shell-placeholders}; an implementation MAY record byte ranges of placeholder positions in its parse tree to support migration tooling such as `cook --migrate-sigil`.
+The `ACCESSOR` production is defined above. The `sigil_placeholder` production can appear inside `output_pattern`, `SHELL_BLOCK_CONTENT`, `SHELL_LINE_CONTENT`, and `plate_test_shell_block_body` text. Resolution is defined by §{xref.resolution} and §{lua.shell-placeholders}; an implementation MAY record byte ranges of placeholder positions in its parse tree to support migration tooling such as `cook --migrate-sigil`.
 
 **`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting).
 
-**`LUA_IDENT` vs `BARE_IDENTIFIER` (CS-0035).** A `LUA_IDENT` is the strict Lua identifier shape `/[A-Za-z_][A-Za-z0-9_]*/` — narrower than `BARE_IDENTIFIER`, which additionally admits internal dots and hyphens. The `LUA_IDENT` production is used wherever the matched text is bound as a Lua local at load time and therefore must round-trip through the Lua identifier grammar; the `use_declaration`'s `use_name` (§{grammar-appendix.declarations}) is currently the sole site.
+**`LUA_IDENT` vs `BARE_IDENTIFIER` (CS-0035).** A `LUA_IDENT` is the strict Lua identifier shape `/[A-Za-z_][A-Za-z0-9_]*/` — narrower than `BARE_IDENTIFIER`, which additionally admits internal dots and hyphens. The `LUA_IDENT` production is used wherever the matched text is bound as a Lua local at load time and therefore needs to round-trip through the Lua identifier grammar; the `use_declaration`'s `use_name` (§{grammar-appendix.declarations}) is currently the sole site.
 
 **`lua_line` MAY be empty.** The `>` prefix alone (with no following content) is a valid `lua_line` producing an empty Lua expression.
 

@@ -48,7 +48,7 @@ import core //core/lib                  # sigil-anchored to workspace root
 recipe "bundle": "backend.build" "frontend.build" "core.core_lib"
 ```
 
-Here `backend` and `frontend` are tree-relative aliases for sibling Cookfiles below the importer's directory; `core` is anchored at the workspace root via the `//` sigil and may resolve to any directory at or below the workspace root, regardless of where the importing Cookfile sits in the tree. The dependencies `"backend.build"`, `"frontend.build"`, and `"core.core_lib"` refer to recipes in those Cookfiles uniformly; the first segment before the dot selects the import alias, and the remainder is the recipe name in the imported Cookfile.
+Here `backend` and `frontend` are tree-relative aliases for sibling Cookfiles below the importer's directory; `core` is anchored at the workspace root via the `//` sigil and resolves to a directory at or below the workspace root, regardless of where the importing Cookfile sits in the tree. The dependencies `"backend.build"`, `"frontend.build"`, and `"core.core_lib"` refer to recipes in those Cookfiles uniformly; the first segment before the dot selects the import alias, and the remainder is the recipe name in the imported Cookfile.
 
 ### Note 7.2.1
 
@@ -161,6 +161,6 @@ A conforming implementation that maintains a cache of recipe execution results M
 
 2. **`cache_key` uniqueness is per-Cookfile-cache-file scope.** A cache entry's identity within its index file is determined by its `cache_key` (typically derived from the unit's primary output path with optional variant suffix). The `cache_key` does not encode the recipe namespace; cross-Cookfile uniqueness is provided by **per-Cookfile cache locality** (each Cookfile maintains its own cache index file under its own directory).
 
-3. **`cache_meta.input_paths` is importer-relative.** For a unit registered by recipe R in Cookfile C with working directory W, every entry in `cache_meta.input_paths` MUST be a path relative to W. This holds for both same-Cookfile inputs and cross-Cookfile dep inputs; substitution-time path rewriting (§7.3) ensures cross-Cookfile dep paths arrive in importer-relative form. For sigil-anchored imports the path may contain `..` segments; the cache check uses `W.join(input_path)` to locate the file on disk, and `..` segments resolve correctly against W.
+3. **`cache_meta.input_paths` is importer-relative.** For a unit registered by recipe R in Cookfile C with working directory W, every entry in `cache_meta.input_paths` MUST be a path relative to W. This holds for both same-Cookfile inputs and cross-Cookfile dep inputs; substitution-time path rewriting (§7.3) ensures cross-Cookfile dep paths arrive in importer-relative form. For sigil-anchored imports the path can contain `..` segments; the cache check uses `W.join(input_path)` to locate the file on disk, and `..` segments resolve correctly against W.
 
 A conforming implementation MAY layer additional content-addressed artifact storage atop the index files; that layer is outside the scope of this section.
