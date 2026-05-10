@@ -45,3 +45,6 @@ viewer = ["dep:cook-dag-viewer"]
 [dev-dependencies]
 tempfile = "3"
 mockito = "1"
+cargo_metadata = "0.18"
+sha2 = "0.10"
+walkdir = "2"

@@ -11,8 +11,9 @@
 #                       description, tree-sitter.json description). Routes
 #                       through cook_modules/release.lua.
 #   cook release      — cut a Phase 1 host-target release: build cook, package
-#                       via cook-xtask, tag, push to Gitea (mirrors to GitHub),
-#                       and upload artifacts to LioraLabs/cook GitHub release.
+#                       via `cook package`, tag, push to Gitea (mirrors to
+#                       GitHub), and upload artifacts to LioraLabs/cook GitHub
+#                       release.
 #                       Idempotent: re-running on the same VERSION from another
 #                       host appends that host's tarball + checksum line to the
 #                       existing release. Routes through cook_modules/release.lua.
@@ -37,12 +38,28 @@ import standard ./standard
 import ts ./tree-sitter-cook
 
 use release
+use luarocks_phase2
 
 chore bump-claim
     > release.bump_claim(cook.env.VERSION)
 
 chore release
     > release.cut(cook.env.VERSION)
+
+chore build-lua
+    > luarocks_phase2.build_lua()
+
+chore check-exports
+    > luarocks_phase2.check_exports()
+
+chore bundle-luarocks
+    > luarocks_phase2.bundle_luarocks()
+
+chore package: build-lua bundle-luarocks
+    > luarocks_phase2.package(cook.env.VERSION, cook.env.TARGET)
+
+chore gate-m2: package
+    > luarocks_phase2.gate_m2()
 
 # ── Common workflow aliases ────────────────────────────────
 # Forward the most-used commands to their qualified targets so the

@@ -13,7 +13,8 @@
 --                                  tree-sitter.json description).
 --
 --   release.cut(version)         — cut a Phase 1 host-target release:
---                                  build cook, package via cook-xtask,
+--                                  build cook, package via `cook package`
+--                                  (M.package in luarocks_phase2.lua),
 --                                  tag the commit, push to Gitea (which
 --                                  mirrors to GitHub), and upload the
 --                                  host's tarball + a merged checksums
@@ -122,9 +123,10 @@ function M.bump_claim(version)
 end
 
 -- ── release.cut ─────────────────────────────────────────────────────────
--- Build cook for the host triple, package it via cook-xtask, tag the
--- current HEAD, push the tag, and upload the artifact + a merged
--- release-wide checksums file to the LioraLabs/cook GitHub release.
+-- Build cook for the host triple, package it via `cook package`
+-- (cook_modules/luarocks_phase2.lua → M.package), tag the current HEAD,
+-- push the tag, and upload the artifact + a merged release-wide
+-- checksums file to the LioraLabs/cook GitHub release.
 --
 -- The release is created on first call and merged into on subsequent
 -- calls (typically from a different host targeting the same VERSION).
@@ -186,18 +188,28 @@ esac
 TARBALL_NAME="cook-${VERSION}-${OS}-${ARCH}.tar.gz"
 echo "[release.cut] host: ${HOST_TRIPLE} → ${OS}-${ARCH}"
 
-# 4. Build cook (release profile) and package it
-echo "[release.cut] building cook..."
-( cd cli && cargo build --release --bin cook )
+# 4. Package via the cook chore. `cook package` builds cook itself
+#    (cook-cli, release profile, target=${HOST_TRIPLE}), validates symbol
+#    exports against the M2.2 sentinel set, copies the staged tree, and
+#    tarballs into ${DIST}/${TARBALL_NAME} alongside a sibling .sha256.
+#    The chore depends on `build-lua` + `bundle-luarocks`, so the staged
+#    Lua + LuaRocks tree is rebuilt automatically on a clean checkout.
+echo "[release.cut] packaging via cook package..."
 rm -rf "${DIST}"
-( cd cli && cargo xtask package --binary target/release/cook --version "${VERSION}" --target "${HOST_TRIPLE}" )
+cook --set VERSION="${VERSION}" --set TARGET="${HOST_TRIPLE}" package
 test -f "${DIST}/${TARBALL_NAME}" \
     || { echo "[release.cut] ERROR: expected tarball not found at ${DIST}/${TARBALL_NAME}" >&2; exit 1; }
+test -f "${DIST}/${TARBALL_NAME}.sha256" \
+    || { echo "[release.cut] ERROR: expected sha256 not found at ${DIST}/${TARBALL_NAME}.sha256" >&2; exit 1; }
 
-# 5. Extract this host's checksum line for the merged file
-HOST_SUMS_LINE=$(awk -v t="${TARBALL_NAME}" '$2==t {print; exit}' "${DIST}/cook-${VERSION}-checksums.txt")
+# 5. Extract this host's checksum line for the merged file. cook package
+#    writes a per-tarball .sha256 (same `<hash>  <filename>` format that
+#    sha256sum / shasum produce) instead of the consolidated checksums
+#    file that cargo xtask used to produce. The merged file built below
+#    is still the single release-wide source of truth.
+HOST_SUMS_LINE=$(cat "${DIST}/${TARBALL_NAME}.sha256")
 test -n "${HOST_SUMS_LINE}" \
-    || { echo "[release.cut] ERROR: no checksum entry for ${TARBALL_NAME} in xtask output" >&2; exit 1; }
+    || { echo "[release.cut] ERROR: empty .sha256 sibling at ${DIST}/${TARBALL_NAME}.sha256" >&2; exit 1; }
 
 # 6. Tag and push (idempotent: skip if already tagged locally / on origin)
 if git rev-parse --verify --quiet "${VERSION}" >/dev/null; then
