@@ -37,7 +37,6 @@ The cook source tree ships a directory of small example projects:
 
 ```
 cook/examples/
-├── cpp-project/          # full C++ build with tests
 ├── lua-build/            # build Lua from source
 ├── multi-output/         # one command, multiple outputs
 ├── monorepo/             # cross-Cookfile imports
@@ -48,21 +47,10 @@ cook/examples/
 
 Every example has a runnable `Cookfile` you can read and execute. Particularly worth your time:
 
-- **cpp-project** — a fleshed-out example of the `cpp` module in action.
 - **multi-output** — for when one command produces several files at once.
 - **monorepo** — the canonical "many Cookfiles, one umbrella" shape.
 
-## C.3. Cook modules
-
-Blessed modules ship through LuaRocks at `rocks.usecook.com`. Source lives in the `cook-modules` repository on Gitea. To see what's available:
-
-```bash
-cook modules search ""
-```
-
-To learn how to *write* a module, the source of any blessed module is small enough to read end-to-end. Start with `dist` or `release` — they're both ~200 lines of Lua.
-
-## C.4. The DAG viewer
+## C.3. The DAG viewer
 
 `cook dag` is the single best tool for understanding a build you didn't write. Open it with the recipe you want to investigate:
 
@@ -77,17 +65,17 @@ Every node tells you:
 
 If a build "is rebuilding too much" or "isn't rebuilding when I expect", the DAG viewer will tell you why faster than reading the Cookfile.
 
-## C.5. When the Book is wrong
+## C.4. When the Book is wrong
 
 This is a rough first draft. If something in the Book disagrees with the Standard, the Standard is correct and the Book is buggy. Open an issue (or fix it directly) — patches to the Book don't need a CS-NNNN entry, but they do need to land via the same review path as any other change to the cook repo.
 
-## C.6. Reading list, in order
+## C.5. Reading list, in order
 
 If you're picking up Cook for a real project right now:
 
 1. Re-read **chapter 4** (`ingredients` and `cook`) — that's 90% of what you'll write.
 2. Read the [Standard's §4](https://docs.usecook.com/standard/04-recipes/) for the formal rules.
-3. Skim the **cpp-project example** to see a real build.
+3. Skim the **monorepo example** to see how multi-Cookfile composition fits together.
 4. Bookmark `cook --help` and `cook emit-lua`.
 
 That's enough to ship.

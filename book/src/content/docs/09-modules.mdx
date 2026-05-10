@@ -8,7 +8,7 @@ sidebar:
 
 Once a project has more than one Cookfile worth of recipes, you start wanting to reuse things. Cook gives you two complementary tools:
 
-1. **`use`** — pull in a Lua module that *defines new functions* in scope. Good for "I want a `cpp.executable(...)` helper everywhere."
+1. **`use`** — pull in a Lua module that *defines new functions* in scope. Good for "I want a `mylib.something(...)` helper everywhere."
 2. **`import`** — pull in another *Cookfile* under an alias, so its recipes are addressable as `alias.recipe`. Good for monorepos where each subproject has its own Cookfile.
 
 ## 9.1. Modules with `use`
@@ -38,24 +38,15 @@ recipe wave
     greet.shout("world")
 ```
 
-`use greet` binds `greet` as a global table inside the Cookfile's Lua context. Any recipe can call `greet.something(...)`. The bare `alias.fn(args)` form on its own line is the **module-call shorthand** introduced in §9.5 — it desugars to a register-phase (`>>`) call. That matters here because `greet.shout` invokes `cook.add_unit`, which is register-only; calling it via `>` (execute phase) raises `attempt to call a nil value (field 'add_unit')`. *(Standard §6.* and §7.*.)*
+`use greet` binds `greet` as a global table inside the Cookfile's Lua context. Any recipe can call `greet.something(...)`. The bare `alias.fn(args)` form on its own line is the **module-call shorthand** introduced in §9.4 — it desugars to a register-phase (`>>`) call. That matters here because `greet.shout` invokes `cook.add_unit`, which is register-only; calling it via `>` (execute phase) raises `attempt to call a nil value (field 'add_unit')`. *(Standard §6.* and §7.*.)*
 
 Cook resolves `use NAME` by looking for `cook_modules/NAME.lua` in the workspace. If not found, it errors when a recipe that depends on the binding is registered.
 
 ## 9.2. Where modules come from
 
-You write your own modules in `cook_modules/` for project-specific helpers. For shared functionality — language toolchains, package builders, deployment helpers — Cook ships **blessed modules** through LuaRocks.
+You write your own modules in `cook_modules/` for project-specific helpers. That's the path the Book uses everywhere — `use NAME` resolves to `cook_modules/NAME.lua` and you own the source.
 
-```bash
-cook modules install cpp
-cook modules install dist
-cook modules list
-cook modules search build
-```
-
-`cook modules install cpp` adds `cpp` to your `cook.toml` manifest, downloads the rock into `cook_modules/share/lua/5.4/cpp.lua` (the LuaRocks-flavoured destination, per Standard §7.4), and pins it in `cook.lock`. `use cpp` finds it via the bundled Lua's package search path. Hand-written project-local modules live alongside it at `cook_modules/<name>.lua` — same `use` syntax, different on-disk location.
-
-The default index is **rocks.usecook.com**. You can configure additional indexes (private rocks, a mirror) through `cook.toml`'s `[registry]` section. *(See `cook modules install --help` for the full flag set.)*
+For shared functionality across projects, Cook also has a `cook modules` subcommand that manages a LuaRocks-backed module index. The CLI surface (`cook modules install`, `list`, `search`, …) is documented in chapter 10. There aren't any published modules to demo here yet — when there are, each one will get its own chapter showing what it provides and how to use it.
 
 ## 9.3. `import` — composing whole Cookfiles
 
@@ -85,74 +76,25 @@ recipe backend.build
 
 Dotted forms only appear at the *reference* site (in dependency lists, in `$<...>` placeholders) and always route through an `import` alias. Want a `backend.build` recipe? Put `recipe build` in `./backend/Cookfile` and `import backend ./backend` at the top of the parent Cookfile. *(Standard §5.2.1, §7.)*
 
-## 9.4. `cpp` module — a worked example
-
-`cpp` is a blessed module that provides `static_library`, `shared_library`, `executable`, and `compile_commands` helpers. The real Cookfile from `examples/cpp-project/` in the cook repo:
-
-```cook
-use cpp
-
-recipe mathlib
-    cpp.static_library("mathlib", {
-        dir = "src/math/",
-        includes = { "include/" },
-        export_includes = { "include/" },
-        standard = "c++17",
-    })
-
-recipe app: mathlib
-    cpp.executable("app", {
-        sources = { "src/app/main.cpp" },
-        links = { "mathlib" },
-        standard = "c++17",
-    })
-
-recipe test-vec: mathlib
-    cpp.executable("test_vec", {
-        sources = { "tests/test_vec.cpp" },
-        links = { "mathlib" },
-        standard = "c++17",
-    })
-
-recipe test-util: mathlib
-    cpp.executable("test_util", {
-        sources = { "tests/test_util.cpp" },
-        links = { "mathlib" },
-        standard = "c++17",
-    })
-
-recipe run-tests: test-vec test-util
-    ingredients "build/bin/test_*"
-    test { ./$<in> } timeout 30
-
-recipe compile-commands: mathlib app test-vec test-util
-    cpp.compile_commands()
-
-chore clean
-    rm -rf build .cook
-```
-
-Six recipes plus a `clean` chore — full C++ build with library/executable separation, automatic header dependency tracking, two test executables aggregated by `run-tests`, and a `compile_commands.json` generator for editor tooling. The `cpp.*` calls are register-phase: each one adds a few units and their interconnections.
-
-## 9.5. Module-call shorthand
+## 9.4. Module-call shorthand
 
 This:
 
 ```cook
-recipe app
-    cpp.executable("app", { ... })
+recipe wave
+    greet.shout("world")
 ```
 
 is shorthand for:
 
 ```cook
-recipe app
-    >> cpp.executable("app", { ... })
+recipe wave
+    >> greet.shout("world")
 ```
 
 Cook recognises `alias.fn(args)` as a top-level register-phase call inside a recipe body and desugars to `>>` automatically. The shorthand keeps Cookfiles compact when you're calling module helpers; the `>>{ ... }` form is still there when you need register-phase Lua that isn't a single function call. *(Standard §4.11.)*
 
-## 9.6. Building your own module
+## 9.5. Building your own module
 
 Three steps:
 
@@ -162,7 +104,7 @@ Three steps:
 
 Inside a module, you have the full `cook.*` API available — `cook.add_unit`, `cook.step_group`, `cook.env`, the path/fs helpers, everything. The Standard's chapter 6 is the full reference for what's in scope.
 
-## 9.7. Try it
+## 9.6. Try it
 
 Make `cook_modules/copy.lua`:
 
@@ -189,8 +131,8 @@ recipe vendor
     copy.tree("upstream/lib", "build/lib")
 ```
 
-Run `cook vendor`. The first run copies; the second run is cached. (We're using the module-call shorthand from §9.5 — `copy.tree` registers a unit via `cook.add_unit`, which is register-phase. Writing `> copy.tree(...)` would error.)
+Run `cook vendor`. The first run copies; the second run is cached. (We're using the module-call shorthand from §9.4 — `copy.tree` registers a unit via `cook.add_unit`, which is register-phase. Writing `> copy.tree(...)` would error.)
 
-## 9.8. Where to next
+## 9.7. Where to next
 
-The Standard's [§7 Cross-Cookfile composition](https://docs.usecook.com/standard/07-cross-cookfile-composition/) is the formal definition. The Cook Modules repo on Gitea is where blessed modules live — a good source of working code to read.
+The Standard's [§7 Cross-Cookfile composition](https://docs.usecook.com/standard/07-cross-cookfile-composition/) is the formal definition of `use` and `import`.

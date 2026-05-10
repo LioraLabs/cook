@@ -64,18 +64,6 @@ recipe compile
     }
 ```
 
-Or, with the `cpp` module (install once: `cook modules install cpp`):
-
-```cook
-use cpp
-
-recipe app
-    cpp.executable("app", {
-        sources = { "src/**/*.c" },
-        standard = "c11",
-    })
-```
-
 ## A.4. Run every test binary
 
 ```cook
