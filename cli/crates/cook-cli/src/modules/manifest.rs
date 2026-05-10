@@ -30,17 +30,15 @@ pub struct ManifestRegistry {
 
 impl Default for ManifestRegistry {
     /// Default index list when `[registry].indexes` is missing or empty.
-    /// M3.7 (Task 5) populates the constants. Until then, returns an empty
-    /// vec — callers fall back to passing `--server` flags from CLI args.
+    /// rocks.usecook.com is the cook-blessed index (CS-0062 §7 search-path);
+    /// luarocks.org is the public ecosystem fallback.
     fn default() -> Self {
-        // Task 5 replaces the body of this single authoritative impl with:
-        //   Self {
-        //       indexes: vec![
-        //           "https://rocks.usecook.com".to_string(),
-        //           "https://luarocks.org".to_string(),
-        //       ],
-        //   }
-        Self { indexes: Vec::new() }
+        Self {
+            indexes: vec![
+                "https://rocks.usecook.com".to_string(),
+                "https://luarocks.org".to_string(),
+            ],
+        }
     }
 }
 
@@ -200,6 +198,18 @@ cook_smoke = ">= 1.0, < 2.0"
         assert_eq!(
             m.modules.get("cook_smoke").map(String::as_str),
             Some(">= 1.0, < 2.0")
+        );
+    }
+
+    #[test]
+    fn default_registry_has_documented_indexes() {
+        let r = ManifestRegistry::default();
+        assert_eq!(
+            r.indexes,
+            vec![
+                "https://rocks.usecook.com".to_string(),
+                "https://luarocks.org".to_string(),
+            ]
         );
     }
 }

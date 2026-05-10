@@ -37,3 +37,6 @@ docs/superpowers/
 
 # Canopy
 .canopy/
+
+# luarocks pack outputs (Phase 3 cook_smoke fixture and future rocks)
+rocks/*/*-*.src.rock
