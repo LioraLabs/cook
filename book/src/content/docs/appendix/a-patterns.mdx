@@ -114,7 +114,7 @@ cook --set TARGET=arm64-darwin build
 recipe gen
     ingredients "schema.proto"
     cook "build/types.go" "build/types.py" using {
-        protoc --go_out=build --python_out=build $<in>
+        protoc --go_out=build --python_out=build schema.proto
     }
 ```
 

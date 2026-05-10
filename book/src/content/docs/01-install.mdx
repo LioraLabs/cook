@@ -37,29 +37,11 @@ You should see the version banner and a list of subcommands. If `cook: command n
 
 ## 1.3. What got installed
 
-`cook` ships as a self-contained, relocatable tree:
-
-```
-~/.cook/
-├── VERSION
-├── bin/
-│   ├── cook                # the binary you actually invoke
-│   ├── lua                 # bundled Lua 5.4 interpreter
-│   ├── luac                # bundled Lua compiler
-│   └── luarocks            # launcher for the bundled LuaRocks
-├── include/lua5.4/         # Lua headers (rocks build against these)
-├── lib/
-│   ├── liblua5.4.so        # bundled Lua shared library
-│   └── lua/5.4/            # LuaRocks install destination
-└── share/cook/
-    ├── default-rocks-config.lua
-    ├── luarocks-driver.lua
-    └── v0.1.0/             # versioned bundled data
-```
+The install is a self-contained `~/.cook/` tree (the `cook` binary, a bundled Lua 5.4 runtime, and a bundled LuaRocks). You don't usually need to think about its internals — `tree ~/.cook/` if you're curious.
 
 The tree is **relocatable**: at runtime the bundled LuaRocks launcher derives its install root from its own location (exposed as the `COOK_PREFIX` env var) and writes nothing into your home directory beyond this tree. Move `~/.cook/` to `/opt/cook/` and it still works.
 
-You don't usually need to think about this layout. The one time it matters is when you run `cook modules install` (chapter 9) — that command shells out to the bundled LuaRocks, not whatever `lua` and `luarocks` happen to be on your `PATH`.
+The one time the layout matters is when you run `cook modules install` (chapter 9) — that command shells out to the bundled LuaRocks, not whatever `lua` and `luarocks` happen to be on your `PATH`.
 
 <div class="book-tip">
 
@@ -80,7 +62,7 @@ Same command as the install. The script is idempotent — it checks the latest r
 | Path | Owner | What's there |
 |---|---|---|
 | `~/.cook/` (or `$COOK_INSTALL_DIR`) | the install tree | binary + bundled Lua + LuaRocks. Never touched at build time. |
-| `<project>/.cook/cache/` | per project | content-hashed cache for `cook` step outputs. Safe to delete; rebuild repopulates. |
+| `<project>/.cook/cache/` | per project | content-hashed cache for `cook` step outputs. Appears once recipes produce cacheable outputs (a recipe with only bare-shell steps leaves no `cache/`). Safe to delete; rebuild repopulates. |
 | `<project>/.cook/logs/` | per project | per-build log archive (`cook logs` reads these). |
 
 `cook init` writes a `.gitignore` that excludes `<project>/.cook/` for you.

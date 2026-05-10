@@ -110,7 +110,7 @@ recipe build
 
 If you try `recipe backend.build` at the top of a Cookfile, the parser rejects it — namespaced recipes belong behind `import`, not in dotted top-level definitions.
 
-A handful of names are reserved and can't be used as a recipe name: the path-accessor names (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`) and the top-level keywords (`recipe`, `chore`, `config`, `use`, `import`). They belong to path accessors and the grammar; we'll meet them in chapter 7.
+A handful of names are reserved and can't be used as a recipe name: the path-accessor names (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`). They belong to path accessors and the grammar; we'll meet them in chapter 7.
 
 ## 3.6. What runs when you ask for a recipe
 
