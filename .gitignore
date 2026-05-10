@@ -14,6 +14,14 @@ dist/
 !**/.cook/cloud.toml
 build/
 bin/
+# Vendored luarocks ships its own src/bin/ and src/luarocks/build/ trees
+# (and tests/fixtures use bin/ directories). Don't let the project-wide
+# build/ + bin/ ignore rules silently drop them — that's what caused
+# Phase 2 M2.4 to fail on macOS the first time around.
+!cli/vendored/luarocks-*/**/bin/
+!cli/vendored/luarocks-*/**/bin/**
+!cli/vendored/luarocks-*/**/build/
+!cli/vendored/luarocks-*/**/build/**
 
 # IDE
 .idea/
