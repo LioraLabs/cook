@@ -176,7 +176,12 @@ local function ensure_tag(version)
 end
 
 local function reconcile_sums(version, sums_name, host_line, tarball_name)
-    local sums_dir = rstrip(cook.sh("mktemp -d"))
+    -- mktemp under target/ rather than /tmp: CS-0045 sandboxes fs.* in
+    -- chore-step Lua bodies to paths under the project root, so any later
+    -- fs.exists / fs.read / fs.write on the merged-sums file would error
+    -- if the dir lived under /tmp. The bash heredoc this function replaced
+    -- did everything inside the shell so it didn't hit the sandbox.
+    local sums_dir = rstrip(cook.sh("mktemp -d -p target cook-release-cut-XXXXXX"))
     local sums_path = sums_dir .. "/" .. sums_name
 
     local exists = try_sh(string.format(
