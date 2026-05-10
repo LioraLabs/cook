@@ -1,0 +1,10 @@
+use cook_smoke
+use lua-cjson as cjson
+use argparse
+
+recipe smoke
+    > local s = require("cook_smoke")
+    > local out = cjson.encode({hello = "world", value = s.value()})
+    > print(out)
+    > local p = argparse("smoke", "test")
+    > print("argparse loaded:", p ~= nil)

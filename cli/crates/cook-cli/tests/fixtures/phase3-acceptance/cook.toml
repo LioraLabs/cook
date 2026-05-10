@@ -1,0 +1,7 @@
+[registry]
+indexes = ["https://rocks.usecook.com", "https://luarocks.org"]
+
+[modules]
+cook_smoke  = "*"
+"lua-cjson" = ">=2.1"
+argparse    = "*"
