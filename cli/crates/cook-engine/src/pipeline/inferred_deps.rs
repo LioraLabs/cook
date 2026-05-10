@@ -159,7 +159,7 @@ pub fn single_dep_conflicts(cookfile: &Cookfile) -> Vec<String> {
         for dep_ref in &refs {
             if recipe.deps.contains(&dep_ref.recipe_name) {
                 warnings.push(format!(
-                    "recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
+                    "recipe '{}' has both explicit ': {}' and inferred '$<{}>' dependency — conflicting scheduling intent",
                     recipe.name, dep_ref.recipe_name, dep_ref.recipe_name
                 ));
             }
@@ -180,7 +180,7 @@ pub fn workspace_dep_conflicts(
             for inferred_dep in dep_list {
                 if recipe.deps.contains(inferred_dep) {
                     warnings.push(format!(
-                        "recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
+                        "recipe '{}' has both explicit ': {}' and inferred '$<{}>' dependency — conflicting scheduling intent",
                         recipe.name, inferred_dep, inferred_dep
                     ));
                 }
@@ -195,7 +195,7 @@ pub fn workspace_dep_conflicts(
                 for inferred_dep in dep_list {
                     if recipe.deps.contains(inferred_dep) {
                         warnings.push(format!(
-                            "recipe '{}' has both explicit ': {}' and inferred '{{{}}}' dependency — conflicting scheduling intent",
+                            "recipe '{}' has both explicit ': {}' and inferred '$<{}>' dependency — conflicting scheduling intent",
                             qualified_consumer, inferred_dep, inferred_dep
                         ));
                     }
@@ -331,5 +331,31 @@ mod tests {
         let cf = cook_lang::parse("recipe a\n    echo hi\nrecipe b\n    echo bye\n").unwrap();
         let deps = compute_single_inferred_deps(&cf);
         assert!(deps.is_empty(), "expected empty, got: {deps:?}");
+    }
+
+    /// Diagnostic text guard: when a recipe declares both an explicit `: dep`
+    /// and an inferred `$<dep>` body reference for the same name, the warning
+    /// must spell the inferred form using the current `$<...>` sigil syntax,
+    /// not the legacy `{...}` curly-brace form. The book and Standard teach
+    /// `$<...>`; the diagnostic must match.
+    #[test]
+    fn single_dep_conflict_uses_sigil_placeholder_syntax() {
+        let src = "recipe compile\n    cook \"compile.out\" using { echo hi > $<out> }\nrecipe link: compile\n    cook \"link.out\" using { echo $<compile> > $<out> }\n";
+        let cf = cook_lang::parse(src).unwrap();
+        let warnings = single_dep_conflicts(&cf);
+        assert_eq!(warnings.len(), 1, "expected exactly one warning, got: {warnings:?}");
+        let w = &warnings[0];
+        assert!(
+            w.contains("inferred '$<compile>'"),
+            "warning must spell the inferred ref with $<...> sigil syntax, got: {w}"
+        );
+        assert!(
+            !w.contains("'{compile}'"),
+            "warning must not use the legacy {{NAME}} placeholder form, got: {w}"
+        );
+        assert_eq!(
+            w,
+            "recipe 'link' has both explicit ': compile' and inferred '$<compile>' dependency — conflicting scheduling intent"
+        );
     }
 }
