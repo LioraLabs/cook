@@ -45,6 +45,12 @@ fn chore_package_produces_expected_tarball_shape() {
         .expect("host line")
         .to_string();
 
+    // Pre-clean stage + dist dirs so the test exercises the from-clean
+    // codepath. The chore-dep wiring (chore package: build-lua bundle-luarocks)
+    // means each invocation must rebuild the staged tree from scratch.
+    let _ = std::fs::remove_dir_all(repo.join("target/cook-stage"));
+    let _ = std::fs::remove_dir_all(repo.join("cli/target/dist"));
+
     // Build cook explicitly so the chore has a release binary to invoke.
     let build_status = Command::new("cargo")
         .args(["build", "--release", "-p", "cook-cli"])

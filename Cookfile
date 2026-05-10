@@ -55,7 +55,7 @@ chore check-exports
 chore bundle-luarocks
     > luarocks_phase2.bundle_luarocks()
 
-chore package
+chore package: build-lua bundle-luarocks
     > luarocks_phase2.package(cook.env.VERSION, cook.env.TARGET)
 
 chore gate-m2: package

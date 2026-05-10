@@ -385,6 +385,11 @@ function M.package(version, target)
     if not version or version == "" then
         error("package: missing VERSION (pass --set VERSION=vX.Y.Z)")
     end
+    -- VERSION is interpolated into shell commands and tarball filenames;
+    -- restrict to the safe alphabet upstream packaging tools accept.
+    if not version:match("^v?[0-9A-Za-z._%-]+$") then
+        error("package: VERSION '" .. version .. "' must match ^v?[0-9A-Za-z._-]+$")
+    end
     target = (target ~= nil and target ~= "") and target or host_target()
     local os_part, arch_part = target_to_os_arch(target)
     local stage_name = string.format("cook-%s-%s-%s", version, os_part, arch_part)
@@ -640,8 +645,9 @@ chore gate-b
     end
     print("[gate-m2] Part B: OK (cjson encode/decode round-trip)")
 
-    -- Best-effort cleanup. Don't error if rm -rf fails; the tmpdir is
-    -- under /tmp and will be reaped by the OS eventually.
+    -- Best-effort cleanup. The tmpdir is under target/ (CS-0045 confines
+    -- chore-Lua paths to the project root, so /tmp is not usable). If rm
+    -- fails the debris stays under target/ until the next `cargo clean`.
     cook.exec("rm -rf " .. td, 0)
 
     print("[gate-m2] BOTH PARTS PASS on " .. plat)
