@@ -525,6 +525,66 @@ fn refresh_package_path(lua: &mlua::Lua, cwd: &PathBuf) -> mlua::Result<()> {
 // Shell execution (worker variant with prefixed output)
 // ---------------------------------------------------------------------------
 
+/// Maximum bytes per captured stream included in a COOK_CMD_FAILED error
+/// message. Larger outputs are truncated with a marker so a chatty failure
+/// (e.g., a verbose linker spew) doesn't blow up the error string.
+const COOK_CMD_FAIL_STREAM_CAP: usize = 64 * 1024;
+
+/// Lossy-decode a captured stream and apply the cap. Returns an empty
+/// string for empty input so callers can suppress the corresponding
+/// section header.
+fn truncate_captured_stream(stream: &[u8]) -> String {
+    if stream.is_empty() {
+        return String::new();
+    }
+    let head_slice = if stream.len() > COOK_CMD_FAIL_STREAM_CAP {
+        &stream[..COOK_CMD_FAIL_STREAM_CAP]
+    } else {
+        stream
+    };
+    let mut head = String::from_utf8_lossy(head_slice).into_owned();
+    if stream.len() > COOK_CMD_FAIL_STREAM_CAP {
+        if !head.ends_with('\n') {
+            head.push('\n');
+        }
+        head.push_str(&format!(
+            "... ({} bytes truncated)\n",
+            stream.len() - COOK_CMD_FAIL_STREAM_CAP
+        ));
+    }
+    head
+}
+
+/// Build the canonical COOK_CMD_FAILED error string with captured streams
+/// appended on subsequent lines. The first line keeps the pre-existing
+/// `COOK_CMD_FAILED:<line>:<code>:<cmd>` shape so the parser at
+/// `cook-cli/src/pipeline.rs:348` continues to extract line/code (and
+/// flows the trailing captured streams through to the user via the
+/// `command` field of the displayed error).
+pub fn format_cmd_failed(
+    line: usize,
+    code: i32,
+    cmd: &str,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> String {
+    let mut msg = format!("COOK_CMD_FAILED:{line}:{code}:{cmd}");
+    let stdout_str = truncate_captured_stream(stdout);
+    if !stdout_str.is_empty() {
+        msg.push_str("\n--- stdout ---\n");
+        msg.push_str(&stdout_str);
+        if !msg.ends_with('\n') {
+            msg.push('\n');
+        }
+    }
+    let stderr_str = truncate_captured_stream(stderr);
+    if !stderr_str.is_empty() {
+        msg.push_str("--- stderr ---\n");
+        msg.push_str(&stderr_str);
+    }
+    msg
+}
+
 fn run_shell_in_worker(
     cmd: &str,
     wd: &std::path::Path,
@@ -547,9 +607,12 @@ fn run_shell_in_worker(
 
     if !output.status.success() {
         let code = output.status.code().unwrap_or(1);
-        return Err(mlua::Error::runtime(format!(
-            "COOK_CMD_FAILED:{}:{}:{}",
-            line, code, cmd
+        return Err(mlua::Error::runtime(format_cmd_failed(
+            line,
+            code,
+            cmd,
+            &output.stdout,
+            &output.stderr,
         )));
     }
 
@@ -693,7 +756,13 @@ fn execute_shell(
                 WorkResult {
                     id,
                     success: false,
-                    error: Some(format!("COOK_CMD_FAILED:{}:{}:{}", line, code, cmd)),
+                    error: Some(format_cmd_failed(
+                        line,
+                        code,
+                        cmd,
+                        &output.stdout,
+                        &output.stderr,
+                    )),
                     test_output: None,
                     node_name,
                     output_lines,
@@ -1301,5 +1370,49 @@ mod tests {
             exit_code: Some(7),
         };
         assert_eq!(to.exit_code, Some(7));
+    }
+
+    // SHI-188: format_cmd_failed embeds captured stdout/stderr.
+    #[test]
+    fn format_cmd_failed_includes_captured_streams() {
+        let msg = format_cmd_failed(
+            42,
+            1,
+            "cc bad.c",
+            b"compiling bad.c\n",
+            b"bad.c:1: error: undeclared identifier\n",
+        );
+        // Legacy prefix preserved so the pipeline.rs parser still extracts
+        // line/code.
+        assert!(
+            msg.starts_with("COOK_CMD_FAILED:42:1:cc bad.c"),
+            "missing legacy prefix: {msg}"
+        );
+        // Both captured streams flow through.
+        assert!(msg.contains("--- stdout ---\ncompiling bad.c"), "stdout missing: {msg}");
+        assert!(
+            msg.contains("--- stderr ---\nbad.c:1: error: undeclared identifier"),
+            "stderr missing: {msg}"
+        );
+    }
+
+    #[test]
+    fn format_cmd_failed_omits_empty_stream_sections() {
+        let msg = format_cmd_failed(0, 2, "false", b"", b"");
+        assert_eq!(msg, "COOK_CMD_FAILED:0:2:false");
+    }
+
+    #[test]
+    fn format_cmd_failed_truncates_huge_stream() {
+        let huge = vec![b'.'; COOK_CMD_FAIL_STREAM_CAP * 2];
+        let msg = format_cmd_failed(0, 1, "noisy", &huge, b"");
+        assert!(msg.contains("... ("), "expected truncation marker: {}", &msg[..200]);
+        assert!(
+            msg.contains("bytes truncated"),
+            "expected 'bytes truncated' marker: {}",
+            &msg[..200]
+        );
+        // Cap plus a small fixed overhead — well under twice the cap.
+        assert!(msg.len() < COOK_CMD_FAIL_STREAM_CAP + 1024);
     }
 }

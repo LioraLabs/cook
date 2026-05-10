@@ -498,24 +498,6 @@ local function tmpdir()
     return (abs:gsub("\n+$", ""))
 end
 
--- run_logged(label, cmd, log_path) — execute cmd with stdout+stderr
--- redirected to log_path. On failure, read the log and raise with its
--- contents inlined so the operator sees what actually went wrong (cook.exec
--- raises on non-zero exit but does not include captured output in the
--- error). Returns the captured log as a string on success.
-local function run_logged(label, cmd, log_path)
-    local exec_cmd = cmd .. " > " .. log_path .. " 2>&1"
-    local ok, err = pcall(cook.exec, exec_cmd, 0)
-    if not ok then
-        local log = fs.exists(log_path) and fs.read(log_path) or "(no log captured)"
-        error(string.format(
-            "[gate-m2] %s FAILED. Captured output:\n%s\n[gate-m2] underlying error: %s",
-            label, log, tostring(err)
-        ))
-    end
-    return fs.exists(log_path) and fs.read(log_path) or ""
-end
-
 function M.gate_m2()
     local plat = gate_platform()
     print("[gate-m2] platform: " .. plat)
@@ -575,7 +557,7 @@ mkdir -p %s
             cook_prefix, so_path, fixture_c
         )
     end
-    run_logged("Part A cc", cc_cmd, td .. "/part-a-cc.log")
+    cook.exec(cc_cmd, 0)
     if not fs.exists(so_path) then
         error("gate_m2: Part A compile produced no .so at " .. so_path)
     end
@@ -598,11 +580,10 @@ chore gate-a
     fs.write(cookfile_a_path, cookfile_a)
 
     -- Run the staged cook against Cookfile-a and capture stdout.
-    local out_a = run_logged(
-        "Part A cook run",
-        env_prefix .. string.format("%s/bin/cook -f %s gate-a", cook_prefix, cookfile_a_path),
-        td .. "/part-a-cook.log"
-    )
+    local out_a = cook.exec(env_prefix .. string.format(
+        "%s/bin/cook -f %s gate-a 2>&1",
+        cook_prefix, cookfile_a_path
+    ), 0)
     print("[gate-m2] Part A output:\n" .. out_a)
     if not out_a:find("PART_A_VALUE=42", 1, true) then
         error("gate_m2: Part A did not print PART_A_VALUE=42 (cook executable's lua exports may be missing). Output:\n" .. out_a)
@@ -612,18 +593,14 @@ chore gate-a
     -- ── Part B: lua-cjson via bundled luarocks ────────────────────────
     print("[gate-m2] Part B: installing lua-cjson via bundled luarocks")
 
-    -- Install lua-cjson into the proj cook_modules tree. run_logged
-    -- captures the install transcript so failures surface the actual
-    -- luarocks error (the gitignore-dropped `build/` files were debugged
-    -- via this exact mechanism on macOS — keep the safety net).
-    run_logged(
-        "Part B luarocks install",
-        env_prefix .. string.format(
-            "%s/bin/luarocks install lua-cjson --tree %s --server https://luarocks.org",
-            cook_prefix, proj_modules
-        ),
-        td .. "/part-b-luarocks.log"
-    )
+    -- Install lua-cjson into the proj cook_modules tree. cook.exec on
+    -- non-zero exit raises with stdout/stderr inlined post-SHI-188, so
+    -- a luarocks failure here surfaces the real error directly (the
+    -- gitignore-dropped build/ files would have been a one-line diagnosis).
+    cook.exec(env_prefix .. string.format(
+        "%s/bin/luarocks install lua-cjson --tree %s --server https://luarocks.org 2>&1",
+        cook_prefix, proj_modules
+    ), 0)
 
     -- Verify the rock landed where we expect. luarocks --tree <td>/cook_modules
     -- writes shared libs under lib/lua/5.4/.
@@ -656,11 +633,10 @@ chore gate-b
 ]], proj_modules, proj_modules, proj_modules)
     fs.write(cookfile_b_path, cookfile_b)
 
-    local out_b = run_logged(
-        "Part B cook run",
-        env_prefix .. string.format("%s/bin/cook -f %s gate-b", cook_prefix, cookfile_b_path),
-        td .. "/part-b-cook.log"
-    )
+    local out_b = cook.exec(env_prefix .. string.format(
+        "%s/bin/cook -f %s gate-b 2>&1",
+        cook_prefix, cookfile_b_path
+    ), 0)
     print("[gate-m2] Part B output:\n" .. out_b)
     if not out_b:find('"hello":"world"', 1, true) then
         error("gate_m2: Part B encoded output missing \"hello\":\"world\". Output:\n" .. out_b)

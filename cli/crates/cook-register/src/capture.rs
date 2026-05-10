@@ -155,6 +155,57 @@ pub fn register_cook_api_capture(
     Ok(recipes)
 }
 
+/// Maximum bytes per captured stream included in a COOK_CMD_FAILED error
+/// message. Keep in sync with cook-luaotp's `COOK_CMD_FAIL_STREAM_CAP`.
+const COOK_CMD_FAIL_STREAM_CAP: usize = 64 * 1024;
+
+fn truncate_captured_stream(stream: &[u8]) -> String {
+    if stream.is_empty() {
+        return String::new();
+    }
+    let head_slice = if stream.len() > COOK_CMD_FAIL_STREAM_CAP {
+        &stream[..COOK_CMD_FAIL_STREAM_CAP]
+    } else {
+        stream
+    };
+    let mut head = String::from_utf8_lossy(head_slice).into_owned();
+    if stream.len() > COOK_CMD_FAIL_STREAM_CAP {
+        if !head.ends_with('\n') {
+            head.push('\n');
+        }
+        head.push_str(&format!(
+            "... ({} bytes truncated)\n",
+            stream.len() - COOK_CMD_FAIL_STREAM_CAP
+        ));
+    }
+    head
+}
+
+/// Build the canonical COOK_CMD_FAILED error string with captured streams
+/// inlined. Mirrors the helper in cook-luaotp's pool.rs; duplicated here
+/// to avoid creating a cross-crate dep edge for a 30-line formatter. The
+/// first line preserves the legacy `COOK_CMD_FAILED:<line>:<code>:<cmd>`
+/// shape so the parser at `cook-cli/src/pipeline.rs:348` continues to
+/// extract line/code while flowing the trailing captured streams through
+/// to the user.
+fn format_cmd_failed(line: usize, code: i32, cmd: &str, stdout: &[u8], stderr: &[u8]) -> String {
+    let mut msg = format!("COOK_CMD_FAILED:{line}:{code}:{cmd}");
+    let stdout_str = truncate_captured_stream(stdout);
+    if !stdout_str.is_empty() {
+        msg.push_str("\n--- stdout ---\n");
+        msg.push_str(&stdout_str);
+        if !msg.ends_with('\n') {
+            msg.push('\n');
+        }
+    }
+    let stderr_str = truncate_captured_stream(stderr);
+    if !stderr_str.is_empty() {
+        msg.push_str("--- stderr ---\n");
+        msg.push_str(&stderr_str);
+    }
+    msg
+}
+
 fn run_shell_command(
     cmd: &str,
     wd: &std::path::Path,
@@ -177,9 +228,12 @@ fn run_shell_command(
 
     if !output.status.success() {
         let code = output.status.code().unwrap_or(1);
-        return Err(mlua::Error::runtime(format!(
-            "COOK_CMD_FAILED:{}:{}:{}",
-            _line, code, cmd
+        return Err(mlua::Error::runtime(format_cmd_failed(
+            _line,
+            code,
+            cmd,
+            &output.stdout,
+            &output.stderr,
         )));
     }
 
