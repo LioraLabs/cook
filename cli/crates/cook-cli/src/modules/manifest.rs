@@ -23,17 +23,17 @@ pub struct ManifestModules {
     pub modules: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManifestRegistry {
     pub indexes: Vec<String>,
 }
 
-impl ManifestRegistry {
+impl Default for ManifestRegistry {
     /// Default index list when `[registry].indexes` is missing or empty.
     /// M3.7 (Task 5) populates the constants. Until then, returns an empty
     /// vec — callers fall back to passing `--server` flags from CLI args.
-    pub fn default() -> Self {
-        // Task 5 replaces this with:
+    fn default() -> Self {
+        // Task 5 replaces the body of this single authoritative impl with:
         //   Self {
         //       indexes: vec![
         //           "https://rocks.usecook.com".to_string(),
@@ -117,6 +117,7 @@ argparse    = ">=0.7"
         assert_eq!(m.modules.get("cook_smoke").map(String::as_str), Some("*"));
         assert_eq!(m.modules.get("lua-cjson").map(String::as_str), Some("2.1.*"));
         assert_eq!(m.modules.get("argparse").map(String::as_str), Some(">=0.7"));
+        assert_eq!(m.modules.len(), 3);
         assert_eq!(r, ManifestRegistry::default());
     }
 
@@ -181,7 +182,9 @@ indexes = ["https://rocks.usecook.com"]
 cook_smoke = 1
 "#,
         );
-        assert!(parse_cook_toml(f.path()).is_err());
+        let err = parse_cook_toml(f.path()).expect_err("must fail");
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("parse"), "expected parse error, got: {msg}");
     }
 
     #[test]
