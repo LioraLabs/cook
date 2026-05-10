@@ -18,6 +18,10 @@ use crate::{CaptureState, RegisterError, SharedCaptureState};
 pub struct Registry {
     working_dir: PathBuf,
     env_vars: Rc<RefCell<HashMap<String, String>>>,
+    /// Explicit CLI `--set KEY=VALUE` overrides, kept separate so they can be
+    /// re-applied to `cook.env` after the config block runs (CLI wins over
+    /// config-block defaults regardless of authoring style).
+    cli_overrides: HashMap<String, String>,
     export_store: SharedExportStore,
     terminal_outputs: SharedTerminalOutputs,
     selected_config: Option<String>,
@@ -42,6 +46,7 @@ impl Registry {
         Self {
             working_dir,
             env_vars: Rc::new(RefCell::new(env_vars)),
+            cli_overrides: HashMap::new(),
             export_store: Rc::new(RefCell::new(BTreeMap::new())),
             terminal_outputs: Arc::new(Mutex::new(BTreeMap::new())),
             selected_config: None,
@@ -50,6 +55,14 @@ impl Registry {
             alias_qualified_prefixes: BTreeMap::new(),
             env_keyset: EnvKeyset::new(),
         }
+    }
+
+    /// Record explicit `--set KEY=VALUE` overrides. They are re-applied to
+    /// `cook.env` after the config-block dispatcher runs, so a config block's
+    /// `env.KEY = "default"` no longer silently shadows a CLI override.
+    pub fn with_cli_overrides(mut self, overrides: HashMap<String, String>) -> Self {
+        self.cli_overrides = overrides;
+        self
     }
 
     pub fn with_selected_config(mut self, selected_config: Option<String>) -> Self {
@@ -202,6 +215,16 @@ impl Registry {
             // Must happen before the env global is removed so the table is
             // still accessible. freeze() is idempotent under union.
             self.env_keyset.freeze(&env_tbl)?;
+
+            // Re-apply explicit `--set KEY=VALUE` overrides on top of any
+            // values the config block wrote. CLI overrides MUST win over
+            // config-block defaults, but config-block evaluation needs to
+            // observe the override values during dispatch (so derived
+            // expressions like `env.X = env.X .. "/foo"` work) — hence we
+            // run the dispatch first and reassert the overrides after.
+            for (k, v) in &self.cli_overrides {
+                env_tbl.set(k.as_str(), v.as_str())?;
+            }
 
             // Snapshot mutations from cook.env back into shared env_vars.
             {

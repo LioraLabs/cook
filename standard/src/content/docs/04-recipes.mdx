@@ -103,7 +103,7 @@ The glob language itself — which characters are wildcards, whether `**` matche
 ```cook
 recipe lib
     ingredients "src/*.c" "include/*.h" !"src/lua.c" !"src/luac.c"
-    cook "build/libmath.a" using { ar rcs {out} {all} }
+    cook "build/libmath.a" using { ar rcs $<out> $<all> }
 ```
 
 The ingredient set is every `.c` file in `src/` and every `.h` file in `include/`, minus `src/lua.c` and `src/luac.c`.
@@ -164,7 +164,7 @@ A `cook_step` (§{grammar-appendix.steps}, `cook_step`) declares a build output.
 cook "out" using_clause?
 ```
 
-The output is a `STRING` whose interior MAY contain substitution placeholders (e.g. `{in.stem}`, `{in}`, `{out}`). The placeholder language is defined by the Cook Lua API chapter (§{lua.shell-placeholders}) and by §{xref} for cross-recipe references; §{recipes} treats placeholder text as opaque.
+The output is a `STRING` whose interior MAY contain substitution placeholders (e.g. `$<in.stem>`, `$<in>`, `$<out>`). The placeholder language is defined by the Cook Lua API chapter (§{lua.shell-placeholders}) and by §{xref} for cross-recipe references; §{recipes} treats placeholder text as opaque.
 
 A conforming implementation MUST accept all three of the following forms:
 
@@ -181,8 +181,8 @@ After the `using` keyword, the `using`-dispatch order of §{grammar-appendix.ste
 ```cook
 recipe lib
     ingredients "lib/*.c"
-    cook "build/obj/{in.stem}.o" using { gcc -c {in} -o {out} }
-    cook "build/libmath.a" using { ar rcs {out} {all} }
+    cook "build/obj/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/libmath.a" using { ar rcs $<out> $<all> }
 ```
 
 The first `cook` is a one-to-one mapping from each ingredient to one object file. The second is a many-to-one mapping producing a single archive from the collected set. Both use the inline (one-line) `shell_block` form of `using`.
@@ -207,11 +207,11 @@ A `cook_step`'s **iteration mode** is determined by its output pattern list, bef
 
 | Output pattern shape | Mode | Driver | Units produced |
 |---|---|---|---|
-| At least one output contains `{in.ACCESSOR}` (own-input accessor) | **One-to-one over own inputs** | The step's resolved `ingredients` list (§{recipes.ingredients}) | One per input |
-| At least one output contains `{lib.ACCESSOR}` (dep-driven accessor, §{xref.dep-driven}) | **One-to-one over dep outputs** | `lib`'s output list (§{xref.dep-recipe-output}) | One per `lib` output |
+| At least one output contains `$<in.ACCESSOR>` (own-input accessor) | **One-to-one over own inputs** | The step's resolved `ingredients` list (§{recipes.ingredients}) | One per input |
+| At least one output contains `$<lib.ACCESSOR>` (dep-driven accessor, §{xref.dep-driven}) | **One-to-one over dep outputs** | `lib`'s output list (§{xref.dep-recipe-output}) | One per `lib` output |
 | All outputs are literal (no accessor placeholders) | **Many-to-one** (the "one" refers to *one unit*, not one output) | None — one unit runs with the full input list visible | Exactly one |
 
-A conforming implementation MUST reject, with a load-time diagnostic, a `cook_step` whose output patterns mix iteration sources — that is, where two outputs select different drivers (one bears `{in.ACCESSOR}` while another bears `{libmath.ACCESSOR}`, or one bears `{in.ACCESSOR}` while another is literal). All output patterns of a single `cook_step` MUST share one driver.
+A conforming implementation MUST reject, with a load-time diagnostic, a `cook_step` whose output patterns mix iteration sources — that is, where two outputs select different drivers (one bears `$<in.ACCESSOR>` while another bears `$<libmath.ACCESSOR>`, or one bears `$<in.ACCESSOR>` while another is literal). All output patterns of a single `cook_step` MUST share one driver.
 
 The iteration mode determines the number of work units produced; it is orthogonal to the `cook_step`'s declared output count. Each mode admits any number of declared outputs (one or more), as detailed in §{recipes.cook-multi-output}.
 
@@ -220,13 +220,13 @@ The iteration mode determines the number of work units produced; it is orthogona
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/{in.stem}.o" using { gcc -c {in} -o {out} }    # one-to-one over own inputs
-    cook "build/app" using { gcc {all} -o {out} }              # many-to-one (literal output)
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }    # one-to-one over own inputs
+    cook "build/app" using { gcc $<all> -o $<out> }              # many-to-one (literal output)
 ```
 
 ### Note 4.5.1.1
 
-The CS-0022 unification removes `{in}` from the using-clause's contents as a separate iteration trigger. Iteration mode is decided exclusively by the output pattern list. A using-clause that contains `{in}` while the output pattern list is fully literal is rejected at load time — see §{lua.shell-placeholders} for the diagnostic shape.
+The CS-0022 unification removes `$<in>` from the using-clause's contents as a separate iteration trigger. Iteration mode is decided exclusively by the output pattern list. A using-clause that contains `$<in>` while the output pattern list is fully literal is rejected at load time — see §{lua.shell-placeholders} for the diagnostic shape.
 
 ## 4.6. `cook` step — multi-output form [#recipes.cook-multi-output]
 A `cook_step` MAY declare two or more outputs by listing additional `STRING` patterns before the `using` clause:
@@ -247,12 +247,12 @@ recipe generate
     cook "staging/out.js" "staging/out.wasm" using {
         ./fake-generator.sh
         mkdir -p staging
-        cp pkg/out.js {out_1}
-        cp pkg/out.wasm {out_2}
+        cp pkg/out.js $<out_1>
+        cp pkg/out.wasm $<out_2>
     }
 ```
 
-One `cook` step declares two outputs produced together by a sequence of shell commands. The commands are the four non-blank lines of the shell block, in order (§{lexical.brace-blocks}). The placeholders `{out_1}` and `{out_2}` resolve to the unit's first and second declared outputs, in declaration order, per §{lua.shell-placeholders}.
+One `cook` step declares two outputs produced together by a sequence of shell commands. The commands are the four non-blank lines of the shell block, in order (§{lexical.brace-blocks}). The placeholders `$<out_1>` and `$<out_2>` resolve to the unit's first and second declared outputs, in declaration order, per §{lua.shell-placeholders}.
 
 ### Example 4.6.2
 
@@ -295,15 +295,15 @@ A `plate_step` (and a `test_step`, §{recipes.test-step}) is in one of three ite
 
 | Shell-block body contains | Lua-block body references | Mode |
 |---|---|---|
-| `{in}` or `{in.ACCESSOR}` (no `{all}`) | `input` (no `inputs`) | **one-to-one** over source |
-| `{all}` (no `{in}` / `{in.ACCESSOR}`) | `inputs` (no `input`) | **many-to-one** |
+| `$<in>` or `$<in.ACCESSOR>` (no `$<all>`) | `input` (no `inputs`) | **one-to-one** over source |
+| `$<all>` (no `$<in>` / `$<in.ACCESSOR>`) | `inputs` (no `input`) | **many-to-one** |
 | neither | neither | **one-shot** |
 | both | both | **error** (mixed iteration signal) |
 
 The **iteration source** for a `plate_step` (and `test_step`) is the preceding `cook_step`'s output list (flattened across all units it produces), falling back to the recipe's resolved ingredients (§{recipes.ingredients}) if no `cook_step` precedes it. A step in **one-to-one** or **many-to-one** mode MUST have a non-empty source; a step in **one-shot** mode does not consult the source.
 
 A conforming implementation MUST reject:
-- A body that contains both an iteration-item placeholder/binding (`{in}` / `{in.ACCESSOR}` / `input`) and a batched-source placeholder/binding (`{all}` / `inputs`).
+- A body that contains both an iteration-item placeholder/binding (`$<in>` / `$<in.ACCESSOR>` / `input`) and a batched-source placeholder/binding (`$<all>` / `inputs`).
 - A `plate_step` or `test_step` in one-to-one or many-to-one mode whose source is empty.
 
 The Lua identifier scan operates on the same lexical text the brace-balance lexer (§{lexical.brace-blocks}) operates on — strings, comments, and long strings are excluded; only free-identifier-position references count.
@@ -313,10 +313,10 @@ The Lua identifier scan operates on the same lexical text the brace-balance lexe
 ```cook
 recipe install
     ingredients "src/*.c"
-    cook "build/bin/{in.stem}" using { cc {in} -o {out} }
+    cook "build/bin/$<in.stem>" using { cc $<in> -o $<out> }
     plate {
         install -d $PREFIX/bin
-        install -m755 {in} $PREFIX/bin/{in.name}
+        install -m755 $<in> $PREFIX/bin/$<in.name>
     }
 ```
 
@@ -327,13 +327,13 @@ The `plate` step iterates over the preceding `cook` step's output list (one unit
 ```cook
 recipe bundle
     ingredients "src/*.c"
-    cook "build/bin/{in.stem}" using { cc {in} -o {out} }
+    cook "build/bin/$<in.stem>" using { cc $<in> -o $<out> }
     plate {
-        tar -czf build/bundle.tgz {all}
+        tar -czf build/bundle.tgz $<all>
     }
 ```
 
-The body uses `{all}` and no `{in}`; the step is many-to-one and registers exactly one unit, with `{all}` substituted as the space-joined preceding-cook output list.
+The body uses `$<all>` and no `$<in>`; the step is many-to-one and registers exactly one unit, with `$<all>` substituted as the space-joined preceding-cook output list.
 
 ### Note 4.7.1
 
@@ -382,8 +382,8 @@ The `as` modifier is **only valid on `test_step`**. A conforming implementation 
 ```cook
 recipe smoke
     ingredients "tests/*.c"
-    cook "build/{in.stem}" using { cc {in} -o {out} }
-    test { ./{in} } timeout 60
+    cook "build/$<in.stem>" using { cc $<in> -o $<out> }
+    test { ./$<in> } timeout 60
 ```
 
 Each test binary is run with a 60-second time bound, and the step expects each to exit zero (no `should_fail`).
@@ -393,7 +393,7 @@ Each test binary is run with a 60-second time bound, and the step expects each t
 ```cook
 recipe coverage
     ingredients "src/*.c"
-    cook "build/bin/{in.stem}.test" using { cc {in} -o {out} }
+    cook "build/bin/$<in.stem>.test" using { cc $<in> -o $<out> }
     test >{
         for _, bin in ipairs(inputs) do
             cook.sh("./" .. bin .. " --check")

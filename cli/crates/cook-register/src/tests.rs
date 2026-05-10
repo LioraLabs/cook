@@ -443,6 +443,68 @@ fn test_registry_no_dispatcher_no_op() {
     assert_eq!(units.recipe_name, "build");
 }
 
+#[test]
+fn test_cli_overrides_win_over_config_block_defaults() {
+    // Regression: a `config` block's `env.X = "default"` is last-write-wins
+    // per Standard §3.6, but explicit CLI `--set X=Y` overrides MUST still
+    // win. The engine reapplies cli_overrides on cook.env after the
+    // dispatcher returns.
+    let mut initial_env = HashMap::new();
+    initial_env.insert("OPT_LEVEL".to_string(), "0".to_string());
+    initial_env.insert("UNSET_KEY".to_string(), "from_env".to_string());
+
+    let mut cli_overrides = HashMap::new();
+    cli_overrides.insert("OPT_LEVEL".to_string(), "0".to_string());
+
+    let lua_source = r#"
+function __cook_run_config_blocks(selected_name)
+    env.OPT_LEVEL = "3"
+    env.GREETING = "hello"
+end
+
+cook.recipe("build", {}, function() end)
+"#;
+
+    let tmp = TempDir::new().unwrap();
+    let registry = Registry::new(tmp.path().to_path_buf(), initial_env)
+        .with_cli_overrides(cli_overrides);
+    let units = registry.register_recipe(lua_source, "build", None).unwrap();
+
+    // CLI override wins over the config block's `env.OPT_LEVEL = "3"`.
+    assert_eq!(units.env_vars.get("OPT_LEVEL").map(|s| s.as_str()), Some("0"));
+    // Keys not in cli_overrides keep the config-block value.
+    assert_eq!(units.env_vars.get("GREETING").map(|s| s.as_str()), Some("hello"));
+    // Process-env keys not touched by the config block (and not in
+    // cli_overrides) flow through unchanged.
+    assert_eq!(units.env_vars.get("UNSET_KEY").map(|s| s.as_str()), Some("from_env"));
+}
+
+#[test]
+fn test_cli_override_for_undeclared_key_still_applied() {
+    // CLI overrides apply unconditionally, even for keys the config block
+    // doesn't declare. Whether `$<X>` resolution then accepts X is a
+    // separate concern handled by env_keyset / require_env.
+    let initial_env = HashMap::new();
+    let mut cli_overrides = HashMap::new();
+    cli_overrides.insert("ARBITRARY".to_string(), "42".to_string());
+
+    let lua_source = r#"
+function __cook_run_config_blocks(selected_name)
+    env.DECLARED = "yes"
+end
+
+cook.recipe("build", {}, function() end)
+"#;
+
+    let tmp = TempDir::new().unwrap();
+    let registry = Registry::new(tmp.path().to_path_buf(), initial_env)
+        .with_cli_overrides(cli_overrides);
+    let units = registry.register_recipe(lua_source, "build", None).unwrap();
+
+    assert_eq!(units.env_vars.get("ARBITRARY").map(|s| s.as_str()), Some("42"));
+    assert_eq!(units.env_vars.get("DECLARED").map(|s| s.as_str()), Some("yes"));
+}
+
 // -----------------------------------------------------------------------
 // Chore registration tests (CS-0020)
 // -----------------------------------------------------------------------

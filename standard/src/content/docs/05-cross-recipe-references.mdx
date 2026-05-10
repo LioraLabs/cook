@@ -4,7 +4,7 @@ sidebar:
   order: 5
 ---
 # 5. Cross-recipe references [#xref]
-> **Normative.** This chapter defines *name references*: the surface by which one recipe refers to another. It covers three syntactic forms — dep-list references (`recipe A: B`), bare placeholders (`{B}`), and accessor placeholders (`{B.stem}`) — and specifies their resolution, expansion, and effect on the dependency graph. The formal grammar of the placeholders is given in App. A; this chapter specifies their meaning.
+> **Normative.** This chapter defines *name references*: the surface by which one recipe refers to another. It covers three syntactic forms — dep-list references (`recipe A: B`), bare placeholders (`$<B>`), and accessor placeholders (`$<B.stem>`) — and specifies their resolution, expansion, and effect on the dependency graph. The formal grammar of the placeholders is given in App. A; this chapter specifies their meaning.
 
 ## 5.1. Name references [#xref.name-references]
 A **name reference** is the sole mechanism by which a recipe refers to another recipe. A name reference MAY appear in one of three surfaces:
@@ -12,8 +12,8 @@ A **name reference** is the sole mechanism by which a recipe refers to another r
 | Surface | Location | Form |
 |---|---|---|
 | Dep-list | Recipe header `: …` (§{recipes.dep-list}) | `NAME` |
-| Bare placeholder | Any step template string | `{NAME}` |
-| Accessor placeholder | `cook` step output pattern (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) | `{NAME.ACCESSOR}` |
+| Bare placeholder | Any step template string | `$<NAME>` |
+| Accessor placeholder | `cook` step output pattern (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) | `$<NAME.ACCESSOR>` |
 
 All three surfaces share the resolution rules of §{xref.resolution} and the dependency implications of §{xref.dep-implications}. Expansion behaviour differs by surface: dep-list references have no template expansion; bare placeholders expand per §{xref.string-substitution}; accessor placeholders drive iteration per §{xref.dep-driven}.
 
@@ -32,8 +32,15 @@ This is a closed function: every well-lexed placeholder either resolves to a kno
 
 A name reference appearing in a dep-list is resolved against the recipe names in scope with no accessor split: the whole string is the recipe name. Qualified cross-Cookfile dep-list references (`alias.recipe`) follow the resolution rule of §{modules}.
 
-### 5.2.1. Dotted recipe names [#xref.dotted-names]
-Recipe names MAY contain `.` separators. The whole-token match in step (2) above is tried before the accessor-split in step (3), so a dotted recipe name like `backend.build` is matched as a single unit when it exactly equals a recipe name in scope.
+### 5.2.1. Dotted name references [#xref.dotted-names]
+Recipe and chore names declared in a Cookfile MUST NOT contain `.` (§{lexical.identifiers}, App. A.2). A dotted name reference therefore never names a recipe defined in the current Cookfile; it is always either:
+
+- a **qualified cross-Cookfile reference** of the form `alias.recipe`, resolved against the importing Cookfile's `import` aliases per §{modules.qualified-refs}; or
+- a **path-accessor placeholder** of the form `RECIPE.ACCESSOR` (where `ACCESSOR ∈ {stem, name, ext, dir}`), per step (2) of §{xref.resolution}.
+
+A conforming implementation resolves a dotted `$<TOKEN>` by first attempting the path-accessor split (the rightmost dot separates `RECIPE` from `ACCESSOR`); if `ACCESSOR` is one of the four path-accessor names and `RECIPE` resolves to a recipe in scope, the placeholder is an accessor reference. Otherwise the leftmost dot is taken as an import-alias separator and the reference is resolved per §{modules.qualified-refs}. A token that satisfies neither shape MUST produce a load-time diagnostic per step (4) of §{xref.resolution}.
+
+Because no dotted name can resolve to a recipe defined in the current Cookfile, there is no whole-token-vs-split ambiguity to adjudicate.
 
 ### 5.2.2. Reserved final segment [#xref.reserved-segment]
 A recipe's final dot-separated segment MUST NOT equal a path accessor (§{xref.path-accessors}) or any of `in`, `out`, `all`. A conforming implementation MUST reject a Cookfile that declares such a name, at parse time. The rule is enforced by the `check_reserved_recipe_name` production in App. A.
@@ -54,12 +61,12 @@ A **path accessor** is one of the four names `stem`, `name`, `ext`, `dir`. For a
 The set of path accessors is closed: an accessor not in this list is not a path accessor for the purposes of §{xref.resolution} or §{lua.shell-placeholders}. Extending the set is a change to this Standard, not a library change. See rationale B.5.P.
 
 ## 5.4. Dep-driven iteration [#xref.dep-driven]
-Rule. When a `cook` step's output pattern list contains a `{NAME.ACCESSOR}` accessor placeholder naming recipe `lib`, the step's iteration driver is `lib`'s output list, not this recipe's own input list.
+Rule. When a `cook` step's output pattern list contains a `$<NAME.ACCESSOR>` accessor placeholder naming recipe `lib`, the step's iteration driver is `lib`'s output list, not this recipe's own input list.
 
-- **Iteration shape.** The step is a **one-to-one step (§{recipes.cook-single-output})**. For each item `x` in `lib`'s output list (§{xref.dep-recipe-output}), one work unit is registered. Within that unit, the iteration item is `x`, and the dotted-accessor placeholders `{in.ACCESSOR}` refer to `x`. A placeholder `{lib.ACCESSOR}` in the same step refers to the same accessor of `x`.
+- **Iteration shape.** The step is a **one-to-one step (§{recipes.cook-single-output})**. For each item `x` in `lib`'s output list (§{xref.dep-recipe-output}), one work unit is registered. Within that unit, the iteration item is `x`, and the dotted-accessor placeholders `$<in.ACCESSOR>` refer to `x`. A placeholder `$<lib.ACCESSOR>` in the same step refers to the same accessor of `x`.
 - **One driver per step.** A step's output pattern list MAY contain accessor placeholders referring to AT MOST ONE distinct recipe. Multiple occurrences referring to the same `lib` (possibly with different accessors) are permitted and refer to the same driver. Accessor placeholders naming two or more distinct recipes in the same step MUST be rejected with a diagnostic.
-- **Bare `{lib}` in an output pattern.** A conforming implementation MUST reject a `cook` step whose output pattern list contains a bare `{lib}` (no accessor) naming a recipe. `{lib}` has no iteration semantics.
-- **Accessor placeholder in a using-clause body or plate/test body.** A `{lib.ACCESSOR}` appearing in a `cook` `using` `shell_block` body, a `plate` body (shell or Lua), a `test` body (shell or Lua), or a bare `shell_command` MUST be rejected with a diagnostic. Plate and test steps have no output pattern and therefore can never declare a `lib`-driven driver; the rejection is universal in those bodies.
+- **Bare `$<lib>` in an output pattern.** A conforming implementation MUST reject a `cook` step whose output pattern list contains a bare `$<lib>` (no accessor) naming a recipe. `$<lib>` has no iteration semantics.
+- **Accessor placeholder in a using-clause body or plate/test body.** A `$<lib.ACCESSOR>` appearing in a `cook` `using` `shell_block` body, a `plate` body (shell or Lua), a `test` body (shell or Lua), or a bare `shell_command` MUST be rejected with a diagnostic. Plate and test steps have no output pattern and therefore can never declare a `lib`-driven driver; the rejection is universal in those bodies.
 - **String-substitution references coexist.** A step MAY contain any number of `{libX}` bare references (§{xref.string-substitution}) to other recipes, orthogonally to whichever recipe (if any) drives iteration. Those references do not participate in the "one driver" rule.
 
 ### 5.4.1. A recipe's output [#xref.dep-recipe-output]
@@ -82,34 +89,34 @@ recipe protos
     ingredients "proto/*.proto"
 
 recipe compile_protos
-    cook "build/obj/{protos.stem}.pb.cc" using { protoc --cpp_out=build/obj {in} }
-    cook "build/lib/libprotos.a" using { ar rcs {out} {all} }
+    cook "build/obj/$<protos.stem>.pb.cc" using { protoc --cpp_out=build/obj $<in> }
+    cook "build/lib/libprotos.a" using { ar rcs $<out> $<all> }
 ```
 
-The `compile_protos` recipe's first step is dep-driven by `protos`; for each `x` in `protos`'s output list (the resolved globs), one work unit is registered with `{in}` = `x` and `{out}` = `build/obj/STEM(x).pb.cc`. The second step chains on the first (§{recipes.cook-single-output}), not on `protos`.
+The `compile_protos` recipe's first step is dep-driven by `protos`; for each `x` in `protos`'s output list (the resolved globs), one work unit is registered with `$<in>` = `x` and `$<out>` = `build/obj/STEM(x).pb.cc`. The second step chains on the first (§{recipes.cook-single-output}), not on `protos`.
 
 ## 5.5. String-substitution references [#xref.string-substitution]
-Rule. A `{NAME}` bare reference in a `cook` `using` shell block, **`plate` shell block, `test` shell block,** or bare `shell_command` MUST be substituted by the space-joined concatenation of the named recipe's output list (§{xref.dep-recipe-output}). A `{NAME}` reference inside a `using_lua_block` is parsed as Lua syntax (a single-element table containing the local variable `NAME`); cross-recipe references in Lua bodies use `cook.dep_output(NAME)` and `cook.dep_output_list(NAME)` per §{modules}.
+Rule. A `$<NAME>` bare reference in a `cook` `using` shell block, **`plate` shell block, `test` shell block,** or bare `shell_command` MUST be substituted by the space-joined concatenation of the named recipe's output list (§{xref.dep-recipe-output}). A `$<NAME>` reference inside a `using_lua_block` is parsed as Lua syntax (a single-element table containing the local variable `NAME`); cross-recipe references in Lua bodies use `cook.dep_output(NAME)` and `cook.dep_output_list(NAME)` per §{modules}.
 
 - **Empty output.** If the named recipe's output list is empty, the substitution is the empty string. A conforming implementation MUST emit a warning at register time, naming the referring recipe and the referent. The reference itself is not an error.
-- **Lua lowering.** A conforming implementation MAY lower a `{NAME}` reference to `cook.dep_output("NAME")` and a `{NAME.ACCESSOR}` iteration to a `cook.dep_output_list("NAME")`-driven form. The Standard specifies the observable behaviour; the Lua forms are one conforming lowering.
+- **Lua lowering.** A conforming implementation MAY lower a `$<NAME>` reference to `cook.dep_output("NAME")` and a `$<NAME.ACCESSOR>` iteration to a `cook.dep_output_list("NAME")`-driven form. The Standard specifies the observable behaviour; the Lua forms are one conforming lowering.
 
 ### 5.5.1. Example [#xref.string-substitution-example]
 ```cook
 recipe libmath
     ingredients "src/math/*.c"
-    cook "build/obj/math/{in.stem}.o" using { gcc -c {in} -o {out} }
-    cook "build/lib/libmath.a" using { ar rcs {out} {all} }
+    cook "build/obj/math/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/lib/libmath.a" using { ar rcs $<out> $<all> }
 
 recipe app
-    cook "build/bin/app" using { gcc -o {out} main.c {libmath} }
+    cook "build/bin/app" using { gcc -o $<out> main.c $<libmath> }
 ```
 
-The `{libmath}` reference in `app`'s using-string expands at register time to `"build/lib/libmath.a"` (the single-element output of `libmath`).
+The `$<libmath>` reference in `app`'s using-string expands at register time to `"build/lib/libmath.a"` (the single-element output of `libmath`).
 
 ## 5.6. Dependency implications [#xref.dep-implications]
 - **Name reference ⇒ cross-recipe edge.** A name reference to recipe `B` appearing in any step or dep-list of recipe `A` establishes a cross-recipe dependency from `A` to `B`, observable through execution ordering (§{exec}).
-- **Granularity.** A dep-list reference (`recipe A: B`) MUST be interpreted at whole-recipe granularity: every unit of `A` waits for every unit of `B`. A placeholder reference (`{B}` or `{B.ACCESSOR}`) in a specific step of `A` MAY be refined by the implementation to a per-unit edge from that step's unit(s) to the unit(s) of `B` that produced the referenced output items. Coarse edges are always conformant; fine-grained refinement is an optimisation available to placeholder-sourced edges only.
+- **Granularity.** A dep-list reference (`recipe A: B`) MUST be interpreted at whole-recipe granularity: every unit of `A` waits for every unit of `B`. A placeholder reference (`$<B>` or `$<B.ACCESSOR>`) in a specific step of `A` MAY be refined by the implementation to a per-unit edge from that step's unit(s) to the unit(s) of `B` that produced the referenced output items. Coarse edges are always conformant; fine-grained refinement is an optimisation available to placeholder-sourced edges only.
 - **Validation and cycles.** An implementation MUST validate that the named recipe is defined in scope before the execute phase begins, and MUST reject the Cookfile with a cycle diagnostic if the transitive closure of all cross-recipe edges contains a cycle, before executing any work unit.
 - **Only name references create edges.** A string equal to another recipe's output path, appearing as a literal in an `ingredients` line, does NOT establish a cross-recipe edge. An implementation MUST NOT infer an edge from path-string equality. Authors who want "run this after that" without a name reference MUST use an explicit `: dep`. See rationale B.5.N.
 

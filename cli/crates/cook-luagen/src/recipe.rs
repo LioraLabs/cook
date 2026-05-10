@@ -161,13 +161,20 @@ fn drivers_match(
     }
 }
 
-/// Validate that an output pattern contains no bare path accessors.
-/// Bare `$<stem>`, `$<name>`, `$<ext>`, `$<dir>` are rejected per CS-0033 §6.7;
-/// the canonical form is `$<in.stem>` etc.
+/// Validate placeholder forms inside a `cook` step's output pattern.
+///
+/// Rejects:
+/// - Bare path accessors (`$<stem>`, `$<name>`, `$<ext>`, `$<dir>`) — these
+///   were removed per CS-0033 §6.7. Canonical form: `$<in.stem>` etc.
+/// - Bare recipe references (`$<lib>` with no accessor) where `lib` names an
+///   in-scope recipe — Standard §5.4 third bullet: "`$<lib>` has no
+///   iteration semantics" inside an output pattern. The accessor form
+///   (`$<lib.stem>` etc.) is what enables dep-driven iteration.
 fn check_output_pattern_no_bare_accessors(
     pattern: &str,
     recipe: &str,
     line: usize,
+    recipe_names: &BTreeSet<String>,
 ) -> Result<(), CodegenError> {
     for span in sigil::scan(pattern) {
         let inner = span.ident.as_str();
@@ -183,6 +190,23 @@ fn check_output_pattern_no_bare_accessors(
                 });
             }
             _ => {}
+        }
+
+        // Standard §5.4: bare `$<lib>` (no accessor) referring to an
+        // in-scope recipe is rejected in output patterns. There is no
+        // iteration semantics for it here — use `$<lib.stem>` (or another
+        // path accessor) to drive iteration over `lib`'s outputs, or move
+        // the reference into the `using` body for space-joined substitution.
+        if !inner.contains('.') && recipe_names.contains(inner) {
+            return Err(CodegenError::PlaceholderViolation {
+                recipe: recipe.to_string(),
+                message: format!(
+                    "$<{inner}> (bare recipe reference) is not allowed in an output \
+                     pattern; use $<{inner}.stem> (or another path accessor) for \
+                     dep-driven iteration, or move the reference into the `using` body"
+                ),
+                line,
+            });
         }
     }
     Ok(())
@@ -203,9 +227,15 @@ fn validate_accessor_placement(
         for step in &recipe.steps {
             match step {
                 Step::Cook { step: cook_step, line } => {
-                    // Check output patterns for bare path accessors (CS-0022 §6.7).
+                    // Check output patterns for bare path accessors (CS-0022 §6.7)
+                    // and bare recipe references (Standard §5.4).
                     for pattern in &cook_step.outputs {
-                        check_output_pattern_no_bare_accessors(pattern, &recipe.name, *line)?;
+                        check_output_pattern_no_bare_accessors(
+                            pattern,
+                            &recipe.name,
+                            *line,
+                            recipe_names,
+                        )?;
                     }
 
                     // Multi-output coherence check.

@@ -1,0 +1,86 @@
+---
+title: 1. Install cook
+sidebar:
+  order: 1
+---
+
+# 1. Install cook
+
+`cook` is a single Rust binary with a bundled Lua runtime and a bundled LuaRocks. There's no package manager to fight, no system Lua to match against, and no separate "cook server" — it's one executable that you run from your project directory.
+
+## 1.1. Quick install (Linux / macOS)
+
+The fastest way is the install script:
+
+```bash
+curl -fsSL https://getcook.sh | sh
+```
+
+This drops `cook` into `~/.local/bin/cook` (or `$COOK_INSTALL/bin/cook` if you set that). Re-run the script any time you want to update.
+
+If you'd rather grab a tarball by hand, releases live on the [GitHub releases page](https://github.com/LioraLabs/cook/releases). Each release ships a tarball per host target plus matching `.sha256` files.
+
+## 1.2. Verify the install
+
+```bash
+cook --version
+cook --help
+```
+
+You should see the version banner and a list of subcommands. If `cook: command not found`, your shell hasn't picked up `~/.local/bin` yet — open a new terminal or add it to your `PATH`.
+
+## 1.3. What got installed
+
+`cook` ships as a self-contained tree under `~/.local/share/cook/` (or your install prefix):
+
+```
+~/.local/
+├── bin/
+│   └── cook                # the binary you actually invoke
+└── share/cook/
+    ├── lua/                # bundled Lua 5.4 runtime
+    └── luarocks/           # bundled LuaRocks for module installs
+```
+
+You don't usually need to think about this layout. The one time it matters is when you run `cook modules install` (chapter 9) — that command shells out to the bundled LuaRocks, not whatever `lua` and `luarocks` happen to be on your `PATH`.
+
+<div class="book-tip">
+
+**Tip — no system Lua required.** Cookfiles execute Lua, but you don't need a system Lua install. The bundled runtime is what runs your `>` and `>{ ... }` blocks, your modules, and your config files. This is intentional: the version of Lua a Cookfile sees is fixed across machines, so a recipe that works on your laptop works on CI.
+
+</div>
+
+## 1.4. Updating
+
+```bash
+curl -fsSL https://getcook.sh | sh
+```
+
+Same command as the install. The script is idempotent — it checks the latest release, downloads only if you're behind, and replaces the binary atomically.
+
+## 1.5. Uninstalling
+
+`cook` doesn't write outside its install prefix and `~/.cache/cook/` (per-build caches). To remove it cleanly:
+
+```bash
+rm -rf ~/.local/bin/cook ~/.local/share/cook ~/.cache/cook
+```
+
+## 1.6. Try it
+
+Pick a scratch directory, run:
+
+```bash
+mkdir hello-cook && cd hello-cook
+cook init
+cook build
+```
+
+You should see something like:
+
+```
+✓ build (1 unit)
+Hello from Cook!
+```
+
+That's it — you've run your first Cookfile. The next chapter explains exactly what just happened.

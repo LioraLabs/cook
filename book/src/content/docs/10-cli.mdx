@@ -1,0 +1,190 @@
+---
+title: 10. The cook CLI
+sidebar:
+  order: 10
+---
+
+# 10. The cook CLI
+
+So far we've been running `cook <recipe>` and a couple of subcommands like `cook menu`. This chapter is a tour of every subcommand the CLI ships with, what it's for, and which flags are worth knowing.
+
+`cook --help` is always the source of truth — this chapter is the friendly version.
+
+## 10.1. The base invocation
+
+```
+cook [OPTIONS] [COMMAND]
+```
+
+With no command, `cook` runs the recipe named `build`. With a recipe name as the command, it runs that recipe. With a *subcommand* name (`init`, `menu`, `test`, ...) it runs the subcommand instead. To run a recipe whose name *collides* with a subcommand, prefix it with `+`:
+
+```bash
+cook +menu       # run the recipe named "menu"
+cook menu        # the subcommand
+```
+
+### Global options
+
+Worth memorising:
+
+| Flag                | What it does                                           |
+|---------------------|--------------------------------------------------------|
+| `-f, --file FILE`   | Use a different Cookfile (default: `Cookfile`).        |
+| `--root DIR`        | Override workspace-root resolution.                    |
+| `-q, --quiet`       | Suppress Cook's own output (still see command output). |
+| `-v, --verbose`     | Stream per-unit output inline with `[recipe/node]` prefix. |
+| `-j, --jobs N`      | Cap parallelism at N units (default: CPU count).      |
+| `--color MODE`      | `auto`, `always`, `never`.                            |
+| `--output MODE`     | `auto`, `plain`, `json`.                              |
+| `--set KEY=VALUE`   | Override a config-block env var (repeatable).          |
+
+`--output json` is the one to know if you're scripting against `cook` from CI.
+
+## 10.2. `cook init`
+
+```bash
+cook init
+```
+
+Drop a starter `Cookfile` (one trivial `recipe build`) and a `.gitignore` into the current directory. Useful for getting started in seconds. Won't overwrite an existing `Cookfile`.
+
+## 10.3. `cook menu`
+
+```bash
+cook menu
+```
+
+List every recipe and chore in the workspace. Reads the Cookfile (and any imports), prints recipe names and their declared dependencies. Pair it with `fzf` for a recipe picker:
+
+```cook
+chore pick
+    @cook menu | fzf | xargs -r cook
+```
+
+(The `@` is required because a chore body line that starts with the bare word `cook` would otherwise be parsed as the forbidden `cook` step keyword. See chapter 6 §6.6.)
+
+## 10.4. `cook test`
+
+```bash
+cook test
+cook test apps.web
+cook test apps.web.unit
+```
+
+Run every recipe that contains a `test` step. With a *scope* argument, narrow to recipes under that namespace. Output is aggregated per-test: a unit failure doesn't cancel sibling tests, and the summary at the end lists every failure.
+
+## 10.5. `cook dag`
+
+```bash
+cook dag
+cook dag link
+cook dag link release
+```
+
+Open a TUI viewer for the build DAG. Default target is `build`; pass any recipe name. The optional second arg is a config preset to apply. Useful for "wait, why is this recipe rebuilding?" — every node shows its inputs, outputs, and cache status.
+
+Quit with `q`. Inside the TUI, arrow keys navigate, `enter` expands a node, `c` toggles the cache view.
+
+## 10.6. `cook serve`
+
+```bash
+cook serve
+cook serve test
+```
+
+Watch the recipe's ingredient set; re-run on change. This is your fast-iteration loop — equivalent to `make` + `entr`, but built-in. Defaults to the `build` recipe; pass any recipe name.
+
+`cook serve` respects the same `--set` and `--output` flags as everything else, so you can `cook serve test --set DEBUG=1` and have a live test loop with debug output enabled.
+
+## 10.7. `cook logs`
+
+```bash
+cook logs              # list recent build IDs
+cook logs build        # logs from the latest "build" run
+cook logs build:link   # logs from a specific node within build
+```
+
+Cook keeps a per-build log archive under `.cook/logs/`. `cook logs` is your way back into them. With no arguments, it lists recent build IDs and timestamps. With a recipe name, it shows the latest log for that recipe. With `recipe:node`, it scopes to one unit.
+
+Particularly useful when `--quiet` was on during the build and you want to see what happened.
+
+## 10.8. `cook modules`
+
+The module manager. Subcommands:
+
+| Subcommand                   | Effect                                               |
+|------------------------------|------------------------------------------------------|
+| `cook modules install [N…]`  | Install (or add and install) named rocks.            |
+| `cook modules remove N`      | Drop a module from `cook.toml` and prune.            |
+| `cook modules update [N]`    | Bump versions within manifest constraints.           |
+| `cook modules list`          | Read `cook.lock`, print installed rocks.             |
+| `cook modules search QUERY`  | Search configured indexes.                           |
+
+With no names, `cook modules install` realises the locked closure recorded in `cook.lock` — the equivalent of `npm ci` or `cargo install --locked`. Use this in CI.
+
+Useful flags:
+
+| Flag                 | Use                                                  |
+|----------------------|------------------------------------------------------|
+| `--registry URL`     | One-shot prefix for `[registry].indexes`.            |
+| `--non-interactive`  | Error on prompts instead of asking (CI-safe).         |
+| `--accept-trust`     | TOFU consent for new index hosts (CI-safe).           |
+
+## 10.9. `cook emit-lua`
+
+```bash
+cook emit-lua
+cook emit-lua -f some/Cookfile
+```
+
+Print the Lua program your Cookfile compiles to. Read-only; no work runs. This is the *understanding aid* for chapter 8 — when you're not sure what a surface form desugars to, `emit-lua` shows you exactly which `cook.add_unit` calls it produced.
+
+Useful for debugging modules: if a module call doesn't seem to be doing what you expect, run `cook emit-lua` and read the generated registration.
+
+## 10.10. Recipe selectors
+
+Wherever a subcommand takes a recipe name, you can use the dotted form:
+
+```bash
+cook backend.build
+cook test apps.web.unit
+cook logs apps.web:run
+```
+
+Same resolution rules as inside a Cookfile — the literal name wins, then the import-alias split (chapter 9).
+
+## 10.11. Environment overrides
+
+Two ways to pass values into a build:
+
+```bash
+cook --set TARGET=arm64 build               # one-shot
+TARGET=arm64 cook build                     # via shell env (only consulted if declared in a config block)
+```
+
+CLI `--set` always wins (it's reapplied on top of `cook.env` after the config block runs). Process env is used to *initialize* `cook.env` before the config block runs — the config block can read it (`env.TARGET` inside the body sees the process value) but a bare `env.TARGET = "x86_64-linux"` will overwrite it. For env-var-overridable defaults, use the read-modify form: `env.TARGET = env.TARGET or "x86_64-linux"`. Every consulted key is part of the cache key, so swapping `TARGET` cleanly busts only the relevant units.
+
+## 10.12. Cheatsheet
+
+```
+# everyday
+cook                       run the build recipe
+cook RECIPE                run a specific recipe
+cook menu                  list recipes
+cook test                  run all tests
+cook serve                 watch + rerun on change
+
+# investigation
+cook dag                   open the DAG TUI
+cook logs                  show build logs
+cook emit-lua              dump compiled Lua
+
+# modules
+cook modules install       sync from cook.lock
+cook modules install NAME  add and install a rock
+cook modules remove NAME   drop a rock
+cook modules update        bump within manifest constraints
+
+# bootstrap
+cook init                  scaffold a starter Cookfile
+```

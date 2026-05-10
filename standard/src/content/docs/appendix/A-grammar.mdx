@@ -38,7 +38,9 @@ config_body           ::= LUA_SOURCE
 
 **Duplicate `import_declaration` rule.** The `BARE_IDENTIFIER` (local alias) of each `import_declaration` MUST be unique within a Cookfile. A conforming implementation MUST reject duplicate import names.
 
-**Reserved recipe name segments.** The identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env` are reserved and MUST NOT appear as the final dot-separated segment of any recipe name. A conforming implementation MUST reject a recipe whose name ends with one of these segments (e.g., `backend.stem` is rejected; `backend.build` is accepted). Additionally, `env` MUST NOT appear as the **first** dot-separated segment of a recipe name (e.g., `recipe env.foo` is rejected). This reserves the `env.` prefix for the explicit env-var-lookup form.
+**Recipe / chore declaration names — no dots.** The `name` of a `recipe_header` or `chore_header` MUST NOT contain `.` (dot). A conforming implementation MUST reject a top-level declaration `recipe NAME` or `chore NAME` whose `NAME` (whether bare or quoted) contains a dot, at parse time. Diagnostic: `recipe name 'NAME': dotted recipe names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing`. Namespacing across Cookfiles is achieved exclusively via `import_declaration` (§{modules.import-declaration}); a dotted reference appearing in a `dependency_list` or in a `$<...>` placeholder resolves through an `import` alias per §{modules.qualified-refs}.
+
+**Reserved recipe name identifiers.** A recipe or chore declaration name MUST NOT equal one of the reserved identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`. (Combined with the no-dots rule above, this is the entirety of the reserved-name constraint at the declaration site.) The same eight identifiers MUST NOT appear as the *final* dot-separated segment of a `dependency_list` entry or a `$<...>` placeholder, and `env` MUST NOT appear as the *first* dot-separated segment of either. This reserves the `env.` prefix for the explicit env-var-lookup form (§{xref.env-namespace}).
 
 ## A.3. Recipes [#grammar-appendix.recipes]
 ```ebnf
@@ -141,9 +143,9 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
 
 **Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before `using`, the `using_clause` resolves per the unrestricted production above — the bare-`STRING` arm having been removed in CS-0022, the form `cook "a" "b" using STRING` is rejected by the production itself rather than by a separate well-formedness rule.
 
-**Iteration coherence (CS-0022).** All `STRING` output patterns of a single `cook_step` MUST share an iteration source: every output is literal (no accessor placeholder), or every output bears `{in.ACCESSOR}` (own-input driver), or every output bears `{lib.ACCESSOR}` for the same recipe `lib` (dep-driven driver). A conforming implementation MUST reject a `cook_step` whose output patterns mix sources, with a diagnostic naming the offending outputs. See §{recipes.iteration-mode}.
+**Iteration coherence (CS-0022).** All `STRING` output patterns of a single `cook_step` MUST share an iteration source: every output is literal (no accessor placeholder), or every output bears `$<in.ACCESSOR>` (own-input driver), or every output bears `$<lib.ACCESSOR>` for the same recipe `lib` (dep-driven driver). A conforming implementation MUST reject a `cook_step` whose output patterns mix sources, with a diagnostic naming the offending outputs. See §{recipes.iteration-mode}.
 
-**Plate/test mode coherence (CS-0024).** A `plate_step` or `test_step` body MUST NOT contain both an iteration-item placeholder/binding and a batched-source placeholder/binding. For shell-block bodies, this means a body MUST NOT contain both `{in}` (or `{in.ACCESSOR}`) and `{all}`. For Lua-block bodies, the body MUST NOT reference both `input` and `inputs` (free-identifier scan, ignoring strings/comments/long-strings per §{lexical.brace-blocks}). A conforming implementation MUST reject a body that violates this rule with a diagnostic naming both tokens. See §{recipes.iteration-mode-plate-test}.
+**Plate/test mode coherence (CS-0024).** A `plate_step` or `test_step` body MUST NOT contain both an iteration-item placeholder/binding and a batched-source placeholder/binding. For shell-block bodies, this means a body MUST NOT contain both `$<in>` (or `$<in.ACCESSOR>`) and `$<all>`. For Lua-block bodies, the body MUST NOT reference both `input` and `inputs` (free-identifier scan, ignoring strings/comments/long-strings per §{lexical.brace-blocks}). A conforming implementation MUST reject a body that violates this rule with a diagnostic naming both tokens. See §{recipes.iteration-mode-plate-test}.
 
 **Plate/test source presence (CS-0024).** A `plate_step` or `test_step` in one-to-one or many-to-one mode MUST have a non-empty iteration source — that is, the recipe MUST contain a preceding `cook_step` whose output list is non-empty, or an `ingredients_step` whose resolved path list is non-empty. A conforming implementation MUST reject a `plate_step` or `test_step` whose mode requires source consultation but whose recipe provides none. A `plate_step` or `test_step` in one-shot mode does not consult the source and MAY appear in a recipe with neither.
 
@@ -205,22 +207,7 @@ BRACE_BALANCED        ::= /* text in which `{` and `}` counted outside of
 MODULE_CALL_TEXT      ::= /* see § 4.11 */
 ```
 
-**Placeholder shape (`{NAME.ACCESSOR}` and related).** Placeholders embedded in `cook_step` output patterns and `SHELL_BLOCK_CONTENT` bodies are not separately tokenised by the Cookfile grammar — they are raw character sequences inside a `STRING` or `SHELL_BLOCK_CONTENT` production. Their well-formedness is validated at codegen time per §{lua.shell-placeholders} (CS-0022 §3.8). For reference, the recognised forms are:
-
-```ebnf
-placeholder           ::= "{" placeholder_body "}"
-placeholder_body      ::= "in"                                  /* own-input list */
-                       | "out"                                  /* single output */
-                       | "out_" /[1-9][0-9]*/                  /* Nth multi-output */
-                       | "all"                                  /* all own inputs */
-                       | BARE_IDENTIFIER                        /* bare recipe ref */
-                       | BARE_IDENTIFIER "." ACCESSOR           /* dotted accessor */
-ACCESSOR              ::= "stem" | "name" | "ext" | "dir"
-```
-
-This production is informative; the normative rules are in §{lua.shell-placeholders}.
-
-**Sigil placeholder shape (`$<IDENT>`).** The strict sigil placeholder form is normatively defined in §{lexical.placeholders}. Its production is reproduced here for reference in the context of surrounding grammar productions:
+**Placeholder shape.** Placeholders embedded in `cook_step` output patterns and `SHELL_BLOCK_CONTENT` bodies are not separately tokenised by the Cookfile grammar — they are raw character sequences inside a `STRING` or `SHELL_BLOCK_CONTENT` production. Their well-formedness is validated at codegen time per §{lua.shell-placeholders}. The single recognised form is the strict sigil `$<IDENT>`, normatively defined in §{lexical.placeholders} (CS-0033). Its production is reproduced here for reference in the context of surrounding grammar productions:
 
 ```ebnf
 sigil_placeholder       ::= "$<" placeholder_ident ">"

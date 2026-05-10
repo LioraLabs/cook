@@ -1,0 +1,166 @@
+---
+title: 3. Recipes & dependencies
+sidebar:
+  order: 3
+---
+
+# 3. Recipes & dependencies
+
+Most build systems revolve around the dependency graph — `B depends on A` means "do A first, then B." Cook is no different. The colon in a recipe header is how you say it.
+
+## 3.1. The colon
+
+```cook
+recipe a
+    echo "a"
+
+recipe b: a
+    echo "b"
+
+recipe c: a b
+    echo "c"
+```
+
+`b` depends on `a`. `c` depends on both. The dependencies after the colon are recipe names, separated by whitespace. Bare or quoted, mix as you like:
+
+```cook
+recipe c: "a" b
+    echo same as above
+```
+
+Run `cook c`. You'll see `a`, then `b`, then `c`. Cook walked the graph, ran each recipe at most once, and respected the order.
+
+## 3.2. Parallel where it can be
+
+Now try this:
+
+```cook
+recipe slow1
+    sleep 1
+    echo slow1 done
+
+recipe slow2
+    sleep 1
+    echo slow2 done
+
+recipe both: slow1 slow2
+    echo both done
+```
+
+`cook both` finishes in about one second, not two. `slow1` and `slow2` have no dependency on each other, so Cook runs them in parallel. The default parallelism is the number of CPU cores; override it with `-j` if you need to:
+
+```bash
+cook -j 1 both     # serial
+cook -j 8 both     # cap at 8
+```
+
+## 3.3. Cycles are an error
+
+```cook
+recipe a: b
+    echo a
+
+recipe b: a
+    echo b
+```
+
+`cook a` rejects this with a cycle diagnostic before any work runs — Cook detects it during DAG construction. There's no clever ordering Cook could pick; cycles are always a bug. *(Standard §4.2, §8.4.)*
+
+## 3.4. Default recipe and overriding it
+
+We mentioned this in chapter 2: bare `cook` runs the recipe named `build`. There's nothing magical about the name — it's just the convention. If your project doesn't have a `build` recipe, bare `cook` is an error. If it does, that's what runs.
+
+To run a different recipe, name it: `cook lint`, `cook ship`, `cook deploy`.
+
+If your recipe name *collides* with a `cook` subcommand — `menu`, `test`, `serve`, `init`, `dag`, `logs`, `modules`, `chore`, etc. — the subcommand wins. Prefix the recipe name with `+` to disambiguate:
+
+```bash
+cook +menu       # run the recipe called "menu"
+cook menu        # list recipes (the subcommand)
+cook +test       # run the recipe called "test"
+cook test        # run the test runner (the subcommand)
+```
+
+## 3.5. Namespacing across Cookfiles
+
+A recipe declared in a single Cookfile has a single, undotted name — `build`, `compile`, `ship`. Dots aren't allowed in the name at the declaration site. The standard form for grouping recipes under a namespace is `import`:
+
+```cook
+# /Cookfile
+import backend  ./backend
+import frontend ./frontend
+
+recipe ship: backend.build frontend.build
+    echo deploying
+```
+
+```cook
+# /backend/Cookfile
+recipe build
+    echo build the backend
+```
+
+```cook
+# /frontend/Cookfile
+recipe build
+    echo build the frontend
+```
+
+`backend.build` in `ship`'s dependency list is a *qualified reference*: the segment before the leftmost dot picks the import alias, the rest is the recipe name in the imported Cookfile. We come back to `import` in detail in chapter 9.
+
+If you try `recipe backend.build` at the top of a Cookfile, the parser rejects it — namespaced recipes belong behind `import`, not in dotted top-level definitions.
+
+A handful of names are reserved and can't be used as a recipe name: the path-accessor names (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`) and the top-level keywords (`recipe`, `chore`, `config`, `use`, `import`). They belong to path accessors and the grammar; we'll meet them in chapter 7.
+
+## 3.6. What runs when you ask for a recipe
+
+Cook's contract: when you run `cook X`, every recipe `X` transitively depends on runs to completion *before* any work for `X` itself starts. Within a single recipe, units inside the same step group can run in parallel; across recipes, the dependency edge is a hard barrier.
+
+```cook
+recipe lib
+    echo step 1 of lib
+    echo step 2 of lib
+
+recipe app: lib
+    echo step 1 of app
+```
+
+`lib`'s two steps both finish before `app` begins. *(Standard §8.4 covers this in detail.)*
+
+## 3.7. Dependencies on imported recipes
+
+Once you start splitting a project across multiple Cookfiles (chapter 9), you'll write things like:
+
+```cook
+import backend ./backend
+
+recipe ship: backend.build
+    echo deploying
+```
+
+The dotted form `backend.build` is a *qualified reference*. Resolution: split on the leftmost dot, look up `backend` as an `import` alias, and find `build` in the imported Cookfile. There's no ambiguity with a local recipe named `backend.build` because dotted recipe names aren't allowed at the declaration site (see §3.5). *(Standard §5.2, §7.)*
+
+## 3.8. Try it
+
+Make this Cookfile:
+
+```cook
+recipe download
+    echo "fetching things..."
+
+recipe extract: download
+    echo "unpacking..."
+
+recipe install: extract
+    echo "installing..."
+
+recipe doctor
+    echo "checking system..."
+
+recipe ship: install doctor
+    echo "shipping!"
+```
+
+Run `cook ship`. Predict the order before you do — then check yourself. (`download → extract → install`, with `doctor` somewhere in there in parallel, then `ship` at the end.)
+
+Use `cook dag ship` to open the **DAG viewer**: a TUI that shows the graph for a recipe. We'll come back to `dag` in chapter 10 when we tour the CLI.

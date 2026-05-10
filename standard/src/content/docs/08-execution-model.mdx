@@ -20,7 +20,7 @@ A conforming implementation MAY register and execute different recipes concurren
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/{in.stem}.o" using { gcc -c {in} -o {out} }
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
 ```
 
 Register phase: the recipe body runs once. The `cook` step expands to a step group containing one work unit per matched source file. No `gcc` process is spawned.
@@ -71,7 +71,7 @@ An implementation MAY permit narrowly-scoped capture-mode side effects that part
 recipe build
     >> local flag = cook.env.OPTIMISE or "-O0"
     ingredients "src/*.c"
-    cook "build/{in.stem}.o" using { gcc -c {in} -o {out} }
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
 ```
 
 The `>>` line runs during the register phase (`>>` is the inline-Lua prefix; see §{recipes.lua-steps}). It reads `cook.env` — a value established before the register phase began — and assigns a local visible to subsequent declarative-region steps. The `cook` step then records its work units. No subprocess is spawned during registration.
@@ -107,8 +107,8 @@ The Cookfile surface syntax in §{recipes} produces step groups and sequential u
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/{in.stem}.o" using { gcc -c {in} -o {out} }
-    cook "build/app" using { gcc -o {out} {all} }
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/app" using { gcc -o $<out> $<all> }
 ```
 
 The first `cook` step expands to one step group containing one compile unit per source file; the compiles MAY run in parallel. The second `cook` step is a distinct step group. The barrier rule forces every compile to complete before the link unit begins.
@@ -164,7 +164,7 @@ After an interactive unit completes, execution resumes under the normal rules: n
 
 ```cook
 recipe dev
-    cook "build/app" using { gcc main.c -o {out} }
+    cook "build/app" using { gcc main.c -o $<out> }
     @./build/app
     echo "exited"
 ```
@@ -212,7 +212,7 @@ An implementation's artifact-store write path MUST treat a `put` of bytes that c
 ```cook
 recipe build
     ingredients "src/main.c"
-    cook "build/main.o" using { gcc -c {all} -o {out} }
+    cook "build/main.o" using { gcc -c $<all> -o $<out> }
 ```
 
 On the first run, `build/main.o`'s unit executes and its completion MAY be recorded. On a subsequent run with an unchanged `src/main.c` and unchanged command text, an implementation MAY skip the unit. If the command text changes or `src/main.c` changes, the unit MUST re-run.
@@ -284,7 +284,7 @@ The exact wording and formatting of diagnostics are implementation-defined (§{i
 ```cook
 recipe build
     ingredients "src/main.c"
-    cook "app using { gcc {all} -o {out} }
+    cook "app using { gcc $<all> -o $<out> }
 ```
 
 The unterminated output-path string in the `cook` step (`"app` has no closing `"`) is a syntactic error (§{lexical.strings}). The implementation MUST report this diagnostic and MUST NOT proceed to register-phase evaluation; any semantic issue that would have been detected later — for example, a missing dependency — MUST NOT be reported for this run.

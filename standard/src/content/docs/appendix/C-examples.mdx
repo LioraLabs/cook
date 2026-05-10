@@ -74,14 +74,14 @@ This example exercises the four surfaces of cross-recipe references defined in �
 ```cook
 recipe libmath
     ingredients "src/math/*.c"
-    cook "build/obj/math/{in.stem}.o" using { gcc -c {in} -o {out} }
-    cook "build/lib/libmath.a" using { ar rcs {out} {all} }
+    cook "build/obj/math/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/lib/libmath.a" using { ar rcs $<out> $<all> }
 
 recipe app
-    cook "build/bin/app" using { gcc -o {out} main.c {libmath} }
+    cook "build/bin/app" using { gcc -o $<out> main.c $<libmath> }
 ```
 
-In `app`, the `{libmath}` placeholder is a bare name reference (§{xref.string-substitution}). It expands at register time to the single-element output list of `libmath`, i.e., `"build/lib/libmath.a"`. The resulting `app` step's command is `gcc -o build/bin/app main.c build/lib/libmath.a`.
+In `app`, the `$<libmath>` placeholder is a bare name reference (§{xref.string-substitution}). It expands at register time to the single-element output list of `libmath`, i.e., `"build/lib/libmath.a"`. The resulting `app` step's command is `gcc -o build/bin/app main.c build/lib/libmath.a`.
 
 ### Dep-driven iteration
 
@@ -90,10 +90,10 @@ recipe protos
     ingredients "proto/*.proto"
 
 recipe compile_protos
-    cook "build/obj/{protos.stem}.pb.cc" using { protoc --cpp_out=build/obj {in} }
+    cook "build/obj/$<protos.stem>.pb.cc" using { protoc --cpp_out=build/obj $<in> }
 ```
 
-In `compile_protos`, the `{protos.stem}` placeholder in the output pattern (§{xref.dep-driven}) is an accessor placeholder. It names `protos` as the iteration driver. The step registers one work unit per item in `protos`'s output list — which, because `protos` has no cook step, is the resolved glob `proto/*.proto` passed through (§{xref.dep-recipe-output}). For each resolved path `x`, `{in}` = `x`, `{stem}` = `path.stem(x)`, and `{protos.stem}` = `path.stem(x)`.
+In `compile_protos`, the `$<protos.stem>` placeholder in the output pattern (§{xref.dep-driven}) is an accessor placeholder. It names `protos` as the iteration driver. The step registers one work unit per item in `protos`'s output list — which, because `protos` has no cook step, is the resolved glob `proto/*.proto` passed through (§{xref.dep-recipe-output}). For each resolved path `x`, `$<in>` = `x`, `$<in.stem>` = `path.stem(x)`, and `$<protos.stem>` = `path.stem(x)`.
 
 ### Ingredients-only recipe referenced by another
 
@@ -117,9 +117,9 @@ recipe protos
     ingredients "proto/*.proto"
 
 recipe server
-    cook "build/obj/{protos.stem}.o" using { gcc -c {in} -I{core}/include -o {out} }
+    cook "build/obj/$<protos.stem>.o" using { gcc -c $<in> -I$<core>/include -o $<out> }
 ```
 
-The `server` step is dep-driven by `protos` (output pattern contains `{protos.stem}`). The `{core}` in the shell block is a bare string-substitution reference (§{xref.string-substitution}) to `core`'s single output. The step thus depends on both `protos` (per-unit, driving iteration) and `core` (whole-recipe or refined per-unit, per §{xref.dep-implications}) — two distinct cross-recipe edges from a single step.
+The `server` step is dep-driven by `protos` (output pattern contains `$<protos.stem>`). The `$<core>` in the shell block is a bare string-substitution reference (§{xref.string-substitution}) to `core`'s single output. The step thus depends on both `protos` (per-unit, driving iteration) and `core` (whole-recipe or refined per-unit, per §{xref.dep-implications}) — two distinct cross-recipe edges from a single step.
 
 Exercises: §{xref} (full chapter), §{recipes.ingredients} (ingredients), §{recipes.cook-single-output} (one-to-one cook step), §{exec.cross-recipe-ordering} (cross-recipe ordering).

@@ -34,6 +34,10 @@ pub enum LexError {
     ReservedTripleArrow { line: usize },
     #[error("line {line}: 'use' name '{name}' is not a valid Lua identifier (must match /^[A-Za-z_][A-Za-z0-9_]*$/; '-' and '.' are not permitted)")]
     InvalidUseName { name: String, line: usize },
+    #[error("line {line}: recipe name '{name}': dotted recipe names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing")]
+    DottedDeclaredRecipeName { name: String, line: usize },
+    #[error("line {line}: chore name '{name}': dotted chore names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing")]
+    DottedDeclaredChoreName { name: String, line: usize },
 }
 
 const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "all", "env"];
@@ -150,7 +154,14 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
         {
             let rest = trimmed["recipe".len()..].trim();
             let (name, after_name) = parse_name(rest, line_num)?;
+            // Reserved-segment check first so the existing, more-specific
+            // diagnostics (e.g. "'env' is a reserved word") still fire for
+            // names like `env.foo` instead of being shadowed by the generic
+            // dotted-name rejection below.
             check_reserved_recipe_name(&name, line_num)?;
+            if name.contains('.') {
+                return Err(LexError::DottedDeclaredRecipeName { name, line: line_num });
+            }
 
             let deps = if let Some(after_colon) = after_name.strip_prefix(':') {
                 parse_names(after_colon.trim(), line_num)?
@@ -169,6 +180,9 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
             let rest = trimmed["chore".len()..].trim();
             let (name, after_name) = parse_name(rest, line_num)?;
             check_reserved_recipe_name(&name, line_num)?;
+            if name.contains('.') {
+                return Err(LexError::DottedDeclaredChoreName { name, line: line_num });
+            }
 
             let deps = if let Some(after_colon) = after_name.strip_prefix(':') {
                 parse_names(after_colon.trim(), line_num)?
@@ -790,16 +804,41 @@ recipe "build"
     }
 
     #[test]
-    fn test_reserved_name_in_dotted_recipe_rejected() {
-        let input = "recipe backend.stem\n    echo hi\n";
-        let result = crate::parse(input);
-        assert!(result.is_err(), "expected error for recipe named 'backend.stem'");
+    fn test_dotted_declared_recipe_name_rejected() {
+        let input = "recipe backend.build\n    echo hi\n";
+        let result = tokenize(input);
+        match result {
+            Err(LexError::DottedDeclaredRecipeName { ref name, line: 1 }) if name == "backend.build" => {}
+            other => panic!("expected DottedDeclaredRecipeName for 'backend.build', got: {:?}", other),
+        }
     }
 
     #[test]
-    fn test_non_reserved_dotted_name_accepted() {
-        let input = "recipe backend.build\n    echo hi\n";
-        let result = crate::parse(input);
-        assert!(result.is_ok(), "expected ok for recipe named 'backend.build', got: {:?}", result.err());
+    fn test_dotted_declared_recipe_name_quoted_rejected() {
+        let input = "recipe \"backend.build\"\n    echo hi\n";
+        let result = tokenize(input);
+        match result {
+            Err(LexError::DottedDeclaredRecipeName { ref name, line: 1 }) if name == "backend.build" => {}
+            other => panic!("expected DottedDeclaredRecipeName for quoted 'backend.build', got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_dotted_declared_chore_name_rejected() {
+        let input = "chore tools.fmt\n    echo hi\n";
+        let result = tokenize(input);
+        match result {
+            Err(LexError::DottedDeclaredChoreName { ref name, line: 1 }) if name == "tools.fmt" => {}
+            other => panic!("expected DottedDeclaredChoreName for 'tools.fmt', got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_undotted_recipe_with_dotted_dep_accepted() {
+        // The no-dots rule is at the *declaration* site; dotted dep references
+        // remain legal because they resolve through `import` aliases.
+        let input = "recipe ship: backend.build frontend.build\n    echo deploy\n";
+        let result = tokenize(input);
+        assert!(result.is_ok(), "expected ok for undotted recipe with dotted deps, got: {:?}", result.err());
     }
 }

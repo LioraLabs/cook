@@ -1,0 +1,1 @@
+$<lib> (bare recipe reference) is not allowed in an output pattern

@@ -1,0 +1,94 @@
+---
+title: 5. plate & test
+sidebar:
+  order: 5
+---
+
+# 5. `plate` and `test`
+
+The `cook` step produces files. Two more step kinds — `plate` and `test` — let you *run* the things `cook` produced.
+
+## 5.1. `plate` — run a thing
+
+A `plate` step takes the recipe's current input list and runs a shell or Lua block against it. It doesn't declare outputs; it doesn't transform files. Its job is "do something with each of these inputs."
+
+```cook
+recipe demo
+    ingredients "examples/*.sh"
+    plate { sh $<in> }
+```
+
+For each `examples/*.sh` ingredient, `sh examples/foo.sh` runs. One unit per input.
+
+By default, `plate` units run in parallel (one per input) the same way a one-to-one `cook` step does. *(Standard §4.7 for the grammar; §8.3 for the parallelism rule.)*
+
+## 5.2. `plate` after a `cook` step
+
+The interesting case: `plate` inherits the *preceding `cook` step's outputs* as its inputs (or, if no `cook` step has run yet, the recipe's resolved ingredients). Chain them:
+
+```cook
+recipe build
+    ingredients "src/*.c"
+    cook "build/$<in.stem>" using { gcc $<in> -o $<out> }
+    plate { ./$<in> --selftest }
+```
+
+`build` compiles each `.c` to an executable, then runs each executable. The `cook` step's outputs become the next step's inputs.
+
+## 5.3. `test` — like `plate`, but for tests
+
+`test` is `plate`'s sibling. It runs a body against the inputs, but with a few test-specific affordances:
+
+- A failure in one `test` unit doesn't cancel the others — Cook collects all failures and reports them together.
+- Output is captured per-unit so you get a clean per-test summary.
+- The `cook test` subcommand selects test recipes specifically.
+
+```cook
+recipe run-tests
+    ingredients "build/test_*"
+    test { ./$<in> } timeout 30
+```
+
+The `timeout` clause caps each unit at 30 seconds. *(Standard §4.8.)*
+
+## 5.4. `cook test` — the subcommand
+
+```bash
+cook test                # run every recipe that contains a test step
+cook test apps.web       # scope to recipes under the apps.web namespace
+cook test apps.web.unit  # scope to a specific full recipe name
+```
+
+`cook test` is the first specialized subcommand we've seen. Underneath, it's running test recipes the same way `cook X` runs any recipe — it just filters to recipes that contain `test` steps and aggregates output for human reading. The optional positional is a *recipe scope* (a namespace prefix or a full recipe name), not a substring match. We'll see the rest of these subcommands in chapter 10.
+
+## 5.5. `plate` vs `test` — when to use which
+
+Use `plate` when:
+- You're running something that's part of a build (a code generator, a copy step, a linter that gates the build).
+- A failure should *stop the build*.
+
+Use `test` when:
+- You're running tests, and you want all failures reported even if one fails.
+- You want `cook test` to find this recipe.
+
+Mechanically they're very similar; the difference is intent and aggregation.
+
+## 5.6. Try it
+
+```cook
+recipe compile
+    ingredients "src/*.c"
+    cook "build/$<in.stem>" using { gcc $<in> -o $<out> }
+
+recipe smoke: compile
+    ingredients "build/*"
+    plate { ./$<in> </dev/null }
+
+recipe unit: compile
+    ingredients "build/test_*"
+    test { ./$<in> } timeout 5
+```
+
+Run `cook smoke` — every binary executes in parallel; sibling units already in flight finish, then the recipe is reported FAILED if any unit exited non-zero. (For abort-on-first-failure, use `cook test --fail-fast` against a `test` recipe — there's no `--fail-fast` for `plate`.)
+
+Run `cook test` — only `unit` runs (it has the `test` step), and Cook reports a per-binary pass/fail summary.

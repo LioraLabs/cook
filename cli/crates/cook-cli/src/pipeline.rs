@@ -482,8 +482,14 @@ pub fn cmd_run(globals: &Globals, recipe_name: &str, config: Option<&str>) -> Re
         let inferred_deps = pipeline::compute_single_inferred_deps(&parsed.cookfile);
         print_dep_conflicts(&pipeline::single_dep_conflicts(&parsed.cookfile));
 
-        let registries =
-            pipeline::build_single_registries(cookfile_dir, env_vars, parsed.lua_source, config);
+        let registries = pipeline::build_single_registries(
+            cookfile_dir,
+            env_vars,
+            &globals.set,
+            parsed.lua_source,
+            config,
+        )
+        .map_err(pipeline_error_to_cook_error)?;
 
         run_with_progress(globals, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
     }
@@ -981,8 +987,14 @@ pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), Cook
             .map_err(pipeline_error_to_cook_error)?;
 
         let recipe_infos = pipeline::build_single_recipe_infos(&parsed.cookfile);
-        let registries =
-            pipeline::build_single_registries(cookfile_dir, env_vars, parsed.lua_source, config);
+        let registries = pipeline::build_single_registries(
+            cookfile_dir,
+            env_vars,
+            &globals.set,
+            parsed.lua_source,
+            config,
+        )
+        .map_err(pipeline_error_to_cook_error)?;
         let inferred_deps = pipeline::compute_single_inferred_deps(&parsed.cookfile);
         print_dep_conflicts(&pipeline::single_dep_conflicts(&parsed.cookfile));
 

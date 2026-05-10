@@ -1,0 +1,199 @@
+---
+title: 7. Substitutions & paths
+sidebar:
+  order: 7
+---
+
+# 7. Substitutions & paths
+
+We've been using placeholders like `$<in>`, `$<out>`, `$<in.stem>`, and `$<compile>` without explaining the rules. This chapter is the rules.
+
+## 7.1. The placeholder sigil
+
+Every Cookfile placeholder has the shape:
+
+```
+$<IDENT>
+```
+
+A literal `$<`, an identifier (optionally with a dot accessor or `_N` suffix), and a literal `>`. The sigil was chosen specifically so it never collides with shell syntax — `$VAR`, `${VAR}`, `{a,b,c}` brace expansion, `awk '{print $1}'`, JSON literals all start with something other than `$<` and pass through Cook as literal text.
+
+If you see `$<X` *without* a closing `>`, or with a non-identifier character before the close, Cook does **not** treat it as a placeholder — it's just literal shell text. The lexer doesn't search forward past a non-identifier byte hunting for a closing `>`. *(Standard §2.11.)*
+
+## 7.2. The four kinds of placeholder
+
+Inside an output pattern, a `using { ... }` body, a `plate`/`test` body, or a bare shell command, a `$<TOKEN>` placeholder resolves in priority order:
+
+1. **Builtin placeholders** — the per-step accessors like `$<in>`, `$<out>`, `$<all>`, `$<out_1>`.
+2. **Recipe references** — `$<lib>` expands to the recipe `lib`'s outputs; `$<lib.stem>` is the same with a path accessor applied.
+3. **Declared environment variables** — `$<HOST>` resolves to `cook.env["HOST"]` *if and only if* `HOST` was declared in a `config` block.
+4. **Hard error** — anything else fails at load time with a diagnostic.
+
+There is no silent fallthrough. If you typo a placeholder, you get a clear error pointing at the line. *(Standard §5.2.)*
+
+## 7.3. Builtin placeholders
+
+| Placeholder       | Meaning                                              | Where it works                |
+|-------------------|------------------------------------------------------|-------------------------------|
+| `$<in>`           | The current input (in iterating steps)               | `using` body, `plate`, `test` |
+| `$<out>`          | The current output                                   | `using` body                  |
+| `$<all>`          | Every input on one line, space-separated              | `using` body                  |
+| `$<out_1>`, `$<out_2>`, ... | Nth declared output                       | `using` body, multi-output `cook` |
+| `$<in.stem>`      | Stem of the current input (any path accessor)        | output pattern, `using` body  |
+
+`$<in>`, `$<out>`, `$<all>` are the ones you'll write 90% of the time.
+
+## 7.4. Path accessors as placeholders
+
+Anywhere you can write `$<TOKEN>`, you can write `$<TOKEN.ACCESSOR>` for one of the four path accessors:
+
+- `stem` — file name without extension
+- `name` — full file name
+- `ext` — extension
+- `dir` — directory part
+
+```cook
+recipe rename
+    ingredients "src/*.txt"
+    cook "build/$<in.stem>.md" using { cat $<in> > $<out> }
+```
+
+Accessors apply to the resolved path on the left of the dot. `$<in.stem>` = stem of the current input. `$<lib.dir>` = directory of recipe `lib`'s output.
+
+The four accessors are a closed set. Adding a fifth is a change to the Cook language, not a library decision. *(Standard §5.3.)*
+
+## 7.5. Recipe references — the bare form
+
+Inside a step body, a placeholder that *names another recipe* expands to that recipe's outputs:
+
+```cook
+recipe compile
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+
+recipe link: compile
+    cook "build/app" using { gcc $<compile> -o $<out> }
+```
+
+`$<compile>` in the link body expands to every output of the `compile` recipe, space-separated, exactly as if you'd written `$<all>` referring to compile's outputs. *(Standard §5.5.)*
+
+You can have any number of bare recipe references in a single step. They don't drive iteration — they're just text substitution. The dependency graph picks up the edge automatically (referencing `$<compile>` inside `link` makes `link` depend on `compile`).
+
+<div class="book-tip">
+
+**Tip — don't double up.** If you reference `$<compile>` inside `link`, *don't* also write `recipe link: compile`. Cook treats the placeholder as the dep edge, and writing both forms triggers a `conflicting scheduling intent` warning. Use the explicit colon list only when you depend on a recipe whose outputs you don't substitute into your command.
+
+</div>
+
+## 7.6. Driver iteration — `$<lib.stem>` in an output pattern
+
+We met this in chapter 4. Recap:
+
+```cook
+recipe buildtests
+    ingredients "tests/*.c"
+    cook "build/$<in.stem>" using { gcc $<in> -o $<out> }
+
+recipe runtests
+    cook "results/$<buildtests.stem>.txt" using {
+        ./$<in> > $<out>
+    }
+```
+
+When an *output pattern* contains `$<lib.ACCESSOR>`, that recipe drives iteration. One unit per output of `lib`.
+
+The rules:
+- Only one driver per step.
+- Bare `$<lib>` (no accessor) in an output pattern is a hard error.
+- `$<lib.ACCESSOR>` is forbidden in `using` bodies, `plate` bodies, `test` bodies, and bare shell commands — those have no output pattern and so can't have a driver.
+- Placeholder identifiers don't allow hyphens. A recipe named `build-tests` is legal, but `$<build-tests.stem>` won't parse — the lexer stops at the hyphen (Standard §2.11). For drivers, keep the recipe name hyphen-free or use dots: `buildtests`, or `build.tests`.
+
+*(Standard §5.4.)*
+
+## 7.7. Environment variables — declare them
+
+Cook treats `$<KEY>` as an environment-variable lookup *only if* you've declared `KEY` in a config block:
+
+```cook
+config
+    env.TARGET = "x86_64-linux"
+    env.OPT_LEVEL = "3"
+
+recipe build
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using {
+        gcc -c -O$<OPT_LEVEL> --target=$<TARGET> $<in> -o $<out>
+    }
+```
+
+A few things to note:
+- `config` is a **load-phase** block. It runs once, before any recipe registers.
+- Inside the config body, `env` is an alias for `cook.env`. Both names work, both refer to the same table.
+- A declared env var is consulted via `cook.env`. If the user passes `--set OPT_LEVEL=0` on the CLI, that overrides whatever the config block wrote — CLI overrides win unconditionally.
+- Process env is used to **initialize** `cook.env` *before* the config block runs. The config block can read it (`env.X` inside the body sees the process value) but a bare assignment like `env.OPT_LEVEL = "3"` overwrites it. To opt into "use process env if set, otherwise default," write the read-modify form: `env.OPT_LEVEL = env.OPT_LEVEL or "3"`. The chapter's plain `env.OPT_LEVEL = "3"` is the simple "always default" shape; the read-modify form is the "env-var-overridable default" shape. Both are common; pick per variable.
+- Declared env vars are part of the cache key — change `--set OPT_LEVEL=0` and Cook rebuilds. *(Standard §5.2 step 3.)*
+
+A `$<KEY>` placeholder for a *non-declared* env var is a hard error. This is deliberate: typos and accidental shell-variable leaks were the #1 source of build flakiness in earlier prototypes, so the Standard pins the rule down.
+
+## 7.8. Recipes shadow env vars
+
+If a recipe and an env var share a name, the recipe wins. Cook emits a warning naming both. Don't do this on purpose — it's a footgun.
+
+## 7.9. Distinguishing Cook placeholders from shell variables
+
+This trips people up coming from `make` or shell-heavy build systems. Inside a `using { ... }` body, two things look superficially similar:
+
+```cook
+recipe demo
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using {
+        echo "compiling $<in> for ${TARGET:-x86_64} as $USER"
+        gcc -c $<in> -o $<out>
+    }
+```
+
+Cook will only substitute `$<in>`, `$<in.stem>`, and `$<out>`. Everything else — `${TARGET:-x86_64}`, `$USER` — passes through to the shell verbatim. That's deliberate: you can use shell parameter expansion, command substitution, brace expansion, and Cook placeholders side-by-side without one form swallowing the other.
+
+If you want a Cook config var inside the same command, declare it and use `$<TARGET>`:
+
+```cook
+config
+    env.TARGET = "x86_64-linux"
+
+recipe demo
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using {
+        gcc -c $<in> --target=$<TARGET> -o $<out>
+    }
+```
+
+The Cook-managed `TARGET` is now part of the cache key. A shell `$TARGET` would not be.
+
+## 7.10. Try it
+
+Make a `Cookfile`:
+
+```cook
+config
+    env.GREETING = "hello"
+
+recipe greet
+    ingredients "Cookfile"
+    plate { echo "$<GREETING>, world" }
+
+recipe shout: greet
+    echo "shout sees: $<greet>"
+```
+
+Run:
+
+```bash
+cook greet
+cook --set GREETING=hi greet
+cook shout
+```
+
+Observe:
+- The first run uses the default `"hello"`.
+- The second uses `"hi"` from `--set` and busts the cache (CLI overrides win over config-block defaults — see §7.7).
+- `shout` references `$<greet>`, which expands to `greet`'s output list. Note: in the current implementation the `plate` passthrough output is the empty list, so `$<greet>` substitutes to the empty string; the Standard says it should be the input list (`Cookfile`). Treat that mismatch as an open implementation bug while the audit lands.

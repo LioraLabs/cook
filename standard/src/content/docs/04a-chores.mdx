@@ -94,8 +94,8 @@ A chore MAY depend on a recipe (run a build, then post-process) and a recipe MAY
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/{in.stem}.o" using { cc -c {in} -o {out} }
-    cook "build/app" using { cc {all} -o {out} }
+    cook "build/$<in.stem>.o" using { cc -c $<in> -o $<out> }
+    cook "build/app" using { cc $<all> -o $<out> }
 
 chore play: build
     ./build/app

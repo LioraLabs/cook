@@ -114,7 +114,7 @@ A unit that consumes input files which are not statically known until execute ti
 cook.add_unit({
     inputs  = { "src/a.c" },
     output  = "build/a.o",
-    command = "gcc -c {in} -MMD -MF .cook/deps/a.d -o {out}",
+    command = "gcc -c $<in> -MMD -MF .cook/deps/a.d -o $<out>",
     discovered_inputs = {
         from   = ".cook/deps/a.d",
         format = "make",

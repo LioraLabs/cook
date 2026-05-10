@@ -6,7 +6,10 @@
 //!   3. Caller-supplied `KEY=VALUE` overrides (e.g. CLI `--set` flags)
 //!
 //! Cookfile-defined variables live inside `config ... end` Lua blocks
-//! and are applied at runtime, not as part of this static layering.
+//! and are applied at runtime. Layer (3) is reapplied to `cook.env` after
+//! the config block runs, so explicit CLI overrides win over config-block
+//! defaults regardless of how the block was authored. See
+//! `parse_cli_overrides` for the helper that exposes layer (3) separately.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -43,17 +46,31 @@ pub fn resolve_env(
     }
 
     // Layer 3: caller-supplied KEY=VALUE overrides (split on first '=')
+    for (k, v) in parse_cli_overrides(overrides)? {
+        env.insert(k, v);
+    }
+
+    Ok(env)
+}
+
+/// Parse `KEY=VALUE` override strings (typically the CLI `--set` flags) into
+/// a map. This is layer (3) of [`resolve_env`] in isolation; the engine needs
+/// it as a separate input so it can re-apply CLI overrides on top of any
+/// values a `config` block writes to `cook.env`.
+pub fn parse_cli_overrides(
+    overrides: &[String],
+) -> Result<HashMap<String, String>, PipelineError> {
+    let mut map = HashMap::new();
     for set_arg in overrides {
         if let Some(eq_pos) = set_arg.find('=') {
             let key = set_arg[..eq_pos].to_string();
             let value = set_arg[eq_pos + 1..].to_string();
-            env.insert(key, value);
+            map.insert(key, value);
         } else {
             return Err(PipelineError::InvalidSet(set_arg.clone()));
         }
     }
-
-    Ok(env)
+    Ok(map)
 }
 
 #[cfg(test)]

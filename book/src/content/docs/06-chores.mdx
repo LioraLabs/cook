@@ -1,0 +1,113 @@
+---
+title: 6. Chores
+sidebar:
+  order: 6
+---
+
+# 6. Chores
+
+Recipes are about *building* things — they have ingredients, outputs, caches, and a dependency graph. But every project also has *chores*: clean the build dir, run the formatter, open the docs in a browser. They aren't builds; trying to give them a cache key is silly because they have no meaningful inputs and outputs.
+
+Cook's `chore` keyword is for exactly this.
+
+## 6.1. The shape of a chore
+
+```cook
+chore clean
+    rm -rf build .cook
+```
+
+That's it. `chore` is a top-level keyword like `recipe`. The body is a sequence of shell (or Lua) steps; there are no ingredients, no `cook` step, no caching. Run it like a recipe:
+
+```bash
+cook clean
+```
+
+A chore is essentially a "recipe-shaped command runner." *(Standard §4a.)*
+
+## 6.2. Why a separate keyword?
+
+You could imagine modelling chores as recipes that just happen to skip ingredients. Two reasons Cook gives them their own keyword:
+
+1. **No caching, ever.** The Standard requires every step in a chore body to run with `cache = false`. There's no surprise where running `cook clean` does nothing because Cook decided the inputs hadn't changed.
+2. **Default-interactive shell.** Shell commands inside a chore body are *interactive by default* — they get a real TTY, no per-line capture or buffering. `chore play` running `fzf` works exactly the way you'd want. Inside a recipe, you'd need to write `@fzf` (chapter 8). In a chore, `fzf` on its own does the right thing. *(Standard §4a.3.)*
+
+## 6.3. What a chore body can contain
+
+A chore body MAY have:
+- Shell commands (default-interactive)
+- `@`-prefixed shell commands (always interactive — but already the default here)
+- Lua lines (`>`) and Lua blocks (`>{ ... }`)
+- Inline Lua (`>>`, `>>{ ... }`) for register-time logic
+- Module calls (`alias.fn(...)`)
+
+A chore body MUST NOT have:
+- `ingredients`
+- `cook`
+- `plate`
+- `test`
+
+If you find yourself wanting one of those four in a chore, you wanted a recipe. *(Standard §4a.2.)*
+
+## 6.4. Dependencies between chores and recipes
+
+Chores can depend on recipes; recipes can depend on chores. Use the same colon syntax:
+
+```cook
+recipe build
+    ingredients "src/*.c"
+    cook "build/main" using { gcc $<all> -o $<out> }
+
+chore play: build
+    ./build/main
+```
+
+`cook play` builds first, then drops you into the binary. Note that `play` is a chore, not a recipe — it runs interactively, no cache, no parallel-with-itself.
+
+## 6.5. Chores in the wild
+
+Real-world chores you'll write a lot:
+
+```cook
+chore clean
+    rm -rf build .cook target
+
+chore fmt
+    cargo fmt
+
+chore lint
+    cargo clippy --all-targets
+
+chore docs
+    cargo doc --open
+
+chore release
+    > release.cut(cook.env.VERSION)
+```
+
+That last one calls a Lua function from a module — the `release` import. Modules are chapter 9.
+
+## 6.6. Try it
+
+```cook
+recipe build
+    ingredients "src/*.c"
+    cook "build/main" using { gcc $<all> -o $<out> }
+
+chore run: build
+    ./build/main
+
+chore clean
+    rm -rf build .cook
+
+chore fzf-recipe
+    @cook menu | fzf
+```
+
+Run each:
+- `cook build` — builds.
+- `cook run` — builds (cached), then runs the binary interactively.
+- `cook fzf-recipe` — runs `cook menu` and pipes it into `fzf` for a picker.
+- `cook clean` — wipes everything.
+
+> **Why the `@` in `fzf-recipe`?** A chore body line that starts with the bare word `cook` is parsed as the (forbidden) `cook` step keyword and rejected. The `@` prefix forces the line to be classified as an interactive shell step instead, so the parser sees one shell step whose contents happen to invoke the `cook` binary.

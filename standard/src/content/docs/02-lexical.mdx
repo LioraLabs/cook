@@ -49,24 +49,27 @@ BARE_IDENTIFIER ::= /[A-Za-z_][A-Za-z0-9_.\-]*/
 
 The first character MUST be an ASCII letter (`A`–`Z`, `a`–`z`) or underscore (`_`); each subsequent character MUST be an ASCII letter, ASCII digit, underscore, hyphen (`-`), or dot (`.`). A conforming implementation MUST reject any other character. Unicode letters and digits are NOT part of `BARE_IDENTIFIER`.
 
-`BARE_IDENTIFIER` is used in three syntactic roles, each with its own supplementary constraints documented where that role is defined:
+`BARE_IDENTIFIER` is used in four syntactic roles, each with its own supplementary constraints documented where that role is defined:
 
 | Role                                   | Supplementary constraint                                                      |
 |---|---|
 | Import alias (`import_declaration`)    | MUST be unique across imports within the Cookfile (App. A.2).                 |
-| Recipe / dependency name               | Final dot-separated segment MUST NOT be a reserved segment (§{lexical.keywords}, App. A.2). |
+| Recipe / chore name (declaration site) | MUST NOT contain `.` (App. A.2). The name is a single undotted segment; namespacing is achieved via `import` (§{modules.import-declaration}), not via dotted recipe names. |
+| Dependency name / cross-recipe reference | MAY contain `.`. A dotted dependency name resolves through an `import` alias per §{modules.qualified-refs}; the segment before the leftmost `.` selects the import, the remainder is the recipe name in the imported Cookfile. |
 | First segment of a `module_call`       | MUST NOT contain `.` or `-` (App. A.4).                                       |
 
-Where the grammar admits either a `BARE_IDENTIFIER` or a double-quoted `STRING` (for example, a recipe name or a dependency), the two forms are equivalent in meaning; the quoted form exists to admit names that would not otherwise match `BARE_IDENTIFIER`.
+Where the grammar admits either a `BARE_IDENTIFIER` or a double-quoted `STRING` (for example, a recipe name or a dependency), the two forms are equivalent in meaning; the quoted form exists to admit names that would not otherwise match `BARE_IDENTIFIER`. The "no dots" restriction on declared recipe and chore names applies to both forms — a quoted recipe name MUST also be undotted.
 
 ### Example 2.3.1
 
 ```cook
-recipe backend.build: lib setup
-    gcc -o lib.o lib.c
+import backend ./services/backend
+
+recipe ship: backend.build lib setup
+    echo deploying
 ```
 
-`backend.build` is a valid `BARE_IDENTIFIER` (dot is an interior character). `lib` and `setup` are valid `BARE_IDENTIFIER` dependency names. The final segment `build` is not a reserved recipe segment (§{lexical.keywords}), so the header is accepted.
+`ship`, `lib`, and `setup` are valid undotted recipe / dependency names. `backend.build` is a valid dotted *dependency* name: it is not a recipe defined here, but a qualified reference to the `build` recipe of the Cookfile imported under the alias `backend`. By contrast, a top-level declaration `recipe backend.build` would be rejected at parse time — namespaced recipes live behind `import`, not in dotted top-level definitions.
 
 ## 2.4. Keywords [#lexical.keywords]
 The Cookfile language reserves eight identifiers contextually, each in a single role: the final dot-separated segment of a recipe name. Outside that role the identifiers are ordinary tokens.
@@ -82,7 +85,7 @@ The Cookfile language reserves eight identifiers contextually, each in a single 
 | `all`                  | Final segment of a recipe name   |
 | `env`                  | Final **or first** segment of a recipe name |
 
-A conforming implementation MUST reject a recipe whose name's final dot-separated segment is a reserved recipe segment (App. A.2). A reserved recipe segment MAY appear as a non-final segment — for example, `backend.build` is valid because `build` is the final segment, whereas `backend.stem` is rejected because `stem` is the final segment. The identifier `env` is further restricted: it also MUST NOT appear as the first segment, so `env.foo` is rejected at parse time. This restriction reserves the `env.` prefix for the explicit env-var-lookup form and eliminates the resolution ambiguity that would otherwise arise between `$<env.X>` (env-var lookup) and an accessor on a recipe named `env`.
+A conforming implementation MUST reject a *placeholder identifier* (§{lexical.placeholders}) or a *dependency name* whose final dot-separated segment is a reserved recipe segment (App. A.2). The reserved-segment rule is contextual to the resolution surface — it constrains what dotted reference forms are well-formed, not the lexical class of `BARE_IDENTIFIER` itself. (At a top-level recipe declaration site, the name is undotted by §{lexical.identifiers}, so the reserved-segment rule reduces to "the recipe name MUST NOT equal one of the reserved identifiers": `recipe stem`, `recipe env`, `recipe in`, etc., are rejected.) The identifier `env` is further restricted: it also MUST NOT appear as the first segment of a dotted reference, so `$<env.foo>` is the explicit env-var-lookup form and a *dependency* `env.foo` is rejected at parse time. This restriction reserves the `env.` prefix for the explicit env-var-lookup form and eliminates the resolution ambiguity that would otherwise arise between `$<env.X>` (env-var lookup) and an accessor on a recipe named `env`.
 
 The keywords that introduce other top-level or recipe-body productions — `recipe`, `chore`, `config`, `ingredients`, `cook`, `plate`, `using`, `use`, `import`, `test` — are recognised as keywords only when followed by a keyword separator (space, tab, or `"`). Among these, the **top-level keywords** `recipe`, `chore`, `config`, `use`, and `import` are recognised as keywords only when their line begins at column 0 (no leading whitespace); an indented line whose first word is a top-level keyword is a `Content` token, dispatched per §{grammar.step-dispatch}. The recipe-body keywords (`ingredients`, `cook`, `plate`, `test`, `using`) are not subject to the column-0 rule.
 
@@ -108,7 +111,7 @@ The empty string `""` is a valid `STRING`. A double quote inside a `STRING` is n
 ```cook
 recipe "build"
     ingredients "src/*.c" !"src/legacy.c"
-    cook "bin/app" using { gcc {all} -o {out} }
+    cook "bin/app" using { gcc $<all> -o $<out> }
 ```
 
 Each `"…"` is a `STRING`. The `!"src/legacy.c"` form is an `ingredient` exclusion, not a distinct string class (App. A.4): it is the literal `!` followed by an ordinary `STRING`. The `using { … }` clause is a shell block (§{lexical.brace-blocks}), not a `STRING`.
@@ -191,7 +194,7 @@ No other step kind accepts a bare `NUMBER`; digits that appear inside a shell co
 
 ```cook
 recipe "run-tests"
-    test { ./{in} } timeout 30 should_fail
+    test { ./$<in> } timeout 30 should_fail
 ```
 
 `30` is a `NUMBER` denoting a 30-second timeout.

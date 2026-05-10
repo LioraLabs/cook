@@ -34,7 +34,7 @@ pub mod registries;
 pub mod workspace;
 
 pub use dag_units::{collect_dag_units, DagUnits};
-pub use env::{load_env, resolve_env};
+pub use env::{load_env, parse_cli_overrides, resolve_env};
 pub use error::PipelineError;
 pub use inferred_deps::{
     compute_single_inferred_deps, compute_workspace_inferred_deps, single_dep_conflicts,

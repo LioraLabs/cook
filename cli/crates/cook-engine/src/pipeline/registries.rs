@@ -10,7 +10,7 @@ use std::path::Path;
 
 use crate::RegistryEntry;
 
-use super::env::{load_env, resolve_env};
+use super::env::{load_env, parse_cli_overrides, resolve_env};
 use super::error::PipelineError;
 use super::recipe_info::find_full_prefix;
 use super::workspace::Workspace;
@@ -18,14 +18,20 @@ use super::workspace::Workspace;
 /// Build a single-Cookfile registry map (empty-string prefix).
 ///
 /// `env_vars` is the fully-layered environment (system → .env → overrides);
-/// callers typically obtain it from `super::env::resolve_env`.
+/// callers typically obtain it from `super::env::resolve_env`. `env_overrides`
+/// is the slice of caller-supplied `KEY=VALUE` overrides (typically the CLI
+/// `--set` flags); it is parsed and threaded into the registry so the engine
+/// can re-apply CLI overrides on top of any values a `config` block writes.
 pub fn build_single_registries(
     cookfile_dir: &Path,
     env_vars: HashMap<String, String>,
+    env_overrides: &[String],
     lua_source: String,
     selected_config: Option<&str>,
-) -> BTreeMap<String, RegistryEntry> {
+) -> Result<BTreeMap<String, RegistryEntry>, PipelineError> {
+    let cli_overrides = parse_cli_overrides(env_overrides)?;
     let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars)
+        .with_cli_overrides(cli_overrides)
         .with_selected_config(selected_config.map(|s| s.to_string()));
     let mut registries = BTreeMap::new();
     registries.insert(
@@ -36,7 +42,7 @@ pub fn build_single_registries(
             alias_dirs: BTreeMap::new(),
         },
     );
-    registries
+    Ok(registries)
 }
 
 /// Build workspace registries: one for root (empty prefix), one per import.
@@ -53,6 +59,7 @@ pub fn build_workspace_registries(
 ) -> Result<BTreeMap<String, RegistryEntry>, PipelineError> {
     let dotenv_vars = load_env(&workspace.root.dir);
     let root_env = resolve_env(config, dotenv_vars, env_overrides)?;
+    let cli_overrides = parse_cli_overrides(env_overrides)?;
 
     // One shared terminal-outputs map for the entire workspace invocation.
     // All Registries write to and read from the same map, keyed by
@@ -66,6 +73,7 @@ pub fn build_workspace_registries(
     let root_alias_qp = workspace.alias_qualified_prefixes_for(&workspace.root.dir);
     // Root has empty prefix (already the default; explicit for clarity).
     let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env)
+        .with_cli_overrides(cli_overrides.clone())
         .with_selected_config(config.map(|s| s.to_string()))
         .with_shared_terminal_outputs(shared_outputs.clone())
         .with_qualified_prefix(String::new())
@@ -86,6 +94,7 @@ pub fn build_workspace_registries(
         let alias_dirs = workspace.alias_dirs_for(&loaded.dir);
         let alias_qp = workspace.alias_qualified_prefixes_for(&loaded.dir);
         let registry = cook_register::Registry::new(loaded.dir.clone(), import_env)
+            .with_cli_overrides(cli_overrides.clone())
             .with_selected_config(config.map(|s| s.to_string()))
             .with_shared_terminal_outputs(shared_outputs.clone())
             .with_qualified_prefix(prefix.clone())

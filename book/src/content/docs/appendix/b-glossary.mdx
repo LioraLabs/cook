@@ -1,0 +1,57 @@
+---
+title: B — Glossary
+sidebar:
+  order: 101
+---
+
+# Appendix B — Glossary
+
+Terms used throughout the Book and the Standard, in plain English.
+
+**Cookfile** — A file (typically `Cookfile`) that declares recipes, chores, configuration, and module imports. The unit Cook operates on.
+
+**Recipe** — A named, dependency-aware bundle of build steps. Started by the `recipe` keyword.
+
+**Chore** — A named bundle of *non-build* commands. Started by the `chore` keyword. No caching, no `ingredients`, no `cook` step. Commands run interactively by default.
+
+**Step** — A single line (or block) inside a recipe or chore body. Each step has a *kind*: `ingredients`, `cook`, `plate`, `test`, shell command, Lua line, Lua block, module call.
+
+**Step group** — A set of work units registered together that may run in parallel. The surface `cook` step routes through one automatically.
+
+**Work unit** — The smallest scheduling primitive Cook executes. Recorded at register time, dispatched at execute time.
+
+**Register phase** — The first phase of a recipe's execution. Lua code in the body runs once, in *capture mode*; calls like `cook.add_unit` record work units rather than performing them.
+
+**Execute phase** — The second phase. Cook arranges the recorded work units into a graph and runs them, in parallel where it can.
+
+**Capture mode** — The register-phase semantics of the Cook Lua API: side-effecting calls record work instead of doing it.
+
+**Ingredient** — An input file matched by a glob pattern in an `ingredients` step. The full ingredient set of a recipe is `(union of includes) \ (union of excludes)`.
+
+**Driver** — In a `cook` step with a `$<lib.ACCESSOR>` placeholder in the output pattern, `lib`'s output list is the *driver* of iteration: one unit per item.
+
+**Path accessor** — One of `stem`, `name`, `ext`, `dir`. Splits a path inside a placeholder.
+
+**Placeholder** — A `$<TOKEN>` (or `$<TOKEN.ACCESSOR>`) that resolves to one of: a builtin (`in`/`out`/`all`), another recipe's outputs, or a declared env var. The `$<...>` sigil was picked specifically so it doesn't clash with shell brace expansion (`{a,b,c}`), shell parameter expansion (`${VAR}`), or anything else that uses curly braces.
+
+**String substitution** — The expansion of a bare `$<lib>` (no accessor) inside a step body to the resolved outputs of recipe `lib`, space-separated.
+
+**Dep-driven iteration** — When a `cook` step's output pattern references another recipe with an accessor (`$<lib.stem>`), that recipe drives iteration.
+
+**Config block** — A `config` (or `config NAME`) top-level section. Runs at *load time*, before any recipe registers, and seeds `cook.env` with declared variables.
+
+**Module** — A Lua file in `cook_modules/` that returns a table. Pulled into scope with `use NAME`.
+
+**Import** — A statement that pulls another Cookfile under an alias. `import backend ./backend` makes `backend.build` resolve to that Cookfile's `build` recipe.
+
+**Cache key** — The hash Cook computes for a work unit, used to decide whether to re-run it. Built from declared inputs (file content), declared outputs, the rendered command, and any consulted env keys.
+
+**Discovered inputs** — Inputs a unit declares *during* execute time, typically by reading a `.d` dependency file emitted by a compiler. Folded into the cache key for next time.
+
+**Workspace** — The directory tree rooted at the Cookfile's directory (or a directory containing a Cookfile). Cook walks parent directories until it finds one.
+
+**`.cook/`** — Per-workspace cache directory. Stores hashes, log archives, and any side files referenced by `discovered_inputs`. Safe to delete.
+
+**Surface form** — The Cookfile-side syntax that desugars to `cook.*` Lua calls. Keeps simple things short. Use `cook emit-lua` to see the desugaring.
+
+**Standard** — [The Cook Standard](https://docs.usecook.com/standard/). Authoritative reference for everything the Book covers casually. When the Book and the Standard disagree, the Standard is correct.

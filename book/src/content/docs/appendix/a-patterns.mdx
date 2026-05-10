@@ -1,0 +1,211 @@
+---
+title: A — Common patterns
+sidebar:
+  order: 100
+---
+
+# Appendix A — Common patterns
+
+Small, copy-pasteable Cookfiles for things you'll want to do.
+
+## A.1. Compile every C file in `src/`
+
+```cook
+recipe build
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+```
+
+## A.2. Compile and link
+
+```cook
+recipe compile
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+
+recipe link
+    cook "build/app" using { gcc $<compile> -o $<out> }
+```
+
+(`link` doesn't need an explicit `: compile` dependency — `$<compile>` already creates the edge, and writing both gets you a "conflicting scheduling intent" warning.)
+
+## A.3. Recursive C with header tracking
+
+Surface form (no discovered inputs — `.d` files get regenerated but Cook doesn't fold their contents into the cache key):
+
+```cook
+recipe compile
+    ingredients "src/**/*.c"
+    cook "build/$<in.stem>.o" using {
+        gcc -MMD -MF .cook/deps/$<in.stem>.d -c $<in> -o $<out>
+    }
+```
+
+With `discovered_inputs` (each header change picks up automatically) — drop into Lua:
+
+```cook
+recipe compile
+    ingredients "src/**/*.c"
+    >>{
+        for _, src in ipairs(recipe.ingredients[1]) do
+            local stem = path.stem(src)
+            cook.add_unit({
+                inputs  = { src },
+                output  = "build/" .. stem .. ".o",
+                command = string.format(
+                    "gcc -MMD -MF .cook/deps/%s.d -c %s -o build/%s.o",
+                    stem, src, stem),
+                discovered_inputs = {
+                    from   = ".cook/deps/" .. stem .. ".d",
+                    format = "make",
+                },
+            })
+        end
+    }
+```
+
+Or, with the `cpp` module (install once: `cook modules install cpp`):
+
+```cook
+use cpp
+
+recipe app
+    cpp.executable("app", {
+        sources = { "src/**/*.c" },
+        standard = "c11",
+    })
+```
+
+## A.4. Run every test binary
+
+```cook
+recipe build
+    ingredients "tests/*.c"
+    cook "build/$<in.stem>" using { gcc $<in> -o $<out> }
+
+recipe run-tests: build
+    ingredients "build/test_*"
+    test { ./$<in> } timeout 30
+```
+
+## A.5. Tarball the build
+
+```cook
+recipe build
+    ingredients "src/*"
+    cook "build/$<in.name>" using { cp $<in> $<out> }
+
+recipe package: build
+    ingredients "build/*"
+    cook "dist/release.tar.gz" using {
+        tar czf $<out> -C build .
+    }
+```
+
+## A.6. Per-platform target
+
+```cook
+config
+    env.TARGET = "x86_64-linux"
+
+recipe build
+    ingredients "src/*.c"
+    cook "build/$<TARGET>/$<in.stem>.o" using {
+        gcc --target=$<TARGET> -c $<in> -o $<out>
+    }
+```
+
+```bash
+cook build                          # default TARGET
+cook --set TARGET=arm64-darwin build
+```
+
+## A.7. Code generator with multiple outputs
+
+```cook
+recipe gen
+    ingredients "schema.proto"
+    cook "build/types.go" "build/types.py" using {
+        protoc --go_out=build --python_out=build $<in>
+    }
+```
+
+## A.8. Lua-bodied transformation
+
+```cook
+recipe count
+    ingredients "src/*.txt"
+    cook "build/$<in.stem>.count" using >{
+        local f = io.open(input, "r")
+        local txt = f:read("*a")
+        f:close()
+        local words = 0
+        for _ in txt:gmatch("%S+") do words = words + 1 end
+        local out = io.open(output, "w")
+        out:write(tostring(words) .. "\n")
+        out:close()
+    }
+```
+
+## A.9. Watch + re-run on change
+
+No special Cookfile syntax needed. From your shell:
+
+```bash
+cook serve
+cook serve test
+```
+
+## A.10. Interactive picker
+
+```cook
+chore pick
+    @cook menu | fzf | xargs -r cook
+```
+
+The `@` prefix is required: a chore body line that starts with the bare word `cook` is parsed as the (forbidden) `cook` step keyword and rejected. `@` forces the line to be classified as an interactive shell step, so the parser sees one shell step whose contents happen to invoke the `cook` binary.
+
+## A.11. CI-safe `cook modules install`
+
+```bash
+cook modules install --non-interactive --accept-trust
+```
+
+Realises the locked module closure with no prompts. Drop this in your CI config alongside `cook test`.
+
+## A.12. Multi-Cookfile monorepo
+
+```
+.
+├── Cookfile           # umbrella
+├── backend/
+│   └── Cookfile
+├── frontend/
+│   └── Cookfile
+└── tools/
+    └── Cookfile
+```
+
+```cook
+# /Cookfile
+import backend  ./backend
+import frontend ./frontend
+import tools    ./tools
+
+recipe ship: backend.build frontend.build
+    echo "deploying"
+
+chore fmt: tools.fmt
+chore lint: tools.lint
+```
+
+Each subproject's Cookfile stands alone (you can `cd backend && cook build`); the umbrella stitches them together for top-level commands.
+
+## A.13. Cleaning up
+
+```cook
+chore clean
+    rm -rf build .cook target dist
+```
+
+The most-typed chore in any project. Put it in every Cookfile; future-you will thank you.

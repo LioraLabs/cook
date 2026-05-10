@@ -2356,3 +2356,83 @@ recipe r
         "as_name should be substituted, not literal:\n{lua}"
     );
 }
+
+// ── Standard §5.4: bare $<lib> in output pattern is rejected ──
+
+#[test]
+fn bare_recipe_ref_in_output_pattern_is_rejected() {
+    // Standard §5.4 third bullet: a `cook` step whose output pattern list
+    // contains a bare `$<lib>` (no accessor) naming a recipe MUST be
+    // rejected at load time. The accessor form `$<lib.stem>` (dep-driven
+    // iteration) and the bare form inside a `using` body (string-
+    // substitution) are both legal — only "bare in an output pattern"
+    // is banned.
+    let src = r#"recipe lib
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+
+recipe broken
+    cook "out/$<lib>.txt" using { echo hi > $<out> }
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let err = result.expect_err("bare $<lib> in output pattern must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("$<lib>"),
+        "diagnostic must name the offending placeholder, got: {msg}"
+    );
+    assert!(
+        msg.contains("output pattern"),
+        "diagnostic must mention output pattern context, got: {msg}"
+    );
+    assert!(
+        msg.contains("$<lib.stem>") || msg.contains("path accessor"),
+        "diagnostic must hint at the accessor fix, got: {msg}"
+    );
+}
+
+#[test]
+fn dep_driven_accessor_in_output_pattern_still_accepted() {
+    // Sibling check: the accessor form (`$<lib.stem>`) is the canonical
+    // dep-driven shape and MUST keep parsing cleanly. This is what the
+    // bare-form rejection above is teaching the user to write instead.
+    let src = r#"recipe lib
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+
+recipe driven
+    cook "out/$<lib.stem>.txt" using { echo hi > $<out> }
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_ok(),
+        "dep-driven $<lib.stem> in output pattern must remain accepted, got: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn bare_recipe_ref_in_using_body_still_accepted() {
+    // Sibling check: bare `$<lib>` IS legal inside a `using` body —
+    // there it expands to the space-joined list of `lib`'s outputs
+    // (Standard §5.5). Only the output-pattern position is rejected.
+    let src = r#"recipe lib
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+
+recipe link
+    cook "build/app" using { gcc $<lib> -o $<out> }
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_ok(),
+        "bare $<lib> in using body must remain accepted, got: {:?}",
+        result.err()
+    );
+}

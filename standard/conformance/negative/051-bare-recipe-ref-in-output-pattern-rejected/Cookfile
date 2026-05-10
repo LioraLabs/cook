@@ -1,0 +1,6 @@
+recipe lib
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+
+recipe broken
+    cook "out/$<lib>.txt" using { echo hi > $<out> }
