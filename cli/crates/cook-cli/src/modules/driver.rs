@@ -8,7 +8,7 @@
 //!
 //! Error handling is passthrough: on non-zero exit, the driver returns an
 //! `anyhow::Error` whose Display contains argv + captured stdout + captured
-//! stderr (each capped at 8 KiB to match `cook.exec`'s SHI-188 truncation).
+//! stderr (each capped at 64 KiB to match `cook.exec`'s SHI-188 truncation).
 //! No structured parsing of luarocks output.
 
 use std::path::PathBuf;
@@ -18,7 +18,10 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::modules::lockfile::LockedModule;
 
-const STREAM_CAP_BYTES: usize = 8 * 1024;
+// Per-stream cap matching SHI-188's `cook.exec` failure truncation.
+// Keep in sync with COOK_CMD_FAIL_STREAM_CAP in cli/crates/cook-luaotp/src/pool.rs
+// and cli/crates/cook-register/src/capture.rs.
+const STREAM_CAP_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct RocksDriver {
@@ -37,6 +40,10 @@ pub struct InstalledRock {
 pub struct SearchHit {
     pub name: String,
     pub version: String,
+    /// Approximation: always the first configured index in the driver's
+    /// `indexes` list, not the actual index the hit came from. Phase 3
+    /// does not parse luarocks search output to per-hit precision; the
+    /// user sees luarocks's own output too via the parent command stdout.
     pub index: String,
 }
 
@@ -290,6 +297,7 @@ mod tests {
         let project = tempfile::tempdir().expect("project");
         let log = project.path().join("argv.log");
         std::env::set_var("FAKE_LUAROCKS_LOG", &log);
+        std::env::set_var("FAKE_LUAROCKS_EXIT", "0");
 
         let driver = RocksDriver::new(
             prefix.path().to_path_buf(),
