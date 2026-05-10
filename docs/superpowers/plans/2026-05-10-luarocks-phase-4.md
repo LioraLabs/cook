@@ -99,9 +99,9 @@ Edit this plan's ticket-ID table below, replacing each `<TBD>` with the assigned
 | Module | Real-implementation ticket ID |
 |---|---|
 | cook_cpp | SHI-133 |
-| cook_rust | `<TBD-rust>` |
-| cook_pnpm | `<TBD-pnpm>` |
-| cook_ai | `<TBD-ai>` |
+| cook_rust | SHI-190 |
+| cook_pnpm | SHI-191 |
+| cook_ai | SHI-192 |
 
 - [ ] **Step 3: Commit the plan update**
 
@@ -730,7 +730,7 @@ Expected: clean commit. Section D handles tagging + publish.
 - Create: `~/dev/cook-modules/cook_rust/cook_rust-0.0.1-1.rockspec`
 - Create: `~/dev/cook-modules/cook_rust/README.md`
 
-**Prerequisite:** the `cook_rust` real-implementation ticket ID is filled in Task A.1's table. Substitute it for `<TBD-rust>` in steps 2 and 4 below.
+**Prerequisite:** the `cook_rust` real-implementation ticket ID is filled in Task A.1's table. Substitute it for `SHI-190` in steps 2 and 4 below.
 
 - [ ] **Step 1: Create the directory**
 
@@ -740,17 +740,17 @@ mkdir -p ~/dev/cook-modules/cook_rust
 
 - [ ] **Step 2: Write `cook_rust.lua`**
 
-Create `~/dev/cook-modules/cook_rust/cook_rust.lua` with this exact content (substitute `<TBD-rust>` with the assigned ID, e.g. `SHI-201`):
+Create `~/dev/cook-modules/cook_rust/cook_rust.lua` with this exact content (substitute `SHI-190` with the assigned ID, e.g. `SHI-201`):
 
 ```lua
 -- cook_rust — SHI-176 Phase 4 stub.
--- The real implementation lands in <TBD-rust>.
+-- The real implementation lands in SHI-190.
 
 local M = {}
 M.name = "cook_rust"
 
 function M.placeholder()
-    error("[cook_rust] SHI-176 Phase 4 stub. Real cook_rust lands in <TBD-rust>.", 2)
+    error("[cook_rust] SHI-176 Phase 4 stub. Real cook_rust lands in SHI-190.", 2)
 end
 
 return M
@@ -758,7 +758,7 @@ return M
 
 - [ ] **Step 3: Write `cook_rust-0.0.1-1.rockspec`**
 
-Create `~/dev/cook-modules/cook_rust/cook_rust-0.0.1-1.rockspec` with this exact content (substitute `<TBD-rust>`):
+Create `~/dev/cook-modules/cook_rust/cook_rust-0.0.1-1.rockspec` with this exact content (substitute `SHI-190`):
 
 ```lua
 package = "cook_rust"
@@ -768,13 +768,13 @@ source = {
    tag = "cook_rust-0.0.1-1",
 }
 description = {
-   summary = "Stub for the cook Rust build module — real implementation tracked in <TBD-rust>",
+   summary = "Stub for the cook Rust build module — real implementation tracked in SHI-190",
    detailed = [[
       Stub rock published by SHI-176 Phase 4 to reserve the cook_rust name on
       rocks.usecook.com and exercise the publish pipeline at realistic
       multi-rock scale. Calling cook_rust.placeholder() errors with a pointer
       at the real-implementation ticket. Replace this rock's contents when
-      <TBD-rust> lands.
+      SHI-190 lands.
    ]],
    homepage = "https://github.com/lioralabs/cook-modules",
    license = "MIT",
@@ -789,16 +789,16 @@ build = {
 
 - [ ] **Step 4: Write `README.md`**
 
-Create `~/dev/cook-modules/cook_rust/README.md` with this exact content (substitute `<TBD-rust>`):
+Create `~/dev/cook-modules/cook_rust/README.md` with this exact content (substitute `SHI-190`):
 
 ```markdown
 # cook_rust
 
-**Stub rock for the cook Rust build module.** Real implementation tracked in [<TBD-rust>](https://linear.app/shiny-guru/issue/<TBD-rust>).
+**Stub rock for the cook Rust build module.** Real implementation tracked in [SHI-190](https://linear.app/shiny-guru/issue/SHI-190).
 
 This rock currently exposes only `cook_rust.placeholder()`, which raises an error pointing at the real-implementation ticket. It exists to reserve the `cook_rust` name on `rocks.usecook.com` and to exercise the publish pipeline at multi-rock scale (SHI-176 Phase 4).
 
-When <TBD-rust> ships, replace this directory's contents with the real implementation and bump the rock version to `0.1.0-1` (or higher). The Gitea Actions publish CI on tag push handles the rest.
+When SHI-190 ships, replace this directory's contents with the real implementation and bump the rock version to `0.1.0-1` (or higher). The Gitea Actions publish CI on tag push handles the rest.
 ```
 
 - [ ] **Step 5: Local rockspec lint**
@@ -815,10 +815,10 @@ Expected: `cook_rust-0.0.1-1.rockspec is OK`.
 ```bash
 cd ~/dev/cook-modules
 git add cook_rust/
-git commit -m "feat(stub): cook_rust 0.0.1-1 — Phase 4 stub rock (<TBD-rust> follow-up)"
+git commit -m "feat(stub): cook_rust 0.0.1-1 — Phase 4 stub rock (SHI-190 follow-up)"
 ```
 
-(Substitute `<TBD-rust>` in the commit message.)
+(Substitute `SHI-190` in the commit message.)
 
 ### Task C.4: Author `cook_pnpm/`
 
@@ -827,7 +827,7 @@ git commit -m "feat(stub): cook_rust 0.0.1-1 — Phase 4 stub rock (<TBD-rust> f
 - Create: `~/dev/cook-modules/cook_pnpm/cook_pnpm-0.0.1-1.rockspec`
 - Create: `~/dev/cook-modules/cook_pnpm/README.md`
 
-**Prerequisite:** the `cook_pnpm` real-implementation ticket ID is filled in Task A.1's table. Substitute it for `<TBD-pnpm>` below.
+**Prerequisite:** the `cook_pnpm` real-implementation ticket ID is filled in Task A.1's table. Substitute it for `SHI-191` below.
 
 - [ ] **Step 1: Create the directory**
 
@@ -837,17 +837,17 @@ mkdir -p ~/dev/cook-modules/cook_pnpm
 
 - [ ] **Step 2: Write `cook_pnpm.lua`**
 
-Create `~/dev/cook-modules/cook_pnpm/cook_pnpm.lua` with this exact content (substitute `<TBD-pnpm>`):
+Create `~/dev/cook-modules/cook_pnpm/cook_pnpm.lua` with this exact content (substitute `SHI-191`):
 
 ```lua
 -- cook_pnpm — SHI-176 Phase 4 stub.
--- The real implementation lands in <TBD-pnpm>.
+-- The real implementation lands in SHI-191.
 
 local M = {}
 M.name = "cook_pnpm"
 
 function M.placeholder()
-    error("[cook_pnpm] SHI-176 Phase 4 stub. Real cook_pnpm lands in <TBD-pnpm>.", 2)
+    error("[cook_pnpm] SHI-176 Phase 4 stub. Real cook_pnpm lands in SHI-191.", 2)
 end
 
 return M
@@ -855,7 +855,7 @@ return M
 
 - [ ] **Step 3: Write `cook_pnpm-0.0.1-1.rockspec`**
 
-Create `~/dev/cook-modules/cook_pnpm/cook_pnpm-0.0.1-1.rockspec` with this exact content (substitute `<TBD-pnpm>`):
+Create `~/dev/cook-modules/cook_pnpm/cook_pnpm-0.0.1-1.rockspec` with this exact content (substitute `SHI-191`):
 
 ```lua
 package = "cook_pnpm"
@@ -865,13 +865,13 @@ source = {
    tag = "cook_pnpm-0.0.1-1",
 }
 description = {
-   summary = "Stub for the cook pnpm-monorepo module — real implementation tracked in <TBD-pnpm>",
+   summary = "Stub for the cook pnpm-monorepo module — real implementation tracked in SHI-191",
    detailed = [[
       Stub rock published by SHI-176 Phase 4 to reserve the cook_pnpm name on
       rocks.usecook.com and exercise the publish pipeline at realistic
       multi-rock scale. Calling cook_pnpm.placeholder() errors with a pointer
       at the real-implementation ticket. Replace this rock's contents when
-      <TBD-pnpm> lands.
+      SHI-191 lands.
    ]],
    homepage = "https://github.com/lioralabs/cook-modules",
    license = "MIT",
@@ -886,16 +886,16 @@ build = {
 
 - [ ] **Step 4: Write `README.md`**
 
-Create `~/dev/cook-modules/cook_pnpm/README.md` with this exact content (substitute `<TBD-pnpm>`):
+Create `~/dev/cook-modules/cook_pnpm/README.md` with this exact content (substitute `SHI-191`):
 
 ```markdown
 # cook_pnpm
 
-**Stub rock for the cook pnpm-monorepo module.** Real implementation tracked in [<TBD-pnpm>](https://linear.app/shiny-guru/issue/<TBD-pnpm>).
+**Stub rock for the cook pnpm-monorepo module.** Real implementation tracked in [SHI-191](https://linear.app/shiny-guru/issue/SHI-191).
 
 This rock currently exposes only `cook_pnpm.placeholder()`, which raises an error pointing at the real-implementation ticket. It exists to reserve the `cook_pnpm` name on `rocks.usecook.com` and to exercise the publish pipeline at multi-rock scale (SHI-176 Phase 4).
 
-When <TBD-pnpm> ships, replace this directory's contents with the real implementation and bump the rock version to `0.1.0-1` (or higher). The Gitea Actions publish CI on tag push handles the rest.
+When SHI-191 ships, replace this directory's contents with the real implementation and bump the rock version to `0.1.0-1` (or higher). The Gitea Actions publish CI on tag push handles the rest.
 ```
 
 - [ ] **Step 5: Local rockspec lint**
@@ -912,7 +912,7 @@ Expected: `cook_pnpm-0.0.1-1.rockspec is OK`.
 ```bash
 cd ~/dev/cook-modules
 git add cook_pnpm/
-git commit -m "feat(stub): cook_pnpm 0.0.1-1 — Phase 4 stub rock (<TBD-pnpm> follow-up)"
+git commit -m "feat(stub): cook_pnpm 0.0.1-1 — Phase 4 stub rock (SHI-191 follow-up)"
 ```
 
 ### Task C.5: Author `cook_ai/`
@@ -922,7 +922,7 @@ git commit -m "feat(stub): cook_pnpm 0.0.1-1 — Phase 4 stub rock (<TBD-pnpm> f
 - Create: `~/dev/cook-modules/cook_ai/cook_ai-0.0.1-1.rockspec`
 - Create: `~/dev/cook-modules/cook_ai/README.md`
 
-**Prerequisite:** the `cook_ai` real-implementation ticket ID is filled in Task A.1's table. Substitute it for `<TBD-ai>` below.
+**Prerequisite:** the `cook_ai` real-implementation ticket ID is filled in Task A.1's table. Substitute it for `SHI-192` below.
 
 - [ ] **Step 1: Create the directory**
 
@@ -932,17 +932,17 @@ mkdir -p ~/dev/cook-modules/cook_ai
 
 - [ ] **Step 2: Write `cook_ai.lua`**
 
-Create `~/dev/cook-modules/cook_ai/cook_ai.lua` with this exact content (substitute `<TBD-ai>`):
+Create `~/dev/cook-modules/cook_ai/cook_ai.lua` with this exact content (substitute `SHI-192`):
 
 ```lua
 -- cook_ai — SHI-176 Phase 4 stub.
--- The real implementation lands in <TBD-ai>.
+-- The real implementation lands in SHI-192.
 
 local M = {}
 M.name = "cook_ai"
 
 function M.placeholder()
-    error("[cook_ai] SHI-176 Phase 4 stub. Real cook_ai lands in <TBD-ai>.", 2)
+    error("[cook_ai] SHI-176 Phase 4 stub. Real cook_ai lands in SHI-192.", 2)
 end
 
 return M
@@ -950,7 +950,7 @@ return M
 
 - [ ] **Step 3: Write `cook_ai-0.0.1-1.rockspec`**
 
-Create `~/dev/cook-modules/cook_ai/cook_ai-0.0.1-1.rockspec` with this exact content (substitute `<TBD-ai>`):
+Create `~/dev/cook-modules/cook_ai/cook_ai-0.0.1-1.rockspec` with this exact content (substitute `SHI-192`):
 
 ```lua
 package = "cook_ai"
@@ -960,13 +960,13 @@ source = {
    tag = "cook_ai-0.0.1-1",
 }
 description = {
-   summary = "Stub for the cook AI/LLM module — real implementation tracked in <TBD-ai>",
+   summary = "Stub for the cook AI/LLM module — real implementation tracked in SHI-192",
    detailed = [[
       Stub rock published by SHI-176 Phase 4 to reserve the cook_ai name on
       rocks.usecook.com and exercise the publish pipeline at realistic
       multi-rock scale. Calling cook_ai.placeholder() errors with a pointer
       at the real-implementation ticket. Replace this rock's contents when
-      <TBD-ai> lands.
+      SHI-192 lands.
    ]],
    homepage = "https://github.com/lioralabs/cook-modules",
    license = "MIT",
@@ -981,16 +981,16 @@ build = {
 
 - [ ] **Step 4: Write `README.md`**
 
-Create `~/dev/cook-modules/cook_ai/README.md` with this exact content (substitute `<TBD-ai>`):
+Create `~/dev/cook-modules/cook_ai/README.md` with this exact content (substitute `SHI-192`):
 
 ```markdown
 # cook_ai
 
-**Stub rock for the cook AI/LLM module.** Real implementation tracked in [<TBD-ai>](https://linear.app/shiny-guru/issue/<TBD-ai>).
+**Stub rock for the cook AI/LLM module.** Real implementation tracked in [SHI-192](https://linear.app/shiny-guru/issue/SHI-192).
 
 This rock currently exposes only `cook_ai.placeholder()`, which raises an error pointing at the real-implementation ticket. It exists to reserve the `cook_ai` name on `rocks.usecook.com` and to exercise the publish pipeline at multi-rock scale (SHI-176 Phase 4).
 
-When <TBD-ai> ships, replace this directory's contents with the real implementation and bump the rock version to `0.1.0-1` (or higher). The Gitea Actions publish CI on tag push handles the rest.
+When SHI-192 ships, replace this directory's contents with the real implementation and bump the rock version to `0.1.0-1` (or higher). The Gitea Actions publish CI on tag push handles the rest.
 ```
 
 - [ ] **Step 5: Local rockspec lint**
@@ -1007,7 +1007,7 @@ Expected: `cook_ai-0.0.1-1.rockspec is OK`.
 ```bash
 cd ~/dev/cook-modules
 git add cook_ai/
-git commit -m "feat(stub): cook_ai 0.0.1-1 — Phase 4 stub rock (<TBD-ai> follow-up)"
+git commit -m "feat(stub): cook_ai 0.0.1-1 — Phase 4 stub rock (SHI-192 follow-up)"
 git push origin main
 git push github main
 ```
@@ -1451,7 +1451,7 @@ type: project
 
 Phase 4 of the SHI-176 (Cook modules — LuaRocks integration) epic shipped on <YYYY-MM-DD>:
 
-- **Four stub blessed-module rocks** published to `rocks.usecook.com`: `cook_cpp` (0.0.1-1, real impl in SHI-133), `cook_rust` (0.0.1-1, real impl in <TBD-rust>), `cook_pnpm` (0.0.1-1, real impl in <TBD-pnpm>), `cook_ai` (0.0.1-1, real impl in <TBD-ai>). Each errors with an SHI-pointing message when called.
+- **Four stub blessed-module rocks** published to `rocks.usecook.com`: `cook_cpp` (0.0.1-1, real impl in SHI-133), `cook_rust` (0.0.1-1, real impl in SHI-190), `cook_pnpm` (0.0.1-1, real impl in SHI-191), `cook_ai` (0.0.1-1, real impl in SHI-192). Each errors with an SHI-pointing message when called.
 - **Publish CI on nas-arm64**: tag-push of `<module>-<MAJOR>.<MINOR>.<PATCH>-<rockrev>` triggers Gitea Actions to pack the rock, land artifacts in cook-rocks-index, force-push the GitHub mirror; Cloudflare Pages picks it up.
 - **`cook pull` clean-burn deletion**: 1953 LoC under `cli/crates/cook-cli/src/pull/` removed, the `pull` clap variant gone, README/CONTRIBUTING updated, original `2026-05-07-cook-pull-registry-design.md` marked Status: Superseded.
 
@@ -1527,5 +1527,5 @@ This completes the implementation plan.
 - Modified: `~/.claude/projects/-home-alex-dev-cook/memory/project_cook_module_publishing.md` (PAT rotation date)
 
 **Linear:**
-- Created: 3 follow-up tickets (`<TBD-rust>`, `<TBD-pnpm>`, `<TBD-ai>`) under SHI-176 epic
+- Created: 3 follow-up tickets (`SHI-190`, `SHI-191`, `SHI-192`) under SHI-176 epic
 - Updated: SHI-176 with Phase 4 completion comment
