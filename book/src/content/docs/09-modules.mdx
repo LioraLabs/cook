@@ -111,12 +111,21 @@ Make `cook_modules/copy.lua`:
 ```lua
 local copy = {}
 
-function copy.tree(src, dst)
-    cook.add_unit({
-        inputs  = { src },
-        output  = dst,
-        command = string.format("cp -a %s %s", src, dst),
-    })
+-- Expand a glob and register one unit per matched file. Cook's cache
+-- hashes file content, not directories, so each input must be a file.
+-- Passing a directory (or a directory glob) here raises a register-time
+-- error pointing back at this call site.
+function copy.tree(src_glob, dst_dir)
+    local sources = fs.glob(src_glob)
+    for _, src in ipairs(sources) do
+        local name = path.name(src)
+        local dst = path.join(dst_dir, name)
+        cook.add_unit({
+            inputs  = { src },
+            output  = dst,
+            command = string.format("mkdir -p %s && cp -a %s %s", dst_dir, src, dst),
+        })
+    end
 end
 
 return copy
@@ -128,10 +137,12 @@ Now in `Cookfile`:
 use copy
 
 recipe vendor
-    copy.tree("upstream/lib", "build/lib")
+    copy.tree("upstream/lib/*", "build/lib")
 ```
 
-Run `cook vendor`. The first run copies; the second run is cached. (We're using the module-call shorthand from §9.4 — `copy.tree` registers a unit via `cook.add_unit`, which is register-phase. Writing `> copy.tree(...)` would error.)
+Run `cook vendor`. The first run copies each file; the second run is cached because every declared input resolves to a file whose content cook can hash. (We're using the module-call shorthand from §9.4 — `copy.tree` registers units via `cook.add_unit`, which is register-phase. Writing `> copy.tree(...)` would error.)
+
+> Why a glob and not a directory? Cook's cache hashes file content, so every entry in `inputs` must point at a file. A directory input has no hashable bytes; cook rejects it at register time rather than silently invalidating the cache on every run.
 
 ## 9.7. Where to next
 
