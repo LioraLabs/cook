@@ -367,4 +367,40 @@ mod tests {
         let result = Cli::try_parse_from(["cook", "--test"]);
         assert!(result.is_err(), "--test should be rejected after the redesign");
     }
+
+    #[test]
+    fn logs_no_args_means_latest() {
+        let cli = parse(&["logs"]);
+        let Some(Cmd::Logs(a)) = &cli.cmd else { panic!("expected Logs command") };
+        assert!(a.build_id.is_none());
+        assert!(!a.last_failed);
+        assert!(a.nth.is_none());
+    }
+
+    #[test]
+    fn logs_build_id_positional() {
+        let cli = parse(&["logs", "2026-05-10-abc"]);
+        let Some(Cmd::Logs(a)) = &cli.cmd else { panic!() };
+        assert_eq!(a.build_id.as_deref(), Some("2026-05-10-abc"));
+    }
+
+    #[test]
+    fn logs_nth_flag() {
+        let cli = parse(&["logs", "-n", "3"]);
+        let Some(Cmd::Logs(a)) = &cli.cmd else { panic!() };
+        assert_eq!(a.nth, Some(3));
+    }
+
+    #[test]
+    fn logs_last_failed_flag() {
+        let cli = parse(&["logs", "--last-failed"]);
+        let Some(Cmd::Logs(a)) = &cli.cmd else { panic!() };
+        assert!(a.last_failed);
+    }
+
+    #[test]
+    fn logs_conflicting_selectors_fail_to_parse() {
+        let res = Cli::try_parse_from(["cook", "logs", "--last-failed", "-n", "2"]);
+        assert!(res.is_err());
+    }
 }
