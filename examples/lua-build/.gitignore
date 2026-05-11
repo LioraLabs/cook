@@ -1,4 +1,5 @@
-build/
+cook_modules/
 .cook/
 .cache/
+build/
 compile_commands.json

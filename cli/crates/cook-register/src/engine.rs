@@ -116,7 +116,17 @@ impl Registry {
         recipe_name: &str,
         cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
     ) -> Result<RecipeUnits, RegisterError> {
-        let lua = Lua::new();
+        // Use unsafe_new() so that cook modules containing C extensions (e.g.
+        // lpeg.so, cjson.so) can be loaded during the register phase.  The
+        // register VM already executes user-authored Lua (Cookfile bodies) with
+        // the same level of trust as the execute-phase worker, so there is no
+        // effective security regression here.  The FS sandbox (register_fs_api_
+        // with_sandbox) is installed immediately below and still confines file-
+        // system access to the project root.
+        // SAFETY: mlua's unsafe_new() opens all Lua standard libraries; the
+        //   caller is responsible for sandboxing any dangerous surfaces through
+        //   the cook API layer.  Consistent with cook-luaotp/src/pool.rs:159.
+        let lua = unsafe { Lua::unsafe_new() };
         let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
 
         // Thread CacheContext into the Lua VM so cook.add_unit can compute

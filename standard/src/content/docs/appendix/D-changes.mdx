@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.8** (`cs-standard/v0.8`, 2026-05-07) — CS-0045, CS-0046, CS-0047, CS-0048, CS-0049, CS-0050, CS-0051, CS-0052, CS-0054, CS-0055, CS-0056, CS-0057, CS-0058, CS-0059, CS-0060, CS-0061
+- **v0.8** (`cs-standard/v0.8`, 2026-05-07) — CS-0045, CS-0046, CS-0047, CS-0048, CS-0049, CS-0050, CS-0051, CS-0052, CS-0054, CS-0055, CS-0056, CS-0057, CS-0058, CS-0059, CS-0060, CS-0061, CS-0062, CS-0063, CS-0064, CS-0065, CS-0066
 - **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042, CS-0043, CS-0044
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
 - **v0.5** (`cs-standard/v0.5`, 2026-05-01..2026-05-03) — CS-0022, CS-0023, CS-0024, CS-0025, CS-0026, CS-0027, CS-0028, CS-0029, CS-0030
@@ -1113,5 +1113,15 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 **Rationale.** CS-0062 established the canonical four-path order for execute-phase workers but left register-phase `cook.load_module` on a two-path search (`<name>.lua`, `<name>/init.lua` only). A module installed via LuaRocks (e.g. `cook_cc`) lands under `cook_modules/share/lua/5.4/`; without this extension, `use cook_cc` would fail at register time even though the module is correctly installed. Unifying the search order across phases removes a class of "works at execute but not at register" surprises and makes the register-phase resolution invariant to how the module was installed.
 
 **Conformance impact.** A conforming implementation MUST extend the four-path search to register-phase `cook.load_module`. Conformance fixture `053-rocks-share-lua-resolution/` is upgraded from parse-only to runtime-verified: the `chore verify` body reads `rockmod.value` from a module installed at the share/lua/5.4 path and asserts 42. Three new unit tests in `cli/crates/cook-register/src/module_loader.rs` (`test_load_module_resolves_share_lua_flat`, `test_load_module_resolves_share_lua_init`, `test_load_module_top_level_wins_over_share_lua`) pin the positive and priority cases.
+
+**Reference:** this commit.
+
+## CS-0066 — Register-phase module loading MUST configure `package.path`/`package.cpath` and MUST permit C extensions [#changes.cs-0066]
+
+**Summary.** §7.4 gains a normative paragraph requiring a conforming implementation to configure `package.path` and `package.cpath` on the register-phase Lua VM before executing any module body loaded via `cook.load_module`. The search order mirrors the execute-phase order established by CS-0062. Additionally, a conforming implementation MUST NOT restrict native C extension loading in the register-phase VM; C extensions (`.so`/`.dll`) installed under `cook_modules/` MUST be loadable at register time.
+
+**Rationale.** Multi-file rocks (such as `cook_cc`) use Lua's native `require()` internally to load their sub-modules (e.g., `require("cook_cc.toolchain")` inside `cook_cc/init.lua`). Without `package.path` and `package.cpath` configured for the register-phase VM, these internal requires fail because they search only the system Lua paths, not the project's `cook_modules/`. This class of failure was latent before real multi-file rocks existed; the migration of `examples/lua-build` from a vendored single-file `cpp.lua` to the multi-file `cook_cc` rock triggered it. The companion C-extension rule closes the parallel gap: `cook_cc/finder.lua` depends on `lpeg` (a C extension), so a register-phase VM that blocks native modules cannot load `cook_cc` at all. The register phase already runs fully user-trusted Lua (Cookfile bodies, module code); permitting C extensions introduces no new trust boundary.
+
+**Conformance impact.** A conforming implementation MUST configure `package.path` and `package.cpath` (same order as CS-0062) before executing each module body in the register phase. The reference implementation stashes the original `package.path`/`package.cpath` on first load per VM using the `_cook_original_path`/`_cook_original_cpath` sentinel approach, mirroring the execute-phase idiom. A conforming implementation MUST create the register-phase Lua VM with all standard libraries enabled (equivalent to `mlua::Lua::unsafe_new()`) so that native module loading (`package.loadlib`) is available. The project-root `fs.*` sandbox (CS-0045) MUST still be installed on the register-phase VM immediately after creation; the expanded VM capabilities do not relax the filesystem confinement rules.
 
 **Reference:** this commit.

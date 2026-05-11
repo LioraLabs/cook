@@ -242,6 +242,56 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
             state.current_module = None;
         };
 
+        // 4b. Extend package.path / package.cpath so that sub-requires within
+        // a multi-file rock (e.g. `require("cook_cc.toolchain")` inside
+        // cook_cc/init.lua, or `require("lpeg")` for a C extension) resolve
+        // against cook_modules/. Mirrors the execute-phase logic in
+        // cook-luaotp/src/pool.rs:refresh_package_search_paths.  We prepend
+        // the cook_modules paths once per VM using the same stash-and-prepend
+        // idiom as the execute-phase so repeated load_module calls on the same
+        // VM are idempotent.
+        {
+            if let Ok(LuaValue::Table(pkg)) = lua.globals().get::<LuaValue>("package") {
+                let cm = modules_dir.display().to_string();
+                let so_ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
+
+                // -- package.path (pure-Lua modules) --
+                let original_path: String = match pkg.get::<LuaValue>("_cook_original_path") {
+                    Ok(LuaValue::String(s)) => s.to_string_lossy(),
+                    _ => {
+                        let cur: String = pkg.get::<String>("path").unwrap_or_default();
+                        let _ = pkg.set("_cook_original_path", cur.clone());
+                        cur
+                    }
+                };
+                let new_path = format!(
+                    "{cm}/?.lua;{cm}/?/init.lua;\
+                     {cm}/share/lua/5.4/?.lua;{cm}/share/lua/5.4/?/init.lua;\
+                     {orig}",
+                    cm = cm,
+                    orig = original_path,
+                );
+                let _ = pkg.set("path", new_path);
+
+                // -- package.cpath (C extension modules) --
+                let original_cpath: String = match pkg.get::<LuaValue>("_cook_original_cpath") {
+                    Ok(LuaValue::String(s)) => s.to_string_lossy(),
+                    _ => {
+                        let cur: String = pkg.get::<String>("cpath").unwrap_or_default();
+                        let _ = pkg.set("_cook_original_cpath", cur.clone());
+                        cur
+                    }
+                };
+                let new_cpath = format!(
+                    "{cm}/?.{ext};{cm}/lib/lua/5.4/?.{ext};{orig}",
+                    cm = cm,
+                    ext = so_ext,
+                    orig = original_cpath,
+                );
+                let _ = pkg.set("cpath", new_cpath);
+            }
+        }
+
         // 5. Execute the module file
         let chunk_name = format!("@{}", module_path.display());
         let result: LuaValue = match lua.load(&source).set_name(&chunk_name).eval() {
