@@ -10,8 +10,8 @@ pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
     if state.picker.is_some() {
         return handle_picker(state, key);
     }
-    if state.search.is_some() {
-        return handle_search_overlay(state, key);
+    if let Some(s) = state.search.as_ref() {
+        if s.editing { return handle_search_overlay(state, key); }
     }
     match (key.code, key.modifiers) {
         (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => Action::Quit,
@@ -55,9 +55,12 @@ pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
                 pattern: String::new(),
                 matches: Vec::new(),
                 cursor: 0,
+                editing: true,
             });
             Action::Continue
         }
+        (KeyCode::Char('n'), _) => { state.jump_to_next_match(1); Action::Continue }
+        (KeyCode::Char('N'), _) => { state.jump_to_next_match(-1); Action::Continue }
         _ => Action::Continue,
     }
 }
@@ -99,7 +102,20 @@ fn handle_picker(state: &mut UiState, key: KeyEvent) -> Action {
     Action::SwitchBuild(target_id)
 }
 
-fn handle_search_overlay(_state: &mut UiState, _key: KeyEvent) -> Action {
-    // Implementation deferred to Task 16.
+fn handle_search_overlay(state: &mut UiState, key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Esc => { state.search = None; }
+        KeyCode::Enter => {
+            let pat = state.search.as_ref().map(|s| s.pattern.clone()).unwrap_or_default();
+            state.set_search_pattern(pat);
+        }
+        KeyCode::Backspace => {
+            if let Some(s) = state.search.as_mut() { s.pattern.pop(); }
+        }
+        KeyCode::Char(c) => {
+            if let Some(s) = state.search.as_mut() { s.pattern.push(c); }
+        }
+        _ => {}
+    }
     Action::Continue
 }

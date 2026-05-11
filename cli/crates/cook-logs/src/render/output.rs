@@ -40,8 +40,28 @@ fn build_lines<'a>(state: &'a UiState, theme: &Theme) -> Vec<Line<'a>> {
     lines.push(Line::styled(label, theme.dim_style()));
     lines.push(Line::raw(""));
 
-    for log in &node.lines {
-        lines.push(render_line(log, state, theme));
+    // Collect line indices that are search matches for the currently selected node.
+    let matched_lines: std::collections::BTreeSet<usize> = state.search.as_ref()
+        .filter(|s| !s.editing)
+        .map(|s| {
+            s.matches.iter()
+                .filter(|(r, n, _)| *r == rid && *n == nid)
+                .map(|(_, _, i)| *i)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for (i, log) in node.lines.iter().enumerate() {
+        let line = render_line(log, state, theme);
+        if matched_lines.contains(&i) {
+            let style = ratatui::style::Style::default()
+                .bg(ratatui::style::Color::Yellow)
+                .fg(ratatui::style::Color::Black);
+            let spans = line.spans.into_iter().map(|s| s.patch_style(style)).collect::<Vec<_>>();
+            lines.push(Line::from(spans));
+        } else {
+            lines.push(line);
+        }
     }
     lines
 }

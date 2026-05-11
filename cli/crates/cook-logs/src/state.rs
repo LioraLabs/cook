@@ -30,6 +30,7 @@ pub struct SearchState {
     pub pattern: String,
     pub matches: Vec<(RecipeId, NodeId, usize)>, // (recipe, node, line index)
     pub cursor: usize,
+    pub editing: bool, // true while user is typing; false after Enter
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +146,47 @@ impl UiState {
             self.rebuild_flat();
         }
     }
+
+    pub fn set_search_pattern(&mut self, pat: String) {
+        let mut matches = Vec::new();
+        let needle = pat.to_lowercase();
+        if !needle.is_empty() {
+            for (rid, recipe) in &self.view.recipes {
+                for (nid, node) in &recipe.nodes {
+                    for (i, line) in node.lines.iter().enumerate() {
+                        if line.text.to_lowercase().contains(&needle) {
+                            matches.push((*rid, *nid, i));
+                        }
+                    }
+                }
+            }
+        }
+        self.search = Some(SearchState { pattern: pat, matches, cursor: 0, editing: false });
+        self.jump_to_current_match();
+    }
+
+    pub fn jump_to_next_match(&mut self, dir: i32) {
+        let len_opt = self.search.as_ref().map(|s| s.matches.len());
+        let Some(len) = len_opt else { return };
+        if len == 0 { return; }
+        if let Some(s) = self.search.as_mut() {
+            let len_i = len as i32;
+            s.cursor = ((s.cursor as i32 + dir).rem_euclid(len_i)) as usize;
+        }
+        self.jump_to_current_match();
+    }
+
+    fn jump_to_current_match(&mut self) {
+        let target = self.search.as_ref()
+            .and_then(|s| s.matches.get(s.cursor).copied());
+        let Some((rid, nid, line_idx)) = target else { return };
+        if let Some(pos) = self.flat.iter().position(|r| {
+            matches!(r, FlatRow::Node(r1, n1) if *r1 == rid && *n1 == nid)
+        }) {
+            self.selected = pos;
+        }
+        self.scroll_y = line_idx as u16;
+    }
 }
 
 #[cfg(test)]
@@ -236,5 +278,20 @@ mod tests {
         s.cycle_filter(); // -> FailedOnly
         // Recipe row + only the failing node (b)
         assert_eq!(s.flat.len(), 2);
+    }
+
+    #[test]
+    fn search_finds_substring_in_node_lines() {
+        use cook_progress::log_reader::LogLine;
+        use cook_progress::event::Stream;
+        let mut view = mk(false);
+        // Add a line to the first node containing "error: foo"
+        let (_rid, recipe) = view.recipes.iter_mut().next().unwrap();
+        let (_nid, node) = recipe.nodes.iter_mut().next().unwrap();
+        node.lines.push(LogLine { stream: Stream::Stdout, ts: None, text: "error: foo".into() });
+
+        let mut s = UiState::new(view, LoadDiagnostics::default());
+        s.set_search_pattern("ERROR".into());
+        assert_eq!(s.search.as_ref().unwrap().matches.len(), 1);
     }
 }
