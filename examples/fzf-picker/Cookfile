@@ -1,22 +1,24 @@
-use cpp
+use cook_cc
 
 config
     env.CFLAGS = "-O2 -Wall"
 
 recipe colorize
-    cpp.bin("colorize", {
+    cook_cc.bin("colorize", {
         sources = { "src/colorize.c" },
     })
 
 recipe wordcount
-    cpp.bin("wordcount", {
+    cook_cc.bin("wordcount", {
         sources = { "src/wordcount.c" },
     })
 
 recipe reverse
-    cpp.bin("reverse", {
+    cook_cc.bin("reverse", {
         sources = { "src/reverse.c" },
     })
+
+recipe build: colorize wordcount reverse
 
 recipe tools: colorize wordcount reverse
 
@@ -27,7 +29,7 @@ chore play: tools
     @printf '\n\033[1m── running %s on %s ──\033[0m\n\n' "$(cat .cook/scratch/tool)" "$(cat .cook/scratch/file)" && ./build/bin/$(cat .cook/scratch/tool) < "$(cat .cook/scratch/file)"
 
 recipe compile-commands: tools
-    cpp.compile_commands()
+    cook_cc.compile_commands()
 
 chore clean
     rm -rf build .cook
