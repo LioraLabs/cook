@@ -45,10 +45,10 @@ The official `cook_cc` rock at `rocks.usecook.com` is the reference implementati
 The blessed rock is published as `cook_cc`. A Cookfile imports it by:
 
 ```
-use cook_cc as cc
+use cook_cc
 ```
 
-Per Standard §6 (`use`-env) and §7 (cross-Cookfile resolution), `use cook_cc as cc` MUST bind the loaded module table to the local name `cc` in the Cookfile's scope.
+Per Standard §6 (`use`-env) and §7 (cross-Cookfile resolution), `use cook_cc` MUST bind the loaded module table to the local name `cook_cc` in the Cookfile's scope. The grammar of `§6.use` does not currently provide an `as`-alias form; call sites refer to the module by its rock name (`cook_cc.bin(...)`, `cook_cc.find(...)`, etc.). A future Standard revision may introduce alias syntax; this clause will be updated in lockstep.
 
 The implementation's module table MUST include an `init` function honoured by the loader contract at Standard §6.3.4: the loader MUST call `init()` exactly once per Lua VM that loads the module. The `init` function MAY rehydrate state from `cook.cache` (e.g., a previously-detected compiler triple) and MUST NOT be exposed as part of the user-callable surface (callers reading §9.2.3 do not invoke `init()` directly).
 
