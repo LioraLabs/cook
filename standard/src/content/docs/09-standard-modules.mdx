@@ -51,3 +51,150 @@ use cook_cc as cc
 Per Standard §6 (`use`-env) and §7 (cross-Cookfile resolution), `use cook_cc as cc` MUST bind the loaded module table to the local name `cc` in the Cookfile's scope.
 
 The implementation's module table MUST include an `init` function honoured by the loader contract at Standard §6.3.4: the loader MUST call `init()` exactly once per Lua VM that loads the module. The `init` function MAY rehydrate state from `cook.cache` (e.g., a previously-detected compiler triple) and MUST NOT be exposed as part of the user-callable surface (callers reading §9.2.3 do not invoke `init()` directly).
+
+### 9.2.3. Public surface [#stdmods.cc.surface]
+
+#### 9.2.3.1. cc.bin [#stdmods.cc.bin]
+
+```
+cc.bin(name: string, opts: BinOpts) -> string
+```
+
+Registers an executable target named `name`. A conforming implementation MUST compile every source listed in `opts.sources` (or globbed from `opts.dir`) and link the resulting objects to `build/bin/<name>`. The function MUST register the target in the implementation's known-targets state so `cc.compile_commands()` (§9.2.3.11) can recover its inputs.
+
+`BinOpts` fields (all optional unless noted):
+
+| Field | Type | Semantics |
+|---|---|---|
+| `sources` | list[string] | Source paths or globs. REQUIRED unless `dir` is provided. |
+| `dir` | string | Root for recursive source globbing (`*.c`, `*.cpp`, `*.cc`, `*.cxx`). |
+| `includes` | list[string] | Private include dirs. |
+| `export_includes` | list[string] | Public include dirs propagated to consumers via `cook.export`. |
+| `defines` | list[string] | Macro names or `NAME=value`. |
+| `system_libs` | list[string] | Passed to the linker as `-l<name>`. |
+| `extra_cflags` | string | Raw flags appended at compile. |
+| `extra_ldflags` | string | Raw flags appended at link. |
+| `links` | list[string] | Other cc-registered targets to link against (transitive propagation per §9.2.4). |
+| `standard` | string | e.g., `"c++17"`, `"c11"`. |
+| `warnings` | string | `"default"` (`-Wall`), `"strict"` (`-Wall -Wextra -Wpedantic`), `"none"`, or raw flags. |
+
+Return: the target name (echo for chaining).
+
+Error: if the source count is zero after globbing, the implementation MUST raise `[cc.bin] no sources found for target '<name>'` at the caller's line.
+
+#### 9.2.3.2. cc.lib [#stdmods.cc.lib]
+
+```
+cc.lib(name: string, opts: LibOpts) -> string
+```
+
+Registers a static-library target. A conforming implementation MUST compile sources as for `cc.bin`, then archive the objects to `build/lib/lib<name>.a`. `LibOpts` is `BinOpts` minus link-time fields (`extra_ldflags`, `system_libs` apply at consumer link time, not at archive time, but MAY be recorded for propagation).
+
+Error model identical to §9.2.3.1.
+
+#### 9.2.3.3. cc.shared [#stdmods.cc.shared]
+
+```
+cc.shared(name: string, opts: SharedOpts) -> string
+```
+
+Registers a shared-library target. A conforming implementation MUST compile sources with `-fPIC` and link the objects to `build/lib/lib<name>.<ext>`, where `<ext>` is `so` on Linux and macOS and `dll` on Windows. The linker MUST be invoked with `-shared` on Linux, `-dynamiclib` on macOS, and `/DLL` on Windows.
+
+`SharedOpts` fields are identical to `BinOpts`.
+
+#### 9.2.3.4. cc.headers [#stdmods.cc.headers]
+
+```
+cc.headers(name: string, opts: HeadersOpts) -> string
+```
+
+Registers a header-only library: a logical target that records exports for transitive propagation but emits no compile or link units. `HeadersOpts` typically carries `export_includes` and `defines`. `cc.headers` MUST register the target in known-targets but MUST NOT call `cook.add_unit(...)`.
+
+#### 9.2.3.5. cc.compile [#stdmods.cc.compile]
+
+```
+cc.compile(source: string, opts: CompileOpts) -> string
+```
+
+Compiles a single source file to an object. A conforming implementation MUST emit one work unit per call with `output = "build/obj/<target_name>/<stem>.o"` (where `<stem>` is the source's filename without extension and `<target_name>` is `opts.target_name` or `"default"`). The unit's `discovered_inputs` MUST point at a make-format depfile so header dependencies participate in incremental rebuilds.
+
+Returns the output path.
+
+#### 9.2.3.6. cc.archive [#stdmods.cc.archive]
+
+```
+cc.archive(objects: list[string], output: string) -> string
+```
+
+Archives `objects` into a static library at `output` via `ar rcs`. The implementation MUST emit one work unit whose `inputs = objects`, `output = output`, `command = "ar rcs <output> <objects...>"`.
+
+#### 9.2.3.7. cc.link [#stdmods.cc.link]
+
+```
+cc.link(objects: list[string], output: string, opts: LinkOpts) -> string
+```
+
+Links objects to `output`. `LinkOpts.system_libs` is appended as `-l<name>`; `LinkOpts.extra_ldflags` is appended verbatim; `LinkOpts.shared = true` adds the platform's shared-library flag (§9.2.3.3).
+
+#### 9.2.3.8. cc.find [#stdmods.cc.find]
+
+```
+cc.find(name: string, opts: FindOpts?) -> FindResult
+```
+
+Discovers a package by name and returns a structured result record.
+
+`FindOpts` (all optional):
+
+| Field | Type | Semantics |
+|---|---|---|
+| `version` | string | A semver-style constraint (e.g., `">=4.0"`). Ignored in v0.1; honoured starting v0.2. |
+
+`FindResult` (returned by every `cc.find` call):
+
+| Field | Type | Semantics |
+|---|---|---|
+| `found` | boolean | `true` iff any strategy located the package. |
+| `cflags` | string | The raw cflags string (verbatim from pkg-config in v0.1). |
+| `libs` | string | The raw libs string. |
+| `system_libs` | list[string] | Parsed `-l` names. |
+| `include_dirs` | list[string] | Parsed `-I` paths. |
+| `lib_dirs` | list[string] | Parsed `-L` paths. |
+| `frameworks` | list[string] | Parsed `-framework` names (macOS). |
+| `version` | string \| nil | Detected version (nil in v0.1; non-nil from v0.2 when an emitting strategy is consulted). |
+
+A conforming v0.1 implementation MUST use pkg-config as the only strategy; a missing package returns `{ found = false, ... }` with empty lists. Future Standard revisions will normatively introduce additional strategies (curated finders, CMake-compat); the result-record shape above is forward-stable.
+
+The implementation MUST cache results in `cook.cache` keyed by `"pkg:<name>"` so repeat calls within one invocation do not re-shell pkg-config.
+
+#### 9.2.3.9. cc.defaults [#stdmods.cc.defaults]
+
+```
+cc.defaults(opts: DefaultsOpts)
+```
+
+Records module-wide defaults that subsequent `cc.bin`, `cc.lib`, `cc.shared`, and `cc.headers` calls MUST honour by additive merge (lists prepend; scalars replace). `cc.defaults` is the canonical mechanism for setting build-wide overrides from `config` blocks; implementations MUST NOT consult `CPP_*` environment variables.
+
+#### 9.2.3.10. cc.toolchain [#stdmods.cc.toolchain]
+
+```
+cc.toolchain(opts: ToolchainOpts)
+```
+
+Overrides the active compiler, standard, and warnings. `ToolchainOpts`:
+
+| Field | Type | Semantics |
+|---|---|---|
+| `compiler` | string | The `cxx` driver to use (e.g., `"clang++"`); the `cc` driver is derived. |
+| `standard` | string | Default `-std=` value for subsequent C++ compiles. |
+| `warnings` | string | Default warnings preset or raw flags. |
+
+If never called, the implementation MUST auto-detect a compiler via PATH probing during `init()`.
+
+#### 9.2.3.11. cc.compile_commands [#stdmods.cc.compile-commands]
+
+```
+cc.compile_commands()
+```
+
+Writes `compile_commands.json` in the current working directory, one entry per source per known target. The output MUST be valid JSON parseable by clangd and equivalent tools. The implementation runs in the worker VM (called from a recipe body), so its inputs MUST be sourced from `cook.cache` (target list) and `cook.import` (per-target compile info) — both established Cook APIs.
