@@ -30,4 +30,24 @@ This Standard's v0.1 catalogue:
 
 Future Standard revisions extend this catalogue additively.
 
-{/* §9.2 — cc — follows in Tasks 14-16. */}
+## 9.2. cc — C-family build module [#stdmods.cc]
+
+### 9.2.1. Synopsis and conformance scope [#stdmods.cc.synopsis]
+
+The `cc` module specifies a portable surface for declarative C and C++ native builds. It dispatches on source-file extension (`.c`, `.C` → `cc`; `.cpp`, `.cc`, `.cxx`, `.C++` → `cxx`) so a single target may mix C and C++ sources without per-target language opt-in.
+
+A conforming implementation MUST expose the eleven public functions listed in §9.2.3 and MUST honour their option tables, return values, and propagation semantics. A conforming implementation SHOULD provide informative error diagnostics for the negative cases described per-function.
+
+The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
+
+### 9.2.2. Identity, resolution, init hook [#stdmods.cc.identity]
+
+The blessed rock is published as `cook_cc`. A Cookfile imports it by:
+
+```
+use cook_cc as cc
+```
+
+Per Standard §6 (`use`-env) and §7 (cross-Cookfile resolution), `use cook_cc as cc` MUST bind the loaded module table to the local name `cc` in the Cookfile's scope.
+
+The implementation's module table MUST include an `init` function honoured by the loader contract at Standard §6.3.4: the loader MUST call `init()` exactly once per Lua VM that loads the module. The `init` function MAY rehydrate state from `cook.cache` (e.g., a previously-detected compiler triple) and MUST NOT be exposed as part of the user-callable surface (callers reading §9.2.3 do not invoke `init()` directly).

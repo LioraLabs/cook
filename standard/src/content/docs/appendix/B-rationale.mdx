@@ -378,3 +378,11 @@ Two design alternatives were considered and rejected:
 ## B.A. On Appendix A
 
 _To be filled in._
+
+## Why `cc` rather than `cpp` (§{stdmods.cc}) [#rationale.cc-not-cpp]
+
+The blessed C-family build module is named `cc`, not `cpp`. The module handles `.c` and `.cpp` (plus `.cc`, `.cxx`) sources uniformly: extension dispatch chooses the appropriate compiler from a single toolchain triple. Naming it `cpp` would privilege C++ over C even though every public function (`cc.bin`, `cc.lib`, `cc.find`, etc.) is equally idiomatic for either language. The name `cc` aligns with the historical Unix toolchain convention (`cc(1)`, `$CC` make-variable) and with Rust's `cc` crate, both of which describe "C-family compilation" without language privilege.
+
+## Why §9 Standard Modules is normative [#rationale.stdmods-normative]
+
+Blessed modules are part of the Cook contract that anyone — not only Liora Labs — may reimplement. The official rock is one implementation; an alternative implementation (e.g., a Rust-side native module exposing the same Lua surface, or a strictly-pinned older snapshot) must produce semantically equivalent behaviour against the §9 sections it claims to implement. Specifying the surface normatively in numbered Standard chapters — rather than informatively in an appendix — makes conformance checkable: every public function lists its semantics with RFC-2119 MUST / SHOULD keywords; every option table field is enumerated; every error condition is documented.
