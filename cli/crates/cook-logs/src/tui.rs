@@ -70,6 +70,25 @@ pub fn run_with_backend<B: Backend>(
                         }
                     }
                 }
+                Action::YankSelectedLog => {
+                    if let Some((rid, nid)) = state.selected_node() {
+                        if let Some(recipe) = state.view.recipes.get(&rid) {
+                            if let Some(node) = recipe.nodes.get(&nid) {
+                                let text = node.lines.iter()
+                                    .map(|l| l.text.clone())
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                use base64::Engine;
+                                let payload = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+                                // OSC 52: ESC ] 52 ; c ; <base64> BEL
+                                let _ = std::io::Write::write_all(
+                                    &mut std::io::stdout(),
+                                    format!("\x1b]52;c;{}\x07", payload).as_bytes(),
+                                );
+                            }
+                        }
+                    }
+                }
                 Action::SwitchBuild(target_id) => {
                     if let Some(root) = &logs_root {
                         let build_dir = root.join(&target_id);

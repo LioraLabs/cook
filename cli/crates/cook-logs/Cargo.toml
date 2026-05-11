@@ -7,6 +7,7 @@ description = "Terminal UI viewer for Cook build logs"
 [dependencies]
 cook-progress = { path = "../cook-progress" }
 
+base64 = "0.22"
 ratatui = "0.30"
 crossterm = "0.29"
 ansi-to-tui = "8"

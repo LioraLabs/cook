@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::state::{Focus, UiState};
 
-pub enum Action { Continue, Quit, Reload, SwitchBuild(String) }
+pub enum Action { Continue, Quit, Reload, SwitchBuild(String), YankSelectedLog }
 
 pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
     if state.picker.is_some() {
@@ -50,6 +50,7 @@ pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
             Action::Continue
         }
         (KeyCode::Char('r'), _) => Action::Reload,
+        (KeyCode::Char('y'), _) => Action::YankSelectedLog,
         (KeyCode::Char('/'), _) => {
             state.search = Some(crate::state::SearchState {
                 pattern: String::new(),
