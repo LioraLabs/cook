@@ -224,3 +224,153 @@ The runtime pin lives in `examples/cli_audit_exit_codes/walkthrough.sh`. The tes
 A companion conformance harness — JSON-lines validators against fixture builds — pins the format at corpus level so a future implementation's renderer can be checked against the same contract as the reference cook-cli.
 
 **Found in.** Surfaced during the [CS-0043](D-changes#changes-cs-0043) fix: the bug was traceable only because the unit test in `cli/crates/cook-progress/src/render/json.rs` asserted `"stream":"stderr"` while the upstream pipeline made the `Stream::Stderr` variant unreachable. Without the test the wire-format lie would have been silent. With a normative section, the same audit could have been performed against the spec rather than against the test.
+
+## E.13. `$<NAME>` cross-recipe substitution does not lower in `plate` shell bodies [#pre-v1.plate-shell-cross-recipe-not-lowered]
+
+**Status.** Open as of v0.8. Cross-references E.14 (the Lua-body analogue).
+
+**Symptom.** §{xref.string-substitution} normatively asserts that a `$<NAME>` reference in a `cook` `using` shell block, a `plate` shell block, a `test` shell block, or a bare `shell_command` MUST be substituted by the space-joined concatenation of the named recipe's output list. The substitution fires correctly inside `cook using { … }` bodies but does NOT fire inside `plate { … }` shell bodies in cook 0.8 — the literal `$<NAME>` flows through to the recorded unit's `command` payload and the shell errors on it at execute time.
+
+**Repro.** With cook-lang 0.1.0 (claiming Cook Standard v0.8):
+
+```cook
+recipe debug-apk
+    ingredients "src/main.kt"
+    cook "build/app.apk" using { touch $<out> }
+
+recipe install: debug-apk
+    plate {
+        adb install -r $<debug-apk>
+    }
+```
+
+`cook emit-lua` for `install`:
+
+```lua
+cook.recipe("install", {requires = {"debug-apk"}}, function()
+    cook.step_group(function()
+    cook.add_unit({command = "set -e\nadb install -r $<debug-apk>", cache = false, consulted_env_keys = {}})
+    end)
+end)
+```
+
+The `requires` edge is correctly inferred (good), but the command string carries `$<debug-apk>` verbatim. At execute time the shell parses `$<debug-apk>` as `$` followed by `<debug-apk>`, which is a redirection error: `/bin/sh: -c: line N: syntax error near unexpected token 'newline'`.
+
+The same `$<NAME>` reference inside a `cook ... using { … }` body of the same recipe lowers correctly: emitted Lua becomes `... " install -r " .. cook.dep_output("NAME")`. The asymmetry sits between the two shell-body surfaces, not in the lexer or the §{xref} resolution surface.
+
+**Status quo.** Plate shell bodies are codegen'd by `cli/crates/cook-luagen/src/recipe.rs`. The cook-step shell-body path scans for `$<NAME>` tokens and emits `cook.dep_output(NAME)` interpolations; the plate-step shell-body path does not. The §{xref.dep-implications} edge-inference path *does* fire for plate bodies (the `requires = {"debug-apk"}` in the repro above confirms this), so the recipe sees the dep and orders correctly — the gap is in §{xref.string-substitution} lowering only.
+
+**Workaround.** Hardcode the dependent recipe's output path inside the plate body, leaving the `: NAME` dep edge for ordering:
+
+```cook
+recipe install: debug-apk
+    plate {
+        adb install -r build/app.apk
+    }
+```
+
+This couples the consumer to the producer's output filename, which the `$<NAME>` form was meant to abstract.
+
+**Resolution path.** Extend `cook-luagen`'s plate-shell-body codegen to apply the same `$<NAME>` lowering pass that fires for `cook using { … }` shell bodies. The lowering rule is identical (§{xref.string-substitution}, "Lua lowering" note): `$<NAME>` → `cook.dep_output("NAME")`, `$<NAME.ACCESSOR>` → `cook.dep_output_list("NAME")`-driven form. Add a positive conformance fixture under `standard/conformance/positive/` exercising `plate { $<NAME> }` with a non-empty output list, and a runtime fixture under `examples/` that asserts the substitution at execute time. The §{xref.dep-implications} edge inference already works for the same surface, so the spec/impl gap is one-directional.
+
+**Found in.** Real-world Cookfile for the `glovemap` Android key-mapper project (`~/dev/glovemap/Cookfile`). The project's `install` recipe consumes the APK produced by the `debug-apk` recipe and ships it to a tablet via adb; the natural shape is `adb install -r $<debug-apk>` inside a `plate { … }` block. Hardcoded path workaround in production.
+
+## E.14. `cook.dep_output` is not installed on execute-phase worker VMs [#pre-v1.cook-dep-output-execute-phase]
+
+**Status.** Open as of v0.8. Cross-references E.13 (the shell-body analogue).
+
+**Symptom.** §{xref.string-substitution} states: "A `$<NAME>` reference inside a `using_lua_block` is parsed as Lua syntax (a single-element table containing the local variable `NAME`); cross-recipe references in Lua bodies use `cook.dep_output(NAME)` and `cook.dep_output_list(NAME)`." §{lua.using-block-globals-plate-test} confirms the same for plate and test Lua bodies: "Cross-recipe references inside a plate or test Lua body use `cook.dep_output()` / `cook.dep_output_list()`, identical to a `using >{ … }` Lua body."
+
+Plate and test Lua bodies run at **execute phase** (§{exec.execute-phase}). The implementation registers `cook.dep_output` and `cook.dep_output_list` only on the **register-phase** Lua VM (`cli/crates/cook-register/src/dep_output_api.rs`, `register_dep_output_api`); the execute-phase worker pool (`cli/crates/cook-luaotp/src/pool.rs`) installs `cook.env`, `inputs`, `outputs`, `input`, `output`, `input_N`, but not `dep_output` / `dep_output_list`. A `plate >{ ... }` body that calls `cook.dep_output("foo")` therefore errors at execute time with `attempt to call a nil value (field 'dep_output')`.
+
+**Repro.** With cook-lang 0.1.0:
+
+```cook
+recipe upstream
+    cook "build/u.txt" using { echo hi > $<out> }
+
+recipe downstream: upstream
+    plate >{
+        local path = cook.dep_output("upstream")
+        cook.sh("cat " .. path)
+    }
+```
+
+Output of `cook downstream`:
+
+```
+[downstream/$lua] lua error: runtime error: ...
+attempt to call a nil value (field 'dep_output')
+    [C]: in field 'dep_output'
+    [string "..."]:1: in main chunk
+```
+
+The same call from a `using >{ … }` body (which runs at execute phase on a worker VM, per the spec) would presumably also fail; the surface-level wording in §{lua.using-block-globals} implies the API is available there too. The two surfaces share the worker-VM context, so the gap is identical.
+
+**Status quo.** Cross-recipe dep refs from Lua bodies have no working surface at execute time. Authors of plate Lua bodies cannot reach a dependency's output path through the spec'd API. The only path that works today is the shell-body form (§5.5 surface form), which itself has the partial gap documented in E.13 — together, the two entries cover every surface a Cookfile author would reach for to express "this plate operates on a dep's output."
+
+**Workaround.** Use a shell plate body and hardcode the dep's output path:
+
+```cook
+recipe downstream: upstream
+    plate { cat build/u.txt }
+```
+
+Or, if the dep's output path is parametric (e.g., a globbed multi-output `cook` step), restructure so the consumer has its own `ingredients` line that re-globs the producer's output directory — accepting that the glob resolves at register time and may be empty on first build.
+
+**Resolution path.** Two options:
+
+1. **Install `cook.dep_output` / `cook.dep_output_list` on the worker VM.** The register-phase implementation in `cook-register/src/dep_output_api.rs` reads from `SharedTerminalOutputs`, which is a runtime structure populated by `cook.add_unit` calls. The same structure is plumbable to worker VMs through `pool.rs::set_globals_on_vm` (where `cook.env`, `inputs`, etc. are installed). Each worker VM gets a read-only reference to the terminal-outputs table at unit-execution time. This option resolves E.14 directly and is the surface-faithful fix.
+2. **Lower `cook.dep_output(N)` calls in plate/test Lua bodies at register phase.** Treat plate/test Lua bodies the same way cook-step `using >{ … }` bodies are lowered today (per the §{xref.string-substitution} "Lua lowering" note): scan the body for `cook.dep_output(N)` / `cook.dep_output_list(N)` calls and emit register-phase substitutions whose results are baked into the `lua_code` payload. This option avoids changes to the worker VM at the cost of a more invasive codegen pass and a register-time eager-evaluation semantics shift (the dep's output must be known at the register-phase moment of the consuming `add_unit` call).
+
+Option 1 is preferred — it matches the spec's surface semantics (the API call happens at execute time) and is a local change to the worker pool. Option 2 is the "treat plate Lua bodies like cook-step Lua bodies" path and is the surface-most-compatible approach if option 1 turns out to have unforeseen interactions with the execute-phase scheduler.
+
+A positive conformance fixture under `standard/conformance/positive/` exercising `plate >{ cook.dep_output("X") }` plus a runtime pin under `examples/` asserts the chosen resolution.
+
+**Found in.** Same `glovemap` project as E.13. The project's first cut of `recipe install` was a Lua plate calling `android.adb_install(cook.dep_output("debug-apk"), ...)`. After hitting this gap, the recipe was rewritten as a shell plate with a hardcoded APK path (which then surfaced E.13).
+
+## E.15. Bare `env.X = "..."` in `config` clobbers `--set X=...` [#pre-v1.config-set-clobber]
+
+**Status.** Open as of v0.8.
+
+**Symptom.** The `--set KEY=VALUE` CLI flag is the documented mechanism for overriding env defaults at invocation (`cook --help` output: "Override a variable (KEY=VALUE), repeatable"). A user reflexively writes `env.X = "default"` inside a `config` block to declare a default, expecting `--set X=other` to take precedence at runtime. It does not: the config block executes after `--set` populates `cook.env`, so the bare assignment overwrites the CLI-supplied value with the literal. The override silently fails.
+
+**Status quo.** §{lua.env-alias} states only that `env` and `cook.env` are bound to the same table inside a `config_block` body; the Standard does not specify how the table is populated relative to CLI overrides, nor what an unqualified assignment means. In practice, `--set` is applied to `cook.env` before any config block runs, and config-block assignments run as ordinary Lua against that table. Last write wins: a bare `env.X = "..."` is the last write.
+
+**Repro.** With cook-lang 0.1.0:
+
+```cook
+config
+    env.DEVICE = ""
+
+chore show
+    > print("DEVICE = " .. cook.env.DEVICE)
+```
+
+```
+$ cook --set DEVICE=tablet:5555 show
+DEVICE =
+```
+
+The user expected `tablet:5555`. The config block's `env.DEVICE = ""` ran after `--set` populated the env, clobbering the override.
+
+**Workaround.** Use the `or`-default idiom on every line of a config block:
+
+```cook
+config
+    env.DEVICE = env.DEVICE or ""
+```
+
+This preserves an existing value (from `--set`) and falls back to the literal only when the key is unset. It works, but every author writing a config block has to remember the idiom; missing the `or` is a silent bug — the override mechanism advertised in `--help` simply doesn't take effect, with no diagnostic.
+
+**Resolution path.** Three options, in order of preference:
+
+1. **Add an explicit defaults-helper.** Introduce `cook.default(key, value)` (or `env.default("X", "...")`) as the canonical surface for declaring a config default. The helper is a no-op when the key is already set (from `--set`, from an `import`-passed config, etc.) and assigns the literal otherwise. The bare `env.X = "..."` form retains its current "last-write-wins" Lua semantics — the helper is the documented idiom and the Standard cookbook prescribes it. Migration is purely additive; existing Cookfiles continue to work, and the `or`-idiom remains valid but no longer load-bearing. Spec impact: one new §6 subsection naming the helper, one positive conformance fixture, an example or two updated.
+
+2. **Diagnostic at register phase.** When a config-block assignment overwrites a `--set`-supplied value with a different literal, emit a `--set X=A clobbered by config line N (env.X = "B")` warning at register time. Authors who actually want to override the CLI from inside a config block (rare) can silence the warning with the `or` idiom. This option avoids any language change; it adds a friction-point that future authors will hit on their first run and be able to fix locally. Spec impact: one §8 paragraph on the diagnostic, optional negative conformance case.
+
+3. **Reverse the precedence.** Make `--set` apply *after* config blocks run, so the CLI flag truly wins regardless of how the config block was authored. This is the most behaviorally surprising option (Lua last-write-wins is broken for the env table specifically) but most user-intuition-friendly. Spec impact: a §8 normative rule on the ordering, and a migration note explaining why some existing Cookfiles that depended on config-block-overriding-CLI behavior change. Probably not the right call — option 1 is cleaner.
+
+Option 1 is preferred. It documents the right shape, doesn't break Lua semantics, and gives authors a one-line idiom that does exactly what they meant.
+
+**Found in.** Same `glovemap` project as E.13/E.14. The `install` recipe was failing to push to the right device because `cook --set DEVICE=tablet:5555 install` was being clobbered by `env.DEVICE = ""` in the config block. The fix was to convert every config-block line to the `env.X = env.X or "..."` idiom; the realization that `--set` had been silently ignored took several minutes of debugging an adb "more than one device/emulator" error that pointed elsewhere.
