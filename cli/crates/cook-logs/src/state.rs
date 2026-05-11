@@ -45,6 +45,7 @@ pub struct UiState {
     pub soft_wrap: bool,
     pub focus: Focus,
     pub picker_open: bool,
+    pub show_help: bool,
 }
 
 impl UiState {
@@ -63,6 +64,7 @@ impl UiState {
             soft_wrap: false,
             focus: Focus::Tree,
             picker_open: false,
+            show_help: false,
         };
         s.rebuild_flat();
         s.select_first_failed_or_first();

@@ -16,7 +16,7 @@ pub fn handle_key(state: &mut UiState, key: KeyEvent) -> Action {
     match (key.code, key.modifiers) {
         (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => Action::Quit,
         (KeyCode::Char('?'), _) => {
-            // help overlay toggled by tui draw loop / future state field
+            state.show_help = !state.show_help;
             Action::Continue
         }
         (KeyCode::Tab, _) => {
