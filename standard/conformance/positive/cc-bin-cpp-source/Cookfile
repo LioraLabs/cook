@@ -1,0 +1,4 @@
+use cook_cc
+
+recipe build
+    cook_cc.bin("hello_cpp", { sources = { "src/hello.cpp" }, standard = "c++17" })
