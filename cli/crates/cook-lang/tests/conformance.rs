@@ -5,12 +5,112 @@
 //! with a diagnostic containing the expected class-substring.
 //!
 //! See `standard/00-introduction.mdx` § 0.7 for conformance requirements.
+//!
+//! # cc-* fixtures
+//!
+//! Fixtures whose names begin with `cc-` exercise the cook_cc module.
+//! The *parse-only* gate here validates only the Cookfile AST shape (the
+//! `use cook_cc` statement and Lua step syntax).  Runtime execution of
+//! cc-* fixtures — actually invoking `cook` against a tempdir, compiling
+//! C sources, and asserting outputs — is deferred to a separate runner
+//! (path b of the Step-5 design choice in SHI-133 Task 20).
+//!
+//! When that runner lands it will consume `standard/conformance/_shared/`
+//! (populated by `ensure_shared_cook_cc` below) and wire `install_cc_into`
+//! into the per-fixture tempdir setup.
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use cook_lang::ast::*;
 use cook_lang::parse;
+
+// ---------------------------------------------------------------------------
+// cook_cc shared installation — used by execute-mode cc-* fixtures
+// ---------------------------------------------------------------------------
+
+/// Resolves to `standard/conformance/_shared/cook_cc/share/lua/5.4/cook_cc`.
+fn shared_cook_cc_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../standard/conformance/_shared/cook_cc/share/lua/5.4/cook_cc")
+}
+
+/// Ensures `standard/conformance/_shared/cook_cc/` is populated exactly once
+/// per test run.
+///
+/// Resolution order:
+///   1. `COOK_CC_PATH` env var — copy the `.lua` files from that directory
+///      (dev workflow: point at the local cook_cc source tree).
+///   2. Otherwise, run `luarocks install cook_cc` against a single server
+///      (rocks.usecook.com) to avoid the luarocks dual-server bug.
+///
+/// This function is a no-op if the cook_cc `init.lua` already exists in the
+/// shared tree (idempotent re-runs).
+fn ensure_shared_cook_cc() {
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        let shared = shared_cook_cc_dir();
+        if shared.join("init.lua").exists() {
+            return;
+        }
+        std::fs::create_dir_all(&shared).expect("mkdir _shared/cook_cc");
+
+        if let Ok(local) = std::env::var("COOK_CC_PATH") {
+            let src = PathBuf::from(&local);
+            for entry in std::fs::read_dir(&src).expect("read COOK_CC_PATH") {
+                let entry = entry.unwrap();
+                let name = entry.file_name();
+                if name.to_string_lossy().ends_with(".lua") {
+                    std::fs::copy(entry.path(), shared.join(&name)).expect("copy lua");
+                }
+            }
+        } else {
+            let tree = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../standard/conformance/_shared");
+            let status = std::process::Command::new("luarocks")
+                .args([
+                    "install",
+                    "cook_cc",
+                    "--tree",
+                    tree.to_str().unwrap(),
+                    "--server",
+                    "https://rocks.usecook.com",
+                ])
+                .status()
+                .expect("luarocks install cook_cc");
+            assert!(status.success(), "luarocks install cook_cc failed");
+        }
+    });
+}
+
+/// Symlinks (or copies on non-Unix) the shared cook_cc tree into a fixture's
+/// tempdir `cook_modules/` path, so that `use cook_cc` resolves at runtime.
+///
+/// Called from execute-mode cc-* fixture runners; not called from the
+/// parse-only paths in this file.
+#[allow(dead_code)]
+fn install_cc_into(fixture_tmpdir: &std::path::Path) {
+    ensure_shared_cook_cc();
+
+    let target_parent = fixture_tmpdir.join("cook_modules/share/lua/5.4");
+    std::fs::create_dir_all(&target_parent).unwrap();
+    let shared = shared_cook_cc_dir();
+    let dst = target_parent.join("cook_cc");
+    if dst.exists() {
+        return;
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&shared, &dst).unwrap();
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(&dst).unwrap();
+        for entry in std::fs::read_dir(&shared).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), dst.join(entry.file_name())).unwrap();
+        }
+    }
+}
 
 fn corpus_root() -> PathBuf {
     if let Ok(override_path) = std::env::var("COOK_CONFORMANCE_CORPUS") {
