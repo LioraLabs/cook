@@ -2,10 +2,10 @@
 //! into an in-memory `BuildView` that the logs TUI can render.
 
 use std::collections::BTreeMap;
-use std::io;
+use std::io::{self, BufRead};
 use std::path::Path;
 
-use crate::event::{NodeId, NodeKind, RecipeId, SkipReason, Stream};
+use crate::event::{NodeId, NodeKind, RecipeId, SkipReason, Stream, PROGRESS_SCHEMA_VERSION};
 use crate::model::{NodeStatus, Status};
 
 #[derive(Debug, Clone)]
@@ -99,10 +99,15 @@ pub fn load(build_dir: &Path) -> io::Result<(BuildView, LoadDiagnostics)> {
         Err(e) => return Err(e),
     }
 
-    // events.jsonl + .log fallback handled in subsequent tasks.
     let events_path = build_dir.join("events.jsonl");
-    if !events_path.exists() {
-        diag.events_jsonl_missing = true;
+    match std::fs::File::open(&events_path) {
+        Ok(_) => {
+            replay_events_jsonl(&events_path, &mut view, &mut diag)?;
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            diag.events_jsonl_missing = true;
+        }
+        Err(e) => return Err(e),
     }
 
     Ok((view, diag))
@@ -158,6 +163,252 @@ fn summarize_build_dir(build_dir: &Path) -> io::Result<BuildSummary> {
         }
     }
     Ok(summary)
+}
+
+fn replay_events_jsonl(
+    path: &Path,
+    view: &mut BuildView,
+    diag: &mut LoadDiagnostics,
+) -> io::Result<()> {
+    let f = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::new(f);
+
+    // Name → minted id, in insertion order.
+    let mut recipe_ids: BTreeMap<String, RecipeId> = BTreeMap::new();
+    let mut node_ids: BTreeMap<(RecipeId, String), NodeId> = BTreeMap::new();
+    let mut next_recipe: u32 = 0;
+    let mut next_node: u32 = 0;
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => { diag.skipped_jsonl_lines += 1; continue; }
+        };
+        if line.trim().is_empty() { continue; }
+        let value: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => { diag.skipped_jsonl_lines += 1; continue; }
+        };
+        let obj = match value.as_object() {
+            Some(o) => o,
+            None => { diag.skipped_jsonl_lines += 1; continue; }
+        };
+        let v_ok = obj.get("v")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32 <= PROGRESS_SCHEMA_VERSION)
+            .unwrap_or(false);
+        if !v_ok {
+            diag.skipped_jsonl_lines += 1;
+            continue;
+        }
+        let ty = match obj.get("type").and_then(|v| v.as_str()) {
+            Some(t) => t,
+            None => { diag.skipped_jsonl_lines += 1; continue; }
+        };
+        let ts = obj.get("ts").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+        match ty {
+            "build-started" => { /* recipes appear on node-started/recipe-started */ }
+            "recipe-started" => {
+                if let Some(name) = obj.get("recipe").and_then(|v| v.as_str()) {
+                    let rid = *recipe_ids.entry(name.to_string()).or_insert_with(|| {
+                        let id = RecipeId::new(next_recipe); next_recipe += 1; id
+                    });
+                    view.recipes.entry(rid).or_insert_with(|| RecipeView {
+                        name: name.to_string(),
+                        status: Status::Running,
+                        nodes: BTreeMap::new(),
+                    });
+                }
+            }
+            "recipe-completed" | "recipe-failed" => {
+                if let Some(name) = obj.get("recipe").and_then(|v| v.as_str()) {
+                    let status = if ty == "recipe-completed" { Status::Completed } else { Status::Failed };
+                    if let Some(rid) = recipe_ids.get(name).copied() {
+                        if let Some(r) = view.recipes.get_mut(&rid) {
+                            r.status = status;
+                        }
+                    }
+                }
+            }
+            "node-started" => {
+                let r_name = obj.get("recipe").and_then(|v| v.as_str()).unwrap_or("");
+                let n_name = obj.get("node").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let kind = match obj.get("kind").and_then(|v| v.as_str()) {
+                    Some("compile") => NodeKind::Compile,
+                    Some("link") => NodeKind::Link,
+                    Some("resolve") => NodeKind::Resolve,
+                    Some("generate") => NodeKind::Generate,
+                    Some("write") => NodeKind::Write,
+                    Some("test") => NodeKind::Test,
+                    _ => NodeKind::Cooked,
+                };
+                let rid = *recipe_ids.entry(r_name.to_string()).or_insert_with(|| {
+                    let id = RecipeId::new(next_recipe); next_recipe += 1; id
+                });
+                let recipe = view.recipes.entry(rid).or_insert_with(|| RecipeView {
+                    name: r_name.to_string(),
+                    status: Status::Running,
+                    nodes: BTreeMap::new(),
+                });
+                let nid = *node_ids.entry((rid, n_name.clone())).or_insert_with(|| {
+                    let id = NodeId::new(next_node); next_node += 1; id
+                });
+                recipe.nodes.entry(nid).or_insert(NodeView {
+                    name: n_name,
+                    status: NodeStatus::Running,
+                    kind,
+                    started_at: ts.clone(),
+                    ended_at: None,
+                    elapsed_ms: None,
+                    skip_reason: None,
+                    lines: Vec::new(),
+                });
+            }
+            "node-completed" | "node-failed" | "node-cache-hit" | "node-skipped" => {
+                let r_name = obj.get("recipe").and_then(|v| v.as_str()).unwrap_or("");
+                let n_name = obj.get("node").and_then(|v| v.as_str()).unwrap_or("");
+                let rid = match recipe_ids.get(r_name).copied() { Some(r) => r, None => continue };
+                let nid = match node_ids.get(&(rid, n_name.to_string())).copied() { Some(n) => n, None => continue };
+                let Some(recipe) = view.recipes.get_mut(&rid) else { continue };
+                let Some(node) = recipe.nodes.get_mut(&nid) else { continue };
+                node.ended_at = ts.clone();
+                node.elapsed_ms = obj.get("elapsed_ms").and_then(|v| v.as_u64());
+                node.status = match ty {
+                    "node-completed" => NodeStatus::Completed,
+                    "node-failed" => NodeStatus::Failed,
+                    "node-cache-hit" => NodeStatus::Completed,
+                    "node-skipped" => {
+                        node.skip_reason = obj.get("reason").and_then(|v| v.as_str())
+                            .and_then(parse_skip_reason);
+                        NodeStatus::Skipped
+                    }
+                    _ => node.status,
+                };
+            }
+            "node-output" => {
+                let r_name = obj.get("recipe").and_then(|v| v.as_str()).unwrap_or("");
+                let n_name = obj.get("node").and_then(|v| v.as_str()).unwrap_or("");
+                let stream = match obj.get("stream").and_then(|v| v.as_str()) {
+                    Some("stderr") => Stream::Stderr,
+                    _ => Stream::Stdout,
+                };
+                let text = obj.get("line").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let rid = match recipe_ids.get(r_name).copied() { Some(r) => r, None => continue };
+                let nid = match node_ids.get(&(rid, n_name.to_string())).copied() { Some(n) => n, None => continue };
+                if let Some(recipe) = view.recipes.get_mut(&rid) {
+                    if let Some(node) = recipe.nodes.get_mut(&nid) {
+                        node.lines.push(LogLine { stream, ts: ts.clone(), text });
+                    }
+                }
+            }
+            _ => { /* ignore interactive-*, finished — postmortem doesn't need them */ }
+        }
+    }
+    Ok(())
+}
+
+fn parse_skip_reason(s: &str) -> Option<SkipReason> {
+    match s {
+        "upstream-failed" => Some(SkipReason::UpstreamFailed),
+        "condition-false" => Some(SkipReason::ConditionFalse),
+        "disabled" => Some(SkipReason::Disabled),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests_load_events {
+    use super::*;
+    use crate::event::{NodeId, NodeKind, ProgressEvent, RecipeId, RecipeTopo, Stream};
+    use crate::log_store::{LogConfig, LogStore};
+    use crate::model::build::BuildState;
+    use std::time::Duration;
+
+    fn drive_minimal_build(tmp: &Path) -> String {
+        let mut store = LogStore::open(tmp, LogConfig::default()).unwrap();
+        let mut state = BuildState::new();
+        let bs = ProgressEvent::BuildStarted {
+            recipes: vec![RecipeTopo {
+                id: RecipeId::new(0),
+                name: "lib".into(),
+                deps: vec![],
+                expected_nodes: 1,
+            }],
+            total_nodes: 1,
+        };
+        state.apply(&bs);
+        store.record(&state, &bs).unwrap();
+
+        let ns = ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0),
+            node: NodeId::new(0),
+            name: "parser.c".into(),
+            artifact: None,
+            fallback_label: "parser.c".into(),
+            kind: NodeKind::Cooked,
+        };
+        state.apply(&ns);
+        store.record(&state, &ns).unwrap();
+
+        let no = ProgressEvent::NodeOutput {
+            recipe: RecipeId::new(0),
+            node: NodeId::new(0),
+            line: "hello world".into(),
+            stream: Stream::Stdout,
+        };
+        state.apply(&no);
+        store.record(&state, &no).unwrap();
+
+        let nf = ProgressEvent::NodeFailed {
+            recipe: RecipeId::new(0),
+            node: NodeId::new(0),
+            elapsed: Duration::from_millis(123),
+            error: "boom".into(),
+        };
+        state.apply(&nf);
+        store.record(&state, &nf).unwrap();
+
+        store.close(false).unwrap();
+        store.build_id().to_string()
+    }
+
+    #[test]
+    fn load_replays_events_into_buildview() {
+        let tmp = tempfile::tempdir().unwrap();
+        let build_id = drive_minimal_build(tmp.path());
+        let build_dir = tmp.path().join(".cook").join("logs").join(&build_id);
+
+        let (view, diag) = load(&build_dir).unwrap();
+        assert!(!diag.events_jsonl_missing);
+
+        assert_eq!(view.recipes.len(), 1);
+        let (_, recipe) = view.recipes.iter().next().unwrap();
+        assert_eq!(recipe.name, "lib");
+        assert_eq!(recipe.nodes.len(), 1);
+        let (_, node) = recipe.nodes.iter().next().unwrap();
+        assert_eq!(node.name, "parser.c");
+        assert_eq!(node.status, NodeStatus::Failed);
+        assert_eq!(node.elapsed_ms, Some(123));
+        assert_eq!(node.lines.len(), 1);
+        assert_eq!(node.lines[0].text, "hello world");
+        assert_eq!(node.lines[0].stream, Stream::Stdout);
+    }
+
+    #[test]
+    fn load_skips_corrupt_jsonl_lines_and_counts_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let build_id = drive_minimal_build(tmp.path());
+        let build_dir = tmp.path().join(".cook").join("logs").join(&build_id);
+        let events_path = build_dir.join("events.jsonl");
+        let mut text = std::fs::read_to_string(&events_path).unwrap();
+        text.push_str("not json at all\n");
+        text.push_str("{\"missing\":\"v\"}\n");
+        std::fs::write(&events_path, text).unwrap();
+
+        let (_view, diag) = load(&build_dir).unwrap();
+        assert_eq!(diag.skipped_jsonl_lines, 2);
+    }
 }
 
 #[cfg(test)]
