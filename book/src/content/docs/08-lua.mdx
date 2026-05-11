@@ -74,7 +74,7 @@ The `>>{ ... }` block says "run this at register time." This records one shell u
 | `cache`             | boolean          | `true`  | Set to `false` to never cache. |
 | `discovered_inputs` | table            | absent  | Auto-add inputs the command discovers. See §8.7. |
 | `ingredient_groups` | array of array   | absent  | Bind `input_N` globals inside a `lua_code` body — one entry per `ingredients` group. |
-| `line`              | integer          | `0`     | Source line for diagnostics. Codegen sets this for you. |
+| `line`              | integer          | `0`     | Source line for diagnostics. Codegen sets this where it has a useful line (e.g. chore shells); defaults to `0` otherwise. |
 
 You'll rarely write this by hand; the surface forms cover the common cases. The escape hatch is here when you need it.
 

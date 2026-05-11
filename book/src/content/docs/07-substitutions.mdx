@@ -41,6 +41,8 @@ There is no silent fallthrough. If you typo a placeholder, you get a clear error
 | `$<out_1>`, `$<out_2>`, ... | Nth declared output                       | `using` body, multi-output `cook` |
 | `$<in.stem>`      | Stem of the current input (any path accessor)        | output pattern, `using` body  |
 
+Bare shell commands in a recipe body run in *one-shot* mode — no iteration source, no declared output — so the iteration/output builtins above don't apply there. Bare shell *can* still substitute recipe references (`$<compile>`) and declared env vars (`$<TARGET>`), which is what §7.10's "Try it" does.
+
 `$<in>`, `$<out>`, `$<all>` are the ones you'll write 90% of the time.
 
 ## 7.4. Path accessors as placeholders
@@ -106,7 +108,7 @@ The rules:
 - Only one driver per step.
 - Bare `$<lib>` (no accessor) in an output pattern is a hard error.
 - `$<lib.ACCESSOR>` is forbidden in `using` bodies, `plate` bodies, `test` bodies, and bare shell commands — those have no output pattern and so can't have a driver.
-- Placeholder identifiers don't allow hyphens. A recipe named `build-tests` is legal, but `$<build-tests.stem>` won't parse — the lexer stops at the hyphen (Standard §2.11). For drivers, keep the recipe name hyphen-free: `buildtests`, or `build_tests`. (Dotted names like `build.tests` are not allowed at the *declaration* site — dots in `$<...>` always route through an `import` alias.)
+- Placeholder identifiers don't allow hyphens. A recipe named `build-tests` is legal, but `$<build-tests.stem>` won't parse — the lexer stops at the hyphen (Standard §2.11). For drivers, keep the recipe name hyphen-free: `buildtests`, or `build_tests`. (Dotted names like `build.tests` are not allowed at the *declaration* site — dots inside a placeholder always denote either a path accessor or an `import` alias, never a locally-declared recipe segment.)
 
 *(Standard §5.4.)*
 

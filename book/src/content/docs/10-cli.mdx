@@ -132,7 +132,7 @@ cook logs build                 # logs from the latest "build" run (recipe selec
 cook logs build:link            # scope to a specific node within build
 ```
 
-Cook keeps a per-build log archive under `.cook/logs/`. `cook logs` is your way back into them. With no arguments, it lists recent build IDs and timestamps. With `--build <id>`, it dumps that specific archive — the form to reach for when you have an ID in hand (from `cook` output or another `cook logs` listing). The optional `[SELECTOR]` positional accepts a recipe name (latest run for that recipe) or a `recipe:node` form (single unit); `--failed` is the convenient post-mortem shortcut.
+Cook keeps a per-build log archive under `.cook/logs/`. `cook logs` is your way back into them. With no arguments, it lists recent build IDs and timestamps. `--build <id>` selects a specific archive — pair it with `--failed` or a `recipe:node` selector to print contents (a bare `--build <id>` alone currently produces no body output). The optional `[SELECTOR]` positional accepts a recipe name (latest run for that recipe) or a `recipe:node` form (single unit); `--failed` is the convenient post-mortem shortcut and emits the failing nodes' captured output directly.
 
 Particularly useful when `--quiet` was on during the build and you want to see what happened.
 
@@ -154,7 +154,7 @@ Useful flags (available on every `cook modules` subcommand unless noted):
 
 | Flag                 | Use                                                  |
 |----------------------|------------------------------------------------------|
-| `--registry URL`     | One-shot prefix for `[registry].indexes` (install/update/search). |
+| `--registry URL`     | One-shot prefix for `[registry].indexes`.            |
 | `--non-interactive`  | Error on prompts instead of asking (CI-safe).         |
 | `--accept-trust`     | TOFU consent for new index hosts (CI-safe).           |
 | `--output MODE`      | `auto` / `plain` / `json` — machine output for CI.    |

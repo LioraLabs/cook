@@ -40,7 +40,7 @@ recipe wave
 
 `use greet` binds `greet` as a global table inside the Cookfile's Lua context. Any recipe can call `greet.something(...)`. The bare `alias.fn(args)` form on its own line is the **module-call shorthand** introduced in §9.4 — it desugars to a register-phase (`>>`) call. That matters here because `greet.shout` invokes `cook.add_unit`, which is register-only; calling it via `>` (execute phase) raises `cook.add_unit: register-only API called from execute-phase Lua (Standard §6.3.2)`. *(Standard §6.3, §7.4.)*
 
-Cook resolves `use NAME` by trying, in order, `cook_modules/NAME.lua`, `cook_modules/NAME/init.lua`, and the LuaRocks-managed install paths under `cook_modules/share/lua/5.4/`. If none match, it errors when a recipe that depends on the binding is registered.
+Cook resolves `use NAME` against the project's `cook_modules/` tree at two locations: `cook_modules/NAME.lua` and `cook_modules/NAME/init.lua`. If neither exists, you'll get `module not found: NAME (tried NAME.lua and NAME/init.lua)` when a recipe that depends on the binding is registered. (LuaRocks-installed modules — those added via `cook modules install` — land under `cook_modules/share/lua/5.4/` and are reachable from inside module code via Lua's stock `require()`, not via `use`; see Standard §7.4.)
 
 ## 9.2. Where modules come from
 

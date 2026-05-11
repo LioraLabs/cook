@@ -37,6 +37,7 @@ Surface form (no discovered inputs — `.d` files get regenerated but Cook doesn
 recipe compile
     ingredients "src/**/*.c"
     cook "build/$<in.stem>.o" using {
+        mkdir -p .cook/deps
         gcc -MMD -MF .cook/deps/$<in.stem>.d -c $<in> -o $<out>
     }
 ```
@@ -53,7 +54,7 @@ recipe compile
                 inputs  = { src },
                 output  = "build/" .. stem .. ".o",
                 command = string.format(
-                    "gcc -MMD -MF .cook/deps/%s.d -c %s -o build/%s.o",
+                    "mkdir -p .cook/deps && gcc -MMD -MF .cook/deps/%s.d -c %s -o build/%s.o",
                     stem, src, stem),
                 discovered_inputs = {
                     from   = ".cook/deps/" .. stem .. ".d",
@@ -63,6 +64,8 @@ recipe compile
         end
     }
 ```
+
+Cook auto-creates parent dirs for declared `output`s but not for the `discovered_inputs.from` sidecar `gcc -MF` writes — hence the `mkdir -p .cook/deps` prelude.
 
 ## A.4. Run every test binary
 

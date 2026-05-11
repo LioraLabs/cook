@@ -18,9 +18,9 @@ Terms used throughout the Book and the Standard, in plain English.
 
 **`cook` step** — The build-step keyword (distinct from the `cook` binary). Declares one or more outputs and a shell or Lua body that produces them; every `cook` step is cacheable. *(Standard §4.5–§4.6.)*
 
-**`plate` step** — A `cook`-style step with no declared outputs. Runs a body against the recipe's current input list, typically to ship something outside the project (deploy, install, publish). Not cached. *(Standard §4.7.)*
+**`plate` step** — A `cook`-style step with no declared outputs. Iterates over the preceding `cook` step's outputs (or the recipe's ingredients, if no `cook` step precedes), typically to ship something outside the project (deploy, install, publish). Not cached. *(Standard §4.7.)*
 
-**`test` step** — Like `plate`, but its units report pass/fail rather than producing artifacts. Failures are aggregated rather than fail-fast; supports `as`, `timeout`, and `should_fail` modifiers. *(Standard §4.8.)*
+**`test` step** — Like `plate`, but its units report pass/fail rather than producing artifacts. Supports `as 'name'`, `timeout N`, and `should_fail` modifiers in that canonical order. The Standard leaves cross-recipe aggregation implementation-defined in v0.8; the bundled `cook test` runner currently collects failures into one summary and exposes `--fail-fast` to short-circuit. *(Standard §4.8.)*
 
 **`@` step / interactive command** — A shell step prefixed with `@`. Drains all concurrent work before running, inherits the controlling TTY, and is never cached. Chore-body shell steps behave this way by default; recipe-body shell steps need the explicit `@`. *(Standard §4.10, §4a.3.)*
 
@@ -52,9 +52,13 @@ Terms used throughout the Book and the Standard, in plain English.
 
 **Config block** — A `config` (or `config NAME`) top-level section. Runs at *load time*, before any recipe registers, and seeds `cook.env` with declared variables.
 
-**Module** — A built-in module (e.g. `fs`, `path`) or a Lua file under `cook_modules/` that returns a table. Pulled into scope with `use NAME`. If the module's table exposes an `init()` function, Cook calls it once after load.
+**Module** — A Lua file under `cook_modules/` (as `NAME.lua` or `NAME/init.lua`) that returns a table, pulled into scope with `use NAME`. If the module's table exposes an `init()` function, Cook calls it once after load. (The Lua API tables `fs` and `path` are *not* modules — they're pre-bound library tables provided by the host environment per Standard §6.5–§6.6. Standard §6.8.1 reserves a built-in-module slot but defines no built-ins in v0.1.)
 
 **Import** — A statement that pulls another Cookfile under an alias. `import backend ./backend` makes `backend.build` resolve to that Cookfile's `build` recipe.
+
+**Namespace** — Informal term for the `alias` segment of a qualified reference: in `backend.build`, the `backend` `import` alias is the namespace and `build` is the recipe name (Standard §7.3 defines `alias.recipe` as the single-segment normative form). Deeper dotted paths like `apps.web.unit` work in practice because `apps` imports a Cookfile that itself imports under alias `web`, but the Standard does not yet normatively define the chained form.
+
+**Drain / single-drain** — Execution mode in which Cook waits for every in-flight work unit to finish before starting the marked unit, and runs nothing else concurrently with it. Used by `@`-prefixed interactive shell steps and by every chore body (single-drain start, Standard §4a.3 / CS-0051).
 
 **Cache key** — The hash Cook computes for a work unit, used to decide whether to re-run it. Built from declared inputs (file content), declared outputs, the rendered command, and any consulted env keys.
 
