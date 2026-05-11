@@ -165,16 +165,20 @@ pub struct DagArgs {
 
 #[derive(clap::Args, Debug, Clone)]
 pub struct LogsArgs {
-    /// Recipe selector (or 'recipe:node'). Omit to list recent build ids.
-    pub selector: Option<String>,
+    /// Specific build id (directory name under .cook/logs/).
+    pub build_id: Option<String>,
 
-    /// Specific build id.
-    #[arg(long)]
-    pub build: Option<String>,
+    /// Open the Nth most recent build (1 = latest).
+    #[arg(short = 'n', long, conflicts_with_all = ["build_id", "last_failed"])]
+    pub nth: Option<usize>,
 
-    /// Dump failed nodes from the most recent build.
-    #[arg(long)]
-    pub failed: bool,
+    /// Open the most recent build with a non-zero exit code.
+    #[arg(long, conflicts_with_all = ["build_id", "nth"])]
+    pub last_failed: bool,
+
+    /// Color theme: auto (default) or mono.
+    #[arg(long, default_value = "auto")]
+    pub theme: String,
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -318,18 +322,6 @@ mod tests {
                 assert_eq!(args.theme, "mono");
             }
             other => panic!("expected Cmd::Dag, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn logs_subcommand_with_failed_flag() {
-        let cli = parse(&["logs", "--failed"]);
-        match cli.cmd {
-            Some(Cmd::Logs(args)) => {
-                assert!(args.failed);
-                assert!(args.selector.is_none());
-            }
-            other => panic!("expected Cmd::Logs, got {other:?}"),
         }
     }
 

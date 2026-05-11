@@ -20,6 +20,7 @@ path = "src/lib.rs"
 cook-lang = { path = "../cook-lang" }
 cook-progress = { path = "../cook-progress" }
 cook-engine = { path = "../cook-engine" }
+cook-logs = { path = "../cook-logs" }
 cook-dag-viewer = { path = "../cook-dag-viewer", optional = true }
 
 clap = { version = "4", features = ["derive"] }

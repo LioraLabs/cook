@@ -1,7 +1,6 @@
 //! cook — the user-facing binary for the Cook build system.
 
 mod cli;
-mod cmd_logs;
 mod error;
 mod iso8601;
 mod pipeline;
@@ -50,11 +49,20 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         Some(Cmd::Modules(args)) => std::process::exit(modules::run(args)),
         Some(Cmd::Test(args)) => cmd_test(&globals, &args),
         Some(Cmd::Dag(args)) => cmd_dag(&globals, &args),
-        Some(Cmd::Logs(args)) => crate::cmd_logs::cmd_logs(
-            args.selector.as_deref(),
-            args.build.as_deref(),
-            args.failed,
-        ),
+        Some(Cmd::Logs(args)) => {
+            let selector = if args.last_failed {
+                cook_logs::BuildSelector::LastFailed
+            } else if let Some(id) = args.build_id.clone() {
+                cook_logs::BuildSelector::ByBuildId(id)
+            } else if let Some(n) = args.nth {
+                cook_logs::BuildSelector::Nth(n)
+            } else {
+                cook_logs::BuildSelector::Latest
+            };
+            let project_root = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
+            cook_logs::cmd_logs(&project_root, selector, cook_logs::Theme::default())
+                .map_err(|e| CookError::Other(e.to_string()))
+        }
         Some(Cmd::Serve(args)) => cmd_serve(
             &globals,
             args.recipe.as_deref().unwrap_or("build"),
