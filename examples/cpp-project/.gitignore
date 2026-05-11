@@ -1,2 +1,4 @@
-.cook
-build
+cook_modules/
+.cook/
+build/
+compile_commands.json

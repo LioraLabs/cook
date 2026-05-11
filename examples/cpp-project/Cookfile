@@ -1,7 +1,7 @@
-use cpp
+use cook_cc
 
 recipe mathlib
-    cpp.static_library("mathlib", {
+    cook_cc.lib("mathlib", {
         dir = "src/math/",
         includes = { "include/" },
         export_includes = { "include/" },
@@ -9,21 +9,21 @@ recipe mathlib
     })
 
 recipe app: mathlib
-    cpp.executable("app", {
+    cook_cc.bin("app", {
         sources = { "src/app/main.cpp" },
         links = { "mathlib" },
         standard = "c++17",
     })
 
 recipe test-vec: mathlib
-    cpp.executable("test_vec", {
+    cook_cc.bin("test_vec", {
         sources = { "tests/test_vec.cpp" },
         links = { "mathlib" },
         standard = "c++17",
     })
 
 recipe test-util: mathlib
-    cpp.executable("test_util", {
+    cook_cc.bin("test_util", {
         sources = { "tests/test_util.cpp" },
         links = { "mathlib" },
         standard = "c++17",
@@ -34,7 +34,9 @@ recipe run-tests: test-vec test-util
     test { ./$<in> } timeout 30
 
 recipe compile-commands: mathlib app test-vec test-util
-    cpp.compile_commands()
+    cook_cc.compile_commands()
+
+recipe build: mathlib app test-vec test-util
 
 chore clean
     rm -rf build .cook
