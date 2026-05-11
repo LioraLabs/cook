@@ -1,0 +1,7 @@
+use cook_cc
+
+config
+    cook_cc.defaults({ defines = { "COMMON_DEFINE" } })
+
+recipe build
+    cook_cc.bin("app", { sources = { "src/main.c" } })

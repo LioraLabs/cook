@@ -1,0 +1,18 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="libfoo" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="cook_cc.lib(\"foo\", { sources = { \"src/lib.cpp\" }, export_includes = { \"include/\" } })"
+    Recipe name="build" line=6
+      deps: ["libfoo"]
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="cook_cc.bin(\"app\", { sources = { \"src/main.cpp\" }, links = { \"foo\" } })"
+  chores:

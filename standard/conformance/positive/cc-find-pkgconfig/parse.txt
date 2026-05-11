@@ -1,0 +1,14 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="probe" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Lua code="local r = cook_cc.find(\"zlib\")"
+        Lua code="if not r.found then error(\"zlib not found\") end"
+        Lua code="if #r.system_libs == 0 then error(\"zlib system_libs empty\") end"
+  chores:

@@ -1,0 +1,6 @@
+use cook_cc
+
+recipe probe
+    > local r = cook_cc.find("zlib")
+    > if not r.found then error("zlib not found") end
+    > if #r.system_libs == 0 then error("zlib system_libs empty") end
