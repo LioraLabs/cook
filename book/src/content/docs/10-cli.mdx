@@ -54,7 +54,7 @@ Drop a starter `Cookfile` (one trivial `recipe build`) and a `.gitignore` into t
 cook menu
 ```
 
-List every recipe and chore in the workspace. Reads the Cookfile (and any imports), prints recipe names and their declared dependencies. The output is human-formatted (kind prefix, padding); for shell pipelines use `cook list` (§10.4) instead.
+List every recipe and chore in the workspace. Reads the Cookfile (and any imports), prints each name on its own line with a kind prefix and column padding (e.g. `recipe build`, `chore  clean`). The output is human-formatted; for shell pipelines use `cook list` (§10.4) instead.
 
 ## 10.4. `cook list`
 
@@ -78,6 +78,8 @@ chore pick
 | `--recipes-only`   | Print recipe names only.                                  |
 | `--chores-only`    | Print chore names only. Mutually exclusive with the above.|
 
+All global options (`-f/--file`, `--root`, `--output`, …) apply here too.
+
 ## 10.5. `cook test`
 
 ```bash
@@ -87,6 +89,15 @@ cook test apps.web.unit
 ```
 
 Run every recipe that contains a `test` step. With a *scope* argument, narrow to recipes under that namespace. Output is aggregated per-test: a unit failure doesn't cancel sibling tests, and the summary at the end lists every failure.
+
+| Flag                       | Effect                                                                       |
+|----------------------------|------------------------------------------------------------------------------|
+| `--filter GLOB`            | Glob-filter tests by `<namespace>.<recipe>:<name>`. Repeatable.              |
+| `--fail-fast`              | Cancel queued tests on first failure.                                        |
+| `--rerun [GLOB]`           | Force re-run of matching tests (or all if no pattern).                       |
+| `--rerun-failed`           | Re-run only tests that failed (or were blocked / timed out) last run.        |
+| `--report-json PATH`       | Write JSON test report (default `.cook/test-report.json`).                   |
+| `--report-junit PATH`      | Write JUnit XML test report.                                                 |
 
 ## 10.6. `cook dag`
 
@@ -98,7 +109,7 @@ cook dag link release
 
 Open a TUI viewer for the build DAG. Default target is `build`; pass any recipe name. The optional second arg is a config preset to apply. Useful for "wait, why is this recipe rebuilding?" — every node shows its inputs, outputs, and cache status.
 
-Quit with `q`. Inside the TUI, arrow keys navigate, `enter` expands a node, `c` toggles the cache view.
+Quit with `q`; the in-TUI keybindings (navigation, expand, toggle cache view) are listed in the help bar at the bottom of the viewer — `?` brings up a fuller cheatsheet. Pass `--theme mono` if your terminal doesn't render the default color scheme well.
 
 ## 10.7. `cook serve`
 
@@ -114,12 +125,14 @@ Watch the recipe's ingredient set; re-run on change. This is your fast-iteration
 ## 10.8. `cook logs`
 
 ```bash
-cook logs              # list recent build IDs
-cook logs build        # logs from the latest "build" run
-cook logs build:link   # logs from a specific node within build
+cook logs                       # list recent build IDs
+cook logs --build <id>          # dump the named build
+cook logs --failed              # dump failed nodes from the most recent build
+cook logs build                 # logs from the latest "build" run (recipe selector)
+cook logs build:link            # scope to a specific node within build
 ```
 
-Cook keeps a per-build log archive under `.cook/logs/`. `cook logs` is your way back into them. With no arguments, it lists recent build IDs and timestamps. With a recipe name, it shows the latest log for that recipe. With `recipe:node`, it scopes to one unit.
+Cook keeps a per-build log archive under `.cook/logs/`. `cook logs` is your way back into them. With no arguments, it lists recent build IDs and timestamps. With `--build <id>`, it dumps that specific archive — the form to reach for when you have an ID in hand (from `cook` output or another `cook logs` listing). The optional `[SELECTOR]` positional accepts a recipe name (latest run for that recipe) or a `recipe:node` form (single unit); `--failed` is the convenient post-mortem shortcut.
 
 Particularly useful when `--quiet` was on during the build and you want to see what happened.
 
@@ -137,13 +150,14 @@ The module manager. Subcommands:
 
 With no names, `cook modules install` realises the locked closure recorded in `cook.lock` — the equivalent of `npm ci` or `cargo install --locked`. Use this in CI.
 
-Useful flags:
+Useful flags (available on every `cook modules` subcommand unless noted):
 
 | Flag                 | Use                                                  |
 |----------------------|------------------------------------------------------|
-| `--registry URL`     | One-shot prefix for `[registry].indexes`.            |
+| `--registry URL`     | One-shot prefix for `[registry].indexes` (install/update/search). |
 | `--non-interactive`  | Error on prompts instead of asking (CI-safe).         |
 | `--accept-trust`     | TOFU consent for new index hosts (CI-safe).           |
+| `--output MODE`      | `auto` / `plain` / `json` — machine output for CI.    |
 
 ## 10.10. `cook emit-lua`
 
@@ -153,6 +167,8 @@ cook emit-lua -f some/Cookfile
 ```
 
 Print the Lua program your Cookfile compiles to. Read-only; no work runs. This is the *understanding aid* for chapter 8 — when you're not sure what a surface form desugars to, `emit-lua` shows you exactly which `cook.add_unit` calls it produced.
+
+The command is file-level only: you can point at a different Cookfile with `-f`, but you can't scope it to a single recipe — Cook prints the whole compiled module every time.
 
 Useful for debugging modules: if a module call doesn't seem to be doing what you expect, run `cook emit-lua` and read the generated registration.
 
@@ -192,7 +208,8 @@ cook serve                 watch + rerun on change
 
 # investigation
 cook dag                   open the DAG TUI
-cook logs                  show build logs
+cook logs                  list recent build ids
+cook logs --build ID       dump a specific build
 cook emit-lua              dump compiled Lua
 
 # modules

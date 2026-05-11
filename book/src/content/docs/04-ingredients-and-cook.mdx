@@ -26,7 +26,7 @@ A recipe MAY have at most one `ingredients` line. The set is the union of all in
 
 ```cook
 recipe lib
-    ingredients "src/*.c" "include/*.h" !"src/lua.c" !"src/luac.c"
+    ingredients "src/*.c" !"src/lua.c" !"src/luac.c"
     cook "build/libmath.a" using { ar rcs $<out> $<all> }
 ```
 
@@ -92,8 +92,8 @@ recipe wasm
     ingredients "src/wasm.rs"
     cook "out.js" "out.wasm" using {
         wasm-pack build
-        cp pkg/out.js out.js
-        cp pkg/out.wasm out.wasm
+        cp pkg/out.js $<out_1>
+        cp pkg/out.wasm $<out_2>
     }
 ```
 
@@ -114,9 +114,9 @@ recipe runtests
     }
 ```
 
-When `cook` sees `$<buildtests.stem>` in the output pattern, the driver is `buildtests`'s output list, not `runtests`'s own ingredients. One unit per file in that list. *(Standard §5.4.)*
+When `cook` sees `$<buildtests.stem>` in the output pattern, the driver is `buildtests`'s output list, not `runtests`'s own ingredients. One unit per file in that list. Like any cross-recipe reference, `$<buildtests.stem>` also makes `buildtests` an implicit prerequisite of `runtests` — no `: buildtests` dep needed. *(Standard §5.4.)*
 
-> **Note — placeholder identifiers don't allow hyphens.** A recipe name like `build-tests` is legal, but `$<build-tests.stem>` won't parse as a placeholder (the lexer stops at the hyphen — Standard §2.11). If you want to drive iteration off another recipe's outputs, keep its name hyphen-free or use dots: `$<buildtests.stem>` or `$<build.tests.stem>`.
+> **Note — placeholder identifiers don't allow hyphens.** A recipe name like `build-tests` is legal, but `$<build-tests.stem>` won't parse as a placeholder (the lexer stops at the hyphen — Standard §2.11). If you want to drive iteration off another recipe's outputs, keep its name hyphen-free (`buildtests`, `build_tests`).
 
 A `cook` step can have at most one driver recipe in its output patterns. Bare `$<lib>` (no accessor) in an output pattern is rejected — accessor or nothing.
 
@@ -124,11 +124,12 @@ A `cook` step can have at most one driver recipe in its output patterns. Bare `$
 
 Every `cook` step is cached. The cache key is built from:
 
-- the resolved input file contents (hashed),
+- the rendered command string,
+- the declared input paths (and, in this implementation, their content hashes),
 - the declared output paths,
-- the rendered command string.
+- the recipe's resolved environment (every consulted `cook.env` key).
 
-Change a `.c` file → only its output is rebuilt. Add a flag to `gcc` → everything rebuilds. Touch a `.c` file but leave its bytes alone → nothing rebuilds. *(Standard §8.6.)*
+Change a `.c` file → only its output is rebuilt. Add a flag to `gcc` → everything rebuilds. Touch a `.c` file but leave its bytes alone → nothing rebuilds. Flip a declared env var with `--set` → just the affected units rebuild. *(Standard §8.6.)*
 
 You can opt a unit out by routing through Lua (chapter 8) and setting `cache = false`, but the surface `cook` step always caches.
 

@@ -41,7 +41,7 @@ The install is a self-contained `~/.cook/` tree (the `cook` binary, a bundled Lu
 
 The tree is **relocatable**: at runtime the bundled LuaRocks launcher derives its install root from its own location (exposed as the `COOK_PREFIX` env var) and writes nothing into your home directory beyond this tree. Move `~/.cook/` to `/opt/cook/` and it still works.
 
-The one time the layout matters is when you run `cook modules install` (chapter 9) — that command shells out to the bundled LuaRocks, not whatever `lua` and `luarocks` happen to be on your `PATH`.
+The one time the layout matters is when you run `cook modules install` (chapter 10) — that command shells out to the bundled LuaRocks, not whatever `lua` and `luarocks` happen to be on your `PATH`.
 
 <div class="book-tip">
 
@@ -65,7 +65,7 @@ Same command as the install. The script is idempotent — it checks the latest r
 | `<project>/.cook/cache/` | per project | content-hashed cache for `cook` step outputs. Appears once recipes produce cacheable outputs (a recipe with only bare-shell steps leaves no `cache/`). Safe to delete; rebuild repopulates. |
 | `<project>/.cook/logs/` | per project | per-build log archive (`cook logs` reads these). |
 
-`cook init` writes a `.gitignore` that excludes `<project>/.cook/` for you.
+`cook init` writes a `.gitignore` covering `<project>/.cook/` (with `cloud.toml` re-included so its cache-backend config is checked in) and the `cook_modules/lib/` install tree.
 
 ## 1.6. Uninstalling
 

@@ -16,6 +16,14 @@ Terms used throughout the Book and the Standard, in plain English.
 
 **Step** — A single line (or block) inside a recipe or chore body. Each step has a *kind*: `ingredients`, `cook`, `plate`, `test`, shell command, Lua line, Lua block, module call.
 
+**`cook` step** — The build-step keyword (distinct from the `cook` binary). Declares one or more outputs and a shell or Lua body that produces them; every `cook` step is cacheable. *(Standard §4.5–§4.6.)*
+
+**`plate` step** — A `cook`-style step with no declared outputs. Runs a body against the recipe's current input list, typically to ship something outside the project (deploy, install, publish). Not cached. *(Standard §4.7.)*
+
+**`test` step** — Like `plate`, but its units report pass/fail rather than producing artifacts. Failures are aggregated rather than fail-fast; supports `as`, `timeout`, and `should_fail` modifiers. *(Standard §4.8.)*
+
+**`@` step / interactive command** — A shell step prefixed with `@`. Drains all concurrent work before running, inherits the controlling TTY, and is never cached. Chore-body shell steps behave this way by default; recipe-body shell steps need the explicit `@`. *(Standard §4.10, §4a.3.)*
+
 **Step group** — A set of work units registered together that may run in parallel. The surface `cook` step routes through one automatically.
 
 **Work unit** — The smallest scheduling primitive Cook executes. Recorded at register time, dispatched at execute time.
@@ -28,11 +36,15 @@ Terms used throughout the Book and the Standard, in plain English.
 
 **Ingredient** — An input file matched by a glob pattern in an `ingredients` step. The full ingredient set of a recipe is `(union of includes) \ (union of excludes)`.
 
-**Driver** — In a `cook` step with a `$<lib.ACCESSOR>` placeholder in the output pattern, `lib`'s output list is the *driver* of iteration: one unit per item.
+**Driver** — Whatever populates iteration for a `cook` step: either the recipe's own ingredients (referenced via `$<in.ACCESSOR>`) or another recipe's outputs (`$<lib.ACCESSOR>`). One unit per item.
+
+**Iteration mode** — How many units a step produces relative to its inputs. *One-to-one* (one unit per input, `$<in...>` in the output pattern), *many-to-one* (one unit consuming `$<all>` inputs, no `$<in...>` in the output pattern), or *one-shot* (no `ingredients` at all). *(Standard §4.5–§4.6.)*
 
 **Path accessor** — One of `stem`, `name`, `ext`, `dir`. Splits a path inside a placeholder.
 
-**Placeholder** — A `$<TOKEN>` (or `$<TOKEN.ACCESSOR>`) that resolves to one of: a builtin (`in`/`out`/`all`), another recipe's outputs, or a declared env var. The `$<...>` sigil was picked specifically so it doesn't clash with shell brace expansion (`{a,b,c}`), shell parameter expansion (`${VAR}`), or anything else that uses curly braces.
+**Placeholder** — A `$<IDENT>` (optionally `$<IDENT.ACCESSOR>`, or the indexed form `$<out_N>` / `$<out_N.ACCESSOR>` for multi-output `cook` steps) that resolves to one of: a builtin (`in`/`out`/`all`/`out_N`), another recipe's outputs, or a declared env var. The `$<...>` sigil was picked specifically so it doesn't clash with shell brace expansion (`{a,b,c}`), shell parameter expansion (`${VAR}`), or anything else that uses curly braces.
+
+**Sigil** — A reserved marker at the Cookfile surface. Cook uses two: `$<...>` for placeholders inside shell text, and `//` for workspace-root-anchored import paths.
 
 **String substitution** — The expansion of a bare `$<lib>` (no accessor) inside a step body to the resolved outputs of recipe `lib`, space-separated.
 
@@ -40,7 +52,7 @@ Terms used throughout the Book and the Standard, in plain English.
 
 **Config block** — A `config` (or `config NAME`) top-level section. Runs at *load time*, before any recipe registers, and seeds `cook.env` with declared variables.
 
-**Module** — A Lua file in `cook_modules/` that returns a table. Pulled into scope with `use NAME`.
+**Module** — A built-in module (e.g. `fs`, `path`) or a Lua file under `cook_modules/` that returns a table. Pulled into scope with `use NAME`. If the module's table exposes an `init()` function, Cook calls it once after load.
 
 **Import** — A statement that pulls another Cookfile under an alias. `import backend ./backend` makes `backend.build` resolve to that Cookfile's `build` recipe.
 
@@ -48,7 +60,9 @@ Terms used throughout the Book and the Standard, in plain English.
 
 **Discovered inputs** — Inputs a unit declares *during* execute time, typically by reading a `.d` dependency file emitted by a compiler. Folded into the cache key for next time.
 
-**Workspace** — The directory tree rooted at the Cookfile's directory (or a directory containing a Cookfile). Cook walks parent directories until it finds one.
+**Workspace** — The directory tree Cook treats as one project, rooted at the *workspace root*.
+
+**Workspace root** — The anchor for `//`-prefixed import paths. Located, in order: `--root <dir>` on the CLI, a `.cookroot` marker file, or fallback to the invoked Cookfile's directory. *(Standard §7.6.)*
 
 **`.cook/`** — Per-workspace cache directory. Stores hashes, log archives, and any side files referenced by `discovered_inputs`. Safe to delete.
 

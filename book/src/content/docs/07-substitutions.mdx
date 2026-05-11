@@ -71,11 +71,11 @@ recipe compile
     ingredients "src/*.c"
     cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
 
-recipe link: compile
+recipe link
     cook "build/app" using { gcc $<compile> -o $<out> }
 ```
 
-`$<compile>` in the link body expands to every output of the `compile` recipe, space-separated, exactly as if you'd written `$<all>` referring to compile's outputs. *(Standard §5.5.)*
+`$<compile>` in the link body expands to every output of the `compile` recipe, space-separated, exactly as if you'd written `$<all>` referring to compile's outputs. The placeholder also records `link`'s dep on `compile` for you, so no explicit `: compile` is needed (see the tip below). *(Standard §5.5.)*
 
 You can have any number of bare recipe references in a single step. They don't drive iteration — they're just text substitution. The dependency graph picks up the edge automatically (referencing `$<compile>` inside `link` makes `link` depend on `compile`).
 
@@ -106,7 +106,7 @@ The rules:
 - Only one driver per step.
 - Bare `$<lib>` (no accessor) in an output pattern is a hard error.
 - `$<lib.ACCESSOR>` is forbidden in `using` bodies, `plate` bodies, `test` bodies, and bare shell commands — those have no output pattern and so can't have a driver.
-- Placeholder identifiers don't allow hyphens. A recipe named `build-tests` is legal, but `$<build-tests.stem>` won't parse — the lexer stops at the hyphen (Standard §2.11). For drivers, keep the recipe name hyphen-free or use dots: `buildtests`, or `build.tests`.
+- Placeholder identifiers don't allow hyphens. A recipe named `build-tests` is legal, but `$<build-tests.stem>` won't parse — the lexer stops at the hyphen (Standard §2.11). For drivers, keep the recipe name hyphen-free: `buildtests`, or `build_tests`. (Dotted names like `build.tests` are not allowed at the *declaration* site — dots in `$<...>` always route through an `import` alias.)
 
 *(Standard §5.4.)*
 
@@ -137,7 +137,7 @@ A `$<KEY>` placeholder for a *non-declared* env var is a hard error. This is del
 
 ## 7.8. Recipes shadow env vars
 
-If a recipe and an env var share a name, the recipe wins. Cook emits a warning naming both. Don't do this on purpose — it's a footgun.
+If a recipe and an env var share a name, the recipe wins. Cook emits a warning naming both. Don't do this on purpose — it's a footgun. If you genuinely need to read the env var while a like-named recipe exists, use the explicit `$<env.NAME>` form, which always means "the declared env var" and never resolves to a recipe.
 
 ## 7.9. Distinguishing Cook placeholders from shell variables
 
@@ -181,7 +181,7 @@ recipe greet
     ingredients "Cookfile"
     plate { echo "$<GREETING>, world" }
 
-recipe shout: greet
+recipe shout
     echo "shout sees: $<greet>"
 ```
 

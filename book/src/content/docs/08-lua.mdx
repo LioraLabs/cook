@@ -73,6 +73,8 @@ The `>>{ ... }` block says "run this at register time." This records one shell u
 | `interactive`       | boolean          | `false` | Run on the main thread with a TTY. |
 | `cache`             | boolean          | `true`  | Set to `false` to never cache. |
 | `discovered_inputs` | table            | absent  | Auto-add inputs the command discovers. See §8.7. |
+| `ingredient_groups` | array of array   | absent  | Bind `input_N` globals inside a `lua_code` body — one entry per `ingredients` group. |
+| `line`              | integer          | `0`     | Source line for diagnostics. Codegen sets this for you. |
 
 You'll rarely write this by hand; the surface forms cover the common cases. The escape hatch is here when you need it.
 
@@ -120,6 +122,8 @@ config
     end)()
 ```
 
+(Inside a `config` body, `env` is the local alias for `cook.env`. Anywhere else — recipe bodies, modules — refer to it as `cook.env`; the bare name `env` is only bound during load.)
+
 Use **`cook.exec`** when you want to register a shell step from Lua — typically inside a module or in a body that's building units conditionally. It's the Lua counterpart of writing a bare shell line in a recipe body, with caching off:
 
 ```cook
@@ -131,7 +135,14 @@ recipe deploy
     }
 ```
 
-Each `cook.exec` call records one unit; at execute time, Cook runs them in the same step group. A chore body that *just wants to shell out* doesn't need either helper — the shell command is already a step kind, so `chore deploy / rsync -a build/ web:/var/www/` is the natural form. Reach for `cook.exec` only when you're generating the commands programmatically.
+Each `cook.exec` call records one shell unit. The recorded units run **sequentially** (one after the next, in the order they were registered) — if you want fan-out parallelism for a batch like this, register them with `cook.add_unit(...)` inside an explicit `cook.step_group(function() ... end)`. A chore body that *just wants to shell out* doesn't need either helper — the shell command is already a step kind:
+
+```cook
+chore deploy
+    rsync -a build/ web:/var/www/
+```
+
+Reach for `cook.exec` only when you're generating the commands programmatically.
 
 > **Note — `cook.exec` is register-only.** Calling `cook.exec` from execute-phase Lua (a `>` line, a `>{ ... }` block, or a `using >{ ... }` body) raises a Lua runtime error per Standard §6.3.2. The "I want to shell out from inside an execute-phase body" use case is `cook.sh`. *(Standard §6.3.1, §6.3.2.)*
 

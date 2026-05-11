@@ -29,8 +29,8 @@ A chore is essentially a "recipe-shaped command runner." *(Standard §4a.)*
 
 You could imagine modelling chores as recipes that just happen to skip ingredients. Two reasons Cook gives them their own keyword:
 
-1. **No caching, ever.** The Standard requires every step in a chore body to run with `cache = false`. There's no surprise where running `cook clean` does nothing because Cook decided the inputs hadn't changed.
-2. **Default-interactive shell.** Shell commands inside a chore body are *interactive by default* — they get a real TTY, no per-line capture or buffering. `chore play` running `fzf` works exactly the way you'd want. Inside a recipe, you'd need to write `@fzf` (chapter 8). In a chore, `fzf` on its own does the right thing. *(Standard §4a.3.)*
+1. **No caching, ever.** Cook never records a cached work unit from a chore body — registered units inside a chore must use `cache = false`. There's no surprise where running `cook clean` does nothing because Cook decided the inputs hadn't changed.
+2. **Default-interactive shell.** Shell commands inside a chore body are *interactive by default* — they get a real TTY, no per-line capture or buffering. `chore play` running `fzf` works exactly the way you'd want. Inside a recipe body you'd reach for the `@`-prefixed shell step (`@fzf`) to force interactive mode; in a chore, `fzf` on its own already does the right thing. *(Standard §4a.3.)*
 
 ## 6.3. What a chore body can contain
 
@@ -62,7 +62,7 @@ chore play: build
     ./build/main
 ```
 
-`cook play` builds first, then drops you into the binary. Note that `play` is a chore, not a recipe — it runs interactively, no cache, no parallel-with-itself.
+`cook play` builds first, then drops you into the binary. Note that `play` is a chore, not a recipe — it runs interactively, never caches, and is **single-drain**: once a chore body starts, no other recipe's work units run until it finishes. *(Standard §4a.3.)*
 
 ## 6.5. Chores in the wild
 
@@ -85,7 +85,7 @@ chore release
     > release.cut(cook.env.VERSION)
 ```
 
-That last one calls a Lua function from a module — the `release` import. Modules are chapter 9.
+That last one calls a Lua function from a module — the `release` import — and reads `cook.env`, the table that holds declared config-block values. Modules are chapter 9; `cook.env` (and the rest of the `cook.*` API) is chapter 8.
 
 ## 6.6. Try it
 

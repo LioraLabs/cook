@@ -38,9 +38,9 @@ recipe wave
     greet.shout("world")
 ```
 
-`use greet` binds `greet` as a global table inside the Cookfile's Lua context. Any recipe can call `greet.something(...)`. The bare `alias.fn(args)` form on its own line is the **module-call shorthand** introduced in §9.4 — it desugars to a register-phase (`>>`) call. That matters here because `greet.shout` invokes `cook.add_unit`, which is register-only; calling it via `>` (execute phase) raises `attempt to call a nil value (field 'add_unit')`. *(Standard §6.* and §7.*.)*
+`use greet` binds `greet` as a global table inside the Cookfile's Lua context. Any recipe can call `greet.something(...)`. The bare `alias.fn(args)` form on its own line is the **module-call shorthand** introduced in §9.4 — it desugars to a register-phase (`>>`) call. That matters here because `greet.shout` invokes `cook.add_unit`, which is register-only; calling it via `>` (execute phase) raises `cook.add_unit: register-only API called from execute-phase Lua (Standard §6.3.2)`. *(Standard §6.3, §7.4.)*
 
-Cook resolves `use NAME` by looking for `cook_modules/NAME.lua` in the workspace. If not found, it errors when a recipe that depends on the binding is registered.
+Cook resolves `use NAME` by trying, in order, `cook_modules/NAME.lua`, `cook_modules/NAME/init.lua`, and the LuaRocks-managed install paths under `cook_modules/share/lua/5.4/`. If none match, it errors when a recipe that depends on the binding is registered.
 
 ## 9.2. Where modules come from
 
@@ -66,7 +66,7 @@ chore fmt: tools.fmt
 
 `import ALIAS PATH` says "the Cookfile at `PATH/Cookfile` is now reachable under `ALIAS`." Its recipes show up as `ALIAS.recipe`, its chores as `ALIAS.chore`.
 
-There is no whole-token-vs-split ambiguity to worry about. A recipe declared in a single Cookfile always has an undotted name (Standard §2.3 / App. A.2):
+There is no whole-token-vs-split ambiguity to worry about. A recipe declared in a single Cookfile always has an undotted name (Standard App. A.2):
 
 ```cook
 # this is rejected at parse time:
@@ -75,6 +75,8 @@ recipe backend.build
 ```
 
 Dotted forms only appear at the *reference* site (in dependency lists, in `$<...>` placeholders) and always route through an `import` alias. Want a `backend.build` recipe? Put `recipe build` in `./backend/Cookfile` and `import backend ./backend` at the top of the parent Cookfile. *(Standard §5.2.1, §7.)*
+
+Import paths are tree-relative by default (`./backend`, `../shared`). They can also be anchored to the workspace root with the `//` sigil — `import core //core/lib` always resolves from the workspace root regardless of which Cookfile it appears in. Use this in deep monorepos where relative paths get tangled. *(Standard §7.2.)*
 
 ## 9.4. Module-call shorthand
 

@@ -64,15 +64,15 @@ recipe b: a
     echo b
 ```
 
-`cook a` rejects this with a cycle diagnostic before any work runs — Cook detects it during DAG construction. There's no clever ordering Cook could pick; cycles are always a bug. *(Standard §4.2, §8.4.)*
+`cook a` rejects this with a cycle diagnostic before any work runs — Cook detects it during DAG construction. There's no clever ordering Cook could pick; cycles are always a bug. *(Standard §4.2.)*
 
 ## 3.4. Default recipe and overriding it
 
-We mentioned this in chapter 2: bare `cook` runs the recipe named `build`. There's nothing magical about the name — it's just the convention. If your project doesn't have a `build` recipe, bare `cook` is an error. If it does, that's what runs.
+We mentioned this in chapter 2: bare `cook` runs the recipe named `build`. There's nothing magical about the name — it's just the convention. If your project doesn't have a `build` recipe, bare `cook` is an error (`cook: recipe not found: build`). If it does, that's what runs.
 
 To run a different recipe, name it: `cook lint`, `cook ship`, `cook deploy`.
 
-If your recipe name *collides* with a `cook` subcommand — `menu`, `test`, `serve`, `init`, `dag`, `logs`, `modules`, `chore`, etc. — the subcommand wins. Prefix the recipe name with `+` to disambiguate:
+If your recipe name *collides* with a `cook` subcommand — `init`, `menu`, `list`, `modules`, `test`, `dag`, `logs`, `serve`, `emit-lua` — the subcommand wins. Prefix the recipe name with `+` to disambiguate:
 
 ```bash
 cook +menu       # run the recipe called "menu"

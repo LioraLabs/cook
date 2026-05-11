@@ -49,17 +49,17 @@ recipe run-tests
     test { ./$<in> } timeout 30
 ```
 
-The `timeout` clause caps each unit at 30 seconds. *(Standard §4.8.)*
+The `timeout` clause caps each unit at 30 seconds. Two more modifiers are available in fixed order — `as "name"` to rename the test in the summary, and `should_fail` for negative tests — see Standard §4.8.
 
 ## 5.4. `cook test` — the subcommand
 
 ```bash
-cook test                # run every recipe that contains a test step
+cook test                # run every test step in the workspace
 cook test apps.web       # scope to recipes under the apps.web namespace
 cook test apps.web.unit  # scope to a specific full recipe name
 ```
 
-`cook test` is the first specialized subcommand we've seen. Underneath, it's running test recipes the same way `cook X` runs any recipe — it just filters to recipes that contain `test` steps and aggregates output for human reading. The optional positional is a *recipe scope* (a namespace prefix or a full recipe name), not a substring match. We'll see the rest of these subcommands in chapter 10.
+`cook test` is the first specialized subcommand we've seen. It walks the workspace, runs every recipe that contributes a `test` step (building whatever those recipes' `cook` dependencies need along the way), and aggregates the *test* results into a single human-readable summary — non-test units still execute, but only test units show up in the summary. The optional positional is a *recipe scope* (a namespace prefix or a full recipe name), not a substring match. We'll see the rest of these subcommands in chapter 10.
 
 ## 5.5. `plate` vs `test` — when to use which
 

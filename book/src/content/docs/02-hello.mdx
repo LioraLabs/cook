@@ -28,9 +28,11 @@ Two lines. We're going to spend this whole chapter on those two lines, because e
 A **recipe** is a named bundle of work. It starts with the keyword `recipe`, a name, and a colon-separated list of dependencies if it has any. Below the header comes the recipe **body**, indented one level. The body lists the *steps* the recipe runs.
 
 ```cook
-recipe build              ← header (no deps yet)
-    echo "Hello from Cook!"   ← one step (a shell command)
+recipe build
+    echo "Hello from Cook!"
 ```
+
+The first line is the **header** (no dependencies yet); the indented line is **one step**, a bare shell command.
 
 There is no closing `end` keyword. A recipe ends when the file ends, or when another column-0 keyword starts a new top-level form (`recipe`, `chore`, `config`, `use`, `import`). Indentation is what makes a line *part of the body* rather than the start of something new. *(Standard §4.1.1)*
 
@@ -109,11 +111,11 @@ recipe "build"
 
 Quoting is what you reach for when the name needs a character a bare identifier can't carry — most often a space. *(Standard §2.3, §2.5, §4.1.)*
 
-A bare identifier accepts ASCII letters, digits, underscore, hyphen (`-`), and dot (`.`). Dots are how you write **dotted names** like `backend.build` — that's a single recipe name, not two tokens. Useful when imported modules live under aliases, which we'll see in chapter 9.
+A bare identifier accepts ASCII letters, digits, underscore, and hyphen (`-`). It can *not* contain a dot: at a declaration site, `recipe backend.build` is rejected by the parser. Dots appear at *reference* sites (in dependency lists and `$<...>` placeholders), where `backend.build` resolves through an `import` alias. We'll come back to this in chapter 9.
 
 ## 2.6. Comments and blank lines
 
-Lines starting with `#` are comments. Blank lines are ignored. Both can appear inside a recipe body without ending it:
+A line whose first non-whitespace character is `#` is a comment. Blank lines are ignored. Both can appear inside a recipe body without ending it:
 
 ```cook
 # Top-level comment.

@@ -20,7 +20,7 @@ This Book assumes you've used a Unix shell, you've written a `Makefile` or a `pa
 Three tracks, eat them in order:
 
 1. **Getting started** — install, write your first recipe, learn what dependencies do.
-2. **Building things** — the four step kinds you'll use 90% of the time: `ingredients`, `cook`, `plate`, `test`. Plus chores for command-runner-style commands.
+2. **Building things** — the four step kinds you'll use 90% of the time (`ingredients`, `cook`, `plate`, `test`), and the `chore` top-level form for command-runner-style commands.
 3. **Going further** — Lua for the cases the surface syntax can't reach, modules to share recipes across projects, and a tour of every CLI subcommand.
 
 The Appendices collect *common patterns* (small recipes for things you'll want to do), a *glossary* (in case you forgot what a "step group" is), and a *where to next* page that points you at the Standard for the parts the Book doesn't cover yet.
@@ -32,17 +32,17 @@ recipe build
     ingredients "src/*.c"
     cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
 
-recipe link: build
+recipe link
     cook "build/app" using { gcc $<build> -o $<out> }
 
-recipe test: link
+recipe smoketest: link
     plate { ./build/app --selftest }
 
 chore clean
     rm -rf build
 ```
 
-Four recipes, twelve lines, and you've got an incremental C build with caching, automatic per-file iteration, and a self-test step. Read on, and by chapter 5 you'll know exactly what each line is doing and why.
+Three recipes, a chore, eleven lines, and you've got an incremental C build with caching, automatic per-file iteration, and a self-test step. (Note: `link` doesn't need a `: build` dep — `$<build>` already records the edge for you, and writing both forms triggers a "conflicting scheduling intent" warning. We cover that in chapter 7.) Read on, and by chapter 5 you'll know exactly what each line is doing and why.
 
 ## Conventions used in the Book
 
