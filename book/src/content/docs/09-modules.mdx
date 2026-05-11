@@ -114,9 +114,10 @@ Make `cook_modules/copy.lua`:
 local copy = {}
 
 -- Expand a glob and register one unit per matched file. Cook's cache
--- hashes file content, not directories, so each input must be a file.
--- Passing a directory (or a directory glob) here raises a register-time
--- error pointing back at this call site.
+-- hashes file content, not directories, so each input must be a file —
+-- `fs.glob` drops sub-directory matches for you, so a pattern like
+-- `upstream/lib/*` against a tree that mixes files and sub-directories
+-- yields only the files.
 function copy.tree(src_glob, dst_dir)
     local sources = fs.glob(src_glob)
     for _, src in ipairs(sources) do
@@ -144,7 +145,7 @@ recipe vendor
 
 Run `cook vendor`. The first run copies each file; the second run is cached because every declared input resolves to a file whose content cook can hash. (We're using the module-call shorthand from §9.4 — `copy.tree` registers units via `cook.add_unit`, which is register-phase. Writing `> copy.tree(...)` would error.)
 
-> Why a glob and not a directory? Cook's cache hashes file content, so every entry in `inputs` must point at a file. A directory input has no hashable bytes; cook rejects it at register time rather than silently invalidating the cache on every run.
+> Why a glob and not a directory? Cook's cache hashes file content, so every entry in `inputs` must point at a file. A directory input has no hashable bytes; cook rejects it at register time rather than silently invalidating the cache on every run. `fs.glob` filters sub-directories out of its results so you never hit that error for a path you didn't write by hand — but a directory you pass explicitly (e.g. `inputs = { "upstream/lib" }`) still trips it.
 
 ## 9.7. Where to next
 

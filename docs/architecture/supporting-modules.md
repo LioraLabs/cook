@@ -1,171 +1,142 @@
-# Supporting Modules: Analyzer, Watcher, Env, Progress
+## Supporting Modules: Analyzer, Watcher, Env, Progress
 
-Four focused modules that underpin Cook's build pipeline. The analyzer runs before any recipe executes; the watcher powers `cook serve`; the env loader feeds the five-layer variable resolution system; and the progress crate renders build output to the terminal and persists build logs for post-hoc inspection.
+Four focused modules that underpin Cook's build pipeline. The analyzer determines which recipes to run and in what order; the watcher powers `cook serve`; the env loader feeds the layered variable resolution applied before each build; and the progress crate renders build output to the terminal and persists build logs for post-hoc inspection.
+
+Module locations have shifted as the build system was split into workspace crates. Old single-tree paths (`src/analyzer/`, `src/watcher/`, `src/env/`) no longer exist — every module now lives inside one of the `cli/crates/*` crates.
 
 ---
 
-## 1. Analyzer (`src/analyzer/`)
+## 1. Analyzer (`cli/crates/cook-engine/src/analyzer.rs`)
 
 ### Purpose
 
-The analyzer determines which recipes to run and in what order. It is called early in every recipe run and `cook serve` invocation — before any recipe execution begins — and returns an ordered list of recipe names that the scheduler then enqueues.
+The analyzer determines the execution order of recipes. It runs once early in every build (and every `cook serve` rebuild) and returns either an ordered list of recipe names (`topological_sort`) or a recipe -> dependency-names map (`dependency_edges` / `dependency_edges_multi`). The scheduler enqueues recipes in the order returned here.
 
-Entry point: `src/analyzer/mod.rs:35` `resolve_execution_order(cookfile, target)` → `Vec<String>`.
+The module works entirely with string-keyed `BTreeMap<String, RecipeInfo>` — it does not depend on the parser AST. The translation from `cook_lang::ast::Cookfile` to `RecipeInfo` is done by `pipeline::recipe_info::build_single_recipe_infos` (`cli/crates/cook-engine/src/pipeline/recipe_info.rs:22`) and `pipeline::recipe_info::build_workspace_recipe_info`.
 
----
+### Structures
 
-### RecipeInfo Struct
-
-Defined at `src/analyzer/graph.rs:12`:
+`RecipeInfo` is defined at `cli/crates/cook-engine/src/analyzer.rs:37`:
 
 ```rust
 pub struct RecipeInfo {
-    pub ingredients: Vec<String>,  // glob input patterns from the recipe header
-    pub serves: Vec<String>,       // output paths produced by Cook steps
-    pub requires: Vec<String>,     // explicit deps from the recipe header
+    pub ingredients: Vec<String>,
+    pub serves: Vec<String>,
+    pub requires: Vec<String>,
 }
 ```
 
-`build_recipe_info` (`src/analyzer/mod.rs:7`) populates one `RecipeInfo` per recipe by iterating over `cookfile.recipes`. The `serves` field is extracted by filtering each recipe's steps for `Step::Cook` variants and collecting every entry in `cook_step.outputs` (`src/analyzer/mod.rs:12-22`). For example, a recipe with a `cook "build/{stem}.o"` step will have `"build/{stem}.o"` in its `serves` list. A multi-output step such as `cook "out/parser.rs" "out/parser.h" using { ... }` contributes both patterns to `serves`.
+`ingredients` are glob patterns the recipe consumes; `serves` are cook-step output patterns; `requires` are the recipe names listed after `:` in the recipe header. The shape matches the historical struct exactly, but the file it lives in has moved.
 
----
+`WorkspaceLayout` (`analyzer.rs:188`) and the helper `NamespaceEntry = (PathBuf, String, PathBuf)` carry the canonical-path + import-name information needed to compute fully-qualified recipe names across imported Cookfiles. `build_workspace_recipe_info(layout)` returns a `BTreeMap<String, RecipeInfo>` whose keys are dotted-prefix names like `"backend.proto.generate"`.
 
-### Dependency Types
+### Algorithms
 
-There are two independent mechanisms for establishing that recipe B must run before recipe A.
+**Adjacency.** `build_adjacency` (`analyzer.rs:55`) maps each recipe name to the `BTreeSet<&str>` of names it depends on. **Edges come from explicit `requires` only.** Every other kind of cross-recipe edge enters the pipeline elsewhere.
 
-**Explicit dependencies** are declared in the recipe header:
-
-```
-recipe "build": "setup"
-```
-
-This causes `"setup"` to appear in `recipe.deps` and therefore in `RecipeInfo.requires`. The graph builder validates each explicit dep against the known recipe names and returns `GraphError::UnknownRecipe` if any is missing (`src/analyzer/graph.rs:41-44`).
-
-**Implicit file-based dependencies** are derived automatically. The graph builds a reverse lookup `serves_map: HashMap<&str, &str>` mapping each served path to the name of the recipe that produces it (`src/analyzer/graph.rs:29-34`). Then, for every ingredient of every recipe, it performs an exact string lookup in that map (`src/analyzer/graph.rs:47-53`).
-
-> **Important: implicit matching is exact string equality, not glob matching.**
+> **Important: implicit ingredient-serves matching has been removed.**
 >
-> If recipe `gen` serves `"src/gen.c"` and recipe `build` has ingredient `"src/*.c"`, the ingredient `"src/*.c"` does **not** match the served path `"src/gen.c"`. The lookup key is the literal ingredient string — no pattern expansion is performed. This is confirmed by the dedicated test at `src/analyzer/graph.rs:147-161` (`test_glob_pattern_does_not_trigger_implicit_dep`).
+> The historical rule — "if recipe A's `ingredients` contains a path string that another recipe B has in its `serves`, infer A depends on B" — is gone. `build_adjacency` no longer looks at `ingredients` or `serves` at all; it only resolves `requires`. Path-string equality between an ingredient and another recipe's cook-output is opaque and produces no edge. See Cook Standard § 5.6 and rationale B.5.N. The removal is pinned by `test_ingredient_serves_string_match_is_opaque` and `test_path_match_does_not_imply_dep` (`analyzer.rs:622`, `analyzer.rs:640`), and `test_dependency_edges_no_implicit_via_serves` (`analyzer.rs:836`) confirms the same for `dependency_edges`.
 >
-> Implicit dependency is only triggered when an ingredient string is identical to a served path string. Glob patterns in ingredients are for the file-watching and runtime globbing layers, not for dependency resolution.
+> Cross-recipe edges from name references in recipe bodies (`{lib}` / `{lib.accessor}`) are not produced by the analyzer either. They are extracted by codegen — `cook_luagen::dep_ref::extract_dep_refs` (driven from `cli/crates/cook-engine/src/pipeline/inferred_deps.rs:27`, `:155`) — and stitched into the runtime DAG separately as "inferred deps" rather than walked through `build_adjacency`. The analyzer's job is now strictly the explicit-`requires` graph.
 
-Both dependency types are merged into a single `HashSet<&str>` per recipe, so a recipe that declares `"compile"` in both `requires` and as an implicit match via ingredients produces the same graph edge as one that declares it only once (`src/analyzer/graph.rs:267-281`, `test_duplicate_edges_are_harmless`).
+**Topological sort.** `topological_sort(recipes, target)` (`analyzer.rs:128`) is a recursive DFS with three node states (`Unvisited` / `Visiting` / `Visited`). Returns recipes in post-order DFS, so index 0 has no remaining dependencies and the target recipe is last.
 
----
+- **Only reachable recipes are returned.** Recipes elsewhere in the Cookfile that are not reachable from `target` never appear in the output. Pinned by `test_only_needed_recipes_included` (`analyzer.rs:733`).
+- **Diamond dependencies are emitted once.** The `Visited` state short-circuits re-entry.
 
-### Topological Sort
+**Dependency edges.** `dependency_edges(recipes, target)` (`analyzer.rs:74`) computes `topological_sort` and then projects each reachable recipe's adjacency to a sorted `Vec<String>`, filtered to dependencies that are themselves reachable. `dependency_edges_multi` (`analyzer.rs:103`) merges per-target results into a single map.
 
-Implemented at `src/analyzer/graph.rs:20` as a standard DFS with three node states: `Unvisited`, `Visiting`, `Visited`.
+**Workspace recipe registration for `cook test`.** `register_workspace_for_test(project_root)` (`analyzer.rs:338`) walks the import graph from `project_root/Cookfile`, BFS-deduplicating by canonical path. Every reachable recipe is registered — even ones not referenced by any target — so `cook test` can discover all `test_step` units across the workspace. Imports use `cook_lang::ast::ImportPath::Tree` (resolved relative to the importing dir) or `ImportPath::Sigil` (resolved relative to `project_root`).
 
-Key properties:
+### Errors
 
-- **Only reachable recipes are included.** The DFS starts at `target` and only visits recipes reachable through the dependency graph. Unrelated recipes in the Cookfile are never returned (`src/analyzer/graph.rs:256-265`, `test_only_needed_recipes_included`).
-- **Diamond dependencies are handled correctly.** A shared dependency visited via two paths is emitted exactly once because the `Visited` state short-circuits re-entry (`src/analyzer/graph.rs:77-78`).
-- **Output order.** A recipe is pushed to `order` only after all its dependencies have been pushed (post-order DFS), so index 0 is always a recipe with no remaining dependencies and the target recipe is always last.
+`GraphError` (`analyzer.rs:17`) has four variants:
 
----
+| Variant | Condition |
+|---|---|
+| `GraphError::CycleDetected(name)` | A node was encountered while already in `Visiting` state (direct self-dep or transitive cycle). |
+| `GraphError::UnknownRecipe(name)` | `target` is not in the recipes map, or some recipe's `requires` names a recipe that doesn't exist. |
+| `GraphError::Io(msg)` | Filesystem error while walking the workspace import graph (only emitted by `register_workspace_for_test` / `build_recipe_info_for_targets`). |
+| `GraphError::Parse(msg)` | `cook_lang::parse` failed on a Cookfile encountered during workspace walk. |
 
-### Error Detection
-
-| Error | Condition | Location |
-|---|---|---|
-| `GraphError::UnknownRecipe(name)` | Target recipe not in map; or an explicit `requires` names a recipe that doesn't exist | `graph.rs:24-26`, `graph.rs:41-43` |
-| `GraphError::CycleDetected(name)` | A node is encountered while already in `Visiting` state (direct self-dep or transitive cycle) | `graph.rs:79` |
-
-These errors are mapped to user-facing `CookError` variants in `src/cli/mod.rs:204-209`.
+CLI-side translation to `CookError` lives in `cli/crates/cook-cli/src/pipeline.rs` (see `cmd_serve` at `pipeline.rs:1116`).
 
 ---
 
-## 2. Watcher (`src/watcher/mod.rs`)
+## 2. Watcher (`cli/crates/cook-cli/src/watcher.rs`)
 
 ### Purpose
 
-The watcher powers `cook serve` — the continuous rebuild mode. It watches ingredient directories and the Cookfile for changes, debounces rapid file system events, and invokes a callback that triggers a rebuild.
+The watcher powers `cook serve` — the continuous rebuild mode. It watches ingredient directories and every Cookfile in the workspace for changes, debounces rapid filesystem events, and invokes a callback that triggers a rebuild.
 
----
-
-### CookWatcher Struct
-
-Defined at `src/watcher/mod.rs:6`:
+### Structures
 
 ```rust
 pub struct CookWatcher {
-    pub globs: Vec<String>,       // ingredient glob patterns for all watched recipes
-    pub cookfile_path: PathBuf,   // path to the Cookfile being watched
+    pub globs: Vec<String>,
+    pub cookfile_paths: Vec<PathBuf>,
 }
 ```
 
-`globs` is populated by `collect_globs_for_recipes` (`src/watcher/mod.rs:19`), which iterates over the Cookfile's recipes in execution order and collects all ingredient patterns for each recipe in the target set.
+Defined at `cli/crates/cook-cli/src/watcher.rs:8`. Note `cookfile_paths` is **plural** — workspaces can have multiple Cookfiles via `import`, and every imported Cookfile is watched so a change in any of them re-parses and rebuilds.
+
+`globs` is populated by `CookWatcher::collect_globs_for_recipes(cookfile, recipe_names)` (`watcher.rs:21`), which iterates the recipes of a *single* `cook_lang::ast::Cookfile` and collects the `ingredients` patterns of every recipe whose name appears in `recipe_names`. The function takes one Cookfile at a time; the workspace driver (`cmd_serve` in `cli/crates/cook-cli/src/pipeline.rs:1087`) collects globs per Cookfile and accumulates `cookfile_paths` for every imported file.
+
+### Algorithms
+
+**Directory registration.** `watch` (`watcher.rs:46`) creates a `notify::RecommendedWatcher`. For each glob pattern, it extracts the parent directory via `Path::new(pattern).parent()` and — if the directory exists and has not already been registered — calls `watcher.watch(dir, RecursiveMode::Recursive)` (`watcher.rs:61-67`). A glob like `"src/**/*.c"` therefore watches the entire `src/` tree.
+
+Each Cookfile's parent directory is then registered with `RecursiveMode::NonRecursive` (`watcher.rs:69-75`), so a Cookfile edit fires but unrelated siblings of the Cookfile do not. The `watched_dirs` `HashSet` deduplicates registrations across the two passes.
+
+**Debounce.** A trailing 200 ms debounce (`watcher.rs:77-78`): `let debounce = Duration::from_millis(200)`, with `last_trigger` checked against `Instant::now()` before each callback invocation. Bursts of filesystem events (editor save fsync sequences, atomic-rename pairs) collapse into a single rebuild.
+
+**Change classification.** When a relevant event arrives, the callback receives a boolean `cookfile_changed` (`watcher.rs:87-93`):
+
+- `true` — the event's path list contains any of `self.cookfile_paths`. The caller is expected to re-parse the Cookfile from scratch.
+- `false` — a non-Cookfile path matched one of the ingredient globs. The caller rebuilds from the already-parsed Cookfile.
+
+An event with no Cookfile-matching path and no glob-matching path is ignored entirely.
+
+Glob matching is done via `glob::Pattern::new(pattern).matches(&path)` in `matches_any_glob` (`watcher.rs:34`); patterns that fail to compile are silently skipped.
+
+### Interactive-step rejection
+
+`cook serve` rejects any recipe whose body contains an `@`-prefixed interactive shell step. The check lives in `cmd_serve` (`cli/crates/cook-cli/src/pipeline.rs:1097-1111`), before `CookWatcher` is constructed — the watcher itself has no concept of interactivity.
 
 ---
 
-### Directory Setup
-
-The `watch` method (`src/watcher/mod.rs:44`) uses the `notify` crate (`RecommendedWatcher`). Directory registration works as follows:
-
-1. For each glob pattern in `self.globs`, the parent directory is extracted via `Path::new(pattern).parent()` (`src/watcher/mod.rs:61`).
-2. Each unique directory that exists on disk is registered with `RecursiveMode::Recursive` — so a glob like `"src/**/*.c"` causes the entire `src/` tree to be watched.
-3. The Cookfile's parent directory is always registered separately with `RecursiveMode::NonRecursive` (`src/watcher/mod.rs:67-69`), so changes to the Cookfile itself are detected without recursing into siblings.
-
----
-
-### Debounce
-
-The watcher applies a 200ms trailing debounce (`src/watcher/mod.rs:71`). A rebuild is only triggered if at least 200ms has elapsed since the last trigger. Rapid successive file system events (e.g., an editor writing multiple files atomically) collapse into a single rebuild.
-
----
-
-### Change Classification
-
-When a relevant event arrives, the callback receives a boolean `cookfile_changed` (`src/watcher/mod.rs:81-88`):
-
-- `true` — the changed path matches `self.cookfile_path` exactly. The caller re-parses the Cookfile from scratch.
-- `false` — a non-Cookfile path matched one of the ingredient globs. The caller rebuilds using the already-parsed Cookfile.
-
-An event is ignored entirely if no changed path matches either the Cookfile or any ingredient glob.
-
----
-
-### Interactive Step Rejection
-
-`cook serve` rejects any recipe that contains an `@`-prefixed interactive step. This check is enforced in `src/cli/mod.rs` before the watcher is started, not inside the watcher itself. See `src/cli/mod.rs` `cmd_serve` for the validation logic.
-
----
-
-## 3. Env (`src/env/mod.rs`)
+## 3. Env (`cli/crates/cook-engine/src/pipeline/env.rs` + `cli/crates/cook-cli/src/pipeline.rs`)
 
 ### Purpose
 
-Loads a `.env` file from the Cookfile's working directory and returns its contents as a flat `HashMap<String, String>`. The result is one input layer into the five-layer variable resolution system assembled in `src/cli/mod.rs`.
+Build a single `HashMap<String, String>` of environment variables to hand to the runtime, from three layered sources. The result is the input env for every shell step the engine runs.
 
----
+There is no longer a `src/env/mod.rs`. The `.env` reader and the layered merge both live in `cli/crates/cook-engine/src/pipeline/env.rs`; the CLI wires them together in `cli/crates/cook-cli/src/pipeline.rs` (see `cmd_run` at `pipeline.rs:477-479` and `cmd_dag` at `pipeline.rs:1231-1233`).
 
-### Implementation
+### Structures and functions
 
-```rust
-pub fn load_env(cookfile_dir: &Path) -> HashMap<String, String>
-```
+`load_env(cookfile_dir: &Path) -> HashMap<String, String>` (`env.rs:20`) reads `<cookfile_dir>/.env` via `dotenvy::from_path_iter`. Missing-file and parse-error cases return an empty map — the function never errors. The `dotenvy` crate handles standard `.env` syntax: comments (`# …`), blank lines, and single- or double-quoted values (quotes are stripped).
 
-Located at `src/env/mod.rs:4`. It constructs the path `cookfile_dir/.env` and uses `dotenvy::from_path_iter` to parse it. If the file does not exist or cannot be read, the function returns an empty map — it never errors (`src/env/mod.rs:6-9`).
+`resolve_env(selected_config, dotenv_vars, overrides) -> Result<HashMap<String, String>, PipelineError>` (`env.rs:33`) performs the layered merge.
 
-The `dotenvy` crate handles standard `.env` syntax: comments (`# …`), blank lines, single-quoted and double-quoted values (quotes are stripped from the stored value).
+`parse_cli_overrides(overrides) -> Result<HashMap<String, String>, PipelineError>` (`env.rs:60`) splits `KEY=VALUE` strings on the first `=`. Missing `=` produces `PipelineError::InvalidSet`. The engine also calls this directly to re-apply CLI overrides on top of any values a `config` block writes to `cook.env`.
 
----
+### Algorithms
 
-### Five-Layer Variable Resolution
-
-`load_env` provides only one layer. The full resolution is assembled in `src/cli/mod.rs` `resolve_env` (`src/cli/mod.rs:132`). Each layer overwrites keys from all lower layers:
+The merge order in `resolve_env` is (later layers overwrite earlier):
 
 | Priority | Source | Notes |
 |---|---|---|
-| 1 (lowest) | `std::env::vars()` — system environment | Shell exports and OS env |
-| 2 | Cookfile bare variables (`CC "gcc"`) | `cookfile.vars` |
-| 3 | Selected config block (`config "debug" … end`) | Only applied when a config is named on the CLI |
-| 4 | `.env` file | Loaded by `load_env`; `src/cli/mod.rs:201` |
-| 5 (highest) | `--set KEY=VALUE` CLI flags | `cli.set`; split on the first `=` |
+| 1 (lowest) | `std::env::vars()` — system environment | `env.rs:41` |
+| 2 | `.env` file | Loaded by `load_env`; merged at `env.rs:43-46` |
+| 3 (highest) | `--set KEY=VALUE` CLI flags | Split via `parse_cli_overrides`; merged at `env.rs:48-51` |
 
-The merged `HashMap<String, String>` is passed directly to the scheduler and runtime. There is no further variable resolution at execution time.
+Cookfile-defined variables are **not** a layer in `resolve_env`. The historical "bare cookfile vars" form (`CC "gcc"` at file scope) was removed — bare top-level declarations don't compose with named-config override, so the language now requires all Cookfile-level variables to be set inside a `config NAME ... end` block (or an unnamed `config ... end` block). Those values are applied at runtime by the Lua-executed config block, and CLI overrides (layer 3) are re-applied on top via `parse_cli_overrides` so explicit `--set` flags always win over config-block defaults. The `selected_config` argument to `resolve_env` is accepted but unused — kept only to avoid churning call sites; it flows separately to the runtime for config-block dispatch.
+
+### Errors
+
+`PipelineError::InvalidSet(arg)` — a `--set` argument without `=` (e.g. `--set DEBUG` instead of `--set DEBUG=1`). Surfaced by `resolve_env` and `parse_cli_overrides`.
 
 ---
 
@@ -175,11 +146,9 @@ The merged `HashMap<String, String>` is passed directly to the scheduler and run
 
 Renders build progress to the terminal and persists every build to `.cook/logs/<build-id>/` for post-hoc inspection. Owns no mutable build state beyond what is derived from `ProgressEvent` inputs.
 
----
-
 ### Architecture
 
-cook-engine emits `EngineEvent`s over an `mpsc::Sender`. `cook-cli` bridges those to `cook_progress::ProgressEvent` (interning recipe/node names into typed `RecipeId`/`NodeId`, and tagging each node with a `NodeKind` — `Cooked` by default, `Test` for test-step nodes, with room for `Compile`/`Link`/`Resolve`/`Generate`/`Write` as the engine grows). The `Driver` consumes events, applies them to a pure `BuildState`, records them to an optional `LogStore`, then hands them to a `Renderer`.
+cook-engine emits `EngineEvent`s over an `mpsc::Sender`. `cook-cli` bridges those to `cook_progress::ProgressEvent` (interning recipe/node names into typed `RecipeId`/`NodeId`, and tagging each node with a `NodeKind` — `Cooked` by default, `Test` for test-step nodes, with `Compile`/`Link`/`Resolve`/`Generate`/`Write` available for richer producers). The `Driver` consumes events, applies them to a pure `BuildState`, records them to an optional `LogStore`, then hands them to a `Renderer`.
 
 ```
 cook-engine ──EngineEvent──▶ bridge ──ProgressEvent──▶ Driver
@@ -192,7 +161,7 @@ cook-engine ──EngineEvent──▶ bridge ──ProgressEvent──▶ Drive
                                                                    └── JsonWriter    (--output=json)
 ```
 
----
+The wire-format schema version is pinned at `PROGRESS_SCHEMA_VERSION = 1` (`cli/crates/cook-progress/src/event.rs:20`); writers emit it as the top-level integer `v` field on every `events.jsonl` line, and readers refuse lines whose `v` exceeds the highest version they recognise.
 
 ### State model
 
@@ -205,7 +174,7 @@ cook-engine ──EngineEvent──▶ bridge ──ProgressEvent──▶ Drive
 
 Guards in `apply` prevent duplicate events from corrupting counters (important for log replay / recap).
 
----
+The `ProgressEvent` enum (`cli/crates/cook-progress/src/event.rs:106`) currently carries `BuildStarted`, `RecipeStarted`, `RecipeCompleted` (with `RecipeKind::Recipe` or `RecipeKind::Chore` for the summary detail string), `RecipeFailed`, `NodeStarted`, `NodeCompleted`, `NodeFailed`, `NodeCacheHit`, `NodeSkipped`, `NodeOutput`, `InteractiveStart` (with `chore_step_count` for chore windows), `InteractiveEnd` (with `is_terminal` and the optional `failed_step` of a chore window), and `Finished`.
 
 ### Renderers
 
@@ -230,8 +199,6 @@ Selected by the driver based on flags + environment:
 
 **JsonWriter** emits one JSON object per line, transforming `RecipeId`/`NodeId` into human-readable names and `Duration` fields into integer `elapsed_ms` — same shape as what LogStore writes to `events.jsonl`.
 
----
-
 ### Interactive command takeover
 
 When a node is interactive (gdb, REPL), the inline renderer hides its sticky status line so the child has clean stdio. The append-only event log is unaffected — printed lines stay in scrollback like any other output.
@@ -239,8 +206,6 @@ When a node is interactive (gdb, REPL), the inline renderer hides its sticky sta
 1. On `InteractiveStart`: `EventWriter` prints a `Running <recipe>/<node>` line, then `StatusLine::hide()` flips a flag so the tick thread no-ops (no further redraws). The child process inherits stdio and runs on fresh lines below.
 2. On `InteractiveEnd { is_terminal: false }`: refresh the snapshot from `BuildState` and call `show()` — the tick thread resumes redrawing at the bottom.
 3. On `InteractiveEnd { is_terminal: true }` or `Finished`: leave the status line hidden. The terminal ends with the event log and the interactive child's output in scrollback, no live tail.
-
----
 
 ### Log store (`.cook/logs/<build-id>/`)
 
@@ -263,8 +228,6 @@ Rotation is enforced at `LogStore::open` time, before any event is recorded:
 
 Recipe and node names are sanitized to `[a-zA-Z0-9._-]` when used as path components.
 
----
-
 ### `cook logs` built-in
 
 Text-only reader of `.cook/logs/`. No TUI.
@@ -276,8 +239,6 @@ cook logs <recipe>:<node>          # dump one node's log
 cook logs <selector> --build <id>  # pick a specific build
 cook logs --failed                 # grep events.jsonl for "node-failed" entries
 ```
-
----
 
 ### Not in scope (follow-up)
 

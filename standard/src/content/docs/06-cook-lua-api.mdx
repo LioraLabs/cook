@@ -289,7 +289,9 @@ Creates the directory at `path`, and any missing parent components, if they do n
 ### 6.5.6. `fs.glob` [#lua.fs-glob]
 **Signature.** `fs.glob(pattern: string) -> array of string`
 
-Returns a 1-indexed sequence of absolute paths matching the glob `pattern`, interpreted relative to the working directory. The order of returned paths is implementation-defined. An invalid glob pattern is a Lua runtime error; a valid pattern with no matches MUST return an empty sequence.
+Returns a 1-indexed sequence of absolute paths matching the glob `pattern`, interpreted relative to the working directory. A path is included only when it resolves to a regular file; entries whose final (symlink-resolved) type is a directory MUST be dropped, and MUST NOT raise an error (CS-0064). The order of returned paths is implementation-defined. An invalid glob pattern is a Lua runtime error; a valid pattern with no matches MUST return an empty sequence.
+
+> The directory-filter rule pairs with §6.2's path-shape restriction (CS-0063): downstream `cook.add_unit` inputs reject directory paths, so a glob like `dir/*` against a tree that mixes files and sub-directories would otherwise fail with `is a directory` for paths the author never wrote. Filtering at the glob layer makes the common "all files under a directory" pattern well-defined.
 
 ### 6.5.7. `fs.mtime` [#lua.fs-mtime]
 **Signature.** `fs.mtime(path: string) -> number`

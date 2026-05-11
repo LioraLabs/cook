@@ -127,6 +127,10 @@ pub fn compute_test_fingerprint(
 }
 
 /// Helper to resolve a glob pattern into a set of files.
+///
+/// Sub-directory matches are dropped (CS-0064): every consumer of this
+/// helper feeds the results into cook's file-hashing path, where a
+/// directory entry has no hashable bytes.
 pub fn resolve_glob(root: &Path, pattern: &str) -> BTreeSet<String> {
     let full_pattern = root.join(pattern);
     let prefix = root.to_string_lossy().to_string();
@@ -138,15 +142,14 @@ pub fn resolve_glob(root: &Path, pattern: &str) -> BTreeSet<String> {
 
     paths
         .filter_map(Result::ok)
-        .filter_map(|p| {
+        .filter(|p| !matches!(std::fs::metadata(p), Ok(m) if m.is_dir()))
+        .map(|p| {
             let path_str = p.to_string_lossy().to_string();
-            Some(
-                path_str
-                    .strip_prefix(&prefix)
-                    .unwrap_or(&path_str)
-                    .trim_start_matches('/')
-                    .to_string(),
-            )
+            path_str
+                .strip_prefix(&prefix)
+                .unwrap_or(&path_str)
+                .trim_start_matches('/')
+                .to_string()
         })
         .collect()
 }

@@ -79,6 +79,12 @@ pub fn register_resolve_ingredients(lua: &Lua, working_dir: &Path) -> Result<(),
 }
 
 /// Resolve a glob pattern into a sorted set of relative file paths.
+///
+/// Matches whose final (symlink-resolved) metadata is a directory are
+/// dropped (CS-0064): `recipe.ingredients` and `cook.resolve_ingredients`
+/// feed straight into `cook.add_unit` inputs, which CS-0063 already
+/// rejects directory paths from. Filtering here keeps a glob like
+/// `src/*` well-defined when `src/` contains sub-directories.
 fn resolve_glob(root: &Path, pattern: &str) -> BTreeSet<String> {
     let full_pattern = root.join(pattern);
     let prefix = root.to_string_lossy().to_string();
@@ -90,15 +96,34 @@ fn resolve_glob(root: &Path, pattern: &str) -> BTreeSet<String> {
 
     paths
         .filter_map(Result::ok)
-        .filter_map(|p| {
+        .filter(|p| !matches!(std::fs::metadata(p), Ok(m) if m.is_dir()))
+        .map(|p| {
             let path_str = p.to_string_lossy().to_string();
-            Some(
-                path_str
-                    .strip_prefix(&prefix)
-                    .unwrap_or(&path_str)
-                    .trim_start_matches('/')
-                    .to_string(),
-            )
+            path_str
+                .strip_prefix(&prefix)
+                .unwrap_or(&path_str)
+                .trim_start_matches('/')
+                .to_string()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// CS-0064: `recipe.ingredients` / `cook.resolve_ingredients` MUST
+    /// drop sub-directory matches, so a tree with a file and a sibling
+    /// directory both matched by `*` yields only the file.
+    #[test]
+    fn resolve_glob_filters_directories() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+
+        let got = resolve_glob(dir.path(), "*");
+        let expected: BTreeSet<String> = ["a.txt".to_string()].into_iter().collect();
+        assert_eq!(got, expected);
+    }
 }

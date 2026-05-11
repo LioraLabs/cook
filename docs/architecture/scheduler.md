@@ -1,132 +1,191 @@
-# Scheduler: DAG Builder, Worker Pool, Parallelism
+# Scheduling Layer: Recipe Waves, Work-Unit DAG, Worker Pool
 
-**Source files:** `src/scheduler/mod.rs` (490 lines), `src/scheduler/dag.rs` (249 lines), `src/scheduler/builder.rs` (259 lines), `src/scheduler/pool.rs` (551 lines), `src/scheduler/output.rs` (206 lines)
+**Source crates:**
+- `cli/crates/cook-dag/src/lib.rs` — generic `Dag<T>` (~636 lines incl. tests)
+- `cli/crates/cook-engine/src/` — Cook-specific orchestration (~6.6k lines across 9 files)
+- `cli/crates/cook-luaotp/src/pool.rs` — `WorkerPool` and worker threads (~1.7k lines)
+- `cli/crates/cook-contracts/src/lib.rs` — shared `WorkPayload`, `DepKind`, `CacheMeta`, `RecipeUnits`, `OutputStream`
 
 ---
 
 ## 1. Overview
 
-The scheduler is the execution engine that takes the work units produced by the runtime and runs them as fast as the dependency graph allows. The pipeline has three stages:
+There is no single "scheduler" module any more. Scheduling is split across four crates that compose into a pipeline:
 
-1. **Build** — `build_dag()` in `builder.rs` consumes a topologically-sorted `Vec<RecipeUnits>` and produces an `ExecutionDag` where every node knows how many predecessors it must wait for.
-2. **Execute** — `execute_dag()` in `mod.rs` seeds the pool with all initially-ready nodes, then drives a result loop: every time a node finishes, its dependents' counters are decremented and any that reach zero are dispatched immediately.
-3. **Output** — `SharedWriter` in `output.rs` serializes line-level output from all worker threads so that lines from different recipes never interleave on the terminal.
+```
+   targets + recipe_infos
+            │
+            ▼
+   ┌──────────────────────┐
+   │ wave_grouper         │  partition recipes into ordered waves
+   │   (cook-engine)      │     ──> Vec<Wave>
+   └──────────────────────┘
+            │
+            ▼  for each wave:
+   ┌──────────────────────┐
+   │ register_recipe(...) │  evaluate registration-phase Lua per recipe
+   │   (cook-register     │     ──> RecipeUnits with CapturedUnit list
+   │    via RegistryEntry)│
+   └──────────────────────┘
+            │
+            ▼
+   ┌──────────────────────┐
+   │ dag_builder          │  RecipeUnits ──> Dag<WorkNode>
+   │   (cook-engine)      │     barriers + step groups + cross-recipe edges
+   └──────────────────────┘
+            │
+            ▼
+   ┌──────────────────────┐
+   │ executor::execute_dag│  seed pool, run loop, chore drains, cache updates
+   │   (cook-engine)      │     ──> emits EngineEvent through mpsc
+   └──────────────────────┘
+            │              ▲
+            │              │ WorkResult (id, success, output_lines, ...)
+            ▼              │
+   ┌──────────────────────┐
+   │ WorkerPool           │  N threads, each owns a !Send mlua::Lua VM
+   │   (cook-luaotp)      │     executes Shell / LuaChunk / Test payloads
+   └──────────────────────┘
+```
 
-Interactive steps (`@`-prefixed shell commands) are special-cased throughout: they cannot share stdout/stdin with worker threads, so they are held in a side queue and only run on the main thread once the worker pool is fully drained.
+The top-level entry point is `cook_engine::run::run()` (and `run_for_test()` for `cook test`), defined at `cli/crates/cook-engine/src/run.rs:314` and `:46`. Both return `RunResult { test_results }` on success and `EngineError` on failure.
+
+Two architectural points are worth keeping in mind throughout:
+
+1. **The work DAG is generic.** `cook-dag::Dag<T>` knows nothing about Cook. Cook-specific payload lives in `cook_engine::WorkNode` (`cli/crates/cook-engine/src/lib.rs:62`), which is what the engine instantiates `Dag<T>` with.
+2. **Waves are the granularity of registration.** Registration-phase Lua needs its own `!Send` `mlua::Lua` VM and is serialised per recipe; the wave abstraction partitions recipes into ordered groups where members of a wave have no recipe-level ordering constraint between them. After a wave's recipes are registered, the work-unit DAG for that wave is built and run to completion before the next wave starts.
 
 ---
 
-## 2. DAG Data Structures (`src/scheduler/dag.rs`)
+## 2. Generic `Dag<T>` (`cook-dag`)
 
-### `WorkPayload`
+`cook_dag::Dag<T>` is a behaviour-free directed-acyclic graph with topological traversal support. It has no knowledge of Cook semantics — it just stores nodes, dependency edges, and `AtomicUsize` counters.
 
-```rust
-pub enum WorkPayload {
-    Shell { cmd: String, line: usize },
-    Interactive { cmd: String, line: usize },
-    LuaChunk {
-        code: String,
-        input: String,
-        output: String,
-        ingredient_groups: Vec<Vec<String>>,
-    },
-}
-```
+### Core API
 
-- `Shell` — an ordinary shell command captured from a recipe step. `line` is the source line number used in error messages (`COOK_CMD_FAILED:<line>:<code>:<cmd>`).
-- `Interactive` — a shell command that needs inherited stdio (the `@` prefix in a cookfile). Cannot run on a worker thread.
-- `LuaChunk` — a Lua block step. Carries the full code string plus the `input`/`output` path strings and `ingredient_groups` that the Lua VM will see as globals. The worker thread's isolated `mlua::Lua` VM evaluates this directly.
+| Method | Behaviour | Source |
+|---|---|---|
+| `Dag::new()` | Empty DAG | `cook-dag/src/lib.rs:147` |
+| `add_node(payload: T, depends_on: &[usize]) -> Result<usize, DagError>` | Append a node, dedupe duplicate deps via `BTreeSet`, wire forward edges, return its id | `cook-dag/src/lib.rs:159` |
+| `validate() -> Result<(), CycleError>` | Kahn's algorithm; on cycle, walks unconsumed predecessors to surface one concrete cycle path | `cook-dag/src/lib.rs:201` |
+| `initial_ready() -> Vec<usize>` | All nodes where `remaining_deps == 0` (the roots) | `cook-dag/src/lib.rs:302` |
+| `complete(id) -> Vec<usize>` | Atomic `fetch_sub(1, SeqCst)` on each dependent's `remaining_deps`; returns dependents whose previous value was 1 (i.e. just became ready) | `cook-dag/src/lib.rs:315` |
+| `node(id) -> &Node<T>` | Read-only access | `cook-dag/src/lib.rs:334` |
 
-### `CacheMeta`
+### Concurrency properties
 
-```rust
-pub struct CacheMeta {
-    pub recipe_name: String,
-    pub cache_key:   String,
-    pub input_paths: Vec<String>,
-    pub output_path: Option<String>,
-    pub command_hash: u64,
-}
-```
+- `Dag<T>` is `Send + Sync` when `T: Send + Sync` (asserted by `dag_is_send_and_sync` in the test module at `cook-dag/src/lib.rs:629`).
+- `complete()` uses `Ordering::SeqCst` so multiple worker threads can call it concurrently on different node ids without external locking. The thread that observes `prev == 1` is the unique unlocker of that dependent.
+- `add_node()` returns `DagError::DependencyOutOfRange` when a dep id has not yet been inserted; on error the DAG is left unchanged. Self-references and forward references are both caught by the same range check.
 
-Attached to a node when the cache subsystem recorded the step during capture. After a node executes successfully, `execute_dag` re-stats the input and output files and calls `cache_manager.update_step()` to record the new fingerprints.
+### Cycle reporting
 
-### `DagNode`
+`CycleError` (`cook-dag/src/lib.rs:80`) carries:
+- `cycle_path: Vec<usize>` — a concrete `[v_0, …, v_k]` with the implicit closing edge `v_k → v_0`, in dependency order (`v_i` depends on `v_{i+1}`).
+- `blocked: usize` — number of nodes part of, or transitively downstream of, the cycle.
 
-```rust
-pub struct DagNode {
-    pub id:             usize,
-    pub payload:        Option<WorkPayload>,  // None = pre-satisfied (cached)
-    pub recipe_name:    String,
-    pub cache_meta:     Option<CacheMeta>,
-    pub dependents:     Vec<usize>,           // node IDs that depend on this one
-    pub remaining_deps: AtomicUsize,          // decremented as predecessors complete
-}
-```
+The engine calls `dag.validate()` defensively at the top of `execute_dag` (`cli/crates/cook-engine/src/executor.rs:312`); the work-DAG builder cannot construct a cycle today (every dep id was emitted earlier in the same pass), but the validation is cheap insurance against a future builder bug.
 
-`remaining_deps` is an `AtomicUsize` so `dag.complete(id)` can be called from worker threads without holding a mutex — each `fetch_sub(1, AcqRel)` returns the *previous* value, so the thread that observes `prev == 1` knows it just made that dependent ready.
+---
 
-`payload: None` marks a pre-satisfied node (a cached step that needs no re-execution). These nodes complete immediately and synchronously when first encountered, cascading through any downstream nodes that are also pre-satisfied.
+## 3. Recipe DAG and waves (`cook-engine`)
 
-### `ExecutionDag`
+The recipe-level scheduling layer sits above the work-unit DAG. Two structures cooperate:
 
-```rust
-pub struct ExecutionDag {
-    nodes: Vec<DagNode>,
-}
-```
+### `RecipeDag` — wave-by-wave readiness tracking
 
-A flat `Vec<DagNode>` indexed by node ID. Key methods:
+`cli/crates/cook-engine/src/recipe_dag.rs:22` — a much simpler structure than the work DAG. Each recipe is a node; nodes track `remaining_deps`, `in_flight`, and `done` flags. The API is:
 
-| Method | Purpose |
+- `RecipeDag::new(dep_edges: &BTreeMap<String, Vec<String>>)`
+- `pop_ready() -> Vec<String>` — returns all recipes whose deps are satisfied and which are not yet in-flight or done, and flips them to `in_flight`.
+- `mark_done(names: &[String])` — flips `in_flight → done` and decrements `remaining_deps` on dependents.
+
+This struct is the abstract pattern; in practice the unified entry point in `run.rs` does not use `RecipeDag` directly because it pre-computes the full wave list up front via `wave_grouper`.
+
+### `wave_grouper::compute_waves` — two-tier wave assignment
+
+`cli/crates/cook-engine/src/wave_grouper.rs:28` partitions recipes into ordered `Wave`s using two kinds of edge:
+
+| Edge | Semantics |
 |---|---|
-| `add_node(payload, recipe, cache_meta, dep_ids)` | Appends a node and wires `dep_ids` as predecessors |
-| `add_presatisfied(recipe, dep_ids)` | Same but with `payload: None` |
-| `initial_ready() -> Vec<usize>` | All nodes where `remaining_deps == 0` |
-| `complete(id) -> Vec<usize>` | Decrement deps on dependents; return newly-ready IDs |
+| **Explicit** (`: dep`) | Wave boundary. If B explicitly depends on A, A's wave is strictly earlier than B's. |
+| **Inferred** (`{dep}` references) | Same-wave merging. If B references `{A}`, A and B land in the same wave with A registered first. Transitive inferred deps collapse into one wave (C → B → A all-inferred ⇒ one wave). |
+
+The algorithm:
+1. Build inferred-edge connected components (undirected BFS) — each component is a same-wave group.
+2. Build inter-group edges from explicit deps that cross group boundaries.
+3. Kahn-toposort the groups; a group's wave level is `max(dep_wave_levels) + 1`, or 0 if it has none.
+4. Within each wave, concatenate groups in toposorted order, and within each group, toposort recipes by directed inferred edges so dependees come first.
+
+The result is a `Vec<Wave>` where each `Wave { recipes: Vec<String> }` lists recipes in registration order. Wave 0 runs first, wave N runs last; recipes within a wave have no ordering constraint between them other than the intra-group order needed for `{dep}` references to resolve at registration time.
+
+### How `run_inner` consumes waves
+
+`cli/crates/cook-engine/src/run.rs:481` is the wave loop:
+
+```text
+for wave in &waves {
+    for recipe_name in &wave.recipes {
+        units = registry.register_recipe(...);   // ── registration-phase Lua
+        wave_units.push(units);
+        wave_cache_managers.insert(...);
+    }
+    dag = dag_builder::build_dag(wave_units)?;   // ── work-unit DAG for this wave
+    executor::execute_dag(dag, num_jobs, ...);   // ── run it to completion
+}
+```
+
+Registration within a wave is currently serial (each `register_recipe` call holds its own `!Send` Lua VM for the duration of registration). The wave abstraction is what makes future per-recipe-thread parallelism a local change rather than a structural one: members of a wave are by construction safe to register concurrently because they have no recipe-level dependency on each other.
+
+Once the wave is registered, **all** of its work runs through one shared `Dag<WorkNode>` and one shared `WorkerPool` invocation — work-unit parallelism across recipes within a wave is the engine's primary source of concurrency.
 
 ---
 
-## 3. DAG Builder (`src/scheduler/builder.rs`)
+## 4. Work-unit DAG building (`dag_builder.rs`)
 
-`build_dag(recipe_units: Vec<RecipeUnits>) -> ExecutionDag`
+`cli/crates/cook-engine/src/dag_builder.rs:35`:
 
-The input is a `Vec<RecipeUnits>` already in **topological order** — if recipe B depends on recipe A, A appears first. The builder iterates through them once, maintaining a `recipe_leaves: HashMap<String, Vec<usize>>` that maps each completed recipe to its final barrier nodes.
-
-### Within-recipe wiring: barriers and step groups
-
-The central concept is the **barrier** — a set of DAG node IDs that represents "everything that must have finished before the next sequential unit can begin." The barrier starts empty (meaning "no within-recipe predecessors") and is updated after each unit is processed.
-
-```
-DepKind::Sequential  →  depends on current barrier; becomes the new barrier (singleton)
-DepKind::StepGroup(gi) →  depends on current barrier (shared); all members collected;
-                           when the last member is processed, all members become the new barrier
+```rust
+pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, EngineError>
 ```
 
-This means step-group members can run in parallel with each other but are still gated behind whatever ran before the group, and everything after the group waits for all members to finish.
+The input is a wave's worth of `RecipeUnits` in registration order. The builder iterates once, maintaining a `recipe_leaves: BTreeMap<String, Vec<usize>>` that maps each fully-processed recipe to its terminal barrier nodes (so later recipes can wire cross-recipe edges to them).
 
-Example — compile two files in parallel, then link:
+### `WorkPayload` variants
+
+`WorkPayload` (`cli/crates/cook-contracts/src/lib.rs:58`) is the per-unit work description; the engine wraps it in `WorkNode { payload: Option<WorkPayload>, recipe_name, cache_meta, working_dir, env_vars }` (`cli/crates/cook-engine/src/lib.rs:62`). When `payload` is `None`, the node is pre-satisfied (a cache hit captured at registration time) and the executor completes it synchronously without dispatching to the pool.
+
+| Variant | Carries | Where it runs |
+|---|---|---|
+| `Shell { cmd, line }` | A literal shell command | Worker thread: `/bin/sh -c cmd`, captures stdout+stderr |
+| `Interactive { cmd, line, is_chore }` | Shell command needing inherited stdio | Main thread, after pool drains; `is_chore=true` joins a chore window |
+| `LuaChunk { code, inputs, outputs, ingredient_groups, step_kind, is_chore }` | Cook/test/chore-step Lua body | Worker VM `lua.load(code).exec()`; if `is_chore=true` it routes through the chore-window drain instead |
+| `Test { cmd, line, timeout, should_fail, suite_name, test_name, iteration_item }` | One test unit | Worker thread: spawned with a timeout, outcome reported as `TestStarted` / `TestPassed` / `TestFailed` / `TestTimedOut` events |
+
+### `DepKind` and the barrier concept
+
+`DepKind` (`cli/crates/cook-contracts/src/lib.rs:172`) is how the registrar tells the builder how a unit relates to its siblings:
+
+| Variant | Within-recipe semantics |
+|---|---|
+| `Sequential` | Depends on the current barrier; becomes the new barrier (singleton). |
+| `StepGroup(idx)` | Depends on the current barrier (shared with group siblings). When the last group member is processed, all members become the new barrier. |
+| `TestSibling(idx)` | Same wiring as `StepGroup`, but failures are scoped: a failing test in the group does **not** cancel its siblings (so every test in a group runs regardless of which ones fail). |
+
+The **barrier** is the central concept: a set of node ids representing "everything that must finish before the next sequential unit can begin." It starts empty and is updated after each unit per the rules above. This is the same mechanism the old single-module scheduler used; the only changes are (a) the barrier now feeds into `Dag<WorkNode>::add_node` rather than a Cook-specific `ExecutionDag`, and (b) `TestSibling` joined the variant list.
+
+### Worked example: compile-then-link
 
 ```
-Initial barrier: []
-
 unit 0: StepGroup(0), cmd="gcc -c a.c"
-  → all_deps = []  (no within-recipe deps, no cross-recipe deps)
-  → dag_id = 0, group_dag_ids[0] = [0]
-  → not the last in group 0 (size=2), barrier unchanged: []
-
 unit 1: StepGroup(0), cmd="gcc -c b.c"
-  → all_deps = []
-  → dag_id = 1, group_dag_ids[0] = [0, 1]
-  → last in group 0: barrier = [0, 1]
-
-unit 2: Sequential, cmd="ar rcs lib.a a.o b.o"
-  → all_deps = [0, 1]  (both compilers)
-  → dag_id = 2
-  → barrier = [2]
+unit 2: Sequential,   cmd="ar rcs lib.a a.o b.o"
 ```
 
-Resulting DAG:
+- Initial barrier `= []`.
+- Unit 0: within_deps `= []`, dag_id `= 0`. Not the last in group 0; barrier unchanged.
+- Unit 1: within_deps `= []`, dag_id `= 1`. Last in group 0: barrier becomes `[0, 1]`.
+- Unit 2: within_deps `= [0, 1]`, dag_id `= 2`. Barrier becomes `[2]`.
 
 ```
   [0: gcc -c a.c]   [1: gcc -c b.c]
@@ -135,254 +194,285 @@ Resulting DAG:
           [2: ar rcs lib.a]
 ```
 
-### Cross-recipe wiring
+### Cross-recipe edges
 
-When a recipe names prerequisites in `deps`, the builder looks up each prerequisite's leaf barrier in `recipe_leaves` and collects those node IDs as `cross_deps`. Cross-recipe deps are applied only to **root nodes** of the dependent recipe — units whose `within_deps` list is empty:
+Two flavours:
 
-```rust
-let all_deps = if within_deps.is_empty() {
-    cross_deps.clone()
-} else {
-    within_deps          // within-recipe chain takes precedence
-};
-```
+- **Coarse `deps`** (`RecipeUnits.deps: Vec<String>`): each prerequisite's leaves are unioned into `cross_deps`. Cross-recipe deps apply only to **root** units (units whose within-recipe deps are empty) — once a recipe has internal predecessors, those subsume the cross-recipe wait. See `dag_builder.rs:92`.
+- **Fine-grained `dep_edges`** (`Vec<(unit_idx, dep_recipe_name)>`): for the exact unit at `unit_idx`, append the named recipe's terminal nodes regardless of whether the unit has within-recipe deps. This is how a single late step in recipe B can wait on recipe A without forcing all of B's earlier steps to. See `dag_builder.rs:100`.
 
-This means: "the first thing this recipe does must wait for everything the prerequisite recipes did last."
+### Pre-satisfaction (cache hits at registration)
 
-Example — `build` depends on `setup`:
+`is_presatisfied(unit)` (`dag_builder.rs:181`) is true when the captured payload is `Shell { cmd: "", .. }` or `Test { cmd: "", .. }` with no `cache_meta`. In that case the builder emits a `WorkNode` with `payload: None`; the executor's `process_ready` sees the `None` and completes the node immediately, cascading through any downstream chain of pre-satisfied nodes in the same call stack.
 
-```
-setup recipe leaf: [0: mkdir build]
+(The artifact cache check that runs at execute time — `check_node_cache` at `executor.rs:507` — is a separate path: it sees real payloads with `cache_meta` and decides node-by-node whether to skip them.)
 
-build, unit 0 (root, Sequential):
-  within_deps = []  → all_deps = [0]  (cross-recipe)
-  dag_id = 1
+### Plan-time output-collision check
 
-  [0: mkdir build]
-        |
-  [1: gcc main.c]
-```
-
-### Cache pre-satisfaction
-
-`is_presatisfied(unit)` returns true when the unit has an empty shell command and no `cache_meta`. In practice, when the runtime detects a cache hit it emits a `CapturedUnit` with an empty `cmd` — the builder calls `dag.add_presatisfied()` for it, which sets `payload: None`. The execution loop completes these nodes immediately and synchronously without dispatching to any thread.
+Before returning the DAG, `build_dag` calls `detect_output_collisions` (`dag_builder.rs:194`) which fails fast with `EngineError::OutputCollision` when two recipes with no dependency edge between them (in either direction) both declare the same canonical output path. This prevents silent races under `--jobs > 1`.
 
 ---
 
-## 4. Worker Pool (`src/scheduler/pool.rs`)
+## 5. Worker pool (`cook-luaotp`)
 
-### Architecture
-
-```
-Main thread                     Worker threads (N)
------------                     ------------------
-WorkerPool::spawn(N, ...)  →    thread 0: worker_loop(queue, tx, lua_vm, ...)
-                                thread 1: worker_loop(queue, tx, lua_vm, ...)
-                                ...
-pool.submit(WorkItem)      →    SharedQueue (Mutex<VecDeque> + Condvar)
-                           ←    mpsc::Receiver<WorkResult>
-pool.shutdown()            →    N × QueueItem::Shutdown sentinels
-```
-
-Each worker thread owns its own `mlua::Lua` VM. The VM is `!Send` (cannot be moved between threads), but because the VM never leaves the thread it was created on, `unsafe { mlua::Lua::unsafe_new() }` is used. This is the only `unsafe` block in the scheduler.
-
-### Per-thread setup (`worker_loop`, line 109)
-
-Each worker calls three registration functions before entering its loop:
-
-1. `register_fs_api(&lua, &working_dir)` — mounts `fs.*` Lua globals (read, write, exists, etc.)
-2. `register_path_api(&lua)` — mounts `path.*` Lua globals (join, basename, etc.)
-3. `register_worker_cook_table(...)` — creates the `cook` Lua table with:
-   - `cook.sh(cmd)` — runs a shell command, returns stdout as a string
-   - `cook.exec(cmd, line)` — same, with explicit line number for error messages
-   - `cook.env` — table of recipe environment variables
-
-`cook.sh` and `cook.exec` are closures that capture a `Arc<Mutex<String>>` called `current_recipe`. Before each work item is executed, the loop updates this string so that output lines are prefixed with the correct recipe name.
-
-### Shared queue
+`cli/crates/cook-luaotp/src/pool.rs:77`:
 
 ```rust
-struct SharedQueue {
-    queue:   Mutex<VecDeque<QueueItem>>,
-    condvar: Condvar,
-}
+pub fn WorkerPool::spawn(n: usize) -> (WorkerPool, mpsc::Receiver<WorkResult>);
+pub fn submit(&self, item: WorkItem);
+pub fn shutdown(self);   // + Drop impl that signals + joins
 ```
 
-`pool.submit(item)` locks the queue, pushes `QueueItem::Work(item)`, then calls `condvar.notify_one()`. Workers block on `condvar.wait(q)` when the queue is empty. `pool.shutdown()` pushes one `QueueItem::Shutdown` sentinel per thread and calls `condvar.notify_all()`.
+### Per-thread Lua VM
 
-### Result channel
+Each of the N worker threads creates **its own** `mlua::Lua` VM with `unsafe { mlua::Lua::unsafe_new() }` (`pool.rs:159`). The VM is `!Send` — it cannot move between threads — but because it never leaves the thread that created it, the unsafe constructor's invariants are satisfied. This is the only `unsafe` block in the scheduling layer, and the rationale has not changed since the old single-module scheduler.
 
-Each worker thread receives a clone of an `mpsc::Sender<WorkResult>`. The main thread holds the sole `mpsc::Receiver<WorkResult>`. This is a standard fan-in: N producers, 1 consumer.
+Each worker installs:
+- `path.*` Lua API (`cook_lua_stdlib::register_path_api`)
+- A `cook` table whose closures (`cook.sh`, `cook.exec`, `cook.env`) capture `Arc<Mutex<…>>` slots updated per work item: `current_recipe`, `current_working_dir`, `current_env_vars`, and a CS-0045 sandbox slot (`current_sandbox`).
+- `fs.*` API bound to a `WorkingDirSource::Live` reading the live cwd slot (so one VM can serve items from multiple Cookfiles per CS-0017).
+- Register-only API guards (`cook.add_unit`, `cook.recipe`, `cook.step_group`, `cook.interactive`) that raise errors when invoked from the execute-phase VM.
+
+### Shared queue + result channel
+
+```text
+WorkerPool::queue : Arc<SharedQueue {
+    queue:   Mutex<VecDeque<QueueItem>>,   // QueueItem = Work(WorkItem) | Shutdown
+    condvar: Condvar,
+}>
+
+submit(item):  lock, push_back(Work(item)), notify_one()
+shutdown():    lock, push_back(Shutdown) × N, notify_all(), join all
+```
+
+The result channel is a standard fan-in `mpsc::channel<WorkResult>`: each worker holds an `mpsc::Sender` clone; the executor on the main thread holds the sole `Receiver`.
 
 ### `WorkItem` and `WorkResult`
 
 ```rust
 pub struct WorkItem {
-    pub id:          usize,
-    pub payload:     WorkPayload,
+    pub id: usize,
+    pub payload: WorkPayload,
     pub recipe_name: String,
+    pub working_dir: PathBuf,
+    pub env_vars: HashMap<String, String>,
+    pub project_root: PathBuf,    // CS-0045: per-item sandbox root
 }
 
 pub struct WorkResult {
-    pub id:      usize,
+    pub id: usize,
     pub success: bool,
-    pub error:   Option<String>,
+    pub error: Option<String>,
+    pub test_output: Option<TestOutput>,
+    pub node_name: String,
+    pub output_lines: Vec<(OutputStream, String)>,   // CS-0035 fd-tagged lines
 }
 ```
 
-Note: unlike earlier drafts, `WorkItem` does not carry `env_vars`, `quiet`, or `writer` — those are captured once at thread spawn time and live for the thread's lifetime.
+The worker dispatch in `execute_work_item` (`pool.rs:735`) routes by payload:
 
-### Executing work items (`execute_work_item`, line 258)
+| Payload | Function | Notes |
+|---|---|---|
+| `Shell` | `execute_shell` (`pool.rs:804`) | `std::process::Command`, captures stdout+stderr, splits into `(Stream, String)` entries |
+| `LuaChunk` | `execute_lua_chunk` (`pool.rs:883`) | Sets `input`, `output`, `inputs`, `outputs`, `input_1..N` globals, runs `lua.load(code).exec()` |
+| `Test` | `execute_test` (`pool.rs:944`) | Spawns child with timeout, builds `TestOutput { stdout, stderr, exit_code, timed_out, ... }` |
+| `Interactive` | Returns a `"BUG: interactive step dispatched to worker pool"` error | Should never occur — the engine routes interactives to the chore-window drain instead |
 
-| Payload type | Execution path |
-|---|---|
-| `Shell` | `execute_shell()` — `std::process::Command`, captures stdout/stderr, writes prefixed lines through `SharedWriter` |
-| `LuaChunk` | `execute_lua_chunk()` — sets `input`, `output`, `input_1..N` globals, calls `lua.load(code).exec()` |
-| `Interactive` | Returns an immediate error: `"BUG: interactive step dispatched to worker pool"` — this should never occur if the execution loop is correct |
+### Panic safety
 
-Shell failure produces an error string in the format `COOK_CMD_FAILED:<line>:<exit_code>:<cmd>` — a structured format parsed by the error reporter upstream.
+Each work item runs inside `std::panic::catch_unwind` (`pool.rs:287`). A Rust panic in `execute_work_item` is converted into a failing `WorkResult` carrying `"worker panic: …"` so the engine never hangs on `rx.recv()`. The Lua VM is reused — mlua wraps Lua-callback panics as Lua errors, keeping the VM state sane.
 
 ---
 
-## 5. Execution Loop (`src/scheduler/mod.rs`, `execute_dag`)
+## 6. Execution loop (`executor::execute_dag`)
 
-### Initialization
+`cli/crates/cook-engine/src/executor.rs:280`:
 
 ```rust
-let (pool, rx) = WorkerPool::spawn(num_workers, writer, working_dir.clone(), env_vars.clone());
-let initial = dag.initial_ready();   // all nodes where remaining_deps == 0
-for id in initial {
-    pending += process_ready(&dag, id, &pool, ...);
-}
+pub fn execute_dag(
+    dag: Dag<WorkNode>,
+    num_workers: usize,
+    cache_managers: BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+    event_tx: Option<mpsc::Sender<EngineEvent>>,
+    cache_ctx: Arc<CacheContext>,
+    test_cache: Option<&TestCache>,
+    fingerprint_by_node: &BTreeMap<usize, String>,
+    rerun_patterns: &[String],
+) -> Result<Vec<TestResult>, EngineError>
 ```
 
-`pending` counts work items currently in-flight (submitted to pool but no result received yet). `finished` counts all nodes that have been accounted for (completed, failed, or cancelled). The loop ends when `pending == 0 && interactive_queue.is_empty()`.
+### Initialisation
 
-### `process_ready(id, ...)`
-
-Called whenever a node becomes ready. Returns the number of items submitted to the pool (0 or 1).
-
-```
-Node is cancelled?          → finished++, return 0
-payload == None             → finished++, dag.complete(id), cascade to dependents
-payload == Interactive      → interactive_queue.push(id), return 0
-payload == Shell/LuaChunk   → pool.submit(WorkItem { id, payload, recipe_name }), return 1
+```text
+1. Install the depfile-parser callback (one-time, via Once).
+2. dag.validate() — defensive cycle check.
+3. WorkerPool::spawn(num_workers) → (pool, rx).
+4. Build per-recipe RecipeTracker { start, total_nodes, completed_nodes, cached_nodes,
+                                    has_failure, started, is_chore }.
+5. Seed: for id in dag.initial_ready() { pending += process_ready(id, …) }.
 ```
 
-Pre-satisfied nodes cascade synchronously — if a chain of cached nodes precedes a real node, they all resolve in the same call stack before the loop needs to wait for pool results.
+`pending` counts work items currently in-flight (submitted to the pool but no result yet). `finished` counts every node that has been accounted for (completed, failed, pre-satisfied, or cancelled). The loop exits when `pending == 0 && interactive_queue.is_empty()`.
+
+### `process_ready(id)` — what to do with a newly-ready node
+
+Returns the number of items submitted to the pool (0 or 1). Routing (`executor.rs:559`):
+
+```text
+cancelled[id]                                → finished++, return 0
+payload == None  (pre-satisfied)             → emit NodeCacheHit, finished++,
+                                               dag.complete(id), recurse into newly_ready
+payload == Interactive                       → interactive_queue.push(id), return 0
+payload == LuaChunk { is_chore: true }       → interactive_queue.push(id), return 0
+                                               (CS-0051: chore Lua shares the drain)
+payload == Test                              → test-cache lookup first; on hit synthesize
+                                               TestStarted + TestPassed(cached=true) and
+                                               cascade as a cache hit; on miss, fall through
+                                               to artifact-cache check then pool dispatch
+payload == Shell / LuaChunk (non-chore) /
+           Test (cache miss)                 → check_node_cache(); on hit, cascade; on miss,
+                                               ensure_output_parent_dirs() (CS-0050), then
+                                               pool.submit(WorkItem { ... }); return 1
+```
+
+Pre-satisfied cascades are synchronous and recursive: a chain of cached nodes all resolve in the same call stack before the loop waits for any pool result.
 
 ### Main loop
 
-```
-loop:
-  while pending == 0 && !interactive_queue.is_empty():
-      run next interactive node on main thread (see §6)
+```text
+loop {
+    while pending == 0 && !interactive_queue.is_empty() {
+        run_next_interactive_window();   // see §7
+    }
+    if pending == 0 && interactive_queue.is_empty() { break }
 
-  if pending == 0 && interactive_queue.is_empty(): break
+    result = rx.recv()                    // block on next worker result
+    pending -= 1; finished += 1
 
-  result = rx.recv()   ← blocks until a worker reports back
-  pending -= 1
-  finished += 1
-
-  if result.success:
-      update cache entry (if node has cache_meta)
-      newly_ready = dag.complete(result.id)
-      for each newly_ready: pending += process_ready(...)
-  else:
-      record failure
-      cancel_subtree(result.id)   ← marks all transitive dependents cancelled
-```
-
-`cancel_subtree` is a recursive helper defined inside `execute_dag` that walks `node.dependents` and sets `cancelled[id] = true`. Cancelled nodes are skipped (and counted as finished) when `process_ready` encounters them.
-
-### Cache update path
-
-After a successful node, `execute_dag` re-stats every input file and the output file (if any) listed in the node's `CacheMeta`, then calls `cache_manager.update_step()`. This happens on the main thread immediately after receiving the `WorkResult`, before dispatching newly-ready dependents. After the loop exits, `cm.flush_all()` persists the in-memory cache to disk.
-
----
-
-## 6. Interactive Step Handling
-
-Interactive nodes (`WorkPayload::Interactive`) require the terminal's stdin/stdout/stderr to be inherited by the child process. Worker threads cannot do this because their output goes through `SharedWriter`.
-
-**Detection:** When `process_ready` encounters an `Interactive` payload, it pushes the node ID onto `interactive_queue` and returns 0 (no pool submission).
-
-**Execution condition:** Interactive nodes only run when `pending == 0` — all in-flight pool work has completed and results have been received. There is no explicit `drain()` call; the condition is simply the inner `while` in the main loop:
-
-```rust
-while pending == 0 && !interactive_queue.is_empty() {
-    let id = interactive_queue.remove(0);
-    // ... run on main thread ...
+    if result.success {
+        forward result.output_lines as EngineEvent::OutputLine
+        emit NodeCompleted
+        record_completion in cache_manager (handles depfile augmentation,
+            cloud_key + artifact_key computation, backend put_bytes)
+        for nid in dag.complete(result.id) { pending += process_ready(nid, …) }
+    } else {
+        emit NodeFailed
+        failures.push((result.id, recipe_name, error))
+        for dep in dag.node(result.id).dependents() {
+            cancel_subtree(dag, dep, ...)   // see §8
+        }
+    }
 }
 ```
 
-**Running on main thread:** `run_interactive_on_main(cmd, line, working_dir, env_vars)` calls `std::process::Command` with the default stdio (inherited). The worker threads are idle (blocked on `condvar.wait`) during this time.
-
-**Resuming parallel work:** After the interactive node succeeds, `dag.complete(id)` is called and any newly-ready dependents are dispatched to the pool. If those dependents include more interactive nodes, they are queued and will run in the next `pending == 0` window.
-
-**Failure:** If the interactive command exits with a non-zero status, its error is recorded and `cancel_subtree` is called on its dependents. The main loop then returns to waiting for any remaining pool work before breaking.
+After the loop, the executor flushes every `cache_manager`, drains the pool (its `Drop` sends `Shutdown` sentinels and joins all threads), and either returns `Ok(test_results)` or wraps the accumulated failures in `EngineError::TaskFailures`.
 
 ---
 
-## 7. Failure Handling
+## 7. Interactive steps and chore-window drain
 
-When a node fails (pool returns `success: false`, or an interactive command returns `Err`):
+`WorkPayload::Interactive` and `WorkPayload::LuaChunk { is_chore: true, .. }` cannot share stdio with workers — they need the controlling terminal. Both feed `interactive_queue: Vec<usize>` and are drained only when `pending == 0`. The drain is the inner `while` in the main loop; there is no explicit `drain()` call.
+
+When the queue head is reached, the executor branches on whether the head is a **chore-window member** (`is_chore_window_member` at `executor.rs:85`): any `Interactive { is_chore: true, .. }` or `LuaChunk { is_chore: true, .. }`.
+
+### Chore-window path (CS-0051)
+
+`executor.rs:1021`. A chore body is emitted by the registrar as a linear chain of `Interactive`/`LuaChunk` units bracketed by `cook._enter_chore()` / `cook._exit_chore()` with `is_chore = true`. Only the head is initially ready; later steps surface as each predecessor completes. The drain pre-walks `dependents()` from the head while same-recipe + chore-member + single-predecessor invariants hold to discover the **full window** statically, then:
+
+1. Emit one `EngineEvent::InteractiveStart { chore_step_count: n }` so the renderer can freeze progress bars **before** any chore output appears.
+2. Run window steps in order:
+   - Shell-interactive steps → `run_interactive_on_main` directly on the engine thread.
+   - Lua-bundle chore steps → submitted to the worker pool as a single `WorkItem`; the executor blocks on `rx.recv()` for that one result (safe because chore drains only enter when `pending == 0`, so the submitted item is the only in-flight one).
+3. On step failure: record `failed_idx`, set `last_err`, break, and cancel the untouched tail of the window.
+4. Emit one `EngineEvent::InteractiveEnd { success, is_terminal, failed_step }`. The `is_terminal` flag tells the renderer "no more work is coming — leave progress bars frozen".
+
+### Legacy single-line path
+
+`executor.rs:1357`. `Interactive { is_chore: false, .. }` keeps the pre-CS-0051 per-node `InteractiveStart` / `InteractiveEnd` pair. Same execution model — runs on the main thread via `run_interactive_on_main` — but no window pre-walk and no `chore_step_count`.
+
+The renderer suppresses any in-progress progress bars between `InteractiveStart` and `InteractiveEnd` so the interactive command owns the terminal.
+
+---
+
+## 8. Failure handling
+
+When a node fails (either a worker returns `success: false`, or an interactive command exits non-zero, or `ensure_output_parent_dirs` returns `Err`):
 
 1. The failure is appended to `failures: Vec<(node_id, recipe_name, error_message)>`.
-2. `cancel_subtree(id, &mut cancelled)` marks `cancelled[id] = true` for every transitive dependent of the failed node.
-3. When `process_ready` encounters a cancelled node, it increments `finished` without submitting work — the node is effectively skipped.
-4. Independent branches (not downstream of the failed node) continue running normally.
+2. `cancel_subtree(dag, dep, &mut cancelled, …)` is called for every direct dependent of the failed node. The helper recurses through `dag.node(id).dependents()`, marking each transitively reachable node as cancelled.
+3. For each cancelled `WorkPayload::Test` node, `cancel_subtree` also emits `EngineEvent::TestBlocked { upstream }` and synthesises a `TestResult { outcome: Blocked, blocked_by: Some(upstream_name), … }`. These accumulate in `blocked_results` so the test runner can report them even though they never executed.
+4. When `process_ready` later encounters a cancelled node, it ticks `finished` without submitting work — the node is skipped.
+5. Failures in independent branches (not downstream of the failed node) continue running normally.
 
-After the loop, if `failures` is non-empty, `execute_dag` returns:
+After the loop, if `failures` is non-empty the executor returns:
 
 ```rust
-Err(SchedulerError { failures })
+Err(EngineError::TaskFailures {
+    count: failures.len(),
+    failures,                          // Vec<(node_id, recipe_name, error_message)>
+    partial_test_results: blocked + cached_test_results + test_results,
+})
 ```
 
-`SchedulerError` formats as:
+`run_for_test_inner` (`run.rs:74`) catches this variant, extracts `partial_test_results`, and returns `Ok(RunResult { test_results })` — failed cook steps are surfaced through the per-test `Blocked` rows rather than as a hard error from `cook test`.
 
-```
-scheduler: N task(s) failed:
-  node <id> (<recipe_name>): <error_message>
-```
+The old `SchedulerError` type no longer exists; failures propagate as `EngineError` variants throughout.
+
+### `cancel_subtree` and `TestSibling`
+
+`DepKind::TestSibling` produces edges in the DAG just like `StepGroup`, so `cancel_subtree` would naturally cascade through them. The current implementation walks `dependents()` unconditionally; the test-blocked semantics rely on the fact that test-step nodes are leaves in their group (no within-recipe dependent points back at them) plus the upstream cancellation skipping. See `executor.rs:427`.
 
 ---
 
-## 8. Output Serialization (`src/scheduler/output.rs`)
+## 9. Output streaming
 
-### `SharedWriter`
+There is no `SharedWriter`. Output is line-streamed through `EngineEvent`s.
+
+### Worker side
+
+Each `execute_shell` / `execute_test` / `execute_lua_chunk` returns a `WorkResult` whose `output_lines: Vec<(OutputStream, String)>` carries every captured line tagged with its file descriptor of origin — `OutputStream::Stdout` or `OutputStream::Stderr` (`cli/crates/cook-contracts/src/lib.rs:28`). CS-0035 made this distinction load-bearing: prior to the fix the `output_lines` were untagged `Vec<String>` and every line in `events.jsonl` was attributed to stdout.
+
+### Engine side
+
+When the executor receives a successful `WorkResult` (`executor.rs:1697`):
 
 ```rust
-pub struct SharedWriter {
-    stdout: Arc<Mutex<io::Stdout>>,
-    stderr: Arc<Mutex<io::Stderr>>,
+for (stream, line) in &result.output_lines {
+    emit(&event_tx, EngineEvent::OutputLine {
+        recipe: recipe_name.clone(),
+        line: line.clone(),
+        stream: *stream,
+    });
 }
 ```
 
-Two mutexes — one for stdout, one for stderr — ensure that no two threads write a partial line at the same time. Both `write_stdout_line` and `write_stderr_line` lock, write `[prefix] line\n`, flush, and unlock atomically.
+The chore-window Lua path forwards captured lines the same way (`executor.rs:1178`). Downstream consumers (the TTY renderer, the JSONL writer at `events.jsonl`, the per-node log store) decide how to prefix and where to write — the engine is purely an event emitter.
 
-`SharedWriter` is `Clone` (cloning the `Arc`s) so each worker thread and the main pool initialization all share the same underlying locks.
+---
 
-### `PrefixedWriter`
+## 10. Event flow
 
-A stateful byte-level writer that buffers incoming bytes, scans for newlines, and emits complete lines through a `Sink`:
+`EngineEvent` (`cli/crates/cook-engine/src/lib.rs:117`) is the engine's full observability surface. Variants:
 
+| Lifecycle | Events |
+|---|---|
+| Build | `BuildStarted { recipes, total_nodes }`, `Finished { elapsed, success }` |
+| Recipe | `RecipeQueued`, `RecipeStarted`, `RecipeCompleted { kind: Recipe \| Chore }`, `RecipeFailed` |
+| Node | `NodeStarted { kind: NodeKind }`, `NodeCompleted`, `NodeFailed`, `NodeCacheHit`, `NodeSkipped` |
+| Interactive | `InteractiveStart { chore_step_count }`, `InteractiveEnd { is_terminal, failed_step }` |
+| Output | `OutputLine { recipe, line, stream }` |
+| Test | `TestStarted`, `TestPassed { cached, should_fail }`, `TestFailed { reason: ExitStatusMismatch \| SignalKilled \| SpawnError }`, `TestBlocked { upstream }`, `TestTimedOut { timeout }` |
+
+`NodeKind` and `RecipeKind` are engine-side enums isomorphic to `cook_progress::NodeKind` / `cook_progress::event::RecipeKind`; the CLI translates between them so `cook-engine` does not directly depend on `cook-progress` (the renderer is one of several possible event consumers — `events.jsonl`, the test runner, and a future telemetry path can all subscribe to the same stream).
+
+Events are emitted through `Option<mpsc::Sender<EngineEvent>>` (`emit` helper at `executor.rs:44`). `run::run_inner` spans the event stream across a `std::thread::scope` (`run.rs:606`): a bridge thread `recv`s events and forwards them to the user-supplied `on_event` callback while the main thread runs `execute_dag`.
+
+### `ExportStore`
+
+`cli/crates/cook-engine/src/lib.rs:51`:
+
+```rust
+pub type ExportStore = BTreeMap<String, serde_json::Value>;
 ```
-Sink::Stdout(&SharedWriter)   → write_stdout_line
-Sink::Stderr(&SharedWriter)   → write_stderr_line
-Sink::Buffer(Arc<Mutex<Vec<u8>>>) → test-only in-memory sink
-```
 
-`PrefixedWriter::write_bytes(data)` appends to an internal `Vec<u8>` and flushes any newline-terminated segments. `flush_remaining()` emits whatever is left (no trailing newline in the source) as a final partial line.
-
-In practice the pool's shell and Lua execution paths call `SharedWriter` methods directly (line-splitting is done on the already-collected output string), so `PrefixedWriter` is available for callers that receive streaming byte chunks from child process pipes.
-
-### Output format
-
-Every line printed by a worker looks like:
-
-```
-[recipe_name] <original line content>
-```
-
-This makes it immediately obvious which recipe produced each line when multiple recipes run in parallel.
+The engine owns one `ExportStore` per run and threads it into each registration call so that `cook.export()` calls from one recipe can be observed by later recipes' registration-phase Lua. It is not part of the work-DAG scheduling proper but lives in the same crate because the wave loop is its natural owner.

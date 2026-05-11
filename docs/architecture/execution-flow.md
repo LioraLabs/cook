@@ -6,333 +6,294 @@ This traces what happens when you run `cook build` from CLI to completion, follo
 
 ## 1. Overview
 
-`cook build` runs a single top-level function call that fans out into parsing, environment setup, dependency analysis, and a per-recipe register-then-execute loop. The key insight is the **two-phase** approach for each recipe: the recipe body runs twice — once in _capture mode_ to discover what work needs to be done, and once more (in parallel via a DAG scheduler) to actually do it.
+`cook build` is a recipe invocation. After clap dispatch the CLI hands the recipe target off to `cook-engine`, which parses the Cookfile (and any imported Cookfiles), assembles a per-namespace registry of compiled Lua sources, computes the recipe DAG, groups recipes into **waves**, and executes the waves in topological order. Within a wave, every recipe registers concurrently in its own `mlua::Lua` VM; the resulting work-unit DAGs are merged and driven by a worker pool that can interleave units from many recipes at once.
 
-The full chain is:
+The chain at a glance:
 
 ```
-main()
-  └─ cli::run()
-       └─ cmd_run()
-            ├─ read_and_parse()         → Cookfile AST + Lua source
-            ├─ resolve_env()            → merged HashMap<String, String>
-            ├─ analyzer::resolve_execution_order()  → Vec<String> (recipe order)
-            └─ for each recipe:
-                 ├─ rt.register_recipe()    → RecipeUnits (Phase 1: capture)
-                 ├─ scheduler::builder::build_dag()  → ExecutionDag
-                 └─ scheduler::execute_dag()         (Phase 2: execute)
+cook-cli::main()              process entry, clap parse, exit-code mapping
+  └─ cook-cli::dispatch()     Cmd enum → cmd_run / cmd_test / cmd_dag / ...
+       └─ cook-cli::cmd_run()             thin CLI wrapper
+            ├─ pipeline::read_and_parse()           AST + Lua source + warnings
+            ├─ pipeline::validate_selected_config()
+            ├─ (workspace? → pipeline::Workspace::load + workspace_* builders)
+            │   (single?    → pipeline::resolve_env + single_* builders)
+            ├─ pipeline::compute_*_inferred_deps()  {NAME} body refs → edges
+            └─ cook_engine::run::run()
+                 ├─ cache bootstrap (CloudConfig, CacheContext)
+                 ├─ analyzer::dependency_edges_multi() → recipe DAG
+                 ├─ wave_grouper::compute_waves()     → Vec<Wave>
+                 └─ for each wave (in topo order):
+                      ├─ register every recipe (concurrent, per-VM)
+                      ├─ dag_builder::build_dag()    → work-unit DAG
+                      └─ executor::execute_dag()     → run via WorkerPool
 ```
+
+The "two-phase" model (register → execute) still exists, but it is now scoped **per wave** rather than per recipe: a whole wave's recipes are registered, their work-unit DAGs are merged, and the merged DAG runs as one unit before the next wave begins. Cross-wave ordering is preserved by edges in the recipe graph; within a wave there are no recipe boundaries that block execution — work units from different recipes can run interleaved.
 
 ---
 
-## 2. CLI Dispatch
+## 2. CLI dispatch
 
-**Entry point:** `src/main.rs:3`
+### 2.1 Process entry — `cli/crates/cook-cli/src/main.rs:20`
 
-```rust
-fn main() {
-    if let Err(e) = cli::run() { ... }
-}
-```
+`main()` builds a versioned clap `Command` (the version string is composed at runtime so it can append the Cook Standard version from `cook_lang::COOK_STANDARD_VERSION`), parses `argv`, and calls `dispatch(cli)`. On error it prints `cook: {e}` to stderr (suppressed for `CookError::TestFailure`, where the reporter already printed a summary) and exits with `e.exit_code()`.
 
-`main()` delegates immediately to `cli::run()` (`src/cli/mod.rs:94`). This is where clap parses `argv`:
+**Data in:** `argv`
+**Data out:** populated `Cli` value, or process exit with a `CookError` exit code
 
-```rust
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();   // line 95
+### 2.2 Subcommand routing — `cli/crates/cook-cli/src/cli.rs:69` (`enum Cmd`)
 
-    let result = match &cli.command {
-        Some(Command::External(args)) => {
-            let recipe = args.first().map(|s| s.as_str()).unwrap_or("build");
-            let config = args.get(1).map(|s| s.as_str());
-            cmd_run(&cli, recipe, config)            // e.g. `cook build`
-        }
-        None => cmd_run(&cli, "build", None),        // bare `cook` with no subcommand
-        ...
-    };
-```
+`Cli` is a clap-derive struct with a flattened `Globals` and an `Option<Cmd>`. The `Cmd` enum carries the reserved subcommands (`Init`, `Menu`, `List`, `Modules`, `Test`, `Dag`, `Logs`, `Serve`, `EmitLua`) plus a catch-all `Recipe(Vec<String>)` variant marked `#[command(external_subcommand)]`. Any first positional that does not match a reserved name lands in `Cmd::Recipe`. A bare invocation (`cook` with no args) leaves `cmd = None`.
 
-When you type `cook build`, clap sees `build` as an unknown subcommand and routes it to the `Command::External(args)` arm (line 104). When you type bare `cook`, the `None` arm fires (line 109), defaulting the recipe to `"build"`. Either way, `cmd_run(&cli, "build", None)` is called.
+`dispatch` in `main.rs:43` translates the variant:
 
-**Key CLI flags consumed here:**
+| Cmd                | Handler                                            |
+|--------------------|----------------------------------------------------|
+| `None`             | `cmd_run(&globals, "build", None)`                 |
+| `Cmd::Recipe(parts)` | `dispatch_recipe` → strip leading `+`, then `cmd_run` |
+| `Cmd::EmitLua`     | `cmd_emit_lua` (note: `--emit-lua` is no longer a flag) |
+| `Cmd::Test(args)`  | `cmd_test`                                         |
+| `Cmd::Dag(args)`   | `cmd_dag` (feature-gated on `viewer`)              |
+| `Cmd::Serve(args)` | `cmd_serve`                                        |
+| `Cmd::Init/Menu/List/Logs/Modules` | their respective `cmd_*`            |
 
-| Flag | Field | Default |
-|------|-------|---------|
-| `-f / --file` | `cli.file` | `"Cookfile"` |
-| `--emit-lua` | `cli.emit_lua` | `false` |
-| `-q / --quiet` | `cli.quiet` | `false` |
-| `--no-taste` | `cli.no_taste` | `false` |
-| `-j / --jobs` | `cli.jobs` | CPU count |
-| `--set KEY=VALUE` | `cli.set` | `[]` |
+`dispatch_recipe` (`main.rs:68`) is the recipe escape path: a single leading `+` is stripped (`cook +test` runs the recipe named `test`, sidestepping the reserved `Cmd::Test`), and the optional second positional becomes the named-config argument. So `cook build` and `cook +build` both end up at `cmd_run(&globals, "build", None)`.
+
+**Globals** (defined in `cli.rs:33`, all `global = true`): `-f / --file`, `--root`, `-q / --quiet`, `-v / --verbose`, `-j / --jobs`, `--color`, `--output`, `--set KEY=VALUE` (repeatable).
+
+**Data in:** parsed `Cli`
+**Data out:** a single `cmd_*` call
+
+### 2.3 CLI glue — `cli/crates/cook-cli/src/pipeline.rs`
+
+`pipeline.rs` is intentionally thin: it does not consume any `cook_lang::ast::Cookfile` directly. Its job is
+
+1. forward to `cook_engine::pipeline::*` for parse / workspace / env / registry / inferred-dep work;
+2. spin up a `cook-progress` renderer thread plus a bridge thread that translates `cook_engine::EngineEvent`s into `cook_progress::ProgressEvent`s (`bridge_engine_to_progress_events`, line 84);
+3. drive `cook_engine::run::run`;
+4. map `PipelineError` → `CookError` (`pipeline_error_to_cook_error`, line 31) and `EngineError` → `CookError` (`engine_error_to_cook_error`, line 344) for exit-code classification.
+
+`cmd_run` (`pipeline.rs:447`) is the entry for `cook build`. It branches on whether the Cookfile has imports: workspace builds load through `Workspace::load`, single-file builds skip that and use the `single_*` builders. Both paths converge on `run_with_progress` (line 396), which is the only place that calls `cook_engine::run::run`.
+
+**Data in:** `Globals`, recipe name, optional named-config name
+**Data out:** `Ok(())` or `CookError`
 
 ---
 
-## 3. Read & Parse
+## 3. Parse + workspace load
 
-**Function:** `read_and_parse()` — `src/cli/mod.rs:121`
+### 3.1 `read_and_parse` — `cli/crates/cook-engine/src/pipeline/parse.rs:36`
 
-```rust
-fn read_and_parse(cli: &Cli) -> Result<(Cookfile, String), CookError> {
-    let source = std::fs::read_to_string(&cli.file)...;   // line 122
-    let cookfile = parser::parse(&source)...;              // line 126
-    let lua_source = codegen::generate(&cookfile);         // line 128
-    Ok((cookfile, lua_source))
-}
+```text
+path → ParsedCookfile { cookfile, lua_source, warnings }
 ```
 
-Three things happen:
+- `cook_lang::parse(&source)` produces the AST (`PipelineError::Parse` on failure).
+- `cook_luagen::dep_ref::extract_recipe_names` pre-scans recipe names for codegen disambiguation.
+- `cook_luagen::generate_with_names_checked` runs codegen with § 5.4 placement validation enabled (hard error → `PipelineError::Codegen`).
+- `cook_luagen::generate_with_names_and_warnings` runs codegen again under the § 5.5 policy to collect warnings — the Lua source is byte-identical; only the diagnostic policy differs.
 
-1. **Read from disk.** The `cli.file` path (default `"Cookfile"`) is read into a `String`. If the file is missing, the error surfaces here as `CookError::Other`.
+The CLI wraps this in `cook-cli/src/pipeline.rs:49`, which prints each warning to stderr (`cook: warning: …`) before returning the `ParsedCookfile`.
 
-2. **Parse to AST.** `parser::parse(&source)` runs the lexer then the parser, returning a `Cookfile` AST (`src/parser/ast.rs`). The AST records recipes, their ingredient glob patterns, explicit `requires` deps, cook steps, and bare variable assignments. Parse errors become `CookError::ParseError` and include the source location.
-
-3. **Transpile to Lua.** `codegen::generate(&cookfile)` converts the AST to a Lua source string. Every recipe becomes a `cook.recipe("name", {ingredients=..., requires=...}, function() ... end)` call. Shell steps become `cook.exec(...)` calls; cook steps (with `begin_step`/`end_step` wrapping) become `cook.layer(...)` calls.
-
-Back in `cmd_run()` (line 190), if `--emit-lua` was set, the Lua source is printed to stdout and the process exits immediately:
-
-```rust
-if cli.emit_lua {
-    println!("{lua_source}");
-    return Ok(());
-}
-```
+`pipeline::validate_selected_config` (`parse.rs:65`) rejects an unknown `--config NAME` argument up front, listing available names.
 
 **Data in:** path to Cookfile
-**Data out:** `(Cookfile, String)` — the AST and transpiled Lua source
+**Data out:** AST, generated Lua source, warnings
+
+### 3.2 Workspace load (when the root Cookfile has imports) — `cli/crates/cook-engine/src/pipeline/workspace.rs:39`
+
+When `parsed.cookfile.imports` is non-empty, `cmd_run` resolves the workspace root (either `--root` or the discovered project root) via `pipeline::resolve_workspace_root` and then calls `Workspace::load`. The loader:
+
+- canonicalises the root Cookfile path and the workspace-root path,
+- parses + codegens the root,
+- recursively follows `import` directives via `Self::load_imports`, anchoring `//path/from/root` sigil imports at `workspace_root` and `./path` imports at the importer's directory,
+- detects cycles by tracking the set of visited canonical directories,
+- deduplicates the same canonical target reached via two aliases.
+
+The result is a `Workspace { root: LoadedCookfile, imports: BTreeMap<PathBuf, LoadedCookfile>, namespace_map, workspace_root }`.
+
+**Data in:** root Cookfile path, workspace root, `--set` overrides (forwarded)
+**Data out:** fully-resolved `Workspace`
+
+For single-Cookfile builds this step is skipped: `cmd_run` operates directly on `parsed.cookfile` and uses `pipeline::build_single_recipe_infos` / `pipeline::build_single_registries`.
 
 ---
 
-## 4. Environment Resolution
+## 4. Registry and recipe-info assembly
 
-**Function:** `resolve_env()` — `src/cli/mod.rs:132`
+### 4.1 `RecipeInfo` map — `cli/crates/cook-engine/src/pipeline/recipe_info.rs`
 
-Cook builds a single flat `HashMap<String, String>` by merging five layers in order. Later layers win.
+For each recipe across the workspace, `pipeline::build_workspace_recipe_info` (or `build_single_recipe_infos` for the single-file case) produces a `BTreeMap<String, RecipeInfo>` keyed by fully-qualified recipe name (e.g. `apps.web.build` for an imported recipe under alias `apps.web`). `RecipeInfo` (`analyzer.rs:37`) is the pure-data graph node used by the analyzer:
 
 ```rust
-fn resolve_env(
-    cookfile: &Cookfile,
-    selected_config: Option<&str>,
-    dotenv_vars: HashMap<String, String>,
-    cli_sets: &[String],
-) -> Result<HashMap<String, String>, CookError> {
-```
-
-**Layer 1 — System environment** (line 139)
-```rust
-let mut env: HashMap<String, String> = std::env::vars().collect();
-```
-The starting point is the process's inherited environment. `PATH`, `HOME`, `CC`, anything the shell exported is already here.
-
-**Layer 2 — Cookfile bare variables** (line 142)
-```rust
-for (k, v) in &cookfile.vars {
-    env.insert(k.clone(), v.clone());
+pub struct RecipeInfo {
+    pub ingredients: Vec<String>,
+    pub serves: Vec<String>,
+    pub requires: Vec<String>,
 }
 ```
-Variables declared at the top of the Cookfile (e.g., `CC "clang"`) are inserted, overriding system env.
 
-**Layer 3 — Selected config block** (line 146)
-```rust
-if let Some(config_name) = selected_config {
-    let config_vars = cookfile.configs.get(config_name).ok_or_else(|| ...)?;
-    for (k, v) in config_vars { env.insert(k.clone(), v.clone()); }
-}
-```
-If a config name was passed as a positional CLI argument (e.g., `cook build release`), the variables from that named config block are overlaid. Unknown config names produce a helpful error listing available configs.
+`ingredients` / `serves` are recorded for introspection (`cook menu`, `cook dag`) but **do not produce dependency edges** — Cook Standard § 5.6 and rationale B.5.N removed ingredient-serves matching. Only `requires` (explicit `: dep`) and inferred-dep edges (next step) create edges.
 
-**Layer 4 — `.env` file** (line 167)
-```rust
-for (k, v) in dotenv_vars { env.insert(k, v); }
-```
-`load_env(cookfile_dir)` is called at line 201 of `cmd_run()` before `resolve_env()` is called. It reads a `.env` file from the Cookfile's directory (if present) and returns a map. Those values are passed in as `dotenv_vars` and applied here.
+### 4.2 `RegistryEntry` map — `cli/crates/cook-engine/src/pipeline/registries.rs`
 
-**Layer 5 — `--set` CLI overrides** (line 172)
-```rust
-for set_arg in cli_sets {
-    if let Some(eq_pos) = set_arg.find('=') {
-        env.insert(set_arg[..eq_pos].to_string(), set_arg[eq_pos+1..].to_string());
-    }
-}
-```
-`--set KEY=VALUE` flags have the final word. The string is split on the first `=`, so values may contain `=` characters.
+`pipeline::build_workspace_registries` / `build_single_registries` build a `BTreeMap<String, RegistryEntry>` keyed by **namespace prefix**: `""` for the root, `apps.web` for an import aliased that way, etc. Each `RegistryEntry` carries the compiled Lua source plus a `cook_register::Registry` configured with the namespace's working directory, env vars, `--set` overrides, and the optionally-selected config-block name. The engine looks up the right entry per recipe at registration time (see § 6).
 
-**Data in:** `Cookfile` AST, optional config name, dotenv map, `--set` strings
-**Data out:** `HashMap<String, String>` — the fully-merged environment
+**Data in:** parsed AST(s), env vars, named-config name, `--set` overrides
+**Data out:** `BTreeMap<String, RegistryEntry>` plus `BTreeMap<String, RecipeInfo>`
 
-This map is passed to `Runtime::new()` (line 215) and also forwarded to `execute_dag()` (line 264) so worker processes inherit it.
+### 4.3 Inferred deps — `cli/crates/cook-engine/src/pipeline/inferred_deps.rs:26` / `:50`
+
+`compute_single_inferred_deps` / `compute_workspace_inferred_deps` walk every recipe body looking for `{NAME}` body references (Cook Standard § 5.3 / App. E.10), resolving them through any import aliases. The output is a `BTreeMap<String, Vec<String>>` from consumer recipe → referenced recipes.
+
+These are **codegen-time** dependencies. Unlike explicit `requires` (which become wave boundaries), inferred deps cause **same-wave merging** in the wave grouper: a recipe and any recipe it body-references end up in the same wave so the referencing recipe sees the referent's outputs when it registers.
+
+`pipeline::single_dep_conflicts` / `workspace_dep_conflicts` (called via `print_dep_conflicts` in `cook-cli/src/pipeline.rs:57`) print warnings when a `{NAME}` reference conflicts with an explicit dep declaration.
+
+**Data in:** Cookfile AST(s)
+**Data out:** `BTreeMap<String, Vec<String>>` inferred edges, plus diagnostic warnings
 
 ---
 
-## 5. Dependency Analysis
+## 5. Environment resolution
 
-**Function:** `analyzer::resolve_execution_order()` — `src/cli/mod.rs:204`, implemented in `src/analyzer/mod.rs:35`
+`cli/crates/cook-engine/src/pipeline/env.rs:33` defines the layered merge. Layer order (later wins):
 
-```rust
-let order = analyzer::resolve_execution_order(&cookfile, recipe_name)
-    .map_err(|e| match e {
-        GraphError::UnknownRecipe(name) => CookError::RecipeNotFound(name),
-        GraphError::CycleDetected(name) => CookError::Other(format!("dependency cycle involving: {name}")),
-    })?;
-```
+1. **System env** — `std::env::vars()`.
+2. **`.env` file** — loaded by `pipeline::load_env(cookfile_dir)` (`env.rs:20`), parsed with `dotenvy`.
+3. **CLI `--set KEY=VALUE` overrides** — parsed by `pipeline::parse_cli_overrides` (`env.rs:60`), split on the first `=`. Missing `=` is rejected with `PipelineError::InvalidSet`.
 
-`resolve_execution_order` calls `build_recipe_info()` (`src/analyzer/mod.rs:7`) to extract a `HashMap<String, RecipeInfo>` from the AST, then calls `topological_sort()` (`src/analyzer/graph.rs:20`).
+Note the change from earlier versions: **bare cookfile vars (`CC "gcc"`) are gone**. Cookfile-defined variables now live inside `config NAME ... end` blocks and are applied by the registry's Lua VM at registration time — not by `resolve_env`. CLI `--set` overrides are also re-applied on top of `cook.env` after the config block runs, so explicit CLI overrides win over config-block defaults regardless of how the block was authored. `resolve_env` takes a `selected_config` parameter but ignores it: config-block dispatch is the registry's job.
 
-**Two kinds of dependency edges:**
+For workspace builds, `cmd_run` does not call `resolve_env` directly — env layering is folded into `build_workspace_registries` per namespace, so each imported Cookfile sees its own `.env` (loaded relative to that Cookfile's directory).
 
-1. **Explicit deps** (`requires` in the recipe header). The recipe declares `requires = {"clean"}` and the graph adds a direct edge. Validated at graph-build time: referencing a non-existent recipe is an immediate error.
-
-2. **Implicit deps** (ingredient-serves matching). If recipe A lists `"lib.a"` in its `ingredients` list, and recipe B lists `"lib.a"` in its output (`serves`) list, the analyzer infers an edge A → B. This is an exact string match — glob patterns in `ingredients` do _not_ trigger implicit deps (`src/analyzer/graph.rs:47`).
-
-The sort is a DFS post-order traversal starting at the target recipe. Only recipes reachable from the target are included — unrelated recipes in the Cookfile are ignored. Cycle detection is handled by tracking `Visiting` / `Visited` node states.
-
-**Data in:** `Cookfile` AST, target recipe name
-**Data out:** `Vec<String>` — recipe names in execution order (dependencies first)
-
-Example: for `cook build` where `build` requires `compile` and `compile` requires nothing, the result is `["compile", "build"]`.
+**Data in:** optional `--config` name, `.env` map, `--set` strings
+**Data out:** `HashMap<String, String>` merged env (single-file path), or per-namespace `RegistryEntry`s (workspace path)
 
 ---
 
-## 6. Per-Recipe Execution Loop
+## 6. Recipe DAG and wave grouping
 
-`cmd_run()` iterates over the ordered recipe names (`src/cli/mod.rs:232`):
+Inside `cook_engine::run::run` (`cli/crates/cook-engine/src/run.rs:314`):
 
-```rust
-for name in &order {
-    // Phase 1: Register
-    let units = rt.register_recipe(&lua_source, name)?;   // line 238
+### 6.1 Cache bootstrap (`run.rs:354–432`)
 
-    // Build DAG for this recipe
-    let dag = crate::scheduler::builder::build_dag(vec![units]);  // line 252
+Load `.cook/cloud.toml` (default if absent), build an env-denylist, probe `ExecutionContext` (machine identity, declared-tool binary hashes), pick a backend (`CloudBackend` when `cloud.enabled` is true, else `LocalBackend` at `cache_dir()`), and assemble an `Arc<CacheContext>` that flows to every worker. Backend health is probed once; failure is logged but does not abort the build (the backend is treated as disabled).
 
-    if dag.is_empty() { continue; }
+### 6.2 Recipe DAG — `analyzer::dependency_edges_multi` (`analyzer.rs:103`)
 
-    // Phase 2: Execute
-    crate::scheduler::execute_dag(
-        dag, num_jobs, cookfile_dir.to_path_buf(),
-        env_vars.clone(), cli.quiet, Some(cache_manager.clone()),
-    )?;  // line 259
-}
-```
+`dependency_edges_multi` builds an adjacency map from `requires` declarations only (`build_adjacency`, `analyzer.rs:55`) and merges per-target reachability sets. It performs a DFS topological reachability check; `GraphError::UnknownRecipe` and `GraphError::CycleDetected` surface up as `EngineError::UnknownRecipe` / `EngineError::CycleDetected`.
 
-Recipes run _sequentially_ (one at a time). Within each recipe, work units run in parallel via the DAG. This ordering ensures cross-recipe file dependencies are respected before the next recipe scans its ingredients.
+The edges map is `BTreeMap<String, Vec<String>>`: recipe name → recipes it depends on. Only `requires` and codegen-emitted name-reference edges feed this map; ingredient-serves matching is gone (see § 4.1).
 
-### Phase 1 — Register
+### 6.3 Wave grouping — `wave_grouper::compute_waves` (`run.rs:449`)
 
-**Function:** `Runtime::register_recipe()` — `src/runtime/mod.rs:239`
+`compute_waves` takes three inputs: `edges` (explicit deps; produce wave boundaries), `inferred_deps` (`{NAME}` refs; merge into the same wave), and the set of all reachable recipe names. It returns `Vec<Wave>` where each `Wave` carries a sorted list of recipe names that can register and execute in the same wave.
 
-A fresh Lua VM is created. The Cook API is registered in **capture mode**: `cook.exec()` is a no-op that records a `CapturedUnit` instead of executing anything; `cook.layer()` similarly records the work unit and checks the cache to decide whether the step is already satisfied.
+After waves are computed the engine emits a single `EngineEvent::BuildStarted` describing the topology, followed by an `EngineEvent::RecipeQueued` per recipe (`run.rs:466`–`476`).
 
-```rust
-let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
-let recipes = register_cook_api_capture(&lua, &self.env_vars, &self.working_dir, capture_state.clone())?;
-```
-
-The generated Lua source is loaded into the VM (`lua.load(lua_source).exec()` at line 267), registering all recipe functions. Then `setup_recipe_context()` (line 276) runs cache invalidation and resolves ingredient globs into the `recipe.ingredients` table. Finally the recipe function is called (line 280).
-
-As the recipe body runs, each `cook.exec()` / `cook.layer()` call appends to `capture_state.units`. `cook.begin_step()` / `cook.end_step()` bracket groups of parallelisable units into a `step_groups` entry.
-
-**What comes back** is a `RecipeUnits` struct (line 291):
-
-```rust
-RecipeUnits {
-    recipe_name: String,
-    deps: Vec<String>,           // explicit requires
-    units: Vec<CapturedUnit>,    // one per work item
-    step_groups: Vec<Vec<usize>>,// indices of parallelisable groups
-}
-```
-
-Each `CapturedUnit` carries:
-- `payload: WorkPayload` — either `Shell { cmd, line }`, `Interactive { cmd, line }`, or `LuaChunk { ... }`
-- `dep_kind: DepKind` — `Sequential` (depends on previous barrier) or `StepGroup(idx)` (parallel with group peers)
-- `cache_meta: Option<CacheMeta>` — present when the step needs to run; `None` when pre-satisfied by cache
-
-### Phase 2 — Build and Execute the DAG
-
-**Build:** `scheduler::builder::build_dag()` — `src/scheduler/builder.rs:18`
-
-`build_dag()` converts `RecipeUnits` into an `ExecutionDag`. It maintains a _barrier_: the set of DAG node IDs that a new sequential unit must wait for. `Sequential` units extend the barrier one node at a time. `StepGroup` units all share the same barrier entry point and together become the new barrier when the last group member is processed.
-
-Cache-satisfied units (`CapturedUnit` with empty command and no `cache_meta`) are added as **presatisfied nodes** (no payload). The scheduler resolves them immediately without dispatching work.
-
-**Execute:** `scheduler::execute_dag()` — `src/scheduler/mod.rs:82`
-
-```rust
-pub fn execute_dag(
-    dag: ExecutionDag,
-    num_workers: usize,
-    working_dir: PathBuf,
-    env_vars: HashMap<String, String>,
-    _quiet: bool,
-    cache_manager: Option<Arc<ThreadSafeCacheManager>>,
-) -> Result<(), SchedulerError>
-```
-
-Execution proceeds as follows:
-
-1. **Seed.** `dag.initial_ready()` (line 161) returns all nodes with zero remaining deps. Each is passed to `process_ready()`.
-
-2. **Dispatch.** `process_ready()` handles three cases (line 117):
-   - `None` payload (presatisfied): mark done, immediately cascade to dependents.
-   - `WorkPayload::Interactive`: push onto `interactive_queue` for main-thread execution.
-   - Any other payload: submit to `WorkerPool` as a `WorkItem`.
-
-3. **Worker pool.** `WorkerPool::spawn()` starts `num_workers` threads (default: CPU count). Each worker receives `WorkItem`s over a channel, runs the command as a subprocess, and sends a `WorkResult` back.
-
-4. **Main loop.** The main thread waits on the result channel. When a result arrives, if it succeeded, `dag.complete(id)` decrements `remaining_deps` on all dependents and returns the newly-unblocked ones for immediate dispatch. If it failed, `cancel_subtree()` marks all transitive dependents as cancelled.
-
-5. **Interactive queue.** Whenever `pending == 0` (pool drained) and `interactive_queue` is non-empty, the main thread runs the queued interactive command directly with stdin attached (line 169). This is how `@`-prefixed steps work — they require a TTY and cannot run in worker threads.
-
-6. **Cache update.** After each successful node, if the node carries `CacheMeta`, `cache_manager.update_step()` is called (line 243). At the end of the DAG, `cm.flush_all()` writes the cache to disk (line 311).
-
-7. **Termination.** The loop exits when `pending == 0` and `interactive_queue` is empty. `pool.shutdown()` is called to join worker threads.
-
-**Data in:** `ExecutionDag`, worker count, working dir, env vars, optional cache manager
-**Data out:** `Ok(())` or `Err(SchedulerError)` listing each failed node as `(node_id, recipe_name, message)`
+**Data in:** `recipe_infos`, `targets`, `inferred_deps`
+**Data out:** `Vec<Wave>` plus initial topology events
 
 ---
 
-## 7. Output and Error Handling
+## 7. Per-wave register / build / execute loop
 
-### What the user sees on success
+The main loop is `for wave in &waves { ... }` (`run.rs:481`).
 
-Cook prints a short status line per recipe before registration:
+### 7.1 Registration (`run.rs:482`–`519`)
 
-```
-cook: registering recipe 'build'   ← printed to stderr (line 234)
-```
+For each recipe in the wave:
 
-Workers stream their subprocess output via `SharedWriter` (`src/scheduler/output.rs`). On success, `cmd_run()` returns `Ok(())` and `run()` returns normally, exiting with code 0.
+1. `split_recipe_name(name)` splits a fully-qualified name into `(prefix, local_name)` — e.g. `apps.web.build` → `("apps.web", "build")`.
+2. The matching `RegistryEntry` is looked up by prefix. A missing entry is a hard error (`EngineError::RegistrationFailed`).
+3. `registry.register_recipe(lua_source, local_name, Some(cache_ctx))` runs the recipe in **capture mode** inside a fresh `mlua::Lua` VM. The Cook API is registered with capture semantics: `cook.exec`, `cook.layer`, `cook.add_unit`, etc. record `CapturedUnit`s into the registry's `CaptureState` instead of executing anything. See `cli/crates/cook-register/src/lib.rs` and `engine.rs` for the API surface.
+4. The recipe's qualified name is written back into `units.recipe_name`, cross-recipe deps from `edges` are copied into `units.deps`, and a `ThreadSafeCacheManager` rooted at `<registry-working-dir>/.cook/cache` is created.
 
-### What the user sees on failure
+Recipes inside a wave can register **concurrently** in principle (one thread per recipe, since `mlua::Lua` is `!Send`). In the current implementation the loop is sequential but the structure (one VM per registration, distinct `CaptureState`s per recipe) is what enables that concurrency.
 
-Errors are handled inside `cli::run()` (line 112) — it does **not** return `Err` to `main()`. Instead, it prints the error and calls `process::exit()` directly:
+The output of the wave registration is a `Vec<RecipeUnits>`. Each `RecipeUnits` carries the captured units, recipe-local dep info, and cross-recipe `deps` derived from the edge map.
 
-```rust
-match result {
-    Ok(()) => Ok(()),
-    Err(e) => {
-        eprintln!("cook: {e}");
-        std::process::exit(e.exit_code());
-    }
-}
-```
+**Data in:** wave's recipe names, registries, `cache_ctx`, `edges`
+**Data out:** `Vec<RecipeUnits>` for the wave, plus per-recipe `ThreadSafeCacheManager`s
 
-(`main.rs` has a fallback error handler, but it never fires during normal operation.)
+### 7.2 Work-unit DAG — `dag_builder::build_dag` (`run.rs:524`)
 
-Exit codes (`CookError::exit_code()`, line 73):
+`build_dag` merges every `RecipeUnits` in the wave into one `Dag<WorkNode>`. It wires:
 
-| Error | Exit code | Example message |
-|-------|-----------|-----------------|
-| `CommandFailed` | 1 | `Cookfile:42: command failed (exit 1): gcc main.c` |
-| `ParseError` | 2 | `cook: parse error: unexpected token at line 5` |
-| `RecipeNotFound` | 3 | `cook: recipe not found: myrecipe` |
-| `Other` | 1 | `cook: dependency cycle involving: a` |
+- intra-recipe ordering (the `Sequential` / `StepGroup` / explicit-dep relations the capture API recorded),
+- cross-recipe edges (the `deps` field copied from `edges`),
+- inferred-dep edges (`{NAME}` refs, threaded through during workspace recipe-info assembly).
 
-### Cookfile line numbers in error messages
+The builder cannot introduce cycles by construction (deps only point to already-emitted node ids); a defensive `dag.validate()` in `execute_dag` catches any future regression with `EngineError::CycleDetected`.
 
-When a shell command fails inside a recipe, the error carries the Cookfile source line. This is threaded through as a `COOK_CMD_FAILED:<line>:<code>:<cmd>` sentinel string in the Lua error message, then decoded in two places:
-- `cmd_run()` (line 268) for errors from Phase 1 (capture mode)
-- `cmd_run()` (line 269) for errors from Phase 2 (scheduler results)
+If two unrelated recipes both declare the same canonical output path, `build_dag` returns `EngineError::OutputCollision { path, recipes }`. This is a plan-time error — the wave loop bails before any work runs.
 
-The sentinel format means even errors that cross the Lua/Rust boundary or the thread-pool channel still carry the original source location.
+Zero-work recipes (meta-targets whose body only declares `: dep` edges) never produce a node in the DAG. `run.rs:529`–`548` emits synthetic `RecipeStarted` + `RecipeCompleted` events for them so they don't get stuck in the renderer's Waiting state.
+
+**Data in:** `Vec<RecipeUnits>`
+**Data out:** `Dag<WorkNode>` for this wave (possibly empty)
+
+### 7.3 Execution — `executor::execute_dag` (`cli/crates/cook-engine/src/executor.rs:280`)
+
+`execute_dag` drives the wave's work-unit DAG. Briefly:
+
+1. **Empty / cycle checks.** Empty DAG returns `Ok(vec![])`. `dag.validate()` defensively guards against cycles.
+2. **Worker pool.** `cook_luaotp::WorkerPool::spawn(num_workers)` starts `N` threads. Each worker owns its own `mlua::Lua` VM and pulls `WorkItem`s off a `(Mutex<VecDeque>, Condvar)` queue; results return on an mpsc channel.
+3. **Seed.** `dag.initial_ready()` (`executor.rs:978`) returns every node with zero remaining deps; each goes through `process_ready` which dispatches by payload kind: `None` (presatisfied / cache hit) is completed inline; `Interactive` is queued for main-thread execution; anything else is submitted to the pool.
+4. **Main loop** (`executor.rs:1001`). The thread blocks on the result channel. On success it calls `dag.complete(id)` and dispatches newly-ready nodes; on failure it accumulates the failure and calls `cancel_subtree` to mark transitive dependents as cancelled (and synthesize `Blocked` test results for `cook test`).
+5. **Interactive / chore window.** When the pool is drained and the interactive queue is non-empty, the main thread runs the queued node directly with stdin attached. Chore bodies are emitted as a linear chain of interactive units bracketed by `_enter_chore` / `_exit_chore` and drain together as a single window with one `InteractiveStart` / `InteractiveEnd` pair (CS-0051).
+6. **Recipe tracking.** `RecipeTracker`s aggregate per-recipe progress and emit `RecipeStarted` / `RecipeCompleted` / `RecipeFailed` once a recipe's node count hits zero.
+7. **Cache.** Each successful node updates its recipe's `ThreadSafeCacheManager`; the cache flushes at the end of the wave.
+8. **Termination.** The loop exits when every node is accounted for (`finished == total`) and the interactive queue is empty. The pool is shut down and joined.
+
+Failures are returned as `EngineError::TaskFailures { failures: Vec<(node_id, recipe_name, message)>, partial_test_results }`. Test mode unwraps `partial_test_results` (Blocked rows from cancellation) and treats it as a successful run with failing rows; build mode propagates the failure upward.
+
+Per-wave parallelism is therefore **all work units across all recipes in the wave**, capped at `num_workers`. The within-recipe DAG structure (sequential barriers vs. step groups) still constrains ordering inside a recipe; the wave boundary just adds the cross-recipe edges on top.
+
+**Data in:** work-unit DAG, worker count, per-recipe cache managers, `cache_ctx`, event channel
+**Data out:** `Vec<TestResult>` (empty for build mode) or `EngineError::TaskFailures`
+
+---
+
+## 8. Cache update
+
+`ThreadSafeCacheManager` is per-recipe; `execute_dag` writes to it as each `cache_meta`-carrying node finishes successfully and flushes at end-of-wave. The cache directory layout is `<recipe-working-dir>/.cook/cache/`. The cloud backend (when `cloud.enabled` in `.cook/cloud.toml`) sees the same writes via the `CacheBackend` trait through `CacheContext::backend`; a failed backend is logged and the build continues with the backend treated as disabled.
+
+`cook-fingerprint` installs a depfile-parser shim once per process (`executor.rs:296`) so the precheck augmentation can resolve `.d` files without a runtime dep cycle.
+
+**Data in:** completed `WorkNode`s with cache metadata
+**Data out:** updated on-disk cache + (optionally) cloud cache
+
+---
+
+## 9. Output and error handling
+
+### 9.1 What the user sees on success
+
+There is no longer any direct `println!` from the engine. All progress flows through `EngineEvent`s emitted from `run::run` and `executor::execute_dag` over an mpsc channel. `cook-cli/src/pipeline.rs:84` (`bridge_engine_to_progress_events`) translates each event into a `cook_progress::ProgressEvent` with stable `RecipeId` / `NodeId` interning, and `cook-cli/src/progress.rs::spawn_new_renderer` runs the renderer on a separate thread.
+
+The renderer respects `--output` (`auto` → inline TTY, `plain` → line-prefixed, `json` → newline-delimited JSON) and `--verbose` (per-node output streamed under `[recipe/node]`). The old `SharedWriter` is gone.
+
+On success the engine emits `EngineEvent::Finished { success: true }`, the renderer prints its summary, and `run_with_progress` returns `Ok(())`. `dispatch` returns `Ok(())` and the process exits 0.
+
+### 9.2 What the user sees on failure
+
+A failed work unit in `execute_dag` produces an `EngineError::TaskFailures`. `engine_error_to_cook_error` (`cook-cli/src/pipeline.rs:344`) inspects the first failure: if the message contains the `COOK_CMD_FAILED:<line>:<code>:<cmd>` sentinel emitted by the cook runtime, it decodes it into `Cookfile:<line>: command failed (exit <code>): <cmd>`; otherwise it forwards the raw message. Cycle / unknown-recipe / registration / cache / output-collision errors map to dedicated `CookError` variants.
+
+`main.rs:33` prints `cook: {e}` to stderr (unless the variant is `TestFailure`) and calls `process::exit(e.exit_code())`.
+
+### 9.3 Exit codes
+
+`CookError::exit_code` (`cli/crates/cook-cli/src/error.rs:17`):
+
+| Variant            | Exit code | Example message                                                  |
+|--------------------|-----------|------------------------------------------------------------------|
+| `CommandFailed`    | 1         | `Cookfile:42: command failed (exit 1): gcc main.c`               |
+| `TestFailure`      | 1         | (summary printed by reporter; the error message is suppressed)   |
+| `Other`            | 1         | `dependency cycle involving: a`, `output collision: ...`, etc.   |
+| `ParseError`       | 2         | `parse error: unexpected token at line 5`                        |
+| `RecipeNotFound`   | 3         | `recipe not found: myrecipe`                                     |
+
+The mapping is the only place exit codes are decided; engine and pipeline errors carry no exit-code information of their own.

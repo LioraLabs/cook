@@ -1,238 +1,169 @@
-# Runtime: Lua VM, APIs, Two-Phase Execution
+# Runtime: Two Lua VMs, Two Phases
 
 ## Overview
 
-The runtime (`src/runtime/mod.rs`, `src/runtime/api.rs`) manages the Lua VM that executes the generated Lua source. It has three responsibilities:
+There is no single "runtime" any more. The Lua VM layer is split across two crates with very different roles, plus a third crate that supplies the API surfaces both VMs share:
 
-1. **Lua VM lifecycle** — create an `mlua::Lua` instance, register Cook's built-in API namespaces (`cook.*`, `fs.*`, `path.*`), then load and execute the generated source string.
-2. **API registration** — expose all build-system primitives to Lua code as native Rust functions. Every shell command, filesystem query, and cache-aware transformation routes through these functions.
-3. **Two execution modes** — the same Lua source runs twice for each recipe. The first run (capture mode, `register_recipe()`) suppresses side effects and records what work needs to happen. The second run (execute mode, `execute_recipe()`) actually runs that work. This two-phase design is what makes parallel scheduling possible.
-
----
-
-## Runtime Struct
-
-Defined at `src/runtime/mod.rs:34`:
-
-```rust
-pub struct Runtime {
-    working_dir: PathBuf,
-    env_vars: HashMap<String, String>,
-    no_taste: bool,
-    quiet: bool,
-}
-```
-
-| Field | Purpose |
-|---|---|
-| `working_dir` | Absolute path to the directory containing the Cookfile. All relative paths in shell commands and filesystem APIs are resolved against this. |
-| `env_vars` | The resolved environment variables for this build (from the `[env]` config section). Exposed to Lua as `cook.env` and passed as the environment to all spawned shell processes. |
-| `no_taste` | When true, `cook.taste()` is silent. Used by automated/CI invocations. |
-| `quiet` | Reserved for suppressing progress output (currently threaded through but not yet used in the API layer). |
-
-`Runtime::new()` (line 139) takes `working_dir` and `env_vars`; `no_taste` and `quiet` default to `false` and are set via `set_no_taste()` / `set_quiet()` (lines 148, 152). The caller in `cmd_run()` (in `src/main.rs`) constructs the runtime, applies config, then calls either `register_recipe()` for the scheduler path or `execute_recipe()` for the legacy direct path.
-
----
-
-## Lua VM Initialization
-
-Each call to `register_recipe()` or `execute_recipe()` creates a **fresh** `mlua::Lua` instance (lines 157, 245). There is no shared VM across recipe invocations. This means each recipe starts with a clean global table and no state leaks between recipes.
-
-After creating the VM, the runtime registers APIs in a fixed order:
-
-1. `register_cook_api()` or `register_cook_api_capture()` — sets up the `cook` global table with all `cook.*` functions. Returns a `Rc<RefCell<Vec<RegisteredRecipe>>>` that accumulates recipe registrations as the Lua source executes.
-2. `register_fs_api()` — sets up the `fs` global table.
-3. `register_path_api()` — sets up the `path` global table.
-4. `register_layer_api()` or `register_layer_api_capture()` — adds `cook.layer` to the existing `cook` table. This is registered after the others because it needs a `SharedCacheState` that is constructed after the VM is ready.
-
-Then `lua.load(lua_source).exec()` runs the Lua source. This executes the top-level `cook.recipe(...)` calls, registering each recipe into the in-memory registry. The recipe function bodies are stored but not yet called.
-
-Finally, the runtime looks up the target recipe by name, calls `setup_recipe_context()` to populate `recipe.ingredients` and run cache invalidation, then invokes the recipe function.
-
----
-
-## API Reference
-
-### `cook.*` namespace
-
-Registered by `register_cook_api()` (execute mode, `src/runtime/api.rs:20`) or `register_cook_api_capture()` (capture mode, `src/runtime/api.rs:428`).
-
----
-
-#### `cook.recipe(name, metadata, fn)`
-
-Registers a recipe. The runtime records `name`, extracts `metadata.ingredients` and `metadata.requires` from the Lua table, stores a registry key for `fn`, and appends the entry to the recipes list. The function body is not called at registration time.
-
-`metadata` fields:
-- `ingredients` — array of glob pattern strings. Expanded by `setup_recipe_context()` before the recipe body runs.
-- `requires` — array of recipe name strings. Used by the scheduler to build inter-recipe dependencies.
-
-Both fields are optional; missing or empty fields produce empty Vecs.
-
----
-
-#### `cook.exec(cmd, line)` → string
-
-Execute `cmd` via `/bin/sh -c` in `working_dir` with `env_vars` merged into the process environment. Returns captured stdout as a string (also printed to stdout). Stderr is forwarded directly to the caller's stderr. On failure, raises a Lua error carrying the `COOK_CMD_FAILED:line:code:cmd` sentinel that `execute_recipe()` decodes into a `RuntimeError::CommandFailed`.
-
-**Capture mode behaviour** (`src/runtime/api.rs:474`):
-- If `inside_layer` is true: appends `(cmd, line)` to `layer_commands` (the layer body is doing a dry run to discover the command) and returns `""`.
-- If `inside_layer` is false: creates a `CapturedUnit { payload: WorkPayload::Shell { cmd, line }, dep_kind: Sequential }` and appends it to `state.units`. Returns `""`.
-
-In both capture-mode cases no process is spawned.
-
----
-
-#### `cook.interactive(cmd, line)` → string
-
-Like `cook.exec()` but runs with inherited stdio so the child process has a real terminal. Uses `Command::status()` instead of `Command::output()`, so stdout is not captured. Returns an empty string on success.
-
-This is generated for steps prefixed with `@` in the Cookfile.
-
-**Capture mode behaviour** (`src/runtime/api.rs:496`): Always creates a `CapturedUnit { payload: WorkPayload::Interactive { cmd, line }, dep_kind: Sequential }` regardless of `inside_layer`. Interactive steps are always sequential.
-
----
-
-#### `cook.sh(cmd)` → string
-
-User-facing shell utility. Calls `run_shell_command` with line number `0` (so failures report line 0 rather than a Cookfile line). Intended for use in Lua expressions that need a shell result to drive control flow (e.g., computing a version string).
-
-**Capture mode behaviour** (`src/runtime/api.rs:516`) — this is the critical difference from `cook.exec`:
-- If `inside_layer` is true: appends `(cmd, 0)` to `layer_commands` and returns `""`. Behaves the same as `cook.exec` inside a layer.
-- If `inside_layer` is false: **executes immediately**, even in capture mode. The rationale is that `cook.sh()` is a utility function whose return value drives Lua control flow. Suppressing it would break recipes that use `cook.sh()` at the top level of the recipe body to decide what to build.
-
----
-
-#### `cook.taste(line)`
-
-Debugger breakpoint placeholder. In execute mode with `no_taste: false`, prints a message to stderr. Otherwise a no-op. In capture mode, always a no-op (`src/runtime/api.rs:552`). The DAG codegen path does not emit `cook.taste()` calls; this function exists for legacy compatibility.
-
----
-
-#### `cook.env`
-
-A Lua table populated with all entries from `env_vars` (`src/runtime/api.rs:99`, `556`). Keys and values are strings. Read-only by convention. Generated Lua code accesses environment variables via `cook.env["VAR"]` (from template expansion) or `cook.env.VAR` (from Lua block steps).
-
----
-
-#### `cook.layer(inputs, output, cmd_hash, fn [, lua_code])`
-
-Cache-aware execution wrapper. The core of Cook's incremental build support.
-
-Arguments:
-- `inputs` — string or table of strings: relative paths to input files
-- `output` — string or nil: relative path to the output file (nil for plate/run-only steps)
-- `cmd_hash` — u64: hash of the command text, computed at codegen time
-- `fn` — Lua function: the body to execute if a rebuild is needed
-- `lua_code` — optional string: raw Lua source of the body, used only in capture mode for `LuaChunk` work units (passed by codegen for `>{ }` blocks)
-
-**Execute mode** (`src/runtime/api.rs:252`): Checks cache via `needs_rebuild_cook` or `needs_rebuild_plate` (depending on whether `output` is nil). If the cache says skip, returns without calling `fn`. If rebuild is needed, calls `fn`, then writes a new `StepEntry` to the cache recording the input mtimes, hashes, and command hash.
-
-**Capture mode** (`src/runtime/api.rs:568`): Checks cache exactly the same way. If the cache says skip, records a presatisfied `CapturedUnit` with `cache_meta: None` (no work needed). If rebuild is needed:
-- If `lua_code` is present: creates a `WorkPayload::LuaChunk` — the body will be re-executed as a Lua chunk in the worker thread.
-- If `lua_code` is absent: sets `inside_layer = true`, calls `fn()` as a dry run (which causes any `cook.exec` / `cook.sh` inside it to push into `layer_commands` instead of executing), then pops the last captured command as the `WorkPayload::Shell`.
-
-In both cases the captured unit is assigned a `DepKind` based on whether a step group is currently open (see below).
-
----
-
-#### `cook.begin_step()` / `cook.end_step()`
-
-Step group boundaries for parallelism.
-
-**Execute mode**: Both are no-ops (`src/runtime/api.rs:105`).
-
-**Capture mode** (`src/runtime/api.rs:532`, `544`):
-- `begin_step()` appends a new empty group to `step_groups`, sets `current_group` to its index.
-- `end_step()` sets `current_group` to `None`.
-
-Any `cook.layer()` call executed while `current_group` is `Some(i)` gets `dep_kind: DepKind::StepGroup(i)` and its unit index is appended to `step_groups[i]`. Units outside a group get `dep_kind: DepKind::Sequential`.
-
----
-
-### `fs.*` namespace
-
-Registered by `register_fs_api()` (`src/runtime/api.rs:112`). All path arguments are joined to `working_dir` before the filesystem call, so relative paths work correctly from Lua.
-
-| Function | Return | Notes |
+| Crate | Phase | What it does |
 |---|---|---|
-| `fs.exists(path)` | bool | True if the path exists (file or directory) |
-| `fs.size(path)` | u64 | File size in bytes; errors if path does not exist |
-| `fs.read(path)` | string | Full file contents as a UTF-8 string; errors on read failure |
-| `fs.glob(pattern)` | table | Array of absolute path strings matching the glob pattern |
-| `fs.mtime(path)` | f64 | Modification time as seconds since UNIX epoch |
+| `cli/crates/cook-register` | **Register (capture)** | One short-lived `mlua::Lua` per recipe. Runs the generated Cookfile Lua with capture-mode `cook.*` so it records `CapturedUnit`s instead of doing the work. |
+| `cli/crates/cook-luaotp` | **Execute** | Long-lived pool of N worker threads. Each thread owns one `mlua::Lua` and pulls `WorkItem`s off a shared queue: `Shell`, `Interactive` (rejected — never dispatched), `LuaChunk`, and `Test`. |
+| `cli/crates/cook-lua-stdlib` | **Both** | The shared `fs.*`, `path.*`, and `cook.platform.*` tables, plus the CS-0045 sandbox policy and `os.execute` / `io.popen` escape-hatch guards. Installed into the register-phase VM by `cook-register` and into every worker VM by `cook-luaotp` so both phases see byte-identical behavior (CS-0044). |
+| `cli/crates/cook-contracts` | (types) | Behavior-free shared types: `WorkPayload`, `CapturedUnit`, `CacheMeta`, `DepKind`, `StepKind`, `RecipeUnits`, `OutputStream`. Zero deps on other Cook crates. |
 
-Note: `fs.glob()` returns absolute paths (the full `working_dir + pattern` expansion). This differs from `recipe.ingredients`, which returns relative paths. Callers that need relative paths from `fs.glob()` must strip the working directory prefix themselves.
+`cook-engine` (not described here) orchestrates: it calls `cook-register` once per recipe to obtain a `RecipeUnits`, assembles all units into a global DAG, then dispatches `WorkItem`s to the `cook-luaotp` pool and consumes `WorkResult`s off the result channel. The old monolithic `Runtime` struct and the legacy single-threaded `execute_recipe()` path are gone — every execution now flows through capture → DAG → worker pool.
 
 ---
 
-### `path.*` namespace
+## Register phase (`cook-register`)
 
-Registered by `register_path_api()` (`src/runtime/api.rs:184`). Pure string manipulation using Rust's `std::path`. No filesystem access.
+Entry point: `Registry::register_recipe()` at `cli/crates/cook-register/src/engine.rs:113`. One call per recipe.
 
-| Function | Return | Notes |
+For each call the registry:
+
+1. Creates a fresh `mlua::Lua` (`engine.rs:119`).
+2. Threads a `CacheContext` in as Lua app data so `cook.add_unit` can compute real `context_hash` / `env_contribution` values (`engine.rs:124`).
+3. Builds the capture-mode `cook` table via `register_cook_api_capture` (`engine.rs:132`, implementation at `cli/crates/cook-register/src/capture.rs:27`). That installs `cook.recipe`, `cook.exec`, `cook.interactive`, `cook.sh`, and `cook.env`.
+4. Installs the shared stdlib: `fs.*` (`engine.rs:163`), `path.*` (`engine.rs:168`), `cook.platform.*` (`engine.rs:178`), and the `os.execute` / `io.popen` shell escape guards (`engine.rs:169`). Sandbox is always `Confined { project_root }` for the register VM (`engine.rs:166`).
+5. Installs the recipe-API extensions: `cook.add_unit` / `cook.step_group` / `cook._enter_chore` / `cook._exit_chore` / `cook.passthrough` (`cli/crates/cook-register/src/unit_api.rs:84`), `cook.add_test` (`cli/crates/cook-register/src/test_api.rs:11`), `cook.dep_output` / `cook.dep_output_list` (`cli/crates/cook-register/src/dep_output_api.rs:42`), `cook.export` / `cook.import` (`cli/crates/cook-register/src/export_api.rs:12`), `cook.json_decode` / `cook.yaml_decode` (`cli/crates/cook-register/src/codec_api.rs:6`), `cook.require_env` (`cli/crates/cook-register/src/env_api.rs:64`), `cook.load_module` (`cli/crates/cook-register/src/module_loader.rs:144`), and `cook.resolve_ingredients` (`cli/crates/cook-register/src/context.rs:47`).
+6. `lua.load(lua_source).exec()` (`engine.rs:206`) — runs the codegen output produced by `cook-luagen`. This registers all recipes; bodies are not yet called.
+7. Dispatches any config blocks (`engine.rs:211`), then re-applies CLI `--set KEY=VALUE` overrides, then freezes the declared env keyset and snapshots `cook.env` back into the shared map.
+8. Looks up the target recipe, calls `setup_recipe_context` to populate `recipe.ingredients` (`cli/crates/cook-register/src/context.rs:10`), then invokes the recipe body (`engine.rs:297`).
+9. Flushes module caches, then assembles a `RecipeUnits` out of `CaptureState` and returns it (`engine.rs:322`).
+
+### Capture-mode `cook.*` semantics
+
+| API | Register-phase behavior | Execute-phase behavior |
 |---|---|---|
-| `path.stem(p)` | string | Filename without extension (`"lib/matrix.c"` → `"matrix"`); dotfiles return full name (`".gitignore"` → `".gitignore"`) |
-| `path.name(p)` | string | Basename with extension (`"lib/matrix.c"` → `"matrix.c"`) |
-| `path.ext(p)` | string | Extension including dot (`"matrix.c"` → `".c"`); returns `""` if none |
-| `path.dir(p)` | string | Parent directory (`"lib/matrix.c"` → `"lib"`); returns `""` for bare filenames |
-| `path.replace_ext(p, ext)` | string | Replaces extension; leading dot on `ext` is optional (`"matrix.c", ".o"` and `"matrix.c", "o"` both give `"matrix.o"`) |
-| `path.join(a, b)` | string | Concatenates path components (`"build/obj", "matrix.o"` → `"build/obj/matrix.o"`) |
+| `cook.recipe(name, meta, fn)` | Records `(name, ingredients, excludes, requires, fn)` in the registry (`capture.rs:39`). Body not called until the target recipe is selected. | Register-only — guarded with a §6.3.2 diagnostic in worker VMs (`cli/crates/cook-luaotp/src/pool.rs:535`). |
+| `cook.exec(cmd, line)` | Pushes a `CapturedUnit { payload: WorkPayload::Shell, dep_kind }` onto `CaptureState.units` (`capture.rs:85`). Returns `""`. No subprocess. | Register-only — guarded with a §6.3.2 diagnostic (`pool.rs:504`). |
+| `cook.interactive(cmd, line)` | Pushes a `CapturedUnit { payload: WorkPayload::Interactive, ... }` (`capture.rs:106`). Always sequential. | Register-only — guarded (`pool.rs:511`). The engine routes captured `Interactive` units through a dedicated foreground window before dispatch; the worker pool will surface a "BUG: interactive step dispatched" error if one ever reaches it (`pool.rs:776`). |
+| `cook.sh(cmd)` | **Executes immediately** (`capture.rs:138`). `cook.sh` is the both-phase shell-out helper: its return value drives Lua control flow during capture (e.g. computing a version string used in subsequent `cook.add_unit` calls). | Executes via `run_shell_in_worker` in the worker VM (`pool.rs:341`). Phase: **Both** (Standard §6.3.1). |
+| `cook.add_unit(table)` | Appends a `CapturedUnit` from a Lua table (see below) (`unit_api.rs:118`). | Register-only — guarded (`pool.rs:519`). |
+| `cook.step_group(fn)` | Opens a parallel group, calls `fn()`, closes the group, and drains `current_step_outputs` into `last_cook_step_outputs` (`unit_api.rs:432`). | Register-only — guarded (`pool.rs:527`). |
+| `cook.add_test(table)` | Appends a `CapturedUnit` with `WorkPayload::Test` and `DepKind::TestSibling(group)` so failures don't cancel siblings (`test_api.rs:15`). | Register-only (executed in the worker pool by `execute_test`, `pool.rs:944`). |
+| `cook.dep_output(name)` / `cook.dep_output_list(name)` | Looks up `name`'s terminal outputs in the workspace-shared `SharedTerminalOutputs` map, accumulates a dep edge and the rewritten importer-relative paths into `CaptureState.step_group_dep_refs` / `step_group_dep_input_paths` so the next `cook.add_unit` picks them up (`dep_output_api.rs:64`). | Not present. |
+| `cook.export(name, table)` / `cook.import(name)` | Cross-recipe data pass via a shared `BTreeMap<String, serde_json::Value>` (`export_api.rs:12`). | Not present. |
+| `cook.env` | Lua table seeded from the resolved env vars; mutable while config blocks run, then snapshotted back into the host `HashMap` and frozen (`capture.rs:144`, `engine.rs:235`). | Lua table backed by an `__index` metatable that reads the worker's per-item `current_env_vars` slot at call time (`pool.rs:356`). |
+| `cook.require_env(name)` | Returns `cook.env[name]` if `name` is in the frozen keyset; otherwise raises a diagnostic listing the declared keys (`env_api.rs:72`). | Not present. |
+| `cook.platform.os` / `cook.platform.arch` | Set from `std::env::consts` at registration time (`cli/crates/cook-lua-stdlib/src/platform_api.rs:16`). | Same, registered once per worker. |
+| `cook.json_decode(s)` / `cook.yaml_decode(s)` | Parses to a Lua table via `serde_json` / `serde_yml` (`codec_api.rs:6`). | Not present. |
+| `cook.load_module(name)` | Resolves `cook_modules/<name>.lua` or `cook_modules/<name>/init.lua` relative to the recipe's working dir, evaluates it once, runs `init()` if present, memoizes the result, and detects cycles (`module_loader.rs:144`). | A worker-side counterpart exists for `use foo` modules referenced from execute-phase Lua chunks (`pool.rs:391`). Each worker VM keeps its own `_cook_module_cache` keyed by `(cwd, name)`. |
+| `cook.passthrough(list)` | Pushes paths into `current_step_outputs` without recording an emitting unit. Used by codegen for plate/test/bare-shell steps so the recipe's terminal output list is still well-defined (`unit_api.rs:418`). | Not present. |
+| `cook.taste()` | Removed. The DAG codegen path no longer emits it; the old debugger placeholder is gone. | — |
+
+The register-only diagnostics on the worker VM cite Standard §6.3.2 and name the offending function so users get a focused message instead of `attempt to call a nil value`.
 
 ---
 
-## Two Execution Modes
+## Execute phase (`cook-luaotp`)
 
-### Capture Mode (`register_recipe()`)
+Entry point: `WorkerPool::spawn(n)` at `cli/crates/cook-luaotp/src/pool.rs:81`. Returns the pool and a single `mpsc::Receiver<WorkResult>` shared by all workers.
 
-Entry point: `src/runtime/mod.rs:239`.
+Each worker thread is a `worker_loop` (`pool.rs:153`) that:
 
-The VM is initialized with the capture-mode API set: `register_cook_api_capture()` + `register_layer_api_capture()`. When the recipe function body executes:
+1. Creates its own VM with `unsafe { mlua::Lua::unsafe_new() }` (`pool.rs:159`). `mlua::Lua` is `!Send`, but the VM is constructed on and never leaves the worker thread, so the `unsafe_new` constructor (which forgoes the cross-thread safety harness) is sound here. Each worker has exactly one VM for its lifetime — VM creation is amortized across many `WorkItem`s.
+2. Registers `path.*` once at startup (`pool.rs:162`) — pure string manipulation, no per-item state.
+3. Registers the `cook` table once via `register_worker_cook_table` (`pool.rs:329`) with closures that read per-item state out of `Arc<Mutex<_>>` slots: `current_recipe`, `current_working_dir`, `current_env_vars`, `current_sandbox`. This is what `cook.sh`, the `cook.env` metatable, and the live `fs.*` / sandbox sources read at call time.
+4. Registers `fs.*` with `WorkingDirSource::Live` and `SandboxSource::Live` so a single VM serving items from multiple Cookfiles (CS-0017 multi-Cookfile imports) resolves each call against the active item's cwd and the active item's sandbox policy (`pool.rs:193`).
+5. Installs the `os.execute` / `io.popen` escape-hatch guards with the same live sandbox source (`pool.rs:203`).
+6. Installs register-only guards on `cook.exec` / `cook.interactive` / `cook.add_unit` / `cook.step_group` / `cook.recipe` (`pool.rs:504`–`pool.rs:542`).
+7. Enters the work loop. Each iteration: pop a `QueueItem` (`pool.rs:210`); on `Shutdown`, break; on `Work(item)`, update the per-item slots, pick a `SandboxPolicy` from the payload's `StepKind` (`pool.rs:250`), refresh `package.path` / `package.cpath` for the unit's `cook_modules/` directory (`pool.rs:275`, `pool.rs:587`), run `execute_work_item` under `catch_unwind` (`pool.rs:287`), and send the `WorkResult` on the channel.
 
-- `cook.exec()` — records a `CapturedUnit` (or buffers into `layer_commands` if inside a layer). No process is spawned.
-- `cook.interactive()` — records a `CapturedUnit` with `WorkPayload::Interactive`. No process is spawned.
-- `cook.sh()` — inside a layer: buffers into `layer_commands`. Outside a layer: **executes immediately** (needed for control-flow).
-- `cook.layer()` — checks cache; either records a presatisfied unit or dry-runs the body to extract the shell command, then records a unit that needs execution.
-- `cook.begin_step()` / `cook.end_step()` — open and close step groups.
+The `catch_unwind` boundary converts Rust panics into failure `WorkResult`s so the engine never hangs on `rx.recv()`. The Lua VM is reused after the panic — mlua catches panics raised inside Lua callbacks and converts them to Lua errors, so VM state stays sane.
 
-After the recipe function returns, `register_recipe()` assembles a `RecipeUnits` value from the `CaptureState` and returns it to the scheduler (line 290–296).
+### `WorkPayload` dispatch
 
-Purpose: discover what work exists and whether it is cached, without performing any work. The resulting `RecipeUnits` feeds into the DAG builder.
+`execute_work_item` (`pool.rs:735`) matches on the payload:
 
-### Execute Mode (`execute_recipe()`)
+| Payload | Handler | Notes |
+|---|---|---|
+| `Shell { cmd, line }` | `execute_shell` (`pool.rs:804`) | `/bin/sh -c cmd` in `working_dir` with merged env. Output is line-split and tagged `(OutputStream::Stdout, _)` or `(_, Stderr)` so downstream renderers preserve fd-of-origin (CS-0035). Failure shapes a `COOK_CMD_FAILED:line:code:cmd` string with truncated captured streams. |
+| `LuaChunk { code, inputs, outputs, ingredient_groups, step_kind, is_chore }` | `execute_lua_chunk` (`pool.rs:883`) | Sets `inputs` / `outputs` / `input` / `output` / `input_1`..`input_N` Lua globals, then `lua.load(code).exec()`. Sandbox policy was already installed into the per-item slot by the loop. |
+| `Interactive { .. }` | Surfaces `"BUG: interactive step dispatched to worker pool"` (`pool.rs:776`) — the engine drains interactive units through a dedicated foreground window before dispatch. |
+| `Test { cmd, line, timeout, should_fail, suite_name, test_name, .. }` | `execute_test` (`pool.rs:944`) | Spawns `/bin/sh -c cmd` with piped stdio, drains stdout/stderr in separate threads (to avoid pipe-buffer deadlocks), polls for completion against `timeout_secs`, and produces a `TestOutput` carrying duration, timed_out, exit_success, exit_code, and the `should_fail` inversion. |
 
-Entry point: `src/runtime/mod.rs:156`.
+### Per-worker `package.path` refresh
 
-The VM is initialized with the real API set: `register_cook_api()` + `register_layer_api()`. When the recipe function body executes:
+`refresh_package_search_paths` (`pool.rs:587`) is called before every work item. It stashes the original Lua `package.path` / `package.cpath` once, then for each unit prepends entries for the unit's `<cwd>/cook_modules/`:
 
-- `cook.exec()` / `cook.sh()` — spawn a subprocess via `/bin/sh -c`, capture stdout, return it.
-- `cook.interactive()` — spawn a subprocess with inherited stdio.
-- `cook.layer()` — checks cache; if rebuild needed, calls the Lua body function which in turn calls `cook.exec()` / `cook.sh()` for real.
-- `cook.begin_step()` / `cook.end_step()` — no-ops.
+- `package.path`: `<cwd>/cook_modules/?.lua`, `<cwd>/cook_modules/?/init.lua`, `<cwd>/cook_modules/share/lua/5.4/?.lua`, `<cwd>/cook_modules/share/lua/5.4/?/init.lua`, then the original.
+- `package.cpath`: `<cwd>/cook_modules/?.<so-ext>`, `<cwd>/cook_modules/lib/lua/5.4/?.<so-ext>`, then the original. (`<so-ext>` is `dll` on Windows, `so` everywhere else.)
 
-On success the cache is flushed. On failure, `execute_recipe()` walks the `mlua::Error` chain looking for the `COOK_CMD_FAILED:line:code:cmd` sentinel (the `find_cook_cmd_failed()` helper at line 303) and converts it into a structured `RuntimeError::CommandFailed`.
-
-This is the **legacy single-threaded path**. The parallel scheduler does not call `execute_recipe()` — it calls `register_recipe()` to get the DAG, then dispatches work units to the thread pool individually. Each worker receives a `WorkPayload` and executes it directly (bypassing the Lua VM entirely for `Shell` payloads, or spinning up a fresh VM for `LuaChunk` payloads).
+The original suffixes are stashed exactly once so per-unit refresh is idempotent across many calls.
 
 ---
 
-## Capture-Mode Data Structures
+## Shared APIs (`cook-lua-stdlib`)
 
-### `CaptureState` (`src/runtime/api.rs:404`)
+The Standard tags `fs.*`, `path.*`, and `cook.platform.*` as **Phase: Both**. CS-0044 realizes that contract by giving each table a single implementation that both VMs install. Bug fixes to these surfaces MUST land here, not in `cook-register` or `cook-luaotp`.
 
-Mutable state accumulated during capture-mode execution. Wrapped in `Rc<RefCell<_>>` and shared between all the capture-mode API closures via clone:
+### `WorkingDirSource`
+
+`cli/crates/cook-lua-stdlib/src/lib.rs:55`. Abstracts how `fs.*` learns the cwd at call time:
+
+- `Static(PathBuf)` — captured once at registration. Used by `cook-register` (one VM per recipe, cwd never changes).
+- `Live(Arc<Mutex<PathBuf>>)` — resolved on every call. Used by `cook-luaotp`'s reusable workers, which serve items from possibly many Cookfiles within a single build.
+
+### `SandboxSource` / `SandboxPolicy`
+
+`cli/crates/cook-lua-stdlib/src/sandbox.rs:40`. CS-0045 project-root sandbox for `fs.*` and the Lua shell escape hatches. Two policies:
+
+- `Off` — no confinement. Used by `plate` step Lua bodies (the explicit "ship outside the project" surface, Standard §{recipes.plate-step}).
+- `Confined { project_root }` — relative paths get joined to `working_dir`; absolute paths are admitted only if their lexically-normalized form lies under `project_root`; relative paths with `..` segments that escape the root are rejected. Canonicalization is **lexical** (not `std::fs::canonicalize`) so `fs.write` / `fs.mkdir_p` can succeed against paths that don't yet exist.
+
+The register-phase VM is always `Confined`. The execute-phase worker selects `Off` for `StepKind::Plate` and `Confined` for `Cook` / `Test` / `Chore` (`pool.rs:255`). Future `StepKind` variants default to `Confined` until a CS classifies them explicitly.
+
+### `fs.*` (`cli/crates/cook-lua-stdlib/src/fs_api.rs`)
+
+| Function | Returns | Notes |
+|---|---|---|
+| `fs.exists(path)` | bool | Returns true for files or directories. |
+| `fs.size(path)` | u64 | Errors on missing path. |
+| `fs.read(path)` | string | Full contents, UTF-8 lossy. |
+| `fs.glob(pattern)` | table | Array of absolute paths; entries whose canonical form fails the sandbox check are silently filtered out. |
+| `fs.mtime(path)` | f64 | Seconds since UNIX epoch. |
+| `fs.write(path, content)` | nil | Creates parent directories with `mkdir -p` semantics. |
+| `fs.mkdir_p(path)` | nil | `std::fs::create_dir_all`. |
+
+Every entry runs `check_path` first (`fs_api.rs:176`), which resolves the user path against the active `WorkingDirSource` and validates it against the active `SandboxSource`.
+
+### `path.*` (`cli/crates/cook-lua-stdlib/src/path_api.rs`)
+
+Pure string manipulation using `std::path`. No I/O, no cwd dependency. Entries: `path.stem`, `path.name`, `path.ext`, `path.dir`, `path.replace_ext(p, ext)` (leading dot optional), `path.join(a, b)`.
+
+### `cook.platform.*` (`cli/crates/cook-lua-stdlib/src/platform_api.rs`)
+
+`cook.platform = { os = std::env::consts::OS, arch = std::env::consts::ARCH }`. Frozen at VM registration; never changes for the life of the VM.
+
+### Shell escape guards (`cli/crates/cook-lua-stdlib/src/shell_guard.rs`)
+
+Installs Lua-side guards on `os.execute` and `io.popen` so a confined step body can't use raw Lua I/O to escape the project root. The guards read from the same `SandboxSource` as `fs.*`, so plate bodies (which run with `Off`) keep the unguarded behavior.
+
+---
+
+## Capture-mode data structures
+
+### `CaptureState` (`cli/crates/cook-register/src/lib.rs:55`)
+
+Mutable state accumulated during a single `register_recipe()` call. Wrapped in `Rc<RefCell<_>>` and shared between every capture-mode closure. Intentionally `!Send` — registration is single-threaded with a single VM.
 
 | Field | Type | Purpose |
 |---|---|---|
-| `inside_layer` | bool | True while `cook.layer()`'s dry-run body is executing |
-| `layer_commands` | `Vec<(String, usize)>` | Commands buffered during the dry-run |
-| `units` | `Vec<CapturedUnit>` | All captured work units, in execution order |
-| `current_group` | `Option<usize>` | Index of the currently open step group, or None |
-| `step_groups` | `Vec<Vec<usize>>` | Parallel groups: each inner vec contains unit indices |
+| `inside_layer` | `bool` | True while the dry-run body of a legacy `cook.layer()` call is executing. (`cook.layer` is no longer emitted by codegen, but the flag is kept for any remaining call sites.) |
+| `layer_commands` | `Vec<(String, usize)>` | Buffer for commands captured during a layer dry-run. |
+| `units` | `Vec<CapturedUnit>` | All captured work units, in source order. |
+| `current_group` | `Option<usize>` | Index of the currently-open step group, or `None`. |
+| `step_groups` | `Vec<Vec<usize>>` | Parallel tiers: each inner vec contains indices into `units`. |
+| `current_step_outputs` | `Vec<String>` | Outputs collected during the current `cook.step_group` call; drained into `last_cook_step_outputs` when the group closes. |
+| `last_cook_step_outputs` | `Vec<String>` | Terminal outputs — the outputs from the last completed cook step group. Last one wins. |
+| `dep_edges` | `Vec<(usize, String)>` | Fine-grained cross-recipe edges `(unit_index, dep_recipe_name)`, recorded when `cook.add_unit` runs after one or more `cook.dep_output(...)` calls in the same step group. |
+| `step_group_dep_refs` | `Vec<String>` | Dep refs accumulated by `cook.dep_output*` calls within the current `cook.step_group`; cleared at group close. |
+| `step_group_dep_input_paths` | `Vec<String>` | Importer-relative rewritten output paths returned by `cook.dep_output*`; surface as `cache_meta.input_paths` entries on the next `cook.add_unit`. |
+| `current_chore_active` | `bool` | True between `cook._enter_chore()` and `cook._exit_chore()`. `cook.add_unit` rejects `cache = true` while this is set (Standard §{chores.no-caching}). |
+| `current_recipe` | `Option<String>` | Fully-qualified name of the currently-executing recipe; used by `cook.add_test` to default `suite` to the enclosing recipe's name (CS-0061 §3.2). |
 
-### `CapturedUnit` (`src/runtime/api.rs:389`)
-
-One unit of work extracted from the recipe:
+### `CapturedUnit` and `WorkPayload` (`cli/crates/cook-contracts/src/lib.rs`)
 
 ```rust
 pub struct CapturedUnit {
@@ -242,76 +173,84 @@ pub struct CapturedUnit {
 }
 ```
 
-- `payload` — the work to execute: `WorkPayload::Shell { cmd, line }`, `WorkPayload::Interactive { cmd, line }`, or `WorkPayload::LuaChunk { code, input, output, ingredient_groups }`.
-- `cache_meta` — `Some(CacheMeta)` if the unit needs to be executed; `None` if the cache check determined it is already up to date (presatisfied).
-- `dep_kind` — how this unit relates to others in the recipe.
+`WorkPayload` (`cook-contracts/src/lib.rs:58`) is `#[non_exhaustive]` with four variants:
 
-### `DepKind` (`src/runtime/api.rs:380`)
+- `Shell { cmd, line }` — a `/bin/sh -c` command.
+- `Interactive { cmd, line, is_chore }` — runs with inherited stdio in the engine's foreground window. `is_chore` distinguishes a unit emitted between `_enter_chore` / `_exit_chore` from a legacy `interactive = true` shell step in a regular recipe.
+- `LuaChunk { code, inputs, outputs, ingredient_groups, step_kind, is_chore }` — raw Lua source executed by a worker. `step_kind` is what the execute-phase sandbox picker reads; missing/unknown values default to `StepKind::Cook` (the strictest contract, so a misclassified plate body degrades to a Lua runtime error instead of silently writing outside the project).
+- `Test { cmd, line, timeout, should_fail, suite_name, test_name, iteration_item }` — handled by `execute_test`.
+
+`cache_meta` is `Some(CacheMeta)` for cacheable units (cook-step bodies and explicit `cache = true` shells) and `None` for plate / test / chore / `cache = false` units. The `CacheMeta` carries `cache_key`, `input_paths`, `output_paths`, `command_hash`, `context_hash`, `env_contribution`, `consulted_env`, an optional `DiscoveredInputs`, and the project / Cookfile identity (`project_id`, `cookfile_path`).
+
+### `DepKind` (`cook-contracts/src/lib.rs:170`)
 
 ```rust
+#[non_exhaustive]
 pub enum DepKind {
-    StepGroup(usize),
-    Sequential,
+    StepGroup(usize),     // parallel sibling within group `i`
+    Sequential,           // sequential barrier after all prior units
+    TestSibling(usize),   // like StepGroup, but failures don't cancel siblings
 }
 ```
 
-- `DepKind::StepGroup(i)` — this unit belongs to step group `i`. It can run in parallel with other units in the same group because they share no file dependencies (each processes a distinct input file).
-- `DepKind::Sequential` — this unit is a sequential barrier. The DAG builder places it after all units from the previous step group, and before any units in the next group. Bare `cook.exec()` calls outside of `cook.begin_step()` / `cook.end_step()` always get `Sequential`.
+The DAG builder maps `StepGroup(i)` to a parallelism tier, `Sequential` to a barrier edge after the most recent tier, and `TestSibling(i)` to a tier whose failure mode is reported-but-not-cancelling.
 
-### `RecipeUnits` (`src/runtime/api.rs:396`)
-
-The complete output of `register_recipe()`:
+### `RecipeUnits` (`cook-contracts/src/lib.rs:182`)
 
 ```rust
 pub struct RecipeUnits {
     pub recipe_name: String,
-    pub deps: Vec<String>,
+    pub deps: Vec<String>,                 // from metadata.requires
     pub units: Vec<CapturedUnit>,
-    pub step_groups: Vec<Vec<usize>>,
+    pub step_groups: Vec<Vec<usize>>,      // indices into `units`
+    pub working_dir: PathBuf,
+    pub env_vars: BTreeMap<String, String>,
+    pub terminal_outputs: Vec<String>,     // last cook step's outputs
+    pub dep_edges: Vec<(usize, String)>,   // (unit index, dep recipe name)
 }
 ```
 
-- `recipe_name` — name of the recipe.
-- `deps` — recipe names from `metadata.requires`. Used by the DAG builder to add inter-recipe edges.
-- `units` — all captured units in order.
-- `step_groups` — parallel tiers: `step_groups[i]` contains the indices into `units` of all units in step group `i`.
-
-### How Step Groups are Built
-
-1. `cook.begin_step()` fires → `step_groups.push(Vec::new())`, `current_group = Some(len - 1)`.
-2. Each `cook.layer()` call during the group → unit appended to `units`, its index appended to `step_groups[current_group]`, unit gets `dep_kind: StepGroup(current_group)`.
-3. `cook.end_step()` fires → `current_group = None`.
-
-After capture, `RecipeUnits.step_groups[0]` contains the indices of all units in the first `cook`/`plate` step, `step_groups[1]` the second, and so on. The DAG builder uses these to assign all units within a group to the same parallelism tier.
+The complete output of one `register_recipe` call. Consumed by `cook-engine` to assemble the global DAG. `BTreeMap` is mandatory for `env_vars` — deterministic order is what makes cache fingerprints reproducible.
 
 ---
 
-## Recipe Context Setup (`setup_recipe_context()`)
+## Recipe context setup
 
-`src/runtime/mod.rs:44`. Called by both `execute_recipe()` and `register_recipe()` immediately before invoking the recipe function. Sets up the Lua `recipe` global and handles recipe-level cache invalidation.
+`setup_recipe_context` (`cli/crates/cook-register/src/context.rs:10`) runs just before the recipe body is called. It builds a Lua `recipe` global with:
 
-### Cache Invalidation
+- `recipe.name` — the recipe's bare name.
+- `recipe.ingredients` — a nested table: `recipe.ingredients[i]` is the sorted array of relative paths matching the i-th `ingredients` glob, with the recipe's `excludes` patterns subtracted.
 
-Computes two hashes over the current build state:
+Glob expansion happens once per registration (not on every Lua access); patterns are joined to `working_dir`, expanded with `glob::glob`, stripped back to relative paths, and stored in a `BTreeSet` for sorted/dedup-by-construction output. The Cookfile-level cache invalidation that the old monolithic `Runtime` did here is no longer the runtime's job — that work moved to `cook-cache` / `cook-engine`, which compute `context_hash` and consult `CacheMeta.input_paths` directly.
 
-- `current_env_hash` — hash of all `env_vars` key-value pairs.
-- `current_secondary_hash` — hash of all files matched by each `ingredients` glob pattern (file contents or mtimes).
+`cook.resolve_ingredients(includes, excludes)` (`context.rs:47`) exposes the same glob+exclude pipeline as a Lua function for codegen's iteration patterns.
 
-If either hash differs from what is stored in the on-disk `RecipeCache`, the entire cache for this recipe is discarded (`state.cache = RecipeCache::new()`, `state.dirty = true`). This ensures that a change to the environment or to any ingredient file causes all steps to be treated as stale.
+---
 
-The new hash values are then written back to the cache state (line 65–67).
+## Sandboxing recap (`StepKind` → policy)
 
-### Ingredient Glob Resolution
+CS-0045 makes the sandbox an attribute of the captured unit, not of the VM:
 
-For each pattern in `recipe.metadata.ingredients` (the list from the `ingredients` declaration in the Cookfile), the runtime:
+| Step kind | `WorkPayload.step_kind` | Worker policy | Rationale |
+|---|---|---|---|
+| `cook` | `StepKind::Cook` | `Confined { project_root }` | Cacheable, hermetic. Must be derivable from the cache fingerprint. |
+| `test` | `StepKind::Test` | `Confined` | Non-cacheable but hermetic-by-intent. |
+| `chore` | `StepKind::Chore` | `Confined` | Non-cacheable, hermetic-by-intent. |
+| `plate` | `StepKind::Plate` | `Off` | Explicit "ship outside the project" surface (deploys, uploads). |
 
-1. Joins the pattern to `working_dir` to form a full glob pattern.
-2. Runs `glob::glob()` to expand it.
-3. Strips the `working_dir` prefix from each result to get relative paths.
-4. Stores the relative paths in a Lua table.
+Register-phase Lua is always `Confined { project_root }` (`engine.rs:166`) — captured `lua_code` strings will replay at execute time with their own per-step-kind policy applied there, so register-time helper I/O (e.g. files read while resolving a `cook.dep_output(...)`) just needs to stay inside the project.
 
-The resulting nested table is written to `recipe_table["ingredients"]` with 1-based indexing: `recipe.ingredients[1]` is the array of paths matching the first glob pattern, `recipe.ingredients[2]` the second, and so on. This matches the `recipe.ingredients[N]` access pattern that codegen emits.
+The sandbox is enforced by `check_path` inside every `fs.*` entry and by the `os.execute` / `io.popen` guards. Both consult the same `SandboxSource`, so a plate body that hands off to `os.execute` keeps the same `Off` policy as its `fs.write` calls.
 
-### Glob Recording for New-File Detection
+---
 
-After building the Lua table, the runtime also records the glob results in `cache_state.cache.globs` (line 98–132). On each run, it compares the current glob result against the stored one. If any file that was previously in the glob result is no longer present, all `StepEntry` records that reference that file as an input are evicted from the cache. This ensures that deleting a source file correctly invalidates any steps that depended on it.
+## What changed since the old doc
+
+- The monolithic `Runtime` struct at `src/runtime/mod.rs` is gone. Register and execute live in separate crates with no shared state at the type level.
+- The legacy single-threaded `execute_recipe()` path is gone. Every recipe is captured first; all execution happens in the worker pool.
+- The Lua VM is no longer "fresh per recipe" on the execute side — workers reuse a single VM across many `WorkItem`s. The register side still creates one VM per recipe.
+- `cook.layer()` / `cook.begin_step()` / `cook.end_step()` / `cook.taste()` are no longer emitted by codegen. Codegen now emits `cook.step_group(function() ... end)` containing one or more `cook.add_unit({...})` calls; chores wrap their body with `cook._enter_chore()` / `cook._exit_chore()`.
+- New capture-mode surface: `cook.add_unit`, `cook.step_group`, `cook.passthrough`, `cook.add_test`, `cook.dep_output` / `cook.dep_output_list`, `cook.export` / `cook.import`, `cook.require_env`, `cook.load_module`, `cook.json_decode` / `cook.yaml_decode`, `cook.platform.os` / `cook.platform.arch`.
+- `cook.dep_output` resolution is workspace-global. Importer aliases rewrite output paths into importer-relative form; diamond imports are resolved through `alias_qualified_prefixes` so two import chains reaching the same importee see one canonical storage key.
+- The `fs.*` / `path.*` / `cook.platform.*` tables are now defined once in `cook-lua-stdlib` and registered into both VMs (CS-0044). Bug fixes must land there.
+- Project-root sandbox (CS-0045) is enforced inside `fs.*` and on the Lua shell escape hatches, with the policy picked per work item from `WorkPayload.step_kind`.

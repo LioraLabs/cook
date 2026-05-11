@@ -107,7 +107,9 @@ pub fn register_fs_api_with_sandbox(
                 // escapes the root (best-effort: see Note 6.5.3 — we
                 // do not chase hostile symlinks).
                 let lossy = path.to_string_lossy().to_string();
-                if policy.resolve("fs.glob", &wd, &lossy).is_ok() {
+                if policy.resolve("fs.glob", &wd, &lossy).is_ok()
+                    && !resolves_to_directory(&path)
+                {
                     paths.push(lossy);
                 }
             }
@@ -183,6 +185,24 @@ fn check_path(
     policy
         .resolve(api, working_dir, user_path)
         .map_err(|e| mlua::Error::runtime(e.to_string()))
+}
+
+/// True iff `path` resolves to a directory after following symlinks.
+/// `fs.glob` filters these out (§6.5.6, CS-0064): cook's only
+/// downstream consumer of glob results — `cook.add_unit` inputs —
+/// already rejects directory paths (CS-0063), so a glob like
+/// `dir/*` that matches a sub-directory would otherwise raise the
+/// directory-rejection diagnostic for a path the author never wrote
+/// by hand. Drop it here instead.
+///
+/// `std::fs::metadata` follows symlinks, so a symlink whose target is
+/// a directory is also treated as a directory. A broken symlink (or
+/// any other stat error) is treated as "not a directory" — `fs.glob`
+/// is a read-only enumerator and any downstream consumer that needs
+/// the path to actually exist will diagnose the missing file with a
+/// more specific message.
+fn resolves_to_directory(path: &std::path::Path) -> bool {
+    matches!(std::fs::metadata(path), Ok(m) if m.is_dir())
 }
 
 #[cfg(test)]
@@ -339,6 +359,94 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(count, 2);
+    }
+
+    /// CS-0064: `fs.glob` drops sub-directories from its results so the
+    /// downstream `cook.add_unit` directory-input rejection (CS-0063)
+    /// never fires for a path the author didn't write by hand.
+    #[test]
+    fn static_glob_filters_out_directories() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "").unwrap();
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        std::fs::write(dir.path().join("nested/c.txt"), "").unwrap();
+
+        let lua = setup_static(dir.path());
+        let table: LuaTable = lua
+            .load(r#"return fs.glob("*")"#)
+            .eval()
+            .unwrap();
+        let mut got: Vec<String> = table
+            .sequence_values::<String>()
+            .map(Result::unwrap)
+            .map(|p| std::path::Path::new(&p)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned())
+            .collect();
+        got.sort();
+        assert_eq!(got, vec!["a.txt".to_string(), "b.txt".to_string()]);
+    }
+
+    /// CS-0064: a symlink whose target is a directory is also dropped.
+    /// `std::fs::metadata` follows the link, so the filter sees the
+    /// terminal directory rather than the symlink itself.
+    #[cfg(unix)]
+    #[test]
+    fn static_glob_filters_symlink_to_directory() {
+        let dir = TempDir::new().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        std::os::unix::fs::symlink(&real, dir.path().join("link")).unwrap();
+
+        let lua = setup_static(dir.path());
+        let table: LuaTable = lua
+            .load(r#"return fs.glob("*")"#)
+            .eval()
+            .unwrap();
+        let mut got: Vec<String> = table
+            .sequence_values::<String>()
+            .map(Result::unwrap)
+            .map(|p| std::path::Path::new(&p)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned())
+            .collect();
+        got.sort();
+        assert_eq!(got, vec!["a.txt".to_string()]);
+    }
+
+    /// CS-0064: a symlink whose target is a regular file is kept.
+    /// Mirrors the previous test's setup to pin the negative direction
+    /// of the symlink-follow rule.
+    #[cfg(unix)]
+    #[test]
+    fn static_glob_keeps_symlink_to_file() {
+        let dir = TempDir::new().unwrap();
+        let real = dir.path().join("real.txt");
+        std::fs::write(&real, "").unwrap();
+        std::os::unix::fs::symlink(&real, dir.path().join("link.txt")).unwrap();
+
+        let lua = setup_static(dir.path());
+        let table: LuaTable = lua
+            .load(r#"return fs.glob("*.txt")"#)
+            .eval()
+            .unwrap();
+        let mut got: Vec<String> = table
+            .sequence_values::<String>()
+            .map(Result::unwrap)
+            .map(|p| std::path::Path::new(&p)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned())
+            .collect();
+        got.sort();
+        assert_eq!(got, vec!["link.txt".to_string(), "real.txt".to_string()]);
     }
 
     // ---- Sandbox tests (CS-0045) ------------------------------------
