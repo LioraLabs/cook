@@ -11,3 +11,8 @@ Cookfile
         Lua code="local m = require(\"rockmod\")"
         Lua code="print(m.value)"
   chores:
+    Chore name="verify" line=7
+      deps: []
+      steps:
+        Lua code="if rockmod.value ~= 42 then error(\"rockmod.value mismatch\") end"
+        Lua code="print(\"ok\")"

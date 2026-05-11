@@ -1,1 +1,1 @@
-return { value = "rocks-tree-resolution-ok" }
+return { value = 42 }

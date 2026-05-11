@@ -178,24 +178,28 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
             }
         }
 
-        // 1. Resolve path: working_dir/cook_modules/name.lua or name/init.lua
+        // 1. Resolve path: hand-vendored wins over LuaRocks-installed.
+        //    Order mirrors cook-luaotp/src/pool.rs:616 (Standard §7).
         let working_dir = s.borrow().working_dir.clone();
         let modules_dir = working_dir.join("cook_modules");
+        let share_dir = modules_dir.join("share/lua/5.4");
 
-        let flat_path = modules_dir.join(format!("{}.lua", name));
-        let init_path = modules_dir.join(&name).join("init.lua");
+        let candidates = [
+            modules_dir.join(format!("{}.lua", name)),
+            modules_dir.join(&name).join("init.lua"),
+            share_dir.join(format!("{}.lua", name)),
+            share_dir.join(&name).join("init.lua"),
+        ];
 
-        let module_path = if flat_path.exists() {
-            flat_path
-        } else if init_path.exists() {
-            init_path
-        } else {
-            return Err(LuaError::runtime(format!(
-                "module not found: {} (tried {}.lua and {}/init.lua)",
-                name,
-                name,
-                name
-            )));
+        let module_path = match candidates.iter().find(|p| p.exists()) {
+            Some(p) => p.clone(),
+            None => {
+                return Err(LuaError::runtime(format!(
+                    "module not found: {} (tried {}.lua, {}/init.lua, \
+                     share/lua/5.4/{}.lua, share/lua/5.4/{}/init.lua)",
+                    name, name, name, name, name
+                )));
+            }
         };
 
         // 2. Read the file, hash with hash_str
@@ -617,5 +621,81 @@ mod tests {
         state.borrow().flush_all();
         let cache_file = dir.path().join(".cook/cache/test_mod.json");
         assert!(cache_file.exists());
+    }
+
+    #[test]
+    fn test_load_module_resolves_share_lua_flat() {
+        let dir = TempDir::new().unwrap();
+        let share_dir = dir.path().join("cook_modules/share/lua/5.4");
+        std::fs::create_dir_all(&share_dir).unwrap();
+        std::fs::write(
+            share_dir.join("rockmod.lua"),
+            "local m = {} m.tag = 'share-flat' return m",
+        )
+        .unwrap();
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("cook", lua.create_table().unwrap())
+            .unwrap();
+        let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+        register_module_loader(&lua, state).unwrap();
+
+        let tag: String = lua
+            .load(r#"local m = cook.load_module("rockmod") return m.tag"#)
+            .eval()
+            .unwrap();
+        assert_eq!(tag, "share-flat");
+    }
+
+    #[test]
+    fn test_load_module_resolves_share_lua_init() {
+        let dir = TempDir::new().unwrap();
+        let share_dir = dir.path().join("cook_modules/share/lua/5.4/rockmod");
+        std::fs::create_dir_all(&share_dir).unwrap();
+        std::fs::write(
+            share_dir.join("init.lua"),
+            "local m = {} m.tag = 'share-init' return m",
+        )
+        .unwrap();
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("cook", lua.create_table().unwrap())
+            .unwrap();
+        let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+        register_module_loader(&lua, state).unwrap();
+
+        let tag: String = lua
+            .load(r#"local m = cook.load_module("rockmod") return m.tag"#)
+            .eval()
+            .unwrap();
+        assert_eq!(tag, "share-init");
+    }
+
+    #[test]
+    fn test_load_module_top_level_wins_over_share_lua() {
+        let dir = TempDir::new().unwrap();
+        let modules_dir = dir.path().join("cook_modules");
+        let share_dir = modules_dir.join("share/lua/5.4");
+        std::fs::create_dir_all(&share_dir).unwrap();
+
+        // hand-vendored at top level
+        std::fs::write(modules_dir.join("rockmod.lua"), "return { tag = 'top' }").unwrap();
+        // also installed under share/lua/5.4 — top-level must win
+        std::fs::write(share_dir.join("rockmod.lua"), "return { tag = 'share' }").unwrap();
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("cook", lua.create_table().unwrap())
+            .unwrap();
+        let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
+        register_module_loader(&lua, state).unwrap();
+
+        let tag: String = lua
+            .load(r#"local m = cook.load_module("rockmod") return m.tag"#)
+            .eval()
+            .unwrap();
+        assert_eq!(tag, "top");
     }
 }
