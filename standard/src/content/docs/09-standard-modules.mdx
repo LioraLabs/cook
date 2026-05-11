@@ -198,3 +198,36 @@ cc.compile_commands()
 ```
 
 Writes `compile_commands.json` in the current working directory, one entry per source per known target. The output MUST be valid JSON parseable by clangd and equivalent tools. The implementation runs in the worker VM (called from a recipe body), so its inputs MUST be sourced from `cook.cache` (target list) and `cook.import` (per-target compile info) — both established Cook APIs.
+
+### 9.2.4. Transitive propagation [#stdmods.cc.transitive]
+
+Every cc target maker (`cc.bin`/`cc.lib`/`cc.shared`/`cc.headers`) MUST call `cook.export(name, info)` recording the target's outward-facing fields:
+
+- `info.includes` — directories the consumer should add to `-I<dir>`
+- `info.defines` — macros the consumer should add to `-D<def>`
+- `info.system_libs` — libraries the consumer should link with `-l<name>`
+- `info.extra_ldflags` — raw flags to append at consumer link time
+- `info.links` — further transitive targets (forms the propagation graph)
+- `info.compile_info` — per-target compile info for `cc.compile_commands` (§9.2.3.11)
+
+When `opts.links = { "a", "b" }` is provided to a target maker, the implementation MUST resolve the closure by walking `cook.import("a").links`, `cook.import("b").links`, recursively, deduplicating both nodes (cycle-safe) and field values. The closure's `includes` / `defines` / `system_libs` / `extra_ldflags` MUST be merged into the new target's compile and link commands.
+
+v0.1 normatively specifies implicit-public propagation: every field in the target maker's options is exported as-is. Future Standard revisions will introduce PRIVATE / PUBLIC distinctions; v0.1 implementations MAY anticipate the split by recognising `export_includes` (already a documented field on `BinOpts` per §9.2.3.1) as the public form; absence of `export_*` means the corresponding `includes`/etc. is exported by default.
+
+### 9.2.5. Error model [#stdmods.cc.errors]
+
+Every error MUST be prefixed with `[cc.<fn>]` and named at level 2 (`error(msg, 2)`) so the blame surfaces at the Cookfile call site, not inside the module. Negative cases that MUST be diagnosed:
+
+| Function | Condition | Message |
+|---|---|---|
+| `cc.bin`/`lib`/`shared` | `#sources == 0` after globbing | `no sources found for target '<name>'` |
+| `cc.compile` | source file does not exist | `source file not found: <path>` |
+| `cc.toolchain` (during `init()`) | no compiler on PATH | `no C/C++ compiler on PATH (tried g++, clang++)` |
+
+`cc.find` does NOT raise on a miss; it returns `{ found = false }`. Callers that require a hit MUST test `result.found` and raise their own error.
+
+### 9.2.6. Vendoring after install [#stdmods.cc.vendoring]
+
+Per §9.1.2, a project MAY hand-vendor a copy of `cook_cc` by placing `cook_modules/cook_cc.lua` (or `cook_modules/cook_cc/init.lua`) at the top of the project's `cook_modules/` directory. The hand-vendored file becomes the source of truth for that project; subsequent `cook modules install` invocations MUST leave it untouched (the install only writes under `cook_modules/share/lua/5.4/`).
+
+A re-installed rock at `share/lua/5.4/cook_cc/init.lua` coexisting with a hand-vendored `cook_cc.lua` at the top level is unambiguously resolved: §7 specifies hand-vendored top-level wins.
