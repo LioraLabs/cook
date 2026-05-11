@@ -1,0 +1,18 @@
+[package]
+name = "cook-logs"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal UI viewer for Cook build logs"
+
+[dependencies]
+cook-progress = { path = "../cook-progress" }
+
+ratatui = "0.30"
+crossterm = "0.29"
+ansi-to-tui = "7"
+unicode-width = "0.2"
+thiserror = "2"
+
+[dev-dependencies]
+insta = { version = "1", features = ["yaml"] }
+tempfile = "3"

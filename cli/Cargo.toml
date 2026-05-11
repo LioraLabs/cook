@@ -12,6 +12,7 @@ members = [
     "crates/cook-register",
     "crates/cook-engine",
     "crates/cook-dag-viewer",
+    "crates/cook-logs",
     "crates/cook-cli",
 ]
 resolver = "2"
