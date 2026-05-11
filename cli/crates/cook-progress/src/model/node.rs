@@ -12,6 +12,9 @@ pub enum NodeStatus {
     Completed,
     Failed,
     Skipped,
+    /// Status is unknown because the events log is absent; reconstructed from
+    /// `.log` files only.
+    Unknown,
 }
 
 #[derive(Debug, Clone)]

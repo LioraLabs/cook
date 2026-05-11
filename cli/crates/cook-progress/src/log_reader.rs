@@ -110,6 +110,10 @@ pub fn load(build_dir: &Path) -> io::Result<(BuildView, LoadDiagnostics)> {
         Err(e) => return Err(e),
     }
 
+    if diag.events_jsonl_missing {
+        populate_from_log_files(build_dir, &mut view)?;
+    }
+
     Ok((view, diag))
 }
 
@@ -163,6 +167,81 @@ fn summarize_build_dir(build_dir: &Path) -> io::Result<BuildSummary> {
         }
     }
     Ok(summary)
+}
+
+fn populate_from_log_files(build_dir: &Path, view: &mut BuildView) -> io::Result<()> {
+    let nodes_root = build_dir.join("nodes");
+    if !nodes_root.exists() {
+        return Ok(());
+    }
+    let mut next_recipe: u32 = 0;
+    let mut next_node: u32 = 0;
+    for recipe_entry in std::fs::read_dir(&nodes_root)? {
+        let recipe_entry = recipe_entry?;
+        if !recipe_entry.file_type()?.is_dir() {
+            continue;
+        }
+        let r_name = recipe_entry.file_name().to_string_lossy().to_string();
+        let rid = RecipeId::new(next_recipe);
+        next_recipe += 1;
+        let mut recipe = RecipeView {
+            name: r_name.clone(),
+            status: Status::Completed, // unknown; default benign
+            nodes: BTreeMap::new(),
+        };
+        for node_entry in std::fs::read_dir(recipe_entry.path())? {
+            let node_entry = node_entry?;
+            let path = node_entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("log") {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let nid = NodeId::new(next_node);
+            next_node += 1;
+            let mut lines = Vec::new();
+            let text = std::fs::read_to_string(&path)?;
+            for raw in text.lines() {
+                if let Some(rest) = raw.strip_prefix("[out] ") {
+                    lines.push(LogLine {
+                        stream: Stream::Stdout,
+                        ts: None,
+                        text: rest.to_string(),
+                    });
+                } else if let Some(rest) = raw.strip_prefix("[err] ") {
+                    lines.push(LogLine {
+                        stream: Stream::Stderr,
+                        ts: None,
+                        text: rest.to_string(),
+                    });
+                } else {
+                    lines.push(LogLine {
+                        stream: Stream::Stdout,
+                        ts: None,
+                        text: raw.to_string(),
+                    });
+                }
+            }
+            recipe.nodes.insert(
+                nid,
+                NodeView {
+                    name: stem,
+                    status: NodeStatus::Unknown,
+                    kind: NodeKind::Cooked,
+                    started_at: None,
+                    ended_at: None,
+                    elapsed_ms: None,
+                    skip_reason: None,
+                    lines,
+                },
+            );
+        }
+        view.recipes.insert(rid, recipe);
+    }
+    Ok(())
 }
 
 fn replay_events_jsonl(
@@ -496,5 +575,47 @@ mod tests_load_manifest {
         assert!(diag.manifest_missing);
         assert_eq!(view.build_id, "2026-05-10-bbb");
         assert!(view.exit_code.is_none());
+    }
+}
+
+#[cfg(test)]
+mod tests_log_fallback {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn load_falls_back_to_log_files_when_events_jsonl_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("2026-05-10-zzz");
+        let nodes = dir.join("nodes").join("lib");
+        fs::create_dir_all(&nodes).unwrap();
+        fs::write(
+            dir.join("manifest.toml"),
+            "schema_version = 1\n\
+             build_id = \"2026-05-10-zzz\"\n\
+             started_at = \"2026-05-10T10:00:00Z\"\n\
+             ended_at = \"2026-05-10T10:00:01Z\"\n\
+             exit_code = 0\n",
+        )
+        .unwrap();
+        fs::write(
+            nodes.join("parser.c.log"),
+            "[out] hello\n[err] oops\n",
+        )
+        .unwrap();
+
+        let (view, diag) = load(&dir).unwrap();
+        assert!(diag.events_jsonl_missing);
+        assert_eq!(view.recipes.len(), 1);
+        let (_, recipe) = view.recipes.iter().next().unwrap();
+        assert_eq!(recipe.name, "lib");
+        let (_, node) = recipe.nodes.iter().next().unwrap();
+        assert_eq!(node.name, "parser.c");
+        assert_eq!(node.status, NodeStatus::Unknown);
+        assert_eq!(node.lines.len(), 2);
+        assert_eq!(node.lines[0].stream, Stream::Stdout);
+        assert_eq!(node.lines[0].text, "hello");
+        assert_eq!(node.lines[1].stream, Stream::Stderr);
+        assert_eq!(node.lines[1].text, "oops");
     }
 }
