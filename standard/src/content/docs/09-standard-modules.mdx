@@ -1,0 +1,33 @@
+---
+title: "§{stdmods} — Standard Modules"
+sidebar:
+  order: 9
+---
+# 9. Standard Modules [#stdmods]
+> **Normative.** This chapter specifies the public surface of blessed Cook modules — modules curated by the Cook project and distributed through the official LuaRocks-backed registry (`rocks.usecook.com`). A module's presence as a numbered subsection of this chapter is what makes it "blessed": a conformance-checkable contract that any implementation of the module MUST honour.
+
+The Standard governs the contract, not the reference implementation. The published rock is one implementation that meets the contract; a reimplementation in another language layer MUST produce semantically equivalent behaviour for every public surface specified here.
+
+## 9.1. Scope and bootstrap [#stdmods.bootstrap]
+
+### 9.1.1. Bootstrap [#stdmods.bootstrap.install]
+
+A conforming project obtains a blessed module by listing it under `[modules]` in `cook.toml` and running `cook modules install`. The install populates `cook_modules/share/lua/5.4/<name>/init.lua` (and `cook_modules/lib/lua/5.4/<name>.<so-ext>` for C extensions) under the calling Cookfile's `cook_modules/` directory, per Standard §7's resolution order.
+
+### 9.1.2. Vendoring escape hatch [#stdmods.bootstrap.vendor]
+
+A project MAY hand-vendor a copy of a blessed module by placing `cook_modules/<name>.lua` or `cook_modules/<name>/init.lua` at the top of the project's `cook_modules/` directory. Per Standard §7, hand-vendored top-level paths take precedence over LuaRocks-installed `share/lua/5.4/` paths. Hand-vendored copies are the project's responsibility; the implementation MUST treat them as the source of truth without consulting the published rock or the lockfile.
+
+A future `cook modules install` MUST NOT overwrite a hand-vendored top-level file; the install step inserts only into `cook_modules/share/lua/5.4/` (and siblings) per the standard layout.
+
+### 9.1.3. Catalogue [#stdmods.bootstrap.catalogue]
+
+This Standard's v0.1 catalogue:
+
+| Module | Section | Summary |
+|---|---|---|
+| `cc` | §9.2 | C-family (C + C++) native build module |
+
+Future Standard revisions extend this catalogue additively.
+
+{/* §9.2 — cc — follows in Tasks 14-16. */}
