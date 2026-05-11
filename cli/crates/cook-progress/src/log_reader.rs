@@ -60,8 +60,52 @@ pub struct LoadDiagnostics {
     pub events_jsonl_missing: bool,
 }
 
-pub fn load(_build_dir: &Path) -> io::Result<(BuildView, LoadDiagnostics)> {
-    unimplemented!("filled in by later tasks")
+pub fn load(build_dir: &Path) -> io::Result<(BuildView, LoadDiagnostics)> {
+    let mut diag = LoadDiagnostics::default();
+    let build_id = build_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| io::Error::other("build_dir has no file name"))?
+        .to_string();
+
+    let mut view = BuildView {
+        build_id: build_id.clone(),
+        started_at: String::new(),
+        ended_at: None,
+        exit_code: None,
+        recipes: BTreeMap::new(),
+    };
+
+    let manifest_path = build_dir.join("manifest.toml");
+    match std::fs::read_to_string(&manifest_path) {
+        Ok(text) => {
+            if let Ok(value) = text.parse::<toml::Value>() {
+                if let Some(s) = value.get("started_at").and_then(|v| v.as_str()) {
+                    view.started_at = s.to_string();
+                }
+                view.ended_at = value
+                    .get("ended_at")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                view.exit_code = value
+                    .get("exit_code")
+                    .and_then(|v| v.as_integer())
+                    .map(|i| i as i32);
+            }
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            diag.manifest_missing = true;
+        }
+        Err(e) => return Err(e),
+    }
+
+    // events.jsonl + .log fallback handled in subsequent tasks.
+    let events_path = build_dir.join("events.jsonl");
+    if !events_path.exists() {
+        diag.events_jsonl_missing = true;
+    }
+
+    Ok((view, diag))
 }
 
 pub fn list_builds(logs_root: &Path) -> io::Result<Vec<BuildSummary>> {
@@ -160,5 +204,46 @@ mod tests_list {
         assert_eq!(builds.len(), 1);
         assert_eq!(builds[0].build_id, "2026-05-10-aaa");
         assert_eq!(builds[0].exit_code, None);
+    }
+}
+
+#[cfg(test)]
+mod tests_load_manifest {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn load_reads_manifest_metadata_into_buildview() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("2026-05-10-aaa");
+        fs::create_dir_all(dir.join("nodes")).unwrap();
+        fs::write(
+            dir.join("manifest.toml"),
+            "schema_version = 1\n\
+             build_id = \"2026-05-10-aaa\"\n\
+             started_at = \"2026-05-10T10:00:00Z\"\n\
+             ended_at = \"2026-05-10T10:00:05Z\"\n\
+             exit_code = 0\n",
+        )
+        .unwrap();
+
+        let (view, diag) = load(&dir).unwrap();
+        assert_eq!(view.build_id, "2026-05-10-aaa");
+        assert_eq!(view.started_at, "2026-05-10T10:00:00Z");
+        assert_eq!(view.ended_at.as_deref(), Some("2026-05-10T10:00:05Z"));
+        assert_eq!(view.exit_code, Some(0));
+        assert!(!diag.manifest_missing);
+    }
+
+    #[test]
+    fn load_tolerates_missing_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("2026-05-10-bbb");
+        fs::create_dir_all(dir.join("nodes")).unwrap();
+
+        let (view, diag) = load(&dir).unwrap();
+        assert!(diag.manifest_missing);
+        assert_eq!(view.build_id, "2026-05-10-bbb");
+        assert!(view.exit_code.is_none());
     }
 }
