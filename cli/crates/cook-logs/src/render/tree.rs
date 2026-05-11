@@ -11,9 +11,18 @@ use crate::state::{FlatRow, UiState};
 use crate::theme::Theme;
 
 pub fn draw(f: &mut Frame, area: Rect, state: &UiState, theme: &Theme) {
-    let mut lines: Vec<Line> = Vec::with_capacity(state.flat.len());
-    for (i, row) in state.flat.iter().enumerate() {
-        let line = render_row(state, theme, *row);
+    // Slice the visible window. `ensure_tree_visible` (called from the
+    // draw loop) keeps `tree_scroll` in range; we still clamp here so the
+    // renderer is robust if called with a stale offset.
+    let total = state.flat.len();
+    let viewport = area.height as usize;
+    let start = state.tree_scroll.min(total.saturating_sub(viewport.max(1)));
+    let end = (start + viewport).min(total);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(end - start);
+    for i in start..end {
+        let row = state.flat[i];
+        let line = render_row(state, theme, row);
         let line = if i == state.selected && matches!(state.focus, crate::state::Focus::Tree) {
             apply_selection(line, theme)
         } else {

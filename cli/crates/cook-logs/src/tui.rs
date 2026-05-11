@@ -55,7 +55,7 @@ pub fn run_with_backend<B: Backend>(
             }
         }
         terminal
-            .draw(|f| draw_frame(f, &state, &theme))
+            .draw(|f| draw_frame(f, &mut state, &theme))
             .map_err(|e| ViewerError::Layout(e.to_string()))?;
         let evt = event::read().map_err(|e| ViewerError::Layout(e.to_string()))?;
         if let Event::Key(key) = evt {
@@ -111,7 +111,7 @@ pub fn run_with_backend<B: Backend>(
     Ok(())
 }
 
-fn draw_frame(f: &mut ratatui::Frame<'_>, state: &UiState, theme: &Theme) {
+fn draw_frame(f: &mut ratatui::Frame<'_>, state: &mut UiState, theme: &Theme) {
     let area = f.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -120,6 +120,7 @@ fn draw_frame(f: &mut ratatui::Frame<'_>, state: &UiState, theme: &Theme) {
     render::header::draw(f, chunks[0], state, theme);
 
     if area.width < 60 {
+        state.ensure_tree_visible(chunks[1].height as usize);
         match state.focus {
             Focus::Tree => render::tree::draw(f, chunks[1], state, theme),
             Focus::Output => render::output::draw(f, chunks[1], state, theme),
@@ -129,6 +130,7 @@ fn draw_frame(f: &mut ratatui::Frame<'_>, state: &UiState, theme: &Theme) {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
             .split(chunks[1]);
+        state.ensure_tree_visible(panes[0].height as usize);
         render::tree::draw(f, panes[0], state, theme);
         render::output::draw(f, panes[1], state, theme);
     }
@@ -191,9 +193,9 @@ mod tests {
     fn renders_one_frame_with_failed_node_visible() {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
-        let state = UiState::new(one_failed_build(), LoadDiagnostics::default());
+        let mut state = UiState::new(one_failed_build(), LoadDiagnostics::default());
         let frame = terminal
-            .draw(|f| draw_frame(f, &state, &Theme::default()))
+            .draw(|f| draw_frame(f, &mut state, &Theme::default()))
             .unwrap();
         let content: String = frame
             .buffer

@@ -45,6 +45,7 @@ pub struct UiState {
     pub flat: Vec<FlatRow>,
     pub expanded: BTreeSet<RecipeId>,
     pub selected: usize,
+    pub tree_scroll: usize,
     pub scroll_y: u16,
     pub filter: Filter,
     pub search: Option<SearchState>,
@@ -64,6 +65,7 @@ impl UiState {
             flat: Vec::new(),
             expanded,
             selected: 0,
+            tree_scroll: 0,
             scroll_y: 0,
             filter: Filter::All,
             search: None,
@@ -136,6 +138,7 @@ impl UiState {
         };
         self.rebuild_flat();
         self.scroll_y = 0;
+        self.tree_scroll = 0;
     }
 
     pub fn toggle_fold(&mut self) {
@@ -145,6 +148,22 @@ impl UiState {
             }
             self.rebuild_flat();
         }
+    }
+
+    /// Adjust `tree_scroll` so `selected` sits inside the visible window.
+    /// Sticky: scroll only changes when the selection would otherwise leave
+    /// the viewport. No-op when `available_rows == 0`.
+    pub fn ensure_tree_visible(&mut self, available_rows: usize) {
+        if available_rows == 0 {
+            return;
+        }
+        if self.selected < self.tree_scroll {
+            self.tree_scroll = self.selected;
+        } else if self.selected >= self.tree_scroll + available_rows {
+            self.tree_scroll = self.selected + 1 - available_rows;
+        }
+        let max_scroll = self.flat.len().saturating_sub(available_rows);
+        self.tree_scroll = self.tree_scroll.min(max_scroll);
     }
 
     pub fn set_search_pattern(&mut self, pat: String) {
@@ -293,5 +312,37 @@ mod tests {
         let mut s = UiState::new(view, LoadDiagnostics::default());
         s.set_search_pattern("ERROR".into());
         assert_eq!(s.search.as_ref().unwrap().matches.len(), 1);
+    }
+
+    #[test]
+    fn ensure_tree_visible_keeps_selection_in_viewport() {
+        let mut s = UiState::new(mk(false), LoadDiagnostics::default());
+        // mk() builds 1 recipe + 2 nodes = 3 flat rows. With a 2-row viewport
+        // and selection at index 2, scroll must shift to 1 so the selection
+        // is visible at the bottom.
+        s.selected = 2;
+        s.tree_scroll = 0;
+        s.ensure_tree_visible(2);
+        assert_eq!(s.tree_scroll, 1);
+
+        // Moving selection back to index 0 must pull the viewport up to 0.
+        s.selected = 0;
+        s.ensure_tree_visible(2);
+        assert_eq!(s.tree_scroll, 0);
+
+        // Selection already in view → scroll unchanged (sticky).
+        s.selected = 1;
+        s.tree_scroll = 0;
+        s.ensure_tree_visible(2);
+        assert_eq!(s.tree_scroll, 0);
+    }
+
+    #[test]
+    fn ensure_tree_visible_clamps_when_viewport_larger_than_rows() {
+        let mut s = UiState::new(mk(false), LoadDiagnostics::default());
+        s.selected = 2;
+        s.tree_scroll = 5; // stale offset past end
+        s.ensure_tree_visible(10);
+        assert_eq!(s.tree_scroll, 0); // clamped because flat.len() <= viewport
     }
 }
