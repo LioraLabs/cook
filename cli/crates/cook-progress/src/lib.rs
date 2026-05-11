@@ -2,6 +2,7 @@
 
 pub mod driver;
 pub mod event;
+pub mod log_reader;
 pub mod log_store;
 pub mod model;
 pub mod render;
@@ -9,6 +10,9 @@ pub mod style;
 
 pub use driver::Driver;
 pub use event::{NodeId, NodeKind, ProgressEvent, RecipeId, RecipeTopo, SkipReason, Stream, PROGRESS_SCHEMA_VERSION};
+pub use log_reader::{
+    BuildSummary, BuildView, LoadDiagnostics, LogLine, NodeView, RecipeView,
+};
 pub use log_store::{LogConfig, LogStore};
 pub use model::{BuildState, Counters, NodeState, NodeStatus, RecipeState, Status};
 pub use render::Renderer;

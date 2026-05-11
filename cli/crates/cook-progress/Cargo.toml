@@ -11,6 +11,7 @@ unicode-width = "0.2"
 time = { version = "0.3", features = ["formatting"] }
 arc-swap = "1"
 terminal_size = "0.3"
+toml = "0.8"
 
 [dev-dependencies]
 insta = { version = "1", features = ["yaml"] }
