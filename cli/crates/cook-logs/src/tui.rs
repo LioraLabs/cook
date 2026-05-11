@@ -45,6 +45,15 @@ pub fn run_with_backend<B: Backend>(
         std::env::current_dir().ok().map(|d| d.join(".cook").join("logs"));
 
     loop {
+        if let Some(p) = state.picker.as_mut() {
+            if p.builds.is_empty() {
+                if let Some(root) = &logs_root {
+                    if let Ok(list) = log_reader::list_builds(root) {
+                        p.builds = list;
+                    }
+                }
+            }
+        }
         terminal
             .draw(|f| draw_frame(f, &state, &theme))
             .map_err(|e| ViewerError::Layout(e.to_string()))?;
@@ -58,6 +67,22 @@ pub fn run_with_backend<B: Backend>(
                         let build_dir = root.join(&state.view.build_id);
                         if let Ok((view, diag)) = log_reader::load(&build_dir) {
                             state = UiState::new(view, diag);
+                        }
+                    }
+                }
+                Action::SwitchBuild(target_id) => {
+                    if let Some(root) = &logs_root {
+                        let build_dir = root.join(&target_id);
+                        if let Ok((view, diag)) = log_reader::load(&build_dir) {
+                            // Preserve a few UI prefs across builds per spec §10.
+                            let prev_filter = state.filter;
+                            let prev_show_ts = state.show_timestamps;
+                            let prev_soft_wrap = state.soft_wrap;
+                            state = UiState::new(view, diag);
+                            state.filter = prev_filter;
+                            state.show_timestamps = prev_show_ts;
+                            state.soft_wrap = prev_soft_wrap;
+                            state.rebuild_flat();
                         }
                     }
                 }
@@ -89,7 +114,9 @@ fn draw_frame(f: &mut ratatui::Frame<'_>, state: &UiState, theme: &Theme) {
         render::output::draw(f, panes[1], state, theme);
     }
 
-    // Picker rendered later (Task 15 will populate it).
+    if let Some(p) = state.picker.as_ref() {
+        render::picker::draw(f, area, &p.builds, p.cursor);
+    }
     if state.show_help {
         render::help::draw(f, area, &state.diagnostics);
     }

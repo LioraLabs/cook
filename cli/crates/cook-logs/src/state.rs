@@ -3,8 +3,14 @@
 use std::collections::BTreeSet;
 
 use cook_progress::event::{NodeId, RecipeId, Stream};
-use cook_progress::log_reader::{BuildView, LoadDiagnostics, NodeView};
+use cook_progress::log_reader::{BuildSummary, BuildView, LoadDiagnostics, NodeView};
 use cook_progress::model::NodeStatus;
+
+#[derive(Debug, Clone)]
+pub struct PickerState {
+    pub builds: Vec<BuildSummary>,
+    pub cursor: usize,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Filter {
@@ -44,7 +50,7 @@ pub struct UiState {
     pub show_timestamps: bool,
     pub soft_wrap: bool,
     pub focus: Focus,
-    pub picker_open: bool,
+    pub picker: Option<PickerState>,
     pub show_help: bool,
 }
 
@@ -63,7 +69,7 @@ impl UiState {
             show_timestamps: false,
             soft_wrap: false,
             focus: Focus::Tree,
-            picker_open: false,
+            picker: None,
             show_help: false,
         };
         s.rebuild_flat();
@@ -214,6 +220,14 @@ mod tests {
         if let FlatRow::Node(_, nid) = s.flat[s.selected] {
             assert_eq!(nid, NodeId::new(0)); // first failed
         }
+    }
+
+    #[test]
+    fn picker_starts_closed_and_can_be_opened() {
+        let mut s = UiState::new(mk(false), LoadDiagnostics::default());
+        assert!(s.picker.is_none());
+        s.picker = Some(PickerState { builds: vec![], cursor: 0 });
+        assert!(s.picker.is_some());
     }
 
     #[test]
