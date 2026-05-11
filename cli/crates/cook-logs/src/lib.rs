@@ -23,7 +23,18 @@ pub fn cmd_logs(
     theme: Theme,
 ) -> Result<(), ViewerError> {
     let logs_root = project_root.join(".cook").join("logs");
+
+    if !logs_root.exists() {
+        println!("No builds found. Run `cook build` first.");
+        return Ok(());
+    }
+
     let builds = log_reader::list_builds(&logs_root).map_err(ViewerError::io_listing)?;
+
+    if builds.is_empty() {
+        println!("No builds found. Run `cook build` first.");
+        return Ok(());
+    }
 
     let build_id = resolve_selector(&builds, &selector)?;
     let build_dir = logs_root.join(&build_id);
@@ -85,5 +96,5 @@ fn resolve_selector(
 }
 
 fn nearby_ids(builds: &[BuildSummary]) -> Vec<String> {
-    builds.iter().take(5).map(|b| b.build_id.clone()).collect()
+    builds.iter().take(10).map(|b| b.build_id.clone()).collect()
 }

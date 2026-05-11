@@ -166,6 +166,29 @@ fn summarize_build_dir(build_dir: &Path) -> io::Result<BuildSummary> {
                 .map(|i| i as i32);
         }
     }
+
+    // recipe_count: directories under nodes/
+    let nodes_root = build_dir.join("nodes");
+    if let Ok(rd) = std::fs::read_dir(&nodes_root) {
+        summary.recipe_count = rd
+            .flatten()
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .count();
+    }
+
+    // failed_count: scan events.jsonl for node-failed events
+    let events_path = build_dir.join("events.jsonl");
+    if let Ok(text) = std::fs::read_to_string(&events_path) {
+        let cursor = std::io::Cursor::new(text);
+        for line in cursor.lines().flatten() {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                if value.get("type").and_then(|v| v.as_str()) == Some("node-failed") {
+                    summary.failed_count += 1;
+                }
+            }
+        }
+    }
+
     Ok(summary)
 }
 
@@ -519,6 +542,32 @@ mod tests_list {
         assert_eq!(builds[0].build_id, "2026-05-10-bbb"); // newest first
         assert_eq!(builds[0].exit_code, Some(1));
         assert_eq!(builds[1].exit_code, Some(0));
+    }
+
+    #[test]
+    fn list_builds_counts_recipes_and_failed_nodes() {
+        use std::fs;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let dir = root.join("2026-05-10-aaa");
+        fs::create_dir_all(dir.join("nodes").join("lib")).unwrap();
+        fs::create_dir_all(dir.join("nodes").join("vm")).unwrap();
+        fs::write(
+            dir.join("manifest.toml"),
+            "schema_version = 1\nbuild_id = \"2026-05-10-aaa\"\nstarted_at = \"2026-05-10T10:00:00Z\"\nended_at = \"2026-05-10T10:00:01Z\"\nexit_code = 1\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("events.jsonl"),
+            "{\"v\":1,\"ts\":\"2026-05-10T10:00:00Z\",\"type\":\"node-failed\",\"recipe\":\"vm\",\"node\":\"lvm.c\",\"elapsed_ms\":100,\"error\":\"x\"}\n\
+             {\"v\":1,\"ts\":\"2026-05-10T10:00:01Z\",\"type\":\"node-completed\",\"recipe\":\"lib\",\"node\":\"parser.c\",\"elapsed_ms\":50,\"kind\":\"cooked\"}\n",
+        )
+        .unwrap();
+
+        let builds = list_builds(root).unwrap();
+        assert_eq!(builds.len(), 1);
+        assert_eq!(builds[0].recipe_count, 2);
+        assert_eq!(builds[0].failed_count, 1);
     }
 
     #[test]
