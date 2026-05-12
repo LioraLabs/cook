@@ -1,0 +1,16 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="probe" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Lua code="local r = cook_cc.find(\"SDL3\")"
+        Lua code="if not r.found then return end"
+        Lua code="for _, a in ipairs(r.tried) do"
+        Lua code="    if a.strategy == \"cmake-compat\" then break end"
+        Lua code="end"
+  chores:
