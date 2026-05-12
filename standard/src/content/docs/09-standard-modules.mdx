@@ -72,6 +72,7 @@ Registers an executable target named `name`. A conforming implementation MUST co
 | `export_includes` | list[string] | Public include dirs propagated to consumers via `cook.export`. |
 | `defines` | list[string] | Macro names or `NAME=value`. |
 | `system_libs` | list[string] | Passed to the linker as `-l<name>`. |
+| `frameworks` | list[string] | macOS frameworks passed through to `cc.link` (§9.2.3.7). No-op on non-macOS hosts. |
 | `extra_cflags` | string | Raw flags appended at compile. |
 | `extra_ldflags` | string | Raw flags appended at link. |
 | `links` | list[string] | Other cc-registered targets to link against (transitive propagation per §9.2.4). |
@@ -88,7 +89,7 @@ Error: if the source count is zero after globbing, the implementation MUST raise
 cc.lib(name: string, opts: LibOpts) -> string
 ```
 
-Registers a static-library target. A conforming implementation MUST compile sources as for `cc.bin`, then archive the objects to `build/lib/lib<name>.a`. `LibOpts` is `BinOpts` minus link-time fields (`extra_ldflags`, `system_libs` apply at consumer link time, not at archive time, but MAY be recorded for propagation).
+Registers a static-library target. A conforming implementation MUST compile sources as for `cc.bin`, then archive the objects to `build/lib/lib<name>.a`. `LibOpts` is `BinOpts` minus link-time fields (`extra_ldflags`, `system_libs`, and `frameworks` apply at consumer link time, not at archive time, but MAY be recorded for propagation).
 
 Error model identical to §9.2.3.1.
 
