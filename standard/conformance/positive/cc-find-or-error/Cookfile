@@ -1,0 +1,5 @@
+use cook_cc
+
+recipe probe
+    > local r = cook_cc.find_or_error("zlib")
+    > if not r.found then error("unreachable") end
