@@ -424,13 +424,24 @@ use cook_cc
 recipe game
     > local sdl3 = cook_cc.find_or_error("SDL3")
     > cook_cc.bin("game", {
-    >     sources      = { "src/main.c" },
-    >     include_dirs = sdl3.include_dirs,
-    >     libs         = sdl3.libs,
-    >     frameworks   = sdl3.frameworks,
+    >     sources       = { "src/main.c" },
+    >     includes      = sdl3.include_dirs,
+    >     system_libs   = sdl3.system_libs,
+    >     extra_ldflags = sdl3.libs,
+    >     frameworks    = sdl3.frameworks,
     > })
-end
 ```
+
+Field mapping for cmake-compat hits:
+
+| FindResult field | BinOpts field | Linker effect |
+|---|---|---|
+| `include_dirs` (list) | `includes` (list) | `-I<dir>` per entry |
+| `system_libs` (list) | `system_libs` (list) | `-l<name>` per entry; usually empty for cmake-compat |
+| `libs` (raw string) | `extra_ldflags` (raw string) | appended verbatim — carries absolute `.so`/`.dylib`/`.a` paths from cmake LINK mode |
+| `frameworks` (list) | `frameworks` (list) | `-framework <name>` per entry on macOS |
+
+`extra_ldflags` is the documented raw-link-flag channel (§9.2.3.7); absolute library paths emitted by cmake-compat are valid raw link tokens, so no Standard-level surface change is required to plumb them through.
 
 ### 7.3 `src/main.c` (sketch — final source under SDL's zlib license, attributed)
 
