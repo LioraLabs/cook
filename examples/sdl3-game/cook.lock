@@ -1,0 +1,22 @@
+schema = 1
+
+[[module]]
+name = "cook_cc"
+version = "0.3.0-1"
+source = "git+https://github.com/lioralabs/cook-modules.git"
+integrity = "sha256-unknown"
+direct = true
+
+[[module]]
+name = "lpeg"
+version = "1.0.2-1"
+source = "'http://www.inf.puc-rio.br/~roberto/lpeg/lpeg-1.0.2.tar.gz'"
+integrity = "sha256-unknown"
+direct = false
+
+[[module]]
+name = "lua-cjson"
+version = "2.1.0.10-1"
+source = "git+https://github.com/openresty/lua-cjson"
+integrity = "sha256-unknown"
+direct = false
