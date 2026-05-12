@@ -1,0 +1,7 @@
+use cook_cc
+
+recipe app
+    > cook_cc.bin("app", {
+    >     sources    = { "src/main.c" },
+    >     frameworks = { "OpenGL", "Cocoa" },
+    > })
