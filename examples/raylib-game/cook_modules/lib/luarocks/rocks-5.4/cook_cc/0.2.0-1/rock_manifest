@@ -1,0 +1,32 @@
+rock_manifest = {
+   ["cook_cc-0.2.0-1.rockspec"] = "4f778e57a60952eefb78437cdb5f294f",
+   doc = {
+      ["README.md"] = "af20f8f92f147983316c39e1cc1431d4"
+   },
+   lua = {
+      cook_cc = {
+         ["cc.lua"] = "28e2a2627fa41657d5a2114c522387dd",
+         ["compile_db.lua"] = "ac3e9757a8b40c42407d25f252e6dfe2",
+         ["finder.lua"] = "c8192d79b6613edab24d5f6fcbf30545",
+         finders = {
+            ["bare_probe.lua"] = "4338ea8785f8cbfad6e5f5b3ce6182c2",
+            ["gl.lua"] = "8eb06792f4f77fca7f62af976d19e304",
+            ["header_probe.lua"] = "ec6bd97018191558f88add3e294a7346",
+            ["init.lua"] = "4e1488d33a5c597f4ba975e0cddb5558",
+            ["libcurl.lua"] = "2d9d41e199b0a3e014d342a12c6c2f85",
+            ["openal.lua"] = "7c012183cb515af35213390446429722",
+            ["pkg_config.lua"] = "397f510232865cc2e1438bf2c8b1c6d8",
+            ["raylib.lua"] = "1ca7c921f72668c53d97c04db9ccd01a",
+            ["sdl2.lua"] = "9c4dcfb43e001ecb099213ff8f2de9f9",
+            ["threads.lua"] = "45f65910598a824d17a554117be52703",
+            ["tool_config.lua"] = "8374bb11d7eda41a7d5424eb68c4d5c1",
+            ["zlib.lua"] = "adca812e5bf72d438786aba372e83c40"
+         },
+         ["init.lua"] = "bc5817cab0b5e7ff6953f636273435e1",
+         ["targets.lua"] = "5504a61d390c2cf32797d68a58dd882a",
+         ["toolchain.lua"] = "5c9287a412af2d40e9e327f5e450f73f",
+         ["transitive.lua"] = "7fbf9f1ee069a70682c2dce62bf338c2",
+         ["version.lua"] = "edd3bad52ee5e17557ef56fcfd41250a"
+      }
+   }
+}
