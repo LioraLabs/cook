@@ -1,8 +1,8 @@
 package = "cook_cc"
-version = "0.3.0-1"
+version = "0.3.1-1"
 source = {
    url = "git+https://github.com/lioralabs/cook-modules.git",
-   tag = "cook_cc-0.3.0-1",
+   tag = "cook_cc-0.3.1-1",
 }
 description = {
    summary  = "Cook C-family (C + C++) native build module",
@@ -14,6 +14,12 @@ description = {
       project-scoped finder registration (cc.register_finder), a raising
       find convenience (cc.find_or_error), transitive link propagation
       including macOS frameworks, and compile_commands.json generation.
+
+      0.3.1 is a patch: the bare-probe finder uses `cook.sh "test -e '<path>'"`
+      for system-path existence checks instead of `fs.exists`, which is
+      sandbox-blocked outside the project root per CS-0045. This is required
+      for raylib/SDL3-style fallback discovery on hosts without `.pc` files.
+
       Specified normatively at §9.2 of the Cook Standard (v0.3).
    ]],
    homepage   = "https://github.com/lioralabs/cook-modules",

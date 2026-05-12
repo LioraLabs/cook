@@ -1,5 +1,5 @@
 rock_manifest = {
-   ["cook_cc-0.3.0-1.rockspec"] = "d5b5cf22aa1dd111669a7834c9023678",
+   ["cook_cc-0.3.1-1.rockspec"] = "e3793ec871db1d0d62e5e41a7b03e946",
    doc = {
       ["README.md"] = "af20f8f92f147983316c39e1cc1431d4"
    },
@@ -9,7 +9,7 @@ rock_manifest = {
          ["compile_db.lua"] = "ac3e9757a8b40c42407d25f252e6dfe2",
          ["finder.lua"] = "fc47ae2c33f886997f431991c09255f1",
          finders = {
-            ["bare_probe.lua"] = "4338ea8785f8cbfad6e5f5b3ce6182c2",
+            ["bare_probe.lua"] = "9b53b90561b0bcb770ec065cab449e6a",
             cmake_compat = {
                ["hints.lua"] = "c307d9f620e82ed968704b7c6429f180"
             },

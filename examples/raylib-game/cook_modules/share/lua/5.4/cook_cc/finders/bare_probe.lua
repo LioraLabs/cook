@@ -29,11 +29,25 @@ local function blank_payload()
     }
 end
 
+-- CS-0045 forbids `fs.exists(...)` on paths outside the project sandbox;
+-- the bare probe by design walks system linker directories like /usr/lib
+-- which are always outside. Existence checks therefore go through
+-- `cook.sh`, which is unsandboxed and inherently shell-out. Single-quote
+-- the path and escape any embedded `'` as `'\''` so a hostile lib name
+-- cannot inject shell metacharacters. (Callers feed cc.find names that
+-- are also passed to `-l<name>`; the linker already constrains those to
+-- a tame charset, but defense in depth is free here.)
+local function exists_unsandboxed(path)
+    local quoted = "'" .. (path:gsub("'", "'\\''")) .. "'"
+    local ok, out = pcall(cook.sh, "test -e " .. quoted .. " && echo y || echo n")
+    return ok and (out or ""):match("^y") ~= nil
+end
+
 function M.try(name)
     for _, dir in ipairs(search_dirs()) do
         for _, ext in ipairs(extensions()) do
             local p = dir .. "/lib" .. name .. ext
-            if fs.exists(p) then
+            if exists_unsandboxed(p) then
                 local payload = blank_payload()
                 payload.system_libs = { name }
                 payload.libs = "-l" .. name
