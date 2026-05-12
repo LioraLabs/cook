@@ -189,6 +189,21 @@ A strategy MAY report `outcome = "skip"` (the strategy structurally could not be
 
 Caching: results MUST be cached in `cook.cache` keyed by `"cc.find:<name>:<canonical-opts>"`, where `canonical-opts` is the deterministic serialisation of `opts` (keys sorted, values stringified, list-valued opts joined with `,`). Repeat calls within one invocation MUST NOT re-consult the chain.
 
+#### 9.2.3.8.1. cmake-compat strategy [#stdmods.cc.find-cmake-compat]
+
+A conforming cmake-compat strategy MUST:
+
+1. If `opts.version` is set, return `{ outcome = "skip", reason = "version detection unsupported by legacy cmake --find-package" }` without invoking any subprocess. cmake-compat does not surface version metadata in v0.3; the chain falls through to bare-probe (itself a no-op on `opts.version`).
+2. Locate a `cmake` driver on PATH. If absent, return `{ outcome = "skip", reason = "cmake binary not on PATH", hint = "install cmake: apt: cmake / brew: cmake / dnf: cmake" }`.
+3. Probe `EXIST` mode for the queried package using `cmake --find-package -DNAME=<name> -DCOMPILER_ID=GNU -DLANGUAGE=C -DMODE=EXIST -DQUIET=TRUE` (or implementation-equivalent invocation). If `EXIST` reports "not found" (cmake exit ≠ 0), return `{ outcome = "miss", reason = "cmake found no Config or Find module for '<name>'", hint = <package-specific or generic> }`.
+4. Probe `COMPILE` mode for cflags; probe `LINK` mode for libs.
+5. Parse `COMPILE` output per §9.2.3.8.2.
+6. Parse `LINK` output per §9.2.3.8.3.
+7. If any token in the parsed LINK output is a filesystem path whose final component matches `*Config.cmake` or `*Targets.cmake`, return `{ outcome = "miss", reason = "imported-target chain too complex for legacy --find-package", hint = "register a project finder for '<name>' via cc.register_finder" }`.
+8. On a clean hit, return `{ outcome = "hit", strategy = "cmake-compat", payload = { … } }` with `payload.version = nil`.
+
+Names passed to cmake-compat are case-sensitive and forwarded to `cmake` unchanged. `cc.find("SDL3")` probes for `SDL3Config.cmake`; `cc.find("sdl3")` probes for `sdl3-config.cmake`. The case convention follows cmake's own resolver behaviour.
+
 #### 9.2.3.9. cc.defaults [#stdmods.cc.defaults]
 
 ```
