@@ -244,11 +244,12 @@ Every cc target maker (`cc.bin`/`cc.lib`/`cc.shared`/`cc.headers`) MUST call `co
 - `info.includes` — directories the consumer adds to `-I<dir>` when compiling
 - `info.defines` — macros the consumer adds to `-D<def>` when compiling
 - `info.system_libs` — libraries the consumer links with `-l<name>` at link time
+- `info.frameworks` — macOS framework entries the consumer adds at link time as `-framework <name>`
 - `info.extra_ldflags` — raw flags to append at consumer link time
 - `info.links` — further transitive targets (forms the propagation graph)
 - `info.compile_info` — per-target compile info for `cc.compile_commands` (§9.2.3.11)
 
-When `opts.links = { "a", "b" }` is provided to a target maker, the implementation MUST resolve the closure by walking `cook.import("a").links`, `cook.import("b").links`, recursively, deduplicating both nodes (cycle-safe) and field values. The closure's `includes` / `defines` / `system_libs` / `extra_ldflags` MUST be merged into the new target's compile and link commands.
+When `opts.links = { "a", "b" }` is provided to a target maker, the implementation MUST resolve the closure by walking `cook.import("a").links`, `cook.import("b").links`, recursively, deduplicating both nodes (cycle-safe) and field values. The closure's `includes` / `defines` / `system_libs` / `extra_ldflags` MUST be merged into the new target's compile and link commands. The closure's `frameworks` MUST be merged into the new target's link command analogously to `system_libs` (dedup-preserving first-seen order); a non-macOS host implementation MAY merge but MUST NOT emit (§9.2.3.7).
 
 v0.1 normatively specifies implicit-public propagation: every field in the target maker's options is exported as-is. Future Standard revisions will introduce PRIVATE / PUBLIC distinctions; v0.1 implementations MAY anticipate the split by recognising `export_includes` (already a documented field on `BinOpts` per §9.2.3.1) as the public form; absence of `export_*` means the corresponding `includes`/etc. is exported by default.
 
@@ -261,6 +262,8 @@ Every error MUST be prefixed with `[cc.<fn>]` and named at level 2 (`error(msg, 
 | `cc.bin`/`lib`/`shared` | `#sources == 0` after globbing | `no sources found for target '<name>'` |
 | `cc.compile` | source file does not exist | `source file not found: <path>` |
 | `cc.toolchain` (during `init()`) | no compiler on PATH | `no C/C++ compiler on PATH (tried g++, clang++)` |
+| `cc.find_or_error` | `result.found == false` | `could not locate '<name>'<version-suffix>:\n  - <strategy>: <outcome> (<reason>)...\n<hints>` |
+| `cc.register_finder` | `finder` is not a function | `register_finder for '<name>' requires a function, got <type>` |
 
 `cc.find` does NOT raise on a miss; it returns `{ found = false }`. Callers that require a hit MUST test `result.found` and raise their own error.
 
