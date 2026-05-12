@@ -1,0 +1,13 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="probe" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Lua code="local r = cook_cc.find(\"SDL3\", { cmake = true, version = \">=3.2\" })"
+        Lua code="-- cmake-compat reports skip on opts.version; chain falls through."
+  chores:
