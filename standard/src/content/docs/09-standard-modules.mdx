@@ -219,6 +219,24 @@ cc.compile_commands()
 
 Writes `compile_commands.json` in the current working directory, one entry per source per known target. The output MUST be valid JSON parseable by clangd and equivalent tools. The implementation runs in the worker VM (called from a recipe body), so its inputs MUST be sourced from `cook.cache` (target list) and `cook.import` (per-target compile info) — both established Cook APIs.
 
+#### 9.2.3.12. cc.register_finder [#stdmods.cc.register-finder]
+
+```
+cc.register_finder(name: string, finder: function(opts) -> FindResult)
+```
+
+Registers a project-scoped finder for `name`. Subsequent `cc.find(name, ...)` calls MUST consult `finder` before the curated/pkg-config/bare-probe stages, recording its Attempt with `strategy = "project:<name>"`. The function MUST return a FindResult; the implementation MAY discard the function's own `tried` field (the resolver synthesises the chain-level `tried` list externally). Re-registration replaces the prior finder without warning; this enables `config` blocks to override defaults per build profile.
+
+Raising in the finder is permitted; the error surfaces at the `cc.find` call site at level 2 (per §9.2.5).
+
+#### 9.2.3.13. cc.find_or_error [#stdmods.cc.find-or-error]
+
+```
+cc.find_or_error(name: string, opts: FindOpts?) -> FindResult
+```
+
+Calls `cc.find(name, opts)`. If `result.found` is `true`, returns `result` unchanged. Otherwise raises an error at level 2 prefixed `[cc.find_or_error]`. The error message MUST list every Attempt in `result.tried` (strategy / outcome / reason) and MUST include any `hint` fields. This is the only function in §9.2 that raises on a missing package.
+
 ### 9.2.4. Transitive propagation [#stdmods.cc.transitive]
 
 Every cc target maker (`cc.bin`/`cc.lib`/`cc.shared`/`cc.headers`) MUST call `cook.export(name, info)` recording the target's outward-facing fields:
