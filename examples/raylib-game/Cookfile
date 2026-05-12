@@ -1,0 +1,10 @@
+use cook_cc
+
+recipe game
+    > local raylib = cook_cc.find_or_error("raylib")
+    > cook_cc.bin("game", {
+    >     sources     = { "src/main.c" },
+    >     includes    = raylib.include_dirs,
+    >     system_libs = raylib.system_libs,
+    >     frameworks  = raylib.frameworks,
+    > })
