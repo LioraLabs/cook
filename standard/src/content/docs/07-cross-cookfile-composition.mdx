@@ -71,6 +71,8 @@ A conforming implementation MUST resolve `cook.load_module(name)` at register ph
 
 A conforming implementation MUST also configure `package.path` and `package.cpath` (following the same search order) on the register-phase Lua VM before executing the body of any module loaded via `cook.load_module`. This ensures that sub-requires within a multi-file module (e.g., `require("cook_cc.toolchain")` inside `cook_cc/init.lua`) resolve against the project's `cook_modules/` rather than the system Lua paths. A conforming implementation MUST allow C extension modules (`.so`/`.dll`) to be loaded during register-phase `cook.load_module` evaluation; the register-phase VM MUST NOT restrict native module loading. [amended CS-0066]
 
+A conforming implementation MAY expose `cook.load_module(name)` on the execute-phase Lua VM as an extension over the register-phase requirement above; when exposed, the execute-phase `cook.load_module` MUST honour the same four-path resolution order. Recipe-body Lua scripts that call `cook.load_module(name)` directly therefore see the same set of candidate paths as register-phase callers, eliminating "works at register but not at execute" surprises. [amended CS-0069]
+
 Cross-Cookfile composition is at the **recipe** level via qualified name references (§{modules.qualified-refs}), not at the **module** level. Sharing module code between Cookfiles happens via the filesystem (a vendored copy, a symlink, or a shared parent) — the cook runtime treats each Cookfile's `cook_modules/` as an independent search root.
 
 ### Example 7.4.1

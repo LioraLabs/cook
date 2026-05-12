@@ -1150,3 +1150,13 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 **Conformance impact.** A conforming v0.3 implementation MUST treat `opts.cmake = false` (default) calls identically to v0.2 calls for stages 1–3 (project → curated → pkg-config); the chain extension is additive. New behaviour: stages 4 (cmake-compat) and 5 (bare-probe) are consulted after pkg-config misses. `opts.cmake = true` skips pkg-config entirely.
 
 **Reference:** the CS-0068 commits on `shi-135-m2-cmake-compat`.
+
+## CS-0069 — Execute-phase `cook.load_module` MUST honour the §7 resolution order [#cs-0069]
+
+**Summary.** §7 grows a clarifying paragraph: a conforming implementation MAY expose `cook.load_module(name)` on the execute-phase Lua VM as an extension over the register-phase requirement, and when exposed it MUST honour the same four-path resolution order specified by CS-0065 (`cook_modules/<name>.lua`, `cook_modules/<name>/init.lua`, `cook_modules/share/lua/5.4/<name>.lua`, `cook_modules/share/lua/5.4/<name>/init.lua`).
+
+**Rationale.** The reference implementation has exposed an execute-phase `cook.load_module(name)` since M0 to support recipe-body Lua scripts that load modules ad-hoc. Pre-CS-0069 the execute-phase implementation only searched two paths (`cook_modules/<name>.lua`, `cook_modules/<name>/init.lua`), causing recipe-body load_module calls to fail for any LuaRocks-installed module — most notably breaking the M1 raylib-game integration example at runtime (the Cookfile's `use cook_cc` translates to an execute-phase `cook.load_module("cook_cc")` whose only resolvable copy lives under `cook_modules/share/lua/5.4/cook_cc/init.lua`). CS-0069 closes this register-vs-execute parity gap.
+
+**Conformance impact.** Implementations MUST search the four paths in §7's order and the diagnostic on miss MUST list all four attempted paths. Implementations that previously searched only the two top-level paths MUST extend their search; the change is additive and cannot break any Cookfile that worked under the pre-CS-0069 behavior.
+
+**Reference:** the CS-0069 commits on `main` after SHI-135 M2.
