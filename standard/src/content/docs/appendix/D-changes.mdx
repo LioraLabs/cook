@@ -1160,3 +1160,13 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 **Conformance impact.** Implementations MUST search the four paths in §7's order and the diagnostic on miss MUST list all four attempted paths. Implementations that previously searched only the two top-level paths MUST extend their search; the change is additive and cannot break any Cookfile that worked under the pre-CS-0069 behavior.
 
 **Reference:** the CS-0069 commits on `main` after SHI-135 M2.
+
+## CS-0070 — Execute-phase Lua VM MUST expose `cook.cache` [#cs-0070]
+
+**Summary.** §6.3.4 grows a normative clause requiring `cook.cache.get`, `cook.cache.set`, and `cook.cache.scope` to be available on BOTH the register-phase and execute-phase Lua VMs. The execute-phase implementation MAY use in-memory-only storage scoped to the worker's lifetime; the register-phase implementation MUST persist values across invocations per the cache contract.
+
+**Rationale.** Standard §6.3.4 lists `cook.cache` among "both-phase APIs" but the reference implementation only registered it on the register-phase VM. The omission was silent until CS-0069 fixed execute-phase `cook.load_module` resolution — raylib-game's `use cook_cc` now correctly resolves and runs `cook_cc.init()`, which calls `cook.cache.get("compiler")` to rehydrate the toolchain probe from the register-phase cache. The execute-phase VM had no `cook.cache` table at all, raising `attempt to index a nil value (field 'cache')`. CS-0070 closes the both-phase parity gap explicitly: implementations MUST expose the cache API on both VMs.
+
+**Conformance impact.** Implementations MUST expose `cook.cache.{get,set,scope}` on both VMs. The execute-phase storage MAY be ephemeral (in-memory, per worker); persistence semantics for the execute-phase API are explicitly NOT specified here and remain available for refinement (see e.g., the disk-persistence design proposal under [SHI-214](https://linear.app/shiny-guru/issue/SHI-214) for cross-run persistence). The minimum bar is that calls do not error.
+
+**Reference:** the CS-0070 commits on `main` after CS-0069.

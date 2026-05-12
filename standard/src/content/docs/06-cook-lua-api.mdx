@@ -179,6 +179,8 @@ A conforming implementation MUST report a runtime error when `name` does not res
 
 The body of a module loaded into the execute-phase VM MUST NOT call register-only API (`cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, `cook.recipe`). A conforming implementation MUST surface such a call as the §{rationale.execute-phase-api} runtime error. Module functions whose bodies are restricted to both-phase API (`cook.sh`, `cook.env`, `cook.cache`, `cook.platform`, `fs.*`, `path.*`) work in either phase; module authors document per-function which phase a function targets.
 
+A conforming implementation MUST expose `cook.cache.get(key)`, `cook.cache.set(key, value)`, and `cook.cache.scope(label) -> table` on BOTH the register-phase and the execute-phase Lua VMs. The execute-phase implementation MAY use in-memory-only storage scoped to the worker's lifetime (no cross-invocation persistence); the register-phase implementation MUST persist values across invocations per the `cook.cache` contract. Modules that initialise on both phases (i.e. their `init()` runs at register time AND on first execute-phase use) rely on the execute-phase API to read cached state from prior register-phase writes — implementations that omit the execute-phase API break any module whose `init()` calls `cook.cache.get`. [amended CS-0070]
+
 ### Note 6.3.1
 
 Additional `cook.*` helpers — notably `cook.env`, `cook.platform`, `cook.cache`, `cook.export`, `cook.import`, `cook.dep_output`, and `cook.dep_output_list` — are part of the runtime but are specified in §{modules} (modules and configuration), not here. §{lua} defines only the work-unit surface and the two phase-split helper families.
