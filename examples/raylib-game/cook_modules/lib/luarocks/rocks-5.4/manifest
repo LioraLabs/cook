@@ -8,7 +8,7 @@ commands = {
 }
 dependencies = {
    cook_cc = {
-      ["0.2.0-1"] = {
+      ["0.3.0-1"] = {
          {
             constraints = {
                {
@@ -83,64 +83,70 @@ modules = {
       "lua-cjson/2.1.0.10-1"
    },
    ["cook_cc.cc"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.compile_db"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finder"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.bare_probe"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
+   },
+   ["cook_cc.finders.cmake_compat"] = {
+      "cook_cc/0.3.0-1"
+   },
+   ["cook_cc.finders.cmake_compat.hints"] = {
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.gl"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.header_probe"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.init"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.libcurl"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.openal"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.pkg_config"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.raylib"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.sdl2"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.threads"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.tool_config"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.finders.zlib"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.init"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.targets"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.toolchain"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.transitive"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    ["cook_cc.version"] = {
-      "cook_cc/0.2.0-1"
+      "cook_cc/0.3.0-1"
    },
    json2lua = {
       "lua-cjson/2.1.0.10-1"
@@ -157,7 +163,7 @@ modules = {
 }
 repository = {
    cook_cc = {
-      ["0.2.0-1"] = {
+      ["0.3.0-1"] = {
          {
             arch = "installed",
             commands = {},
@@ -170,6 +176,8 @@ repository = {
                ["cook_cc.compile_db"] = "cook_cc/compile_db.lua",
                ["cook_cc.finder"] = "cook_cc/finder.lua",
                ["cook_cc.finders.bare_probe"] = "cook_cc/finders/bare_probe.lua",
+               ["cook_cc.finders.cmake_compat"] = "cook_cc/finders/cmake_compat.lua",
+               ["cook_cc.finders.cmake_compat.hints"] = "cook_cc/finders/cmake_compat/hints.lua",
                ["cook_cc.finders.gl"] = "cook_cc/finders/gl.lua",
                ["cook_cc.finders.header_probe"] = "cook_cc/finders/header_probe.lua",
                ["cook_cc.finders.init"] = "cook_cc/finders/init.lua",

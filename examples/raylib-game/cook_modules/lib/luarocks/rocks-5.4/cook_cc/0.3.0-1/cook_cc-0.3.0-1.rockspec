@@ -1,8 +1,8 @@
 package = "cook_cc"
-version = "0.2.0-1"
+version = "0.3.0-1"
 source = {
    url = "git+https://github.com/lioralabs/cook-modules.git",
-   tag = "cook_cc-0.2.0-1",
+   tag = "cook_cc-0.3.0-1",
 }
 description = {
    summary  = "Cook C-family (C + C++) native build module",
@@ -10,11 +10,11 @@ description = {
       Blessed Cook module for C and C++ native builds. Provides declarative
       target makers (cc.bin/lib/shared/headers), low-level primitives
       (cc.compile/archive/link), multi-strategy package discovery
-      (cc.find with project / curated / pkg-config / bare-probe stages),
+      (cc.find with project / curated / pkg-config / cmake-compat / bare-probe stages),
       project-scoped finder registration (cc.register_finder), a raising
       find convenience (cc.find_or_error), transitive link propagation
       including macOS frameworks, and compile_commands.json generation.
-      Specified normatively at §9.2 of the Cook Standard (v0.2).
+      Specified normatively at §9.2 of the Cook Standard (v0.3).
    ]],
    homepage   = "https://github.com/lioralabs/cook-modules",
    license    = "MIT",
@@ -39,6 +39,8 @@ build = {
      ["cook_cc.finders"]               = "cook_cc/finders/init.lua",
      ["cook_cc.finders.pkg_config"]    = "cook_cc/finders/pkg_config.lua",
      ["cook_cc.finders.bare_probe"]    = "cook_cc/finders/bare_probe.lua",
+     ["cook_cc.finders.cmake_compat"]         = "cook_cc/finders/cmake_compat.lua",
+     ["cook_cc.finders.cmake_compat.hints"]   = "cook_cc/finders/cmake_compat/hints.lua",
      ["cook_cc.finders.header_probe"]  = "cook_cc/finders/header_probe.lua",
      ["cook_cc.finders.tool_config"]   = "cook_cc/finders/tool_config.lua",
      ["cook_cc.finders.raylib"]        = "cook_cc/finders/raylib.lua",

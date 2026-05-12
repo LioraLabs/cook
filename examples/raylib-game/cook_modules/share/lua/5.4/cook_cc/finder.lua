@@ -98,15 +98,27 @@ function M.find(name, opts)
     local cached = cook.cache.get(cache_key)
     if cached then return cached end
 
-    local pkg  = require("cook_cc.finders.pkg_config")
-    local bare = require("cook_cc.finders.bare_probe")
+    local pkg   = require("cook_cc.finders.pkg_config")
+    local bare  = require("cook_cc.finders.bare_probe")
+    local cmake = require("cook_cc.finders.cmake_compat")
 
-    local chain = {
-        function() return project_strategy(name, opts) end,
-        function() return curated_strategy(name, opts) end,
-        function() return pkg.main_chain(name, opts) end,
-        function() return bare.main_chain(name, opts) end,
-    }
+    local chain
+    if opts.cmake then
+        chain = {
+            function() return project_strategy(name, opts) end,
+            function() return curated_strategy(name, opts) end,
+            function() return cmake.main_chain(name, opts) end,
+            function() return bare.main_chain(name, opts) end,
+        }
+    else
+        chain = {
+            function() return project_strategy(name, opts) end,
+            function() return curated_strategy(name, opts) end,
+            function() return pkg.main_chain(name, opts) end,
+            function() return cmake.main_chain(name, opts) end,
+            function() return bare.main_chain(name, opts) end,
+        }
+    end
 
     local tried, hit = {}, nil
     for _, step in ipairs(chain) do
