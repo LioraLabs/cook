@@ -160,7 +160,7 @@ A conforming v0.2 implementation MUST consult strategies in this order, first-ma
 3. **pkg-config** — as v0.1.
 4. **Bare-lib probe** — file-existence check for `lib<name>.{so,dylib,a}` on the host's default linker search paths (`/usr/lib`, `/usr/local/lib`, and paths reported by `cc -print-search-dirs`). MUST be skipped when `opts.version` is set; bare probe cannot verify version.
 
-A strategy MAY report `outcome = "skip"` (the strategy structurally could not be consulted) or `outcome = "miss"` (the strategy was consulted and rejected the package). Only `outcome = "hit"` populates `found = true` and the result fields. `skip` and `miss` both allow the chain to continue; the distinction is informational.
+A strategy MAY report `outcome = "skip"` (the strategy structurally could not be consulted) or `outcome = "miss"` (the strategy was consulted and rejected the package). Only `outcome = "hit"` populates `found = true` and the result fields. Implementations MUST NOT stop the chain on `skip` or `miss`; they MUST proceed to the next strategy. The `skip`/`miss` distinction is informational.
 
 `FindResult` (returned by every `cc.find` call):
 
