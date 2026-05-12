@@ -1170,3 +1170,13 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 **Conformance impact.** Implementations MUST expose `cook.cache.{get,set,scope}` on both VMs. The execute-phase storage MAY be ephemeral (in-memory, per worker); persistence semantics for the execute-phase API are explicitly NOT specified here and remain available for refinement (see e.g., the disk-persistence design proposal under [SHI-214](https://linear.app/shiny-guru/issue/SHI-214) for cross-run persistence). The minimum bar is that calls do not error.
 
 **Reference:** the CS-0070 commits on `main` after CS-0069.
+
+## CS-0071 — Execute-phase Lua VM MUST expose `cook.export`/`cook.import` [#cs-0071]
+
+**Summary.** §6.3.4 grows a normative clause requiring `cook.export(name, info)` and `cook.import(name) -> table?` to be available on BOTH the register-phase and the execute-phase Lua VMs. The execute-phase implementation MAY share storage with the register-phase or use a per-worker scratch store when the recipe body is both producer and consumer; cross-worker visibility is the implementer's choice and remains available for refinement.
+
+**Rationale.** §6.3.4 already lists `cook.export` and `cook.import` among the both-phase APIs (Note 6.3.1 enumerates them alongside `cook.env`, `cook.platform`, `cook.cache`, and the dep-output helpers), but the reference implementation only registered them on the register-phase VM. SHI-135 M2 smokes revealed that any recipe-body Lua that drives a `cook_cc` target maker — every example under `examples/` — tripped on the missing execute-phase `cook.export` (the `cc.bin` body calls `cook.export(name, {...})` so transitive consumers can `cook.import` it). CS-0071 closes the both-phase parity gap exactly as CS-0070 did for `cook.cache`.
+
+**Conformance impact.** Implementations MUST expose `cook.export`/`cook.import` on both VMs. The execute-phase storage MAY be ephemeral (per-worker, in-memory) when the producer and consumer share a worker; cross-worker visibility is the implementer's choice and remains available for refinement. The minimum bar is that calls do not error and round-trip values within a single worker VM.
+
+**Reference:** the CS-0071 commits on `main` after CS-0070.
