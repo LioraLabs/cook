@@ -386,3 +386,7 @@ The blessed C-family build module is named `cc`, not `cpp`. The module handles `
 ## Why §9 Standard Modules is normative [#rationale.stdmods-normative]
 
 Blessed modules are part of the Cook contract that anyone — not only Liora Labs — may reimplement. The official rock is one implementation; an alternative implementation (e.g., a Rust-side native module exposing the same Lua surface, or a strictly-pinned older snapshot) must produce semantically equivalent behaviour against the §9 sections it claims to implement. Specifying the surface normatively in numbered Standard chapters — rather than informatively in an appendix — makes conformance checkable: every public function lists its semantics with RFC-2119 MUST / SHOULD keywords; every option table field is enumerated; every error condition is documented.
+
+## Why `cc.find` v0.1 specified pkg-config-only [#rationale.find-v01-history]
+
+The v0.1 wording (released in `cook_cc 0.1.x`) specified pkg-config as the sole `cc.find` strategy. This was deliberate: M0 (the chapter introduction) optimised for a tight normative surface that real Cookfiles could verify against, while leaving room to extend. v0.2 (M1, this revision) generalises to a multi-strategy chain; the v0.1 wording is preserved here so anyone bisecting against `cook_cc 0.1.x` has a referenceable spec. There is no permanent break — every v0.1 call site (`cc.find("zlib")` etc.) remains a valid v0.2 call site, and pkg-config remains a chain stage.

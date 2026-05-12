@@ -1124,4 +1124,19 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 
 **Conformance impact.** A conforming implementation MUST configure `package.path` and `package.cpath` (same order as CS-0062) before executing each module body in the register phase. The reference implementation stashes the original `package.path`/`package.cpath` on first load per VM using the `_cook_original_path`/`_cook_original_cpath` sentinel approach, mirroring the execute-phase idiom. A conforming implementation MUST create the register-phase Lua VM with all standard libraries enabled (equivalent to `mlua::Lua::unsafe_new()`) so that native module loading (`package.loadlib`) is available. The project-root `fs.*` sandbox (CS-0045) MUST still be installed on the register-phase VM immediately after creation; the expanded VM capabilities do not relax the filesystem confinement rules.
 
+## CS-0067 — cc finder multi-strategy chain (M1) [#cs-0067]
+
+**What changed.** Cook Standard §9.2 graduates from v0.1 to v0.2:
+
+- §9.2.3.7 `cc.link`: `LinkOpts` grows a `frameworks` field. Each entry emits `-framework <name>` at link time on macOS; no-op on other hosts.
+- §9.2.3.8 `cc.find`: rewritten from pkg-config-only to a four-stage chain (project-registered → curated → pkg-config → bare-probe). `FindResult` grows a `tried` field listing every strategy consulted. `FindOpts.version` is now honoured.
+- §9.2.3.12 `cc.register_finder`: new — project-scoped extension seam for the chain.
+- §9.2.3.13 `cc.find_or_error`: new — raising convenience wrapper.
+- §9.2.4 transitive propagation: `frameworks` joins the propagated field set.
+- §9.2.5 error catalogue: two new entries for the new raising surfaces.
+
+**Provenance.** [SHI-134](https://linear.app/shiny-guru/issue/SHI-134), parent [SHI-132](https://linear.app/shiny-guru/issue/SHI-132) (Cook builds Doom 3). Reference implementation `cook_cc 0.2.0-1`.
+
+**Migration.** Existing call sites of `cc.find(name)` continue to work unchanged; new fields on the result are additive. Existing target makers (`cc.bin`/`cc.lib`/`cc.shared`) gain an optional `frameworks` option; pre-v0.2 Cookfiles that do not set it observe identical behaviour.
+
 **Reference:** this commit.
