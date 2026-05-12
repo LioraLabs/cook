@@ -487,6 +487,28 @@ fn register_worker_cook_table(
     })?;
     cook.set("load_module", load_module_fn)?;
 
+    // CS-0070: cook.cache on the execute-phase VM (Standard §6.3.4).
+    //
+    // Per-worker in-memory store; no cross-invocation persistence. The
+    // register-phase implementation (cook-register/src/module_loader.rs
+    // `register_cache_api`) handles persistent state and per-module scoping
+    // by writing `.cook/cache/<module>.json`. The execute-phase side only
+    // needs to satisfy the both-phase API surface so that modules like
+    // cook_cc whose `init()` calls `cook.cache.get("compiler")` do not
+    // raise `attempt to index a nil value (field 'cache')` when their
+    // init runs again on the worker VM (the second-phase init that
+    // happens because cook.load_module evaluates the module body on
+    // both VMs).
+    //
+    // The shape mirrors the register-phase API:
+    //   cook.cache.get(key) -> value | nil
+    //   cook.cache.set(key, value)
+    //   cook.cache.scope(label) -> { get, set } (prefixes keys with "<label>:")
+    //
+    // Cross-run persistence on the execute VM is intentionally out of
+    // scope here — see SHI-214 for the disk-persistent design.
+    install_execute_phase_cook_cache(lua, &cook)?;
+
     // Register-only API guards (Standard §6.3.2).
     //
     // `cook.exec`, `cook.interactive`, `cook.add_unit`, `cook.step_group`,
@@ -548,6 +570,71 @@ fn register_worker_cook_table(
     )?;
 
     lua.globals().set("cook", cook)?;
+    Ok(())
+}
+
+/// Install `cook.cache.{get,set,scope}` on the execute-phase VM
+/// (Standard §6.3.4, CS-0070). Storage is an in-memory Lua table held
+/// in the globals under `_cook_execute_cache` — keyed by stringified
+/// keys, valued by arbitrary Lua values. Per-worker; no cross-run
+/// persistence (see SHI-214 for the persistent design).
+///
+/// `scope(label)` returns a sub-table whose `get`/`set` prefix keys
+/// with `"<label>:"` so scoped consumers (e.g. cook_cc.toolchain) get
+/// the same isolation they'd see on the register-phase VM.
+fn install_execute_phase_cook_cache(
+    lua: &mlua::Lua,
+    cook: &mlua::Table,
+) -> mlua::Result<()> {
+    let cache_store = lua.create_table()?;
+    lua.globals().set("_cook_execute_cache", cache_store)?;
+
+    let cache_tbl = lua.create_table()?;
+
+    let get_fn = lua.create_function(|lua, key: String| {
+        let store: mlua::Table = lua.globals().get("_cook_execute_cache")?;
+        store.get::<mlua::Value>(key)
+    })?;
+    cache_tbl.set("get", get_fn)?;
+
+    let set_fn =
+        lua.create_function(|lua, (key, value): (String, mlua::Value)| {
+            let store: mlua::Table = lua.globals().get("_cook_execute_cache")?;
+            store.set(key, value)?;
+            Ok(())
+        })?;
+    cache_tbl.set("set", set_fn)?;
+
+    let scope_fn = lua.create_function(|lua, label: String| {
+        let scoped = lua.create_table()?;
+        let prefix_for_get = format!("{}:", label);
+        let prefix_for_set = prefix_for_get.clone();
+
+        let scoped_get =
+            lua.create_function(move |lua, key: String| {
+                let store: mlua::Table =
+                    lua.globals().get("_cook_execute_cache")?;
+                let full = format!("{}{}", prefix_for_get, key);
+                store.get::<mlua::Value>(full)
+            })?;
+        scoped.set("get", scoped_get)?;
+
+        let scoped_set = lua.create_function(
+            move |lua, (key, value): (String, mlua::Value)| {
+                let store: mlua::Table =
+                    lua.globals().get("_cook_execute_cache")?;
+                let full = format!("{}{}", prefix_for_set, key);
+                store.set(full, value)?;
+                Ok(())
+            },
+        )?;
+        scoped.set("set", scoped_set)?;
+
+        Ok(scoped)
+    })?;
+    cache_tbl.set("scope", scope_fn)?;
+
+    cook.set("cache", cache_tbl)?;
     Ok(())
 }
 
@@ -1740,6 +1827,83 @@ mod tests {
         assert!(
             result.success,
             "cook.load_module must prefer top-level over share-tree; got error: {:?}",
+            result.error
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // CS-0070 regressions: execute-phase VM MUST expose `cook.cache`
+    // with the same get/set/scope surface as the register-phase VM
+    // (Standard §6.3.4). Storage is in-memory and per-worker; cross-run
+    // persistence is not required.
+    // -----------------------------------------------------------------
+
+    /// CS-0070: `cook.cache.get(key)` on a missing key MUST return nil,
+    /// not raise — modules that probe the cache before populating it
+    /// (e.g. cook_cc.toolchain's compiler-detection cache miss) rely
+    /// on the nil sentinel.
+    #[test]
+    fn cook_cache_get_returns_nil_for_missing_key() {
+        let code = r#"
+            local v = cook.cache.get("never_set")
+            assert(v == nil, "expected nil, got "..tostring(v))
+        "#;
+        let result = run_lua_chunk_in_worker(code);
+        assert!(
+            result.success,
+            "cook.cache.get for missing key must return nil; got error: {:?}",
+            result.error
+        );
+    }
+
+    /// CS-0070: a value written by `cook.cache.set(key, value)` MUST be
+    /// retrievable via `cook.cache.get(key)` on the same worker VM.
+    #[test]
+    fn cook_cache_set_then_get_round_trips() {
+        let code = r#"
+            cook.cache.set("compiler", "/usr/bin/cc")
+            local v = cook.cache.get("compiler")
+            assert(v == "/usr/bin/cc",
+                "expected /usr/bin/cc, got "..tostring(v))
+
+            cook.cache.set("count", 42)
+            assert(cook.cache.get("count") == 42,
+                "expected 42, got "..tostring(cook.cache.get("count")))
+        "#;
+        let result = run_lua_chunk_in_worker(code);
+        assert!(
+            result.success,
+            "cook.cache.set then .get must round-trip; got error: {:?}",
+            result.error
+        );
+    }
+
+    /// CS-0070: `cook.cache.scope(label)` MUST namespace keys so that
+    /// two distinct scopes do not collide. Mirrors the register-phase
+    /// scoping contract that cook_cc.toolchain depends on.
+    #[test]
+    fn cook_cache_scope_isolates_keys() {
+        let code = r#"
+            local foo = cook.cache.scope("foo")
+            local bar = cook.cache.scope("bar")
+
+            foo.set("k", "in_foo")
+            bar.set("k", "in_bar")
+
+            assert(foo.get("k") == "in_foo",
+                "foo scope: expected in_foo, got "..tostring(foo.get("k")))
+            assert(bar.get("k") == "in_bar",
+                "bar scope: expected in_bar, got "..tostring(bar.get("k")))
+
+            -- scoped writes MUST NOT leak into the unscoped namespace.
+            assert(cook.cache.get("k") == nil,
+                "unscoped get for 'k' must be nil; got "
+                ..tostring(cook.cache.get("k")))
+        "#;
+        let result = run_lua_chunk_in_worker(code);
+        assert!(
+            result.success,
+            "cook.cache.scope must isolate keys per scope; got error: {:?}",
             result.error
         );
     }
