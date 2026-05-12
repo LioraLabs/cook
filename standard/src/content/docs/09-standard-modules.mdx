@@ -152,13 +152,15 @@ Discovers a package by name and returns a structured result record.
 | Field | Type | Semantics |
 |---|---|---|
 | `version` | string | A semver-style constraint (e.g., `">=4.0"`, `"=4.0.1"`, `">=2.0,<3.0"`). Honoured by every strategy that can determine the discovered package's version. Pre-release tags are excluded (`"4.0.0-rc1"` does NOT satisfy `">=4.0.0"`). |
+| `cmake` | boolean | When `true`, the cmake-compat strategy MUST be consulted immediately after curated finders, before pkg-config, and pkg-config MUST be skipped for this call. The default `false` places cmake-compat after pkg-config in the standard order. |
 
-A conforming v0.2 implementation MUST consult strategies in this order, first-match-wins:
+A conforming v0.3 implementation MUST consult strategies in this order, first-match-wins:
 
 1. **Project-registered finders** (per §9.2.3.12). MUST be tried first so projects can override curated behaviour.
 2. **Curated finders** — implementation-provided finders for a documented short list. The reference implementation ships finders for `raylib`, `sdl2`, `openal`, `gl`/`opengl`, `threads`, `zlib`, `libcurl`. Implementations MAY ship a different set; each curated finder MUST conform to the FindResult contract.
-3. **pkg-config** — as v0.1.
-4. **Bare-lib probe** — file-existence check for `lib<name>.{so,dylib,a}` on the host's default linker search paths (`/usr/lib`, `/usr/local/lib`, and paths reported by `cc -print-search-dirs`). MUST be skipped when `opts.version` is set; bare probe cannot verify version.
+3. **pkg-config** — as v0.1. MUST be skipped when `opts.cmake = true`.
+4. **cmake-compat** — described in §9.2.3.8.1. When `opts.cmake = true`, MUST be consulted in step 3's slot instead.
+5. **Bare-lib probe** — file-existence check for `lib<name>.{so,dylib,a}` on the host's default linker search paths (`/usr/lib`, `/usr/local/lib`, and paths reported by `cc -print-search-dirs`). MUST be skipped when `opts.version` is set; bare probe cannot verify version.
 
 A strategy MAY report `outcome = "skip"` (the strategy structurally could not be consulted) or `outcome = "miss"` (the strategy was consulted and rejected the package). Only `outcome = "hit"` populates `found = true` and the result fields. Implementations MUST NOT stop the chain on `skip` or `miss`; they MUST proceed to the next strategy. The `skip`/`miss` distinction is informational.
 
@@ -180,7 +182,7 @@ A strategy MAY report `outcome = "skip"` (the strategy structurally could not be
 
 | Field | Type | Semantics |
 |---|---|---|
-| `strategy` | string | `"project:<name>"`, `"curated:<name>"`, `"pkg-config"`, `"bare-probe"`, or for third-party rocks `"rocks.<rockname>:<finder>"`. |
+| `strategy` | string | `"project:<name>"`, `"curated:<name>"`, `"pkg-config"`, `"cmake-compat"`, `"bare-probe"`, or for third-party rocks `"rocks.<rockname>:<finder>"`. |
 | `outcome` | string | `"hit"`, `"miss"`, or `"skip"`. |
 | `reason` | string | Human-readable explanation. MAY be empty on `"hit"`. |
 | `hint` | string \| nil | Install hint (e.g., `"apt: libraylib-dev / brew: raylib"`). Curated finders SHOULD emit on miss; other strategies SHOULD NOT. |
