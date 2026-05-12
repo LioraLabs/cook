@@ -1140,3 +1140,13 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 **Migration.** Existing call sites of `cc.find(name)` continue to work unchanged; new fields on the result are additive. Existing target makers (`cc.bin`/`cc.lib`/`cc.shared`) gain an optional `frameworks` option; pre-v0.2 Cookfiles that do not set it observe identical behaviour.
 
 **Reference:** this commit.
+
+## CS-0068 — cc cmake-compat strategy (M2) [#cs-0068]
+
+**Summary.** §9.2.3.8 grows from v0.2's four-stage `cc.find` chain (project → curated → pkg-config → bare-probe) to v0.3's five-stage chain inserting `cmake-compat` between pkg-config and bare-probe. `FindOpts` gains a `cmake` boolean that lifts cmake-compat to position 3 (replacing pkg-config's slot for that call). §9.2.3.8.1 normatively specifies the cmake-compat strategy steps (driver detection, EXIST/COMPILE/LINK probes, imported-target rejection). §9.2.3.8.2 and §9.2.3.8.3 specify the COMPILE-mode and LINK-mode output grammars. §9.2.5 grows three catalogue rows naming the cmake-compat-specific failure modes. `Attempt.strategy` enumeration grows `"cmake-compat"`. App. B gains three rationale sections (legacy-mode trust boundary, chain-order trade-off, v0.2 preservation).
+
+**Rationale.** A long tail of modern C/C++ libraries ship `XxxConfig.cmake` but no `.pc` (SDL3, glfw3, Vulkan SDK, fmt, nlohmann_json, most vendor SDKs). M1's curated short list and pkg-config-only chain leave Cook unable to discover them. Hand-writing curated finders per library does not scale. cmake-compat reuses cmake's own Config-resolution implementation (via `cmake --find-package` legacy mode) as a discovery shim — cmake is never invoked to build anything; Cook's own compiler invocations drive the build. The trust boundary is explicit: cmake-compat's accuracy is delegated to cmake; the only Cook-implemented part is output parsing.
+
+**Conformance impact.** A conforming v0.3 implementation MUST treat `opts.cmake = false` (default) calls identically to v0.2 calls for stages 1–3 (project → curated → pkg-config); the chain extension is additive. New behaviour: stages 4 (cmake-compat) and 5 (bare-probe) are consulted after pkg-config misses. `opts.cmake = true` skips pkg-config entirely.
+
+**Reference:** the CS-0068 commits on `shi-135-m2-cmake-compat`.
