@@ -204,6 +204,25 @@ A conforming cmake-compat strategy MUST:
 
 Names passed to cmake-compat are case-sensitive and forwarded to `cmake` unchanged. `cc.find("SDL3")` probes for `SDL3Config.cmake`; `cc.find("sdl3")` probes for `sdl3-config.cmake`. The case convention follows cmake's own resolver behaviour.
 
+#### 9.2.3.8.2. cmake-compat COMPILE-mode grammar [#stdmods.cc.find-cmake-compile]
+
+`cmake --find-package … -DMODE=COMPILE` emits a shell-token stream containing `-I<dir>`, `-D<macro>`, and (rarely) `-isystem <dir>` tokens, whitespace-separated, with a trailing newline. The implementation MUST reuse the v0.2 token grammar from the pkg-config strategy: `-I` ⇒ `include_dirs`; `-D` ⇒ collected in `cflags`; other tokens preserved verbatim in `cflags`.
+
+#### 9.2.3.8.3. cmake-compat LINK-mode grammar [#stdmods.cc.find-cmake-link]
+
+`cmake --find-package … -DMODE=LINK` emits a shell-token stream whose elements MUST be classified as:
+
+| Token shape | Classification | Field |
+|---|---|---|
+| `-framework <name>` (two tokens) | macOS framework | `frameworks` |
+| `-l<name>` | system library | `system_libs`; also appended to `libs` |
+| `-L<dir>` | library search path | `lib_dirs`; also appended to `libs` |
+| `*.so`, `*.so.<version>`, `*.dylib`, `*.a`, `*.lib` (any token containing `/` or `\` and ending in one of these suffixes) | absolute path to a library file | `libs` (verbatim) |
+| `*Config.cmake`, `*Targets.cmake` | imported-target chain marker | triggers `outcome = "miss"` per §9.2.3.8.1 step 7 |
+| any other non-empty token | recorded in `libs` verbatim; not propagated to typed fields | `libs` |
+
+Absolute paths emitted to `libs` MUST be passable to the linker as-is; linkers accept absolute paths and resolve them without `-L` search.
+
 #### 9.2.3.9. cc.defaults [#stdmods.cc.defaults]
 
 ```
