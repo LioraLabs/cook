@@ -45,3 +45,7 @@ rocks/*/*-*.src.rock
 # cook.lock + the registry, so this is build output, not source. Top-level
 # user-authored lua files in cook_modules/ stay tracked.
 cook_modules/lib/
+
+# cmake-compat finder (cook_cc §9.2.3.8.1) shells out to `cmake --find-package`,
+# which side-effects a CMakeFiles/ directory in the caller's cwd. Build output.
+CMakeFiles/
