@@ -136,6 +136,8 @@ cc.link(objects: list[string], output: string, opts: LinkOpts) -> string
 
 Links objects to `output`. `LinkOpts.system_libs` is appended as `-l<name>`; `LinkOpts.extra_ldflags` is appended verbatim; `LinkOpts.shared = true` adds the platform's shared-library flag (§9.2.3.3).
 
+`LinkOpts.frameworks` (list[string]): each entry MUST emit `-framework <name>` at link time on macOS hosts. On non-macOS hosts the implementation MUST treat the field as a no-op, allowing cross-platform call sites where a curated finder returns `system_libs={"openal"}` on Linux and `frameworks={"OpenAL"}` on macOS to use the same `cc.link` invocation.
+
 #### 9.2.3.8. cc.find [#stdmods.cc.find]
 
 ```
