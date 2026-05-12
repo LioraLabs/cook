@@ -1,0 +1,14 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="probe" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Lua code="local r = cook_cc.find(\"definitely_no_such_package_xyz_42\")"
+        Lua code="if r.found then error(\"expected miss\") end"
+        Lua code="if type(r.tried) ~= \"table\" then error(\"expected tried list\") end"
+  chores:
