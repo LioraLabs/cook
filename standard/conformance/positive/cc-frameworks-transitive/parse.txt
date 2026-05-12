@@ -1,0 +1,19 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="app" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Lua code="cook_cc.lib(\"gfx\", {"
+        Lua code="    sources    = { \"src/lib.c\" },"
+        Lua code="    frameworks = { \"OpenGL\" },"
+        Lua code="})"
+        Lua code="cook_cc.bin(\"app\", {"
+        Lua code="    sources = { \"src/main.c\" },"
+        Lua code="    links   = { \"gfx\" },"
+        Lua code="})"
+  chores:

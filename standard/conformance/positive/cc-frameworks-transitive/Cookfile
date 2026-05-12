@@ -1,0 +1,11 @@
+use cook_cc
+
+recipe app
+    > cook_cc.lib("gfx", {
+    >     sources    = { "src/lib.c" },
+    >     frameworks = { "OpenGL" },
+    > })
+    > cook_cc.bin("app", {
+    >     sources = { "src/main.c" },
+    >     links   = { "gfx" },
+    > })
