@@ -422,20 +422,26 @@ fn register_worker_cook_table(
             }
         }
 
-        // Resolve cook_modules/<name>.lua or cook_modules/<name>/init.lua
+        // Resolve in §7's 4-path order [CS-0069]: hand-vendored wins over
+        // LuaRocks-installed. Mirrors cook-register/src/module_loader.rs.
         let modules_dir = cwd.join("cook_modules");
-        let flat_path = modules_dir.join(format!("{}.lua", name));
-        let init_path = modules_dir.join(&name).join("init.lua");
-        let module_path = if flat_path.exists() {
-            flat_path
-        } else if init_path.exists() {
-            init_path
-        } else {
-            return Err(mlua::Error::runtime(format!(
-                "cook.load_module: module '{}' not found in {}/cook_modules/ \
-                 (tried {}.lua and {}/init.lua)",
-                name, cwd.display(), name, name,
-            )));
+        let share_dir = modules_dir.join("share/lua/5.4");
+        let candidates = [
+            modules_dir.join(format!("{}.lua", name)),
+            modules_dir.join(&name).join("init.lua"),
+            share_dir.join(format!("{}.lua", name)),
+            share_dir.join(&name).join("init.lua"),
+        ];
+        let module_path = match candidates.iter().find(|p| p.exists()) {
+            Some(p) => p.clone(),
+            None => {
+                return Err(mlua::Error::runtime(format!(
+                    "cook.load_module: module '{}' not found in {}/cook_modules/ \
+                     (tried {}.lua, {}/init.lua, share/lua/5.4/{}.lua, \
+                     share/lua/5.4/{}/init.lua)",
+                    name, cwd.display(), name, name, name, name,
+                )));
+            }
         };
 
         let source = std::fs::read_to_string(&module_path).map_err(|e| {
@@ -1618,6 +1624,150 @@ mod tests {
             result.success,
             "cook.sh must remain callable in execute phase; got error: {:?}",
             result.error
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // CS-0069 regressions: execute-phase `cook.load_module` MUST honour
+    // §7's four-path resolution order, not just the top-level two paths.
+    // -----------------------------------------------------------------
+
+    /// Submit a single LuaChunk work item that runs `code` on a worker VM
+    /// rooted at `cwd`, then return the resulting `WorkResult` for
+    /// inspection. Unlike `run_lua_chunk_in_worker`, this lets the caller
+    /// pre-populate `cwd` with module-resolution fixtures.
+    fn run_lua_chunk_in_worker_at(cwd: &std::path::Path, code: &str) -> WorkResult {
+        let (pool, rx) = WorkerPool::spawn(1);
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::LuaChunk {
+                code: code.to_string(),
+                inputs: vec![],
+                outputs: vec![],
+                ingredient_groups: vec![],
+                step_kind: cook_contracts::StepKind::Cook,
+                is_chore: false,
+            },
+            recipe_name: "rec".to_string(),
+            working_dir: cwd.to_path_buf(),
+            env_vars: HashMap::new(),
+            project_root: cwd.to_path_buf(),
+        });
+        let result = rx.recv().unwrap();
+        pool.shutdown();
+        result
+    }
+
+    /// CS-0069: a module installed under `cook_modules/share/lua/5.4/<name>/init.lua`
+    /// (the canonical LuaRocks share-tree layout for multi-file rocks) MUST
+    /// be resolvable by execute-phase `cook.load_module`, not just by the
+    /// register phase. Pre-CS-0069 this raised "module not found" because
+    /// pool.rs only searched the two top-level paths.
+    #[test]
+    fn cook_load_module_resolves_share_lua_5_4_init() {
+        let dir = TempDir::new().unwrap();
+        let share_pkg = dir.path()
+            .join("cook_modules/share/lua/5.4/share_only_pkg");
+        fs::create_dir_all(&share_pkg).expect("mkdir share path");
+        fs::write(
+            share_pkg.join("init.lua"),
+            "return { from_share = true }",
+        ).expect("write init.lua");
+
+        let code = r#"
+            local m = cook.load_module("share_only_pkg")
+            assert(m.from_share == true, "expected from_share=true, got "..tostring(m.from_share))
+        "#;
+        let result = run_lua_chunk_in_worker_at(dir.path(), code);
+        assert!(
+            result.success,
+            "cook.load_module must resolve share/lua/5.4/<name>/init.lua; got error: {:?}",
+            result.error
+        );
+    }
+
+    /// CS-0069: a flat module file at `cook_modules/share/lua/5.4/<name>.lua`
+    /// (single-file rocks) MUST also be resolvable from the execute phase.
+    #[test]
+    fn cook_load_module_resolves_share_lua_5_4_flat() {
+        let dir = TempDir::new().unwrap();
+        let share_dir = dir.path().join("cook_modules/share/lua/5.4");
+        fs::create_dir_all(&share_dir).expect("mkdir share path");
+        fs::write(
+            share_dir.join("share_flat_pkg.lua"),
+            "return { kind = 'flat' }",
+        ).expect("write flat module");
+
+        let code = r#"
+            local m = cook.load_module("share_flat_pkg")
+            assert(m.kind == "flat", "expected kind=flat, got "..tostring(m.kind))
+        "#;
+        let result = run_lua_chunk_in_worker_at(dir.path(), code);
+        assert!(
+            result.success,
+            "cook.load_module must resolve share/lua/5.4/<name>.lua; got error: {:?}",
+            result.error
+        );
+    }
+
+    /// CS-0069: when a module exists at both the top-level and share-tree
+    /// paths, the top-level (hand-vendored) copy MUST win. Mirrors the
+    /// priority test in cook-register/src/module_loader.rs.
+    #[test]
+    fn cook_load_module_top_level_wins_over_share_lua() {
+        let dir = TempDir::new().unwrap();
+        let modules_dir = dir.path().join("cook_modules");
+        let share_dir = modules_dir.join("share/lua/5.4");
+        fs::create_dir_all(&share_dir).expect("mkdir share path");
+        // Top-level (should win): flat <name>.lua under cook_modules/.
+        fs::write(
+            modules_dir.join("dup_pkg.lua"),
+            "return { from = 'top-level' }",
+        ).expect("write top-level module");
+        // Share-tree (should lose): init.lua under share/lua/5.4/<name>/.
+        let share_pkg = share_dir.join("dup_pkg");
+        fs::create_dir_all(&share_pkg).expect("mkdir share pkg");
+        fs::write(
+            share_pkg.join("init.lua"),
+            "return { from = 'share' }",
+        ).expect("write share module");
+
+        let code = r#"
+            local m = cook.load_module("dup_pkg")
+            assert(m.from == "top-level", "expected from=top-level, got "..tostring(m.from))
+        "#;
+        let result = run_lua_chunk_in_worker_at(dir.path(), code);
+        assert!(
+            result.success,
+            "cook.load_module must prefer top-level over share-tree; got error: {:?}",
+            result.error
+        );
+    }
+
+    /// CS-0069: the diagnostic when no candidate path matches MUST list
+    /// all four attempted paths.
+    #[test]
+    fn cook_load_module_miss_diagnostic_lists_all_four_paths() {
+        let dir = TempDir::new().unwrap();
+        let code = r#"cook.load_module("nonexistent_pkg")"#;
+        let result = run_lua_chunk_in_worker_at(dir.path(), code);
+        assert!(!result.success, "expected miss to fail");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("nonexistent_pkg.lua"),
+            "diagnostic must mention top-level flat path; got: {err}"
+        );
+        assert!(
+            err.contains("nonexistent_pkg/init.lua"),
+            "diagnostic must mention top-level init path; got: {err}"
+        );
+        assert!(
+            err.contains("share/lua/5.4/nonexistent_pkg.lua"),
+            "diagnostic must mention share-tree flat path; got: {err}"
+        );
+        assert!(
+            err.contains("share/lua/5.4/nonexistent_pkg/init.lua"),
+            "diagnostic must mention share-tree init path; got: {err}"
         );
     }
 }
