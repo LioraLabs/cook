@@ -300,6 +300,9 @@ Every error MUST be prefixed with `[cc.<fn>]` and named at level 2 (`error(msg, 
 | `cc.toolchain` (during `init()`) | no compiler on PATH | `no C/C++ compiler on PATH (tried g++, clang++)` |
 | `cc.find_or_error` | `result.found == false` | `could not locate '<name>'<version-suffix>:\n  - <strategy>: <outcome> (<reason>)...\n<hints>` |
 | `cc.register_finder` | `finder` is not a function | `register_finder for '<name>' requires a function, got <type>` |
+| `cc.find` (cmake-compat) | cmake binary not on PATH | (returned as `Attempt`, not raised) `cmake binary not on PATH` |
+| `cc.find` (cmake-compat) | EXIST mode reports not found | (returned as `Attempt`) `cmake found no Config or Find module for '<name>'` |
+| `cc.find` (cmake-compat) | LINK output contains `*Config.cmake` / `*Targets.cmake` | (returned as `Attempt`) `imported-target chain too complex for legacy --find-package` |
 
 `cc.find` does NOT raise on a miss; it returns `{ found = false }`. Callers that require a hit MUST test `result.found` and raise their own error.
 
