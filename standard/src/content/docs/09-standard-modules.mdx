@@ -36,7 +36,7 @@ Future Standard revisions extend this catalogue additively.
 
 The `cc` module specifies a portable surface for declarative C and C++ native builds. It dispatches on source-file extension (`.c`, `.C` → `cc`; `.cpp`, `.cc`, `.cxx`, `.C++` → `cxx`) so a single target can mix C and C++ sources without per-target language opt-in.
 
-A conforming implementation MUST expose the eleven public functions listed in §9.2.3 and MUST honour their option tables, return values, and propagation semantics. A conforming implementation SHOULD provide informative error diagnostics for the negative cases described per-function.
+A conforming implementation MUST expose the thirteen public functions listed in §9.2.3 and MUST honour their option tables, return values, and propagation semantics. A conforming implementation SHOULD provide informative error diagnostics for the negative cases described per-function.
 
 The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
 
