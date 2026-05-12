@@ -1,0 +1,5 @@
+use cook_cc
+
+recipe probe
+    > local r = cook_cc.find("SDL3", { cmake = true })
+    > if not r.found then return end
