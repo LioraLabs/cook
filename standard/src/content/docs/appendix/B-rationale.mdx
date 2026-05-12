@@ -390,3 +390,25 @@ Blessed modules are part of the Cook contract that anyone — not only Liora Lab
 ## Why `cc.find` v0.1 specified pkg-config-only [#rationale.find-v01-history]
 
 The v0.1 wording (released in `cook_cc 0.1.x`) specified pkg-config as the sole `cc.find` strategy. This was deliberate: M0 (the chapter introduction) optimised for a tight normative surface that real Cookfiles could verify against, while leaving room to extend. v0.2 (M1, this revision) generalises to a multi-strategy chain; the v0.1 wording is preserved here so anyone bisecting against `cook_cc 0.1.x` has a referenceable spec. There is no permanent break — every v0.1 call site (`cc.find("zlib")` etc.) remains a valid v0.2 call site, and pkg-config remains a chain stage.
+
+## Why cmake-compat ships on legacy `--find-package` [#rationale.cmake-compat-legacy]
+
+cmake 4.x marks the `--find-package` legacy mode "Do not use" in `cmake --help`. cmake-compat ships on this mode anyway because:
+
+1. The annotation is years-old guidance, not a removal timeline. The cmake project carries it for nudging users into proper cmake projects, not as a deprecation deadline.
+2. Reimplementing the equivalent Config-resolution logic natively is the post-M6 "full CMake interpretation" north star, explicitly deferred as not-committed.
+3. The migration path if cmake ever removes legacy mode is to swap `cmake_compat.lua` internals to a temp-project `find_package(X CONFIG REQUIRED)` + `message(STATUS …)` extraction approach. That migration is an internal-only change with no spec impact — `cc.find`'s surface stays identical.
+
+The trust boundary is documented: anything cmake-compat finds is found by cmake's own resolver, so accuracy is delegated; the only Cook-implemented part is the output parser specified in §9.2.3.8.2/3.
+
+## Why cmake-compat sits after pkg-config in the default chain [#rationale.cmake-compat-position]
+
+The roadmap originally proposed "after curated, before pkg-config" for cmake-compat (`docs/superpowers/specs/2026-05-01-cpp-module-roadmap-to-doom3-design.md`). v0.3 places cmake-compat after pkg-config for three reasons:
+
+1. **Speed.** pkg-config returns in ~10ms; the cmake subprocess takes ~100–500ms per probe. Projects whose dependencies all ship `.pc` files never pay the cmake cost in the default chain.
+2. **Substrate stability.** pkg-config's upstream has not deprecated the discovery mode; cmake's `--find-package` legacy annotation gives pkg-config the longer life expectancy as a build-system contract.
+3. **Curated finders own the per-library overrides.** The handful of libraries where cmake-compat is preferred over pkg-config (e.g. SDL3 has no `.pc`; old `libsdl2.pc` may lie around) get the explicit `opts.cmake = true` opt-in, which lifts cmake-compat into step 3 *and* skips pkg-config for that call. The opt-in is the right surface for "I know this is Config-only" — callers express intent at the call site rather than via global resolver order.
+
+## Why `cc.find` v0.2 documented a four-stage chain [#rationale.find-v02-history]
+
+The v0.2 wording (released in `cook_cc 0.2.x`) specified a four-stage chain: project → curated → pkg-config → bare-probe. v0.3 (M2) inserts cmake-compat between pkg-config and bare-probe and adds the `cmake` opt. Every v0.2 call site remains a valid v0.3 call site; pkg-config remains a chain stage. Bisects against `cook_cc 0.2.x` reference this paragraph.
