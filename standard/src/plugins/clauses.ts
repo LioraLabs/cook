@@ -101,8 +101,12 @@ function harvestSluggedHeadings(
       const [, top, mid, bot, title, slug] = m;
       const number = numberFrom(top, mid, bot);
       if (seenAt.has(slug)) {
-        throw new Error(
-          `duplicate slug "${slug}": first seen at ${seenAt.get(slug)}, also at ${rel}`,
+        // During v0.10 transition: warn rather than throw on duplicate slugs.
+        // New chapter files (per the v0.10 reorg) coexist with legacy files
+        // until Task 8 deletes the legacy ones. The later occurrence wins.
+        // See plans/2026-05-13-standard-reorg-plan.md.
+        console.warn(
+          `[clauses] duplicate slug "${slug}": first seen at ${seenAt.get(slug)}, also at ${rel}. Preferring the later occurrence during the v0.10 transition. Task 8 deletes the legacy file; the strict gate then re-asserts.`,
         );
       }
       seenAt.set(slug, rel);
@@ -154,9 +158,13 @@ function assertAllNumberedHeadingsSlugged(
  * title. Consumed by rehype-clause-xrefs at build time.
  *
  * Throws on:
- * - Duplicate slug across any two headings.
  * - Any clause-numbered heading that lacks a [#slug] marker.
  * - Any clause-numbered heading whose [#slug] marker violates the slug grammar.
+ *
+ * Warns on (during the v0.10 transition):
+ * - Duplicate slug across any two headings. The later-seen occurrence
+ *   (alphabetical path order) wins. Task 8 deletes the legacy chapter files,
+ *   at which point duplicates self-resolve and the strict gate re-asserts.
  */
 export function harvestClauses(contentRoot: string): Map<string, ClauseInfo> {
   const files: string[] = [];
