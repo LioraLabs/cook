@@ -4,7 +4,7 @@ The Cookfile parser: text in, AST out. The current reference implementation of t
 
 ## Cook Standard claim
 
-This crate claims **Cook Standard v0.8**.
+This crate claims **Cook Standard v0.9**.
 
 The claim lives in `src/lib.rs`:
 
