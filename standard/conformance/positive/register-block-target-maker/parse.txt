@@ -1,0 +1,8 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: [RegisterBlock body="    local zlib = cook_cc.find_or_error(\"zlib\")\n    cook_cc.bin(\"game\", {\n        sources     = { \"src/main.c\" },\n        system_libs = zlib.system_libs,\n    })" line=3]
+  top_level_module_calls: []

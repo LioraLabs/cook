@@ -1,0 +1,8 @@
+use cook_cc
+
+register
+    local zlib = cook_cc.find_or_error("zlib")
+    cook_cc.bin("game", {
+        sources     = { "src/main.c" },
+        system_libs = zlib.system_libs,
+    })
