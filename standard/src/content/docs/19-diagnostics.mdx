@@ -1,0 +1,28 @@
+---
+title: "§{exec.diag} — Diagnostic ordering"
+sidebar:
+  order: 19
+---
+# 19. Diagnostic ordering [#exec.diag]
+> **Normative.** This chapter defines the ordering relation between syntactic, semantic, and execute-time diagnostics that a conforming implementation MUST observe.
+
+## 19.1. Diagnostic ordering [#exec.diagnostic-ordering]
+An implementation MUST report syntactic errors (those detectable by the rules of §{lexical} and App. A) before it reports semantic errors (those detectable only in the register or execute phase). On encountering a syntactic error, the implementation MUST halt parsing at the first such error and MUST NOT proceed to register-phase evaluation. Consequently, a Cookfile with both a syntactic error and a semantic error MUST produce only the syntactic diagnostic on a given run.
+
+Within the register and execute phases, the implementation MUST report dependency-graph errors — cycles and references to undefined recipes (§{exec.cross-recipe-ordering}) — before attempting to execute any work unit.
+
+The exact wording and formatting of diagnostics are implementation-defined (§{intro.non-scope}). The diagnostic **class** and its **ordering relative to other diagnostics** are normative.
+
+### Example 19.1.1
+
+```cook
+recipe build
+    ingredients "src/main.c"
+    cook "app using { gcc $<all> -o $<out> }
+```
+
+The unterminated output-path string in the `cook` step (`"app` has no closing `"`) is a syntactic error (§{lexical.strings}). The implementation MUST report this diagnostic and MUST NOT proceed to register-phase evaluation; any semantic issue that would have been detected later — for example, a missing dependency — MUST NOT be reported for this run.
+
+### Note 19.1.1
+
+The first-error halt in the syntactic layer means that a single run will not enumerate every syntactic problem in the file. A Cookfile author that wants batch syntax checking can re-run after each fix. Implementations MAY elect to attempt error recovery for better editor integration, but the Standard does not require it and does not relax the ordering rule: recovered-from errors MUST still be reported before any semantic diagnostic.
