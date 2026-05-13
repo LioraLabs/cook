@@ -141,65 +141,73 @@ local function merge_includes(local_incs, transitive_incs)
 end
 
 function M.bin(name, opts)
-    local b = build_opts(opts, "bin")
-    local sources = gather_sources(opts or {})
-    if #sources == 0 then
-        error("[cc.bin] no sources found for target '" .. name .. "'", 2)
-    end
-    register_known(name)
-    local merged = transitive.resolve_links(b.links)
-    b.includes = merge_includes(b.includes, merged.includes)
-    record_export(name, sources, b, "")
-    local objs = compile_all(name, sources, b)
-    cc.link(objs, "build/bin/" .. name, {
-        system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
-        frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
-        extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
-    })
+    cook.recipe(name, { requires = (opts and opts.links) or {} }, function()
+        local b = build_opts(opts, "bin")
+        local sources = gather_sources(opts or {})
+        if #sources == 0 then
+            error("[cc.bin] no sources found for target '" .. name .. "'", 2)
+        end
+        register_known(name)
+        local merged = transitive.resolve_links(b.links)
+        b.includes = merge_includes(b.includes, merged.includes)
+        record_export(name, sources, b, "")
+        local objs = compile_all(name, sources, b)
+        cc.link(objs, "build/bin/" .. name, {
+            system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
+            frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
+            extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
+        })
+    end)
     return name
 end
 
 function M.lib(name, opts)
-    local b = build_opts(opts, "lib")
-    local sources = gather_sources(opts or {})
-    if #sources == 0 then
-        error("[cc.lib] no sources found for target '" .. name .. "'", 2)
-    end
-    local archive_path = "build/lib/lib" .. name .. ".a"
-    register_known(name)
-    local merged = transitive.resolve_links(b.links)
-    b.includes = merge_includes(b.includes, merged.includes)
-    record_export(name, sources, b, archive_path)
-    local objs = compile_all(name, sources, b)
-    cc.archive(objs, archive_path)
+    cook.recipe(name, { requires = (opts and opts.links) or {} }, function()
+        local b = build_opts(opts, "lib")
+        local sources = gather_sources(opts or {})
+        if #sources == 0 then
+            error("[cc.lib] no sources found for target '" .. name .. "'", 2)
+        end
+        local archive_path = "build/lib/lib" .. name .. ".a"
+        register_known(name)
+        local merged = transitive.resolve_links(b.links)
+        b.includes = merge_includes(b.includes, merged.includes)
+        record_export(name, sources, b, archive_path)
+        local objs = compile_all(name, sources, b)
+        cc.archive(objs, archive_path)
+    end)
     return name
 end
 
 function M.shared(name, opts)
-    local b = build_opts(opts, "shared")
-    local sources = gather_sources(opts or {})
-    if #sources == 0 then
-        error("[cc.shared] no sources found for target '" .. name .. "'", 2)
-    end
-    local so_path = "build/lib/lib" .. name .. ".so"
-    register_known(name)
-    local merged = transitive.resolve_links(b.links)
-    b.includes = merge_includes(b.includes, merged.includes)
-    record_export(name, sources, b, so_path)
-    local objs = compile_all(name, sources, b)
-    cc.link(objs, so_path, {
-        system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
-        frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
-        extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
-        shared        = true,
-    })
+    cook.recipe(name, { requires = (opts and opts.links) or {} }, function()
+        local b = build_opts(opts, "shared")
+        local sources = gather_sources(opts or {})
+        if #sources == 0 then
+            error("[cc.shared] no sources found for target '" .. name .. "'", 2)
+        end
+        local so_path = "build/lib/lib" .. name .. ".so"
+        register_known(name)
+        local merged = transitive.resolve_links(b.links)
+        b.includes = merge_includes(b.includes, merged.includes)
+        record_export(name, sources, b, so_path)
+        local objs = compile_all(name, sources, b)
+        cc.link(objs, so_path, {
+            system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
+            frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
+            extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
+            shared        = true,
+        })
+    end)
     return name
 end
 
 function M.headers(name, opts)
-    local b = build_opts(opts, "headers")
-    register_known(name)
-    record_export(name, {}, b, "")
+    cook.recipe(name, { requires = {} }, function()
+        local b = build_opts(opts, "headers")
+        register_known(name)
+        record_export(name, {}, b, "")
+    end)
     return name
 end
 

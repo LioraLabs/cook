@@ -1,8 +1,8 @@
 package = "cook_cc"
-version = "0.3.1-1"
+version = "0.4.0-1"
 source = {
    url = "git+https://github.com/lioralabs/cook-modules.git",
-   tag = "cook_cc-0.3.1-1",
+   tag = "cook_cc-0.4.0-1",
 }
 description = {
    summary  = "Cook C-family (C + C++) native build module",
@@ -15,12 +15,14 @@ description = {
       find convenience (cc.find_or_error), transitive link propagation
       including macOS frameworks, and compile_commands.json generation.
 
-      0.3.1 is a patch: the bare-probe finder uses `cook.sh "test -e '<path>'"`
-      for system-path existence checks instead of `fs.exists`, which is
-      sandbox-blocked outside the project root per CS-0045. This is required
-      for raylib/SDL3-style fallback discovery on hosts without `.pc` files.
+      0.4.0 is a breaking change (SHI-216 / CS-0072): target-makers
+      (cc.bin/lib/shared/headers) now call cook.recipe(name, opts, function() … end)
+      internally, creating their own recipe header. They MUST be invoked
+      from a top-level `register` block (Cook Standard v0.9 §3.7), as a
+      top-level `module_call` (§3.7.5), or another top-level register-phase
+      context — not from inside a `recipe foo / >>` body as in 0.3.x.
 
-      Specified normatively at §9.2 of the Cook Standard (v0.3).
+      Specified normatively at §9.2 of the Cook Standard (v0.9).
    ]],
    homepage   = "https://github.com/lioralabs/cook-modules",
    license    = "MIT",
