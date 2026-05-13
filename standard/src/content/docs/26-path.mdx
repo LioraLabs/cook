@@ -1,0 +1,40 @@
+---
+title: "§{lua.path} — Path helpers"
+sidebar:
+  order: 26
+---
+# 26. Path helpers (`path.*`) [#lua.path]
+> **Normative.** This chapter defines the `path.*` table — pure string manipulation on path components, with no I/O.
+
+## 26.1. Overview [#lua.path-helpers]
+**Phase.** Both. The `path.*` surface is pure string manipulation on path components; it performs no I/O and does not depend on the working directory.
+
+## 26.2. `path.stem` [#lua.path-stem]
+**Signature.** `path.stem(p: string) -> string`
+
+Returns the final path component of `p` with its extension removed. For `"src/foo.c"` the result is `"foo"`. For a path with no file name (e.g., `""` or `"/"`) the result is the empty string.
+
+## 26.3. `path.name` [#lua.path-name]
+**Signature.** `path.name(p: string) -> string`
+
+Returns the final path component of `p` including its extension. For `"src/foo.c"` the result is `"foo.c"`.
+
+## 26.4. `path.ext` [#lua.path-ext]
+**Signature.** `path.ext(p: string) -> string`
+
+Returns the extension of `p` as a string beginning with a literal `.`; for a file with no extension, returns the empty string. For `"src/foo.c"` the result is `".c"`.
+
+## 26.5. `path.dir` [#lua.path-dir]
+**Signature.** `path.dir(p: string) -> string`
+
+Returns `p` with its final component removed. For `"src/foo.c"` the result is `"src"`.
+
+## 26.6. `path.replace_ext` [#lua.path-replace-ext]
+**Signature.** `path.replace_ext(p: string, new_ext: string) -> string`
+
+Returns `p` with its extension replaced by `new_ext`. A leading `.` on `new_ext` is optional: `path.replace_ext("a.c", "o")` and `path.replace_ext("a.c", ".o")` both yield `"a.o"`.
+
+## 26.7. `path.join` [#lua.path-join]
+**Signature.** `path.join(a: string, b: string) -> string`
+
+Returns the path formed by joining `b` onto `a` with the host separator. If `b` is absolute, the result is `b`.
