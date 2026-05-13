@@ -1,0 +1,287 @@
+---
+title: "§{cat.cc} — cc — C-family build module"
+sidebar:
+  order: 28
+---
+# 28. cc — C-family build module [#cat.cc]
+> **Normative.** This chapter specifies the public surface of the `cc` blessed module — the C-family native build module distributed through the official LuaRocks-backed registry (`rocks.usecook.com`). It is the first entry in the §{cat.index} catalogue and a conformance-checkable contract that any reimplementation MUST honour.
+
+## 28.1. Synopsis and conformance scope [#cat.cc.synopsis]
+
+The `cc` module specifies a portable surface for declarative C and C++ native builds. It dispatches on source-file extension (`.c`, `.C` → `cc`; `.cpp`, `.cc`, `.cxx`, `.C++` → `cxx`) so a single target can mix C and C++ sources without per-target language opt-in.
+
+A conforming implementation MUST expose the thirteen public functions listed in §{cat.cc.surface} and MUST honour their option tables, return values, and propagation semantics. A conforming implementation SHOULD provide informative error diagnostics for the negative cases described per-function.
+
+The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
+
+## 28.2. Identity, resolution, init hook [#cat.cc.identity]
+
+The blessed rock is published as `cook_cc`. A Cookfile imports it by:
+
+```
+use cook_cc
+```
+
+Per §{mods.use} (`use` declaration) and §{comp.overview} (cross-Cookfile composition), `use cook_cc` MUST bind the loaded module table to the local name `cook_cc` in the Cookfile's scope. The grammar of `§{mods.use}` does not currently provide an `as`-alias form; call sites refer to the module by its rock name (`cook_cc.bin(...)`, `cook_cc.find(...)`, etc.). A future Standard revision can introduce alias syntax; this clause will be updated in lockstep.
+
+The implementation's module table MUST include an `init` function honoured by the loader contract at §{lua.cook-load-module}: the loader MUST call `init()` exactly once per Lua VM that loads the module. The `init` function MAY rehydrate state from `cook.cache` (e.g., a previously-detected compiler triple) and MUST NOT be exposed as part of the user-callable surface (callers reading §{cat.cc.surface} do not invoke `init()` directly).
+
+## 28.3. Public surface [#cat.cc.surface]
+
+### 28.3.1. cc.bin [#cat.cc.bin]
+
+```
+cc.bin(name: string, opts: BinOpts) -> string
+```
+
+Registers an executable target named `name`. A conforming implementation MUST compile every source listed in `opts.sources` (or globbed from `opts.dir`) and link the resulting objects to `build/bin/<name>`. The function MUST register the target in the implementation's known-targets state so `cc.compile_commands()` (§{cat.cc.compile-commands}) can recover its inputs.
+
+`BinOpts` fields (all optional unless noted):
+
+| Field | Type | Semantics |
+|---|---|---|
+| `sources` | list[string] | Source paths or globs. REQUIRED unless `dir` is provided. |
+| `dir` | string | Root for recursive source globbing (`*.c`, `*.cpp`, `*.cc`, `*.cxx`). |
+| `includes` | list[string] | Private include dirs. |
+| `export_includes` | list[string] | Public include dirs propagated to consumers via `cook.export`. |
+| `defines` | list[string] | Macro names or `NAME=value`. |
+| `system_libs` | list[string] | Passed to the linker as `-l<name>`. |
+| `frameworks` | list[string] | macOS frameworks passed through to `cc.link` (§{cat.cc.link}). No-op on non-macOS hosts. |
+| `extra_cflags` | string | Raw flags appended at compile. |
+| `extra_ldflags` | string | Raw flags appended at link. |
+| `links` | list[string] | Other cc-registered targets to link against (transitive propagation per §{cat.cc.transitive}). |
+| `standard` | string | e.g., `"c++17"`, `"c11"`. |
+| `warnings` | string | `"default"` (`-Wall`), `"strict"` (`-Wall -Wextra -Wpedantic`), `"none"`, or raw flags. |
+
+Return: the target name (echo for chaining).
+
+Error: if the source count is zero after globbing, the implementation MUST raise `[cc.bin] no sources found for target '<name>'` at the caller's line.
+
+### 28.3.2. cc.lib [#cat.cc.lib]
+
+```
+cc.lib(name: string, opts: LibOpts) -> string
+```
+
+Registers a static-library target. A conforming implementation MUST compile sources as for `cc.bin`, then archive the objects to `build/lib/lib<name>.a`. `LibOpts` is `BinOpts` minus link-time fields (`extra_ldflags`, `system_libs`, and `frameworks` apply at consumer link time, not at archive time, but MAY be recorded for propagation).
+
+Error model identical to §{cat.cc.bin}.
+
+### 28.3.3. cc.shared [#cat.cc.shared]
+
+```
+cc.shared(name: string, opts: SharedOpts) -> string
+```
+
+Registers a shared-library target. A conforming implementation MUST compile sources with `-fPIC` and link the objects to `build/lib/lib<name>.<ext>`, where `<ext>` is `so` on Linux and macOS and `dll` on Windows. The linker MUST be invoked with `-shared` on Linux, `-dynamiclib` on macOS, and `/DLL` on Windows.
+
+`SharedOpts` fields are identical to `BinOpts`.
+
+### 28.3.4. cc.headers [#cat.cc.headers]
+
+```
+cc.headers(name: string, opts: HeadersOpts) -> string
+```
+
+Registers a header-only library: a logical target that records exports for transitive propagation but emits no compile or link units. `HeadersOpts` typically carries `export_includes` and `defines`. `cc.headers` MUST register the target in known-targets but MUST NOT call `cook.add_unit(...)`.
+
+### 28.3.5. cc.compile [#cat.cc.compile]
+
+```
+cc.compile(source: string, opts: CompileOpts) -> string
+```
+
+Compiles a single source file to an object. A conforming implementation MUST emit one work unit per call with `output = "build/obj/<target_name>/<stem>.o"` (where `<stem>` is the source's filename without extension and `<target_name>` is `opts.target_name` or `"default"`). The unit's `discovered_inputs` MUST point at a make-format depfile so header dependencies participate in incremental rebuilds.
+
+Returns the output path.
+
+### 28.3.6. cc.archive [#cat.cc.archive]
+
+```
+cc.archive(objects: list[string], output: string) -> string
+```
+
+Archives `objects` into a static library at `output` via `ar rcs`. The implementation MUST emit one work unit whose `inputs = objects`, `output = output`, `command = "ar rcs <output> <objects...>"`.
+
+### 28.3.7. cc.link [#cat.cc.link]
+
+```
+cc.link(objects: list[string], output: string, opts: LinkOpts) -> string
+```
+
+Links objects to `output`. `LinkOpts.system_libs` is appended as `-l<name>`; `LinkOpts.extra_ldflags` is appended verbatim; `LinkOpts.shared = true` adds the platform's shared-library flag (§{cat.cc.shared}).
+
+`LinkOpts.frameworks` (list[string]): each entry MUST emit `-framework <name>` at link time on macOS hosts. On non-macOS hosts the implementation MUST treat the field as a no-op, allowing cross-platform call sites where a curated finder returns `system_libs={"openal"}` on Linux and `frameworks={"OpenAL"}` on macOS to use the same `cc.link` invocation.
+
+### 28.3.8. cc.find [#cat.cc.find]
+
+```
+cc.find(name: string, opts: FindOpts?) -> FindResult
+```
+
+Discovers a package by name and returns a structured result record.
+
+`FindOpts` (all optional):
+
+| Field | Type | Semantics |
+|---|---|---|
+| `version` | string | A semver-style constraint (e.g., `">=4.0"`, `"=4.0.1"`, `">=2.0,<3.0"`). Honoured by every strategy that can determine the discovered package's version. Pre-release tags are excluded (`"4.0.0-rc1"` does NOT satisfy `">=4.0.0"`). |
+| `cmake` | boolean | When `true`, the cmake-compat strategy MUST be consulted immediately after curated finders, before pkg-config, and pkg-config MUST be skipped for this call. The default `false` places cmake-compat after pkg-config in the standard order. |
+
+A conforming v0.3 implementation MUST consult strategies in this order, first-match-wins:
+
+1. **Project-registered finders** (per §{cat.cc.register-finder}). MUST be tried first so projects can override curated behaviour.
+2. **Curated finders** — implementation-provided finders for a documented short list. The reference implementation ships finders for `raylib`, `sdl2`, `openal`, `gl`/`opengl`, `threads`, `zlib`, `libcurl`. Implementations MAY ship a different set; each curated finder MUST conform to the FindResult contract.
+3. **pkg-config** — as v0.1. MUST be skipped when `opts.cmake = true`.
+4. **cmake-compat** — described in §{cat.cc.find-cmake-compat}. When `opts.cmake = true`, MUST be consulted in step 3's slot instead.
+5. **Bare-lib probe** — file-existence check for `lib<name>.{so,dylib,a}` on the host's default linker search paths (`/usr/lib`, `/usr/local/lib`, and paths reported by `cc -print-search-dirs`). MUST be skipped when `opts.version` is set; bare probe cannot verify version.
+
+A strategy MAY report `outcome = "skip"` (the strategy structurally could not be consulted) or `outcome = "miss"` (the strategy was consulted and rejected the package). Only `outcome = "hit"` populates `found = true` and the result fields. Implementations MUST NOT stop the chain on `skip` or `miss`; they MUST proceed to the next strategy. The `skip`/`miss` distinction is informational.
+
+`FindResult` (returned by every `cc.find` call):
+
+| Field | Type | Semantics |
+|---|---|---|
+| `found` | boolean | `true` iff some strategy returned `outcome = "hit"`. |
+| `cflags` | string | Compile flags from the winning strategy (empty on miss). |
+| `libs` | string | Link flags from the winning strategy (empty on miss). |
+| `system_libs` | list[string] | Parsed `-l<name>` libraries. |
+| `include_dirs` | list[string] | Parsed `-I<dir>` paths. |
+| `lib_dirs` | list[string] | Parsed `-L<dir>` paths. |
+| `frameworks` | list[string] | Parsed `-framework <name>` entries (macOS). |
+| `version` | string \| nil | Version detected by the winning strategy (nil if the winning strategy reports none). |
+| `tried` | list[Attempt] | Ordered list of every strategy consulted, including the winning entry on hits. |
+
+`Attempt`:
+
+| Field | Type | Semantics |
+|---|---|---|
+| `strategy` | string | `"project:<name>"`, `"curated:<name>"`, `"pkg-config"`, `"cmake-compat"`, `"bare-probe"`, or for third-party rocks `"rocks.<rockname>:<finder>"`. |
+| `outcome` | string | `"hit"`, `"miss"`, or `"skip"`. |
+| `reason` | string | Human-readable explanation. MAY be empty on `"hit"`. |
+| `hint` | string \| nil | Install hint (e.g., `"apt: libraylib-dev / brew: raylib"`). Curated finders SHOULD emit on miss; other strategies SHOULD NOT. |
+
+Caching: results MUST be cached in `cook.cache` keyed by `"cc.find:<name>:<canonical-opts>"`, where `canonical-opts` is the deterministic serialisation of `opts` (keys sorted, values stringified, list-valued opts joined with `,`). Repeat calls within one invocation MUST NOT re-consult the chain.
+
+#### 28.3.8.1. cmake-compat strategy [#cat.cc.find-cmake-compat]
+
+A conforming cmake-compat strategy MUST:
+
+1. If `opts.version` is set, return `{ outcome = "skip", reason = "version detection unsupported by legacy cmake --find-package" }` without invoking any subprocess. cmake-compat does not surface version metadata in v0.3; the chain falls through to bare-probe (itself a no-op on `opts.version`).
+2. Locate a `cmake` driver on PATH. If absent, return `{ outcome = "skip", reason = "cmake binary not on PATH", hint = "install cmake: apt: cmake / brew: cmake / dnf: cmake" }`.
+3. Probe `EXIST` mode for the queried package using `cmake --find-package -DNAME=<name> -DCOMPILER_ID=GNU -DLANGUAGE=C -DMODE=EXIST -DQUIET=TRUE` (or implementation-equivalent invocation). If `EXIST` reports "not found" (cmake exit ≠ 0), return `{ outcome = "miss", reason = "cmake found no Config or Find module for '<name>'", hint = <package-specific or generic> }`.
+4. Probe `COMPILE` mode for cflags; probe `LINK` mode for libs.
+5. Parse `COMPILE` output per §{cat.cc.find-cmake-compile}.
+6. Parse `LINK` output per §{cat.cc.find-cmake-link}.
+7. If any token in the parsed LINK output is a filesystem path whose final component matches `*Config.cmake` or `*Targets.cmake`, return `{ outcome = "miss", reason = "imported-target chain too complex for legacy --find-package", hint = "register a project finder for '<name>' via cc.register_finder" }`.
+8. On a clean hit, return `{ outcome = "hit", strategy = "cmake-compat", payload = { … } }` with `payload.version = nil`.
+
+Names passed to cmake-compat are case-sensitive and forwarded to `cmake` unchanged. `cc.find("SDL3")` probes for `SDL3Config.cmake`; `cc.find("sdl3")` probes for `sdl3-config.cmake`. The case convention follows cmake's own resolver behaviour.
+
+#### 28.3.8.2. cmake-compat COMPILE-mode grammar [#cat.cc.find-cmake-compile]
+
+`cmake --find-package … -DMODE=COMPILE` emits a shell-token stream containing `-I<dir>`, `-D<macro>`, and (rarely) `-isystem <dir>` tokens, whitespace-separated, with a trailing newline. The implementation MUST reuse the v0.2 token grammar from the pkg-config strategy: `-I` ⇒ `include_dirs`; `-D` ⇒ collected in `cflags`; other tokens preserved verbatim in `cflags`.
+
+#### 28.3.8.3. cmake-compat LINK-mode grammar [#cat.cc.find-cmake-link]
+
+`cmake --find-package … -DMODE=LINK` emits a shell-token stream whose elements MUST be classified as:
+
+| Token shape | Classification | Field |
+|---|---|---|
+| `-framework <name>` (two tokens) | macOS framework | `frameworks` |
+| `-l<name>` | system library | `system_libs`; also appended to `libs` |
+| `-L<dir>` | library search path | `lib_dirs`; also appended to `libs` |
+| `*.so`, `*.so.<version>`, `*.dylib`, `*.a`, `*.lib` (any token containing `/` or `\` and ending in one of these suffixes) | absolute path to a library file | `libs` (verbatim) |
+| `*Config.cmake`, `*Targets.cmake` | imported-target chain marker | triggers `outcome = "miss"` per §{cat.cc.find-cmake-compat} step 7 |
+| any other non-empty token | recorded in `libs` verbatim; not propagated to typed fields | `libs` |
+
+Absolute paths emitted to `libs` MUST be passable to the linker as-is; linkers accept absolute paths and resolve them without `-L` search.
+
+### 28.3.9. cc.defaults [#cat.cc.defaults]
+
+```
+cc.defaults(opts: DefaultsOpts)
+```
+
+Records module-wide defaults that subsequent `cc.bin`, `cc.lib`, `cc.shared`, and `cc.headers` calls MUST honour by additive merge (lists prepend; scalars replace). `cc.defaults` is the canonical mechanism for setting build-wide overrides from `config` blocks; implementations MUST NOT consult `CPP_*` environment variables.
+
+### 28.3.10. cc.toolchain [#cat.cc.toolchain]
+
+```
+cc.toolchain(opts: ToolchainOpts)
+```
+
+Overrides the active compiler, standard, and warnings. `ToolchainOpts`:
+
+| Field | Type | Semantics |
+|---|---|---|
+| `compiler` | string | The `cxx` driver to use (e.g., `"clang++"`); the `cc` driver is derived. |
+| `standard` | string | Default `-std=` value for subsequent C++ compiles. |
+| `warnings` | string | Default warnings preset or raw flags. |
+
+If never called, the implementation MUST auto-detect a compiler via PATH probing during `init()`.
+
+### 28.3.11. cc.compile_commands [#cat.cc.compile-commands]
+
+```
+cc.compile_commands()
+```
+
+Writes `compile_commands.json` in the current working directory, one entry per source per known target. The output MUST be valid JSON parseable by clangd and equivalent tools. The implementation runs in the worker VM (called from a recipe body), so its inputs MUST be sourced from `cook.cache` (target list) and `cook.import` (per-target compile info) — both established Cook APIs.
+
+### 28.3.12. cc.register_finder [#cat.cc.register-finder]
+
+```
+cc.register_finder(name: string, finder: function(opts) -> FindResult)
+```
+
+Registers a project-scoped finder for `name`. Subsequent `cc.find(name, ...)` calls MUST consult `finder` before the curated/pkg-config/bare-probe stages, recording its Attempt with `strategy = "project:<name>"`. The function MUST return a FindResult; the implementation MAY discard the function's own `tried` field (the resolver synthesises the chain-level `tried` list externally). Re-registration replaces the prior finder without warning; this enables `config` blocks to override defaults per build profile.
+
+Raising in the finder is permitted; the error surfaces at the `cc.find` call site at level 2 (per §{cat.cc.errors}).
+
+### 28.3.13. cc.find_or_error [#cat.cc.find-or-error]
+
+```
+cc.find_or_error(name: string, opts: FindOpts?) -> FindResult
+```
+
+Calls `cc.find(name, opts)`. If `result.found` is `true`, returns `result` unchanged. Otherwise raises an error at level 2 prefixed `[cc.find_or_error]`. The error message MUST list every Attempt in `result.tried` (strategy / outcome / reason) and MUST include any `hint` fields. This is the only function in §{cat.cc} that raises on a missing package.
+
+## 28.4. Transitive propagation [#cat.cc.transitive]
+
+Every cc target maker (`cc.bin`/`cc.lib`/`cc.shared`/`cc.headers`) MUST call `cook.export(name, info)` recording the target's outward-facing fields:
+
+- `info.includes` — directories the consumer adds to `-I<dir>` when compiling
+- `info.defines` — macros the consumer adds to `-D<def>` when compiling
+- `info.system_libs` — libraries the consumer links with `-l<name>` at link time
+- `info.frameworks` — macOS framework entries the consumer adds at link time as `-framework <name>`
+- `info.extra_ldflags` — raw flags to append at consumer link time
+- `info.links` — further transitive targets (forms the propagation graph)
+- `info.compile_info` — per-target compile info for `cc.compile_commands` (§{cat.cc.compile-commands})
+
+When `opts.links = { "a", "b" }` is provided to a target maker, the implementation MUST resolve the closure by walking `cook.import("a").links`, `cook.import("b").links`, recursively, deduplicating both nodes (cycle-safe) and field values. The closure's `includes` / `defines` / `system_libs` / `extra_ldflags` MUST be merged into the new target's compile and link commands. The closure's `frameworks` MUST be merged into the new target's link command analogously to `system_libs` (dedup-preserving first-seen order); a non-macOS host implementation MAY merge but MUST NOT emit (§{cat.cc.link}).
+
+v0.1 normatively specifies implicit-public propagation: every field in the target maker's options is exported as-is. Future Standard revisions will introduce PRIVATE / PUBLIC distinctions; v0.1 implementations MAY anticipate the split by recognising `export_includes` (already a documented field on `BinOpts` per §{cat.cc.bin}) as the public form; absence of `export_*` means the corresponding `includes`/etc. is exported by default.
+
+## 28.5. Error model [#cat.cc.errors]
+
+Every error MUST be prefixed with `[cc.<fn>]` and named at level 2 (`error(msg, 2)`) so the blame surfaces at the Cookfile call site, not inside the module. Negative cases that MUST be diagnosed:
+
+| Function | Condition | Message |
+|---|---|---|
+| `cc.bin`/`lib`/`shared` | `#sources == 0` after globbing | `no sources found for target '<name>'` |
+| `cc.compile` | source file does not exist | `source file not found: <path>` |
+| `cc.toolchain` (during `init()`) | no compiler on PATH | `no C/C++ compiler on PATH (tried g++, clang++)` |
+| `cc.find_or_error` | `result.found == false` | `could not locate '<name>'<version-suffix>:\n  - <strategy>: <outcome> (<reason>)...\n<hints>` |
+| `cc.register_finder` | `finder` is not a function | `register_finder for '<name>' requires a function, got <type>` |
+| `cc.find` (cmake-compat) | cmake binary not on PATH | (returned as `Attempt`, not raised) `cmake binary not on PATH` |
+| `cc.find` (cmake-compat) | EXIST mode reports not found | (returned as `Attempt`) `cmake found no Config or Find module for '<name>'` |
+| `cc.find` (cmake-compat) | LINK output contains `*Config.cmake` / `*Targets.cmake` | (returned as `Attempt`) `imported-target chain too complex for legacy --find-package` |
+
+`cc.find` does NOT raise on a miss; it returns `{ found = false }`. Callers that require a hit MUST test `result.found` and raise their own error.
+
+## 28.6. Vendoring after install [#cat.cc.vendoring]
+
+Per §{cat.bootstrap.vendor}, a project MAY hand-vendor a copy of `cook_cc` by placing `cook_modules/cook_cc.lua` (or `cook_modules/cook_cc/init.lua`) at the top of the project's `cook_modules/` directory. The hand-vendored file becomes the source of truth for that project; subsequent `cook modules install` invocations MUST leave it untouched (the install only writes under `cook_modules/share/lua/5.4/`).
+
+A re-installed rock at `share/lua/5.4/cook_cc/init.lua` coexisting with a hand-vendored `cook_cc.lua` at the top level is unambiguously resolved: §{mods.use} specifies hand-vendored top-level wins.
