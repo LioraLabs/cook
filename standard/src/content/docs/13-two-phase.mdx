@@ -1,0 +1,60 @@
+---
+title: "§{exec.phases} — Two-phase model"
+sidebar:
+  order: 13
+---
+# 13. Two-phase model [#exec.phases]
+> **Normative.** This chapter defines the register/execute split that governs every Cookfile evaluation. The phase classification of every Lua-bearing surface form is consolidated in the table at §{exec.phases.classification}.
+
+## 13.1. Two-phase execution [#exec.two-phase]
+A conforming implementation MUST evaluate each selected recipe in two phases: a **register phase** and an **execute phase**. The register phase discovers the work a recipe wishes to perform; the execute phase performs it. The phases MUST NOT be interleaved within a single recipe: every unit of work produced by the register phase of a recipe MUST be known before the execute phase of that recipe begins.
+
+During the register phase, the implementation evaluates the recipe body as Lua code (§{lua}) in **capture mode**. Cook Lua API calls that declare work — `cook.add_unit`, `cook.step_group`, and the step kinds in §{recipes} that desugar to these calls — record the work into a list of **work units** rather than performing it. The register phase MUST run on a single thread with a single Lua VM per recipe registration.
+
+During the execute phase, the implementation arranges the recorded work units into a dependency graph (§{exec.step-groups}, §{exec.cross-recipe-ordering}) and executes the ready units. The execute phase MAY run work units in parallel where the dependency rules below permit it. The execute phase MUST respect every ordering relation established during the register phase.
+
+A conforming implementation MAY register and execute different recipes concurrently only when doing so does not observably reorder work units relative to the rules in §{exec.step-groups}–§{exec.interactive-drain}; in particular, a recipe that depends on another recipe (§{exec.cross-recipe-ordering}) MUST NOT begin execution of any of its work units until every work unit of the prerequisite has completed successfully.
+
+### Example 13.1.1
+
+```cook
+recipe build
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+```
+
+Register phase: the recipe body runs once. The `cook` step expands to a step group containing one work unit per matched source file. No `gcc` process is spawned.
+
+Execute phase: the recorded units run, each in its own subprocess. Members of the step group MAY run in parallel (§{exec.step-groups}).
+
+### Note 13.1.1
+
+The two phases use different Cook Lua API bindings for the same call. In the register phase `cook.exec` records a shell work unit and returns the empty string without spawning a process; in the execute phase a shell work unit is dispatched to a subprocess. See §{lua} for the capture-mode contract of each API.
+
+## 13.2. Phase classification of every Lua-bearing surface form [#exec.phases.classification]
+
+
+Every Lua expression in a Cookfile is evaluated in exactly one of three timings. The following table is normative; rows that link to other sections defer the surface-level definition to that section, and merely state the phase here.
+
+| Surface form | Source section | Phase | Produces a unit? |
+|---|---|---|---|
+| `config` block body                          | §{decl.config}, §{decl.config-composition} | **load** (before any register phase begins) | no — runs against Cook Lua API state directly |
+| Cook module top level (`return mod`) and `init()` | §{comp.overview} | **load** (when the importing Cookfile's `use` resolves) | no |
+| `register_block` body                        | §{decl.register} | **register** | no — spliced verbatim into the compiled register-phase Lua program |
+| top-level `module_call` (`alias.fn(…)`)      | §{toplevel.module-call} | **register** | no — spliced verbatim at source position |
+| `inline_lua_line` (`>>` *body*)              | §{recipes.lua-steps} | **register** | no — inlined into the recipe-body Lua function |
+| `inline_lua_block` (`>>{ … }`)               | §{recipes.lua-steps} | **register** | no — inlined |
+| `lua_line` (`>` *body*)                      | §{recipes.lua-steps} | **execute** | yes — contributes to the body unit per §{recipes.body-bundling} |
+| `lua_block` (`>{ … }`)                       | §{recipes.lua-steps} | **execute** | yes — contributes to the body unit |
+| `cook STR using >{ … }` (using-clause Lua)   | §{recipes.cook-single-output}, §{recipes.cook-multi-output} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals} bindings |
+| `cook.add_unit({lua_code = "…"})` payload    | §{lua.add-unit} | **execute** | yes — runs on the worker VM that picks up the unit |
+| `plate { … }` (shell block)                  | §{recipes.plate-step} | **execute** | yes — recorded with shell payload, with §{lua.shell-placeholders-plate-test} substitutions |
+| `plate >{ … }` (Lua block)                   | §{recipes.plate-step} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals-plate-test} bindings |
+| `test { … }` (shell block)                   | §{recipes.test-step}  | **execute** | yes — recorded with shell payload via `cook.add_test`, with §{lua.shell-placeholders-plate-test} substitutions |
+| `test >{ … }` (Lua block)                    | §{recipes.test-step}  | **execute** | yes — recorded with `lua_code` payload via `cook.add_test`, with §{lua.using-block-globals-plate-test} bindings |
+
+Three corollaries:
+
+1. **The single-`>` family is execute-phase, the doubled-`>` family is register-phase.** This is the surface-level rule a Cookfile author needs to remember; everything else in the table follows from it plus the splicing rules in §{decl.register} and §{toplevel.module-call}.
+2. **`register_block` bodies and top-level module_calls are register-phase.** Both splice verbatim into the compiled register-phase Lua program at their source positions (§{decl.register-splicing}); the module's recorded `cook.add_unit` calls fire during registration and the work units run at execute. Note: recipe-body `module_call` dispatch was removed in CS-0072 (§{recipes.module-call-steps}).
+3. **Inside an execute-phase Lua chunk, register-only Cook Lua API helpers are unavailable.** `cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, and `cook.recipe` MUST raise a Lua runtime error when invoked from execute-phase Lua. `cook.sh` is available in both phases (§{lua.cook-sh}). See §{rationale.execute-phase-api}.

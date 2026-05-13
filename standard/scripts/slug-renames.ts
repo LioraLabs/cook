@@ -65,6 +65,8 @@ export const SLUG_RENAMES: Record<string, string | null> = {
 
   'lexical.placeholders':            'phl.token',
 
+  'exec.phase-classification':       'exec.phases.classification',
+
   'lua.shell-placeholders':            'phl.cook-step',
   'lua.shell-placeholders-plate-test': 'phl.plate-test',
 
