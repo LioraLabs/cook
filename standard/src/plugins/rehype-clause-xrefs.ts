@@ -32,28 +32,27 @@ export function rehypeClauseXrefs(options: ClauseXrefsOptions) {
         const slug = m[1];
         const info = clauseMap.get(slug);
         if (!info) {
-          // Before emitting a generic "unresolved" error, consult the
-          // slug-renames registry. If the slug is a retired one introduced
-          // by the v0.10 structural redesign, surface a precise rename
-          // diagnostic naming the new slug.
+          // Retired or renamed slug. Emit a precise diagnostic naming the new
+          // slug (if any). During the v0.10 transition we `console.warn` rather
+          // than throw; Task 8 activates the vitest source-lint as the hard CI
+          // gate (see src/plugins/__tests__/no-retired-slugs-in-source.test.ts).
           const rename = resolveRename(slug);
           if (rename === null) {
-            // During v0.10 transition: warn rather than fail. Task 8 (the strict-mode flip) activates the vitest source-lint that turns retired-slug refs into a CI error; until then, intermediate-task commits keep retired refs in legacy files.
             console.warn(
               `[slug-renames] §{${slug}} references a slug that was retired with no replacement. See scripts/slug-renames.ts and Cook Standard v0.10 reorg.`,
             );
             continue;
-          }
-          if (rename !== undefined) {
-            // During v0.10 transition: warn rather than fail. Task 8 (the strict-mode flip) activates the vitest source-lint that turns retired-slug refs into a CI error; until then, intermediate-task commits keep retired refs in legacy files.
+          } else if (rename !== undefined) {
             console.warn(
               `[slug-renames] §{${slug}} renamed to §{${rename}} in Cook Standard v0.10. Update the reference in source. See scripts/slug-renames.ts.`,
             );
             continue;
+          } else {
+            // rename === undefined: slug not in renames registry — genuine unknown.
+            throw new Error(
+              `unknown clause slug "${slug}" — §{${slug}} did not resolve in clauseMap`,
+            );
           }
-          throw new Error(
-            `unknown clause slug "${slug}" — §{${slug}} did not resolve in clauseMap`,
-          );
         }
 
         if (m.index! > last) {

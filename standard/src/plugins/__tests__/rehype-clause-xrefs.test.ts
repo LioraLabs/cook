@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { rehype } from 'rehype';
 import { rehypeClauseXrefs } from '../rehype-clause-xrefs';
 import type { ClauseInfo } from '../clauses';
@@ -109,5 +109,49 @@ describe('rehypeClauseXrefs', () => {
     expect(out).toContain('<a href="/x">link</a>');
     expect(out).toContain('href="/02-lexical/#lexical.identifiers"');
     expect(out).toContain('>§ 2.3</a>');
+  });
+
+  it('warns and leaves text untouched for a retired-with-null slug', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const out = process(
+        '<p>see §{grammar.var-declarations} for context</p>',
+        defaultMap,
+      );
+      expect(spy).toHaveBeenCalled();
+      const messages = spy.mock.calls.map(call => String(call[0]));
+      expect(messages.some(msg =>
+        msg.includes('[slug-renames]') && msg.includes('retired with no replacement'),
+      )).toBe(true);
+      expect(out).toContain('§{grammar.var-declarations}');
+      expect(out).not.toContain('class="clause-xref"');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('warns naming the replacement for a renamed slug and leaves text untouched', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const out = process(
+        '<p>see §{grammar.register-blocks.splicing} for context</p>',
+        defaultMap,
+      );
+      expect(spy).toHaveBeenCalled();
+      const messages = spy.mock.calls.map(call => String(call[0]));
+      expect(messages.some(msg =>
+        msg.includes('[slug-renames]') && msg.includes('renamed to §{decl.register-splicing}'),
+      )).toBe(true);
+      expect(out).toContain('§{grammar.register-blocks.splicing}');
+      expect(out).not.toContain('class="clause-xref"');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('still throws for a slug absent from both clauseMap and the renames registry', () => {
+    expect(() =>
+      process('<p>See §{nope.totally-fake-slug}.</p>', defaultMap),
+    ).toThrowError(/unknown clause slug/i);
   });
 });
