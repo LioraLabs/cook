@@ -6,7 +6,7 @@ use crate::lua_block::collect_lua_block;
 use crate::ParseError;
 
 /// Returns true if `text` looks like a module function call: `ident.ident...`
-fn is_module_call(text: &str) -> bool {
+pub(crate) fn is_module_call(text: &str) -> bool {
     let bytes = text.as_bytes();
     // Must start with an ASCII letter or underscore
     if bytes.is_empty() || !(bytes[0].is_ascii_alphabetic() || bytes[0] == b'_') {
@@ -30,7 +30,7 @@ fn is_module_call(text: &str) -> bool {
 /// A module call's body is Lua source, so the brace counter uses the stateful
 /// [`LuaScanner`] (CS-0035): braces inside multi-line long strings or block
 /// comments are treated as data and do not prematurely close the call.
-fn collect_module_call(
+pub(crate) fn collect_module_call(
     first_line_text: &str,
     line: usize,
     tokens: &[Located<Token>],
@@ -90,12 +90,27 @@ pub(crate) fn parse_config_block_lua(
     // The terminating token is left in place for parse() to dispatch.
     let mut pos = start;
     while pos < tokens.len() {
-        match &tokens[pos].value {
+        let tok = &tokens[pos];
+        match &tok.value {
             Token::RecipeHeader { .. }
             | Token::ChoreHeader { .. }
             | Token::ConfigHeader { .. }
             | Token::UseDecl { .. }
-            | Token::ImportDecl { .. } => break,
+            | Token::ImportDecl { .. }
+            | Token::RegisterHeader => break,
+            // Top-level module_call (column-0 Content matching the module-call
+            // shape) is also a terminator as of CS-0072. Check the raw source
+            // line to distinguish column-0 from indented Content.
+            Token::Content(text) if is_module_call(text) => {
+                let raw = source_lines
+                    .get(tok.line.saturating_sub(1))
+                    .copied()
+                    .unwrap_or("");
+                if !raw.starts_with(|c: char| c.is_whitespace()) {
+                    break;
+                }
+                pos += 1;
+            }
             _ => pos += 1,
         }
     }
@@ -114,6 +129,65 @@ pub(crate) fn parse_config_block_lua(
         // the body (consistent with v0.3 explicit-`end` behaviour).
         let lines = &source_lines[start_idx..end_idx];
         let trimmed_end = lines.iter().rposition(|l| !l.trim().is_empty())
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        lines[..trimmed_end].join("\n")
+    } else {
+        String::new()
+    };
+
+    Ok((body, pos))
+}
+
+pub(crate) fn parse_register_block_lua(
+    tokens: &[Located<Token>],
+    start: usize,
+    open_line: usize,
+    source_lines: &[&str],
+) -> Result<(String, usize), ParseError> {
+    // Mirror parse_config_block_lua: scan to the next column-0 top-level
+    // keyword OR top-level module_call shape OR EOF. The terminating
+    // token is left in place for parse() to dispatch.
+    let mut pos = start;
+    while pos < tokens.len() {
+        let tok = &tokens[pos];
+        match &tok.value {
+            Token::RecipeHeader { .. }
+            | Token::ChoreHeader { .. }
+            | Token::ConfigHeader { .. }
+            | Token::UseDecl { .. }
+            | Token::ImportDecl { .. }
+            | Token::RegisterHeader => break,
+            // Top-level module_call (Content matching <id>.<id>(...) shape)
+            // is also a terminator (CS-0072 §4.1.1 clause b).
+            // Only column-0 Content can be top-level: check the raw source line.
+            Token::Content(text) if is_module_call(text) => {
+                let raw = source_lines
+                    .get(tok.line.saturating_sub(1))
+                    .copied()
+                    .unwrap_or("");
+                if !raw.starts_with(|c: char| c.is_whitespace()) {
+                    break;
+                }
+                pos += 1;
+            }
+            _ => pos += 1,
+        }
+    }
+
+    let end_line = if pos < tokens.len() {
+        tokens[pos].line
+    } else {
+        source_lines.len() + 1
+    };
+
+    let start_idx = open_line;
+    let end_idx = end_line.saturating_sub(1);
+    let body = if start_idx < end_idx && end_idx <= source_lines.len() {
+        let lines = &source_lines[start_idx..end_idx];
+        let trimmed_end = lines
+            .iter()
+            .rposition(|l| !l.trim().is_empty())
             .map(|i| i + 1)
             .unwrap_or(0);
         lines[..trimmed_end].join("\n")
@@ -320,6 +394,29 @@ pub(crate) fn parse_recipe(
                 pos += 1;
             }
             Token::Content(text) => {
+                // CS-0072: a column-0 Content token matching the module-call
+                // shape is a top-level module_call, not a recipe step.
+                // Terminate the recipe body and leave the token for parse()
+                // to dispatch as a top-level module_call.
+                if is_module_call(text) {
+                    let raw = source_lines
+                        .get(tok.line.saturating_sub(1))
+                        .copied()
+                        .unwrap_or("");
+                    if !raw.starts_with(|c: char| c.is_whitespace()) {
+                        return Ok((
+                            Recipe {
+                                name,
+                                deps,
+                                ingredients,
+                                excludes,
+                                steps,
+                                line: recipe_line,
+                            },
+                            pos,
+                        ));
+                    }
+                }
                 if let Some(rest) = strip_keyword(text, "ingredients") {
                     if let Some(started) = imperative_began {
                         return Err(region_violation("ingredients", tok.line, started));
@@ -403,27 +500,6 @@ pub(crate) fn parse_recipe(
                         },
                         line: tok.line,
                     });
-                    pos = new_pos;
-                    continue;
-                } else if is_module_call(text) {
-                    if let Some(started) = imperative_began {
-                        return Err(region_violation("module-call", tok.line, started));
-                    }
-                    let (code, new_pos) =
-                        collect_module_call(text, tok.line, tokens, pos, source_lines)?;
-                    // Module calls are register-phase per §4.11. Single-line
-                    // desugars to InlineLua, multi-line to InlineLuaBlock.
-                    if code.contains('\n') {
-                        steps.push(Step::InlineLuaBlock {
-                            code,
-                            line: tok.line,
-                        });
-                    } else {
-                        steps.push(Step::InlineLua {
-                            code,
-                            line: tok.line,
-                        });
-                    }
                     pos = new_pos;
                     continue;
                 } else if let Some(cmd) = text.strip_prefix('@') {
@@ -574,6 +650,20 @@ pub(crate) fn parse_chore(
                 pos += 1;
             }
             Token::Content(text) => {
+                // CS-0072: column-0 Content matching the module-call shape
+                // terminates the chore body; token left for parse() dispatch.
+                if is_module_call(text) {
+                    let raw = source_lines
+                        .get(tok.line.saturating_sub(1))
+                        .copied()
+                        .unwrap_or("");
+                    if !raw.starts_with(|c: char| c.is_whitespace()) {
+                        return Ok((
+                            Chore { name, deps, steps, line: chore_line },
+                            pos,
+                        ));
+                    }
+                }
                 let text = text.clone();
                 if strip_keyword(&text, "ingredients").is_some() {
                     return Err(chore_banned("ingredients", tok.line));
@@ -583,19 +673,6 @@ pub(crate) fn parse_chore(
                     return Err(chore_banned("plate", tok.line));
                 } else if strip_keyword(&text, "test").is_some() {
                     return Err(chore_banned("test", tok.line));
-                } else if is_module_call(&text) {
-                    if let Some(started) = imperative_began {
-                        return Err(region_violation("module-call", tok.line, started));
-                    }
-                    let (code, new_pos) =
-                        collect_module_call(&text, tok.line, tokens, pos, source_lines)?;
-                    if code.contains('\n') {
-                        steps.push(Step::InlineLuaBlock { code, line: tok.line });
-                    } else {
-                        steps.push(Step::InlineLua { code, line: tok.line });
-                    }
-                    pos = new_pos;
-                    continue;
                 } else if let Some(cmd) = text.strip_prefix('@') {
                     let cmd = cmd.to_string();
                     if cmd.is_empty() {

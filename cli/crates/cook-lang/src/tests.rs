@@ -74,41 +74,37 @@ config dev
     assert_eq!(body.lines().count(), 3);
 }
 
-// ── SHI-73: Module calls without Lua delimiters ────────────────────
+// ── SHI-73 / CS-0072: Module calls in recipe bodies ────────────────
+//
+// CS-0072 (Cook Standard v0.9) removes the in-body module_call dispatch.
+// A bare `<id>.<id>(...)` line inside a recipe body now classifies as
+// shell_command (Step::Shell), not InlineLua. Authors must use `>>` for
+// register-phase Lua inside a recipe body.
 
 #[test]
-fn test_module_call_single_line() {
-    // Per §4.11, single-line module-call desugars to InlineLua (register-phase).
+fn test_module_call_single_line_is_shell_after_cs0072() {
+    // CS-0072: bare module-call in recipe body becomes Shell, not InlineLua.
     let source = "recipe build\n    cpp.compile(\"src/*.cpp\")\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].steps.len(), 1);
     match &result.recipes[0].steps[0] {
-        Step::InlineLua { code, .. } => {
-            assert_eq!(code, "cpp.compile(\"src/*.cpp\")");
+        Step::Shell { command, .. } => {
+            assert_eq!(command, "cpp.compile(\"src/*.cpp\")");
         }
-        other => panic!("expected InlineLua step, got {:?}", other),
+        other => panic!("expected Shell step (CS-0072), got {:?}", other),
     }
 }
 
 #[test]
-fn test_module_call_multiline() {
-    // Per §4.11, multi-line module-call desugars to InlineLuaBlock (register-phase).
-    let source = r#"recipe build
-    cpp.compile {
-        sources = "src/*.cpp",
-        output_dir = "build/obj/",
-    }
-"#;
+fn test_module_call_multiline_is_multiple_shell_after_cs0072() {
+    // CS-0072: a bare module-call spanning multiple lines in a recipe body
+    // becomes individual Shell steps (one per content line) since the
+    // multi-line collection only runs for top-level module calls now.
+    let source = "recipe build\n    cpp.compile(\"src/*.cpp\")\n    echo done\n";
     let result = parse(source).unwrap();
-    assert_eq!(result.recipes[0].steps.len(), 1);
-    match &result.recipes[0].steps[0] {
-        Step::InlineLuaBlock { code, .. } => {
-            assert!(code.contains("cpp.compile {"), "code was: {}", code);
-            assert!(code.contains("sources"), "code was: {}", code);
-            assert!(code.contains("}"), "code was: {}", code);
-        }
-        other => panic!("expected InlineLuaBlock step, got {:?}", other),
-    }
+    assert_eq!(result.recipes[0].steps.len(), 2);
+    assert!(matches!(&result.recipes[0].steps[0], Step::Shell { .. }));
+    assert!(matches!(&result.recipes[0].steps[1], Step::Shell { .. }));
 }
 
 #[test]
@@ -120,14 +116,15 @@ fn test_non_module_dot_is_shell() {
 }
 
 #[test]
-fn test_module_call_no_args() {
+fn test_module_call_no_args_is_shell_after_cs0072() {
+    // CS-0072: bare module-call with no args in recipe body becomes Shell.
     let source = "recipe build\n    cpp.detect_compiler()\n";
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
-        Step::InlineLua { code, .. } => {
-            assert_eq!(code, "cpp.detect_compiler()");
+        Step::Shell { command, .. } => {
+            assert_eq!(command, "cpp.detect_compiler()");
         }
-        other => panic!("expected InlineLua step, got {:?}", other),
+        other => panic!("expected Shell step (CS-0072), got {:?}", other),
     }
 }
 
@@ -1441,4 +1438,129 @@ recipe build
         err.contains("recipe 'build'") && err.contains("duplicate declaration"),
         "got: {err}"
     );
+}
+
+// ── Register block parsing (SHI-216 §3.7) ─────────────────────────────
+
+#[test]
+fn test_parse_empty_register_block() {
+    let cookfile = parse("register\n").unwrap();
+    assert_eq!(cookfile.register_blocks.len(), 1);
+    assert_eq!(cookfile.register_blocks[0].body, "");
+    assert_eq!(cookfile.register_blocks[0].line, 1);
+}
+
+#[test]
+fn test_parse_register_block_with_body() {
+    let source = "register\n    cook_cc.bin(\"game\", {})\n";
+    let cookfile = parse(source).unwrap();
+    assert_eq!(cookfile.register_blocks.len(), 1);
+    assert!(cookfile.register_blocks[0].body.contains("cook_cc.bin"));
+}
+
+#[test]
+fn test_parse_multiple_register_blocks() {
+    let source = "register\n    local x = 1\n\nregister\n    local y = 2\n";
+    let cookfile = parse(source).unwrap();
+    assert_eq!(cookfile.register_blocks.len(), 2);
+    assert!(cookfile.register_blocks[0].body.contains("local x"));
+    assert!(cookfile.register_blocks[1].body.contains("local y"));
+}
+
+#[test]
+fn test_parse_register_block_after_recipe_is_allowed() {
+    let source = "recipe build\n    @ ./build\n\nregister\n    cook_cc.bin(\"x\", {})\n";
+    let cookfile = parse(source).unwrap();
+    assert_eq!(cookfile.recipes.len(), 1);
+    assert_eq!(cookfile.register_blocks.len(), 1);
+}
+
+#[test]
+fn test_parse_register_block_interleaved() {
+    let source = "register\n    a()\n\nrecipe build\n    @ ./build\n\nregister\n    b()\n";
+    let cookfile = parse(source).unwrap();
+    assert_eq!(cookfile.register_blocks.len(), 2);
+    assert_eq!(cookfile.recipes.len(), 1);
+    assert!(cookfile.register_blocks[0].body.contains("a()"));
+    assert!(cookfile.register_blocks[1].body.contains("b()"));
+}
+
+#[test]
+fn test_parse_register_with_name_rejected() {
+    let source = "register foo\n    a()\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("register") && msg.contains("no name"),
+        "expected 'register'+'no name' diagnostic, got: {}", msg);
+}
+
+#[test]
+fn test_parse_register_terminates_recipe_body() {
+    let source = "recipe build\n    @ ./build\nregister\n    a()\n";
+    let cookfile = parse(source).unwrap();
+    assert_eq!(cookfile.recipes.len(), 1);
+    assert_eq!(cookfile.recipes[0].steps.len(), 1);
+    assert_eq!(cookfile.register_blocks.len(), 1);
+}
+
+// ── Top-level module_call dispatch (SHI-216 §3.7.5) ───────────────────
+
+#[test]
+fn test_parse_top_level_module_call_single_line() {
+    let source = "use cook_cc\ncook_cc.bin(\"game\", {})\n";
+    let cookfile = parse(source).unwrap();
+    assert_eq!(cookfile.top_level_module_calls.len(), 1);
+    assert!(cookfile.top_level_module_calls[0].code.starts_with("cook_cc.bin"));
+}
+
+#[test]
+fn test_parse_top_level_module_call_multiline() {
+    let source = "use cook_cc\ncook_cc.bin(\"game\", {\n    sources = { \"a.c\" },\n})\n";
+    let cookfile = parse(source).unwrap();
+    assert_eq!(cookfile.top_level_module_calls.len(), 1);
+    let code = &cookfile.top_level_module_calls[0].code;
+    assert!(code.contains("cook_cc.bin"));
+    assert!(code.contains("sources = { \"a.c\" }"));
+}
+
+#[test]
+fn test_parse_top_level_module_call_terminates_recipe() {
+    let source = "use cook_cc\nrecipe build\n    @ ./build\ncook_cc.bin(\"x\", {})\n";
+    let cookfile = parse(source).unwrap();
+    assert_eq!(cookfile.recipes.len(), 1);
+    assert_eq!(cookfile.recipes[0].steps.len(), 1);
+    assert_eq!(cookfile.top_level_module_calls.len(), 1);
+}
+
+#[test]
+fn test_parse_top_level_colon_call_rejected() {
+    let source = "use cook_cc\ncook_cc:bin(\"x\", {})\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("unexpected content"),
+        "expected top-level Content rejection, got: {}", msg);
+}
+
+// ── In-body module_call dispatch REMOVED (SHI-216 §3.9 amendment) ─────
+
+#[test]
+fn test_parse_in_body_bare_module_call_is_shell_after_cs0072() {
+    let source = "use cpp\nrecipe build\n    cpp.bin(\"x\", { sources = { \"a.c\" } })\n";
+    let cookfile = parse(source).unwrap();
+    assert_eq!(cookfile.recipes.len(), 1);
+    assert_eq!(cookfile.recipes[0].steps.len(), 1);
+    use crate::ast::Step;
+    assert!(
+        matches!(cookfile.recipes[0].steps[0], Step::Shell { .. }),
+        "expected Shell step (CS-0072 amendment), got: {:?}",
+        cookfile.recipes[0].steps[0],
+    );
+}
+
+#[test]
+fn test_parse_in_body_explicit_register_prefix_still_inline_lua() {
+    let source = "use cpp\nrecipe build\n    >> cpp.bin(\"x\", { sources = { \"a.c\" } })\n";
+    let cookfile = parse(source).unwrap();
+    use crate::ast::Step;
+    assert!(matches!(cookfile.recipes[0].steps[0], Step::InlineLua { .. }));
 }

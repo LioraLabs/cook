@@ -18,7 +18,7 @@ pub const COOK_STANDARD_VERSION: &str = "0.8";
 
 use ast::*;
 use lexer::*;
-use recipe::{parse_chore, parse_config_block_lua, parse_recipe};
+use recipe::{parse_chore, parse_config_block_lua, parse_recipe, parse_register_block_lua};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
@@ -135,6 +135,8 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
     let mut uses = Vec::new();
     let mut imports = Vec::new();
     let mut seen_recipe = false;
+    let mut register_blocks: Vec<ast::RegisterBlock> = Vec::new();
+    let mut top_level_module_calls: Vec<ast::TopLevelModuleCall> = Vec::new();
     // App. A.2 "Duplicate recipe / chore declaration name rule": recipes and
     // chores share a single callable namespace. Track every declaration so
     // we can reject any subsequent collision (recipe-vs-recipe,
@@ -226,11 +228,28 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 chores.push(chore);
                 pos = new_pos;
             }
-            Token::Content(_) => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: "unexpected content outside of a recipe".to_string(),
-                });
+            Token::Content(text) => {
+                // SHI-216 §3.7.5: a Content line whose first token matches the
+                // module-call shape `<id>.<id>(...)` is a top-level module_call.
+                // Anything else is rejected as before.
+                if recipe::is_module_call(text) {
+                    let header_line = tok.line;
+                    let text_clone = text.clone();
+                    let (code, new_pos) = recipe::collect_module_call(
+                        &text_clone,
+                        header_line,
+                        &tokens,
+                        pos,
+                        &source_lines,
+                    )?;
+                    top_level_module_calls.push(ast::TopLevelModuleCall { code, line: header_line });
+                    pos = new_pos;
+                } else {
+                    return Err(ParseError::Parse {
+                        line: tok.line,
+                        message: "unexpected content outside of a recipe".to_string(),
+                    });
+                }
             }
             Token::LuaLine(_)
             | Token::LuaBlockOpen
@@ -276,16 +295,29 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 pos += 1;
             }
             Token::RegisterHeader => {
-                // Full register-block parse dispatch lands in Task 4 (SHI-216).
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: "register blocks are not yet supported (SHI-216 in progress; parser dispatch lands in Task 4 of the implementation plan)".to_string(),
-                });
+                let header_line = tok.line;
+                // Reject `register foo`: detect non-empty content after the keyword.
+                let raw = source_lines
+                    .get(header_line.saturating_sub(1))
+                    .copied()
+                    .unwrap_or("");
+                let after_kw = raw.trim_start().strip_prefix("register").unwrap_or("");
+                if !after_kw.trim().is_empty() {
+                    return Err(ParseError::Parse {
+                        line: header_line,
+                        message: "register block takes no name; remove the trailing arguments".to_string(),
+                    });
+                }
+                pos += 1;
+                let (body, new_pos) =
+                    parse_register_block_lua(&tokens, pos, header_line, &source_lines)?;
+                register_blocks.push(ast::RegisterBlock { body, line: header_line });
+                pos = new_pos;
             }
         }
     }
 
-    Ok(Cookfile { config_blocks, recipes, chores, uses, imports, register_blocks: vec![], top_level_module_calls: vec![] })
+    Ok(Cookfile { config_blocks, recipes, chores, uses, imports, register_blocks, top_level_module_calls })
 }
 
 #[cfg(test)]

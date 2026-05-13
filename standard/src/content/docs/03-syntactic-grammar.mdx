@@ -321,3 +321,5 @@ The body line `CC "gcc"` is a `Content` token; the step-dispatch cascade matches
 ### Note 3.9.1
 
 The `cook-lang` parser test `test_indented_quoted_pair_is_shell_command` pins the recipe-body treatment of `NAME "value"`. The test `test_empty_interactive_step_errors` pins rejection of a bare `@`.
+
+The reference parser at `cli/crates/cook-lang` enforces the CS-0072 amendment by removing the `is_module_call` branch from the recipe-body step-dispatch in `parse_recipe` / `parse_chore` (informative).
