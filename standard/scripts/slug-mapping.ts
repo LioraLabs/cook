@@ -247,7 +247,8 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-11-new-1':        'comp.overview',
   'sec-11-new-2':        'comp.import',
   'sec-11-new-3':        'comp.qualified-refs',
-  'sec-11-new-4':        'comp.duplicates-and-cycles',
+  'sec-11-new-4':        'comp.use-scope-pointer',
+  'sec-11-new-5':        'comp.duplicates-and-cycles',
 
   // Ch. 12 — Modules (use system + catalogue index)
   'sec-12-new':          'mods',
