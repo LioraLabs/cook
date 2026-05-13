@@ -257,7 +257,15 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-12-new-5':        'mods.local',
   'sec-12-new-6':        'mods.catalogue-index',
 
+  // Ch. 13 — Two-phase model (Part II)
+  'sec-13-new':                'exec.phases',
+  'sec-13-new-classification': 'exec.phases.classification',
+
+  // Ch. 14 — Capture mode (Part II)
+  'sec-14-new':                'exec.capture',
+
   // Ch. 15 — Step groups and parallelism (Part II)
+  'sec-15-new':               'exec.groups',
   'sec-15-new-body-bundling': 'exec.body-bundling',
 
   // Ch. 20 — Workspace root (Part II)
