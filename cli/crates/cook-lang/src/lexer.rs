@@ -8,6 +8,7 @@ pub enum Token {
     ConfigHeader { name: Option<String> },
     UseDecl { name: String },
     ImportDecl { name: String, path: String },
+    RegisterHeader,
     LuaLine(String),
     LuaBlockOpen,
     InlineLuaLine(String),
@@ -203,6 +204,16 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
             let rest = trimmed["config".len()..].trim();
             let (name, _) = parse_name(rest, line_num)?;
             Token::ConfigHeader { name: Some(name) }
+        } else if !line.starts_with(|c: char| c.is_whitespace())
+            && trimmed == "register"
+        {
+            Token::RegisterHeader
+        } else if !line.starts_with(|c: char| c.is_whitespace())
+            && trimmed.starts_with("register")
+            && trimmed.len() > 8
+            && (trimmed.as_bytes()[8] == b' ' || trimmed.as_bytes()[8] == b'\t')
+        {
+            Token::RegisterHeader
         } else if !line.starts_with(|c: char| c.is_whitespace())
             && trimmed.starts_with("use")
             && trimmed.len() > 3
@@ -840,5 +851,49 @@ recipe "build"
         let input = "recipe ship: backend.build frontend.build\n    echo deploy\n";
         let result = tokenize(input);
         assert!(result.is_ok(), "expected ok for undotted recipe with dotted deps, got: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_register_header_bare() {
+        let tokens = tokenize("register").unwrap();
+        assert_eq!(tokens[0].value, Token::RegisterHeader);
+    }
+
+    #[test]
+    fn test_register_header_with_trailing_whitespace() {
+        let tokens = tokenize("register   ").unwrap();
+        assert_eq!(tokens[0].value, Token::RegisterHeader);
+    }
+
+    #[test]
+    fn test_register_header_followed_by_content_is_still_register() {
+        // Lexer admits the RegisterHeader; the parser rejects `register foo`.
+        let tokens = tokenize("register foo").unwrap();
+        assert_eq!(tokens[0].value, Token::RegisterHeader);
+    }
+
+    #[test]
+    fn test_indented_register_is_content() {
+        let tokens = tokenize("    register").unwrap();
+        assert_eq!(tokens[0].value, Token::Content("register".to_string()));
+    }
+
+    #[test]
+    fn test_indented_register_keyword_with_arg_is_content() {
+        let tokens = tokenize("    register foo").unwrap();
+        assert_eq!(tokens[0].value, Token::Content("register foo".to_string()));
+    }
+
+    #[test]
+    fn test_register_prefix_is_content() {
+        // `registers_cleanup` starts with `register` but is a bareword.
+        let tokens = tokenize("registers_cleanup").unwrap();
+        assert_eq!(tokens[0].value, Token::Content("registers_cleanup".to_string()));
+    }
+
+    #[test]
+    fn test_register_underscore_is_content() {
+        let tokens = tokenize("register_foo").unwrap();
+        assert_eq!(tokens[0].value, Token::Content("register_foo".to_string()));
     }
 }

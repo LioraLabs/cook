@@ -302,7 +302,8 @@ pub(crate) fn parse_recipe(
             | Token::ChoreHeader { .. }
             | Token::ConfigHeader { .. }
             | Token::UseDecl { .. }
-            | Token::ImportDecl { .. } => {
+            | Token::ImportDecl { .. }
+            | Token::RegisterHeader => {
                 return Ok((
                     Recipe {
                         name,
@@ -562,7 +563,8 @@ pub(crate) fn parse_chore(
             | Token::ChoreHeader { .. }
             | Token::ConfigHeader { .. }
             | Token::UseDecl { .. }
-            | Token::ImportDecl { .. } => {
+            | Token::ImportDecl { .. }
+            | Token::RegisterHeader => {
                 return Ok((
                     Chore { name, deps, steps, line: chore_line },
                     pos,

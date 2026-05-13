@@ -275,6 +275,13 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 });
                 pos += 1;
             }
+            Token::RegisterHeader => {
+                // Full register-block parse dispatch lands in Task 4 (SHI-216).
+                return Err(ParseError::Parse {
+                    line: tok.line,
+                    message: "register blocks are not yet supported".to_string(),
+                });
+            }
         }
     }
 
