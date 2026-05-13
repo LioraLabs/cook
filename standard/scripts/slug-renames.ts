@@ -64,6 +64,8 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   'stdmods.cc.vendoring':            'cat.cc.vendoring',
 
   'lexical.placeholders':            'phl.token',
+
+  'intro.conformance':               'conf.criteria',
 };
 
 export function resolveRename(retired: string): string | null | undefined {
