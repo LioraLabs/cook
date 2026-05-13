@@ -45,14 +45,3 @@ There is no version pragma in the Cookfile header at this time. At 1.0, the Stan
 
 ## 0.6. Relationship to `docs/architecture/` [#intro.architecture-relationship]
 `docs/standard/` defines what Cookfiles **mean**. `docs/architecture/` documents how the current reference implementation **works** (parser module layout, runtime internals, scheduler thread-pool design, cache layout). Implementation documents can evolve freely without touching the Standard, provided they do not make normative claims about language behavior.
-
-## 0.7. Conformance [#intro.conformance]
-A conforming implementation:
-
-1. MUST accept every Cookfile in the Standard's positive conformance corpus (`docs/standard/conformance/positive/`).
-2. MUST reject every Cookfile in the Standard's negative conformance corpus (`docs/standard/conformance/negative/`) with a diagnostic that identifies the offending line. The exact wording is implementation-defined; the diagnostic class is normative.
-3. For accepted Cookfiles, MUST produce a parse whose structural shape matches the expected shape recorded for each case.
-
-See §{modules} of the Standard (Modules) for additional module-specific conformance requirements.
-
-An implementation is said to **conform to Cook Standard v0.X** when, against the prose and corpus of the `cs-standard/v0.X` tag, it satisfies the three points above. The mechanism by which an implementation claims a version (a README statement, a library constant, a CLI flag, or any other surface) is implementation-defined and is not normatively required by this Standard.
