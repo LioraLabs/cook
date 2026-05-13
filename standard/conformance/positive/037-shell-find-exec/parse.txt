@@ -8,3 +8,5 @@ Cookfile
       deps: []
       steps:
         Shell interactive=true command="find . -name '*.tmp' -exec rm {} \\;"
+  register_blocks: []
+  top_level_module_calls: []

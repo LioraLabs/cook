@@ -10,3 +10,5 @@ Cookfile
       steps:
         Cook outputs=["out/a.js", "out/a.wasm"] using=LuaBlock("        local f = io.open(outputs[1], \"w\"); f:write(\"js\"); f:close()\n        local g = io.open(outputs[2], \"w\"); g:write(\"wasm\"); g:close()")
   chores:
+  register_blocks: []
+  top_level_module_calls: []

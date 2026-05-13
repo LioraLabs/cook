@@ -11,3 +11,5 @@ Cookfile
         Cook outputs=["dist/$<in.name>"] using=ShellBlock(["cp $<in> $<out>"])
         Plate body=LuaBlock("        cook.sh(\"strip \" .. input)")
   chores:
+  register_blocks: []
+  top_level_module_calls: []

@@ -11,3 +11,5 @@ Cookfile
         Lua code="local r = cook_cc.find(\"SDL3\", { cmake = true, version = \">=3.2\" })"
         Lua code="-- cmake-compat reports skip on opts.version; chain falls through."
   chores:
+  register_blocks: []
+  top_level_module_calls: []

@@ -12,3 +12,5 @@ Cookfile
         Lua code="if r.found then error(\"expected miss\") end"
         Lua code="if type(r.tried) ~= \"table\" then error(\"expected tried list\") end"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

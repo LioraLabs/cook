@@ -11,3 +11,5 @@ Cookfile
         Cook outputs=["build/$<in.stem>.out"] using=ShellBlock(["echo > $<out>"])
         Test body=ShellBlock(["test -s $<in>"]) timeout=None should_fail=false
   chores:
+  register_blocks: []
+  top_level_module_calls: []

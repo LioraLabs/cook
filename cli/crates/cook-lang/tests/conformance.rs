@@ -238,6 +238,14 @@ fn format_config(cb: &ConfigBlock) -> String {
     format!("ConfigBlock name={} body={} line={}", name, repr(&cb.body), cb.line)
 }
 
+fn format_register_block(rb: &RegisterBlock) -> String {
+    format!("RegisterBlock body={} line={}", repr(&rb.body), rb.line)
+}
+
+fn format_top_level_module_call(mc: &TopLevelModuleCall) -> String {
+    format!("TopLevelModuleCall code={} line={}", repr(&mc.code), mc.line)
+}
+
 fn format_cookfile(c: &Cookfile) -> String {
     let mut out = String::new();
     out.push_str("Cookfile\n");
@@ -280,6 +288,12 @@ fn format_cookfile(c: &Cookfile) -> String {
             out.push_str(&format!("        {}\n", format_step(s)));
         }
     }
+
+    let register_blocks: Vec<String> = c.register_blocks.iter().map(format_register_block).collect();
+    out.push_str(&format!("  register_blocks: [{}]\n", register_blocks.join(", ")));
+
+    let top_level_calls: Vec<String> = c.top_level_module_calls.iter().map(format_top_level_module_call).collect();
+    out.push_str(&format!("  top_level_module_calls: [{}]\n", top_level_calls.join(", ")));
 
     out
 }

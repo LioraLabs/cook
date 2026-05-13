@@ -11,3 +11,5 @@ Cookfile
         Lua code="local r = cook_cc.find(\"SDL3\", { cmake = true })"
         Lua code="if not r.found then return end"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

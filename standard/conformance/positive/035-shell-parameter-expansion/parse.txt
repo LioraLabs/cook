@@ -10,3 +10,5 @@ Cookfile
       steps:
         Cook outputs=["out.txt"] using=ShellBlock(["echo ${HOME:-fallback} >> $<out>", "echo ${USER%suffix} >> $<out>"])
   chores:
+  register_blocks: []
+  top_level_module_calls: []

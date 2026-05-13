@@ -9,3 +9,5 @@ Cookfile
       excludes: []
       steps:
   chores:
+  register_blocks: []
+  top_level_module_calls: []

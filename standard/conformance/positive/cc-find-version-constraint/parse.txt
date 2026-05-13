@@ -11,3 +11,5 @@ Cookfile
         Lua code="local r = cook_cc.find(\"zlib\", { version = \">=1.2,<2.0\" })"
         Lua code="if not r.found then error(\"expected zlib hit\") end"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

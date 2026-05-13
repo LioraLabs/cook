@@ -1,0 +1,14 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Shell interactive=true command=" ./build"
+  chores:
+  register_blocks: []
+  top_level_module_calls: [TopLevelModuleCall code="cook_cc.bin(\"a\", { sources = { \"a.c\" } })" line=6]

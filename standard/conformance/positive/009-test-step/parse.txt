@@ -11,3 +11,5 @@ Cookfile
         Test body=ShellBlock(["./check"]) timeout=Some(30) should_fail=false
         Test body=ShellBlock(["./mustfail"]) timeout=None should_fail=true
   chores:
+  register_blocks: []
+  top_level_module_calls: []

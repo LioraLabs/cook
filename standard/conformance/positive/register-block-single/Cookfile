@@ -1,0 +1,4 @@
+use cook_cc
+
+register
+    cook_cc.bin("game", { sources = { "src/main.c" } })

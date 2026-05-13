@@ -11,3 +11,5 @@ Cookfile
         Cook outputs=["build/bin/$<in.stem>"] using=ShellBlock(["cc $<in> -o $<out>"])
         Plate body=ShellBlock(["install -d $PREFIX/bin", "install -m755 $<in> $PREFIX/bin/$<in.name>"])
   chores:
+  register_blocks: []
+  top_level_module_calls: []

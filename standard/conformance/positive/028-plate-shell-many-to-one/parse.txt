@@ -11,3 +11,5 @@ Cookfile
         Cook outputs=["dist/bundle.tgz"] using=ShellBlock(["tar czf $<out> $<all>"])
         Plate body=ShellBlock(["tar czf bundle.tgz $<all>"])
   chores:
+  register_blocks: []
+  top_level_module_calls: []

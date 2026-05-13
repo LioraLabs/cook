@@ -10,3 +10,5 @@ Cookfile
       steps:
         Test body=LuaBlock("        cook.add_test { command = \"true\" }              -- default suite = \"r\"\n        cook.add_test { command = \"true\", suite = \"x\" } -- explicit suite = \"x\"") timeout=None should_fail=false
   chores:
+  register_blocks: []
+  top_level_module_calls: []

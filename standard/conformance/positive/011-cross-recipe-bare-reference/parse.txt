@@ -16,3 +16,5 @@ Cookfile
       steps:
         Cook outputs=["build/bin/app"] using=ShellBlock(["gcc -o $<out> main.c $<libmath>"])
   chores:
+  register_blocks: []
+  top_level_module_calls: []

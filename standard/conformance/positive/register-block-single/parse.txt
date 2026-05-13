@@ -1,0 +1,8 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: [RegisterBlock body="    cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })" line=3]
+  top_level_module_calls: []

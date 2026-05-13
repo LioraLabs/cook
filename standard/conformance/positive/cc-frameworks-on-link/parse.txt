@@ -13,3 +13,5 @@ Cookfile
         Lua code="    frameworks = { \"OpenGL\", \"Cocoa\" },"
         Lua code="})"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

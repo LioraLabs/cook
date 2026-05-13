@@ -1,0 +1,6 @@
+use cook_cc
+
+recipe build
+    @ ./build
+
+cook_cc.bin("a", { sources = { "a.c" } })

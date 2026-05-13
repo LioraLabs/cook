@@ -10,3 +10,5 @@ Cookfile
       steps:
         Shell interactive=true command="echo hello"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

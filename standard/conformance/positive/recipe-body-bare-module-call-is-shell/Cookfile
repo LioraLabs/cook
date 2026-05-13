@@ -1,0 +1,4 @@
+use cpp
+
+recipe build
+    cpp.bin("x", { sources = { "a.c" } })

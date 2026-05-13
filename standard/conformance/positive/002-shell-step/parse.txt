@@ -10,3 +10,5 @@ Cookfile
       steps:
         Shell interactive=false command="rm -rf build"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

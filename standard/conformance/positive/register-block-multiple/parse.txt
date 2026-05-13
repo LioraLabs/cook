@@ -1,0 +1,8 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: [RegisterBlock body="    x = 1" line=1, RegisterBlock body="    y = 2" line=4]
+  top_level_module_calls: []

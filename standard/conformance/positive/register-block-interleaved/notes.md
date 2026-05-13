@@ -1,0 +1,1 @@
+Pins CS-0072: a `register` block AFTER a recipe declaration is admitted (§3.2 ordering exemption); the column-0 `register` line terminates the preceding recipe body per §4.1.1's extended terminator-set.

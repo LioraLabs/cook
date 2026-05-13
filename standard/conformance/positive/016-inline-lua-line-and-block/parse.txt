@@ -11,3 +11,5 @@ Cookfile
         InlineLua code="print(\"register-phase line\")"
         InlineLuaBlock code="        local x = 1\n        print(x + 1)"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

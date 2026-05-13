@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=4
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Shell interactive=true command=" ./build"
+  chores:
+  register_blocks: [RegisterBlock body="    a()" line=1, RegisterBlock body="    b()" line=7]
+  top_level_module_calls: []

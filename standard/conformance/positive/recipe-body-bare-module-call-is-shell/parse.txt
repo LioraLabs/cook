@@ -3,10 +3,12 @@ Cookfile
   imports: []
   config_blocks: []
   recipes:
-    Recipe name="colorize" line=3
+    Recipe name="build" line=3
       deps: []
       ingredients: []
       excludes: []
       steps:
-        InlineLua code="cpp.bin(\"colorize\", { sources = { \"src/colorize.c\" } })"
+        Shell interactive=false command="cpp.bin(\"x\", { sources = { \"a.c\" } })"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

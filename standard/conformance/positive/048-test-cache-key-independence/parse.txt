@@ -16,3 +16,5 @@ Cookfile
       steps:
         Test body=ShellBlock(["test 1 -eq 1"]) timeout=Some(5) should_fail=false
   chores:
+  register_blocks: []
+  top_level_module_calls: []

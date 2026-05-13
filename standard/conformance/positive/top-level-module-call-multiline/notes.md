@@ -1,0 +1,1 @@
+Pins CS-0072 §3.7.5 multi-line collection: a top-level module_call whose opening `{` is not balanced on the first line is collected by the brace-balance algorithm into a single top-level item. The `code` field preserves embedded newlines and interior whitespace.

@@ -1,0 +1,8 @@
+register
+    a()
+
+recipe build
+    @ ./build
+
+register
+    b()

@@ -14,3 +14,5 @@ Cookfile
       deps: ["build"]
       steps:
         Shell interactive=true command="./out/app"
+  register_blocks: []
+  top_level_module_calls: []

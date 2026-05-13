@@ -16,3 +16,5 @@ Cookfile
       steps:
         Shell interactive=false command="echo \"shout sees: $<greet>\""
   chores:
+  register_blocks: []
+  top_level_module_calls: []

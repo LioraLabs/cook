@@ -8,11 +8,13 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        InlineLua code="cook_cc.headers(\"api\", { export_includes = { \"include/\" } })"
+        Shell interactive=false command="cook_cc.headers(\"api\", { export_includes = { \"include/\" } })"
     Recipe name="build" line=6
       deps: ["api"]
       ingredients: []
       excludes: []
       steps:
-        InlineLua code="cook_cc.bin(\"app\", { sources = { \"src/main.cpp\" }, links = { \"api\" } })"
+        Shell interactive=false command="cook_cc.bin(\"app\", { sources = { \"src/main.cpp\" }, links = { \"api\" } })"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

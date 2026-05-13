@@ -8,3 +8,5 @@ Cookfile
       deps: []
       steps:
         Shell interactive=true command="rm -rf build"
+  register_blocks: []
+  top_level_module_calls: []

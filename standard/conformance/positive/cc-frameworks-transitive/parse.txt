@@ -17,3 +17,5 @@ Cookfile
         Lua code="    links   = { \"gfx\" },"
         Lua code="})"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

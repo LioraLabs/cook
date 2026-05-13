@@ -14,3 +14,5 @@ Cookfile
         Lua code="local r = cook_cc.find(\"mylib\")"
         Lua code="if not r.found then error(\"expected project-registered hit\") end"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

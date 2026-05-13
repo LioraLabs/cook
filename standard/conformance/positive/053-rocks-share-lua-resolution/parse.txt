@@ -16,3 +16,5 @@ Cookfile
       steps:
         Lua code="if rockmod.value ~= 42 then error(\"rockmod.value mismatch\") end"
         Lua code="print(\"ok\")"
+  register_blocks: []
+  top_level_module_calls: []

@@ -12,3 +12,5 @@ Cookfile
         Shell interactive=false command="recipe inner"
         Shell interactive=false command="echo after"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

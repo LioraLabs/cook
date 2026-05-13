@@ -14,3 +14,5 @@ Cookfile
         Lua code="    if a.strategy == \"cmake-compat\" then break end"
         Lua code="end"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

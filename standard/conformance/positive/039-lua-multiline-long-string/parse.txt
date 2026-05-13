@@ -10,3 +10,5 @@ Cookfile
       steps:
         LuaBlock code="        local s = [[\n            this string contains a } brace\n            and another } here\n        ]]\n        print(s)"
   chores:
+  register_blocks: []
+  top_level_module_calls: []

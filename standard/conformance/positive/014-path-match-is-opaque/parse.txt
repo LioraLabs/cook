@@ -16,3 +16,5 @@ Cookfile
       steps:
         Cook outputs=["build/app"] using=ShellBlock(["cc -o $<out> $<all>"])
   chores:
+  register_blocks: []
+  top_level_module_calls: []

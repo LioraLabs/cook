@@ -1,0 +1,1 @@
+Pins CS-0072 §4.1.1 terminator-set extension: a column-0 top-level module_call after a recipe header closes the recipe body (extended terminator-set clause (b)). The recipe `build` body contains exactly the `@ ./build` step.
