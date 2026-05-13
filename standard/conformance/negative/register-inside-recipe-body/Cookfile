@@ -1,0 +1,3 @@
+recipe build
+    register foo
+        cook_cc.bin("x", {})

@@ -1,0 +1,1 @@
+Pins CS-0072 §3.7.5: the `:` call shape is NOT a top-level module_call (which requires `.`). The column-0 `cook_cc:bin(...)` line is a Content token and is rejected at the top level per §3.1 ("unexpected content outside of a recipe"). Authors using colon-call syntax MUST wrap such calls in a `register` block.

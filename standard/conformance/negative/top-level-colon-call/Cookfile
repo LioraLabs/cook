@@ -1,0 +1,3 @@
+use cook_cc
+
+cook_cc:bin("game", { sources = { "src/main.c" } })

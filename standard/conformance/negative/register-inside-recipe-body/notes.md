@@ -1,0 +1,1 @@
+Pins CS-0072 §3.9: an indented `register` + separator inside a recipe body is rejected with a "top-level only" diagnostic. The indented form cannot be a RegisterHeader (column-0 only per §2.10) and is also not a permitted shell command.
