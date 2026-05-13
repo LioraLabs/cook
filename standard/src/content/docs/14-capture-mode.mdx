@@ -1,0 +1,35 @@
+---
+title: "§{exec.capture} — Capture mode"
+sidebar:
+  order: 14
+---
+# 14. Capture mode [#exec.capture]
+> **Normative.** This chapter defines the determinism contract for register-phase Lua execution.
+
+## 14.1. Capture-mode semantics [#exec.capture-mode]
+Capture-mode Cook Lua API calls MUST be pure with respect to the Cookfile's observable build state: they MUST NOT spawn subprocesses that affect declared outputs, modify files under the working directory, or block on external I/O. Their only effect on conforming evaluation MUST be to append entries to the register-phase record or to read metadata already established (for example, the terminal outputs of a prerequisite recipe that has already completed its register phase — see §{lua}).
+
+Capture-mode calls MUST return synchronously. Any value a capture-mode call produces — for example, the output path string assigned by a `cook` step's expansion — MUST be a deterministic function of the Cookfile source and the register-phase record accumulated so far. It MUST NOT depend on wall-clock time, process identifiers, or the contents of files that the recipe's own work units produce.
+
+An implementation MAY permit narrowly-scoped capture-mode side effects that participate in register-phase Lua control flow rather than in the build itself. Any such exception MUST be documented as part of the Cook Lua API contract in §{lua} and MUST preserve the determinism requirement above with respect to the register-phase record.
+
+### Example 14.1.1
+
+```cook
+recipe build
+    >> local flag = cook.env.OPTIMISE or "-O0"
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+```
+
+The `>>` line runs during the register phase (`>>` is the inline-Lua prefix; see §{recipes.lua-steps}). It reads `cook.env` — a value established before the register phase began — and assigns a local visible to subsequent declarative-region steps. The `cook` step then records its work units. No subprocess is spawned during registration.
+
+Substituting `>` for `>>` would change the semantics: `>` is execute-phase, so the `flag` local would be set on a worker VM during execute, after the cook step's units have already been recorded — too late to influence registration.
+
+The register-phase VM evaluates `register_block` bodies (§{decl.register}) and top-level `module_call` source (§{toplevel.module-call}) in the source order of their containing top-level items, interleaved with recipe registrations. The VM persists across all `toplevel_item`s of a single Cookfile; `local` variables declared at the chunk-top-level of an earlier `register_block` body remain in scope for subsequent `register_block` bodies, top-level module_calls, and `inline_lua_line` / `inline_lua_block` payloads in later recipes. The implementation MUST splice each `register_block` body AND each top-level `module_call` into the compiled register-phase Lua program at its source position; no per-block VM is permitted.
+
+The reference codegen in `cli/crates/cook-luagen/src/recipe.rs` implements this rule by merging recipes, chores, register blocks, and top-level module_calls into a source-line-ordered iteration before emission (informative).
+
+### Note 14.1.1
+
+The capture-mode contract makes work-unit discovery finite, deterministic, and independent of the order in which work units are later executed. A register phase that blocked on a running subprocess would serialise the register phase of other recipes against that subprocess, defeating the two-phase design.
