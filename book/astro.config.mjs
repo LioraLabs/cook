@@ -62,7 +62,7 @@ export default defineConfig({
   },
   vite: {
     preview: {
-      allowedHosts: ['archbtw', 'archbtw.story-pike.ts.net'],
+      allowedHosts: true,
     },
   },
 });
