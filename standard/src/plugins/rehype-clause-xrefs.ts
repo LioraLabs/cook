@@ -1,6 +1,13 @@
 import type { Root, Element, Text, Parent } from 'hast';
 import type { ClauseInfo } from './clauses.ts';
 import { resolveRename } from '../../scripts/slug-renames.ts';
+import { SLUG_MAPPING } from '../../scripts/slug-mapping.ts';
+
+// Slugs registered in the mapping but not yet anchored by a chapter file
+// during the v0.10 reorg show up here. The cascade below treats them as
+// expected forward references and emits a `[upcoming-slug]` warn rather
+// than throwing, so Tasks 2–7 can land incrementally.
+const KNOWN_SLUGS = new Set(Object.values(SLUG_MAPPING));
 
 export interface ClauseXrefsOptions {
   clauseMap: Map<string, ClauseInfo>;
@@ -47,8 +54,19 @@ export function rehypeClauseXrefs(options: ClauseXrefsOptions) {
               `[slug-renames] §{${slug}} renamed to §{${rename}} in Cook Standard v0.10. Update the reference in source. See scripts/slug-renames.ts.`,
             );
             continue;
+          } else if (KNOWN_SLUGS.has(slug)) {
+            // During the v0.10 transition: a forward reference to a slug
+            // whose chapter file has not yet been added. Once Task 8
+            // completes, every KNOWN_SLUG either lives in clauseMap or
+            // is unreferenced — at which point this branch can be
+            // re-tightened back to a throw.
+            console.warn(
+              `[upcoming-slug] §{${slug}} resolves to a v0.10 chapter that has not yet landed in MDX. This warning will clear when the chapter file is added.`,
+            );
+            continue;
           } else {
-            // rename === undefined: slug not in renames registry — genuine unknown.
+            // slug absent from clauseMap, renames registry, and the
+            // v0.10 mapping — genuine unknown.
             throw new Error(
               `unknown clause slug "${slug}" — §{${slug}} did not resolve in clauseMap`,
             );

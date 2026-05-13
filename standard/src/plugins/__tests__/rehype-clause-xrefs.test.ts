@@ -154,4 +154,26 @@ describe('rehypeClauseXrefs', () => {
       process('<p>See §{nope.totally-fake-slug}.</p>', defaultMap),
     ).toThrowError(/unknown clause slug/i);
   });
+
+  it('warns and leaves text untouched for an upcoming v0.10 slug not yet in clauseMap', () => {
+    // `mods` is registered in scripts/slug-mapping.ts as a v0.10 chapter
+    // prefix but its anchoring chapter file lands later in the reorg —
+    // until then it is intentionally absent from clauseMap.
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const out = process(
+        '<p>see §{mods} for context</p>',
+        defaultMap,
+      );
+      expect(spy).toHaveBeenCalled();
+      const messages = spy.mock.calls.map(call => String(call[0]));
+      expect(messages.some(msg =>
+        msg.includes('[upcoming-slug]') && msg.includes('§{mods}'),
+      )).toBe(true);
+      expect(out).toContain('§{mods}');
+      expect(out).not.toContain('class="clause-xref"');
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
