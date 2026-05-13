@@ -72,6 +72,9 @@ export default defineConfig({
       rehypeBareRefLint,
     ],
   },
+  server: {
+    allowedHosts: true,
+  },
   vite: {
     preview: {
       allowedHosts: true,

@@ -185,6 +185,8 @@ mod tests {
             chores: vec![],
             uses: vec![],
             imports: vec![],
+            register_blocks: vec![],
+            top_level_module_calls: vec![],
         }
     }
 

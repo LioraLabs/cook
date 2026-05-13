@@ -285,7 +285,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
         }
     }
 
-    Ok(Cookfile { config_blocks, recipes, chores, uses, imports })
+    Ok(Cookfile { config_blocks, recipes, chores, uses, imports, register_blocks: vec![], top_level_module_calls: vec![] })
 }
 
 #[cfg(test)]

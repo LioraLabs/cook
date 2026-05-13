@@ -11,6 +11,8 @@ fn make_cookfile(recipes: Vec<Recipe>) -> Cookfile {
         chores: vec![],
         uses: vec![],
         imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![],
     }
 }
 
@@ -658,6 +660,8 @@ fn test_use_generates_load_module() {
             UseStatement { module_name: "cpp".to_string(), line: 1 },
         ],
         imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![],
     };
     let output = generate(&cookfile);
     assert!(output.contains(r#"local cpp = cook.load_module("cpp")"#));
@@ -754,6 +758,8 @@ fn test_multiple_uses_generate_in_order() {
             UseStatement { module_name: "proto".to_string(), line: 2 },
         ],
         imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![],
     };
     let output = generate(&cookfile);
     let cpp_pos = output.find(r#"local cpp = cook.load_module("cpp")"#).unwrap();
@@ -1266,6 +1272,8 @@ fn test_codegen_emits_unnamed_config_block() {
         chores: vec![],
         uses: vec![],
         imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![],
     };
     let out = generate(&cookfile);
     assert!(out.contains("function __cook_run_config_blocks"));
@@ -1284,6 +1292,8 @@ fn test_codegen_emits_named_config_block() {
         chores: vec![],
         uses: vec![],
         imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![],
     };
     let out = generate(&cookfile);
     assert!(out.contains("function __cook_run_config_blocks"));
@@ -1299,6 +1309,8 @@ fn test_codegen_skips_dispatcher_when_no_config_blocks() {
         chores: vec![],
         uses: vec![],
         imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![],
     };
     let out = generate(&cookfile);
     assert!(!out.contains("__cook_run_config_blocks"));
@@ -1316,6 +1328,8 @@ fn test_codegen_emits_unnamed_and_named_in_order() {
         chores: vec![],
         uses: vec![],
         imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![],
     };
     let out = generate(&cookfile);
     let base_idx = out.find("base()").unwrap();
@@ -1927,6 +1941,8 @@ fn test_generate_includes_chores() {
         )],
         uses: vec![],
         imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![],
     };
     let lua = generate(&cookfile);
     assert!(lua.contains("cook.recipe(\"build\""), "recipe missing, got:\n{lua}");

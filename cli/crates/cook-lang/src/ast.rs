@@ -40,6 +40,22 @@ pub struct ConfigBlock {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct RegisterBlock {
+    pub body: String,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopLevelModuleCall {
+    /// The collected call source — possibly multi-line if the call's brace
+    /// span extends beyond its first line (collected via the existing
+    /// `collect_module_call` brace-balance machinery). Whitespace and
+    /// comments inside the call body are preserved verbatim.
+    pub code: String,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Chore {
     pub name: String,
     pub deps: Vec<String>,
@@ -54,6 +70,8 @@ pub struct Cookfile {
     pub chores: Vec<Chore>,
     pub uses: Vec<UseStatement>,
     pub imports: Vec<ImportDecl>,
+    pub register_blocks: Vec<RegisterBlock>,
+    pub top_level_module_calls: Vec<TopLevelModuleCall>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -225,6 +243,8 @@ mod tests {
             chores: vec![],
             uses: vec![UseStatement { module_name: "cpp".to_string(), line: 1 }],
             imports: vec![],
+            register_blocks: vec![],
+            top_level_module_calls: vec![],
         };
         assert_eq!(cookfile.uses.len(), 1);
         assert_eq!(cookfile.uses[0].module_name, "cpp");
@@ -263,9 +283,52 @@ mod tests {
             chores: vec![],
             uses: vec![],
             imports: vec![],
+            register_blocks: vec![],
+            top_level_module_calls: vec![],
         };
         assert_eq!(cookfile.config_blocks.len(), 2);
         assert!(cookfile.config_blocks[0].name.is_none());
         assert_eq!(cookfile.config_blocks[1].name.as_deref(), Some("release"));
+    }
+
+    #[test]
+    fn test_register_block_construction() {
+        let block = RegisterBlock {
+            body: "cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })".to_string(),
+            line: 3,
+        };
+        assert_eq!(block.line, 3);
+        assert!(block.body.contains("cook_cc.bin"));
+    }
+
+    #[test]
+    fn test_top_level_module_call_construction() {
+        let call = TopLevelModuleCall {
+            code: "cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })".to_string(),
+            line: 3,
+        };
+        assert_eq!(call.line, 3);
+        assert!(call.code.contains("cook_cc.bin"));
+    }
+
+    #[test]
+    fn test_cookfile_with_register_blocks_and_top_level_calls() {
+        let cookfile = Cookfile {
+            config_blocks: vec![],
+            recipes: vec![],
+            chores: vec![],
+            uses: vec![],
+            imports: vec![],
+            register_blocks: vec![
+                RegisterBlock { body: "a()".into(), line: 1 },
+                RegisterBlock { body: "b()".into(), line: 5 },
+            ],
+            top_level_module_calls: vec![
+                TopLevelModuleCall { code: "cpp.bin(\"x\")".into(), line: 3 },
+            ],
+        };
+        assert_eq!(cookfile.register_blocks.len(), 2);
+        assert_eq!(cookfile.top_level_module_calls.len(), 1);
+        assert_eq!(cookfile.top_level_module_calls[0].line, 3);
     }
 }
