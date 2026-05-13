@@ -54,10 +54,10 @@ describe('rehypeCsPermalinks', () => {
     ).toThrowError(/CS-9999.*dangling/i);
   });
 
-  it('when processing D-changes itself, adds id attributes to entry anchors', () => {
+  it('when processing E-changes itself, adds id attributes to entry anchors', () => {
     const out = process(
       '<h3>CS-0007 — Multi-output cook</h3>',
-      { filePath: 'appendix/D-changes.mdx' },
+      { filePath: 'appendix/E-changes.mdx' },
     );
     expect(out).toContain('id="CS-0007"');
   });

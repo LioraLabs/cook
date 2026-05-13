@@ -2,14 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Extracts every `CS-NNNN` identifier from D-changes.mdx. Used to validate
+ * Extracts every `CS-NNNN` identifier from E-changes.mdx. Used to validate
  * CS-NNNN references elsewhere in the spec.
  *
  * NOTE: this harvests ALL CS-NNNN tokens from the file, including
  * back-references in prose (e.g. "supersedes CS-0001" inside a CS-0003
  * entry). A CS-NNNN that appears only in prose — never as a heading — is
  * still treated as known and will silently validate dangling references
- * elsewhere. In practice every CS-NNNN in D-changes.mdx has a heading,
+ * elsewhere. In practice every CS-NNNN in E-changes.mdx has a heading,
  * so this is an imprecision rather than a practical problem.
  */
 export function harvestCsIds(changesPath: string): Set<string> {
@@ -23,5 +23,5 @@ export function harvestCsIds(changesPath: string): Set<string> {
 }
 
 export function defaultChangesPath(projectRoot: string): string {
-  return path.join(projectRoot, 'src/content/docs/appendix/D-changes.mdx');
+  return path.join(projectRoot, 'src/content/docs/appendix/E-changes.mdx');
 }

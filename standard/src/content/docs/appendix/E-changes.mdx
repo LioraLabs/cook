@@ -1,9 +1,9 @@
 ---
-title: "Appendix D — Changes"
+title: "Appendix E — Changes"
 sidebar:
-  order: 13
+  order: 14
 ---
-# Appendix D. Changes (informative)
+# Appendix E. Changes (informative)
 
 > **Informative.** This appendix is the chronological changelog of amendments to the Cook Standard. Each entry has a stable `CS-NNNN` ID, a one-line summary, the list of sections affected, and the commit / PR reference. Entries are grouped under tagged versions; see the [Versions](#versions) index immediately below.
 
@@ -18,6 +18,8 @@ sidebar:
 - **v0.3** (`cs-standard/v0.3`, 2026-04-28) — CS-0015, CS-0016, CS-0017
 - **v0.2** (`cs-standard/v0.2`, 2026-04-26..2026-04-28) — CS-0011, CS-0012, CS-0013, CS-0014
 - **v0.1** (`cs-standard/v0.1`, 2026-04-22..2026-04-24) — CS-0001 through CS-0010
+
+### v0.1 [#changes.v0-1]
 
 ## CS-0001 — Cook Standard v0.1 established
 
@@ -104,6 +106,8 @@ sidebar:
 
 **Conformance.** No impact. The change is authoring-surface only.
 
+### v0.2 [#changes.v0-2]
+
 ## D.11. CS-0011 — Remove top-level variable declarations. [#changes.cs-0011]
 
 **Date:** 2026-04-26
@@ -168,6 +172,8 @@ A new conformance harness at `tree-sitter-cook/scripts/conformance.mjs` walks `s
 
 **Reference:** this commit.
 
+### v0.3 [#changes.v0-3]
+
 ## D.15. CS-0015 — Recipe-body phase split (`>` execute / `>>` register / module-call register), region rule, body-unit bundling. [#changes.cs-0015]
 
 **Date:** 2026-04-28
@@ -231,6 +237,8 @@ A module function loaded into the execute-phase VM that calls register-only API 
 
 **Reference:** this commit.
 
+### v0.4 [#changes.v0-4]
+
 ## D.18. CS-0018 — Drop the `name:` recipe header form. [#changes.cs-0018]
 
 **Date:** 2026-04-29
@@ -286,6 +294,8 @@ The conformance corpus's `parse.txt` files change format in this cut: `format_co
 **Implementation status.** Authoring + tagging step. No prose changes beyond the Versions index, this entry, and the App. E resolution markers.
 
 **Reference:** this commit.
+
+### v0.5 [#changes.v0-5]
 
 ## D.22. CS-0022 — Cook-step iteration unification: output-pattern as sole driver, `using "cmd"` removed, `{in.ACCESSOR}` family. [#changes.cs-0022]
 
@@ -437,6 +447,8 @@ The map is computed once per Cookfile by `Workspace::alias_qualified_prefixes_fo
 
 **Reference:** the CS-0030 commit on the `feature/cross-cookfile-caching` branch.
 
+### v0.6 [#changes.v0-6]
+
 ## D.31. CS-0031 — Standard cut: v0.6. [#changes.cs-0031]
 
 **Date:** 2026-05-03 (originally cut); amended 2026-05-03 to fold CS-0032 into the v0.6 cut and recognize the sigil import semantics as the load-bearing change.
@@ -474,6 +486,8 @@ App. A.7 adds the `import_path = tree_path | sigil_path` production with the nor
 **Implementation status.** Lockstep — the spec, parser AST (`ImportPath::Tree | ::Sigil`), parser path-shape rejection, codegen for cross-Cookfile body refs, register-side `qualified_prefix` machinery, workspace-root walk-up, and the runtime fixtures (`examples/cache_benchmarks_sigil/`, `examples/monorepo_codegen/`, the four bug-hunt fixtures) all landed across the `feature/cross-cookfile-caching` branch and merged together. CS-0026..CS-0030 are the implementation series that catches up to this entry's normative prose.
 
 **Reference.** The `feature/cross-cookfile-caching` branch merge commit on `main` (the same commit `cs-standard/v0.6` is moved forward to by the CS-0031 amendment).
+
+### v0.7 [#changes.v0-7]
 
 ## D.33. CS-0033 — `$<IDENT>` sigil-disambiguated placeholder syntax with closed-set resolution. [#changes.cs-0033]
 
@@ -697,6 +711,8 @@ CS-0044 extracts the three tables into a new `cli/crates/cook-lua-stdlib` crate 
 **Hard non-changes.** CS-0044 does not introduce a filesystem sandbox; it replicates today's behavior exactly. The user-visible Lua API surface is unchanged — every existing recipe continues to work without modification. Sandboxing is a follow-up that this consolidation enables but does not deliver.
 
 **Reference:** the CS-0044 commit series on the `worktree-agent-a6e35722b1cd28f43` branch.
+
+### v0.8 [#changes.v0-8]
 
 ## D.45. CS-0045 — Project-root sandbox for `cook` / `test` / `chore` step Lua bodies. [#changes.cs-0045]
 
@@ -1181,6 +1197,8 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 **Conformance impact.** Implementations MUST expose `cook.export`/`cook.import` on both VMs. The execute-phase storage MAY be ephemeral (per-worker, in-memory) when the producer and consumer share a worker; cross-worker visibility is the implementer's choice and remains available for refinement. The minimum bar is that calls do not error and round-trip values within a single worker VM.
 
 **Reference:** the CS-0071 commits on `main` after CS-0070.
+
+### v0.9 [#changes.v0-9]
 
 ## CS-0072 — Top-level `register` blocks (SHI-216, v0.9)
 

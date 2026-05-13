@@ -96,7 +96,7 @@ export default defineConfig({
       [rehypeClauseXrefs, { clauseMap }],
       [rehypeCsPermalinks, {
         knownIds: knownCsIds,
-        changesHref: '/appendix/d-changes/',
+        changesHref: '/appendix/e-changes/',
       }],
       rehypeBareRefLint,
     ],

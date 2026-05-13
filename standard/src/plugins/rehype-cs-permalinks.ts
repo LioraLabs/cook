@@ -2,9 +2,9 @@ import type { Root, Element, Text, Parent } from 'hast';
 import { visit } from 'unist-util-visit';
 
 export interface CsPermalinksOptions {
-  // Set of valid CS-NNNN identifiers harvested from D-changes.mdx.
+  // Set of valid CS-NNNN identifiers harvested from E-changes.mdx.
   knownIds: Set<string>;
-  // Href of the changes page, e.g. "/appendix/d-changes/".
+  // Href of the changes page, e.g. "/appendix/e-changes/".
   changesHref: string;
   // When provided, this overrides the VFile.path used at runtime. Primarily
   // useful for unit tests that do not construct a full VFile pipeline.
@@ -19,7 +19,7 @@ export function rehypeCsPermalinks(options: CsPermalinksOptions) {
 
   return function transformer(tree: Root, file?: { path?: string }) {
     const filePath = options.filePath ?? file?.path ?? '';
-    const isChangesFile = /D-changes\.mdx$/.test(filePath);
+    const isChangesFile = /E-changes\.mdx$/.test(filePath);
 
     if (isChangesFile) {
       // Mode A: stamp IDs on headings that begin with "CS-NNNN".
@@ -52,7 +52,7 @@ export function rehypeCsPermalinks(options: CsPermalinksOptions) {
         const id = m[0];
         if (!knownIds.has(id)) {
           throw new Error(
-            `"${id}" is a dangling CS-NNNN reference in ${filePath}: no matching entry in D-changes.mdx`,
+            `"${id}" is a dangling CS-NNNN reference in ${filePath}: no matching entry in E-changes.mdx`,
           );
         }
         if (m.index! > last) {

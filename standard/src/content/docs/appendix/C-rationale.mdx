@@ -1,15 +1,15 @@
 ---
-title: "Appendix B — Rationale"
+title: "Appendix C — Rationale"
 sidebar:
-  order: 11
+  order: 12
 ---
-# Appendix B. Rationale (informative)
+# Appendix C. Rationale (informative)
 
 > **Informative.** This appendix records the reasoning behind design decisions in the Standard. It is non-binding.
 
-## B.0. On §{intro} Introduction [#rationale.intro]
+## C.0. On §{intro} Introduction [#rationale.intro]
 
-### B.0.1. Versioning posture pre-1.0 [#rationale.versioning-pre-1-0]
+### C.0.1. Versioning posture pre-1.0 [#rationale.versioning-pre-1-0]
 The §{intro.version} model — `MAJOR.MINOR` pre-1.0, batched cuts, convention-only conformance claim, git-tagged corpus — embeds four design decisions worth recording.
 
 **Why `MAJOR.MINOR` not strict SemVer pre-1.0.** Breaking changes are normal pre-1.0; the discipline of distinguishing MAJOR from MINOR is performative when every cut may contain a breakage. PATCH buys nothing — there is no installed base whose conformance is broken by a typo fix that nobody has to back-port. Strict SemVer arrives at 1.0 along with an installed base for which the discipline starts to matter.
@@ -20,13 +20,13 @@ The §{intro.version} model — `MAJOR.MINOR` pre-1.0, batched cuts, convention-
 
 **Why the corpus is identified by git tag rather than versioned subdirectory.** Git already snapshots prose and corpus together at the tag. Versioned subdirectories duplicate that snapshot in a place where it must be manually maintained; they also imply a back-port story that pre-1.0 explicitly disclaims.
 
-## B.1. On §{notation} Notation and conventions [#rationale.notation]
+## C.2. On §{notation} Notation and conventions [#rationale.notation]
 _To be filled in._
 
-## B.2. On §{lexical} Lexical structure [#rationale.lexical]
+## C.3. On §{lexical} Lexical structure [#rationale.lexical]
 Chapter 2 is deliberately small. Cookfiles are tokenized line by line, each line classifies into exactly one token, and the step-dispatch cascade in App. A.4 handles every syntactic distinction the lexer declines to make. This pushes complexity out of the lexer and into a single prose cascade (§{lexical.line-classification}) that mirrors the implementation's `if`/`else if` ladder. The rationale entries below record the places where a more sophisticated lexical design was considered and rejected; the unadorned sections are either mechanical (§{lexical.source-representation}, §{lexical.comments}, §{lexical.numbers}) or fall out of constraints explained elsewhere (§{lexical.strings} follows from App. A.5, §{lexical.brace-blocks} follows from the embedded-Lua design in §{lua}).
 
-### B.2.2. Why one token per line [#rationale.one-token-per-line]
+### C.3.2. Why one token per line [#rationale.one-token-per-line]
 The Cookfile grammar is strictly line-oriented: every source line produces exactly one token carrying that line's 1-indexed number. The alternative — a conventional multi-token-per-line lexer — was rejected on three grounds.
 
 First, error locality. Nearly every diagnostic in the Rust parser reports a 1-indexed line number, and authors of Cookfiles edit them in line-oriented tools (editors, diffs, code review). A one-token-per-line scheme makes "line N" unambiguous; a multi-token scheme would need column offsets and a column-aware diagnostic renderer for the same quality of error.
@@ -37,38 +37,38 @@ Third, authoring model. Cookfile authors think in steps, not in expressions, and
 
 The cost is that a `Content` token must be re-examined by the step-dispatch cascade (App. A.4) to distinguish `ingredients`, `cook`, `plate`, `test`, module calls, interactive commands, and shell commands. That re-examination is a small, linear, keyword-prefix test — cheaper than a general tokenizer would be and easier to reason about.
 
-### B.2.3. Why `BARE_IDENTIFIER` is ASCII-only [#rationale.ascii-identifiers]
+### C.3.3. Why `BARE_IDENTIFIER` is ASCII-only [#rationale.ascii-identifiers]
 The `BARE_IDENTIFIER` character class in App. A.5 is ASCII — no Unicode letters, no Unicode digits, no confusables. The reason is interoperability with the shell.
 
 Most `BARE_IDENTIFIER` values end up as filesystem-visible artefacts: recipe names become command-line arguments to the `cook` CLI, and module-call first-segments correspond to on-disk module roots. ASCII-only identifiers guarantee those names survive copy-paste between a Cookfile, a terminal, a CI log, a URL, and a filesystem without encoding surprises. Unicode identifiers would force the implementation to take a stance on normalisation, case-folding, and confusable-detection, none of which is justified by the expected author population.
 
 The cost is paid by authors working in non-Latin scripts, who can still use a `STRING`-form recipe name (App. A.5 allows `name ::= BARE_IDENTIFIER | STRING`) at the price of double quoting. The escape hatch keeps the simple case simple and charges the complexity only to the users who actually need it.
 
-### B.2.4. Why keywords are reserved contextually, not globally [#rationale.contextual-keywords]
+### C.3.4. Why keywords are reserved contextually, not globally [#rationale.contextual-keywords]
 The Cookfile language defines step keywords (`recipe`, `config`, `cook`, `plate`, `ingredients`, `using`, `use`, `import`, `end`, `test`) and reserved recipe segments (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`); neither set is reserved globally. A recipe named `backend.build` is accepted because `build` is not on the reserved-segment list; `backend.stem` is rejected because `stem` is. A `Content` line whose first word is `recipes_cleanup` or `configure` is dispatched as a `shell_command`, not as a declaration, because the step-keyword rule requires a separator after the keyword.
 
 Global reservation would have been simpler to specify but would have broken the most common shell idioms. Cookfiles frequently call tools named `configure`, `cook-book`, `tester`, `using-*` — forbidding those as shell commands to protect a handful of language keywords would be a poor trade. The contextual rule instead places the reservation only where it is needed: the final segment of a recipe name, where the `$<stem>`-style substitution rule would otherwise collide with a literal segment of the same name.
 
 The cost is that the step-dispatch cascade in App. A.4 must insist on a separator after each step keyword (`recipe`, `config`, `cook`, `plate`, `ingredients`, `using`, `use`, `import`, `end`, `test`) so that a `Content` line whose first word is `recipes_cleanup` or `configure` is not misclassified as a declaration. That cost is borne by the Standard and the implementation, not by the author.
 
-### B.2.7. Why `@` is not a lexical prefix [#rationale.at-not-lexical]
+### C.3.7. Why `@` is not a lexical prefix [#rationale.at-not-lexical]
 A natural reading of Cookfiles suggests that `@` is a third line prefix alongside `>` and `>{`. The Standard deliberately does not define it that way.
 
 Making `@` a lexical prefix would require the lexer to know whether it is inside a recipe body, since `@cmd` at the top level is a parse error rather than an interactive step. A line-oriented, context-free lexer cannot make that determination. Pushing the decision into the syntactic dispatch layer (§{grammar.step-dispatch}) keeps the lexer simple and places the diagnostic where it is most actionable — at the point the parser knows there is no enclosing recipe.
 
 The cost is small: `@`-prefixed lines become `Content` tokens whose string still begins with `@`, and the syntactic layer strips the marker when classifying the line as an `interactive_command`. The alternative — a context-aware lexer — would buy nothing observable to the Cookfile author.
 
-## B.3. On §{grammar} Syntactic grammar [#rationale.grammar]
+## C.4. On §{grammar} Syntactic grammar [#rationale.grammar]
 Chapter 3 walks through a grammar that is almost entirely keyword-led at the outer layer. Most of the design decisions in §{grammar} are mechanical consequences of the lexical structure defined in §{lexical}: each production is selected by a single leading token, and no backtracking is required. The rationale entries below address the places where §{grammar} imposes a constraint that goes beyond "pick the production the leading token names" — places where the grammar is deliberately narrower than a permissive reading would allow.
 
-### B.3.2. Why the top-level prefix is ordered [#rationale.ordered-prefix]
+### C.4.2. Why the top-level prefix is ordered [#rationale.ordered-prefix]
 Cookfiles allow declarations of four kinds — variables, `use`, `import`, and `config` — to precede recipes, and the Standard requires that they form a contiguous prefix: once the first recipe has been parsed, no further declaration of any of the four kinds is accepted.
 
 The ordering is not necessary for parsing — a context-free grammar that accepted interleaved declarations and recipes would parse unambiguously. It is a readability and configuration-layering choice. Config blocks and variable declarations are meant to be read as a header that frames the recipes that follow; scattering them between recipes defeats that reading, and permits confusing patterns where a `use` resolved by one recipe is not yet in scope for a sibling recipe that was parsed earlier in the same file. Requiring the prefix to be contiguous removes the question entirely: every declaration is in scope for every recipe.
 
 The rule is trivially removable if it ever proves onerous; nothing downstream depends on it. But while it is in place, the diagnostic is actionable — the parser names the offending item's line — and authors get a clean separation between file-level configuration and recipe definitions.
 
-### B.3.9. Config blocks as the sole variable surface [#rationale.config-only-variables]
+### C.4.9. Config blocks as the sole variable surface [#rationale.config-only-variables]
 A previous revision of the Standard admitted a top-level `variable_declaration` form (`NAME "value"`) that fed values into `cook.env` independently of any `config_block`. This amendment removes that form. The remaining surface is the `config_block` Lua body, which writes `cook.env` (and any other Cook API state) through ordinary Lua assignment.
 
 Three forces motivate the consolidation. First, named overlay configs cannot override values set outside any config block without ad-hoc precedence wording; folding the surface into config blocks gives a single layered model with well-defined override semantics (§{grammar.config-composition}). Second, the bare top-level form is sugar for one specific case of what config block bodies already express; removing it deletes a duplicate surface, the `Token::VarDecl` lexical class, the contextual blocking-keyword reservation, and the recipe-body reclassification rule that the form required. Third, the consolidation moves the choice of *when* a value is set (always, vs. only-when-an-overlay-is-active) into the same surface as the value itself, which keeps the source of truth localised.
@@ -77,7 +77,7 @@ Layered single-select was chosen over multi-select for this revision: at most on
 
 The selection mechanism for the active overlay is implementation-defined. Config selection is a CLI affordance, and the Standard's general posture (§{intro}) is to specify Cookfile-language behaviour rather than tool invocation surfaces. Implementations are free to expose a flag, an environment variable, a file-level default, or any combination; the validation rule for the selected name is normatively specified in §{grammar.config-composition}.
 
-### B.3.10. Implicit termination of recipe and config bodies [#rationale.implicit-end]
+### C.4.10. Implicit termination of recipe and config bodies [#rationale.implicit-end]
 
 Each `recipe` and `config` block in v0.3 closed with an explicit `end` line. The closing keyword was ceremony — every author wrote it without thinking, and the parser had no need for it that the next top-level construct or EOF could not serve. A Cookfile with ten recipes had ten lines that existed only to satisfy the grammar. CS-0019 / v0.4 drops the keyword and replaces it with the implicit-termination rule of §{recipes.termination}.
 
@@ -89,17 +89,17 @@ A bare `end` line is a `Content` token (§{lexical.line-classification}). At top
 
 Migration: in this commit, every spec example (chapters 2 through 8 and App. C) drops its trailing `end` lines so the spec consistently teaches v0.4 surface form. The conformance-corpus migration (every fixture under `standard/conformance/`) and the project-Cookfile migration (root, `cli/`, `standard/`, `tree-sitter-cook/`, `examples/`) follow in subsequent commits of the same v0.4 cut. The Standard cuts at v0.4 with `cs-standard/v0.4` tagged at the merge commit per the parse-format-altering rule in CONTRIBUTING.md.
 
-## B.4. On §{recipes} Recipes and step kinds [#rationale.recipes]
+## C.6. On §{recipes} Recipes and step kinds [#rationale.recipes]
 Chapter 4 defines the largest single surface area of the Cookfile language: the step kinds available inside a recipe body and the dispatch rules that separate them. The design is pragmatic rather than minimalist. The Cook authors had to balance three competing forces: (a) make the common cases (a shell command, a one-to-one build, an interactive prompt) trivially expressible; (b) keep the lexer and parser context-free and line-oriented so that editor tooling remains simple; (c) allow Lua to extend the language without requiring it to do so for basic use. The sections below record the non-obvious choices that follow from those forces.
 
-### B.4.6. Why `cook "a" "b" using "cmd"` is a parse error [#rationale.multi-output-using-error]
+### C.6.6. Why `cook "a" "b" using "cmd"` is a parse error [#rationale.multi-output-using-error]
 The single-string `using` form is convenient in the one-output case because the command template can reference `$<out>` and the runtime knows exactly what to substitute. In the multi-output case that determinism evaporates: a single `"cmd"` template has no way to describe which of several outputs is produced by which sub-command, nor which sub-command produces any at all.
 
 The Standard could have papered over this by, for example, running the same `"cmd"` multiple times with `$<out>` bound in turn to each output. That semantics is surprising — the user typically wants a single invocation of a generator that happens to produce several artifacts, not N invocations. It would also hide common bugs, because a `"cmd"` that produces only the first output would silently "succeed" on the others.
 
 Requiring a block body — either `{ ... }` or `>{ ... }` — forces the author to state exactly how the outputs are produced: either as a literal sequence of shell commands (whose joint effect produces all outputs) or as a Lua block (which has full access to the `outputs` array and can write each entry deliberately). The parser's rejection of the ambiguous single-string form is therefore normative (§{grammar-appendix.steps}, "Multi-output cook-step rule") and produces a diagnostic that names the block-body remedy directly.
 
-### B.4.8. Why `>` is execute-phase and `>>` is register-phase [#rationale.lua-prefix-split]
+### C.6.8. Why `>` is execute-phase and `>>` is register-phase [#rationale.lua-prefix-split]
 The Cookfile language has two Lua-prefix surfaces: the single-`>` family (`>`, `>{ … }`) is execute-phase, and the doubled-`>` family (`>>`, `>>{ … }`) is register-phase. The split exists because conflating them — running both at register, as an earlier draft did — pushed the design into an unresolvable corner.
 
 The teachable case is the single-`>` form. A reader who encounters `> print("hi")` in a recipe expects the line to print when the recipe runs, not when Cook plans the recipe. That intuition aligns with the rest of the imperative region — a `shell_command` line runs at execute, an `@interactive` line runs at execute, and so should a `>` line. The doubled prefix reverses the timing for cases that genuinely need it: register-phase orchestration, where the Lua body's job is to call Cook Lua API helpers (`cook.add_unit`, `cook.export`, `cook.step_group`) that record work for execute. Those calls are nonsensical at execute time — registration is closed by then — so they need a register-phase home.
@@ -108,14 +108,14 @@ The doubled prefix earns its visual weight. A user types `>` to drop a runtime h
 
 The using-clause Lua block (`cook STR using >{ … }`) intentionally reuses the single-`>` prefix. The `>{ … }` syntax means "execute-phase Lua chunk" everywhere it appears; the surrounding `using` clause adds bindings (`input`, `output`, `inputs`, `outputs`, `input_N` per §{lua.using-block-globals}) but does not change the phase. A `using >>{ … }` form is rejected (§{grammar-appendix.steps}, "`using >>{` is rejected"): the using clause produces work for execute, and a register-phase block in that position is incoherent.
 
-### B.4.9. Why `module_call` defaults to register-phase [#rationale.module-call-register]
+### C.6.9. Why `module_call` defaults to register-phase [#rationale.module-call-register]
 A module-call line desugars to `inline_lua_line` (single-line) or `inline_lua_block` (multi-line) per §{recipes.module-call-steps}. Both targets are register-phase. The alternative — desugaring to `lua_line` / `lua_block` and running module calls at execute — was considered and rejected.
 
 Module functions in the wild record work: they call `cook.add_unit`, `cook.step_group`, `cook.export`, and similar register-only helpers. A function like `cpp.static_library("widget", { … })` exists to enumerate sources, register one compile unit per source, and record a final archive unit. None of that is meaningful at execute time — the DAG is already built, and `cook.add_unit` raises by §{rationale.execute-phase-api}.
 
 A user who wants to do execute-phase work via a module function can still do so explicitly: write `> mymod.runtime_check()` inside the imperative region. The module function's body runs at execute on the worker VM, with the execute-phase API surface (§{rationale.execute-phase-api}). The default — register-phase desugaring — fits the overwhelmingly common case (registration helpers) without forcing the rare case (runtime-only module helpers) to pay any cost beyond an explicit `>` prefix.
 
-### B.4.10. Why the recipe body splits into declarative and imperative regions [#rationale.recipe-body-regions]
+### C.6.10. Why the recipe body splits into declarative and imperative regions [#rationale.recipe-body-regions]
 A `recipe_body` is partitioned into a declarative region (register-phase steps) followed by an imperative region (execute-phase steps), with a parse-time error on out-of-order steps (§{recipes.step-kinds}, Note 4.4.2; App. A.3, "Region ordering rule"). The constraint encodes the two-phase execution model in surface syntax.
 
 The alternative — accepting any interleaving of register and execute steps — was tried in early drafts. Two failure modes emerged. First, **diagnostics for body-bundling violations became fragile**. With interleaving, a `> print(x)` after a `cook` step would coalesce into a body unit; another `cook` step further down would record a second unit; a third `> print(x)` would coalesce into yet another body unit. The recipe's units are scattered. Failures cite line numbers without context, and a reader cannot tell at a glance whether a given line will run at register or execute. Second, **scope-sharing rules across the register/execute boundary became impossible to reason about**. A user might expect `>> local x = …` followed by `> print(x)` to print the local. It does not — `x` is a register-phase Lua local, not visible to the execute-phase worker VM.
@@ -124,7 +124,7 @@ The region rule eliminates both failure modes. The declarative region is the pla
 
 The cost is that some Cookfiles need to use a separate recipe to express what an unconstrained body could express in one. The tradeoff is acceptable: a recipe that mixes register and execute work in alternating slabs is, almost always, two recipes pretending to be one.
 
-### B.4.11. Why the imperative region bundles per-recipe rather than per-line [#rationale.body-bundling-per-recipe]
+### C.6.11. Why the imperative region bundles per-recipe rather than per-line [#rationale.body-bundling-per-recipe]
 The imperative region of a recipe compiles to one body unit per uninterrupted run (where `@interactive` interrupts a run). Within a body unit, multiple `>` lines, `>{ … }` blocks, and `shell_command` lines coalesce into a single execute-phase Lua chunk that runs on one worker VM. Two design alternatives were considered and rejected.
 
 **Per-line units (one unit per imperative step)** would mirror the surface form most directly. Each `>` line, each `>{ … }` block, each shell line gets its own unit. The progress UI shows fine-grained granularity; each step has its own cache key (vacuously, since `cache = false` for body steps). The alternative was rejected because it makes "Make-`.ONESHELL`" semantics impossible: `cd bin` followed by `./app` runs in two different shell processes, the `cd` doesn't persist, and the user's most basic intuition for a sequence of recipe-body lines breaks. Forcing every multi-step body to be wrapped in `>{ … }` is a high bar for a one-line `cd; ./app`.
@@ -133,14 +133,14 @@ The imperative region of a recipe compiles to one body unit per uninterrupted ru
 
 The chosen rule — bundle until `@` interrupts — sits between the two extremes. It gives `cd; ./app` the persistence the user expects, lets `> local x` declarations be visible to the next `>` line, and keeps `@interactive` as a real DAG-level checkpoint. The cost is that the user-visible progress UI shows one entry per body unit instead of one per imperative step; the implementation can mitigate by including the source-line range in the body unit's progress label.
 
-### B.4.12. Why register-only Cook Lua API helpers raise from execute-phase Lua [#rationale.execute-phase-api]
+### C.6.12. Why register-only Cook Lua API helpers raise from execute-phase Lua [#rationale.execute-phase-api]
 `cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, and `cook.recipe` are register-only by §{lua.cook-sh}–§{lua.cook-recipe} and §{lua.add-unit}. A conforming implementation MUST raise a Lua runtime error when any of them is called from execute-phase Lua (a `lua_line`, a `lua_block`, or a `using >{ … }` payload). The alternatives — silently doing nothing, returning a stub value, or re-recording a unit that runs after the DAG closed — were rejected.
 
 The register/execute split makes a sharp claim: the DAG is fully known before execution begins. Allowing register-only helpers to "soft fail" inside an execute-phase chunk would erode that claim. A user who calls `cook.add_unit` inside a `>{ … }` body unit is, by the structure of the language, doing something incoherent: the unit being added would have no scheduling context. An error caught at the offending call is the right diagnostic — it identifies the function name and the calling step kind, and points the user at the corrective form (move the call to a `>>{ … }` block or a module function).
 
 `cook.sh` is the one helper exposed in both phases (§{lua.cook-sh}). The user-visible behaviour — "run this command, give me its stdout, error on non-zero" — is the same in both contexts; only the surrounding scheduling differs. Promoting it to both phases keeps the imperative region usable for shell-out work without inventing a parallel `cook.run`-style helper.
 
-### B.4.13. Why module-call dispatch is a first-two-tokens heuristic [#rationale.module-call-heuristic]
+### C.6.13. Why module-call dispatch is a first-two-tokens heuristic [#rationale.module-call-heuristic]
 The module-call pattern of §{grammar-appendix.steps} inspects only the first identifier, a literal `.`, and the first character after the dot. It does not attempt to parse the rest of the line as Lua. This is deliberate.
 
 A full Lua parse at dispatch time would couple the Cook parser to the Lua grammar, making the Cook parser's correctness depend on a Lua front-end and making its diagnostics worse: a Lua syntax error inside a module-call line would have to be reported as a Cook error at a Cook source position. It would also require the Cook parser to make an early commit between "this is a shell command" and "this is Lua", and a wrong early commit in either direction produces terrible error messages.
@@ -149,7 +149,7 @@ The two-token heuristic is cheap, lexer-local, and has no false positives in pra
 
 The multi-line extension (continuing across source lines while braces are unbalanced) is the same brace-balance algorithm used for `lua_block` (§{lexical.brace-blocks}). Reusing it keeps the lexer consistent: the Cookfile parser has exactly one way to recognise a brace-balanced region, and that region's body is always handed to Lua untouched.
 
-### B.4.14. Why chore is a separate form rather than a flag on recipe [#rationale.chore-form-not-flag]
+### C.6.14. Why chore is a separate form rather than a flag on recipe [#rationale.chore-form-not-flag]
 
 The chore-vs-recipe distinction could have been spelled `recipe foo (chore)`, `recipe foo @chore`, `recipe! foo`, or any number of recipe-with-modifier shapes. CS-0020 instead introduces `chore` as a peer top-level keyword. Three forces drive the choice.
 
@@ -161,7 +161,7 @@ Third, the syntactic peerage models the semantic peerage. Chores and recipes are
 
 The cost is a new keyword to remember. Cook's keyword surface remains small (`recipe`, `chore`, `config`, `use`, `import`, `ingredients`, `cook`, `plate`, `test`, `using`); even with `chore` added, the set is well within "memorable in one sitting" range.
 
-### B.4.15. Why chore bans `ingredients`, `cook`, `plate`, `test` [#rationale.chore-banned-steps]
+### C.6.15. Why chore bans `ingredients`, `cook`, `plate`, `test` [#rationale.chore-banned-steps]
 
 The four banned step kinds — `ingredients`, `cook`, `plate`, `test` — share a common property: each declares part of a build-graph node (inputs, outputs, plating, validation). A chore is by definition a body that does NOT participate in the build graph: it always runs, it produces no cacheable output, and its outputs are not consumed by other recipes via the cross-recipe-reference mechanism (§{xref}).
 
@@ -169,56 +169,56 @@ Allowing a `cook` step inside a chore body would be incoherent: either (a) the e
 
 Banning module calls was considered and rejected. A module call typically expands into a sequence of register-phase declarative steps, some of which might be `cook` steps and would be caught by the recipe-body region rule's existing diagnostics. A flat ban would be over-strict — a module that exposes a `cleanup()` function returning no `cook.add_unit` calls is a perfectly valid chore body call. The conservative choice is therefore to allow `module_call` in chore bodies; module authors who emit `cook` units inside a chore-context call see a diagnostic at the `cook.add_unit` site (per §{chores.no-caching}) rather than at parse time.
 
-### B.4.16. Why default-interactive [#rationale.chore-default-interactive]
+### C.6.16. Why default-interactive [#rationale.chore-default-interactive]
 
 A chore is by intent a thing the user runs at a terminal. The `@` marker (§{recipes.shell-steps}) on every shell line of a recipe-shaped command-runner is ceremony — the author already chose `chore` over `recipe` because the body is interactive. The default-interactive rule deletes the ceremony.
 
 The `@` marker is preserved as a no-op inside chore bodies for symmetry: a recipe body author migrating to `chore` does not need to strip every `@`, and a Cookfile that is moved between forms during refactoring continues to parse. The non-symmetric direction (chore → recipe) requires the author to add `@` markers where they want interactivity preserved; this is an authoring choice and is the expected path for "this used to be a chore but I want to add cook steps now".
 
-### B.4.17. Why `plate` and `test` are cook steps with no declared outputs [#rationale.plate-test-no-output-decl]
+### C.6.17. Why `plate` and `test` are cook steps with no declared outputs [#rationale.plate-test-no-output-decl]
 Once cook gained block bodies and three iteration modes (CS-0022), the only structural difference between a cook step and a plate or test step was the presence of an output declaration. Modeling plate and test as "cook with no outputs" makes the body grammar uniform, the placeholder vocabulary uniform, the cross-recipe substitution rules uniform, and the substitution timing uniform. The author's mental model collapses from three step kinds with three surfaces to three step kinds with one surface.
 
 The two keywords survive because they signal author intent that a single keyword would lose: a reader scanning a recipe sees `test` and knows "this is a validation gate." `test` additionally carries genuine extra structure (`timeout` and `should_fail` modifiers) that a generic "cook with no outputs" form would not.
 
 The `using` keyword does not appear on plate or test lines. Cook earns it because its line carries two things — output pattern list and body — that need a separator. Plate and test have only a body; a `using` keyword would be ceremony with no semantic load.
 
-### B.4.18. Why iteration mode is deduced from the body for plate and test [#rationale.plate-test-body-deduction]
+### C.6.18. Why iteration mode is deduced from the body for plate and test [#rationale.plate-test-body-deduction]
 Cook owns iteration mode via the output pattern (CS-0022) because the output pattern is *declarative*: it states the unit's filenames and falls out the iteration shape. Plate and test have no outputs to declare, so the body's placeholder content is the only available signal. The CS-0022 footgun — an output-pattern signal contradicting a body signal — cannot occur in a step that has no output pattern. Deducing mode from body content is therefore sound for plate and test, even though it would be incoherent for cook.
 
 The deduction is purely syntactic: it scans the body's text (shell) or its free-identifier references (Lua) at register time. It does not require Lua evaluation. The alternative — letting the runtime decide which binding to populate based on which one was named — would require dynamic mode selection, breaking the static-shape DAG `cook.add_unit` produces.
 
-### B.4.19. Why `$<out>` is rejected in plate and test bodies [#rationale.plate-test-out-rejected]
+### C.6.19. Why `$<out>` is rejected in plate and test bodies [#rationale.plate-test-out-rejected]
 CS-0022 fixed `$<out>` to mean the unit's declared output. Plate and test declare no outputs, so `$<out>` has no referent. The pre-CS-0024 plate surface used `$<out>` to mean the iteration item — but that is what `$<in>` means everywhere else in the language. A per-step-kind name for "the iteration item" would re-introduce the position-dependent rule that CS-0022 paid to remove.
 
-### B.4.20. Why `$<lib.ACCESSOR>` is rejected in plate and test bodies [#rationale.plate-test-lib-accessor-rejected]
+### C.6.20. Why `$<lib.ACCESSOR>` is rejected in plate and test bodies [#rationale.plate-test-lib-accessor-rejected]
 Plate and test have no output pattern and therefore cannot declare a `lib`-driven iteration. §{xref.dep-driven}'s firewall — `$<lib.ACCESSOR>` rejected in any using-clause body — applies trivially to plate and test bodies: there is never a position in such a body where `$<lib.ACCESSOR>` could be valid. A bare `$<lib>` reference is admitted and substitutes per §{xref.string-substitution}.
 
-### B.4.21. Why a static Lua identifier scan, not a runtime decision [#rationale.plate-test-lua-static-scan]
+### C.6.21. Why a static Lua identifier scan, not a runtime decision [#rationale.plate-test-lua-static-scan]
 A Lua body that references both `input` and `inputs` is making contradictory claims about iteration shape. Detecting that at register time produces a sharp diagnostic with a line number; deferring it to "the runtime decides which binding is bound based on which one was named" would either require dynamic mode selection (incompatible with the static-shape DAG) or two distinct mode-resolution passes (one syntactic for shell, one runtime for Lua). One pass, applied uniformly, is the better trade.
 
 The scan is whole-word, identifier-position. A property-name suffix (`cook.input`, `obj:input(...)`) is not a reference to the binding because the Lua grammar resolves the name as a field access. The scan respects the existing string/comment/long-string ignore rules of §{lexical.brace-blocks}.
 
-### B.4.22. Why `as STRING` and not `name STRING` [#rationale.test-as-not-name]
+### C.6.22. Why `as STRING` and not `name STRING` [#rationale.test-as-not-name]
 `as` reads as natural English ("this test, as 'parses-config'") and aligns with SQL's `AS` aliasing posture. `name` would collide with the table-field `name` in `cook.add_test` (§{lua.cook-add-test}), creating two ways to spell the same concept with subtly different timing — the modifier substitutes at register time, whereas the `name` field is constructed when the table is assembled at execute time. Choosing distinct surface tokens for the two surfaces makes the timing difference legible.
 
-### B.4.23. Why the modifier order is fixed [#rationale.test-modifier-order-fixed]
+### C.6.23. Why the modifier order is fixed [#rationale.test-modifier-order-fixed]
 LL(1) parsability is a hard constraint for the Cook parser (`cook-lang`'s recursive-descent shape). Free-order modifiers either require backtracking or a peek/look-ahead that the parser does not currently support. The fixed order also produces canonical reading order in source: identity (`as`) → constraint (`timeout`) → interpretation (`should_fail`). Authors who reach for a different order are flagged immediately rather than silently parsed differently.
 
-### B.4.24. Why test caching is universal in the Standard [#rationale.test-caching-universal]
+### C.6.24. Why test caching is universal in the Standard [#rationale.test-caching-universal]
 The alternative was caching as an implementation choice with no Standard contract. That posture works for v0.x but creates a portability hazard at v1.0: a Cookfile that passes on cloud-cache machine A and fails on machine B — because A cached a test and B did not — is a contract violation only if the Standard says so. Specifying the cache key inputs and the recordable-outcomes rule (§{exec.cache.test-unit}) means cross-machine cache replay is correct or it is a Standard violation. Without a contract, the cloud-cache feature degrades to "works on machines configured the same way," which is the wrong promise for a build-system test runner.
 
-### B.4.25. Why no per-step `volatile` modifier [#rationale.test-no-volatile]
+### C.6.25. Why no per-step `volatile` modifier [#rationale.test-no-volatile]
 A `volatile` modifier teaches authors that hidden inputs are normal. The right answer for tests with filesystem inputs Cook cannot see (vitest reading `.test.ts`, pytest reading `.py`) is the existing `discovered_inputs` mechanism (§{exec.cache.discovered-inputs}) plus depfile emission. The right answer for tests with non-filesystem hidden inputs (network, clock, `$RANDOM`) is the operator-side `cook --test --rerun [PATTERN]` flag, applied per-invocation. A persistent per-step opt-out would convert "I know this is non-deterministic" into "I'm too lazy to declare my inputs," and the cache becomes a sieve.
 
 The CLI escape hatch costs nothing in language surface and pushes authors toward correct input declaration; the language escape hatch costs spec breadth and grants permission for sloppiness. The trade is in favour of the CLI form.
 
-### B.4.26. Why timed-out + `should_fail` is "timed out", not "passed" [#rationale.test-timeout-not-passed]
+### C.6.26. Why timed-out + `should_fail` is "timed out", not "passed" [#rationale.test-timeout-not-passed]
 A timeout is not an exit status; it is a runtime intervention. Treating it as failure-equivalent for the purpose of `should_fail` would mean any sufficiently slow test passes any `should_fail` claim, which destroys the modifier's diagnostic value. The dedicated "timed out" outcome (§{exec.cache.test-unit}) preserves the runner's ability to flag timeouts distinctly in the report.
 
-## B.5. On §{exec} Execution model [#rationale.exec]
+## C.13. On §{exec} Execution model [#rationale.exec]
 The execution model in §{exec} is organised around a two-phase design: every recipe is evaluated once to discover its work (the register phase) and then arranged for execution (the execute phase). This split is not cosmetic. It is the mechanism by which the Standard turns a scripting-flavoured surface syntax — arbitrary Lua embedded in a recipe body — into a dependency graph that can be reasoned about, parallelised, and cached. The rationale subsections below record why several load-bearing decisions in §{exec} are the way they are.
 
-### B.5.1. Why the register phase is pure and non-blocking [#rationale.register-phase-pure]
+### C.13.1. Why the register phase is pure and non-blocking [#rationale.register-phase-pure]
 The register phase evaluates each recipe's Lua body once, with capture-mode bindings for the Cook Lua API (§{exec.capture-mode}). The requirement that register-phase calls be pure with respect to the build state — no subprocesses against declared outputs, no output-file mutations, no blocking on external I/O — exists for three concrete reasons.
 
 First, **determinism of the graph.** If the register phase could block on a subprocess whose exit depended on a file produced by another recipe's execute phase, the topology of the dependency graph would depend on the order in which the implementation chose to register recipes. Two conforming implementations would then produce different graphs for the same Cookfile. By confining register-phase effects to appending entries to a record, the graph becomes a deterministic function of the Cookfile source and a bounded set of pre-existing inputs.
@@ -229,7 +229,7 @@ Third, **cache reasoning.** The cache (§{exec.cache}) keys work units on their 
 
 The narrowly-scoped exception allowed by the closing paragraph of §{exec.capture-mode} — implementations MAY permit register-phase effects whose only purpose is to feed the register-phase Lua control flow itself — is load-bearing for the `cook.sh` utility in §{lua}. That call's return value drives whether a `cook` step fires at all, and suppressing it would force authors to split dynamic build logic across two passes.
 
-### B.5.2. Why `@` steps drain rather than serialise by default [#rationale.interactive-drain]
+### C.13.2. Why `@` steps drain rather than serialise by default [#rationale.interactive-drain]
 Section 8.5 requires an `@`-prefixed interactive step to drain all other running work before its command begins. The alternative — allowing an interactive step to run concurrently with background work and only inherit the TTY — was rejected because it produces user-hostile behaviour in the common case.
 
 Interactive steps are used for dev-loop commands like `@./build/app`, `@vim notes.md`, and `@./serve`. These share the terminal with the human operator. If background work continues while such a command is in progress, its stdout and stderr interleave with the interactive session, corrupting the user's view and often stealing focus from whatever TUI the interactive command is presenting. Users who saw this behaviour during prototyping reported it as a defect even when the concurrent output was mechanically correct.
@@ -238,7 +238,7 @@ Draining is not the same as serial execution of the whole recipe. Work units bef
 
 Authors who want concurrent background work alongside an interactive session can obtain it by running the background work in a separate recipe and not depending on the interactive recipe — the dependency graph continues to permit parallel execution of independent recipes under the usual rules.
 
-### B.5.3. Why cache semantics are abstract rather than specified by hash algorithm [#rationale.abstract-cache]
+### C.13.3. Why cache semantics are abstract rather than specified by hash algorithm [#rationale.abstract-cache]
 Section 8.6 fixes the **set** of observable inputs a cache MAY consider — command text, input paths, output paths, environment, and optionally input-file content and output-file mtime — but it does not fix the hash function, the on-disk layout, or the policy for when cache entries are evicted. The boundary is deliberate.
 
 **Cross-machine cache correctness.** §8.6's enumeration of permissible cache observables now includes machine identity and tool-binary content. The motivation is the shared/team cache: an artifact produced on one machine and served to another must remain correct against differences in compiler version, libc, locale, and the resolved binary that the command text names. A Cook implementation that hashes only "command text + input files" is correct on a single machine but unsafe across machines; the additional observables let an implementation be cross-machine-safe without taking on those observables when running locally. The denylist clause acknowledges that not every difference in the resolved environment affects build output (ambient session state, secrets unrelated to the artifact), and lets implementations filter without violating the minimum-observable enumeration of ¶2.
@@ -249,12 +249,12 @@ Specifying the hash function in the Standard would also lock every implementatio
 
 The closing paragraph of §{exec.cache} — that caching is optional altogether — follows from the same principle. An implementation that treats every run as a clean build satisfies the dependency rules of §{exec.two-phase}–§{exec.interactive-drain} and therefore conforms. The Standard does not require caching; it regulates it when it is present.
 
-### B.5.4. Why diagnostic ordering is normative but diagnostic wording is not [#rationale.diagnostic-ordering]
+### C.13.4. Why diagnostic ordering is normative but diagnostic wording is not [#rationale.diagnostic-ordering]
 The ordering rule in §{exec.diagnostic-ordering} — syntactic diagnostics before semantic, first syntax error halts parsing — is normative because it determines what a Cookfile author sees on a single run. An implementation that reported a dependency cycle before reporting that a `cook` line was unterminated would mislead authors into debugging the graph when the real problem was a quote.
 
 The wording is not normative because diagnostic quality is a product concern where implementations should be free to differentiate. A terse parser-level message suitable for a CI log and a richly-formatted message suitable for an editor overlay are both conforming so long as the ordering holds and the class of error is identifiable. This matches the convention established in §{intro.non-scope} and §{intro.conformance}: exact wording is out of scope; the diagnostic class is in scope.
 
-### B.5.N. Name references as the sole implicit-dep source
+### C.13.N. Name references as the sole implicit-dep source
 
 CS-0009 removed the implicit cross-recipe dependency rule based on byte-equality between an ingredient path of one recipe and a cook-output path of another (old §{xref.string-substitution}). Under the new rule (§{exec.cross-recipe-ordering}), only name references (§{xref}) establish cross-recipe edges.
 
@@ -264,7 +264,7 @@ The rule is also redundant once name references exist. Any dep the author meant 
 
 The small cost is a one-line migration for any existing Cookfile that relied on the rule: add `$<lib>` to the using-string, or add `: lib` to the header.
 
-### B.5.O. Dep-driven iteration via output-pattern accessors
+### C.13.O. Dep-driven iteration via output-pattern accessors
 
 CS-0009 specifies that `$<lib.ACCESSOR>` appearing in a `cook` step's output pattern list is both a template substitution AND an iteration-source declaration: the step's work units are generated per item in `lib`'s output list rather than per item in this recipe's own input list (§{xref.dep-driven}).
 
@@ -272,7 +272,7 @@ The alternative considered was an explicit declaration such as `cook "build/$<st
 
 The cost — that a step's iteration source is determined by placeholder inspection — is contained by the "one distinct recipe per step" rule (§{xref.dep-driven}): the inspection is unambiguous, and the diagnostic for mixing two distinct drivers is straightforward.
 
-### B.5.P. Closed accessor set
+### C.13.P. Closed accessor set
 
 The set of path accessors (§{xref.path-accessors}) is `{stem, name, ext, dir}` and is closed. Adding an accessor is a change to this Standard.
 
@@ -280,7 +280,7 @@ The alternative — opening the set to every zero-arg `path.*` function — was 
 
 A zero-arg `path.*` addition not in the accessor set remains reachable from step bodies via a `{ … }` Lua block (§{recipes.cook-single-output}, §{recipes.cook-multi-output}). The closed-set rule does not restrict what authors can compute — only what syntactic shortcuts exist for the common cases.
 
-## B.6. On §{lua} Cook Lua API [#rationale.lua]
+## C.21. On §{lua} Cook Lua API [#rationale.lua]
 The Cook Lua API is deliberately small and sharply phase-split. Most build-system DSLs expose a single large API whose functions do different things depending on when they are called — declaration during a "load" pass, execution during a "run" pass, with the split encoded by convention rather than by contract. The Cook Standard commits to the split in its normative text: every function is classified as register-phase, execute-phase, or both, and a conforming implementation MUST install each function in the phases it is documented for.
 
 The reasoning is pragmatic:
@@ -289,41 +289,41 @@ The reasoning is pragmatic:
 - **The execute phase is the parallelism boundary.** Execute-phase work runs on a pool of worker VMs, each with its own Lua state. A function that mutates shared capture state cannot sensibly run on a worker. `cook.add_unit` is register-phase only for exactly this reason.
 - **Keeping the surface small means the phase split is memorable.** A surface this size can be held in an author's head: `cook.add_unit`, the `cook.sh`/`cook.exec`/`cook.interactive` helpers, seven `fs.*` functions, six `path.*` functions, and the execute-phase using-block globals. That is intentional.
 
-### B.6.1. Why placeholder substitutions exist alongside the using-block globals [#rationale.placeholder-vs-globals]
+### C.21.1. Why placeholder substitutions exist alongside the using-block globals [#rationale.placeholder-vs-globals]
 §{lua.shell-placeholders} defines `$<in>`, `$<out>`, `$<all>`, `$<out_N>`, and the dotted-accessor `$<NAME.ACCESSOR>` family for shell blocks (and, by §{xref.string-substitution}, `plate` / `test` / bare `shell_command`). §{lua.using-block-globals} defines `input`, `output`, `inputs`, `outputs`, and `input_N` for `using >{ ... }` Lua-code blocks. Both express the same fundamental idea — "the current input and output of a step" — and an earlier draft of the Standard considered collapsing them to one.
 
 They remain separate because they inhabit different typographic contexts. A shell using-string is a shell line; shell has no binding mechanism for "the current file", so a placeholder syntax is the only option that keeps the surface readable. A Lua using-block is Lua code; Lua has direct variable binding, so exposing `input` and `outputs` as globals is more Lua-idiomatic than expanding `$<in>` inside Lua text.
 
 The substitution also differs in timing. Shell using-string placeholders are substituted at register-time code generation — by the time the unit is recorded, the shell string is already concrete text. Lua using-block globals are bound at execute time on the worker VM. Collapsing the two would require either executing Lua fragments at register time (a re-entrancy hazard) or deferring shell substitution to execute time (a loss of register-phase observability). Keeping them separate is the less-bad outcome.
 
-### B.6.2. Why `fs.*` and `path.*` are separate namespaces [#rationale.fs-path-namespaces]
+### C.21.2. Why `fs.*` and `path.*` are separate namespaces [#rationale.fs-path-namespaces]
 `fs.*` performs I/O against the Cookfile's working directory. `path.*` performs pure string manipulation on path components and is working-directory-independent. An earlier sketch merged them under a single `path` namespace, distinguishing "pure" from "I/O" functions by naming convention. This was rejected.
 
 Keeping the namespaces apart matches a common Lua convention (see the standard library's `io` vs. `string`), and — more importantly — it mirrors the phase-split reasoning in the chapter intro. `path.*` can never observe anything phase-sensitive, so merging it with `fs.*` would invite readers to assume every `fs.*` call is similarly pure. The namespace split is a small, cheap signal that I/O is happening.
 
-### B.6.3. Why `cook.add_unit` is register-phase only [#rationale.add-unit-register-only]
+### C.21.3. Why `cook.add_unit` is register-phase only [#rationale.add-unit-register-only]
 A naive design might allow `cook.add_unit` inside `using >{ ... }` Lua blocks — that is, inside an execute-phase step — as a way to dynamically produce further units based on build outputs. The Standard forbids this: `cook.add_unit` is register-phase only.
 
 The reason is the cache. The set of work units is the input to the scheduler (§{exec}), and the scheduler's correctness depends on knowing all units before any of them runs. A unit added during execution would have to either (a) force re-planning mid-execute — which invalidates any parallelism already in flight — or (b) sneak past the scheduler and run outside its ordering guarantees. Both options break the contract. Authors who need data-driven unit counts call `cook.sh` at register time (§{lua.cook-sh}) to compute the data, then call `cook.add_unit` for each computed unit, all during registration. The examples in `cpp.lua` (e.g., `cpp.static_library`) are the canonical shape.
 
-### B.6.4. Why the cook-step using-string recognises recipe names [#rationale.recipe-name-priority]
+### C.21.4. Why the cook-step using-string recognises recipe names [#rationale.recipe-name-priority]
 A `$<TOKEN>` in a using-string that is neither a known placeholder nor a recipe name falls through to `cook.env[TOKEN]` (§{lua.shell-placeholders}). A `$<TOKEN>` that matches a recipe name in the same Cookfile is instead rewritten to `cook.dep_output("TOKEN")`. This is a deliberate asymmetry: in practice, cross-recipe references to "the outputs of another recipe" are far more common than environment variables that happen to share a name with a recipe. Giving recipe names priority in the fallback order means authors rarely need to choose between the two at the token level — the parser picks the right one.
 
-### B.6.5. Why output-pattern is the sole iteration source [#rationale.output-pattern-iteration]
+### C.21.5. Why output-pattern is the sole iteration source [#rationale.output-pattern-iteration]
 Pre-CS-0022, iteration mode was decided by two non-adjacent regions: §6.7 said "`$<in>` in the using-string drives one-to-one"; §5.4 said "`$<lib.ACCESSOR>` in the output pattern drives dep-driven one-to-one." Both rules co-existed peacefully when authors wrote consistent code, but they failed silently on inconsistent code: `cook "out" using "do $<in>"` (literal output, `$<in>` in using-string) iterated per input under the §6.7 rule, with every iteration writing to the same literal output, clobbering successive results.
 
 CS-0022 makes the output pattern the sole iteration source. The output pattern is the *declarative* part of a cook step — it describes what files the step produces. If those filenames are parameterized (via `$<in.ACCESSOR>` or `$<lib.ACCESSOR>`), iteration follows. If they are literal, the step does not iterate. Authors who wrote the silent-clobber pattern get a load-time error pointing at the literal-output / `$<in>`-in-body mismatch.
 
-### B.6.6. Why `using "cmd"` was removed [#rationale.using-cmd-removed]
+### C.21.6. Why `using "cmd"` was removed [#rationale.using-cmd-removed]
 The string and block forms expressed the same thing — a shell command — through different surfaces. With shell blocks first-class (CS-0022 also extends §{xref.string-substitution} and §{lua.shell-placeholders} to cover `shell_block` content) the string form bought one character of brevity per call site against the cost of a separate normative branch in §6.7 and a separate dispatch arm in `using_clause`. The cost was paid every time an author moved a one-line command onto two lines. The Standard now has one shell surface — `using { cmd }` for one-liners; `using { cmd1\n cmd2 }` for multi-line — and one Lua surface, `using >{ ... }`.
 
-### B.6.7. Why bare path-accessors were removed [#rationale.bare-accessors-removed]
+### C.21.7. Why bare path-accessors were removed [#rationale.bare-accessors-removed]
 Two spellings of the same concept (`$<stem>` and `$<in.stem>`) with position-dependent admissibility (`$<stem>` valid in output patterns, `$<in.stem>` valid in using-clause bodies under earlier proposals) is the kind of memorise-by-rote rule a Standard pays for forever. CS-0022 collapses the surface to one spelling — `$<NAME.ACCESSOR>` — valid in both positions, with `NAME` ∈ `{ in, out, out_N, libname }`. Bare `$<stem>` reads, post-CS-0022, as a `$<TOKEN>` resolving through §{xref.resolution} step 4 to `cook.env["stem"]`. That fallthrough is the wrong failure mode for code being migrated, so the implementation MUST emit a specific diagnostic for the four bare accessor names that points at the new spelling.
 
-### B.6.8. Why `$<lib.ACCESSOR>` is rejected in using-clause bodies [#rationale.lib-accessor-firewall]
+### C.21.8. Why `$<lib.ACCESSOR>` is rejected in using-clause bodies [#rationale.lib-accessor-firewall]
 The §{xref.dep-driven} firewall rejecting `$<lib.ACCESSOR>` in a step whose output pattern does not declare `lib` as the driver is preserved verbatim by CS-0022. Inside a step where `lib` *is* the driver, the spelling `$<in.ACCESSOR>` is used — the local name `in` for "the current iteration item" is universal across drivers, so the using-clause body never names the driver explicitly. Allowing `$<lib.ACCESSOR>` in the body would let an author smuggle a second iteration source past the output-pattern declaration, undoing §{recipes.iteration-mode}'s single-driver invariant.
 
-## B.7. On §{modules} Cross-Cookfile composition and §{lua.use-env} `use` [#rationale.modules]
+## C.11. On §{modules} Cross-Cookfile composition and §{lua.use-env} `use` [#rationale.modules]
 Cross-Cookfile composition (§{modules}) and Lua module loading (§{lua.use-env}) are deliberately split into two declarations that look similar but answer different questions. `use` answers "give me additional Lua for my recipes to call"; `import` answers "tie another Cookfile's recipes into my dependency graph." Conflating them — for example, by making `import` also bring a Lua value into scope — would force authors to pick one semantics at every call site and would blur the two namespaces the dependency resolver walks. The Standard keeps them distinct so that each declaration has one job, and lives in a different chapter: `use` belongs with the Cook Lua API because it loads Lua code, whereas `import` belongs with cross-Cookfile composition because it binds an alias for cross-recipe references.
 
 Built-in modules are resolved before `cook_modules/` (§{lua.use-env}) so that adding a new built-in in a future version of the implementation cannot silently break a project that happens to have a `cook_modules/<name>.lua` of the same name: the built-in always wins, so a project author who wants to override it renames their local module or picks a different name. The converse ordering — consulting `cook_modules/` first — would make the set of built-in names a latent hazard: every new built-in would be a silent semantic change for every project that had colonised the name first. v0.1 of the Standard defines no built-ins, but fixes the ordering now so that the first built-in to ship can do so without a migration.
@@ -332,24 +332,24 @@ The choice of `cook_modules/` — an adjacent directory, resolved only relative 
 
 The §7 search-path order adopts the LuaRocks tree layout (`share/lua/<ver>/`, `lib/lua/<ver>/`) as the on-disk shape so cook can interoperate with luarocks.org rockspecs without forking layout policy. Hand-vendored top-level files retain highest priority so authors can override a rock-installed version by dropping a file at `cook_modules/<name>.lua`; the LuaRocks tree is searched second.
 
-### B.7.1. Why duplicate-`import` is a parse-time error rather than last-wins [#rationale.duplicate-import-parse-time]
+### C.11.1. Why duplicate-`import` is a parse-time error rather than last-wins [#rationale.duplicate-import-parse-time]
 A "last-wins" override is tempting because it is what most language include-systems do for simple `#include` and because it composes cleanly with machine-generated fragments. The Standard rejects it for two reasons.
 
 First, the duplicate-import rule is the only defence against a silent bug where a user edits one `import backend ./services/backend` into `import backend ./services/backend_v2` in a diff that also intends to keep the first line around for some other recipe to consume. Last-wins would silently redirect every `backend.*` dependency in the file to the new target, and the first import would become dead code with no diagnostic. A parse-time error surfaces the mistake at the moment of the edit.
 
 Second, a duplicate-import is diagnosable locally — it is a property of a single Cookfile's token stream, which the parser already holds in full. Pushing the check to a later stage (workspace load, DAG construction) would mean the diagnostic arrives after some non-trivial work has succeeded, and the error message would have to reconstruct which line declared which alias. Parse time is where the information is cheapest.
 
-### B.7.2. Why import cycles are detected at workspace-load time rather than at parse time [#rationale.cycle-load-time]
+### C.11.2. Why import cycles are detected at workspace-load time rather than at parse time [#rationale.cycle-load-time]
 Symmetrically, cycles are NOT caught at parse time because they cannot be: a single Cookfile's tokens cannot know whether `import b ../b` eventually loops back. Cycle detection requires the parser to have run on every Cookfile the edge set transitively touches, and that only happens at workspace-load time. Pushing cycle detection earlier would either require a separate pre-pass — effectively re-parsing every Cookfile before validating any — or would require `import` to be resolved synchronously during parsing, which would re-introduce the coupling that v0.1 deliberately separates (the parser produces an AST; the workspace loader consumes it).
 
 Canonicalisation at the edge boundary (§{modules.duplicates-and-cycles}) is load-bearing. Without it, `import b ./b` and `import b ./services/../b` would be different nodes in the cycle graph, and the diamond dedup rule of §{modules.duplicates-and-cycles} would fire on one but not the other. Canonicalising to absolute, symlink-resolved paths collapses these spellings into one node.
 
-### B.7.3. Why local module names do not collide with reserved recipe segments [#rationale.module-name-no-collision]
+### C.11.3. Why local module names do not collide with reserved recipe segments [#rationale.module-name-no-collision]
 The reserved recipe segments of §{lexical.keywords} (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`) are reserved for the final segment of a recipe or dependency name, not for identifiers in general. A local module may therefore be named, for example, `out.lua` in `cook_modules/`, and bound by `use out`; the binding would collide with nothing in the grammar, because `use` resolves against `BARE_IDENTIFIER` and `STRING` (App. A.2) and is not subject to the recipe-segment reservation.
 
 The Standard declines to extend the reservation to module names because the two namespaces are independently diagnosable: a recipe body that writes `out.foo()` is a `module_call` only if `out` has been bound by a prior `use` declaration in the same Cookfile (§{recipes.module-call-steps}). Without the `use`, the same line is a `shell_command`, and the dispatch cascade of App. A.4 will classify it so. Reserving the name globally would not prevent any bug the dispatch already handles, and would remove an axis of expressiveness from module authors.
 
-## B.8. `out_0` rejection at resolution rather than fall-through [#rationale.out-zero]
+## C.10.1. `out_0` rejection at resolution rather than fall-through [#rationale.out-zero]
 
 The closed-set resolver introduced with the sigil placeholder syntax rejects `$<out_0>` as a `MalformedOutIndex` error rather than letting it fall through to the recipe-then-env-lookup steps. Lexically, `out_0` matches the `out_indexed` production (`"out_" DIGIT+` admits `0`); the rejection happens at resolution, not lexing.
 
@@ -362,7 +362,7 @@ Authors who type `$<out_0>` are virtually always misremembering that `out_N` is 
 
 The `BuiltinMatch::Malformed` variant in the resolver makes the hard-stop explicit in code: `match_builtin` returns three outcomes — `Yes` (valid builtin), `Malformed` (builtin shape, structurally invalid), and `No` (not a builtin shape at all). Only `No` falls through; `Malformed` short-circuits to an error without consulting the recipe or env namespaces.
 
-## B.9. The `cook.require_env` runtime mechanism [#rationale.require-env]
+## C.21.1. The `cook.require_env` runtime mechanism [#rationale.require-env]
 
 §{xref.resolution} step 3 (declared env var) defers the "declared" check to register time, after config-block evaluation has captured the env table's keys. The reference implementation realizes this contract through a Lua function `cook.require_env(name)` injected into the Cook environment alongside `cook.env`, `cook.dep_output`, and the other `cook.*` helpers.
 
@@ -375,7 +375,7 @@ Two design alternatives were considered and rejected:
 - **Codegen-time check.** The codegen could parse config-block source for `env.NAME = ...` patterns and reject undeclared references at register-time emission. This requires the codegen to understand Lua syntax, including conditional assignments and dynamic key construction (`env[some_var] = ...`). The runtime check is simpler, more accurate, and produces the same author-facing diagnostic at virtually the same time (register time vs. codegen time).
 - **Silent fallthrough to `cook.env[name]`.** This was the pre-sigil-placeholder-syntax behaviour and it caused real bugs: a typo such as `$<HOEM>` silently expanded to an empty string, propagated through cache, and triggered spurious reruns. The closed-set resolution rule explicitly rejects this option to make every placeholder either resolve to a known thing or fail loudly.
 
-## B.A. On Appendix A
+## C.A. On Appendix A
 
 _To be filled in._
 
