@@ -180,7 +180,7 @@ A `register_body` MAY be empty: the next top-level construct or EOF MAY immediat
 
 A conforming implementation MUST execute each `register_block` body on the register-phase Lua VM in **source order**, interleaved with recipe registrations. The effect MUST be as if each `register_block` body were spliced verbatim into the compiled register-phase Lua program at its source position. `local` variables and other Lua state declared in one `register_block` body MUST remain in scope for subsequent `register_block` bodies, for `inline_lua_line` / `inline_lua_block` (§{recipes.lua-steps}) lines in recipes that follow, and for the bodies of `cook.recipe(…)` invocations triggered by either, subject to the visibility rules of the underlying Lua language. An implementation MAY represent the parsed `register_block`s as an ordered collection within its abstract syntax tree; the reference implementation in `cli/crates/cook-lang` uses a `Vec<RegisterBlock>` field on the top-level `Cookfile` AST node (informative).
 
-A `register_block` body MAY call any register-phase Cook Lua API (§{lua.register-only}), including `cook.recipe`, `cook.add_unit`, `cook.step_group`, `cook.exec`, `cook.interactive`, and the both-phase APIs of §{lua.both-phase}.
+A `register_block` body MAY call any register-phase Cook Lua API, including `cook.recipe`, `cook.add_unit`, `cook.step_group`, `cook.exec`, `cook.interactive`, and the both-phase APIs.
 
 ### Example 3.7.1
 
