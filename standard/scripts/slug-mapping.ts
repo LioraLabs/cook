@@ -255,9 +255,19 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-12-new-1':        'mods.use',
   'sec-12-new-2':        'mods.use-scope',
   'sec-12-new-3':        'mods.lifecycle',
+  'sec-12-new-3-1':      'mods.lifecycle.load-order',
+  'sec-12-new-3-2':      'mods.lifecycle.caching',
+  'sec-12-new-3-3':      'mods.lifecycle.cycles',
+  'sec-12-new-3-4':      'mods.lifecycle.rehydration',
   'sec-12-new-4':        'mods.builtin',
   'sec-12-new-5':        'mods.local',
   'sec-12-new-6':        'mods.catalogue-index',
+
+  // Ch. 21–24 — Cook Lua API umbrella slugs (Part III, stubs)
+  'sec-21-new':          'lua.surface',
+  'sec-22-new':          'lua.reg',
+  'sec-23-new':          'lua.exec',
+  'sec-24-new':          'lua.both',
 
   // Ch. 13 — Two-phase model (Part II)
   'sec-13-new':                'exec.phases',

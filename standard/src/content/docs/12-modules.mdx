@@ -1,0 +1,114 @@
+---
+title: "§{mods} — Modules"
+sidebar:
+  order: 12
+---
+# 12. Modules [#mods]
+> **Normative.** This chapter defines the `use` declaration, module resolution, the load-time lifecycle, and the catalogue index that points at Part IV. The Lua API call `cook.load_module` that implements resolution at runtime is defined in §{lua.both}; this chapter specifies what the surface declaration means and when module code runs.
+
+## 12.1. The `use` declaration [#mods.use]
+
+A `use` declaration has the form `use <name>`, where `<name>` is either a `BARE_IDENTIFIER` or a `STRING` (App. A.2; the lexical and syntactic rules are restated in §{decl.use}). A conforming implementation MUST resolve a `use` declaration by applying the following steps in order, with the first matching step winning:
+
+1. If `<name>` designates a built-in module (§{mods.builtin}), the built-in module is selected.
+2. Otherwise, the implementation MUST attempt to resolve `<name>` as a local module under `cook_modules/` by the lookup algorithm of §{mods.local}.
+
+A conforming implementation MUST reject a Cookfile for which no step succeeds, with a diagnostic that names `<name>` and indicates which locations were searched. The resolution step MUST occur before any recipe body executes; failure to resolve is a load-time error, not a run-time error.
+
+The result of resolution is a Lua table bound in the Cookfile's Lua environment under the identifier derived from `<name>` by replacing each ASCII hyphen (`-`) with an underscore (`_`). All other characters admitted by `BARE_IDENTIFIER` (App. A.5) pass through unchanged. A conforming implementation MUST make this binding visible to every subsequent `lua_line`, `lua_block`, `inline_lua_line`, `inline_lua_block`, `cook_step` `using` clause, top-level `module_call` (§{toplevel.module-call}), and `register_block` body (§{decl.register}) in the same Cookfile.
+
+A module MAY expose a function named `init` on its returned table. If present, `init` MUST be called exactly once immediately after the module's Lua source has been executed, before any recipe body in the enclosing Cookfile is registered. The full lifecycle contract for `init()` and for module loading is in §{mods.lifecycle}.
+
+### Example 12.1.1
+
+```cook
+use cpp
+
+cpp.bin("colorize", { sources = { "src/colorize.c" } })
+```
+
+The declaration `use cpp` binds the identifier `cpp` in the Cookfile's Lua environment to the table returned by `cook_modules/cpp.lua` (or `cook_modules/cpp/init.lua`). The top-level `cpp.bin(...)` call is dispatched as a top-level module_call (§{toplevel.module-call}) — a register-phase expression that runs against the same register-phase Lua VM as a `register_block` body.
+
+### Note 12.1.1
+
+The hyphen-to-underscore rewrite exists because `BARE_IDENTIFIER` permits internal hyphens (App. A.5) whereas Lua identifiers do not. Thus `use my-mod` binds the Lua global `my_mod`, but the on-disk lookup searches for `cook_modules/my-mod.lua` verbatim: the disk name is not rewritten.
+
+## 12.2. `use` scope is lexical per Cookfile [#mods.use-scope]
+A `use` declaration's alias is scoped to its **declaring Cookfile** and is not visible across `import` boundaries. Each Cookfile in a workspace defines its own `use`-resolution scope. The aliases established by `use foo` in Cookfile A are not in scope for any Lua evaluated from Cookfile B's recipes, and vice versa, regardless of import direction.
+
+For an execute-phase work unit, "the calling work unit's source Cookfile" (§{lua.cook-load-module}) is the Cookfile that contained the recipe whose body unit is being evaluated. A conforming implementation MUST resolve `cook.load_module(name)` and `require(name)` against that Cookfile's `cook_modules/` directory and MUST NOT fall back to a sibling Cookfile's `cook_modules/`.
+
+A conforming implementation MUST resolve `cook.load_module(name)` at register phase, and MUST configure `package.path` and `package.cpath` for each execute-phase work unit, such that the calling Cookfile's `cook_modules/` is searched in the following order: (1) `cook_modules/?.lua` and `cook_modules/?/init.lua` (hand-vendored, top level); (2) `cook_modules/share/lua/<lua-version>/?.lua` and `cook_modules/share/lua/<lua-version>/?/init.lua` (LuaRocks-installed pure Lua); for native modules: (a) `cook_modules/?.<so-ext>` (hand-vendored, top level); (b) `cook_modules/lib/lua/<lua-version>/?.<so-ext>` (LuaRocks-installed). `<lua-version>` is the embedded Lua's MAJOR.MINOR (currently `5.4`). `<so-ext>` is the platform's loadable-module extension (`.so` on Linux/macOS, `.dll` on Windows).
+
+A conforming implementation MUST also configure `package.path` and `package.cpath` (following the same search order) on the register-phase Lua VM before executing the body of any module loaded via `cook.load_module`. This ensures that sub-requires within a multi-file module (e.g., `require("cook_cc.toolchain")` inside `cook_cc/init.lua`) resolve against the project's `cook_modules/` rather than the system Lua paths. A conforming implementation MUST allow C extension modules (`.so`/`.dll`) to be loaded during register-phase `cook.load_module` evaluation; the register-phase VM MUST NOT restrict native module loading. [amended CS-0066]
+
+A conforming implementation MAY expose `cook.load_module(name)` on the execute-phase Lua VM as an extension over the register-phase requirement above; when exposed, the execute-phase `cook.load_module` MUST honour the same four-path resolution order. Recipe-body Lua scripts that call `cook.load_module(name)` directly therefore see the same set of candidate paths as register-phase callers, eliminating "works at register but not at execute" surprises. [amended CS-0069]
+
+Cross-Cookfile composition is at the **recipe** level via qualified name references (§{comp.qualified-refs}), not at the **module** level. Sharing module code between Cookfiles happens via the filesystem (a vendored copy, a symlink, or a shared parent) — the cook runtime treats each Cookfile's `cook_modules/` as an independent search root.
+
+### Example 12.2.1
+
+```
+ws/Cookfile:        import b ./b
+                    use cpp           # resolves to ws/cook_modules/cpp.lua
+                    recipe top
+                        cpp.plan("a")               # register-phase
+                        > cpp.assemble("a")         # execute-phase, same alias
+                        b.build                     # qualified dep on B's recipe
+                    end
+
+ws/b/Cookfile:      use proto         # resolves to ws/b/cook_modules/proto.lua
+                    recipe build
+                        proto.regen()
+                        > proto.verify()
+                    end
+```
+
+`top`'s body unit sees `cpp` (only). `b.build`'s body unit sees `proto` (only). Neither sees the other's modules. Filesystem-level sharing — for example, two Cookfiles vendoring the same `cpp.lua` — is independent: each Cookfile's worker VM caches its load by `(working_dir, name)`, so the same source file evaluated from two Cookfiles is two distinct module instances with independent state.
+
+## 12.3. Module lifecycle [#mods.lifecycle]
+
+This section specifies when module code executes and what scope it observes.
+
+### 12.3.1. Load order [#mods.lifecycle.load-order]
+
+A conforming implementation MUST execute module code in the following order, for each Cookfile in a workspace, before any recipe body of that Cookfile registers:
+
+1. For each `use <name>` declaration (§{mods.use}) in source order, resolve `<name>` against the search paths of §{mods.local} and §{mods.builtin}. The first hit wins.
+2. Execute the resolved module's top-level chunk on the calling Cookfile's register-phase Lua VM. The chunk MUST return a Lua table; a chunk that does not return a table is a load-time error. The returned table is bound under the alias derived from `<name>` per §{mods.use}.
+3. If the returned table has an `init` field bound to a function value, call `init()` exactly once on the register-phase VM. The `init()` call MAY read `cook.cache` (§{lua.both}) and MAY call register-phase Cook Lua API (§{lua.reg}).
+4. Repeat for the next `use <name>` declaration in source order. A later `use` declaration's module body MAY observe state established by an earlier `use` declaration's `init()`.
+
+Module code MUST NOT register work units during top-level chunk execution. Work-unit registration is the responsibility of recipe bodies; modules typically expose functions (e.g. target makers) that recipe bodies call.
+
+### 12.3.2. Per-VM caching [#mods.lifecycle.caching]
+
+A conforming implementation MUST cache the resolved module table by `(working_dir, name)`. A second `use <name>` within the same Cookfile returns the same table without re-reading or re-evaluating the file; the top-level chunk and `init()` MUST run **at most once** per `(working_dir, name)` per Lua VM as a direct consequence of this caching contract. The cache is per-VM: a register-phase VM and an execute-phase VM that both load the same module each independently load the module top-level chunk once.
+
+### 12.3.3. Cycle detection [#mods.lifecycle.cycles]
+
+A conforming implementation MUST detect `cook.load_module` cycles. A cycle is a re-entrant call to `cook.load_module(name)` that occurs while an earlier load of the same `(working_dir, name)` is still in flight on this VM — that is, the earlier call's module body or `init()` has not yet returned. On detection, the implementation MUST raise a runtime error whose message begins with `module cycle detected:` and includes the cycle path rendered as the in-flight module names joined by ` -> `, with the offending re-entered name appended.
+
+Detection MUST survive recoverable errors: when a module's body or `init()` raises, the implementation MUST remove that module from the in-flight set so a later retry on the same VM can proceed (and a genuine subsequent cycle remains detectable).
+
+### 12.3.4. Cross-VM rehydration [#mods.lifecycle.rehydration]
+
+When a module's `init()` records state into `cook.cache` (§{lua.both}) during register-phase load, an execute-phase VM that later loads the same module MUST observe that cached state. The execute-phase implementation MAY use in-memory-only storage scoped to the worker's lifetime (no cross-invocation persistence). [Pinned by CS-0070.]
+
+When a module records transitive-link info via `cook.export` (§{lua.both}) at register time, an execute-phase recipe body that calls `cook.import` MUST observe the recorded info. [Pinned by CS-0071.]
+
+## 12.4. Built-in modules [#mods.builtin]
+A **built-in module** is supplied by the implementation and available without any project-level file. No built-in modules are defined by v0.1 of this Standard; the built-in kind is reserved to allow future extension (§{rationale.modules}).
+
+## 12.5. Local modules [#mods.local]
+A **local module** is a file in the project's `cook_modules/` directory. The lookup algorithm resolves `<name>` against `cook_modules/<name>.lua`, then `cook_modules/<name>/init.lua`. The first existing file wins.
+
+## 12.6. Standard module catalogue [#mods.catalogue-index]
+
+A conforming implementation MAY ship a curated set of **blessed modules** distributed through the official LuaRocks-backed registry (`rocks.usecook.com`). The Standard governs each blessed module's public surface in Part IV (Standard module catalogue, §{cat}). The current catalogue is:
+
+| Module | Section |
+|---|---|
+| `cc` | §{cat.cc} |
+
+Future blessed modules are added additively to the catalogue without disturbing the resolution rules in this chapter.
