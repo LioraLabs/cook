@@ -1,0 +1,101 @@
+---
+title: "§{exec.cache} — Cache semantics"
+sidebar:
+  order: 17
+---
+# 17. Cache semantics [#exec.cache]
+> **Normative.** This chapter defines the abstract cache contract, the integrity rule for restoring artifacts from a content-addressable store, the discovered-inputs mechanism, the test-unit caching contract, and the portability invariants that allow a cache to travel between machines and workspace relocations.
+
+## 17.1. Cache semantics (abstract) [#exec.cache.abstract]
+A conforming implementation MAY maintain a **build cache** that avoids re-executing a work unit whose observable inputs are unchanged since the last successful completion of that unit. The Standard specifies the cache abstractly; the hash function, on-disk layout, eviction policy, and storage medium are implementation-defined (§{intro.non-scope}).
+
+The **observable inputs** of a work unit are those of its properties that are derived from the Cookfile source or from the register-phase record. They comprise, at a minimum:
+
+1. The command text or Lua chunk that the unit will execute.
+2. The list of input paths declared for the unit.
+3. The list of output paths declared for the unit.
+4. The recipe's resolved environment (§{lua}).
+
+A conforming implementation MAY additionally consider the content of the declared input files, the modification times of the declared output files, the content of the recipe's ingredient set, the identity of the host machine on which the unit will execute (e.g., target triple, libc version, locale-affecting environment variables), and the resolved content of the binaries invoked by the unit's command text. It MUST NOT consider wall-clock time, process identifiers, or any state not derivable from the sources above. An implementation MAY exclude from the resolved-environment observable a set of environment variables whose values are known not to affect work-unit output (e.g., ambient session state, credentials unrelated to the build product); the specific set is implementation-defined.
+
+### 17.1.1. Tool-binary fingerprinting (informative) [#exec.cache.tool-binary]
+
+When an implementation chooses to consider "the resolved content of the binaries invoked by the unit's command text", it MUST identify those binaries by inspecting the unit's literal command text — there is no separate manifest of invoked tools. Because shell quoting, command chaining (`;`, `&&`, `||`, pipes), command substitution (`$(...)`, backticks), subshells, and indirect invocation (`xargs`, `find -exec`, scripts) make exhaustive recovery undecidable in general, an implementation is permitted to recognise only a tractable subset of executables and is free to document its tractable subset.
+
+The reference implementation recognises the **first executable token of each newline-separated statement**, after skipping leading `VAR=value` env-prefix tokens (POSIX command-prefix env assignments), and folds the content hash of each unique resolved binary into the unit's context fingerprint in deterministic order. Tools invoked indirectly — through `;`/`&&`/`||`/pipes, command substitution, subshells, or scripts that themselves invoke tools — are NOT fingerprinted by this pass; authors who require those tools to participate in cache invalidation are advised to place each invocation on its own line, declare them via the project-level configuration mechanism described below, or add a regular file the recipe declares as an input. This recognition policy is implementation-defined; other implementations are free to recognise more or less.
+An implementation MAY additionally accept a project-level **declared toolchain** — a list of executable names the build environment promises will be relevant to every unit's identity regardless of whether the auto-detection above sees them in the unit's command text. When supported, the declared toolchain MUST be resolved once per build; each resolved binary's content hash MUST contribute to the context fingerprint of every cacheable unit; an empty or absent declaration MUST contribute observationally inert bytes (so projects that do not use the mechanism produce a deterministic, distinguishable identity contribution); and a declared name that fails to resolve at build start MUST cause the build to fail before any unit executes. The reference implementation exposes this mechanism as `cache.tools` in `.cook/cloud.toml`. This mechanism is intended for environments where toolchain identity is governed at the environment layer (dev containers, `nix-shell`, hermetic Docker) and the implementation's auto-detection cannot see the relevant binary in the literal command text.
+
+When the cache indicates that a unit is up-to-date, the implementation MAY skip executing the unit and MUST treat it as successfully completed for the purposes of the dependency graph. When the cache indicates that a unit is stale or absent, the implementation MUST execute the unit and, on success, MAY record the unit's completion in the cache for subsequent runs.
+
+A unit for which the register-phase record disables caching — for example, a bare shell step or an `@` step, whose registration form sets the cache flag to false — MUST be executed on every run of the containing recipe.
+
+## 17.2. Cache integrity [#exec.cache.integrity]
+An implementation that records output content in a content-addressable store — whether local, shared between machines, or remote — MUST treat that store as untrusted at restore time. When the implementation reads bytes from the store with the intent to install them as the on-disk content of a declared output, it MUST recompute the same content fingerprint that it recorded for that output and MUST compare the recomputed fingerprint to the recorded one. If the two fingerprints differ, the implementation MUST NOT install the bytes; it MUST treat the read as a cache miss and MUST fall through to the rebuild path defined in §{exec.cache.abstract} above.
+
+This requirement holds for every backend, including a backend that resides on the same machine and the same filesystem as the workspace. The Standard does not distinguish "local" from "remote" backends in the cache contract; the integrity check is the same in both cases. An implementation MAY use any deterministic fingerprint that meets the observability constraint of §{exec.cache.abstract} (the fingerprint MUST be a function of the bytes being installed, with no dependence on wall-clock time, process identifiers, or other extrinsic state); it MUST use the same function it recorded the original artifact under. An implementation that exposes the artifact store to writers other than the local build (e.g., a multi-tenant shared backend) SHOULD use a cryptographically secure fingerprint (collision-resistant under adversarial input). The fingerprint verification required by this section MAY be performed as bytes flow through a streaming reader, with the verification surfacing as an end-of-stream error; an implementation is not required to materialise the full artifact in memory before verifying.
+
+The intent is that an implementation's cache restore path MUST NOT be a vector for installing attacker-controlled or otherwise unauthenticated bytes into the workspace. A backend whose contents have drifted, been corrupted, or been replaced — for any reason — MUST be observationally indistinguishable from a backend that simply does not have the artifact.
+
+An implementation's artifact-store write path MUST treat a `put` of bytes that conflict with bytes already stored at the same key as an error. "Conflict" means the bytes differ; re-writing identical bytes is idempotent and MUST succeed. The error MUST surface to the caller; the implementation MUST NOT silently overwrite the prior bytes. This requirement is the write-side analogue of the read-side fingerprint check: it ensures that a key in the artifact store maps to one and only one byte sequence over its lifetime, which is the invariant the read-side verification relies upon.
+
+### Example 17.2.1
+
+```cook
+recipe build
+    ingredients "src/main.c"
+    cook "build/main.o" using { gcc -c $<all> -o $<out> }
+```
+
+On the first run, `build/main.o`'s unit executes and its completion MAY be recorded. On a subsequent run with an unchanged `src/main.c` and unchanged command text, an implementation MAY skip the unit. If the command text changes or `src/main.c` changes, the unit MUST re-run.
+
+### Note 17.2.1
+
+The cache is optional. A conforming implementation that always re-executes every work unit — a clean-build implementation — is conforming so long as the dependency rules of §{exec.two-phase}–§{exec.interactive-drain} are respected.
+
+## 17.3. Discovered inputs [#exec.cache.discovered-inputs]
+
+A unit whose declaration carries `discovered_inputs` (§{lua.add-unit-discovered-inputs}) participates in post-execution input discovery. When such a unit is checked against an existing cache entry, a conforming implementation:
+
+1. **MUST** attempt to read the file at `discovered_inputs.from` from the unit's working directory before composing the input-content set passed to the cache check. If the file is present and well-formed under `discovered_inputs.format`, the implementation MUST union the discovered paths with the unit's declared `inputs[]` for the purposes of the check.
+2. **MUST**, when no restore context is available, treat a missing or malformed discovery file as no augmentation — the check proceeds with the thin (declared-only) input set, which causes an `InputSetChanged` rebuild that regenerates the discovery file. **MAY**, when a restore context is available, substitute the stored entry's recorded input set so the outputs walk and restore path can proceed; this avoids an avoidable rebuild when only the discovery file has been wiped from disk while the rest of the local entry is intact.
+3. **MUST**, after a successful execution, parse the discovery file at `discovered_inputs.from` and amend the recorded `StepEntry`'s input set to include the discovered paths before persisting the entry to the local cache index.
+4. **MUST** treat the discovery file as an implicit cache artifact: uploaded under its own artifact key during commit, restored from the backend on a hit-with-drifted-outputs check (§{exec.cache.integrity}).
+
+The `"make"` discovery format is the Make rule format produced by GCC's `-MMD` flag and equivalent compiler options. The conforming parser MUST: strip the leading target text up to and including the first `:`; join continuation lines (`\\\n` and `\\\r\n`); ignore entries beginning with `/`; ignore the unit's first declared input; ignore entries whose paths do not exist on disk.
+
+## 17.4. Test-unit caching [#exec.cache.test-unit]
+
+A conforming implementation MAY cache the result of a `test_step` unit (§{recipes.test-step}). When caching is implemented, the following rules MUST hold.
+
+1. **Cache key inputs.** A test unit's cache key MUST be a content-addressed digest derived from at least the following inputs:
+   - The unit's substituted command text. For shell-block tests this is the command string after sigil-placeholder substitution (§{lua.shell-placeholders-plate-test}); for Lua-block tests this is the Lua source body string with bindings resolved per §{lua.using-block-globals-plate-test}.
+   - The content fingerprints of every cook-step output the test consumes via §{recipes.iteration-mode-plate-test} source-list flattening.
+   - The content fingerprints of every recipe output the test references via `cook.dep_output(NAME)` or `$<NAME>` cross-recipe substitution (§{xref.string-substitution}).
+   - The deterministic env-key set as filtered through the implementation's `EnvDenylist` (the existing fingerprint mechanism for cook units per §{exec.cache.abstract}).
+   - The tool-binary hash set per §{exec.cache.tool-binary}.
+   - The `timeout` modifier value.
+   - The `should_fail` modifier value.
+
+   The cache key MUST NOT include the test's display name (§{recipes.test-step}), the `suite` field (§{lua.cook-add-test}), the recipe name, or the step's source position. Renaming a test, moving it within a recipe, or moving a recipe between Cookfiles MUST NOT bust its cache.
+
+2. **Recordable outcomes.** A conforming implementation MAY record a test result for replay only when the unit's outcome is **passed**. A test is **passed** when:
+   - The body's exit status is success and `should_fail` is false; or
+   - The body's exit status is failure and `should_fail` is true.
+
+   A test that is **failed** (the dual of passed), **timed out**, or **blocked** (its build dependency failed) MUST NOT be cached. The implementation MAY discard a previously-cached entry whose corresponding test is observed to fail in a subsequent run.
+
+3. **Replayed payload.** A cache hit MUST produce, for reporting purposes, the originally-recorded `(stdout, stderr, duration_secs, success)` quadruple. The duration value of a cache replay is the recorded original duration, not the wall-clock cost of the cache lookup.
+
+4. **Cross-machine portability.** A test result recorded on machine A MUST be a cache hit for the same fingerprint on machine B, given identical inputs.
+
+## 17.5. Cache portability invariants [#exec.cache.portability]
+
+A conforming implementation that maintains a cache of recipe execution results MUST hold the following invariants for the cache to be portable across teammates and across workspace-relocation moves on disk.
+
+1. **`cookfile_path` is workspace-root-relative.** For every cached recipe, the `cookfile_path` recorded in the cache metadata MUST be the importee's Cookfile path expressed as a forward-slash relative path from the workspace root, and MUST contain no absolute-path components. This invariant follows from the workspace shape established by §{comp.import} and §{exec.ws.determination}.
+
+2. **`cache_key` uniqueness is per-Cookfile-cache-file scope.** A cache entry's identity within its index file is determined by its `cache_key` (typically derived from the unit's primary output path with optional variant suffix). The `cache_key` does not encode the recipe namespace; cross-Cookfile uniqueness is provided by **per-Cookfile cache locality** (each Cookfile maintains its own cache index file under its own directory).
+
+3. **`cache_meta.input_paths` is importer-relative.** For a unit registered by recipe R in Cookfile C with working directory W, every entry in `cache_meta.input_paths` MUST be a path relative to W. This holds for both same-Cookfile inputs and cross-Cookfile dep inputs; substitution-time path rewriting (§{comp.qualified-refs}) ensures cross-Cookfile dep paths arrive in importer-relative form. For sigil-anchored imports the path can contain `..` segments; the cache check uses `W.join(input_path)` to locate the file on disk, and `..` segments resolve correctly against W.
+
+A conforming implementation MAY layer additional content-addressed artifact storage atop the index files; that layer is outside the scope of this section.

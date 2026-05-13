@@ -280,10 +280,18 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-15-new':               'exec.groups',
   'sec-15-new-body-bundling': 'exec.body-bundling',
 
+  // Ch. 17 — Cache semantics (Part II)
+  'sec-17-new':            'exec.cache',
+  'sec-17-new-1':          'exec.cache.abstract',
+  'sec-17-new-1-1':        'exec.cache.tool-binary',
+  'sec-17-new-2':          'exec.cache.integrity',
+  'sec-17-new-3':          'exec.cache.discovered-inputs',
+  'sec-17-new-4':          'exec.cache.test-unit',
+  'sec-17-new-5':          'exec.cache.portability',
+
   // Ch. 20 — Workspace root (Part II)
   'sec-20-new':          'exec.ws',
   'sec-20-new-1':        'exec.ws.determination',
-  'sec-17-new-portability': 'exec.cache.portability',
 
   // Ch. 27 — Catalogue governance
   'sec-27-new':          'cat',
