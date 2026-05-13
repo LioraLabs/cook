@@ -595,6 +595,27 @@ fn check_command(
     Ok(())
 }
 
+/// A top-level emission target. Sorted by source line so we emit in
+/// source order, interleaving recipes, chores, register blocks, and
+/// top-level module_calls per Standard §3.7 / §3.7.5 splicing semantics.
+enum TopLevelItem<'a> {
+    Recipe(&'a Recipe),
+    Chore(&'a Chore),
+    RegisterBlock(&'a RegisterBlock),
+    TopLevelModuleCall(&'a TopLevelModuleCall),
+}
+
+impl<'a> TopLevelItem<'a> {
+    fn line(&self) -> usize {
+        match self {
+            TopLevelItem::Recipe(r)             => r.line,
+            TopLevelItem::Chore(c)              => c.line,
+            TopLevelItem::RegisterBlock(rb)     => rb.line,
+            TopLevelItem::TopLevelModuleCall(c) => c.line,
+        }
+    }
+}
+
 pub fn generate_with_names(
     cookfile: &Cookfile,
     recipe_names: &BTreeSet<String>,
@@ -661,153 +682,194 @@ pub fn generate_with_names(
         out.push_str("end\n\n");
     }
 
-    for recipe in &cookfile.recipes {
-        out.push_str(&format!(
-            "cook.recipe(\"{}\", {}, function()\n",
-            escape_lua_string(&recipe.name),
-            generate_metadata(recipe)
-        ));
+    // Source-ordered merge of recipes, chores, register blocks, and
+    // top-level module_calls. Register-block bodies and top-level
+    // module_call source splice verbatim into the top-level chunk per
+    // Standard §3.7 / §3.7.5; recipes and chores emit as cook.recipe(...)
+    // calls. Source order matters: items that depend on earlier register-
+    // block / module-call locals must appear AFTER those items.
+    let mut items: Vec<TopLevelItem> = cookfile
+        .recipes
+        .iter()
+        .map(TopLevelItem::Recipe)
+        .chain(cookfile.chores.iter().map(TopLevelItem::Chore))
+        .chain(cookfile.register_blocks.iter().map(TopLevelItem::RegisterBlock))
+        .chain(cookfile.top_level_module_calls.iter().map(TopLevelItem::TopLevelModuleCall))
+        .collect();
+    items.sort_by_key(|i| i.line());
 
-        // Emit local ingredients variable when recipe has ingredients
-        if !recipe.ingredients.is_empty() {
-            let includes: Vec<String> = recipe
-                .ingredients
-                .iter()
-                .map(|s| format!("\"{}\"", escape_lua_string(s)))
-                .collect();
-            let excludes: Vec<String> = recipe
-                .excludes
-                .iter()
-                .map(|s| format!("\"{}\"", escape_lua_string(s)))
-                .collect();
-            out.push_str(&format!(
-                "    local ingredients = cook.resolve_ingredients({{{}}}, {{{}}})\n",
-                includes.join(", "),
-                excludes.join(", "),
-            ));
-        }
-
-        let mut prev_cook_index: Option<usize> = None;
-        let mut cook_index: usize = 0;
-
-        let mut i = 0;
-        while i < recipe.steps.len() {
-            match &recipe.steps[i] {
-                Step::InlineLua { code, .. } => {
-                    // §{recipes.lua-steps}: register-phase, inlined into the
-                    // recipe-body Lua function.
-                    out.push_str(&format!("    {}\n", code));
-                    i += 1;
-                }
-                Step::InlineLuaBlock { code, .. } => {
-                    // §{recipes.lua-steps}: register-phase, inlined.
-                    for code_line in code.lines() {
-                        out.push_str(&format!("    {}\n", code_line));
+    for item in items {
+        match item {
+            TopLevelItem::RegisterBlock(rb) => {
+                // Splice the body verbatim into the top-level chunk.
+                // Comment lines (Cookfile syntax, leading `#`) are skipped;
+                // blank lines and Lua content are preserved as-is.
+                for line in rb.body.lines() {
+                    if line.trim_start().starts_with('#') {
+                        continue;
                     }
-                    i += 1;
+                    out.push_str(line);
+                    out.push('\n');
                 }
-                Step::Cook {
-                    step: cook_step,
-                    line,
-                } => {
-                    cook_index += 1;
-                    out.push_str(&format!("    local _cook_outputs_{} = {{}}\n", cook_index));
-                    out.push_str("    cook.step_group(function()\n");
-                    generate_cook_step(
-                        &mut out,
-                        cook_step,
-                        *line,
-                        cook_index,
-                        prev_cook_index,
-                        &recipe.ingredients,
-                        recipe_names,
-                    );
-                    out.push_str("    end)\n");
-                    prev_cook_index = Some(cook_index);
-                    i += 1;
+                out.push('\n');
+            }
+            TopLevelItem::TopLevelModuleCall(call) => {
+                // Splice the collected call source verbatim. Same shape as
+                // a register_block containing only that call.
+                for line in call.code.lines() {
+                    if line.trim_start().starts_with('#') {
+                        continue;
+                    }
+                    out.push_str(line);
+                    out.push('\n');
                 }
-                Step::Plate {
-                    step: plate_step,
-                    line,
-                } => {
-                    out.push_str("    cook.step_group(function()\n");
-                    generate_plate_step(
-                        &mut out,
-                        plate_step,
-                        *line,
-                        prev_cook_index,
-                        !recipe.ingredients.is_empty(),
-                        recipe_names,
-                    )?;
-                    out.push_str("    end)\n");
-                    i += 1;
-                }
-                Step::Test {
-                    step: test_step_val,
-                    line,
-                } => {
-                    out.push_str("    cook.step_group(function()\n");
-                    test_step::generate_test_step(
-                        &mut out,
-                        test_step_val,
-                        *line,
-                        prev_cook_index,
-                        !recipe.ingredients.is_empty(),
-                        recipe_names,
-                    )?;
-                    out.push_str("    end)\n");
-                    i += 1;
-                }
-                Step::Shell { interactive: true, command, line } => {
-                    // §{exec.interactive-drain}: own draining unit, breaks
-                    // body-bundling (the next imperative step starts a fresh
-                    // body unit).
-                    // Apply sigil substitution to the command (CS-0033).
-                    let cmd_expr = expand_shell_command_sigil(command, recipe_names);
-                    // cache = false: consulted_env_keys is a cache-keying hint, omitted for
-                    // units that are never cached. The cacheable cook-step path in
-                    // cook_step.rs is the only emission site that includes it.
+                out.push('\n');
+            }
+            TopLevelItem::Recipe(recipe) => {
+                out.push_str(&format!(
+                    "cook.recipe(\"{}\", {}, function()\n",
+                    escape_lua_string(&recipe.name),
+                    generate_metadata(recipe)
+                ));
+
+                // Emit local ingredients variable when recipe has ingredients
+                if !recipe.ingredients.is_empty() {
+                    let includes: Vec<String> = recipe
+                        .ingredients
+                        .iter()
+                        .map(|s| format!("\"{}\"", escape_lua_string(s)))
+                        .collect();
+                    let excludes: Vec<String> = recipe
+                        .excludes
+                        .iter()
+                        .map(|s| format!("\"{}\"", escape_lua_string(s)))
+                        .collect();
                     out.push_str(&format!(
-                        "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
-                        cmd_expr, line
+                        "    local ingredients = cook.resolve_ingredients({{{}}}, {{{}}})\n",
+                        includes.join(", "),
+                        excludes.join(", "),
                     ));
-                    i += 1;
                 }
-                Step::Shell { interactive: false, .. }
-                | Step::Lua { .. }
-                | Step::LuaBlock { .. } => {
-                    // §{recipes.body-bundling}: coalesce a run of
-                    // execute-phase imperative steps into one body unit.
-                    let bundle_start = i;
-                    while i < recipe.steps.len() && is_bundleable(&recipe.steps[i]) {
-                        i += 1;
+
+                let mut prev_cook_index: Option<usize> = None;
+                let mut cook_index: usize = 0;
+
+                let mut i = 0;
+                while i < recipe.steps.len() {
+                    match &recipe.steps[i] {
+                        Step::InlineLua { code, .. } => {
+                            // §{recipes.lua-steps}: register-phase, inlined into the
+                            // recipe-body Lua function.
+                            out.push_str(&format!("    {}\n", code));
+                            i += 1;
+                        }
+                        Step::InlineLuaBlock { code, .. } => {
+                            // §{recipes.lua-steps}: register-phase, inlined.
+                            for code_line in code.lines() {
+                                out.push_str(&format!("    {}\n", code_line));
+                            }
+                            i += 1;
+                        }
+                        Step::Cook {
+                            step: cook_step,
+                            line,
+                        } => {
+                            cook_index += 1;
+                            out.push_str(&format!("    local _cook_outputs_{} = {{}}\n", cook_index));
+                            out.push_str("    cook.step_group(function()\n");
+                            generate_cook_step(
+                                &mut out,
+                                cook_step,
+                                *line,
+                                cook_index,
+                                prev_cook_index,
+                                &recipe.ingredients,
+                                recipe_names,
+                            );
+                            out.push_str("    end)\n");
+                            prev_cook_index = Some(cook_index);
+                            i += 1;
+                        }
+                        Step::Plate {
+                            step: plate_step,
+                            line,
+                        } => {
+                            out.push_str("    cook.step_group(function()\n");
+                            generate_plate_step(
+                                &mut out,
+                                plate_step,
+                                *line,
+                                prev_cook_index,
+                                !recipe.ingredients.is_empty(),
+                                recipe_names,
+                            )?;
+                            out.push_str("    end)\n");
+                            i += 1;
+                        }
+                        Step::Test {
+                            step: test_step_val,
+                            line,
+                        } => {
+                            out.push_str("    cook.step_group(function()\n");
+                            test_step::generate_test_step(
+                                &mut out,
+                                test_step_val,
+                                *line,
+                                prev_cook_index,
+                                !recipe.ingredients.is_empty(),
+                                recipe_names,
+                            )?;
+                            out.push_str("    end)\n");
+                            i += 1;
+                        }
+                        Step::Shell { interactive: true, command, line } => {
+                            // §{exec.interactive-drain}: own draining unit, breaks
+                            // body-bundling (the next imperative step starts a fresh
+                            // body unit).
+                            // Apply sigil substitution to the command (CS-0033).
+                            let cmd_expr = expand_shell_command_sigil(command, recipe_names);
+                            // cache = false: consulted_env_keys is a cache-keying hint, omitted for
+                            // units that are never cached. The cacheable cook-step path in
+                            // cook_step.rs is the only emission site that includes it.
+                            out.push_str(&format!(
+                                "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
+                                cmd_expr, line
+                            ));
+                            i += 1;
+                        }
+                        Step::Shell { interactive: false, .. }
+                        | Step::Lua { .. }
+                        | Step::LuaBlock { .. } => {
+                            // §{recipes.body-bundling}: coalesce a run of
+                            // execute-phase imperative steps into one body unit.
+                            let bundle_start = i;
+                            while i < recipe.steps.len() && is_bundleable(&recipe.steps[i]) {
+                                i += 1;
+                            }
+                            emit_body_unit_with_names(
+                                &mut out,
+                                &recipe.steps[bundle_start..i],
+                                &cookfile.uses,
+                                recipe_names,
+                            );
+                        }
+                        // `Step` is `#[non_exhaustive]`. Future step kinds added by the
+                        // reference implementation that this codegen has not yet learned
+                        // about are skipped — the validator pass above already accepts
+                        // them silently and runtime never sees them in a generated
+                        // recipe.
+                        _ => {
+                            i += 1;
+                        }
                     }
-                    emit_body_unit_with_names(
-                        &mut out,
-                        &recipe.steps[bundle_start..i],
-                        &cookfile.uses,
-                        recipe_names,
-                    );
                 }
-                // `Step` is `#[non_exhaustive]`. Future step kinds added by the
-                // reference implementation that this codegen has not yet learned
-                // about are skipped — the validator pass above already accepts
-                // them silently and runtime never sees them in a generated
-                // recipe.
-                _ => {
-                    i += 1;
-                }
+
+                out.push_str("end)\n\n");
+            }
+            TopLevelItem::Chore(chore) => {
+                out.push_str(&compile_chore(chore, &cookfile.uses));
             }
         }
-
-        out.push_str("end)\n\n");
-    }
-
-    // Emit chores after recipes. Chores compile to the same `cook.recipe(...)`
-    // shape as recipes, but every unit has `cache = false` and every shell step
-    // has `interactive = true` (§{chores.no-caching}, §{exec.interactive-drain}).
-    for chore in &cookfile.chores {
-        out.push_str(&compile_chore(chore, &cookfile.uses));
     }
 
     Ok(out)

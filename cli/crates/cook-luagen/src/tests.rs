@@ -2875,3 +2875,119 @@ recipe link
         result.err()
     );
 }
+
+#[test]
+fn test_codegen_emits_register_block() {
+    let cookfile = Cookfile {
+        config_blocks: vec![],
+        recipes: vec![],
+        chores: vec![],
+        uses: vec![],
+        imports: vec![],
+        register_blocks: vec![RegisterBlock {
+            body: "    cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })".to_string(),
+            line: 1,
+        }],
+        top_level_module_calls: vec![],
+    };
+    let out = generate(&cookfile);
+    assert!(out.contains("cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })"),
+        "expected register-block body in output, got:\n{}", out);
+}
+
+#[test]
+fn test_codegen_emits_register_blocks_in_source_order() {
+    let cookfile = Cookfile {
+        config_blocks: vec![],
+        recipes: vec![],
+        chores: vec![],
+        uses: vec![],
+        imports: vec![],
+        register_blocks: vec![
+            RegisterBlock { body: "    first()".to_string(),  line: 1 },
+            RegisterBlock { body: "    second()".to_string(), line: 5 },
+        ],
+        top_level_module_calls: vec![],
+    };
+    let out = generate(&cookfile);
+    let first_pos = out.find("first()").expect("first() in output");
+    let second_pos = out.find("second()").expect("second() in output");
+    assert!(first_pos < second_pos, "expected first() before second() in output");
+}
+
+#[test]
+fn test_codegen_interleaves_register_blocks_with_recipes() {
+    let cookfile = Cookfile {
+        config_blocks: vec![],
+        recipes: vec![Recipe {
+            name: "mid".to_string(),
+            deps: vec![],
+            ingredients: vec![],
+            excludes: vec![],
+            steps: vec![Step::Shell { command: "echo".into(), line: 5, interactive: false }],
+            line: 4,
+        }],
+        chores: vec![],
+        uses: vec![],
+        imports: vec![],
+        register_blocks: vec![
+            RegisterBlock { body: "    before()".to_string(), line: 1 },
+            RegisterBlock { body: "    after()".to_string(),  line: 8 },
+        ],
+        top_level_module_calls: vec![],
+    };
+    let out = generate(&cookfile);
+    let before_pos = out.find("before()").expect("before() in output");
+    let recipe_pos = out.find("cook.recipe(\"mid\"").expect("recipe registration in output");
+    let after_pos  = out.find("after()").expect("after() in output");
+    assert!(before_pos < recipe_pos, "before() should precede `cook.recipe(\"mid\"`");
+    assert!(recipe_pos < after_pos, "`cook.recipe(\"mid\"` should precede after()");
+}
+
+#[test]
+fn test_codegen_emits_top_level_module_call() {
+    let cookfile = Cookfile {
+        config_blocks: vec![],
+        recipes: vec![],
+        chores: vec![],
+        uses: vec![],
+        imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![TopLevelModuleCall {
+            code: "cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })".to_string(),
+            line: 1,
+        }],
+    };
+    let out = generate(&cookfile);
+    assert!(out.contains("cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })"),
+        "expected top-level module_call body in output, got:\n{}", out);
+}
+
+#[test]
+fn test_codegen_interleaves_top_level_module_calls_with_recipes() {
+    let cookfile = Cookfile {
+        config_blocks: vec![],
+        recipes: vec![Recipe {
+            name: "mid".to_string(),
+            deps: vec![],
+            ingredients: vec![],
+            excludes: vec![],
+            steps: vec![Step::Shell { command: "echo".into(), line: 5, interactive: false }],
+            line: 4,
+        }],
+        chores: vec![],
+        uses: vec![],
+        imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![
+            TopLevelModuleCall { code: "cpp.bin(\"a\", {})".to_string(), line: 1 },
+            TopLevelModuleCall { code: "cpp.bin(\"b\", {})".to_string(), line: 8 },
+        ],
+    };
+    let out = generate(&cookfile);
+    let a_pos      = out.find("cpp.bin(\"a\"").expect("`a` in output");
+    let recipe_pos = out.find("cook.recipe(\"mid\"").expect("recipe registration in output");
+    let b_pos      = out.find("cpp.bin(\"b\"").expect("`b` in output");
+    assert!(a_pos < recipe_pos, "cpp.bin(\"a\") should precede recipe registration");
+    assert!(recipe_pos < b_pos, "recipe registration should precede cpp.bin(\"b\")");
+}
