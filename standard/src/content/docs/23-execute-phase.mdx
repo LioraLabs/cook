@@ -1,0 +1,62 @@
+---
+title: "§{lua.exe} — Execute-phase API"
+sidebar:
+  order: 23
+---
+# 23. Execute-phase API [#lua.exe]
+> **Normative.** This chapter defines the Cook Lua API surfaces that are only bound during the execute phase: the using-block globals on Lua-code work units, and the plate/test Lua-block bindings.
+
+## 23.1. Using-block globals [#lua.using-block-globals]
+**Phase.** Execute-phase only.
+
+When the execute phase runs a Lua-code unit recorded by `cook.add_unit` (§{lua.add-unit}) with a `lua_code` payload — for example, one recorded from `using >{ ... }` on a `cook` step (§{steps.cook-single}, §{steps.cook-multi}) — a conforming implementation MUST, immediately before evaluating `lua_code`, bind the following globals on the worker's Lua VM:
+
+| Global    | Type   | Value |
+|-----------|--------|-------|
+| `inputs`  | table  | A 1-indexed sequence of the unit's input paths, in the order recorded. |
+| `outputs` | table  | A 1-indexed sequence of the unit's output paths, in the order recorded. |
+| `input`   | string | `inputs[1]`, or the empty string if `inputs` is empty. |
+| `output`  | string | `outputs[1]`, or the empty string if `outputs` is empty. |
+| `input_N` | table  | For each ingredient group `g` at 1-based index `N` in the unit's `ingredient_groups`, `input_N` is a 1-indexed sequence of the paths in `g`. |
+
+A conforming implementation MUST bind `input_N` for every ingredient group recorded, in increasing `N`. Groups not recorded MUST NOT be implicitly bound — a reference to `input_3` when only two groups exist MUST read as `nil` rather than as an empty table.
+
+### Example 23.1.1
+
+For the multi-output Lua-block `cook` step
+
+```cook
+recipe build_lua
+    ingredients "src/*.rs"
+    cook "staging-lua/out.js" "staging-lua/out.wasm" using >{
+        os.execute("mkdir -p staging-lua")
+        local sources = table.concat(inputs, " ")
+        local js = io.open(outputs[1], "w")
+        js:write("// generated from " .. sources .. "\n")
+        js:close()
+        local wasm = io.open(outputs[2], "w")
+        wasm:write("BINARY\n")
+        wasm:close()
+    }
+```
+
+the execute-phase worker binds `inputs` to the resolved ingredient paths, `outputs` to `{ "staging-lua/out.js", "staging-lua/out.wasm" }`, `input` to `inputs[1]`, `output` to `"staging-lua/out.js"`, and `input_1` to the first (and only) ingredient group.
+
+### Note 23.1.1
+
+These globals are bindings on the worker VM, not on the register-phase VM. A register-phase Lua step (`> expr` or `>{ ... }` outside a `using` clause) MUST NOT observe them.
+
+## 23.2. Plate and test Lua-block bindings [#lua.using-block-globals-plate-test]
+
+A Lua block in a `plate_step` or `test_step` body (§{steps.plate}, §{steps.test}) is bound according to the step's mode (§{steps.iteration-mode}):
+
+| Binding | Mode | Type | Meaning |
+|---|---|---|---|
+| `input` | one-to-one | string | The current iteration item — one of the source items |
+| `inputs` | many-to-one | table (1-indexed) | The full source list |
+
+A conforming implementation MUST bind exactly one of `input` / `inputs` per unit when the step is in one-to-one or many-to-one mode, per the mode the body's content selected. The other is unbound (Lua `nil` on reference). In **one-shot** mode (§{steps.iteration-mode}), neither `input` nor `inputs` is bound — both are `nil` on reference.
+
+A conforming implementation MUST NOT bind `output` / `outputs` for plate or test units; these have no meaning in a step that declares no outputs. A conforming implementation MUST NOT bind `input_N` (indexed input access) for plate or test units; the source list is exposed wholesale via `inputs` in many-to-one mode.
+
+Cross-recipe references inside a plate or test Lua body use `cook.dep_output()` / `cook.dep_output_list()`, identical to a `using >{ … }` Lua body (§{lua.using-block-globals}).
