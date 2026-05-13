@@ -1,0 +1,33 @@
+---
+title: "§{exec.ws} — Workspace root"
+sidebar:
+  order: 20
+---
+# 20. Workspace root [#exec.ws]
+> **Normative.** This chapter defines the workspace-root determination algorithm. The workspace root anchors sigil-anchored (`//`) imports per §{comp.import} and bounds the project-root sandbox per §{lua.fs}.
+
+## 20.1. Workspace root determination [#exec.ws.determination]
+
+A **workspace root** is the directory against which `//`-anchored sigil imports (§{comp.import}) resolve. A conforming implementation MUST establish the workspace root at invocation time using the following ordered procedure; the first rule that succeeds is authoritative.
+
+1. **Explicit override.** If the implementation provides an explicit-root invocation flag (e.g., `cook --root <path>`) and one was supplied, the workspace root is `<path>` (canonicalised). The invoked Cookfile MUST be at or below `<path>`.
+
+2. **Marker file.** Walk upward from the invoked Cookfile's directory. If any ancestor directory contains a file named `.cookroot` (zero-content sentinel), the **first** such ancestor is the workspace root.
+
+3. **Tree-import inference.** Walk upward from the invoked Cookfile's directory. At each ancestor that contains a `Cookfile`, parse it. The ancestor is a **candidate** when both:
+   1. It transitively imports the invoked Cookfile's directory through tree-relative imports only (sigil-anchored imports are ineligible at this stage because their resolution presupposes a workspace root), AND
+   2. With the candidate treated as the workspace root, every sigil-anchored import in any Cookfile reachable from the candidate (across both tree-relative and sigil-anchored edges) resolves to a directory at or below the candidate after canonicalisation.
+
+   Continue walking; the **highest** candidate is the workspace root.
+
+4. **Self-root.** If no ancestor satisfies (1)–(3) AND neither the invoked Cookfile nor any Cookfile transitively reachable from it (through tree-relative imports) declares any sigil-anchored import, the invoked Cookfile's own directory is the workspace root.
+
+5. **Reject.** If no ancestor satisfies (1)–(3) AND any reachable Cookfile declares a sigil-anchored import, workspace load MUST fail with a diagnostic naming the invoked Cookfile, the offending sigil import, and the inability to identify a workspace root that anchors it.
+
+A workspace root's defining property is that it anchors sigil paths. A Cookfile that transitively reaches a sigil import therefore cannot itself be a workspace root in the absence of an enclosing anchor; the rejection in (5) makes this contract explicit.
+
+The procedure terminates because each step walks to a strict parent directory; the filesystem root is the upper bound. Once the workspace root is determined, it is fixed for the remainder of the invocation.
+
+### Definition: transitively imports
+
+Cookfile *X* **directly imports** directory *D* when *X* has an `import <name> <path>` declaration whose canonicalised resolved directory equals *D*. *X* **transitively imports** *D* when there is a chain *X = X₀ → X₁ → … → Xₙ = D* where each *Xᵢ → Xᵢ₊₁* is a direct import. For workspace-root inference (rule 3.1 above), each link in the chain MUST be tree-relative; sigil-anchored imports are ineligible at that stage because their resolution presupposes a workspace root.

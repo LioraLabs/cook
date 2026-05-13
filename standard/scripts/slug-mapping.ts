@@ -269,6 +269,10 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-23-new':          'lua.exec',
   'sec-24-new':          'lua.both',
 
+  // Ch. 25–26 — fs / path umbrella slugs (Part III, stubs)
+  'sec-25-new':          'lua.fs',
+  'sec-26-new':          'lua.path',
+
   // Ch. 13 — Two-phase model (Part II)
   'sec-13-new':                'exec.phases',
   'sec-13-new-classification': 'exec.phases.classification',
