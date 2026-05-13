@@ -1,5 +1,6 @@
 import type { Root, Element, Text, Parent } from 'hast';
 import type { ClauseInfo } from './clauses.ts';
+import { resolveRename } from '../../scripts/slug-renames.ts';
 
 export interface ClauseXrefsOptions {
   clauseMap: Map<string, ClauseInfo>;
@@ -31,6 +32,24 @@ export function rehypeClauseXrefs(options: ClauseXrefsOptions) {
         const slug = m[1];
         const info = clauseMap.get(slug);
         if (!info) {
+          // Before emitting a generic "unresolved" error, consult the
+          // slug-renames registry. If the slug is a retired one introduced
+          // by the v0.10 structural redesign, surface a precise rename
+          // diagnostic naming the new slug.
+          const rename = resolveRename(slug);
+          if (rename === null) {
+            throw new Error(
+              `§{${slug}} references a slug that was retired with no ` +
+              `replacement. See scripts/slug-renames.ts and Cook Standard ` +
+              `v0.10 reorg.`,
+            );
+          }
+          if (rename !== undefined) {
+            throw new Error(
+              `§{${slug}} renamed to §{${rename}} in Cook Standard v0.10. ` +
+              `Update the reference in source. See scripts/slug-renames.ts.`,
+            );
+          }
           throw new Error(
             `unknown clause slug "${slug}" — §{${slug}} did not resolve in clauseMap`,
           );

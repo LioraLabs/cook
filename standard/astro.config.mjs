@@ -12,13 +12,42 @@ import { rehypeCsPermalinks } from './src/plugins/rehype-cs-permalinks.ts';
 import { rehypeBareRefLint } from './src/plugins/rehype-bare-ref-lint.ts';
 import { harvestCsIds, defaultChangesPath } from './src/plugins/cs-ids.ts';
 import { harvestClauses, defaultContentRoot } from './src/plugins/clauses.ts';
+import { SLUG_RENAMES } from './scripts/slug-renames.ts';
+import { SLUG_MAPPING } from './scripts/slug-mapping.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const knownCsIds = harvestCsIds(defaultChangesPath(__dirname));
 const clauseMap = harvestClauses(defaultContentRoot(__dirname));
 
+// Page-level redirects for the v0.10 structural redesign. The Standard's
+// chapter URLs change wholesale; these redirects keep external links alive.
+// Anchor-level redirects (fragment rewrites driven by SLUG_RENAMES) are out
+// of scope here — see the v0.10 reorg CS entry for the deferred follow-up.
+//
+// SLUG_RENAMES and SLUG_MAPPING are imported so that a future enhancement
+// can compute the fragment-rewrite table from the same source of truth that
+// the build-time plugins consult.
+void SLUG_RENAMES;
+void SLUG_MAPPING;
+
 export default defineConfig({
+  redirects: {
+    '/03-syntactic-grammar/':            '/04-toplevel/',
+    '/04-recipes/':                      '/06-recipes/',
+    '/04a-chores/':                      '/07-chores/',
+    '/05-cross-recipe-references/':      '/10-cross-recipe-references/',
+    '/06-cook-lua-api/':                 '/21-lua-api/',
+    '/07-cross-cookfile-composition/':   '/11-cross-cookfile-composition/',
+    '/08-execution-model/':              '/13-two-phase/',
+    '/09-standard-modules/':             '/27-catalogue/',
+    '/01-notation/':                     '/02-notation/',
+    '/02-lexical/':                      '/03-lexical/',
+    '/appendix/b-rationale/':            '/appendix/c-rationale/',
+    '/appendix/c-examples/':             '/appendix/b-examples/',
+    '/appendix/d-changes/':              '/appendix/e-changes/',
+    '/appendix/e-pre-v1-checklist/':     '/appendix/d-pre-v1-checklist/',
+  },
   integrations: [
     starlight({
       title: 'The Cook Standard',

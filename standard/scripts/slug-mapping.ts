@@ -196,4 +196,110 @@ export const SLUG_MAPPING: Record<string, string> = {
   // ── Appendix D — Changes (informative) ───────────────────────────────────
   'sec-D-10':  'changes.cs-0010',
   'sec-D-20':  'changes.cs-0020',
+
+  // ── v0.10 reorg: new slug prefixes ────────────────────────────────────────
+  // These are stubs that the v0.10 cut populates with real section numbers
+  // (the keys remain the positional `sec-N-M-K` form once new chapters are
+  // numbered).
+
+  // Ch. 1 — Conformance
+  'sec-1-new':           'conf',
+  'sec-1-new-1':         'conf.criteria',
+
+  // Ch. 4 — Top-level structure
+  'sec-4-new':           'toplevel',
+  'sec-4-new-1':         'toplevel.overview',
+  'sec-4-new-2':         'toplevel.ordering',
+  'sec-4-new-3':         'toplevel.termination',
+  'sec-4-new-4':         'toplevel.module-call',
+
+  // Ch. 5 — Declarations
+  'sec-5-new':           'decl',
+  'sec-5-new-1':         'decl.use',
+  'sec-5-new-2':         'decl.import',
+  'sec-5-new-3':         'decl.config',
+  'sec-5-new-3-1':       'decl.config-composition',
+  'sec-5-new-4':         'decl.register',
+  'sec-5-new-4-1':       'decl.register-splicing',
+
+  // Ch. 8 — Step kinds
+  'sec-8-new':           'steps',
+  'sec-8-new-1':         'steps.dispatch',
+  'sec-8-new-2':         'steps.ingredients',
+  'sec-8-new-3':         'steps.cook-single',
+  'sec-8-new-4':         'steps.cook-multi',
+  'sec-8-new-5':         'steps.iteration-mode',
+  'sec-8-new-6':         'steps.plate',
+  'sec-8-new-7':         'steps.test',
+  'sec-8-new-8':         'steps.lua',
+  'sec-8-new-9':         'steps.shell',
+
+  // Ch. 9 — Placeholders
+  'sec-9-new':           'phl',
+  'sec-9-new-1':         'phl.token',
+  'sec-9-new-2':         'phl.resolution',
+  'sec-9-new-3':         'phl.cook-step',
+  'sec-9-new-4':         'phl.plate-test',
+
+  // Ch. 11 — Cross-Cookfile composition
+  'sec-11-new':          'comp',
+  'sec-11-new-1':        'comp.overview',
+  'sec-11-new-2':        'comp.import',
+  'sec-11-new-3':        'comp.qualified-refs',
+  'sec-11-new-4':        'comp.duplicates-and-cycles',
+
+  // Ch. 12 — Modules (use system + catalogue index)
+  'sec-12-new':          'mods',
+  'sec-12-new-1':        'mods.use',
+  'sec-12-new-2':        'mods.use-scope',
+  'sec-12-new-3':        'mods.lifecycle',
+  'sec-12-new-4':        'mods.builtin',
+  'sec-12-new-5':        'mods.local',
+  'sec-12-new-6':        'mods.catalogue-index',
+
+  // Ch. 20 — Workspace root (Part II)
+  'sec-20-new':          'exec.ws',
+  'sec-20-new-1':        'exec.ws.determination',
+  'sec-17-new-portability': 'exec.cache.portability',
+
+  // Ch. 27 — Catalogue governance
+  'sec-27-new':          'cat',
+  'sec-27-new-1':        'cat.index',
+  'sec-27-new-2':        'cat.bootstrap',
+  'sec-27-new-2-1':      'cat.bootstrap.install',
+  'sec-27-new-2-2':      'cat.bootstrap.vendor',
+
+  // Ch. 28 — cc module
+  'sec-28-new':          'cat.cc',
+  'sec-28-new-1':        'cat.cc.synopsis',
+  'sec-28-new-2':        'cat.cc.identity',
+  'sec-28-new-3':        'cat.cc.surface',
+  'sec-28-new-3-1':      'cat.cc.bin',
+  'sec-28-new-3-2':      'cat.cc.lib',
+  'sec-28-new-3-3':      'cat.cc.shared',
+  'sec-28-new-3-4':      'cat.cc.headers',
+  'sec-28-new-3-5':      'cat.cc.compile',
+  'sec-28-new-3-6':      'cat.cc.archive',
+  'sec-28-new-3-7':      'cat.cc.link',
+  'sec-28-new-3-8':      'cat.cc.find',
+  'sec-28-new-3-8-1':    'cat.cc.find-cmake-compat',
+  'sec-28-new-3-8-2':    'cat.cc.find-cmake-compile',
+  'sec-28-new-3-8-3':    'cat.cc.find-cmake-link',
+  'sec-28-new-3-9':      'cat.cc.defaults',
+  'sec-28-new-3-10':     'cat.cc.toolchain',
+  'sec-28-new-3-11':     'cat.cc.compile-commands',
+  'sec-28-new-3-12':     'cat.cc.register-finder',
+  'sec-28-new-3-13':     'cat.cc.find-or-error',
+  'sec-28-new-4':        'cat.cc.transitive',
+  'sec-28-new-5':        'cat.cc.errors',
+  'sec-28-new-6':        'cat.cc.vendoring',
+
+  // Annex D (was E) — Pre-1.0 checklist
+  'sec-D-pre-v1':        'pre-v1',
+  'sec-D-pre-v1-1':      'pre-v1.parse-txt-coupling',
+  'sec-D-pre-v1-2':      'pre-v1.template-vs-bash-expansion',
+  'sec-D-pre-v1-3':      'pre-v1.no-string-escape',
+
+  // Annex F — Conformance corpus stub
+  'sec-F-corpus':        'corpus',
 };
