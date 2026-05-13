@@ -266,7 +266,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   // Ch. 21–24 — Cook Lua API umbrella slugs (Part III, stubs)
   'sec-21-new':          'lua.surface',
   'sec-22-new':          'lua.reg',
-  'sec-23-new':          'lua.exec',
+  'sec-23-new':          'lua.exe',
   'sec-24-new':          'lua.both',
 
   // Ch. 25–26 — fs / path umbrella slugs (Part III, stubs)

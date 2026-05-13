@@ -1,0 +1,45 @@
+---
+title: "§{lua} — Cook Lua API surface"
+sidebar:
+  order: 21
+---
+# 21. Cook Lua API surface [#lua]
+> **Normative.** This chapter is the Cook Lua API's table of contents. The four phase-classified surfaces — register-phase (§{lua.reg}), execute-phase (§{lua.exe}), both-phase (§{lua.both}), and the filesystem/path helpers (§{lua.fs}, §{lua.path}) — are defined in the chapters that follow.
+
+The Cook runtime executes Lua code in two disjoint phases:
+
+- The **register phase** runs the Lua image produced from the Cookfile exactly once on a single-threaded Lua VM. Its purpose is to record a set of work units without performing external effects. API functions in this phase typically return synchronously and mutate capture state.
+- The **execute phase** runs the recorded work units on a pool of worker Lua VMs (one per worker thread). Its purpose is to perform the external effects previously recorded.
+
+Every function defined in this Part is classified as **register-phase only**, **execute-phase only**, or **both phases**. A conforming implementation MUST install a function in each of the phases indicated here, and MUST NOT silently install a register-phase-only function in the execute phase (or vice versa) — a Cookfile that calls a function in the wrong phase MUST observe either the documented behaviour for that phase or a Lua runtime error.
+
+Code encountered via `> expr` (§{recipes.lua-steps}), `>{ ... }` (§{lexical.brace-blocks}, §{recipes.lua-steps}), `using >{ ... }` (§{recipes.cook-single-output}, §{recipes.cook-multi-output}), module bodies (§{mods.use}), and `config` blocks (§{decl.config}) runs with this API in scope.
+
+## 21.1. API surface overview [#lua.api-overview]
+A conforming implementation MUST install the following top-level Lua globals before any Cookfile-derived Lua code runs:
+
+| Global    | Type   | Phases   | Defined in |
+|-----------|--------|----------|------------|
+| `cook`    | table  | both     | §{lua.reg}, §{lua.exe}, §{lua.both} |
+| `fs`      | table  | both     | §{lua.fs} |
+| `path`    | table  | both     | §{lua.path} |
+| `recipe`  | table  | register | §{lua.recipe-global} |
+| `inputs`  | table  | execute  | §{lua.exe} |
+| `outputs` | table  | execute  | §{lua.exe} |
+| `input`   | string | execute  | §{lua.exe} |
+| `output`  | string | execute  | §{lua.exe} |
+| `input_N` | table  | execute  | §{lua.exe} |
+
+The `cook` table carries recipe registration, work-unit registration, shell helpers, dependency-output accessors, module loading, platform information, export/import, and environment access. The full set of keys on the `cook` table is implementation-defined except for the members that are normatively specified in this Part.
+
+## 21.2. The `recipe` global [#lua.recipe-global]
+During the register phase, and only within the body of the Lua function registered by `cook.recipe(...)` (§{mods}), the `recipe` global is bound to a table with the following fields:
+
+- `recipe.name` — string; the declared recipe name (§{recipes.header-forms}).
+- `recipe.ingredients` — a sequence (1-indexed Lua table) of ingredient groups. `recipe.ingredients[i]` is itself a sequence of relative file paths resolved from the `i`-th `ingredients` glob pattern, minus any entries matching an exclude pattern (§{recipes.ingredients}).
+
+A conforming implementation MUST NOT expose the `recipe` global during the execute phase; it is a register-phase artefact.
+
+## 21.3. The `env` alias inside `config_block` bodies [#lua.env-alias]
+
+Within the body of a `config_block` (§{decl.config}), the bare global `env` MUST be bound such that `env` and `cook.env` refer to the same table. Writes through either name MUST be observable through both. The `env` alias is in scope only within `config_block` bodies; it MUST NOT be bound in recipe-body Lua, in `using` blocks, in module bodies, or at any other Lua entry point.
