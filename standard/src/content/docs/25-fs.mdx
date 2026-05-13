@@ -1,0 +1,86 @@
+---
+title: "§{lua.fs} — Filesystem helpers"
+sidebar:
+  order: 25
+---
+# 25. Filesystem helpers (`fs.*`) [#lua.fs]
+> **Normative.** This chapter defines the `fs.*` table — the host-portable filesystem subset that Cook exposes in both register-phase and execute-phase Lua VMs — together with the project-root sandbox and the Lua-side shell escape hatch guards.
+
+## 25.1. Overview [#lua.fs-helpers]
+**Phase.** Both. The same surface is installed in register-phase and execute-phase VMs; semantics are identical.
+
+All `fs.*` functions interpret relative path arguments against the Cookfile's working directory. A conforming implementation MUST NOT silently succeed on I/O errors: failures other than those made explicit below are reported as Lua runtime errors.
+
+## 25.2. `fs.exists` [#lua.fs-exists]
+**Signature.** `fs.exists(path: string) -> boolean`
+
+Returns `true` if a filesystem entry exists at `path`, `false` otherwise. Broken symlinks and permission errors are implementation-defined with respect to the boolean result, but this function MUST NOT raise for a missing path.
+
+## 25.3. `fs.size` [#lua.fs-size]
+**Signature.** `fs.size(path: string) -> integer`
+
+Returns the size of the file at `path` in bytes. A missing or unreadable entry is a Lua runtime error.
+
+## 25.4. `fs.read` [#lua.fs-read]
+**Signature.** `fs.read(path: string) -> string`
+
+Returns the contents of `path` as a Lua string. A missing or unreadable entry is a Lua runtime error. Encoding is not transformed: the string carries raw bytes.
+
+## 25.5. `fs.write` [#lua.fs-write]
+**Signature.** `fs.write(path: string, content: string) -> nil`
+
+Writes `content` to `path`, creating parent directories as needed. Any existing file at `path` is overwritten. Write failure is a Lua runtime error.
+
+## 25.6. `fs.mkdir_p` [#lua.fs-mkdir-p]
+**Signature.** `fs.mkdir_p(path: string) -> nil`
+
+Creates the directory at `path`, and any missing parent components, if they do not already exist. This function MUST succeed when `path` already exists and is a directory.
+
+## 25.7. `fs.glob` [#lua.fs-glob]
+**Signature.** `fs.glob(pattern: string) -> array of string`
+
+Returns a 1-indexed sequence of absolute paths matching the glob `pattern`, interpreted relative to the working directory. A path is included only when it resolves to a regular file; entries whose final (symlink-resolved) type is a directory MUST be dropped, and MUST NOT raise an error (CS-0064). The order of returned paths is implementation-defined. An invalid glob pattern is a Lua runtime error; a valid pattern with no matches MUST return an empty sequence.
+
+> The directory-filter rule pairs with §{lua.add-unit}'s path-shape restriction (CS-0063): downstream `cook.add_unit` inputs reject directory paths, so a glob like `dir/*` against a tree that mixes files and sub-directories would otherwise fail with `is a directory` for paths the author never wrote. Filtering at the glob layer makes the common "all files under a directory" pattern well-defined.
+
+## 25.8. `fs.mtime` [#lua.fs-mtime]
+**Signature.** `fs.mtime(path: string) -> number`
+
+Returns the modification time of `path` as seconds since the Unix epoch, as a `number`. A missing or unreadable entry is a Lua runtime error.
+
+### Note 25.8.1
+
+The `fs.*` surface is intentionally minimal. Authors needing operations not listed here (symlink manipulation, recursive deletion, permission changes) invoke those operations through the shell — `fs.*` is a host-portable subset for the common cases.
+
+### Note 25.8.2
+
+The "Phase: Both" classification on `fs.*`, `path.*`, and `cook.platform.*` is a behavioral contract: every observable property of these tables — the function signatures, the working-directory rooting rule, the error-on-I/O-failure rule, the order-implementation-defined rule on `fs.glob`, the platform string values — MUST be identical between the register-phase VM and the execute-phase worker VMs. A conforming implementation realizes this by sharing a single implementation of these tables across the two VMs. The reference implementation does so via the `cook-lua-stdlib` crate (CS-0044), which is the sole installer of `fs.*`, `path.*`, and `cook.platform.*` in both `cook-register` and `cook-luaotp`. Implementations MAY structure the sharing differently, but a register-phase call and an execute-phase call to the same `fs.*`/`path.*`/`cook.platform.*` function with the same arguments MUST produce the same result, modulo the working-directory difference inherent to the multi-Cookfile-import case (§{comp.import}; CS-0017).
+
+## 25.9. Project-root sandbox [#lua.fs-sandbox]
+
+Beyond the working-directory rooting rule of §{lua.fs-helpers}, every `fs.*` entry that takes a path argument MUST further confine that path to the **project root** when invoked from a sandboxed context. The project root is the workspace root (§{exec.ws}) — the directory containing the top-level Cookfile in the build invocation, even when an imported Cookfile (§{comp.import}) is the immediate caller.
+
+A path is **inside** the project root when its lexical normalization (with `.` and `..` components resolved without consulting the filesystem) is component-wise prefix-equal to the lexical normalization of the project root. An absolute path that lies outside the project root MUST be rejected; a relative path that, after `..` resolution against the caller's working directory, lies outside the project root MUST also be rejected. A conforming implementation MUST raise a Lua runtime error in either case; it MUST NOT silently truncate, retarget, or fall back to the working directory. The diagnostic SHOULD identify the offending path and reference this section's tag (`CS-0045`).
+
+The sandboxed contexts are:
+
+| Context | Sandboxed? |
+|---|---|
+| `cook_step` Lua body (`using >{ ... }`) | yes |
+| `cook_step` shell body's expanded `$<…>` substitutions running through `fs.*` | yes |
+| `test_step` body (Lua or shell) | yes |
+| `chore` body (Lua or shell) | yes |
+| Register-phase Lua: `config_block` body, `inline_lua_line` / `inline_lua_block`, `cook_step` register-time `cook.add_unit({...})` orchestration | yes |
+| `plate_step` body (Lua or shell) | **no** (§{rationale.plate-test-no-output-decl}) |
+
+The plate-step exemption is normative: a `plate_step`'s body MUST NOT have the confinement applied, because shipping outside the project root (deploys, uploads, package installs to `$HOME`, etc.) is the explicit purpose of the step kind. Authors who want the confinement on a non-cacheable side-effect step use a `chore` instead.
+
+A conforming implementation MUST NOT apply the lexical normalization to a path whose `..` resolution would walk above a filesystem root; such a candidate is treated as escaping the project root regardless of the project root's location.
+
+`path.*` (§{lua.path}) is pure string manipulation and does not perform I/O; the sandbox does not apply to it. Authors MAY freely construct out-of-project path strings via `path.*` — only the I/O-performing surfaces (`fs.*` and the shell escape hatches of §{lua.shell-escape-hatches}) reject them.
+
+## 25.10. Lua-side shell escape hatches [#lua.shell-escape-hatches]
+
+The standard Lua library includes two surfaces that run shell commands directly: `os.execute(cmd)` and `io.popen(cmd, mode?)`. Both bypass `cook.sh` (§{lua.cook-sh}) and therefore neither inherits the recipe's working-directory rooting nor contributes to the unit's `command_hash`. In a sandboxed context (§{lua.fs-sandbox}), a conforming implementation MUST disable these entries: a call MUST raise a Lua runtime error referencing this section's tag (`CS-0045`) rather than spawning a child process. In a non-sandboxed context (`plate_step` bodies), `os.execute` and `io.popen` MUST behave exactly as the standard Lua library specifies.
+
+This is a normative constraint on the Cook Lua sandbox surface, not a Lua language change: the Lua specification is unaffected. A conforming Cook implementation MAY install the guard by replacing `os.execute` and `io.popen` with closures that consult the active policy and either delegate to the original implementation (under `Off`) or raise (under `Confined`). The reference implementation does so via `cook-lua-stdlib::install_shell_escape_guards`.
