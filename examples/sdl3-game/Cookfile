@@ -1,11 +1,12 @@
 use cook_cc
 
-recipe game
-    >> local sdl3 = cook_cc.find_or_error("SDL3")
-    >> cook_cc.bin("game", {
-    >>     sources       = { "src/main.c" },
-    >>     includes      = sdl3.include_dirs,
-    >>     system_libs   = sdl3.system_libs,
-    >>     extra_ldflags = sdl3.libs,
-    >>     frameworks    = sdl3.frameworks,
-    >> })
+config
+    sdl3 = cook_cc.find_or_error("SDL3")
+
+cook_cc.bin("game", {
+    sources       = { "src/main.c" },
+    includes      = sdl3.include_dirs,
+    system_libs   = sdl3.system_libs,
+    extra_ldflags = sdl3.libs,
+    frameworks    = sdl3.frameworks,
+})

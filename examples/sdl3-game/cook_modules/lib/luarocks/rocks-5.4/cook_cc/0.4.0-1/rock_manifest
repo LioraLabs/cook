@@ -1,5 +1,5 @@
 rock_manifest = {
-   ["cook_cc-0.3.1-1.rockspec"] = "e3793ec871db1d0d62e5e41a7b03e946",
+   ["cook_cc-0.4.0-1.rockspec"] = "c38e82f6632ca1993500251204a82bca",
    doc = {
       ["README.md"] = "af20f8f92f147983316c39e1cc1431d4"
    },
@@ -27,7 +27,7 @@ rock_manifest = {
             ["zlib.lua"] = "adca812e5bf72d438786aba372e83c40"
          },
          ["init.lua"] = "bc5817cab0b5e7ff6953f636273435e1",
-         ["targets.lua"] = "5504a61d390c2cf32797d68a58dd882a",
+         ["targets.lua"] = "12bd96c35ba4479b09c101c070df2f74",
          ["toolchain.lua"] = "5c9287a412af2d40e9e327f5e450f73f",
          ["transitive.lua"] = "7fbf9f1ee069a70682c2dce62bf338c2",
          ["version.lua"] = "edd3bad52ee5e17557ef56fcfd41250a"
