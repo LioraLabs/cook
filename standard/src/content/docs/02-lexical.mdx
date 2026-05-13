@@ -340,6 +340,19 @@ recipe build: lib setup   # test 7:  RecipeHeader (column 0)
     recipes_cleanup       # test 12: Content (falls through test 7 — no separator)
 ```
 
+### Example 2.10.2
+
+```cook
+register                  # test 11.5: RegisterHeader (bare form)
+register foo              # test 11.5: RegisterHeader (parser rejects the trailing arg)
+register	foo           # test 11.5: RegisterHeader (tab separator)
+    register              # test 12:   Content (indented; falls through 11.5)
+register_cleanup          # test 12:   Content (no separator after `register`)
+registers_cleanup         # test 12:   Content (no separator; not a keyword match)
+```
+
+The bare `register` and `register foo` lines both produce a `RegisterHeader` token; per §{grammar.register-blocks}, the parser rejects the second because a `register_block` admits no name. The tab-separator form is equivalent to the space-separator form at the lexical layer. The indented `register` line is a `Content` token because tests 7–11.5 are sensitive to column-0 positioning. `register_cleanup` and `registers_cleanup` fall through to test 12 because the byte after `register` is `_` and `s`, not a keyword separator.
+
 ## 2.11. Placeholders in shell text [#lexical.placeholders]
 
 > **Normative.**

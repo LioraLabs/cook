@@ -205,13 +205,10 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
             let (name, _) = parse_name(rest, line_num)?;
             Token::ConfigHeader { name: Some(name) }
         } else if !line.starts_with(|c: char| c.is_whitespace())
-            && trimmed == "register"
-        {
-            Token::RegisterHeader
-        } else if !line.starts_with(|c: char| c.is_whitespace())
             && trimmed.starts_with("register")
-            && trimmed.len() > 8
-            && (trimmed.as_bytes()[8] == b' ' || trimmed.as_bytes()[8] == b'\t')
+            && (trimmed.len() == 8
+                || (trimmed.len() > 8
+                    && (trimmed.as_bytes()[8] == b' ' || trimmed.as_bytes()[8] == b'\t')))
         {
             Token::RegisterHeader
         } else if !line.starts_with(|c: char| c.is_whitespace())
@@ -869,6 +866,12 @@ recipe "build"
     fn test_register_header_followed_by_content_is_still_register() {
         // Lexer admits the RegisterHeader; the parser rejects `register foo`.
         let tokens = tokenize("register foo").unwrap();
+        assert_eq!(tokens[0].value, Token::RegisterHeader);
+    }
+
+    #[test]
+    fn test_register_header_with_tab_separator() {
+        let tokens = tokenize("register\tfoo").unwrap();
         assert_eq!(tokens[0].value, Token::RegisterHeader);
     }
 

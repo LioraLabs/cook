@@ -279,7 +279,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 // Full register-block parse dispatch lands in Task 4 (SHI-216).
                 return Err(ParseError::Parse {
                     line: tok.line,
-                    message: "register blocks are not yet supported".to_string(),
+                    message: "register blocks are not yet supported (SHI-216 in progress; parser dispatch lands in Task 4 of the implementation plan)".to_string(),
                 });
             }
         }
