@@ -1,0 +1,173 @@
+---
+title: "§{lua.both} — Both-phase API"
+sidebar:
+  order: 24
+---
+# 24. Both-phase API [#lua.both]
+> **Normative.** This chapter defines the Cook Lua API surfaces that are available in both register-phase and execute-phase Lua. The behavioural contract — signatures, error model, working-directory rooting — is identical across phases; only the surrounding scheduling differs.
+
+## 24.1. `cook.sh` [#lua.cook-sh]
+**Signature.** `cook.sh(cmd: string) -> string`
+**Phase.** Both.
+
+`cook.sh` executes `cmd` via `/bin/sh -c` in the Cookfile's working directory with the current `cook.env` values merged onto the inherited environment, and returns the captured standard output as a string. A non-zero exit status MUST be reported as a Lua runtime error. The error message's first line MUST take the form `COOK_CMD_FAILED:<line>:<exit-code>:<cmd>`, where `<line>` is the source line of the call (or `0` when not applicable, e.g., a register-phase utility call) and `<exit-code>` is the process exit code. The implementation MUST append the captured standard output and standard error to the error message on subsequent lines, separated by the section headers `\n--- stdout ---\n` and `\n--- stderr ---\n` respectively; an empty stream's section MAY be omitted. The implementation MAY truncate either stream above an implementation-defined byte budget; when it does, it MUST emit a marker that names the count of bytes omitted (e.g., `... (12345 bytes truncated)`). The function name is intentionally shared between phases because the user-visible behaviour — "run this command and give me its stdout, error on non-zero" — is the same in both; only the surrounding scheduling differs.
+
+In the **register phase**, `cook.sh` is a utility for control-flow decisions during registration (feature detection, tool discovery, reading version files). It is NOT the mechanism by which work units are recorded; use `cook.add_unit` for that. The capture-mode contract of §{exec.capture} applies: a register-phase `cook.sh` call MUST be deterministic with respect to the Cookfile source and the register-phase record accumulated so far, and MUST NOT modify files under the working directory in a way that affects declared outputs.
+
+In the **execute phase**, `cook.sh` runs on the worker VM that is evaluating an execute-phase Lua chunk — for example, the body unit of an imperative-region run (§{exec.body-bundling}) or a `using >{ … }` payload (§{lua.using-block-globals}). It is the mechanism by which a `lua_line` or `lua_block` shells out, and it is the call into which a coalesced run of adjacent `shell_command` steps desugars (§{exec.body-bundling}). Stdout is captured and returned to the calling Lua code; stderr is streamed to the worker's stderr. The `COOK_CMD_FAILED:` Lua error is identical in shape to the register-phase variant.
+
+## 24.2. `cook.load_module` [#lua.cook-load-module]
+**Signature.** `cook.load_module(name: string) -> table`
+**Phase.** Both.
+
+`cook.load_module` resolves `name` against the calling work unit's source Cookfile and returns the module's Lua table. The lookup is **lexical per Cookfile** (§{mods.use-scope}): an imported Cookfile's body unit, whose `working_dir` is its own import directory, resolves `cook.load_module("foo")` against `<import_dir>/cook_modules/foo.lua`. The importing Cookfile cannot reach into the imported Cookfile's `cook_modules/` and vice versa.
+
+A conforming implementation MUST configure `package.path` and `package.cpath` for the calling Lua VM such that sub-requires within a multi-file module resolve against the project's `cook_modules/` search paths rather than the host system's Lua paths. A conforming implementation MUST allow C extension modules (`.so`/`.dll`) to be loaded during `cook.load_module` evaluation. [amended CS-0066]
+
+When `cook.load_module` is exposed on the execute-phase Lua VM, the execute-phase implementation MUST honour the same four-path resolution order used at register phase. Recipe-body Lua scripts that call `cook.load_module(name)` directly therefore see the same set of candidate paths as register-phase callers, eliminating "works at register but not at execute" surprises. [amended CS-0069]
+
+A conforming implementation MUST report a runtime error when `name` does not resolve to a file under the calling Cookfile's `cook_modules/`. The diagnostic MUST identify `name` and the absolute path(s) that were searched.
+
+The body of a module loaded into the execute-phase VM MUST NOT call register-only API (`cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, `cook.recipe`). A conforming implementation MUST surface such a call as the §{rationale.execute-phase-api} runtime error. Module functions whose bodies are restricted to both-phase API (`cook.sh`, `cook.env`, `cook.cache`, `cook.platform`, `fs.*`, `path.*`) work in either phase; module authors document per-function which phase a function targets.
+
+`cook.load_module` is the resolver behind the `use` declaration (§{mods.use}). The codegen for `use foo` emits `local foo = cook.load_module("foo")` at the top of the Cookfile's register-phase Lua, and prepends the same binding to every execute-phase body unit's `lua_code` payload, so the alias `foo` is in scope for both phases of every recipe in the declaring Cookfile.
+
+Module lifecycle — the top-level chunk's once-per-VM execution, the `init()` call, per-VM caching, cross-VM rehydration, and cycle detection — is specified in §{mods.lifecycle}, not here. This section defines only the call surface.
+
+## 24.3. `cook.env` [#lua.cook-env]
+**Type.** `table`
+**Phase.** Both.
+
+`cook.env` is the Cook-managed environment table. It is a regular Lua table with two semantic distinctions from a bare table:
+
+- Keys MUST be strings and values MUST be strings; a conforming implementation MUST raise a Lua runtime error on a write whose key is not a string or whose value is not a string. (Numeric and boolean values are NOT auto-coerced; authors converting non-string values use Lua's `tostring`.)
+- The table starts populated with the inherited process environment of the Cook invocation (e.g. `PATH`, `HOME`). Subsequent writes overlay this initial population.
+
+`cook.env` is the source of `$<TOKEN>` env-var resolution (§{xref.resolution} step 3, §{xref.env-namespace}) and is merged onto the child-process environment for every shell unit (§{lua.cook-sh}, `cook.add_unit` shell payload). The implementation MUST track which keys of `cook.env` were consulted by each work unit (the `consulted_env_keys` set per §{xref.resolution}) for the purposes of cache invalidation (§{exec.cache.abstract}).
+
+Within a `config_block` body (§{decl.config}), the bare global `env` is bound as an alias of `cook.env` per §{lua.env-alias}. Writes through either name MUST be observable through both.
+
+### Example 24.3.1
+
+```cook
+config
+    env.CC = "clang"
+    env.CXXFLAGS = "-std=c++20 -O2"
+```
+
+The bare `env` inside the config body writes to `cook.env`; the keys `CC` and `CXXFLAGS` are subsequently resolvable as `$<CC>` and `$<CXXFLAGS>` placeholders in recipe bodies (§{phl.cook-step}).
+
+## 24.4. `cook.cache` [#lua.cook-cache]
+**Phase.** Both. [Pinned by CS-0070.]
+
+`cook.cache` is the Cook-managed key/value store available to register-phase and execute-phase Lua. Its purpose is to let modules persist register-phase computations (compiler detection, package finder results) into a form that execute-phase code can read without redoing the work.
+
+### 24.4.1. `cook.cache.get` [#lua.cook-cache-get]
+**Signature.** `cook.cache.get(key: string) -> any`
+
+Returns the value previously stored under `key` via `cook.cache.set` (or `nil` if no value is stored). The value MUST round-trip through any serialisation the implementation uses for persistence; non-serialisable values (Lua functions, userdata, coroutines) MUST raise a Lua runtime error when passed to `cook.cache.set`.
+
+### 24.4.2. `cook.cache.set` [#lua.cook-cache-set]
+**Signature.** `cook.cache.set(key: string, value: any) -> nil`
+
+Stores `value` under `key`. Subsequent `cook.cache.get(key)` returns `value` (or its deserialisation-equal counterpart).
+
+A register-phase write MUST be persisted by the implementation in a way that survives across Cook invocations: a register-phase `set` followed by a later register-phase `get` in a different Cook invocation MUST return the previously-stored value. The on-disk format is implementation-defined.
+
+An execute-phase write MAY be in-memory-only, scoped to the worker VM's lifetime; a conforming implementation MAY discard execute-phase writes between invocations. Modules that rely on cross-invocation persistence MUST perform the persistent writes from register phase.
+
+### 24.4.3. `cook.cache.scope` [#lua.cook-cache-scope]
+**Signature.** `cook.cache.scope(label: string) -> table`
+
+Returns a "scoped" table view whose `get(key)` and `set(key, value)` operations are equivalent to `cook.cache.get(label .. ":" .. key)` and `cook.cache.set(label .. ":" .. key, value)` respectively. The label string MUST NOT contain the `:` character; a conforming implementation MUST raise a Lua runtime error on such a label.
+
+Scopes are conventionally named after the module that owns them (e.g. `cook_cc:toolchain`, `cook_cc:find:raylib`) to prevent key collisions between modules.
+
+## 24.5. `cook.export` and `cook.import` [#lua.cook-export-import]
+**Phase.** Both. [Pinned by CS-0071.]
+
+`cook.export` and `cook.import` are the Cook-managed transitive-link-info channel used by target makers (e.g. `cc.bin`/`cc.lib` per §{cat.cc.transitive}) to publish a target's outward-facing fields and by consumers to read them.
+
+### 24.5.1. `cook.export` [#lua.cook-export]
+**Signature.** `cook.export(name: string, info: table) -> nil`
+
+Records that the target named `name` exposes the fields in `info`. The `info` table's shape is conventionally established by the publisher's module documentation; for `cc` targets the conventional shape is documented in §{cat.cc.transitive}. The Standard does not constrain `info`'s shape beyond requiring it to be a Lua table.
+
+A conforming implementation MUST persist the exported value in a way that subsequent `cook.import(name)` calls (in either phase, within the same Cookfile evaluation) return the exported value.
+
+### 24.5.2. `cook.import` [#lua.cook-import]
+**Signature.** `cook.import(name: string) -> table?`
+
+Returns the table previously published for `name` via `cook.export`, or `nil` if no export has occurred.
+
+A conforming implementation MUST resolve `cook.import` against the **same workspace's** export records — `cook.import` MUST NOT cross workspace boundaries. The interaction with cross-Cookfile composition is: a target maker invoked from an imported Cookfile (§{comp.import}) publishes exports against the workspace-global table, but resolution by recipe name in a different Cookfile uses the qualified name `alias.name` per §{comp.qualified-refs}.
+
+The Cook implementation MAY share the export table between register-phase and execute-phase Lua VMs, or use a per-worker scratch store when the recipe body is both producer and consumer; the minimum bar is that the calls resolve without error and round-trip values within a single worker VM. Implementations that omit the execute-phase API break any target maker whose register-recorded body calls `cook.export` at execute time.
+
+## 24.6. `cook.platform` [#lua.cook-platform]
+**Type.** `table`
+**Phase.** Both.
+
+`cook.platform` is a Cook-managed read-only table exposing the host platform's identity. The following fields MUST be populated by a conforming implementation:
+
+| Field | Type | Value |
+|---|---|---|
+| `os` | string | `"linux"`, `"darwin"`, `"windows"`, or `"unknown"`. |
+| `arch` | string | `"x86_64"`, `"aarch64"`, `"arm"`, `"riscv64"`, or `"unknown"`. |
+| `triple` | string | The host's compiler target triple, e.g. `"x86_64-unknown-linux-gnu"`, `"aarch64-apple-darwin"`. Implementation-defined when the host is not recognised by the implementation's target-triple resolver. |
+
+The values MUST be identical between the register-phase Lua VM and every execute-phase worker VM within a single Cook invocation. Implementations realise this by sharing a single source-of-truth resolver across VMs; the reference implementation does so via `cook-lua-stdlib::platform`.
+
+### Example 24.6.1
+
+```lua
+if cook.platform.os == "darwin" then
+    cook.add_unit({
+        command = "install_name_tool -id @rpath/libfoo.dylib build/lib/libfoo.dylib",
+        cache   = false,
+    })
+end
+```
+
+The `cook.platform.os` check happens at register time on the register-phase VM; the unit is recorded only on macOS hosts.
+
+## 24.7. `cook.dep_output` and `cook.dep_output_list` [#lua.cook-dep-output]
+**Phase.** Both.
+
+`cook.dep_output` and `cook.dep_output_list` are the Lua-side counterpart of the `$<NAME>` string-substitution surface (§{xref.string-substitution}). A `using >{ … }`, `plate >{ … }`, or `test >{ … }` body that needs to reference another recipe's output uses these functions instead of textual placeholder substitution.
+
+### 24.7.1. `cook.dep_output` [#lua.cook-dep-output-single]
+**Signature.** `cook.dep_output(name: string) -> string`
+
+Returns the named recipe's output list joined by single space characters. Equivalent to the textual expansion of `$<NAME>` per §{xref.string-substitution}.
+
+If the named recipe's output list is empty, returns the empty string; a conforming implementation MUST emit a warning at register time naming the referring recipe and the referent. The reference itself is not an error.
+
+If `name` does not name a recipe in scope, a conforming implementation MUST raise a Lua runtime error at the calling step's register time.
+
+### 24.7.2. `cook.dep_output_list` [#lua.cook-dep-output-list]
+**Signature.** `cook.dep_output_list(name: string) -> table`
+
+Returns the named recipe's output list as a 1-indexed Lua table of strings. Equivalent to `cook.dep_output(name)` but preserved as a sequence so that callers can iterate, index, or apply path accessors (§{xref.path-accessors}) per-element.
+
+Same error model as `cook.dep_output`.
+
+### Example 24.7.1
+
+```cook
+recipe libs
+    cook "build/lib/libfoo.a" using { ar rcs $<out> ... }
+    cook "build/lib/libbar.a" using { ar rcs $<out> ... }
+
+recipe app
+    cook "build/bin/app" using >{
+        local libs = cook.dep_output_list("libs")
+        local cmd = "gcc -o " .. output .. " main.c"
+        for _, lib in ipairs(libs) do
+            cmd = cmd .. " " .. lib
+        end
+        cook.sh(cmd)
+    }
+```
+
+The `cook.dep_output_list("libs")` call returns `{ "build/lib/libfoo.a", "build/lib/libbar.a" }`. An equivalent shell-body recipe would use `$<libs>` per §{xref.string-substitution}.
