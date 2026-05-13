@@ -1,0 +1,85 @@
+---
+title: "§{recipes} — Recipes"
+sidebar:
+  order: 6
+---
+# 6. Recipes [#recipes]
+> **Normative.** This chapter defines the shape of a recipe declaration: the header, the optional dependency list, the body's two-region structure, and the at-most-one-ingredients rule. Step kinds are defined in §{steps}; chores are in §{chores}.
+
+## 6.1. Recipe header [#recipes.header-forms]
+A `recipe` is the form `recipe_header NEWLINE recipe_body` (App. A.3). The `recipe_header` is the form `"recipe" name (":" dependency_list)?`, where `name` is either a `BARE_IDENTIFIER` or a double-quoted `STRING` (App. A.5, `name`). An optional `:` introduces a dependency list (§{recipes.dep-list}).
+
+The keyword `recipe` MUST be followed by a separator — whitespace, a tab, or a `"` character — before the name. An identifier whose first word merely begins with `recipe` (for example, `recipes_cleanup`) is a `Content` token, not a header (§{lexical.line-classification}).
+
+A `recipe_header` MUST NOT be introduced by a line whose trimmed content begins with `recipe` but is immediately followed by a non-separator character — for example, `recipes_cleanup`. Such a line is a `Content` token.
+
+A `recipe_body` extends from the line following the header up to (but not including) the next terminating line of the surrounding Cookfile, or end-of-file (whichever comes first). See §{toplevel.termination} for the full terminator-set, which includes `register` and the top-level module_call shape as of CS-0072.
+
+The **reserved-segment rule** of §{grammar-appendix.declarations} applies: the final segment of a recipe's name (the text following the last `.`, or the entire name if it contains no `.`) MUST NOT be one of the identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`. A conforming implementation MUST reject a recipe whose final name segment matches any of these reserved identifiers (App. A.2).
+
+The **duplicate-name rule** of §{grammar-appendix.declarations} also applies: recipes and chores share a single callable namespace, so a recipe whose name matches that of an earlier `recipe` or `chore` declaration in the same Cookfile MUST be rejected at parse time. The diagnostic identifies both the offending declaration and the source line of the prior declaration. Cross-Cookfile composition that would otherwise collide is achieved via `import` aliases (§{comp.import}), not by re-declaring under the same name.
+
+The `chore` top-level form (§{chores}) is a peer of `recipe`. A `chore` body has a more restrictive step-kind alternation than a `recipe` body — see §{chores.body} for the differences.
+
+### Example 6.1.1
+
+```cook
+recipe build
+    gcc -o main main.c
+
+recipe "bundle": backend.build frontend.build
+    echo bundling
+```
+
+Two recipes, in two valid header shapes: explicit with a bare name (`build`), and explicit with a quoted name and dependency list mixing bare and quoted forms.
+
+### Example 6.1.2
+
+```cook
+recipe "build": "setup"
+    gcc -o main main.c
+
+recipe build: setup
+    gcc -o main main.c
+```
+
+Both recipes above are semantically identical; the first uses a quoted name, the second a bare name.
+
+### Note 6.1.1
+
+The token `recipe` is recognised as a top-level keyword only when followed by a separator (space, tab, or `"`). An identifier whose first word merely begins with `recipe` (for example, `recipes_cleanup`) is a `Content` token, not a header. See lexer test `test_recipe_prefix_is_shell_command`.
+
+## 6.2. Dependency list [#recipes.dep-list]
+A **dependency list** is a sequence of one or more `name`s following the `:` in a recipe header (§{grammar-appendix.recipes}, `dependency_list`). Each name in a dependency list is a name reference; its resolution rules are given in §{xref.resolution} and its effect on execution ordering in §{xref.dep-implications} and §{exec.cross-recipe-ordering}.
+
+The `dependency_list` is one or more `name`s separated by whitespace; each element is a `BARE_IDENTIFIER` or a `STRING`, and the two forms MAY be freely mixed within a single list.
+
+A conforming implementation MUST accept a mix of `BARE_IDENTIFIER` and `STRING` forms within a single dependency list. Dependencies MAY use the dotted form (e.g. `backend.build`) to refer to a recipe imported under an alias (§{comp}); the dotted form is a single `BARE_IDENTIFIER` under the token rules of §{lexical.identifiers}, not two tokens separated by `.`.
+
+The dependency list is purely syntactic at parse time. The Standard requires only that:
+
+1. Each referenced recipe exists in the resolved Cookfile (itself, its `use` modules, or its `import` aliases). A conforming implementation MUST reject a Cookfile that references a non-existent recipe — this diagnostic MAY be deferred to the first resolution pass (§{exec}).
+2. The dependency graph is acyclic. A conforming implementation MUST reject a Cookfile whose dependency graph contains a cycle — this diagnostic MAY be deferred to DAG construction (§{exec}).
+
+### Example 6.2.1
+
+```cook
+recipe tools: colorize wordcount reverse
+
+recipe bundle: "backend.build" "frontend.build"
+```
+
+The first recipe lists three dependencies as bare identifiers. The second uses quoted strings for the same effect; it is semantically identical to `recipe bundle: backend.build frontend.build`.
+
+## 6.3. Recipe-body region rule [#recipes.region-rule]
+
+A `recipe_body` MUST be ordered into two consecutive regions, each of which MAY be empty:
+
+1. **Declarative region** — register-phase steps: `ingredients_step`, `cook_step`, `plate_step`, `test_step`, `inline_lua_line`, `inline_lua_block`, plus structural `comment` and blank lines.
+2. **Imperative region** — execute-phase steps: `lua_line`, `lua_block`, `shell_command`, `interactive_command`, plus structural `comment` and blank lines.
+
+Once any imperative-region step appears in the body, no declarative-region step is permitted afterward in the same recipe. A conforming implementation MUST reject a recipe in which a declarative-region step (cook, plate, test, ingredients, `>>`, or `>>{`) appears after the first imperative-region step (`>`, `>{`, shell, or `@`). The diagnostic MUST identify the offending step's line and the line on which the imperative region began.
+
+Comments and blank lines do NOT trigger the region transition. The transition is governed by the most recent step kind, not the most recent line. See App. C for the rationale.
+
+The grammar restatement of this rule appears in App. A.3 ("Region ordering rule"); this chapter holds the prose treatment.
