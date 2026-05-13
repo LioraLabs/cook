@@ -1,0 +1,165 @@
+---
+title: "§{lua.reg} — Register-phase API"
+sidebar:
+  order: 22
+---
+# 22. Register-phase API [#lua.reg]
+> **Normative.** This chapter defines every Cook Lua API surface that is register-phase only. A call to any function in this chapter from execute-phase Lua MUST raise a Lua runtime error per §{rationale.execute-phase-api}.
+
+## 22.1. `cook.add_unit` [#lua.add-unit]
+**Signature.** `cook.add_unit(spec: table) -> nil`
+**Phase.** Register-phase only.
+
+`cook.add_unit` records a single work unit to be executed later. The table argument `spec` accepts the following fields:
+
+| Field               | Type           | Default | Meaning |
+|---------------------|----------------|---------|---------|
+| `command`           | string         | `""`    | Shell command string, run via `/bin/sh -c` in the execute phase. |
+| `lua_code`          | string         | absent  | Lua source executed in the execute phase. If present, `command` is ignored. |
+| `interactive`       | boolean        | `false` | If `true`, the unit runs on the main thread and drains concurrent work (§{exec.interactive-drain}). |
+| `line`              | integer        | `0`     | Source line number used in diagnostics. |
+| `cache`             | boolean        | `true`  | If `false`, the unit is never cached and is re-run on every invocation. |
+| `inputs`            | array of string | `{}`   | Files whose content contributes to the unit's cache key. |
+| `output`            | string         | absent  | Single declared output path (§{steps.cook-single}). |
+| `outputs`           | array of string | absent | Multiple declared output paths (§{steps.cook-multi}). |
+| `ingredient_groups` | array of arrays of string | `{}` | For Lua-code units, the sequence of ingredient groups exposed as `input_N` (§{lua.exe}). |
+| `discovered_inputs` | table         | absent  | If present, declares a file the command writes during the execute phase that records additional input paths the command consumed (§{exec.cache.discovered-inputs}). Subfields: `from` (string, required, working-directory-relative path) and `format` (string, required; the only mandatory format is `"make"`). |
+
+**Output-field exclusivity.** A conforming implementation MUST reject `spec` if both `output` and `outputs` are set, raising a Lua runtime error.
+
+**Path-shape restriction.** Every entry in `inputs`, `output`, and `outputs` is a *file* path. A conforming implementation MUST raise a Lua runtime error at register time when any path in `inputs` resolves (relative to the recipe's working directory) to an existing directory, and when any path in `output`/`outputs` resolves to an existing directory. Non-existent output paths MUST be accepted (declared outputs are typically not yet built at register time); non-existent input paths MAY be accepted at register time and surfaced later by the cache or input-iteration layer. The diagnostic MUST contain the substring `is a directory` and the offending path. Cook's cache hashes file content, so silently accepting a directory would produce an incomplete cache record and the unit would re-run on every invocation.
+
+**Payload selection.** A conforming implementation MUST classify the recorded unit as follows:
+
+1. If `lua_code` is present, the unit is a **Lua-code unit**; `inputs`, `outputs`, and `ingredient_groups` are carried on the payload and used by §{lua.exe} bindings at execute time.
+2. Otherwise, if `interactive` is `true`, the unit is an **interactive shell unit**.
+3. Otherwise, the unit is a **non-interactive shell unit**.
+
+**Caching.** When `cache` is `true`, a conforming implementation MUST record cache metadata containing the recipe name, an input-path list, an output-path list, and a command hash. The hash inputs, cache-key derivation, and storage format are implementation-defined (§{exec.cache}).
+
+**Return value.** `cook.add_unit` returns nothing. A conforming implementation MUST NOT cause the function to block on external work — registration is synchronous by definition (§{exec.capture}).
+
+### Example 22.1.1
+
+```lua
+cook.add_unit({
+    inputs  = { "main.c" },
+    output  = "main.o",
+    command = "gcc -c main.c -o main.o",
+})
+```
+
+Records one shell unit with one input and one output. The same registration is produced by the surface form `cook "main.o" using { gcc -c $<in> -o $<out> }` in a single-output `cook` step (§{steps.cook-single}, §{phl.cook-step}).
+
+### Example 22.1.2
+
+```lua
+cook.add_unit({
+    inputs     = { "src/wasm.rs" },
+    outputs    = { "out.js", "out.wasm" },
+    lua_code   = "os.execute('wasm-pack build')",
+    ingredient_groups = { { "src/wasm.rs" } },
+})
+```
+
+Records one Lua-code unit with multiple outputs. At execute time, the `lua_code` runs with `inputs`, `outputs`, `input`, `output`, and `input_1` bound as described in §{lua.exe}.
+
+**Chore-body restriction (§{chores.no-caching}).** When `cook.add_unit` is called from within the register-phase body of a chore, a conforming implementation MUST raise a Lua runtime error if `cache = true` is passed (or if `cache` is absent, since the default is `true`). The codegen layer enforces this at the source level by always emitting `cache = false` for every unit in a chore body; the runtime check is a defence-in-depth guard against inline-Lua (`>>` / `>>{`) that bypasses the codegen path.
+
+A conforming implementation MAY use implementation-defined internal markers to track whether a chore body is executing. In the reference implementation, the generated Lua calls `cook._enter_chore()` before the body and `cook._exit_chore()` after; `cook.add_unit` checks an internal flag. These helpers are an implementation detail and MUST NOT be relied upon by Cookfile authors.
+
+### Note 22.1.1
+
+Adjacent `cook.add_unit` calls made inside the same register-phase `cook.step_group(fn)` invocation become siblings in the same scheduler step group (§{exec.step-groups}) and MAY run in parallel. Outside a step group they are serial. The surface `cook` step (§{steps.cook-single}, §{steps.cook-multi}) routes through `cook.step_group` implicitly.
+
+### 22.1.1. `discovered_inputs` field [#lua.add-unit-discovered-inputs]
+
+A unit that consumes input files which are not statically known until execute time MAY declare a `discovered_inputs` table on its `cook.add_unit` call:
+
+```lua
+cook.add_unit({
+    inputs  = { "src/a.c" },
+    output  = "build/a.o",
+    command = "gcc -c $<in> -MMD -MF .cook/deps/a.d -o $<out>",
+    discovered_inputs = {
+        from   = ".cook/deps/a.d",
+        format = "make",
+    },
+})
+```
+
+A conforming implementation MUST:
+
+- accept `discovered_inputs` as either absent or a Lua table; reject any non-table value with a register-phase Lua error.
+- require both `from` (non-empty string) and `format` (string) when the table is present; reject missing or wrong-typed subfields with a register-phase Lua error.
+- require `from` to be a relative path under the unit's working directory; reject absolute paths and paths containing `..` segments.
+- support `format = "make"`; MAY support additional formats; MUST raise a register-phase Lua error if `format` names a value the implementation does not recognise. The diagnostic MUST include the offending value and the list of supported values.
+
+The semantic effect of `discovered_inputs` on the cache — including the requirement that `from` MUST NOT also appear in `outputs[]` — is specified in §{exec.cache.discovered-inputs}. This subsection defines only the Lua-level field syntax.
+
+## 22.2. `cook.exec` and `cook.interactive` [#lua.cook-exec]
+**Signatures.**
+  - `cook.exec(cmd: string, line: integer) -> string`
+  - `cook.interactive(cmd: string, line: integer) -> string`
+
+**Phase.** Register-phase only.
+
+These helpers are the Lua-side counterparts of the surface `shell_command` (§{steps.shell}) and `interactive_command` (§{steps.shell}) step forms. Each call records one unit (non-interactive or interactive, respectively) with caching disabled. The return value is the empty string; it is returned only so that callers composing results do not fail on `nil` concatenation.
+
+A conforming implementation MUST raise a Lua runtime error when `cook.exec` or `cook.interactive` is called from execute-phase Lua (a `lua_line`, a `lua_block`, or a `using >{ … }` payload). The diagnostic MUST identify the function name and the calling step kind. The same rule applies to other register-only Cook Lua API helpers: `cook.add_unit`, `cook.step_group`, `cook.recipe`. See §{rationale.execute-phase-api}.
+
+An implementation SHOULD include a brief migration hint in the diagnostic — for example, suggesting `>>` (`inline_lua_line`) instead of `>` to record the call at register phase, or a top-level `register` block as an alternative register-phase context (informative).
+
+## 22.3. `cook.recipe` [#lua.cook-recipe]
+**Signature.** `cook.recipe(name: string, metadata: table, body: function) -> nil`
+**Phase.** Register-phase only.
+
+Registers a recipe with the given name, metadata (`ingredients`, `excludes`, `requires`), and body function. Surface recipes (§{recipes.header-forms}) are compiled to exactly one `cook.recipe` call. A conforming implementation is not required to expose `cook.recipe` as a user-facing extension point; its contract here is what the code generator (§{grammar-appendix.top-level}) produces.
+
+## 22.4. `cook.add_test` [#lua.cook-add-test]
+**Signature.** `cook.add_test(spec: table) -> nil`
+**Phase.** Register-phase only.
+
+`cook.add_test` records a single test work unit. The code generator lowers each `test_step` (§{steps.test}) to exactly one `cook.add_test` call. The table argument `spec` accepts the following fields:
+
+| Field | Type | Required | Default | Constraint |
+|---|---|---|---|---|
+| `command` | string | yes | — | MUST be non-empty; a missing or empty `command` MUST raise a register-phase Lua error. |
+| `suite` | string | no | enclosing recipe's qualified name | If absent or empty, a conforming implementation MUST substitute the fully-qualified name of the recipe currently executing in the register phase (e.g. `"lib.tests"` for a recipe `tests` imported under prefix `lib`). |
+| `name` | string | no | `""` | The display name for this test in runner reports. Set by an `as STRING` modifier (§{steps.test}, CS-0061). |
+| `timeout` | integer | no | `300` | Timeout in seconds. MUST be a positive integer (strictly greater than zero); a value of `0` or less MUST raise a register-phase Lua error. |
+| `should_fail` | boolean | no | `false` | When `true`, the test is expected to exit non-zero; a zero exit code is treated as a failure. |
+| `line` | integer | no | `0` | Source line number of the originating `test_step` in the Cookfile, used in diagnostic output and test labels (e.g. `recipe@2`). The code generator MUST populate this field; a conforming implementation MUST NOT require it to be non-zero. |
+| `iteration_item` | string or nil | no | `nil` | For OneToOne test steps, the current iteration input path (e.g. `_test_in`). When non-nil and non-empty, a conforming implementation MUST include it as a discriminator in the test identity (e.g. `recipe:name[item]`) and in the displayed label (e.g. `recipe@line [item]`). For ManyToOne and OneShot test steps, the code generator MUST pass `nil`. |
+
+A conforming implementation MUST apply the field defaults and raise register-phase Lua errors for invalid field values at the time `cook.add_test` is called, not deferred to execute time. Error messages MUST identify the offending field by name.
+
+## 22.5. `cook.step_group` [#lua.step-group]
+**Signature.** `cook.step_group(fn: function) -> nil`
+**Phase.** Register-phase only.
+
+`cook.step_group` invokes `fn` synchronously on the register-phase Lua VM. Every `cook.add_unit` (§{lua.add-unit}) call made within the dynamic extent of `fn` records its unit as a member of a single **step group** (§{exec.step-groups}). Step-group members MAY execute in parallel during the execute phase.
+
+`cook.step_group` MUST return after `fn` returns; nested `cook.step_group` calls within `fn` are unspecified.
+
+A conforming implementation MUST raise a Lua runtime error when `cook.step_group` is called from execute-phase Lua. The diagnostic MUST identify the function name and the calling step kind.
+
+### Example 22.5.1
+
+```lua
+cook.step_group(function()
+    for _, source in ipairs(inputs) do
+        cook.add_unit({
+            inputs  = { source },
+            output  = source:gsub("%.c$", ".o"),
+            command = string.format("gcc -c %s -o %s", source, source:gsub("%.c$", ".o")),
+        })
+    end
+end)
+```
+
+The N units registered inside the function body form one step group; the N compiles MAY run in parallel under the execute phase.
+
+### Note 22.5.1
+
+The surface `cook` step (§{steps.cook-single}, §{steps.cook-multi}) routes through `cook.step_group` implicitly. Authors of Cook modules (Part IV) typically call `cook.step_group` explicitly to record a fan-out workload.
