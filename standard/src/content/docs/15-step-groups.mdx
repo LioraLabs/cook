@@ -1,0 +1,58 @@
+---
+title: "§{exec.groups} — Step groups and parallelism"
+sidebar:
+  order: 15
+---
+# 15. Step groups and parallelism [#exec.groups]
+> **Normative.** This chapter defines how registered work units are grouped for parallel execution, how the recipe body's imperative region compiles to body units, and how the two interact.
+
+## 15.1. Step groups [#exec.step-groups]
+Work units registered inside a single invocation of `cook.step_group` form a **step group**. The units in one step group MAY execute in any order, and MAY execute in parallel, subject only to cross-recipe dependencies (§{exec.cross-recipe-ordering}) and the interactive rule (§{exec.interactive-drain}).
+
+Work units registered outside any `cook.step_group` invocation are **sequential**. A sequential unit MUST execute strictly after every work unit that was registered earlier in the same recipe, and strictly before every work unit that is registered later in the same recipe.
+
+When step groups and sequential units are interleaved, the implementation MUST enforce a **barrier** between them: every unit of one step group MUST complete before any unit of a later step group or later sequential unit in the same recipe begins. Equivalently, the set of units registered in a single step group acts as a single synchronisation point from the perspective of units registered after it.
+
+The Cookfile surface syntax in §{recipes} produces step groups and sequential units as follows:
+
+| Surface construct | Registration behaviour |
+|---|---|
+| `cook` step (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) | One step group per `cook` step. Recorded by the declarative region. |
+| `plate` step (§{recipes.plate-step}) | One step group per `plate` step. Recorded by the declarative region. |
+| `test` step (§{recipes.test-step}) | One step group per `test` step. Recorded by the declarative region. |
+| `register_block` body (§{decl.register}) | Spliced verbatim into the compiled register-phase Lua program at its source position. Evaluated during the register phase; produces units only via explicit Cook Lua API calls. |
+| top-level `module_call` (§{toplevel.module-call}) | Spliced verbatim at source position; same registration behaviour as `register_block`. |
+| `inline_lua_line`, `inline_lua_block` (§{recipes.lua-steps}) | Inlined into the recipe-body Lua function and evaluated during the register phase. Produce units only via explicit Cook Lua API calls. |
+| `lua_line`, `lua_block` (§{recipes.lua-steps}) | Coalesced into a body unit per imperative-region run (§{exec.body-bundling}); the unit is sequential and its `lua_code` runs on the worker VM at execute. |
+| `shell_command` (§{recipes.shell-steps}) | Coalesced into the same body unit as the surrounding `lua_line` / `lua_block` steps; consecutive shell lines join into one `cook.sh` call within the unit (§{exec.body-bundling}). |
+| `interactive_command` (§{recipes.shell-steps}) | Sequential unit, additionally draining (§{exec.interactive-drain}). Breaks the body-bundling run; the next imperative-region step starts a fresh body unit. |
+
+### Example 15.1.1
+
+```cook
+recipe build
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/app" using { gcc -o $<out> $<all> }
+```
+
+The first `cook` step expands to one step group containing one compile unit per source file; the compiles MAY run in parallel. The second `cook` step is a distinct step group. The barrier rule forces every compile to complete before the link unit begins.
+
+### Note 15.1.1
+
+Parallelism is permissive, not prescriptive. A conforming implementation MAY run step-group members serially — for example, under a one-job flag. The Standard only requires that step-group members are not ordered with respect to one another; it does not require that they actually execute concurrently.
+
+## 15.2. Body bundling [#exec.body-bundling]
+
+The imperative region of a recipe (Note 4.4.2) compiles to a sequence of execute-phase work units, bounded by `interactive_command` steps:
+
+- A run of consecutive imperative-region steps containing zero `interactive_command` steps coalesces into **one body unit**. The implementation MUST record this unit via the Cook Lua API (§{lua.add-unit}) with `lua_code` set to a Lua chunk that is the source-order concatenation of:
+  - each `lua_line` body, terminated by `\n`;
+  - each `lua_block` body, terminated by `\n`;
+  - each `shell_command` body, expressed as a `cook.sh("…")` call (§{lua.cook-sh}). **Adjacent `shell_command` steps coalesce** into a single `cook.sh` call whose argument is the joined commands prefixed by `set -e\n`. A `lua_line` or `lua_block` between two shell lines breaks the coalescence — the second `cook.sh` call is recorded as a fresh process.
+- The body unit's `inputs` and `outputs` are empty. Its `cache` flag MUST be `false`.
+- Each `interactive_command` step is its own draining work unit (§{exec.interactive-drain}) and breaks the bundle.
+
+The Lua VM persists across the whole body unit. A `local` declared in one `lua_line` is visible to the next `lua_line` of the same bundle, and to the same bundle's coalesced shell calls (which see Lua locals as the surrounding chunk's bindings). The Lua VM does NOT persist across `interactive_command` boundaries: each post-`@` body unit is a fresh VM. Likewise, the coalesced shell process does NOT persist across a `lua_line` / `lua_block` interruption inside the same bundle: a `cd` inside one shell coalescence does not survive to the next shell coalescence.
+
+Failure semantics inside the coalesced shell call match per-line halt-on-failure (the `set -e` prefix). A non-zero exit from any joined shell line aborts the unit. A Lua error from `cook.sh` or any inlined Lua statement raises through the unit and fails the recipe by standard Lua semantics.
