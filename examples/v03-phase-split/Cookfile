@@ -5,7 +5,7 @@
 #
 #     cook register-line          - `>>` sets register-phase locals
 #     cook register-block         - `>>{ }` register-phase block
-#     cook module-call            - module-call desugars to register-phase
+#     cook module-call            - explicit `>>` for register-phase (CS-0072)
 #     cook execute-line           - `>` runs at execute time
 #     cook execute-block          - `>{ }` runs at execute time
 #     cook shell-bundle           - consecutive shell lines coalesce; cd persists
@@ -42,10 +42,10 @@ recipe register-block
         end
     }
 
-# ── module call desugars to register-phase (single-line → InlineLua,
-#    multi-line → InlineLuaBlock).
+# ── `>>` required for register-phase module calls (CS-0072). The bare
+#    <id>.<id>(...) implicit dispatch was removed; callers must be explicit.
 recipe module-call
-    checks.greet("world")
+    >> checks.greet("world")
 
 # ── use-bound alias is visible from execute-phase too (CS-0017).
 # `> checks.greet(...)` calls the same function the bare module-call

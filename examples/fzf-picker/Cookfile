@@ -4,17 +4,17 @@ config
     env.CFLAGS = "-O2 -Wall"
 
 recipe colorize
-    cook_cc.bin("colorize", {
+    >> cook_cc.bin("colorize", {
         sources = { "src/colorize.c" },
     })
 
 recipe wordcount
-    cook_cc.bin("wordcount", {
+    >> cook_cc.bin("wordcount", {
         sources = { "src/wordcount.c" },
     })
 
 recipe reverse
-    cook_cc.bin("reverse", {
+    >> cook_cc.bin("reverse", {
         sources = { "src/reverse.c" },
     })
 
@@ -29,7 +29,7 @@ chore play: tools
     @printf '\n\033[1m── running %s on %s ──\033[0m\n\n' "$(cat .cook/scratch/tool)" "$(cat .cook/scratch/file)" && ./build/bin/$(cat .cook/scratch/tool) < "$(cat .cook/scratch/file)"
 
 recipe compile-commands: tools
-    cook_cc.compile_commands()
+    >> cook_cc.compile_commands()
 
 chore clean
     rm -rf build .cook

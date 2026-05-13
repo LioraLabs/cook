@@ -15,20 +15,20 @@ config release
 
 recipe liblua
     ingredients "lua-5.4.7/src/*.c" !"lua-5.4.7/src/lua.c" !"lua-5.4.7/src/luac.c"
-    cook_cc.lib("liblua", {
+    >> cook_cc.lib("liblua", {
         sources = ingredients,
         system_libs = { "m", "dl" },
     })
 
 recipe lua: liblua
-    cook_cc.bin("lua", {
+    >> cook_cc.bin("lua", {
         sources = { "lua-5.4.7/src/lua.c" },
         links = { "liblua" },
         system_libs = { "readline" },
     })
 
 recipe luac: liblua
-    cook_cc.bin("luac", {
+    >> cook_cc.bin("luac", {
         sources = { "lua-5.4.7/src/luac.c" },
         links = { "liblua" },
     })
@@ -39,7 +39,7 @@ recipe test: lua
     test { build/bin/lua -e 'print("hello from lua built by cook")' }
 
 recipe compile-commands: liblua lua luac
-    cook_cc.compile_commands()
+    >> cook_cc.compile_commands()
 
 chore clean
     rm -rf build .cook

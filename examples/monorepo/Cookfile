@@ -1,14 +1,14 @@
 use pnpm
 
 recipe install
-    pnpm.install()
+    >> pnpm.install()
 
 recipe build: install
-    pnpm.run("build")
+    >> pnpm.run("build")
 
 recipe check: build
     ingredients ""
-    pnpm.run("test")
+    >> pnpm.run("test")
     serve ""
 
 chore clean
