@@ -88,6 +88,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   'sec-5-5':     'xref.string-substitution',
   'sec-5-5-1':   'xref.string-substitution-example',
   'sec-5-6':     'xref.dep-implications',
+  'sec-5-7':     'xref.env-namespace',
 
   // ── Chapter 6 — Cook Lua API ───────────────────────────────────────────────
   'sec-6':       'lua',
