@@ -157,6 +157,8 @@ These helpers are the Lua-side counterparts of the surface `shell_command` (§{r
 
 A conforming implementation MUST raise a Lua runtime error when `cook.exec` or `cook.interactive` is called from execute-phase Lua (a `lua_line`, a `lua_block`, or a `using >{ … }` payload). The diagnostic MUST identify the function name and the calling step kind. The same rule applies to other register-only Cook Lua API helpers: `cook.add_unit`, `cook.step_group`, `cook.recipe`. See §{rationale.execute-phase-api}.
 
+An implementation SHOULD include a brief migration hint in the diagnostic — for example, suggesting `>>` (`inline_lua_line`) instead of `>` to record the call at register phase, or a top-level `register` block as an alternative register-phase context (informative).
+
 ### 6.3.3. `cook.recipe` [#lua.cook-recipe]
 **Signature.** `cook.recipe(name: string, metadata: table, body: function) -> nil`
 **Phase.** Register-phase only.

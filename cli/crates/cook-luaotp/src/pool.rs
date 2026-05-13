@@ -550,7 +550,9 @@ fn register_worker_cook_table(
         &cook,
         "exec",
         "cook.exec: register-only API called from execute-phase Lua (Standard §6.3.2). \
-         Use cook.sh(cmd) to shell out from a lua_line / lua_block / using >{ … } payload.",
+         Use cook.sh(cmd) to shell out from a lua_line / lua_block / using >{ … } payload. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
     )?;
     install_register_only_guard(
         lua,
@@ -558,7 +560,9 @@ fn register_worker_cook_table(
         "interactive",
         "cook.interactive: register-only API called from execute-phase Lua (Standard §6.3.2). \
          Interactive steps must be recorded during the register phase; they cannot be \
-         scheduled from a lua_line / lua_block / using >{ … } payload.",
+         scheduled from a lua_line / lua_block / using >{ … } payload. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
     )?;
     install_register_only_guard(
         lua,
@@ -566,7 +570,9 @@ fn register_worker_cook_table(
         "add_unit",
         "cook.add_unit: register-only API called from execute-phase Lua (Standard §6.3.2). \
          Work units are recorded during the register phase; the DAG is closed before \
-         execute-phase Lua runs.",
+         execute-phase Lua runs. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
     )?;
     install_register_only_guard(
         lua,
@@ -574,7 +580,9 @@ fn register_worker_cook_table(
         "step_group",
         "cook.step_group: register-only API called from execute-phase Lua (Standard §6.3.2). \
          Step groups are recorded during the register phase; they cannot be opened from a \
-         lua_line / lua_block / using >{ … } payload.",
+         lua_line / lua_block / using >{ … } payload. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
     )?;
     install_register_only_guard(
         lua,
@@ -582,7 +590,9 @@ fn register_worker_cook_table(
         "recipe",
         "cook.recipe: register-only API called from execute-phase Lua (Standard §6.3.2). \
          Recipes are registered during the register phase; they cannot be declared from a \
-         lua_line / lua_block / using >{ … } payload.",
+         lua_line / lua_block / using >{ … } payload. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
     )?;
 
     lua.globals().set("cook", cook)?;
@@ -1755,6 +1765,32 @@ mod tests {
         let result =
             run_lua_chunk_in_worker(r#"cook.recipe("inner", {}, function() end)"#);
         assert_register_only_diagnostic(&result, "recipe");
+    }
+
+    /// SHI-216 / CS-0072: every register-only guard message MUST include
+    /// a `>>` migration hint so users know how to move the call to register
+    /// phase.  We spot-check `cook.add_unit` (representative of all five).
+    #[test]
+    fn register_only_guard_includes_double_arrow_migration_hint() {
+        let result =
+            run_lua_chunk_in_worker(r#"cook.add_unit({command = "echo hi"})"#);
+        assert!(
+            !result.success,
+            "expected register-only-API call to fail; got success"
+        );
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains(">>"),
+            "diagnostic must include `>>` migration hint; got: {err}"
+        );
+        assert!(
+            err.contains("§6.3.2"),
+            "diagnostic must retain §6.3.2 citation; got: {err}"
+        );
+        assert!(
+            err.contains("register"),
+            "diagnostic must mention `register` block; got: {err}"
+        );
     }
 
     /// `cook.sh` is the both-phase shell-out helper (§6.3.1) and MUST
