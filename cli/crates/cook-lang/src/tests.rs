@@ -1564,3 +1564,50 @@ fn test_parse_in_body_explicit_register_prefix_still_inline_lua() {
     use crate::ast::Step;
     assert!(matches!(cookfile.recipes[0].steps[0], Step::InlineLua { .. }));
 }
+
+#[test]
+fn test_parse_register_inside_recipe_body_rejected() {
+    let source = "recipe build\n    register foo\n        cook_cc.bin(\"x\", {})\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("register") && msg.contains("top-level only"),
+        "expected '`register` blocks are top-level only' diagnostic, got: {}", msg);
+}
+
+#[test]
+fn test_parse_register_bareword_indented_alone_is_shell() {
+    // Indented bare `register` (no separator) is a shell_command "register"
+    // per (post-CS-0072) rule 6 — not rejected. The rejection rule fires
+    // only when `register` is followed by a separator.
+    let source = "recipe build\n    register\n";
+    let cookfile = parse(source).unwrap();
+    assert_eq!(cookfile.recipes.len(), 1);
+    assert_eq!(cookfile.recipes[0].steps.len(), 1);
+    use crate::ast::Step;
+    match &cookfile.recipes[0].steps[0] {
+        Step::Shell { command, .. } => assert_eq!(command, "register"),
+        other => panic!("expected Shell step, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_parse_register_underscore_inside_body_is_shell() {
+    // `register_foo` is not a separator-followed `register`; remains a
+    // shell_command per rule 6.
+    let source = "recipe build\n    register_foo\n";
+    let cookfile = parse(source).unwrap();
+    use crate::ast::Step;
+    match &cookfile.recipes[0].steps[0] {
+        Step::Shell { command, .. } => assert_eq!(command, "register_foo"),
+        other => panic!("expected Shell step, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_parse_register_inside_chore_body_rejected() {
+    let source = "chore clean\n    register foo\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("register") && msg.contains("top-level only"),
+        "expected diagnostic, got: {}", msg);
+}

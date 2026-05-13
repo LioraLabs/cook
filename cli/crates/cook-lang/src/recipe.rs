@@ -519,6 +519,28 @@ pub(crate) fn parse_recipe(
                         interactive: true,
                     });
                 } else {
+                    // SHI-216 / CS-0072 §3.9: reject `register` + separator inside a recipe body.
+                    // An indented `register <args>` cannot be a RegisterHeader (column-0 only
+                    // per §2.10) and is also not a permitted shell command in this position.
+                    // The bare `register` identifier (trimmed == "register", no separator)
+                    // remains a shell_command per the post-CS-0072 rule 6.
+                    {
+                        let trimmed = text.trim();
+                        if trimmed.starts_with("register")
+                            && trimmed.len() > 8
+                            && {
+                                let b = trimmed.as_bytes()[8];
+                                b == b' ' || b == b'\t'
+                            }
+                        {
+                            return Err(ParseError::Parse {
+                                line: tok.line,
+                                message:
+                                    "`register` blocks are top-level only; move this outside the recipe body"
+                                        .to_string(),
+                            });
+                        }
+                    }
                     if imperative_began.is_none() {
                         imperative_began = Some(tok.line);
                     }
@@ -691,6 +713,26 @@ pub(crate) fn parse_chore(
                         interactive: true,
                     });
                 } else {
+                    // SHI-216 / CS-0072 §3.9: reject `register` + separator inside a chore body.
+                    // The bare `register` identifier (no separator) remains a shell_command per
+                    // the post-CS-0072 rule 6.
+                    {
+                        let trimmed = text.trim();
+                        if trimmed.starts_with("register")
+                            && trimmed.len() > 8
+                            && {
+                                let b = trimmed.as_bytes()[8];
+                                b == b' ' || b == b'\t'
+                            }
+                        {
+                            return Err(ParseError::Parse {
+                                line: tok.line,
+                                message:
+                                    "`register` blocks are top-level only; move this outside the chore body"
+                                        .to_string(),
+                            });
+                        }
+                    }
                     if imperative_began.is_none() {
                         imperative_began = Some(tok.line);
                     }
