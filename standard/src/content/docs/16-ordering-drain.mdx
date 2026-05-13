@@ -1,0 +1,65 @@
+---
+title: "§{exec.ord} — Cross-recipe ordering and interactive drain"
+sidebar:
+  order: 16
+---
+# 16. Cross-recipe ordering and interactive drain [#exec.ord]
+> **Normative.** This chapter defines how cross-recipe dependencies enforce execution ordering, the output-path-uniqueness rule that prevents silent races, and the interactive-step drain behaviour.
+
+## 16.1. Cross-recipe ordering [#exec.cross-recipe-ordering]
+Cross-recipe ordering is established only by name references (§{xref} of this Standard). For each name reference from recipe `A` to recipe `B` — in a dep-list, bare placeholder, or accessor placeholder — a conforming implementation MUST treat `B` as a prerequisite of `A`:
+
+- An implementation MUST validate that `B` is defined in scope before the execute phase begins, and MUST reject the Cookfile with a diagnostic naming `A` and `B` otherwise.
+- An implementation MUST reject the Cookfile with a cycle diagnostic if the transitive closure of all cross-recipe edges contains a cycle, before executing any work unit.
+- A placeholder-sourced edge MAY be refined per §{xref.dep-implications}. A dep-list-sourced edge MUST NOT be refined.
+- No other source of cross-recipe ordering is defined. Specifically, string equality between an ingredient path literal of `A` and a cook output path literal of `B` does NOT establish an edge. See rationale B.5.N.
+
+### 16.1.1. Output-path uniqueness across recipes [#exec.output-uniqueness]
+
+Two distinct recipes `A` and `B` MUST NOT both declare the same canonical output path on `cook` steps unless the cross-recipe ordering rules of §{exec.cross-recipe-ordering} establish a path between them in either direction. The **canonical output path** of a `cook` step is the path produced by joining the recipe's working directory with the step's declared output literal.
+
+A conforming implementation MUST detect this condition at plan time, before any work unit of either recipe runs, and MUST reject the build with a diagnostic naming both colliding recipes and the shared canonical output path.
+
+The rationale is execution-order safety: under parallel execution (`--jobs > 1`), two recipes with no enforced ordering that write to the same path race silently — the artifact's contents become non-deterministic, and downstream cache keys derived from the artifact become unstable. Requiring an explicit dependency edge collapses the race to a defined ordering. Where two recipes legitimately produce the same artifact, authors merge them into one recipe (single declaration site) or add an explicit `: <recipe>` dep edge to serialize them.
+
+The rule applies to the declared output paths of `cook` steps; it does not apply to incidental writes performed by a step's command body to paths it has not declared, which the Standard does not track.
+
+### Example 16.1.1
+
+```cook
+recipe writer_a
+    cook "build/shared.bin" using { printf 'a' > $<out> }
+
+recipe writer_b
+    cook "build/shared.bin" using { printf 'b' > $<out> }
+
+recipe build: writer_a writer_b
+```
+
+The Cookfile MUST be rejected at plan time. `writer_a` and `writer_b` both declare the canonical output `build/shared.bin` and there is no dep-list edge between them, so the implementation cannot serialize their writes. The diagnostic MUST name both `writer_a` and `writer_b` and the path `build/shared.bin`.
+
+### Note 16.1.1
+
+The check is plan-time, not execute-time: an implementation that defers detection until a write-write conflict occurs in the filesystem fails the requirement, because a successful first run can mask a race that fails on a subsequent run. The check looks at canonical paths derived from the source, not at filesystem state.
+
+## 16.2. Interactive step draining [#exec.interactive-drain]
+A step classified as `interactive_command` (§{recipes.shell-steps}) — that is, a step whose Cookfile source line begins with `@` — MUST, at execute time, **drain** the implementation's concurrent execute-phase work before its command begins. Draining means: at the instant the interactive unit is about to run, no other work unit of any recipe MUST be in progress. The implementation MUST wait until every then-running work unit has completed before beginning the interactive command.
+
+An interactive unit MUST execute on a thread that inherits the controlling terminal of the Cook process, so that the spawned child inherits stdin, stdout, and stderr attached to a real TTY. The Standard does not prescribe which thread; it requires only the inheritance property and the drain property.
+
+After an interactive unit completes, execution resumes under the normal rules: newly-ready units MAY be dispatched in parallel again. The drain applies only while the interactive unit is pending and running.
+
+### Example 16.2.1
+
+```cook
+recipe dev
+    cook "build/app" using { gcc main.c -o $<out> }
+    @./build/app
+    echo "exited"
+```
+
+When the interactive step is reached at execute time, any other work in progress is drained. `./build/app` runs on a thread with the controlling TTY. Once it completes, `echo "exited"` runs. The `cook` step in the same recipe MUST have completed before `./build/app` begins, by the within-recipe rule of §{exec.step-groups}.
+
+### Note 16.2.1
+
+Draining is stronger than "runs on a single thread": it also excludes the interactive unit from running while any other work unit is still active anywhere in the build. This mirrors the common user expectation that an `@`-prefixed command is a standalone interactive session with no concurrent output from background jobs.
