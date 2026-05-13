@@ -38,17 +38,18 @@ export function rehypeClauseXrefs(options: ClauseXrefsOptions) {
           // diagnostic naming the new slug.
           const rename = resolveRename(slug);
           if (rename === null) {
-            throw new Error(
-              `§{${slug}} references a slug that was retired with no ` +
-              `replacement. See scripts/slug-renames.ts and Cook Standard ` +
-              `v0.10 reorg.`,
+            // During v0.10 transition: warn rather than fail. Task 8 (the strict-mode flip) activates the vitest source-lint that turns retired-slug refs into a CI error; until then, intermediate-task commits keep retired refs in legacy files.
+            console.warn(
+              `[slug-renames] §{${slug}} references a slug that was retired with no replacement. See scripts/slug-renames.ts and Cook Standard v0.10 reorg.`,
             );
+            continue;
           }
           if (rename !== undefined) {
-            throw new Error(
-              `§{${slug}} renamed to §{${rename}} in Cook Standard v0.10. ` +
-              `Update the reference in source. See scripts/slug-renames.ts.`,
+            // During v0.10 transition: warn rather than fail. Task 8 (the strict-mode flip) activates the vitest source-lint that turns retired-slug refs into a CI error; until then, intermediate-task commits keep retired refs in legacy files.
+            console.warn(
+              `[slug-renames] §{${slug}} renamed to §{${rename}} in Cook Standard v0.10. Update the reference in source. See scripts/slug-renames.ts.`,
             );
+            continue;
           }
           throw new Error(
             `unknown clause slug "${slug}" — §{${slug}} did not resolve in clauseMap`,
