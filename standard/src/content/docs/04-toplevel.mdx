@@ -1,0 +1,124 @@
+---
+title: "§{toplevel} — Top-level structure"
+sidebar:
+  order: 4
+---
+# 4. Top-level structure [#toplevel]
+> **Normative.** This chapter defines the top-level production of a Cookfile, the ordering rule for declarations and recipes, and the implicit-termination rule that bounds every body construct (recipe, chore, config, register).
+
+## 4.1. Top-level production [#toplevel.overview]
+A Cookfile is parsed as a single top-level production, `cookfile`, consisting of zero or more `toplevel_item`s (App. A.1). Each `toplevel_item` is a `recipe`, a `chore`, a `config_block`, a `use_declaration`, an `import_declaration`, a `register_block`, a top-level `module_call`, a `comment`, or a `NEWLINE` (blank line).
+
+A conforming implementation MUST drive parsing off the token stream produced by §{lexical}: each syntactic form listed above is selected by the classification of its leading token. Comments and blank lines MUST be accepted at any top-level position and MUST NOT affect the grammatical shape of the surrounding items. A `Content` token at the top level (§{lexical.line-prefixes}) is not a valid `toplevel_item` and MUST be rejected unless it matches the top-level `module_call` shape per §{toplevel.module-call}.
+
+A top-level `module_call` (§{toplevel.module-call}) is a column-0 `Content` line whose first token matches the module-call shape per §{grammar-appendix.steps} `module_call`. The classification rule mirrors the recipe-body cascade as it stood BEFORE CS-0072 — at top level, the rule now fires; in recipe bodies, the rule is removed per §{steps.dispatch} amendment.
+
+### Note 4.1.1
+
+The grammar is top-down and keyword-led at the outer layer: the leading token of a non-blank `toplevel_item` is sufficient to commit to one of `recipe`, `chore`, `config_block`, `use_declaration`, `import_declaration`, or `comment`, with no backtracking. The rejection of a top-level `Content` token (§{lexical.line-prefixes}) is normative in the body of §{toplevel.overview}.
+
+### Note 4.1.2
+
+Inside a recipe body, a different set of productions applies (App. A.3, App. A.4); see §{steps.dispatch}.
+
+## 4.2. Top-level ordering [#toplevel.ordering]
+A `use_declaration`, `import_declaration`, or `config_block` MUST NOT follow the first `recipe` or `chore` in a Cookfile. A conforming implementation MUST reject a Cookfile in which any such item appears after any `recipe` or `chore`. The diagnostic MUST identify the offending item's source line.
+
+Comments and blank lines are not ordered: they MAY appear at any top-level position, both before and after recipes, without affecting the classification of any surrounding item.
+
+Within each ordered prefix, `use_declaration`s, `import_declaration`s, and `config_block`s MAY appear in any order and MAY be interleaved freely.
+
+A `register_block` (§{decl.register}) and a top-level `module_call` (§{toplevel.module-call}) MAY appear at any top-level position, including before any `recipe`/`chore` and interleaved between them. Neither is subject to the use/import/config prefix rule of §4.2.
+
+### Example 4.2.1
+
+```cook
+use cpp
+import backend ./services/backend
+
+config
+    env.CC = "gcc"
+
+config release
+    env.CXXFLAGS = "-O3"
+
+recipe build
+    gcc -o main main.c
+```
+
+Each of the three ordered forms (`use_declaration`, `import_declaration`, `config_block`) appears before the single `recipe`. The `use`, `import`, and `config` items are in the prefix; any of them placed after `recipe build` would be rejected.
+
+### Note 4.2.1
+
+The `cook-lang` parser test `test_parse_use_after_recipe_fails` (and companion tests for `import` and `config`) pin this ordering rule.
+
+## 4.3. Body termination [#toplevel.termination]
+A body construct (`recipe_body`, `chore_body`, `config_body`, `register_body`) extends from the line following the introducing header up to, but not including, the next **terminating line** of the surrounding Cookfile. A line is a terminating line when it begins at column 0 (no leading whitespace) AND EITHER:
+
+  (a) its first whitespace-separated token is one of the top-level keywords `recipe`, `chore`, `config`, `use`, `import`, `register` (§{lexical.keywords}); OR
+  (b) the trimmed line matches the top-level module_call shape `BARE_IDENTIFIER "." BARE_IDENTIFIER (` (§{toplevel.module-call}).
+
+End-of-file is also a terminating boundary.
+
+A conforming implementation MUST consume only the source lines strictly between the header and the next terminating line (or EOF) as the body. The terminating line itself is parsed independently as the next `toplevel_item`. There is no closing keyword.
+
+Comments and blank lines inside a body are part of the body (per the existing body conventions) and do not terminate it. An indented `recipe foo` or `chore foo` line inside a body is not a terminating line — the column-0 requirement applies — and falls through to the body's step-dispatch cascade as a `shell_command` (§{steps.shell}).
+
+A bare `end` line is not a terminating line. It is a `Content` token: at top level it is rejected (§{toplevel.overview}); inside a recipe body it dispatches as a `shell_command` whose body text is `end` (§{steps.shell}).
+
+### Example 4.3.1
+
+```cook
+recipe build
+    gcc -o main main.c
+
+recipe test
+    ./main --selftest
+```
+
+The `recipe build` body extends from the `gcc ...` line up to (but not including) the column-0 `recipe test` line. The `recipe test` body extends from `./main ...` to EOF. No `end` lines appear.
+
+### Example 4.3.2
+
+```cook
+recipe legacy
+    end
+    echo done
+```
+
+The bare `end` on line 2 is a `Content` token (§{lexical.line-classification}). The step-dispatch cascade (§{steps.dispatch}) classifies it as a `shell_command` whose body text is the literal command `end`. The recipe body has two shell steps; the recipe terminates at EOF.
+
+### Note 4.3.1
+
+The terminator-set is the column-0 top-level keyword set fixed by §{lexical.keywords} plus the top-level module_call shape (§{toplevel.module-call}), plus end-of-file. CS-0072 extended the set with `register` and the module_call shape; it is otherwise closed within a single Standard version.
+
+## 4.4. Top-level module calls [#toplevel.module-call]
+
+A **top-level module_call** is a column-0 `Content` token whose first token matches the module-call shape `BARE_IDENTIFIER "." BARE_IDENTIFIER (…)` per App. A.4 (`module_call`). The first segment (before the `.`) is restricted to ASCII letters, digits, and underscore — narrower than `BARE_IDENTIFIER` at large; this is the same restriction §{steps.dispatch} rule 5 applied before CS-0072.
+
+A top-level module_call MUST be a single Lua expression statement. The lexer recognises its first source line; a multi-line call is collected by the brace-balance algorithm of §{lexical.brace-blocks}, treating the call as a Lua source span and using the Lua-spans rule of §{lexical.brace-blocks.lua-spans}. The collected source body is the call as written, preserving interior whitespace and comments.
+
+A top-level module_call is register-phase. A conforming implementation MUST splice the collected call source verbatim into the compiled register-phase Lua program at the source position, identical to a `register_block` body containing only that call. The shared-chunk-scope rule of §{decl.register-splicing} applies. The reference implementation collects parsed top-level module_calls into a `Vec<TopLevelModuleCall>` field on the `Cookfile` AST node (informative).
+
+The `:` call shape (`alias:method(…)`) is NOT a top-level module_call. A line whose first token matches `<id>:<id>(` is a `Content` token and is rejected at the syntactic layer (§{toplevel.overview}) because no top-level construct admits it. Authors using colon-call syntax MUST wrap such calls in a `register` block.
+
+### Example 4.4.1
+
+```cook
+use cook_cc
+
+config
+    raylib = cook_cc.find_or_error("raylib")
+
+cook_cc.bin("game", {
+    sources     = { "src/main.c" },
+    includes    = raylib.include_dirs,
+    system_libs = raylib.system_libs,
+})
+```
+
+Line 6's `cook_cc.bin("game", { …` is a top-level module_call. The opening `{` on line 6 is not balanced by the closer until line 10's `})`, so the lexer collects all four lines as a single multi-line module_call source body. At register time the body splices into the register-phase Lua chunk; `cook_cc.bin` (defined by `cook_cc 0.4.0`) calls `cook.recipe("game", …)` internally to register the recipe.
+
+### Note 4.4.1
+
+The recipe-body step-dispatch cascade in §{steps.dispatch} no longer includes the module_call rule as of CS-0072.
