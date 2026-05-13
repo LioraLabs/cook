@@ -40,9 +40,10 @@ Every Lua expression in a Cookfile is evaluated in exactly one of three timings.
 |---|---|---|---|
 | `config` block body                          | §{grammar.config-blocks}, §{grammar.config-composition} | **load** (before any register phase begins) | no — runs against Cook Lua API state directly |
 | Cook module top level (`return mod`) and `init()` | §{modules.overview} | **load** (when the importing Cookfile's `use` resolves) | no |
+| `register_block` body                        | §{grammar.register-blocks} | **register** | no — spliced verbatim into the compiled register-phase Lua program |
+| top-level `module_call` (`alias.fn(…)`)      | §{grammar.top-level-module-call} | **register** | no — spliced verbatim at source position |
 | `inline_lua_line` (`>>` *body*)              | §{recipes.lua-steps} | **register** | no — inlined into the recipe-body Lua function |
 | `inline_lua_block` (`>>{ … }`)               | §{recipes.lua-steps} | **register** | no — inlined |
-| `module_call` (`alias.fn(…)`)                 | §{recipes.module-call-steps} | **register** | no — desugared to `inline_lua_line` / `inline_lua_block` |
 | `lua_line` (`>` *body*)                      | §{recipes.lua-steps} | **execute** | yes — contributes to the body unit per §{recipes.body-bundling} |
 | `lua_block` (`>{ … }`)                       | §{recipes.lua-steps} | **execute** | yes — contributes to the body unit |
 | `cook STR using >{ … }` (using-clause Lua)   | §{recipes.cook-single-output}, §{recipes.cook-multi-output} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals} bindings |
@@ -54,8 +55,8 @@ Every Lua expression in a Cookfile is evaluated in exactly one of three timings.
 
 Three corollaries:
 
-1. **The single-`>` family is execute-phase, the doubled-`>` family is register-phase.** This is the surface-level rule a Cookfile author needs to remember; everything else in the table follows from it plus desugaring rules in §{recipes}.
-2. **Module-call orchestration is register-phase.** It desugars to `inline_lua_line` / `inline_lua_block` (§{recipes.module-call-steps}), so the module's recorded `cook.add_unit` calls fire during registration. The work units those calls record run at execute, exactly like the cook step's own units.
+1. **The single-`>` family is execute-phase, the doubled-`>` family is register-phase.** This is the surface-level rule a Cookfile author needs to remember; everything else in the table follows from it plus the splicing rules in §{grammar.register-blocks} and §{grammar.top-level-module-call}.
+2. **`register_block` bodies and top-level module_calls are register-phase.** Both splice verbatim into the compiled register-phase Lua program at their source positions (§{grammar.register-blocks.splicing}); the module's recorded `cook.add_unit` calls fire during registration and the work units run at execute. Note: recipe-body `module_call` dispatch was removed in CS-0072 (§{recipes.module-call-steps}).
 3. **Inside an execute-phase Lua chunk, register-only Cook Lua API helpers are unavailable.** `cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, and `cook.recipe` MUST raise a Lua runtime error when invoked from execute-phase Lua. `cook.sh` is available in both phases (§{lua.cook-sh}). See §{rationale.execute-phase-api}.
 
 ## 8.2. Capture-mode semantics [#exec.capture-mode]
@@ -78,6 +79,8 @@ The `>>` line runs during the register phase (`>>` is the inline-Lua prefix; see
 
 Substituting `>` for `>>` would change the semantics: `>` is execute-phase, so the `flag` local would be set on a worker VM during execute, after the cook step's units have already been recorded — too late to influence registration.
 
+The register-phase VM evaluates `register_block` bodies (§{grammar.register-blocks}) and top-level `module_call` source (§{grammar.top-level-module-call}) in the source order of their containing top-level items, interleaved with recipe registrations. The VM persists across all `toplevel_item`s of a single Cookfile; `local` variables declared at the chunk-top-level of an earlier `register_block` body remain in scope for subsequent `register_block` bodies, top-level module_calls, and `inline_lua_line` / `inline_lua_block` payloads in later recipes. The implementation MUST splice each `register_block` body AND each top-level `module_call` into the compiled register-phase Lua program at its source position; no per-block VM is permitted.
+
 ### Note 8.2.1
 
 The capture-mode contract makes work-unit discovery finite, deterministic, and independent of the order in which work units are later executed. A register phase that blocked on a running subprocess would serialise the register phase of other recipes against that subprocess, defeating the two-phase design.
@@ -96,8 +99,9 @@ The Cookfile surface syntax in §{recipes} produces step groups and sequential u
 | `cook` step (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) | One step group per `cook` step. Recorded by the declarative region. |
 | `plate` step (§{recipes.plate-step}) | One step group per `plate` step. Recorded by the declarative region. |
 | `test` step (§{recipes.test-step}) | One step group per `test` step. Recorded by the declarative region. |
+| `register_block` body (§{grammar.register-blocks}) | Spliced verbatim into the compiled register-phase Lua program at its source position. Evaluated during the register phase; produces units only via explicit Cook Lua API calls. |
+| top-level `module_call` (§{grammar.top-level-module-call}) | Spliced verbatim at source position; same registration behaviour as `register_block`. |
 | `inline_lua_line`, `inline_lua_block` (§{recipes.lua-steps}) | Inlined into the recipe-body Lua function and evaluated during the register phase. Produce units only via explicit Cook Lua API calls. |
-| `module_call` (§{recipes.module-call-steps}) | Desugars to `inline_lua_line` / `inline_lua_block`; same registration behaviour. |
 | `lua_line`, `lua_block` (§{recipes.lua-steps}) | Coalesced into a body unit per imperative-region run (§{recipes.body-bundling}); the unit is sequential and its `lua_code` runs on the worker VM at execute. |
 | `shell_command` (§{recipes.shell-steps}) | Coalesced into the same body unit as the surrounding `lua_line` / `lua_block` steps; consecutive shell lines join into one `cook.sh` call within the unit (§{recipes.body-bundling}). |
 | `interactive_command` (§{recipes.shell-steps}) | Sequential unit, additionally draining (§{exec.interactive-drain}). Breaks the body-bundling run; the next imperative-region step starts a fresh body unit. |

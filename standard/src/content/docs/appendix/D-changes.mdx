@@ -9,6 +9,7 @@ sidebar:
 
 ## Versions
 
+- **v0.9** (`cs-standard/v0.9`, pending) — CS-0072
 - **v0.8** (`cs-standard/v0.8`, 2026-05-07) — CS-0045, CS-0046, CS-0047, CS-0048, CS-0049, CS-0050, CS-0051, CS-0052, CS-0054, CS-0055, CS-0056, CS-0057, CS-0058, CS-0059, CS-0060, CS-0061, CS-0062, CS-0063, CS-0064, CS-0065, CS-0066
 - **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042, CS-0043, CS-0044
 - **v0.6** (`cs-standard/v0.6`, 2026-05-03) — CS-0031, CS-0032
@@ -1180,3 +1181,13 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 **Conformance impact.** Implementations MUST expose `cook.export`/`cook.import` on both VMs. The execute-phase storage MAY be ephemeral (per-worker, in-memory) when the producer and consumer share a worker; cross-worker visibility is the implementer's choice and remains available for refinement. The minimum bar is that calls do not error and round-trip values within a single worker VM.
 
 **Reference:** the CS-0071 commits on `main` after CS-0070.
+
+## CS-0072 — Top-level `register` blocks (SHI-216, v0.9)
+
+**Issue.** Target-maker calls (`cook_cc.bin`, etc.) belong at file scope in v0.3, but the only register-phase Lua context the Cookfile grammar admits is the recipe-body `>>` prefix. Authors writing `recipe foo / > cook_cc.bin(…)` (selecting the execute-phase prefix by mistake) hit a runtime-only `§6.3.2 register-only API` diagnostic with no source location. SHI-216 introduces a top-level `register` block whose body splices verbatim into the compiled register-phase Lua program at the source position, plus a top-level bare module_call dispatch, making top-level the canonical home for target-makers. CS-0072 also removes the implicit register-phase module_call dispatch from the recipe-body step cascade — authors who want register-phase Lua inside a recipe body MUST use `>>` (`inline_lua_line`) or `>>{` (`inline_lua_block`).
+
+**Resolution.** Cookfile grammar v0.9 admits two new top-level constructs (`register_block` per §{grammar.register-blocks} and top-level `module_call` per §{grammar.top-level-module-call}) and removes the in-recipe-body module_call dispatch from §{grammar.step-dispatch}. The terminator-set of §{recipes.termination} is extended to include the `register` keyword and the top-level module_call shape. The reference parser at `cli/crates/cook-lang` ships the implementation; conformance fixtures `register-block-*` and `top-level-module-call-*` pin the surface; the deleted 010-use-and-module-call fixture is replaced by `recipe-body-bare-module-call-is-shell`. The `cook_cc` standard module v0.4.0 migrates its target-makers (`bin / lib / shared / headers`) to call `cook.recipe(…)` internally, allowing `cook_cc.bin("game", {…})` to be called directly from a `register` block or as a top-level module_call.
+
+**Touched sections.** §2.4 (keywords), §2.10 (line classification), §3.1 (top-level items), §3.2 (ordering), new §3.7 (`register_block` grammar), new §3.7.5 (top-level `module_call`), §3.9 (step-dispatch cascade amendment — removal of rule 5), §4.1.1 (terminator-set), §4.4 (step-kinds table), §8.2 (execution-model splicing), App. A (formal grammar).
+
+**Conformance fixtures.** `standard/conformance/positive/register-block-{empty,single,multiple,interleaved,target-maker}`, `standard/conformance/positive/top-level-module-call*`, `standard/conformance/positive/recipe-body-bare-module-call-is-shell`, `standard/conformance/negative/register-{inside-recipe-body,with-name}`, `standard/conformance/negative/top-level-colon-call`. The deleted fixture is `standard/conformance/positive/010-use-and-module-call`.

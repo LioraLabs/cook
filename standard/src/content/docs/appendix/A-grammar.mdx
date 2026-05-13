@@ -15,8 +15,14 @@ toplevel_item         ::= recipe
                        | config_block
                        | use_declaration
                        | import_declaration
+                       | register_block
+                       | top_level_module_call
                        | comment
                        | NEWLINE
+
+register_block         ::= "register" NEWLINE register_body
+register_body          ::= LUA_SOURCE       (* see §{lexical.source}, §{grammar.register-blocks} *)
+top_level_module_call  ::= module_call_source  (* column-0; brace-balanced if multi-line *)
 ```
 
 ## A.2. Top-level declarations [#grammar-appendix.declarations]
@@ -32,7 +38,7 @@ config_body           ::= LUA_SOURCE
 
 **Ordering (normative).** `use_declaration`, `import_declaration`, and `config_block` MUST appear before the first `recipe` or `chore`. A conforming implementation MUST reject a Cookfile that places any of these after a `recipe` or `chore`.
 
-**Body termination (normative).** A `config_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, or `import`, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
+**Body termination (normative).** A `config_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, `import`, or `register`, or to a column-0 line matching the top-level module_call shape, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
 
 **Duplicate `config_block` rule.** At most one unnamed `config_block` is permitted per Cookfile. Named `config_block` names MUST be unique. A conforming implementation MUST reject a Cookfile that violates either constraint.
 
@@ -63,7 +69,6 @@ declarative_item      ::= ingredients_step
                        | test_step
                        | inline_lua_line
                        | inline_lua_block
-                       | module_call
                        | comment
                        | NEWLINE
 imperative_region     ::= imperative_item+
@@ -79,7 +84,7 @@ imperative_item       ::= lua_line
 
 **Region ordering rule.** A conforming implementation MUST reject a `recipe_body` in which a `declarative_item` (other than `comment` or `NEWLINE`) appears after the first `imperative_item` (other than `comment` or `NEWLINE`) of the same recipe. The diagnostic MUST identify the offending step's line and the line on which the imperative region began. See §{recipes.step-kinds}, Note 4.4.2 for the prose treatment.
 
-**Body termination (normative).** A `recipe_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, or `import`, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
+**Body termination (normative).** A `recipe_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, `import`, or `register`, or to a column-0 line matching the top-level module_call shape, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
 
 ### A.3.1. Chore [#grammar-appendix.chore]
 
@@ -90,7 +95,6 @@ chore_body               ::= chore_declarative_region chore_imperative_region?
 chore_declarative_region ::= chore_declarative_item*
 chore_declarative_item   ::= inline_lua_line
                            | inline_lua_block
-                           | module_call
                            | comment
                            | NEWLINE
 chore_imperative_region  ::= chore_imperative_item+
@@ -171,9 +175,10 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
 2. Prefix `cook` + separator → `cook_step`.
 3. Prefix `plate` + separator → `plate_step`.
 4. Prefix `test` + separator → `test_step`.
-5. Matches the module-call pattern (first token is `BARE_IDENTIFIER "." BARE_IDENTIFIER`) → `module_call`.
-6. First character is `@` and the remainder is non-empty → `interactive_command`.
-7. Otherwise → `shell_command`.
+5. First character is `@` and the remainder is non-empty → `interactive_command`.
+6. Otherwise → `shell_command`.
+
+Note: CS-0072 removed the former rule 5 that classified a `Content` line matching `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` as `module_call` (register-phase Lua) from the recipe-body cascade. Top-level module_call dispatch is now governed by §{grammar.top-level-module-call}; authors who want register-phase Lua inside a recipe body MUST use the `>>` or `>>{` prefix.
 
 ## A.5. Primitives [#grammar-appendix.primitives]
 ```ebnf

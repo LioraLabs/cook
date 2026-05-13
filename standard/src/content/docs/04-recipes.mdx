@@ -32,7 +32,12 @@ Both recipes above are semantically identical; the first uses a quoted name, the
 The token `recipe` is recognised as a top-level keyword only when followed by a separator (space, tab, or `"`). An identifier whose first word merely begins with `recipe` (for example, `recipes_cleanup`) is a `Content` token, not a header. See lexer test `test_recipe_prefix_is_shell_command`.
 
 ## 4.1.1. Body termination [#recipes.termination]
-A `recipe_body` (§{grammar-appendix.recipes}) and a `config_body` (§{grammar-appendix.declarations}) both extend from the line following the introducing header up to, but not including, the next **terminating line** of the surrounding Cookfile. A line is a terminating line when it begins at column 0 (no leading whitespace) and its first whitespace-separated token is one of the top-level keywords `recipe`, `chore`, `config`, `use`, `import` (§{lexical.keywords}). End-of-file is also a terminating boundary.
+A `recipe_body` (§{grammar-appendix.recipes}) and a `config_body` (§{grammar-appendix.declarations}) both extend from the line following the introducing header up to, but not including, the next **terminating line** of the surrounding Cookfile. A line is a terminating line when it begins at column 0 (no leading whitespace) AND EITHER:
+
+  (a) its first whitespace-separated token is one of the top-level keywords `recipe`, `chore`, `config`, `use`, `import`, `register` (§{lexical.keywords}); OR
+  (b) the trimmed line matches the top-level module_call shape `BARE_IDENTIFIER "." BARE_IDENTIFIER (` (§{grammar.top-level-module-call}).
+
+End-of-file is also a terminating boundary.
 
 A conforming implementation MUST consume only the source lines strictly between the header and the next terminating line (or EOF) as the body. The terminating line itself is parsed independently as the next `toplevel_item`. There is no closing keyword.
 
@@ -64,7 +69,7 @@ The bare `end` on line 2 is a `Content` token (§{lexical.line-classification}).
 
 ### Note 4.1.1.1
 
-The terminator-set is the column-0 top-level keyword set fixed by §{lexical.keywords}, plus end-of-file. The set is closed within a single Standard version; a future revision that adds a new top-level keyword extends this set in lockstep.
+The terminator-set is the column-0 top-level keyword set fixed by §{lexical.keywords} plus the top-level module_call shape (§{grammar.top-level-module-call}), plus end-of-file. CS-0072 extended the set with `register` and the module_call shape; it is otherwise closed within a single Standard version.
 
 ## 4.2. Dependency list [#recipes.dep-list]
 A **dependency list** is a sequence of one or more `name`s following the `:` in a recipe header (§{grammar-appendix.recipes}, `dependency_list`). Each name in a dependency list is a name reference; its resolution rules are given in §{xref.resolution} and its effect on execution ordering in §{xref.dep-implications} and §{exec.cross-recipe-ordering}.
@@ -115,7 +120,7 @@ The ingredient set is every `.c` file in `src/` and every `.h` file in `include/
 An `ingredient` item is always a `STRING` (quoted). A bare word after `ingredients` is a syntax error. The `!` exclusion marker MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_ingredients_with_excludes` and `test_ingredients_excludes_only`.
 
 ## 4.4. Step kinds — overview [#recipes.step-kinds]
-A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the `ingredients_step` covered in §{recipes.ingredients} and the structural `comment` / `NEWLINE` items, a conforming implementation MUST recognise exactly the following nine step kinds:
+A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the `ingredients_step` covered in §{recipes.ingredients} and the structural `comment` / `NEWLINE` items, a conforming implementation MUST recognise exactly the following eight step kinds:
 
 | § | Step kind | Introduced by | Phase |
 |---|---|---|---|
@@ -128,7 +133,6 @@ A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). 
 | 4.9      | `lua_block`           | `>{` line prefix (§{lexical.line-prefixes}) | execute |
 | 4.10     | `shell_command`       | default Content line | execute |
 | 4.10     | `interactive_command` | `@` as the first non-whitespace character of a Content line | execute |
-| 4.11     | `module_call`         | Content line matching the pattern of §{grammar-appendix.steps}, `module_call` | register |
 
 The phase column classifies each step kind by **when its body is evaluated**: register-phase steps run during recipe registration (§{exec.two-phase}), execute-phase steps run when scheduled work units fire. A normative cross-section table appears in §{exec.phase-classification}.
 
@@ -138,9 +142,8 @@ A `Content` token inside a recipe body is classified into exactly one of the key
 2. `cook` + separator → `cook_step` (§{recipes.cook-single-output}, §{recipes.cook-multi-output}).
 3. `plate` + separator → `plate_step` (§{recipes.plate-step}).
 4. `test` + separator → `test_step` (§{recipes.test-step}).
-5. Matches the module-call pattern of §{grammar-appendix.steps} → `module_call` (§{recipes.module-call-steps}).
-6. First character is `@` and the remainder is non-empty → `interactive_command` (§{recipes.shell-steps}).
-7. Otherwise → `shell_command` (§{recipes.shell-steps}).
+5. First character is `@` and the remainder is non-empty → `interactive_command` (§{recipes.shell-steps}).
+6. Otherwise → `shell_command` (§{recipes.shell-steps}).
 
 The four Lua-prefix forms (`>>`, `>>{`, `>`, `>{`) are not subject to this cascade: they are selected at the lexical layer (§{lexical.line-prefixes}) and always produce `inline_lua_line`, `inline_lua_block`, `lua_line`, or `lua_block` steps respectively, regardless of what follows the prefix.
 
@@ -152,10 +155,10 @@ The "separator" after a step keyword is space, tab, or end of token. A Content l
 
 A `recipe_body` MUST be ordered into two consecutive regions, each of which MAY be empty:
 
-1. **Declarative region** — register-phase steps: `ingredients_step`, `cook_step`, `plate_step`, `test_step`, `inline_lua_line`, `inline_lua_block`, `module_call`, plus structural `comment` and blank lines.
+1. **Declarative region** — register-phase steps: `ingredients_step`, `cook_step`, `plate_step`, `test_step`, `inline_lua_line`, `inline_lua_block`, plus structural `comment` and blank lines.
 2. **Imperative region** — execute-phase steps: `lua_line`, `lua_block`, `shell_command`, `interactive_command`, plus structural `comment` and blank lines.
 
-Once any imperative-region step appears in the body, no declarative-region step is permitted afterward in the same recipe. A conforming implementation MUST reject a recipe in which a declarative-region step (cook, plate, test, ingredients, `>>`, `>>{`, or a module call) appears after the first imperative-region step (`>`, `>{`, shell, or `@`). The diagnostic MUST identify the offending step's line and the line on which the imperative region began.
+Once any imperative-region step appears in the body, no declarative-region step is permitted afterward in the same recipe. A conforming implementation MUST reject a recipe in which a declarative-region step (cook, plate, test, ingredients, `>>`, or `>>{`) appears after the first imperative-region step (`>`, `>{`, shell, or `@`). The diagnostic MUST identify the offending step's line and the line on which the imperative region began.
 
 Comments and blank lines do NOT trigger the region transition. The transition is governed by the most recent step kind, not the most recent line. See §{rationale.recipe-body-regions} for the rationale.
 
@@ -447,7 +450,7 @@ A conforming implementation MUST NOT reinterpret the Lua body text. Comments, st
 
 `lua_line` and `lua_block` are **execute-phase** steps. Their bodies are not evaluated during registration. They are recorded as part of a **body unit** (§{recipes.body-bundling}) whose `lua_code` payload runs on a worker VM during the execute phase, after the recipe's declarative work units have completed.
 
-A `module_call` (§{recipes.module-call-steps}) is also register-phase: it desugars to `inline_lua_line` (single-line) or `inline_lua_block` (multi-line). Module-call orchestration uses the Cook Lua API to record work, just as `>>` does directly.
+Prior to CS-0072, `module_call` was also register-phase (§{recipes.module-call-steps}): it desugared to `inline_lua_line` (single-line) or `inline_lua_block` (multi-line). As of CS-0072 the module_call dispatch is removed from the recipe-body cascade; module calls that previously appeared in recipe bodies MUST be moved to a top-level `register` block (§{grammar.register-blocks}) or written as a top-level module_call (§{grammar.top-level-module-call}).
 
 ### 4.9.3. Body bundling [#recipes.body-bundling]
 
@@ -542,35 +545,46 @@ The first two steps are interactive commands: the runtime inherits the user's te
 
 An empty interactive command — a line consisting only of `@` — is rejected with a diagnostic stating that `@` requires a command. See parser test `test_empty_interactive_step_errors`.
 
-## 4.11. Module-call steps [#recipes.module-call-steps]
-A `module_call` is a `Content` line inside a recipe body whose shape matches the pattern given in §{grammar-appendix.steps}, `module_call`:
+## 4.11. Module-call steps (removed in CS-0072) [#recipes.module-call-steps]
+
+> **Amended — CS-0072.** The recipe-body `module_call` step kind is removed as of CS-0072. A `Content` line inside a recipe body matching the `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` shape is now classified as `shell_command` per the (post-CS-0072) rule 6 of the step-dispatch cascade (§{grammar.step-dispatch}). Authors who previously used recipe-body module calls MUST migrate to one of the two new top-level forms: a `register_block` (§{grammar.register-blocks}) or a top-level `module_call` (§{grammar.top-level-module-call}).
+
+The following subsections are preserved for historical reference and for implementations that must document their migration path from pre-v0.9 Cookfiles.
+
+### Pre-CS-0072 recipe-body module_call pattern
+
+A `module_call` was a `Content` line inside a recipe body whose shape matched:
 
 1. The first character is a `BARE_IDENTIFIER` start character — `[A-Za-z_]`.
 2. A run of `[A-Za-z0-9_]` follows (alphanumerics and underscore; dots and hyphens are **not** permitted in the first segment).
 3. A literal `.` follows.
 4. A character matching `[A-Za-z_]` follows the dot.
 
-The pattern is a **heuristic on the first two tokens only**. The remainder of the line is not validated at dispatch time; its well-formedness as a Lua expression is the Lua runtime's concern. When the first-line text contains an open `{` whose depth does not return to zero on that line, the step text MUST be extended to subsequent source lines until brace depth balances, using the same brace-balance algorithm as §{lexical.brace-blocks}. An unterminated brace balance MUST produce a parse error.
+When the first-line text contained an open `{` whose depth did not return to zero on that line, the step text was extended to subsequent source lines until brace depth balanced (§{lexical.brace-blocks}). The resulting step was register-phase: it desugared to `inline_lua_line` (single-line) or `inline_lua_block` (multi-line).
 
-A conforming implementation MUST emit a single-line `module_call` as an `inline_lua_line` step (§{recipes.lua-steps}) and a multi-line `module_call` as an `inline_lua_block` step. The resulting step body is the original source text, with newlines preserved across lines in the multi-line case. Both targets are register-phase: a `module_call` runs during recipe registration, where its body typically calls Cook Lua API functions to record work units. (See §{rationale.module-call-register} for why module calls default to register-phase rather than execute-phase.)
+### Note 4.11.1
 
-### Example 4.11.1
+Pre-CS-0072 Cookfiles containing recipe-body module calls such as:
 
 ```cook
 recipe build
     cpp.compile("src/*.cpp")
-    cpp.compile {
-        sources = "src/*.cpp",
-        output_dir = "build/obj/",
-    }
 ```
 
-Both steps are module calls. The first is single-line and becomes a `lua_line`. The second spans four source lines because the opening `{` on the first line is not balanced until the closing `}` on the fourth; it becomes a `lua_block` whose body is those four lines joined by newlines.
+MUST be migrated to:
 
-### Note 4.11.1
+```cook
+cpp.compile("src/*.cpp")
 
-A leading `.` (as in `./run.sh`) fails rule 1 of the pattern and falls through to `shell_command`. A hyphenated first token (as in `cargo-build.release`) fails rule 2 — hyphens are permitted inside a `BARE_IDENTIFIER` generally, but the module-call heuristic restricts the first segment to `[A-Za-z0-9_]` to avoid swallowing hyphenated shell commands. See parser tests `test_non_module_dot_is_shell` and `test_module_call_multiline`.
+recipe build
+    ...
+```
 
-### Note 4.11.2
+or to a `register` block:
 
-The rationale for dispatching module calls by heuristic rather than by parsing the full Lua expression is discussed in §{rationale.recipes}.
+```cook
+register
+    cpp.compile("src/*.cpp")
+```
+
+A leading `.` (as in `./run.sh`) still falls through to `shell_command` in all versions. A hyphenated first token (as in `cargo-build.release`) also falls through to `shell_command`.
