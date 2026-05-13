@@ -56,7 +56,7 @@ A conforming implementation MUST reject a chore body that contains any of the fo
 
 The recipe-body region rule (§{recipes.step-kinds} Note 4.4.2) applies to chore bodies as well, restricted to the allowed step kinds: `inline_lua_line` and `inline_lua_block` are declarative-region; `shell_command`, `interactive_command`, `lua_line`, `lua_block` are imperative-region. A conforming implementation MUST reject a chore body in which a declarative-region step appears after the first imperative-region step.
 
-A `module_call` (§{recipes.module-call-steps}) is permitted in a chore body — it is register-phase (declarative region) and desugars to `inline_lua_line` / `inline_lua_block`. This is consistent with the chore's allowed-step-kinds set.
+**Migration note (CS-0072 / v0.9).** Prior to CS-0072 a chore body admitted a `module_call` step (register-phase, desugaring to `inline_lua_line` / `inline_lua_block`). CS-0072 removes `module_call` from `chore_declarative_item`; authors who want to invoke a module function from a chore body MUST use the explicit `>>` (`inline_lua_line`) or `>>{` (`inline_lua_block`) form, or move the call to a top-level `register_block` (§{grammar.register-blocks}) or a top-level `module_call` (§{grammar.top-level-module-call}).
 
 ## 4a.3. Default-interactive shell semantics [#chores.default-interactive]
 

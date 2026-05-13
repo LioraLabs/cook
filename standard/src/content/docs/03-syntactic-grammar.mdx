@@ -172,7 +172,7 @@ Multi-overlay selection is deliberately not specified in this revision: per the 
 ## 3.7. Register blocks [#grammar.register-blocks]
 A `register_block` is the top-level form `"register" NEWLINE register_body`. The `register_body` is a sequence of raw source lines (`LUA_SOURCE`, App. A.5) running from the line after the `register` header up to the next terminating line of the surrounding Cookfile (§{recipes.termination}) or end-of-file. The contents of `register_body` are not parsed by the Cookfile grammar; the register-phase Lua VM interprets them at recipe-registration time (§{exec.two-phase}).
 
-A Cookfile MAY contain zero or more `register_block`s. The block takes no name. A conforming implementation MUST reject a `register` line whose content after the keyword is non-empty (e.g. `register foo` or `register "release"`); the diagnostic identifies the offending source line.
+A Cookfile MAY contain zero or more `register_block`s. The block takes no name. A conforming implementation MUST reject a `register` line whose content after the keyword is non-empty (e.g. `register foo` or `register "release"`); the diagnostic MUST identify the offending source line.
 
 A `register_body` MAY be empty: the next top-level construct or EOF MAY immediately follow the `register` header, in which case the block contributes the empty Lua source.
 
@@ -209,16 +209,16 @@ recipe run
     @ ./packer test.dat
 
 register
-    cook_cc.bin("packer", { sources = { "src/packer.c" }, deps = { "common" }, libs = zlib.system_libs })
+    cook_cc.bin("packer", { sources = { "src/packer.c" }, links = { "common" }, system_libs = zlib.system_libs })
 ```
 
 The two-block-with-recipe-between form demonstrates the source-order splicing rule plus shared scope: the `zlib` table written in the first block is visible in the second block. Both blocks splice into the same register-phase Lua chunk; the only restriction is Lua's normal lexical-scope rules (`local` in a `do … end` is not visible outside it, but assignments and `local` at the chunk's top level — which is where register-block bodies splice — persist through the rest of the chunk).
 
 ### Note 3.7.1
 
-Note: the recipe-body step-dispatch cascade in §{grammar.step-dispatch} no longer includes the module_call rule as of CS-0072. A bare `<id>.<id>(…)` line inside a recipe body classifies as `shell_command` and would try to exec the literal text as a shell command. Authors who want register-phase Lua inside a recipe body MUST use `>>` (`inline_lua_line`) or `>>{` (`inline_lua_block`).
+The recipe-body step-dispatch cascade in §{grammar.step-dispatch} no longer includes the module_call rule as of CS-0072. A bare `<id>.<id>(…)` line inside a recipe body classifies as `shell_command` and would try to exec the literal text as a shell command. Authors who want register-phase Lua inside a recipe body MUST use `>>` (`inline_lua_line`) or `>>{` (`inline_lua_block`).
 
-## 3.7.5. Top-level module calls [#grammar.top-level-module-call]
+### 3.7.5. Top-level module calls [#grammar.top-level-module-call]
 
 A **top-level module_call** is a column-0 `Content` token whose first token matches the module-call shape `BARE_IDENTIFIER "." BARE_IDENTIFIER (…)` per App. A.4 (`module_call`). The first segment (before the `.`) is restricted to ASCII letters, digits, and underscore — narrower than `BARE_IDENTIFIER` at large; this is the same restriction §3.9 step-dispatch rule 5 applied before CS-0072.
 
@@ -277,7 +277,7 @@ Two recipes, in two valid header shapes: explicit with a bare name (`build`), an
 ## 3.9. Step dispatch inside a recipe [#grammar.step-dispatch]
 Inside a `recipe_body`, each source line is first classified by the lexer (§{lexical.line-classification}) into one of `Comment`, `Blank`, `LuaLine`, `LuaBlockOpen`, `InlineLuaLine`, `InlineLuaBlockOpen`, or `Content`. Comments and blank lines are skipped; `LuaLine` becomes a `lua_line` step; `LuaBlockOpen` begins a `lua_block` step collected by the brace-balance algorithm (§{lexical.brace-blocks}); `InlineLuaLine` becomes an `inline_lua_line` step; `InlineLuaBlockOpen` begins an `inline_lua_block` step (also brace-balanced).
 
-Note: prior to CS-0072 (Cook Standard v0.9), this cascade included a fifth rule classifying `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` as `module_call` (register-phase Lua). CS-0072 removes that rule from the recipe-body cascade and adds an equivalent top-level dispatch in §{grammar.top-level-module-call}. Authors who want register-phase Lua inside a recipe body MUST use the `>>` (`inline_lua_line`) or `>>{` (`inline_lua_block`) prefix.
+Prior to CS-0072 (Cook Standard v0.9), this cascade included a fifth rule classifying `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` as `module_call` (register-phase Lua). CS-0072 removes that rule from the recipe-body cascade and adds an equivalent top-level dispatch in §{grammar.top-level-module-call}. Authors who want register-phase Lua inside a recipe body MUST use the `>>` (`inline_lua_line`) or `>>{` (`inline_lua_block`) prefix.
 
 A `Content` token inside a `recipe_body` is dispatched to exactly one `declarative_item` or `imperative_item` (App. A.3) by the priority cascade below (App. A.4, "Step-dispatch priority"). The first match wins; a conforming implementation MUST test the alternatives in this order:
 

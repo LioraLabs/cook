@@ -22,7 +22,7 @@ toplevel_item         ::= recipe
 
 register_block         ::= "register" NEWLINE register_body
 register_body          ::= LUA_SOURCE       (* see §{lexical.source}, §{grammar.register-blocks} *)
-top_level_module_call  ::= module_call_source  (* column-0; brace-balanced if multi-line *)
+top_level_module_call  ::= module_call  (* column-0; multi-line via brace-balance per §{lexical.brace-blocks.lua-spans} *)
 ```
 
 ## A.2. Top-level declarations [#grammar-appendix.declarations]

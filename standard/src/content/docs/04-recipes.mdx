@@ -120,7 +120,7 @@ The ingredient set is every `.c` file in `src/` and every `.h` file in `include/
 An `ingredient` item is always a `STRING` (quoted). A bare word after `ingredients` is a syntax error. The `!` exclusion marker MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_ingredients_with_excludes` and `test_ingredients_excludes_only`.
 
 ## 4.4. Step kinds — overview [#recipes.step-kinds]
-A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the `ingredients_step` covered in §{recipes.ingredients} and the structural `comment` / `NEWLINE` items, a conforming implementation MUST recognise exactly the following eight step kinds:
+A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the `ingredients_step` covered in §{recipes.ingredients} and the structural `comment` / `NEWLINE` items, a conforming implementation MUST recognise exactly the following nine step kinds:
 
 | § | Step kind | Introduced by | Phase |
 |---|---|---|---|
