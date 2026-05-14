@@ -9,6 +9,7 @@ sidebar:
 
 ## Versions
 
+- **v0.10** (`cs-standard/v0.10`, 2026-05-13) — CS-0073. Structural redesign: Standard reorganised into four Parts (Cookfile language, Execution model, Cook Lua API, Standard module catalogue) with per-topic chapters. Retired slug prefixes `grammar.*`, `modules.*`, `stdmods.*`, plus several `lua.*` and `lexical.*` / `recipes.*` leaves; new prefixes `conf.*`, `toplevel.*`, `decl.*`, `steps.*`, `phl.*`, `exec.*`, `comp.*`, `mods.*`, `cat.*`, `pre-v1.*`, `corpus.*`. New normative prose for `cook.step_group` (§22.5), both-phase Cook Lua surfaces (§24.3–§24.7), and module lifecycle (§12.3). Annexes B/C and D/E swapped. Retired URLs resolve via page-level redirects. No normative behaviour changes for any conforming Cookfile.
 - **v0.9** (`cs-standard/v0.9`, 2026-05-13) — CS-0072. Top-level `register` blocks + top-level `module_call` + recipe-body module_call dispatch removal. New conformance fixtures `register-block-*`, `top-level-module-call-*`, `recipe-body-bare-module-call-is-shell`. Breaking grammar change; pairs with cook_cc 0.4.0-1 (target-makers wrap with `cook.recipe`).
 - **v0.8** (`cs-standard/v0.8`, 2026-05-07) — CS-0045, CS-0046, CS-0047, CS-0048, CS-0049, CS-0050, CS-0051, CS-0052, CS-0054, CS-0055, CS-0056, CS-0057, CS-0058, CS-0059, CS-0060, CS-0061, CS-0062, CS-0063, CS-0064, CS-0065, CS-0066
 - **v0.7** (`cs-standard/v0.7`, 2026-05-03) — CS-0033, CS-0034, CS-0035, CS-0036, CS-0037, CS-0038, CS-0039, CS-0040, CS-0041, CS-0042, CS-0043, CS-0044
@@ -1209,3 +1210,60 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 **Touched sections.** §2.4 (keywords), §2.10 (line classification), §3.1 (top-level items), §3.2 (ordering), §3.6 (config_body termination reference), new §3.7 (`register_block` grammar), new §3.7.5 (top-level `module_call`), §3.8 (recipe_body termination reference; renumbered Recipes), §3.9 (step-dispatch cascade amendment; renumbered Step dispatch), §4.1.1 (terminator-set), §4.4 (step-kinds table; Note 4.4.2 region rule), §4.9.2 (module_call historical note), §4.11 (section rewritten as historical), §8.1.2 (phase-classification table), §8.2 (execution-model splicing), §8.3 (step-groups table), App. A (A.1 EBNF, A.2/A.3 body-termination, A.3 declarative_item, A.3.1 chore_declarative_item, step-dispatch priority cascade).
 
 **Conformance fixtures.** `standard/conformance/positive/register-block-{empty,single,multiple,interleaved,target-maker}`, `standard/conformance/positive/top-level-module-call*`, `standard/conformance/positive/recipe-body-bare-module-call-is-shell`, `standard/conformance/negative/register-{inside-recipe-body,with-name}`, `standard/conformance/negative/top-level-colon-call`. The deleted fixture is `standard/conformance/positive/010-use-and-module-call`.
+
+### v0.10 [#changes.v0-10]
+
+## CS-0073 — Structural redesign: Parts and per-topic chapters [#cs-0073]
+
+**Date:** 2026-05-13
+**Version:** v0.10
+**Sections affected:** entire Standard (reorganisation). Specifically:
+  - Renumbered Chapters 0–9 → Chapters 0–28 across four Parts.
+  - Retired slug prefixes: `grammar.*`, `modules.*`, `stdmods.*`,
+    `lexical.placeholders`, `lua.shell-placeholders`, `lua.use-env`,
+    `lua.builtin-modules`, `lua.local-modules`, `recipes.body-bundling`.
+  - New slug prefixes: `conf.*`, `toplevel.*`, `decl.*`, `steps.*`,
+    `phl.*`, `exec.*`, `comp.*`, `mods.*`, `cat.*`, `pre-v1.*`, `corpus.*`.
+  - New normative prose:
+    - §22.5 `cook.step_group` (formal definition);
+    - §24.3 `cook.env`, §24.4 `cook.cache`, §24.5 `cook.export`/`cook.import`,
+      §24.6 `cook.platform`, §24.7 `cook.dep_output`/`cook.dep_output_list`
+      (formalises surfaces previously pinned in CS-0066/0070/0071 amendments);
+    - §12.3 Module lifecycle (consolidates lifecycle prose previously
+      scattered across §6.3.4, §6.8, and §7.4).
+  - Annexes B and C swapped (Examples now precedes Rationale).
+  - Annexes D and E swapped (Pre-1.0 checklist now precedes Changes).
+  - Annex C (Rationale) heading numbers renumbered to match new chapter
+    map; slugs preserved.
+  - Annex E (Changes) gets per-version subheaders.
+  - Annex F (Conformance corpus) added as a stub.
+
+**Summary.** The Standard is reorganised into four Parts —
+  The Cookfile language (Part I, author-facing), Execution model
+  (Part II), The Cook Lua API (Part III), and Standard module
+  catalogue (Part IV) — with each chapter focused on one topic.
+  Phase classification, cache semantics, and placeholder
+  specifications each have a single normative home, eliminating
+  the prior three-way splits. The `use` declaration moves from
+  the Lua API chapter to Modules. Chores becomes a real chapter.
+  Workspace root and cache portability move into the Execution
+  model. Body bundling moves from the recipes chapter into step
+  groups. Step dispatch has one normative source. The new
+  normative prose in §22.5, §24.3–§24.7, and §12.3 formalises
+  Cook Lua surfaces previously specified only in amendments.
+  No normative behaviour changes for any conforming Cookfile;
+  this entry is structural and editorial only. The conformance
+  corpus is unchanged. Retired anchored URLs continue to resolve
+  through build-emitted page-level redirects (anchor-level
+  precision for retired anchors is implemented via the
+  client-side fragment rewriter in a follow-on editorial pass).
+
+**Conformance impact.** None. The reference parser, the conformance
+  corpus, and the runtime semantics are byte-for-byte unchanged
+  from v0.9. Implementations that already conform to v0.9 conform
+  to v0.10 without modification. The `cook standard.against-tag`
+  chore against `cs-standard/v0.9` is therefore expected to pass
+  the corpus contract; any failure is parser-impl drift unrelated
+  to this CS (see App. D §D.1 for the brittleness note).
+
+**Reference:** this commit.

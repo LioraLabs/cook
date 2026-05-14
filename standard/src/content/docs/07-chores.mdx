@@ -74,7 +74,7 @@ chore deploy
     > print("deploy complete")
 ```
 
-The two shell steps are interactive: `cd build` and `rsync ...` run with the user's TTY inherited. The `>` line runs at execute phase on the drain thread (controlling terminal), not on a worker VM (CS-0051). There is no body-bundling, and the two shell steps and the `>` Lua line execute under one shared drain — no work unit of any other recipe may run between them (CS-0051).
+The two shell steps are interactive: `cd build` and `rsync ...` run with the user's TTY inherited. The `>` line runs at execute phase on the drain thread (controlling terminal), not on a worker VM (CS-0051). There is no body-bundling, and the two shell steps and the `>` Lua line execute under one shared drain — no work unit of any other recipe interleaves with them (CS-0051).
 
 ## 7.4. No caching [#chores.no-caching]
 

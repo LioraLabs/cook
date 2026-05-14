@@ -4,7 +4,7 @@ sidebar:
   order: 8
 ---
 # 8. Step kinds [#steps]
-> **Normative.** This chapter defines every step kind that may appear in a recipe body or a chore body, the dispatch cascade that classifies each `Content` token, and the iteration-mode rules for `cook`, `plate`, and `test` steps. The execute-phase behaviour of a body's compiled units — including body bundling — is specified in §{exec.groups}.
+> **Normative.** This chapter defines every step kind that appears in a recipe body or a chore body, the dispatch cascade that classifies each `Content` token, and the iteration-mode rules for `cook`, `plate`, and `test` steps. The execute-phase behaviour of a body's compiled units — including body bundling — is specified in §{exec.groups}.
 
 ## 8.1. Step-dispatch cascade [#steps.dispatch]
 Inside a `recipe_body`, each source line is first classified by the lexer (§{lexical.line-classification}) into one of `Comment`, `Blank`, `LuaLine`, `LuaBlockOpen`, `InlineLuaLine`, `InlineLuaBlockOpen`, or `Content`. Comments and blank lines are skipped; `LuaLine` becomes a `lua_line` step; `LuaBlockOpen` begins a `lua_block` step collected by the brace-balance algorithm (§{lexical.brace-blocks}); `InlineLuaLine` becomes an `inline_lua_line` step; `InlineLuaBlockOpen` begins an `inline_lua_block` step (also brace-balanced).
