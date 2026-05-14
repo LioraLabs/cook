@@ -7,7 +7,7 @@ sidebar:
 
 > **Informative.** This appendix presents worked Cookfile examples, each annotated with the sections of the Standard it exercises. Examples are non-binding; they illustrate the normative rules defined in chapters 2–7 and Appendix A.
 
-## C.1. Multi-output cook step (from `examples/multi-output/Cookfile`) [#examples.multi-output-cook]
+## B.1. Multi-output cook step (from `examples/multi-output/Cookfile`) [#examples.multi-output-cook]
 ```cook
 recipe generate
     ingredients "src/*.rs"
@@ -19,9 +19,9 @@ recipe generate
     }
 ```
 
-Exercises: §{recipes.header-forms} (explicit header), §{recipes.ingredients} (ingredients), §{recipes.cook-multi-output} (multi-output cook with `using { ... }` shell block), App. A.3, App. A.4.
+Exercises: §{recipes.header-forms} (explicit header), §{steps.ingredients} (ingredients), §{steps.cook-multi} (multi-output cook with `using { ... }` shell block), App. A.3, App. A.4.
 
-## C.2. Recipe with cross-recipe dependency (from `examples/cross-recipe-deps/Cookfile`) [#examples.cross-recipe-dep]
+## B.2. Recipe with cross-recipe dependency (from `examples/cross-recipe-deps/Cookfile`) [#examples.cross-recipe-dep]
 ```cook
 recipe tools: colorize wordcount reverse
 
@@ -32,9 +32,9 @@ recipe play: tools
     @./build/bin/$(cat .cook/scratch/tool) < "$(cat .cook/scratch/file)"
 ```
 
-Exercises: §{recipes.header-forms} (explicit header with deps), §{recipes.dep-list} (dependency list), §{recipes.shell-steps} (interactive `@` shell commands), App. A.3, App. A.4.
+Exercises: §{recipes.header-forms} (explicit header with deps), §{recipes.dep-list} (dependency list), §{steps.shell} (interactive `@` shell commands), App. A.3, App. A.4.
 
-## C.3. Module use and call (from `examples/fzf-picker/Cookfile`) [#examples.module-use-call]
+## B.3. Module use and call (from `examples/fzf-picker/Cookfile`) [#examples.module-use-call]
 ```cook
 use cpp
 
@@ -47,9 +47,9 @@ recipe colorize
     })
 ```
 
-Exercises: §{grammar.use-declarations} (`use` declaration), §{grammar.config-blocks} (config block with Lua body), §{grammar.step-dispatch} (step dispatch), §{recipes.module-call-steps} (module-call step), App. A.2, App. A.4.
+Exercises: §{decl.use} (`use` declaration), §{decl.config} (config block with Lua body), §{steps.dispatch} (step dispatch), §{toplevel.module-call} (module-call step), App. A.2, App. A.4.
 
-## C.4. Using-block Lua with multiple outputs (from `examples/multi-output/Cookfile`) [#examples.lua-multi-output]
+## B.4. Using-block Lua with multiple outputs (from `examples/multi-output/Cookfile`) [#examples.lua-multi-output]
 ```cook
 recipe build_lua
     ingredients "src/*.rs"
@@ -65,8 +65,8 @@ recipe build_lua
     }
 ```
 
-Exercises: §{recipes.cook-multi-output} (multi-output cook with `using >{ ... }` Lua block), §{lua.using-block-globals} (using-block globals `inputs` / `outputs`), App. A.4.
-## C.5. Cross-recipe references [#examples.cross-recipe-refs]
+Exercises: §{steps.cook-multi} (multi-output cook with `using >{ ... }` Lua block), §{lua.using-block-globals} (using-block globals `inputs` / `outputs`), App. A.4.
+## B.5. Cross-recipe references [#examples.cross-recipe-refs]
 This example exercises the four surfaces of cross-recipe references defined in §{xref}.
 
 ### Bare string substitution
@@ -122,4 +122,4 @@ recipe server
 
 The `server` step is dep-driven by `protos` (output pattern contains `$<protos.stem>`). The `$<core>` in the shell block is a bare string-substitution reference (§{xref.string-substitution}) to `core`'s single output. The step thus depends on both `protos` (per-unit, driving iteration) and `core` (whole-recipe or refined per-unit, per §{xref.dep-implications}) — two distinct cross-recipe edges from a single step.
 
-Exercises: §{xref} (full chapter), §{recipes.ingredients} (ingredients), §{recipes.cook-single-output} (one-to-one cook step), §{exec.cross-recipe-ordering} (cross-recipe ordering).
+Exercises: §{xref} (full chapter), §{steps.ingredients} (ingredients), §{steps.cook-single} (one-to-one cook step), §{exec.cross-recipe-ordering} (cross-recipe ordering).

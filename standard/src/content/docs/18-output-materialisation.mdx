@@ -9,9 +9,9 @@ sidebar:
 ## 18.1. Output path materialisation [#exec.output-materialisation]
 Before invoking the shell text of a `cook` step, a conforming implementation MUST ensure that the parent directory of every output path declared by the step exists, creating it (and any missing ancestors) if necessary. The creation MUST be idempotent: it is not an error if the directory already exists. The creation MUST NOT proceed if the parent path resolves to a non-directory (regular file, symbolic link to a regular file, etc.); in that case the implementation MUST surface a clear diagnostic naming the output path and the offending parent, and MUST NOT execute the step's shell text.
 
-The output paths covered by this rule are exactly those declared by the `cook` step in its surface form (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) — that is, the paths recorded as the unit's output-path list during the register phase (§{exec.cache}). Each output path is resolved against the unit's working directory using the same resolution that the cache fingerprint applies. An output path with no parent component (a path that resolves to the working directory itself) is a no-op.
+The output paths covered by this rule are exactly those declared by the `cook` step in its surface form (§{steps.cook-single}, §{steps.cook-multi}) — that is, the paths recorded as the unit's output-path list during the register phase (§{exec.cache}). Each output path is resolved against the unit's working directory using the same resolution that the cache fingerprint applies. An output path with no parent component (a path that resolves to the working directory itself) is a no-op.
 
-This rule applies to `cook` steps only. `plate` steps (§{recipes.plate-step}) and `test` steps (§{recipes.test-step}) declare no cacheable output paths and are therefore not covered; authors of `plate` and `test` step bodies that need to create directories MUST do so explicitly.
+This rule applies to `cook` steps only. `plate` steps (§{steps.plate}) and `test` steps (§{steps.test}) declare no cacheable output paths and are therefore not covered; authors of `plate` and `test` step bodies that need to create directories MUST do so explicitly.
 
 ### Note 18.1.1
 

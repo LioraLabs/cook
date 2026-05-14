@@ -22,7 +22,7 @@ recipe build
     cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
 ```
 
-The `>>` line runs during the register phase (`>>` is the inline-Lua prefix; see §{recipes.lua-steps}). It reads `cook.env` — a value established before the register phase began — and assigns a local visible to subsequent declarative-region steps. The `cook` step then records its work units. No subprocess is spawned during registration.
+The `>>` line runs during the register phase (`>>` is the inline-Lua prefix; see §{steps.lua}). It reads `cook.env` — a value established before the register phase began — and assigns a local visible to subsequent declarative-region steps. The `cook` step then records its work units. No subprocess is spawned during registration.
 
 Substituting `>` for `>>` would change the semantics: `>` is execute-phase, so the `flag` local would be set on a worker VM during execute, after the cook step's units have already been recorded — too late to influence registration.
 

@@ -17,15 +17,15 @@ The Cookfile surface syntax in §{recipes} produces step groups and sequential u
 
 | Surface construct | Registration behaviour |
 |---|---|
-| `cook` step (§{recipes.cook-single-output}, §{recipes.cook-multi-output}) | One step group per `cook` step. Recorded by the declarative region. |
-| `plate` step (§{recipes.plate-step}) | One step group per `plate` step. Recorded by the declarative region. |
-| `test` step (§{recipes.test-step}) | One step group per `test` step. Recorded by the declarative region. |
+| `cook` step (§{steps.cook-single}, §{steps.cook-multi}) | One step group per `cook` step. Recorded by the declarative region. |
+| `plate` step (§{steps.plate}) | One step group per `plate` step. Recorded by the declarative region. |
+| `test` step (§{steps.test}) | One step group per `test` step. Recorded by the declarative region. |
 | `register_block` body (§{decl.register}) | Spliced verbatim into the compiled register-phase Lua program at its source position. Evaluated during the register phase; produces units only via explicit Cook Lua API calls. |
 | top-level `module_call` (§{toplevel.module-call}) | Spliced verbatim at source position; same registration behaviour as `register_block`. |
-| `inline_lua_line`, `inline_lua_block` (§{recipes.lua-steps}) | Inlined into the recipe-body Lua function and evaluated during the register phase. Produce units only via explicit Cook Lua API calls. |
-| `lua_line`, `lua_block` (§{recipes.lua-steps}) | Coalesced into a body unit per imperative-region run (§{exec.body-bundling}); the unit is sequential and its `lua_code` runs on the worker VM at execute. |
-| `shell_command` (§{recipes.shell-steps}) | Coalesced into the same body unit as the surrounding `lua_line` / `lua_block` steps; consecutive shell lines join into one `cook.sh` call within the unit (§{exec.body-bundling}). |
-| `interactive_command` (§{recipes.shell-steps}) | Sequential unit, additionally draining (§{exec.interactive-drain}). Breaks the body-bundling run; the next imperative-region step starts a fresh body unit. |
+| `inline_lua_line`, `inline_lua_block` (§{steps.lua}) | Inlined into the recipe-body Lua function and evaluated during the register phase. Produce units only via explicit Cook Lua API calls. |
+| `lua_line`, `lua_block` (§{steps.lua}) | Coalesced into a body unit per imperative-region run (§{exec.body-bundling}); the unit is sequential and its `lua_code` runs on the worker VM at execute. |
+| `shell_command` (§{steps.shell}) | Coalesced into the same body unit as the surrounding `lua_line` / `lua_block` steps; consecutive shell lines join into one `cook.sh` call within the unit (§{exec.body-bundling}). |
+| `interactive_command` (§{steps.shell}) | Sequential unit, additionally draining (§{exec.interactive-drain}). Breaks the body-bundling run; the next imperative-region step starts a fresh body unit. |
 
 ### Example 15.1.1
 

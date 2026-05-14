@@ -5,7 +5,7 @@ sidebar:
 ---
 # Appendix A. Grammar (normative)
 
-> **Normative.** This appendix contains the full formal grammar of the Cookfile language in the W3C-style EBNF variant defined in §{notation.grammar}. Where this appendix disagrees with the prose of §{grammar} or §{recipes}, this appendix is authoritative (§{notation.grammar-precedence}).
+> **Normative.** This appendix contains the full formal grammar of the Cookfile language in the W3C-style EBNF variant defined in §{notation.grammar}. Where this appendix disagrees with the prose of any chapter of Part I, this appendix is authoritative (§{notation.grammar-precedence}).
 
 ## A.1. Top level [#grammar-appendix.top-level]
 ```ebnf
@@ -21,7 +21,7 @@ toplevel_item         ::= recipe
                        | NEWLINE
 
 register_block         ::= "register" NEWLINE register_body
-register_body          ::= LUA_SOURCE       (* see §{lexical.source}, §{grammar.register-blocks} *)
+register_body          ::= LUA_SOURCE       (* see §{lexical.source-representation}, §{decl.register} *)
 top_level_module_call  ::= module_call  (* column-0; multi-line via brace-balance per §{lexical.brace-blocks.lua-spans} *)
 ```
 
@@ -34,17 +34,17 @@ config_block          ::= "config" name? NEWLINE config_body
 config_body           ::= LUA_SOURCE
 ```
 
-**`use_name` constraint (normative; CS-0035).** The `use_name` MUST match the `LUA_IDENT` production (§{grammar-appendix.primitives}), regardless of whether it is written bare or inside double quotes. A conforming implementation MUST reject any `use_declaration` whose name contains characters outside `[A-Za-z0-9_]`, does not start with `[A-Za-z_]`, or is empty — including names containing whitespace, hyphens (`-`), or dots (`.`). The diagnostic MUST identify the offending name and source line. The restriction follows from the use-env binding (§{lua.use-env}): the name is bound at load time as a Lua local under the same spelling, and any non-identifier spelling would yield malformed generated Lua. Hyphens are rejected outright (rather than rewritten to underscores) to eliminate silent collisions between names like `foo-bar` and `foo_bar`.
+**`use_name` constraint (normative; CS-0035).** The `use_name` MUST match the `LUA_IDENT` production (§{grammar-appendix.primitives}), regardless of whether it is written bare or inside double quotes. A conforming implementation MUST reject any `use_declaration` whose name contains characters outside `[A-Za-z0-9_]`, does not start with `[A-Za-z_]`, or is empty — including names containing whitespace, hyphens (`-`), or dots (`.`). The diagnostic MUST identify the offending name and source line. The restriction follows from the `use` binding (§{mods.use}): the name is bound at load time as a Lua local under the same spelling, and any non-identifier spelling would yield malformed generated Lua. Hyphens are rejected outright (rather than rewritten to underscores) to eliminate silent collisions between names like `foo-bar` and `foo_bar`.
 
 **Ordering (normative).** `use_declaration`, `import_declaration`, and `config_block` MUST appear before the first `recipe` or `chore`. A conforming implementation MUST reject a Cookfile that places any of these after a `recipe` or `chore`.
 
-**Body termination (normative).** A `config_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, `import`, or `register`, or to a column-0 line matching the top-level module_call shape, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
+**Body termination (normative).** A `config_body`'s extent is determined by the implicit-termination rule of §{toplevel.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, `import`, or `register`, or to a column-0 line matching the top-level module_call shape, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
 
 **Duplicate `config_block` rule.** At most one unnamed `config_block` is permitted per Cookfile. Named `config_block` names MUST be unique. A conforming implementation MUST reject a Cookfile that violates either constraint.
 
 **Duplicate `import_declaration` rule.** The `BARE_IDENTIFIER` (local alias) of each `import_declaration` MUST be unique within a Cookfile. A conforming implementation MUST reject duplicate import names.
 
-**Recipe / chore declaration names — no dots.** The `name` of a `recipe_header` or `chore_header` MUST NOT contain `.` (dot). A conforming implementation MUST reject a top-level declaration `recipe NAME` or `chore NAME` whose `NAME` (whether bare or quoted) contains a dot, at parse time. Diagnostic: `recipe name 'NAME': dotted recipe names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing`. Namespacing across Cookfiles is achieved exclusively via `import_declaration` (§{modules.import-declaration}); a dotted reference appearing in a `dependency_list` or in a `$<...>` placeholder resolves through an `import` alias per §{modules.qualified-refs}.
+**Recipe / chore declaration names — no dots.** The `name` of a `recipe_header` or `chore_header` MUST NOT contain `.` (dot). A conforming implementation MUST reject a top-level declaration `recipe NAME` or `chore NAME` whose `NAME` (whether bare or quoted) contains a dot, at parse time. Diagnostic: `recipe name 'NAME': dotted recipe names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing`. Namespacing across Cookfiles is achieved exclusively via `import_declaration` (§{comp.import}); a dotted reference appearing in a `dependency_list` or in a `$<...>` placeholder resolves through an `import` alias per §{comp.qualified-refs}.
 
 **Duplicate recipe / chore declaration name rule.** Recipes and chores share a single callable namespace within a Cookfile. The `name` of every `recipe_header` and `chore_header` MUST be unique across the union of recipe and chore declarations. A conforming implementation MUST reject, at parse time, a Cookfile that contains:
 
@@ -52,7 +52,7 @@ config_body           ::= LUA_SOURCE
 2. two `chore_header` declarations with the same `name` (chore-vs-chore collision); or
 3. one `recipe_header` and one `chore_header` with the same `name` (recipe-vs-chore collision).
 
-Names compare verbatim — bare and quoted forms of the same name (e.g. `recipe build` and `recipe "build"`) refer to the same callable and therefore collide. The diagnostic MUST identify the offending kind, the colliding name, and the source line of the prior declaration. The recommended diagnostic form is `KIND 'NAME': duplicate declaration (already declared as PRIOR_KIND at line N)`, where `KIND` is the kind of the second declaration and `PRIOR_KIND` is the kind of the first. Cross-Cookfile namespacing for callables that would otherwise collide is achieved via `import_declaration` aliases per §{modules.import-declaration}.
+Names compare verbatim — bare and quoted forms of the same name (e.g. `recipe build` and `recipe "build"`) refer to the same callable and therefore collide. The diagnostic MUST identify the offending kind, the colliding name, and the source line of the prior declaration. The recommended diagnostic form is `KIND 'NAME': duplicate declaration (already declared as PRIOR_KIND at line N)`, where `KIND` is the kind of the second declaration and `PRIOR_KIND` is the kind of the first. Cross-Cookfile namespacing for callables that would otherwise collide is achieved via `import_declaration` aliases per §{comp.import}.
 
 **Reserved recipe name identifiers.** A recipe or chore declaration name MUST NOT equal one of the reserved identifiers `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`. (Combined with the no-dots rule above, this is the entirety of the reserved-name constraint at the declaration site.) The same eight identifiers MUST NOT appear as the *final* dot-separated segment of a `dependency_list` entry or a `$<...>` placeholder, and `env` MUST NOT appear as the *first* dot-separated segment of either. This reserves the `env.` prefix for the explicit env-var-lookup form (§{xref.env-namespace}).
 
@@ -82,9 +82,9 @@ imperative_item       ::= lua_line
 
 **At-most-one-ingredients rule.** A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe with two or more `ingredients_step` items.
 
-**Region ordering rule.** A conforming implementation MUST reject a `recipe_body` in which a `declarative_item` (other than `comment` or `NEWLINE`) appears after the first `imperative_item` (other than `comment` or `NEWLINE`) of the same recipe. The diagnostic MUST identify the offending step's line and the line on which the imperative region began. See §{recipes.step-kinds}, Note 4.4.2 for the prose treatment.
+**Region ordering rule.** A conforming implementation MUST reject a `recipe_body` in which a `declarative_item` (other than `comment` or `NEWLINE`) appears after the first `imperative_item` (other than `comment` or `NEWLINE`) of the same recipe. The diagnostic MUST identify the offending step's line and the line on which the imperative region began. See §{steps.overview}, Note 4.4.2 for the prose treatment.
 
-**Body termination (normative).** A `recipe_body`'s extent is determined by the implicit-termination rule of §{recipes.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, `import`, or `register`, or to a column-0 line matching the top-level module_call shape, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
+**Body termination (normative).** A `recipe_body`'s extent is determined by the implicit-termination rule of §{toplevel.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, `import`, or `register`, or to a column-0 line matching the top-level module_call shape, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
 
 ### A.3.1. Chore [#grammar-appendix.chore]
 
@@ -155,9 +155,9 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
 
 **Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before `using`, the `using_clause` resolves per the unrestricted production above — the bare-`STRING` arm having been removed in CS-0022, the form `cook "a" "b" using STRING` is rejected by the production itself rather than by a separate well-formedness rule.
 
-**Iteration coherence (CS-0022).** All `STRING` output patterns of a single `cook_step` MUST share an iteration source: every output is literal (no accessor placeholder), or every output bears `$<in.ACCESSOR>` (own-input driver), or every output bears `$<lib.ACCESSOR>` for the same recipe `lib` (dep-driven driver). A conforming implementation MUST reject a `cook_step` whose output patterns mix sources, with a diagnostic naming the offending outputs. See §{recipes.iteration-mode}.
+**Iteration coherence (CS-0022).** All `STRING` output patterns of a single `cook_step` MUST share an iteration source: every output is literal (no accessor placeholder), or every output bears `$<in.ACCESSOR>` (own-input driver), or every output bears `$<lib.ACCESSOR>` for the same recipe `lib` (dep-driven driver). A conforming implementation MUST reject a `cook_step` whose output patterns mix sources, with a diagnostic naming the offending outputs. See §{steps.iteration-mode}.
 
-**Plate/test mode coherence (CS-0024).** A `plate_step` or `test_step` body MUST NOT contain both an iteration-item placeholder/binding and a batched-source placeholder/binding. For shell-block bodies, this means a body MUST NOT contain both `$<in>` (or `$<in.ACCESSOR>`) and `$<all>`. For Lua-block bodies, the body MUST NOT reference both `input` and `inputs` (free-identifier scan, ignoring strings/comments/long-strings per §{lexical.brace-blocks}). A conforming implementation MUST reject a body that violates this rule with a diagnostic naming both tokens. See §{recipes.iteration-mode-plate-test}.
+**Plate/test mode coherence (CS-0024).** A `plate_step` or `test_step` body MUST NOT contain both an iteration-item placeholder/binding and a batched-source placeholder/binding. For shell-block bodies, this means a body MUST NOT contain both `$<in>` (or `$<in.ACCESSOR>`) and `$<all>`. For Lua-block bodies, the body MUST NOT reference both `input` and `inputs` (free-identifier scan, ignoring strings/comments/long-strings per §{lexical.brace-blocks}). A conforming implementation MUST reject a body that violates this rule with a diagnostic naming both tokens. See §{steps.iteration-mode-plate-test}.
 
 **Plate/test source presence (CS-0024).** A `plate_step` or `test_step` in one-to-one or many-to-one mode MUST have a non-empty iteration source — that is, the recipe MUST contain a preceding `cook_step` whose output list is non-empty, or an `ingredients_step` whose resolved path list is non-empty. A conforming implementation MUST reject a `plate_step` or `test_step` whose mode requires source consultation but whose recipe provides none. A `plate_step` or `test_step` in one-shot mode does not consult the source and MAY appear in a recipe with neither.
 
@@ -178,7 +178,7 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
 5. First character is `@` and the remainder is non-empty → `interactive_command`.
 6. Otherwise → `shell_command`.
 
-Note: CS-0072 removed the former rule 5 that classified a `Content` line matching `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` as `module_call` (register-phase Lua) from the recipe-body cascade. Top-level module_call dispatch is now governed by §{grammar.top-level-module-call}; authors who want register-phase Lua inside a recipe body MUST use the `>>` or `>>{` prefix.
+Note: CS-0072 removed the former rule 5 that classified a `Content` line matching `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` as `module_call` (register-phase Lua) from the recipe-body cascade. Top-level module_call dispatch is now governed by §{toplevel.module-call}; authors who want register-phase Lua inside a recipe body MUST use the `>>` or `>>{` prefix.
 
 ## A.5. Primitives [#grammar-appendix.primitives]
 ```ebnf
@@ -194,7 +194,7 @@ path_segments         ::= path_segment ( "/" path_segment )*
 path_segment          ::= /[^\s\n\/]+/
 path                  ::= /[^\s\n]+/   /* legacy form; import_path is the canonical path */
 
-**No '..' segment (normative).** A `path_segment` MUST NOT consist solely of two dot characters (`..`). The grammar's regex permits `..` syntactically; this rule eliminates it normatively. See §{modules.import-declaration}.
+**No '..' segment (normative).** A `path_segment` MUST NOT consist solely of two dot characters (`..`). The grammar's regex permits `..` syntactically; this rule eliminates it normatively. See §{comp.import}.
 comment               ::= /#[^\n]*/ NEWLINE
 NEWLINE               ::= /\n/
 LUA_LINE_CONTENT      ::= /[^\n]*/   /* zero or more characters; may be empty */
@@ -202,7 +202,7 @@ LUA_BLOCK_CONTENT     ::= BRACE_BALANCED   /* see § 2.9 */
 SHELL_LINE_CONTENT    ::= /[^\n]+/
 SHELL_BLOCK_CONTENT   ::= BRACE_BALANCED   /* see § 2.9 */
 LUA_SOURCE            ::= /* any sequence of lines up to the next column-0
-                             top-level keyword or end-of-file; see §{recipes.termination} */
+                             top-level keyword or end-of-file; see §{toplevel.termination} */
 BRACE_BALANCED        ::= /* text in which `{` and `}` counted outside of
                              interior-language opaque spans balance to zero.
                              For `LUA_BLOCK_CONTENT`: ignore braces inside Lua
@@ -220,7 +220,7 @@ BRACE_BALANCED        ::= /* text in which `{` and `}` counted outside of
 MODULE_CALL_TEXT      ::= /* see § 4.11 */
 ```
 
-**Placeholder shape.** Placeholders embedded in `cook_step` output patterns and `SHELL_BLOCK_CONTENT` bodies are not separately tokenised by the Cookfile grammar — they are raw character sequences inside a `STRING` or `SHELL_BLOCK_CONTENT` production. Their well-formedness is validated at codegen time per §{lua.shell-placeholders}. The single recognised form is the strict sigil `$<IDENT>`, normatively defined in §{lexical.placeholders} (CS-0033). Its production is reproduced here for reference in the context of surrounding grammar productions:
+**Placeholder shape.** Placeholders embedded in `cook_step` output patterns and `SHELL_BLOCK_CONTENT` bodies are not separately tokenised by the Cookfile grammar — they are raw character sequences inside a `STRING` or `SHELL_BLOCK_CONTENT` production. Their well-formedness is validated at codegen time per §{phl.cook-step}. The single recognised form is the strict sigil `$<IDENT>`, normatively defined in §{phl.token} (CS-0033). Its production is reproduced here for reference in the context of surrounding grammar productions:
 
 ```ebnf
 sigil_placeholder       ::= "$<" placeholder_ident ">"
@@ -232,7 +232,7 @@ ALPHA                   ::= "a"…"z" | "A"…"Z" | "_"
 DIGIT                   ::= "0"…"9"
 ```
 
-The `ACCESSOR` production is defined above. The `sigil_placeholder` production can appear inside `output_pattern`, `SHELL_BLOCK_CONTENT`, `SHELL_LINE_CONTENT`, and `plate_test_shell_block_body` text. Resolution is defined by §{xref.resolution} and §{lua.shell-placeholders}; an implementation MAY record byte ranges of placeholder positions in its parse tree to support migration tooling such as `cook --migrate-sigil`.
+The `ACCESSOR` production is defined above. The `sigil_placeholder` production can appear inside `output_pattern`, `SHELL_BLOCK_CONTENT`, `SHELL_LINE_CONTENT`, and `plate_test_shell_block_body` text. Resolution is defined by §{xref.resolution} and §{phl.cook-step}; an implementation MAY record byte ranges of placeholder positions in its parse tree to support migration tooling such as `cook --migrate-sigil`.
 
 **`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting).
 

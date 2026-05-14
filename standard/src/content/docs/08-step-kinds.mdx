@@ -68,7 +68,7 @@ The `ingredients_step` is introduced by the keyword `ingredients` followed by on
 
 A conforming implementation MUST accept an `ingredients` line containing only excludes, only includes, or a mix of the two in any order. The semantic effect is the set difference `(union of includes) \ (union of excludes)`; ordering of items on the line does not affect the result.
 
-The glob language itself — which characters are wildcards, whether `**` matches across directory separators, and so on — is not defined by §{recipes} and is resolved by the execution model (§{exec}).
+The glob language itself — which characters are wildcards, whether `**` matches across directory separators, and so on — is not defined by §{recipes} and is resolved by the execution model (§{exec.phases}).
 
 ### Example 8.2.1
 
@@ -155,7 +155,7 @@ recipe build
     gcc src/main.c -o bin/app
 ```
 
-The `cook "bin/app"` step is declaration-only. The following `shell_command` supplies the actual build command; the execution model (§{exec}) is responsible for associating it with the declared output.
+The `cook "bin/app"` step is declaration-only. The following `shell_command` supplies the actual build command; the execution model (§{exec.phases}) is responsible for associating it with the declared output.
 
 ### Note 8.4.1
 
@@ -230,7 +230,7 @@ recipe build_lua
     }
 ```
 
-The same two outputs are produced by a Lua block. The `inputs` and `outputs` names visible to the block are established by the execution model (§{exec}) and the Cook Lua API (§{lua.using-block-globals}); §{recipes} requires only that a block-form `using` clause be accepted as the body.
+The same two outputs are produced by a Lua block. The `inputs` and `outputs` names visible to the block are established by the execution model (§{exec.phases}) and the Cook Lua API (§{lua.using-block-globals}); §{recipes} requires only that a block-form `using` clause be accepted as the body.
 
 ### Note 8.5.1
 
@@ -460,7 +460,7 @@ A `shell_command` is any `Content` line inside a recipe body that is not classif
 An `interactive_command` is a `Content` line whose first non-whitespace character is `@` and whose remainder, after removing that `@`, is non-empty (§{grammar-appendix.steps}, `interactive_command`). A conforming implementation MUST:
 
 1. Strip the leading `@` when recording the command body.
-2. Mark the step as requiring interactive stdio (the precise semantics — TTY allocation, stdio inheritance — are defined by §{exec}).
+2. Mark the step as requiring interactive stdio (the precise semantics — TTY allocation, stdio inheritance — are defined by §{exec.interactive-drain}).
 3. Reject an `@`-only line with no following command text.
 
 The `@` marker is not a lexical prefix (see §{lexical.line-prefixes} and §{rationale.at-not-lexical}); it is interpreted only at step-dispatch time, and only inside a recipe body. A bare `@` outside a recipe body is a top-level parse error under §{toplevel.ordering}.

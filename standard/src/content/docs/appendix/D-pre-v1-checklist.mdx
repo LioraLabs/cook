@@ -52,7 +52,7 @@ sidebar:
 
 **Tension.** Each `recipe` and `config` block must close with an explicit `end` line. The closing keyword is ceremony — every author writes it without thinking, and the parser has no need for it that couldn't be served by "next top-level construct or EOF." A Cookfile with ten recipes has ten lines that exist only to satisfy the grammar.
 
-**Status quo.** §{recipes} (recipes) requires `end` at the close of every `recipe` body; §{grammar.config-blocks} requires it for `config` blocks. App. A.3 enumerates `end` in the recipe production. The lexer produces `Token::RecipeEnd` for column-0 `end` lines; the parser consumes one per body.
+**Status quo.** §{recipes} (recipes) requires `end` at the close of every `recipe` body; §{decl.config} requires it for `config` blocks. App. A.3 enumerates `end` in the recipe production. The lexer produces `Token::RecipeEnd` for column-0 `end` lines; the parser consumes one per body.
 
 **Constraints.** The brace-block-as-opaque-source-lines model already cleanly separates Lua- and shell-block boundaries from recipe boundaries — a `recipe` keyword appearing inside a Lua block's source is never seen by the recipe-body parser, because the brace-counter skips the token stream over the block. Implicit termination by next top-level keyword does not interfere with embedded blocks. The lexer currently classifies `recipe`/`config`/`use`/`import` keywords on the trimmed line content (any indentation), which would let an indented `recipe foo` silently close an outer recipe under the new rule. Tightening the lexer to require column 0 for those keywords is part of the resolution.
 
@@ -62,11 +62,11 @@ sidebar:
 
 **Status.** Resolved in v0.4 by [CS-0018](E-changes#changes-cs-0018).
 
-**Tension.** §{grammar.recipe-syntax} normatively defines two recipe header shapes: explicit (`recipe NAME [: deps]`) and implicit (`NAME : deps`). The implicit form has zero usage in `examples/` or `standard/conformance/`; every Cookfile in the project uses the explicit form. App. B.3.7 rationalises only the form's column-0 anchor — the only published rationale is defensive ("here is how we keep it from causing trouble"). An accidental `name: value` at column 0 silently parses as a recipe named `name` with dep `value`, with no diagnostic.
+**Tension.** §{recipes.header-forms} normatively defines two recipe header shapes: explicit (`recipe NAME [: deps]`) and implicit (`NAME : deps`). The implicit form has zero usage in `examples/` or `standard/conformance/`; every Cookfile in the project uses the explicit form. App. B.3.7 rationalises only the form's column-0 anchor — the only published rationale is defensive ("here is how we keep it from causing trouble"). An accidental `name: value` at column 0 silently parses as a recipe named `name` with dep `value`, with no diagnostic.
 
 **Status quo.** Both forms accepted, six parser tests pin the implicit form (three in `cli/crates/cook-lang/src/tests.rs`, three in `cli/crates/cook-lang/src/lexer.rs`), and App. A.3 lists both productions.
 
-**Possible resolution.** Drop the implicit form. §{grammar.recipe-syntax} collapses to one shape; App. A.3's `recipe_header` becomes `"recipe" name (":" dependency_list)?`; App. B.3.7 is deleted; six implicit-form parser tests are removed; one new negative conformance case under `standard/conformance/negative/` asserts that `name: deps` at column 0 is rejected (becomes `Token::Content` and falls into "unexpected content outside of a recipe"). No corpus migration is required because the form is unused.
+**Possible resolution.** Drop the implicit form. §{recipes.header-forms} collapses to one shape; App. A.3's `recipe_header` becomes `"recipe" name (":" dependency_list)?`; App. B.3.7 is deleted; six implicit-form parser tests are removed; one new negative conformance case under `standard/conformance/negative/` asserts that `name: deps` at column 0 is rejected (becomes `Token::Content` and falls into "unexpected content outside of a recipe"). No corpus migration is required because the form is unused.
 
 **Composability.** Removes the typo vector and lets a future E.5 ("drop `end`") change rely on top-level keywords as the unambiguous block-boundary signal. The two are independent but compose well in either order; bundling them in a single cut is reasonable.
 
@@ -76,7 +76,7 @@ sidebar:
 
 **Tension.** Cook's keyword surface conflates two operationally distinct things: build targets (cached, ingredient-driven, output-producing) and command runners (uncached, sequence-of-shell-commands, no artifacts). Both are written as `recipe NAME ... end`, so a reader can't tell from the header what a thing actually does. In this project's own top-level `Cookfile`, only three of fifteen recipes use cook-step machinery (`ts-generate`, `ts-wasm`, `nvim-install`); the other twelve are pure command runners. The example projects show the same split: `recipe play` in `examples/fzf-picker/Cookfile` is all-interactive task work; `recipe clean` in every example is `rm -rf` with no cook step. The conflation also hurts diagnostics — `cook "out" using "..."` inside a recipe-the-author-meant-as-a-task silently allocates a phantom build artifact and caches it on first run, with no signal that the author had something else in mind.
 
-**Status quo.** Authors hand-mark interactivity per shell line via the `@`-prefix (§{recipes.shell-steps}) and rely on convention to distinguish task-shaped recipes from build-shaped ones. The engine treats both identically; caching is implicit on the presence of a `cook` step.
+**Status quo.** Authors hand-mark interactivity per shell line via the `@`-prefix (§{steps.shell}) and rely on convention to distinguish task-shaped recipes from build-shaped ones. The engine treats both identically; caching is implicit on the presence of a `cook` step.
 
 **Possible resolution.** Introduce a new top-level construct, `chore NAME [: deps] ... end` (or, post-E.5, `chore NAME [: deps] ... &lt;until-next-top-level&gt;`), as a thin specialization of `recipe`:
 
@@ -98,7 +98,7 @@ The keyword choice is a deliberate departure from Cook's culinary metaphor (reci
 
 **Status.** Fully resolved in v0.7 by [CS-0033](E-changes#changes-cs-0033) alongside the migration to `$<TOKEN>` sigil syntax.
 
-**Original symptom.** §{lua.shell-placeholders} normatively asserts that "every bare `shell_command` is a **shell text**" subject to the chapter's placeholder substitution. Inside a `recipe` body, a `plate` shell-block body, or a `cook using { … }` body the substitution fired correctly. Inside a `chore` body it did not — a `{TOKEN}` placeholder was emitted into the recorded unit's `command` payload verbatim, and the unit failed at execute time when the shell tried to resolve a literal `{TOKEN}` as a command word.
+**Original symptom.** §{phl.cook-step} normatively asserts that "every bare `shell_command` is a **shell text**" subject to the chapter's placeholder substitution. Inside a `recipe` body, a `plate` shell-block body, or a `cook using { … }` body the substitution fired correctly. Inside a `chore` body it did not — a `{TOKEN}` placeholder was emitted into the recorded unit's `command` payload verbatim, and the unit failed at execute time when the shell tried to resolve a literal `{TOKEN}` as a command word.
 
 **Repro (historical).** With cook-lang 0.1.0 (claiming Cook Standard v0.5):
 
@@ -120,13 +120,13 @@ cook.recipe("devices", {}, function()
 end)
 ```
 
-**Resolution.** The v0.7 sigil-placeholder change ([CS-0033](E-changes#changes-cs-0033)) replaced the `{TOKEN}` template layer with a strict `$<IDENT>` sigil scanner (§{lua.shell-placeholders}) applied uniformly across all four shell-text contexts: `cook using { … }` bodies, `plate` bodies, `test` bodies, and bare `shell_command` steps in both recipe and chore bodies. The chore-body codegen now applies the same sigil-expansion pass on every shell line, emitting `cook.require_env("ADB")` for `$<ADB>` rather than passing the literal through. Spec and implementation now agree.
+**Resolution.** The v0.7 sigil-placeholder change ([CS-0033](E-changes#changes-cs-0033)) replaced the `{TOKEN}` template layer with a strict `$<IDENT>` sigil scanner (§{phl.cook-step}) applied uniformly across all four shell-text contexts: `cook using { … }` bodies, `plate` bodies, `test` bodies, and bare `shell_command` steps in both recipe and chore bodies. The chore-body codegen now applies the same sigil-expansion pass on every shell line, emitting `cook.require_env("ADB")` for `$<ADB>` rather than passing the literal through. Spec and implementation now agree.
 
 **Found in.** Real-world Cookfile for the `glovemap` Android key-mapper project (`~/dotfiles/android/glovemap/Cookfile`), which exercises plate's three iteration modes for adb-deploy and tripped on this when it tried to use `$<ADB>` and `$<PACKAGE>` env placeholders in chore bodies for `devices` / `logs` / `uninstall`.
 
 ## D.9. No multi-line continuation for `ingredients` lists [#pre-v1.multi-line-ingredients]
 
-**Tension.** §{recipes.ingredients} requires every ingredient on a single `ingredients` line: a recipe body MAY contain at most one `ingredients_step`, and the line itself accepts a sequence of space-separated quoted items but no escape for line continuation. There is no whitespace-tolerant alternative shape.
+**Tension.** §{steps.ingredients} requires every ingredient on a single `ingredients` line: a recipe body MAY contain at most one `ingredients_step`, and the line itself accepts a sequence of space-separated quoted items but no escape for line continuation. There is no whitespace-tolerant alternative shape.
 
 **Symptom.** Recipes whose input set spans many globs grow horizontally without bound. A real Cookfile that builds an Android APK depends on Kotlin sources, the manifest, the resource tree, and three build-script files — seven globs producing a 200+ character `ingredients` line:
 
@@ -135,14 +135,14 @@ recipe debug-apk
     ingredients "app/src/**/*.kt" "app/src/main/AndroidManifest.xml" "app/src/main/res/**/*" "app/build.gradle.kts" "build.gradle.kts" "settings.gradle.kts" "gradle.properties"
 ```
 
-The natural reflex is `\`-continuation, which the lexer rejects (the trailing `\` is consumed as part of the preceding STRING or as a `Token::Content` byte). The natural fallback is two `ingredients` lines, which §{recipes.ingredients}'s at-most-one rule rejects with a diagnostic that points at the second line.
+The natural reflex is `\`-continuation, which the lexer rejects (the trailing `\` is consumed as part of the preceding STRING or as a `Token::Content` byte). The natural fallback is two `ingredients` lines, which §{steps.ingredients}'s at-most-one rule rejects with a diagnostic that points at the second line.
 
 **Status quo.** Authors either accept long lines or split the recipe (which is wrong, since the multiple recipes share an output). The line-length friction makes diffs noisier than they need to be — a one-glob-added change re-wraps the entire line in editor displays and shows up as a whole-line replacement in `git diff`.
 
 **Possible resolutions.** Three options, increasing in scope:
 
 1. **Accept `\` line continuation on `ingredients` lines.** Smallest change. Lexer rule: when an `ingredients_step` line ends with `\` and a newline, fold the next line into the current line for purposes of step parsing. Diagnostic for `\`-then-non-newline is unchanged. Conformance impact: one positive fixture exercising a multi-line continuation. App. A grammar gains a footnote on the `ingredients_step` production. This option matches widespread shell convention and is unsurprising.
-2. **Accept a bracketed list form.** `ingredients [ "a" "b" "c" ]` with whitespace (including newlines) freely admitted between items inside the brackets. Cleaner than `\`-continuation and consistent with "every block-shaped surface in cook uses delimiters" (`{}` for shell/Lua bodies). Spec impact is larger: a new ingredient-list shape in App. A.5, two new conformance fixtures (positive: bracketed list; negative: bracketed list mixed with the bare-string form on the same line), and §{recipes.ingredients} grows a paragraph.
+2. **Accept a bracketed list form.** `ingredients [ "a" "b" "c" ]` with whitespace (including newlines) freely admitted between items inside the brackets. Cleaner than `\`-continuation and consistent with "every block-shaped surface in cook uses delimiters" (`{}` for shell/Lua bodies). Spec impact is larger: a new ingredient-list shape in App. A.5, two new conformance fixtures (positive: bracketed list; negative: bracketed list mixed with the bare-string form on the same line), and §{steps.ingredients} grows a paragraph.
 3. **Lift the at-most-one-ingredients rule.** Allow a recipe body to contain multiple `ingredients` lines whose effects union (with the existing exclude semantics applying across all of them). Smallest *spec* change in word count, but contradicts the existing rule's intent (the at-most-one rule was presumably chosen for diagnostic clarity — "the input set lives on this one line"). This option is the least preferred of the three.
 
 Option 1 is the least disruptive to existing Cookfiles and matches the muscle memory of every author who has used Make, shell, or Python. Option 2 is the most consistent with cook's overall "blocks have delimiters" aesthetic. Option 3 should be skipped unless options 1 and 2 are both rejected for other reasons.

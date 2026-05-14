@@ -7,34 +7,68 @@ import standardVersion from '../../../VERSION?raw';
 
 # The Cook Standard
 
-**Version:** v{standardVersion.trim()} (head-of-main; see [App. D Versions index](/appendix/d-changes/#versions)).
+**Version:** v{standardVersion.trim()} (head-of-main; see [App. E Versions index](/appendix/e-changes/#versions)).
 **Status:** Draft — pre-1.0, head-of-main lockstep.
 **Source of truth:** the Rust parser in `cli/crates/cook-lang/`.
 
 The Cook Standard is the authoritative specification of the Cookfile language. It is maintained in lockstep with the `main` branch: any change that affects language surface MUST be reflected in the Standard in the same commit that changes the implementation.
 
-The Standard is a living document. Chapters 0–8 and Appendix A are fully written. Amendments to any section MUST follow the spec-first rule in `CONTRIBUTING.md` and add a `CS-NNNN` entry to `D-changes.mdx`.
+The Standard is a living document organised into four Parts plus front matter and annexes. Amendments to any section MUST follow the spec-first rule in `CONTRIBUTING.md` and add a `CS-NNNN` entry to `E-changes.mdx`.
 
 ## Table of contents
 
-### Normative
+### Front matter
 
 - [§{intro} — Introduction](/00-introduction/)
-- [§{notation} — Notation and conventions](/01-notation/)
-- [§{lexical} — Lexical structure](/02-lexical/)
-- [§{grammar} — Syntactic grammar](/03-syntactic-grammar/)
-- [§{recipes} — Recipes and step kinds](/04-recipes/)
-- [§{xref} — Cross-recipe references](/05-cross-recipe-references/)
-- [§{lua} — Cook Lua API](/06-cook-lua-api/)
-- [§{modules} — Cross-Cookfile composition](/07-cross-cookfile-composition/)
-- [§{exec} — Execution model](/08-execution-model/)
+- [§{conf} — Conformance](/01-conformance/)
+- [§{notation} — Notation and conventions](/02-notation/)
+
+### Part I — The Cookfile language
+
+- [§{lexical} — Lexical structure](/03-lexical/)
+- [§{toplevel} — Top-level structure](/04-toplevel/)
+- [§{decl} — Declarations](/05-declarations/)
+- [§{recipes} — Recipes](/06-recipes/)
+- [§{chores} — Chores](/07-chores/)
+- [§{steps} — Step kinds](/08-step-kinds/)
+- [§{phl} — Placeholders](/09-placeholders/)
+- [§{xref} — Cross-recipe references](/10-cross-recipe-references/)
+- [§{comp} — Cross-Cookfile composition](/11-cross-cookfile-composition/)
+- [§{mods} — Modules](/12-modules/)
+
+### Part II — Execution model
+
+- [§{exec.phases} — Two-phase model](/13-two-phase/)
+- [§{exec.capture} — Capture mode](/14-capture-mode/)
+- [§{exec.groups} — Step groups](/15-step-groups/)
+- [§{exec.ord} — Cross-recipe ordering and drain](/16-ordering-drain/)
+- [§{exec.cache} — Cache semantics](/17-cache/)
+- [§{exec.mat} — Output materialisation](/18-output-materialisation/)
+- [§{exec.diag} — Diagnostic ordering](/19-diagnostics/)
+- [§{exec.ws} — Workspace root](/20-workspace/)
+
+### Part III — The Cook Lua API
+
+- [§{lua} — API surface overview](/21-lua-api/)
+- [§{lua.reg} — Register-phase API](/22-register-phase/)
+- [§{lua.exe} — Execute-phase API](/23-execute-phase/)
+- [§{lua.both} — Both-phase API](/24-both-phase/)
+- [§{lua.fs} — `fs.*` (incl. sandbox)](/25-fs/)
+- [§{lua.path} — `path.*`](/26-path/)
+
+### Part IV — Standard module catalogue
+
+- [§{cat} — Catalogue governance](/27-catalogue/)
+- [§{cat.cc} — `cc` — C-family build module](/28-cc/)
+
+### Annexes
+
 - [App. A — Grammar](/appendix/a-grammar/)
-
-### Informative
-
-- [App. B — Rationale](/appendix/b-rationale/)
-- [App. C — Worked examples](/appendix/c-examples/)
-- [App. D — Changes](/appendix/d-changes/)
+- [App. B — Worked examples](/appendix/b-examples/)
+- [App. C — Rationale](/appendix/c-rationale/)
+- [App. D — Pre-1.0 checklist](/appendix/d-pre-v1-checklist/)
+- [App. E — Changes](/appendix/e-changes/)
+- [App. F — Conformance corpus](/appendix/f-corpus/)
 
 ### Conformance
 
@@ -46,7 +80,7 @@ The Standard is a living document. Chapters 0–8 and Appendix A are fully writt
 See `CONTRIBUTING.md` at the repo root. In brief:
 
 1. Any PR affecting Cookfile surface syntax, execution semantics, the Cook Lua API, or the module system MUST update `standard/` in the same PR.
-2. Add one entry to [`D-changes.mdx`](/appendix/d-changes/) with a new stable `CS-NNNN` ID.
+2. Add one entry to [`E-changes.mdx`](/appendix/e-changes/) with a new stable `CS-NNNN` ID.
 3. If the grammar changes, update [`A-grammar.mdx`](/appendix/a-grammar/).
 4. If the change is observable from a Cookfile, add at least one case to `conformance/positive/` or `conformance/negative/`.
 
@@ -58,4 +92,4 @@ git config core.hooksPath .githooks
 
 ## Reading order
 
-First-time readers: read §{intro} and §{notation}, then the chapter relevant to the construct in question; Appendix A is the formal grammar reference. Skim App. C for worked examples and App. B for design rationale.
+First-time readers: read §{intro}, §{conf}, and §{notation}, then the chapter relevant to the construct in question; Appendix A is the formal grammar reference. Skim App. B for worked examples and App. C for design rationale.

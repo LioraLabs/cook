@@ -13,12 +13,12 @@ The Cook Standard is the authoritative specification of the Cookfile language. I
 The Standard covers the full language surface a Cookfile author can use:
 
 - Lexical structure (tokens, lines, prefixes). See §{lexical}.
-- Syntactic grammar (productions, ordering). See §{grammar} and App. A.
-- Recipe structure and step kinds. See §{recipes}.
+- Top-level structure, declarations, and the syntactic grammar (productions, ordering). See §{toplevel}, §{decl}, and App. A.
+- Recipe structure and step kinds. See §{recipes} and §{steps}.
 - Cross-recipe references (name references, path accessors, dep-driven iteration, string substitution). See §{xref}.
 - The Cook Lua API exposed in `>` / `>{ ... }` / `using >{ ... }` contexts, including the `use` declaration. See §{lua}.
-- Cross-Cookfile composition (`import`, qualified references, `cook_modules/` resolution). See §{modules}.
-- Execution semantics (register phase, execute phase, step groups, cross-recipe ordering, cache semantics). See §{exec}.
+- Cross-Cookfile composition (`import`, qualified references, `cook_modules/` resolution). See §{comp} and §{mods}.
+- Execution semantics (register phase, execute phase, step groups, cross-recipe ordering, cache semantics). See §{exec.phases}.
 
 ## 0.3. Non-scope [#intro.non-scope]
 The Standard does NOT cover:

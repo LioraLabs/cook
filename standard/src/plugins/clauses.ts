@@ -21,16 +21,23 @@ const SLUG_SHAPE_RE = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$/;
 //   Note <NUM> — <TITLE> [#<slug>]            ← note form (em-dash separator)
 // where NUM is a digit run (optionally followed by a single lowercase letter,
 // e.g. "4a" for interstitial chapters), or a single uppercase letter (appendix),
-// with an optional .M[.K] numeric sub-number. TITLE is any run up to the [#,
-// and slug matches SLUG_SHAPE_RE.
+// with an optional .M[.K[.J]] numeric sub-number. TITLE is any run up to the
+// [#, and slug matches SLUG_SHAPE_RE.
+//
+// Four-level depth (M.K.J) is permitted for legacy catalogue modules whose
+// surface API was preserved verbatim in the v0.10 reorg (e.g. cmake-compat
+// sub-strategies inside `cat.cc`). See `plans/2026-05-13-standard-reorg-plan.md`
+// Task 8 / Issue A. Three levels remain the norm everywhere else.
+//
 // Capture groups:
 //   1 = top   (digit run + optional letter, or single uppercase letter)
 //   2 = mid   (digits, optional)
 //   3 = bot   (digits, optional)
-//   4 = title (non-greedy)
-//   5 = slug  (chapter.leaf grammar — one or more dotted segments)
+//   4 = sub   (digits, optional — 4th depth, legacy modules only)
+//   5 = title (non-greedy)
+//   6 = slug  (chapter.leaf grammar — one or more dotted segments)
 const HEADING_RE =
-  /^(?:#+)\s+(?:Note\s+)?([0-9]+[a-z]?|[A-Z])(?:\.([0-9]+)(?:\.([0-9]+))?)?(?:\.|\s+—)\s+(.+?)\s+\[#([a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*)\]\s*$/gm;
+  /^(?:#+)\s+(?:Note\s+)?([0-9]+[a-z]?|[A-Z])(?:\.([0-9]+)(?:\.([0-9]+)(?:\.([0-9]+))?)?)?(?:\.|\s+—)\s+(.+?)\s+\[#([a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*)\]\s*$/gm;
 
 // Matches any clause-numbered heading line regardless of whether it has a marker.
 // Capture group 1 = everything after the number-and-period prefix.
@@ -41,14 +48,21 @@ const HEADING_RE =
 // expository asides. The harvester (HEADING_RE above) DOES match the note
 // form when a slug marker is present, so notes that need to be xref'd can
 // opt in by adding [#slug].
+//
+// Allows 4 levels of depth (M.K.J) for parity with HEADING_RE.
 const NUMBERED_HEADING_RE =
-  /^#+\s+(?:[0-9]+[a-z]?|[A-Z])(?:\.[0-9]+(?:\.[0-9]+)?)?\.\s+(.+)$/gm;
+  /^#+\s+(?:[0-9]+[a-z]?|[A-Z])(?:\.[0-9]+(?:\.[0-9]+(?:\.[0-9]+)?)?)?\.\s+(.+)$/gm;
 
 // Matches a trailing [#<anything>] marker (present but possibly invalid slug).
 const MARKER_PRESENT_RE = /\[#([^\]]+)\]\s*$/;
 
-function numberFrom(top: string, mid?: string, bot?: string): string {
-  return [top, mid, bot].filter(Boolean).join('.');
+function numberFrom(
+  top: string,
+  mid?: string,
+  bot?: string,
+  sub?: string,
+): string {
+  return [top, mid, bot, sub].filter(Boolean).join('.');
 }
 
 // Starlight lowercases file slugs. `02-lexical.mdx` → `/02-lexical/`;
@@ -98,8 +112,8 @@ function harvestSluggedHeadings(
     const src = stripFencedCode(fs.readFileSync(abs, 'utf8'));
 
     for (const m of src.matchAll(HEADING_RE)) {
-      const [, top, mid, bot, title, slug] = m;
-      const number = numberFrom(top, mid, bot);
+      const [, top, mid, bot, sub, title, slug] = m;
+      const number = numberFrom(top, mid, bot, sub);
       if (seenAt.has(slug)) {
         // During v0.10 transition: warn rather than throw on duplicate slugs.
         // New chapter files (per the v0.10 reorg) coexist with legacy files

@@ -13,7 +13,7 @@ The Cook runtime executes Lua code in two disjoint phases:
 
 Every function defined in this Part is classified as **register-phase only**, **execute-phase only**, or **both phases**. A conforming implementation MUST install a function in each of the phases indicated here, and MUST NOT silently install a register-phase-only function in the execute phase (or vice versa) — a Cookfile that calls a function in the wrong phase MUST observe either the documented behaviour for that phase or a Lua runtime error.
 
-Code encountered via `> expr` (§{recipes.lua-steps}), `>{ ... }` (§{lexical.brace-blocks}, §{recipes.lua-steps}), `using >{ ... }` (§{recipes.cook-single-output}, §{recipes.cook-multi-output}), module bodies (§{mods.use}), and `config` blocks (§{decl.config}) runs with this API in scope.
+Code encountered via `> expr` (§{steps.lua}), `>{ ... }` (§{lexical.brace-blocks}, §{steps.lua}), `using >{ ... }` (§{steps.cook-single}, §{steps.cook-multi}), module bodies (§{mods.use}), and `config` blocks (§{decl.config}) runs with this API in scope.
 
 ## 21.1. API surface overview [#lua.api-overview]
 A conforming implementation MUST install the following top-level Lua globals before any Cookfile-derived Lua code runs:
@@ -36,7 +36,7 @@ The `cook` table carries recipe registration, work-unit registration, shell help
 During the register phase, and only within the body of the Lua function registered by `cook.recipe(...)` (§{mods}), the `recipe` global is bound to a table with the following fields:
 
 - `recipe.name` — string; the declared recipe name (§{recipes.header-forms}).
-- `recipe.ingredients` — a sequence (1-indexed Lua table) of ingredient groups. `recipe.ingredients[i]` is itself a sequence of relative file paths resolved from the `i`-th `ingredients` glob pattern, minus any entries matching an exclude pattern (§{recipes.ingredients}).
+- `recipe.ingredients` — a sequence (1-indexed Lua table) of ingredient groups. `recipe.ingredients[i]` is itself a sequence of relative file paths resolved from the `i`-th `ingredients` glob pattern, minus any entries matching an exclude pattern (§{steps.ingredients}).
 
 A conforming implementation MUST NOT expose the `recipe` global during the execute phase; it is a register-phase artefact.
 

@@ -18,22 +18,35 @@ const retired = Object.keys(SLUG_RENAMES);
 const REF_RE = /§\{([a-z][a-z0-9.\-]*)\}/g;
 const ANCHOR_RE = /\[#([a-z][a-z0-9.\-]*)\]/g;
 
+// Historical-content files legitimately reference retired slugs by name —
+// the Rationale appendix discusses prior content under its old slug, and
+// the Changes appendix records the rename in CS entries. These are exempt
+// from the source-lint; the rename registry will still route any rendered
+// links via `[slug-renames]` (informational, not fatal).
+const HISTORICAL_FILES = new Set([
+  'appendix/C-rationale.mdx',
+  'appendix/E-changes.mdx',
+]);
+
+function relFromContentRoot(file: string): string {
+  return path.relative(CONTENT_ROOT, file).split(path.sep).join('/');
+}
+
 describe('source files contain no retired slugs', () => {
-  // Tasks 3–7 leave retired refs in untouched source files. Task 8 deletes
-  // those files and flips this test to active. Until then, this test is
-  // skipped to avoid blocking intermediate commits.
-  it.skip('no §{retired-slug} in any rendered source', () => {
+  it('no §{retired-slug} in any rendered source', () => {
     const offences: string[] = [];
     for (const file of walkMdx(CONTENT_ROOT)) {
+      const rel = relFromContentRoot(file);
+      if (HISTORICAL_FILES.has(rel)) continue;
       const text = fs.readFileSync(file, 'utf8');
       for (const match of text.matchAll(REF_RE)) {
         if (retired.includes(match[1])) {
-          offences.push(`${file}: §{${match[1]}}`);
+          offences.push(`${rel}: §{${match[1]}}`);
         }
       }
       for (const match of text.matchAll(ANCHOR_RE)) {
         if (retired.includes(match[1])) {
-          offences.push(`${file}: [#${match[1]}]`);
+          offences.push(`${rel}: [#${match[1]}]`);
         }
       }
     }

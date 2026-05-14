@@ -65,18 +65,18 @@ The `"make"` discovery format is the Make rule format produced by GCC's `-MMD` f
 
 ## 17.4. Test-unit caching [#exec.cache.test-unit]
 
-A conforming implementation MAY cache the result of a `test_step` unit (§{recipes.test-step}). When caching is implemented, the following rules MUST hold.
+A conforming implementation MAY cache the result of a `test_step` unit (§{steps.test}). When caching is implemented, the following rules MUST hold.
 
 1. **Cache key inputs.** A test unit's cache key MUST be a content-addressed digest derived from at least the following inputs:
-   - The unit's substituted command text. For shell-block tests this is the command string after sigil-placeholder substitution (§{lua.shell-placeholders-plate-test}); for Lua-block tests this is the Lua source body string with bindings resolved per §{lua.using-block-globals-plate-test}.
-   - The content fingerprints of every cook-step output the test consumes via §{recipes.iteration-mode-plate-test} source-list flattening.
+   - The unit's substituted command text. For shell-block tests this is the command string after sigil-placeholder substitution (§{phl.plate-test}); for Lua-block tests this is the Lua source body string with bindings resolved per §{lua.using-block-globals-plate-test}.
+   - The content fingerprints of every cook-step output the test consumes via §{steps.iteration-mode-plate-test} source-list flattening.
    - The content fingerprints of every recipe output the test references via `cook.dep_output(NAME)` or `$<NAME>` cross-recipe substitution (§{xref.string-substitution}).
    - The deterministic env-key set as filtered through the implementation's `EnvDenylist` (the existing fingerprint mechanism for cook units per §{exec.cache.abstract}).
    - The tool-binary hash set per §{exec.cache.tool-binary}.
    - The `timeout` modifier value.
    - The `should_fail` modifier value.
 
-   The cache key MUST NOT include the test's display name (§{recipes.test-step}), the `suite` field (§{lua.cook-add-test}), the recipe name, or the step's source position. Renaming a test, moving it within a recipe, or moving a recipe between Cookfiles MUST NOT bust its cache.
+   The cache key MUST NOT include the test's display name (§{steps.test}), the `suite` field (§{lua.cook-add-test}), the recipe name, or the step's source position. Renaming a test, moving it within a recipe, or moving a recipe between Cookfiles MUST NOT bust its cache.
 
 2. **Recordable outcomes.** A conforming implementation MAY record a test result for replay only when the unit's outcome is **passed**. A test is **passed** when:
    - The body's exit status is success and `should_fail` is false; or

@@ -11,6 +11,7 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   // null means: retired with no replacement (already removed from the
   // language by a prior CS entry).
 
+  'exec':                            'exec.phases',
   'grammar':                         'toplevel.overview',
   'grammar.overview':                'toplevel.overview',
   'grammar.top-level-ordering':      'toplevel.ordering',
@@ -66,11 +67,32 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   'lexical.placeholders':            'phl.token',
 
   'recipes.body-bundling':           'exec.body-bundling',
+  'recipes.termination':             'toplevel.termination',
 
   'exec.phase-classification':       'exec.phases.classification',
 
   'lua.shell-placeholders':            'phl.cook-step',
   'lua.shell-placeholders-plate-test': 'phl.plate-test',
+
+  'lua.use-env':                     'mods.use',
+  'lua.builtin-modules':             'mods.builtin',
+  'lua.local-modules':               'mods.local',
+
+  // Chapter 4 (legacy "Recipes and step kinds") split into Ch. 6 (recipe header)
+  // and Ch. 8 (step kinds) in the v0.10 reorg. Slugs that lived on step bodies
+  // moved with them.
+  'recipes.cook-single-output':      'steps.cook-single',
+  'recipes.cook-multi-output':       'steps.cook-multi',
+  'recipes.plate-step':              'steps.plate',
+  'recipes.test-step':               'steps.test',
+  'recipes.lua-steps':               'steps.lua',
+  'recipes.shell-steps':             'steps.shell',
+  'recipes.module-call-steps':       'toplevel.module-call',
+  'recipes.ingredients':             'steps.ingredients',
+  'recipes.step-kinds':              'steps.overview',
+  'recipes.iteration-mode-plate-test':'steps.iteration-mode-plate-test',
+  'recipes.iteration-mode':          'steps.iteration-mode',
+  'recipes.plate-step-not-sandboxed':'steps.plate',
 
   'intro.conformance':               'conf.criteria',
 };

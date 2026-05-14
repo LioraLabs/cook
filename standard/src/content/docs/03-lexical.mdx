@@ -29,7 +29,7 @@ The token classes produced by the lexer are:
 | `ConfigHeader`         | Line `config` or `config` + name                                              | §{decl.config}      |
 | `UseDecl`              | Line `use` + name                                                             | §{decl.use}      |
 | `ImportDecl`           | Line `import` + `BARE_IDENTIFIER` + path                                      | §{decl.import}      |
-| `LuaLine`              | Line whose first non-whitespace characters are `>` (but not `>{`)             | §{lexical.line-prefixes}, §{recipes.lua-steps} |
+| `LuaLine`              | Line whose first non-whitespace characters are `>` (but not `>{`)             | §{lexical.line-prefixes}, §{steps.lua} |
 | `LuaBlockOpen`         | Line whose first non-whitespace characters are `>{`                           | §{lexical.line-prefixes}, §{lexical.brace-blocks} |
 | `Blank`                | Line containing only whitespace                                               | §{lexical.line-classification}     |
 | `Content`              | Any other line; its classification within a recipe body is deferred to §{steps.dispatch}  | §{steps.dispatch}      |
@@ -104,7 +104,7 @@ A `STRING` opens with `U+0022` (`"`), contains zero or more characters none of w
 
 The empty string `""` is a valid `STRING`. A double quote inside a `STRING` is not expressible in the current grammar; authors needing such content can use the inline-block forms of §{lexical.brace-blocks}, whose interior language (Lua or shell) has its own quoting rules.
 
-`STRING` appears in recipe and dependency names, in `ingredients`, `cook`, `plate`, and `test` steps, and in the optional name of a `config_block` header. In each of those roles, a conforming implementation parses the `STRING` inside the single line that produced the governing token. The `using_clause` (§{recipes.cook-single-output}) takes a brace-block form, not a `STRING`; the former single-string form of `using` was removed in CS-0022.
+`STRING` appears in recipe and dependency names, in `ingredients`, `cook`, `plate`, and `test` steps, and in the optional name of a `config_block` header. In each of those roles, a conforming implementation parses the `STRING` inside the single line that produced the governing token. The `using_clause` (§{steps.cook-single}) takes a brace-block form, not a `STRING`; the former single-string form of `using` was removed in CS-0022.
 
 ### Example 3.5.1
 
@@ -144,18 +144,18 @@ A **line prefix** is a character sequence that, when it appears as the first non
 
 | Prefix | Token produced            | Phase    | Defined in |
 |---|---|---|---|
-| `>>{`  | `InlineLuaBlockOpen`      | register | §{lexical.brace-blocks}, §{recipes.lua-steps} |
-| `>>`   | `InlineLuaLine`           | register | §{recipes.lua-steps} |
-| `>{`   | `LuaBlockOpen`            | execute  | §{lexical.brace-blocks}, §{recipes.lua-steps} |
-| `>`    | `LuaLine`                 | execute  | §{recipes.lua-steps} |
+| `>>{`  | `InlineLuaBlockOpen`      | register | §{lexical.brace-blocks}, §{steps.lua} |
+| `>>`   | `InlineLuaLine`           | register | §{steps.lua} |
+| `>{`   | `LuaBlockOpen`            | execute  | §{lexical.brace-blocks}, §{steps.lua} |
+| `>`    | `LuaLine`                 | execute  | §{steps.lua} |
 
 A conforming implementation MUST test these prefixes in **longest-prefix order**: `>>{` before `>>` before `>{` before `>`. Without this ordering, a `>>{` would be consumed as `>` followed by `>{`, and a `>>` would be consumed as `>` followed by `>`. A conforming implementation MUST apply these prefixes only after leading whitespace has been trimmed from the line; thus `    >>{` opens an inline Lua block identically to `>>{` at column zero.
 
 A run of three or more `>` characters at the start of a trimmed line — `>>>`, `>>>>`, etc. — is reserved and MUST be rejected with a parse error. The reservation keeps space for future prefixes without ambiguity.
 
-The phase column above is informative; the normative phase rule is in §{recipes.lua-steps} and §{exec.two-phase}. The single-`>` family is execute-phase; the doubled-`>` family is register-phase. See §{rationale.lua-prefix-split} for why the surface is split this way.
+The phase column above is informative; the normative phase rule is in §{steps.lua} and §{exec.two-phase}. The single-`>` family is execute-phase; the doubled-`>` family is register-phase. See §{rationale.lua-prefix-split} for why the surface is split this way.
 
-The `@` character is not a lexical prefix. A line whose first non-whitespace character is `@` produces a `Content` token whose string form includes the leading `@`. Its classification as `interactive_command` is made at step-dispatch time (§{steps.dispatch}, §{recipes.shell-steps}) and only inside a recipe body. Outside a recipe body, such a line remains a `Content` token, which the syntactic layer rejects because `Content` tokens are not valid at the top level (§{toplevel.ordering}).
+The `@` character is not a lexical prefix. A line whose first non-whitespace character is `@` produces a `Content` token whose string form includes the leading `@`. Its classification as `interactive_command` is made at step-dispatch time (§{steps.dispatch}, §{steps.shell}) and only inside a recipe body. Outside a recipe body, such a line remains a `Content` token, which the syntactic layer rejects because `Content` tokens are not valid at the top level (§{toplevel.ordering}).
 
 ### Example 3.7.1
 
@@ -173,11 +173,11 @@ recipe build
     gcc -o main main.c
 ```
 
-The `>>` line produces an `InlineLuaLine` token (register-phase). The `>>{` line produces an `InlineLuaBlockOpen` token (register-phase). The `>` line produces a `LuaLine` token (execute-phase). The `>{` line produces a `LuaBlockOpen` token (execute-phase). The `@vim …` and `gcc …` lines both produce `Content` tokens; the former dispatches to `interactive_command` in §{recipes.shell-steps}, the latter to `shell_command`.
+The `>>` line produces an `InlineLuaLine` token (register-phase). The `>>{` line produces an `InlineLuaBlockOpen` token (register-phase). The `>` line produces a `LuaLine` token (execute-phase). The `>{` line produces a `LuaBlockOpen` token (execute-phase). The `@vim …` and `gcc …` lines both produce `Content` tokens; the former dispatches to `interactive_command` in §{steps.shell}, the latter to `shell_command`.
 
 ### Note 3.7.1
 
-A `LuaLine` body MAY be empty: the line `>` alone produces a `LuaLine` whose body is the empty string. The same applies to `InlineLuaLine`: the line `>>` alone produces an `InlineLuaLine` whose body is the empty string. See §{recipes.lua-steps}.
+A `LuaLine` body MAY be empty: the line `>` alone produces a `LuaLine` whose body is the empty string. The same applies to `InlineLuaLine`: the line `>>` alone produces an `InlineLuaLine` whose body is the empty string. See §{steps.lua}.
 
 ## 3.8. Numbers [#lexical.numbers]
 A `NUMBER` token is a non-empty sequence of ASCII digits defined in App. A.5:
@@ -301,10 +301,10 @@ A **keyword separator** in tests 7–11 below is a space (`U+0020`), a tab (`U+0
 
 1. If the trimmed line is empty, the token is `Blank`.
 2. If the trimmed line's first character is `#`, the token is `Comment` (§{lexical.comments}).
-3. If the trimmed line begins with `>>{`, the token is `InlineLuaBlockOpen` (§{lexical.line-prefixes}, §{lexical.brace-blocks}, §{recipes.lua-steps}).
-4. If the trimmed line begins with `>>` (but not `>>{`, by test 3), the token is `InlineLuaLine` (§{lexical.line-prefixes}, §{recipes.lua-steps}).
-5. If the trimmed line begins with `>{`, the token is `LuaBlockOpen` (§{lexical.line-prefixes}, §{lexical.brace-blocks}, §{recipes.lua-steps}).
-6. If the trimmed line begins with `>` (but not `>>` by test 4 or `>{` by test 5), the token is `LuaLine` (§{lexical.line-prefixes}, §{recipes.lua-steps}).
+3. If the trimmed line begins with `>>{`, the token is `InlineLuaBlockOpen` (§{lexical.line-prefixes}, §{lexical.brace-blocks}, §{steps.lua}).
+4. If the trimmed line begins with `>>` (but not `>>{`, by test 3), the token is `InlineLuaLine` (§{lexical.line-prefixes}, §{steps.lua}).
+5. If the trimmed line begins with `>{`, the token is `LuaBlockOpen` (§{lexical.line-prefixes}, §{lexical.brace-blocks}, §{steps.lua}).
+6. If the trimmed line begins with `>` (but not `>>` by test 4 or `>{` by test 5), the token is `LuaLine` (§{lexical.line-prefixes}, §{steps.lua}).
 7. If the line begins at column 0 and the trimmed content begins with the keyword `recipe` followed by a keyword separator, the token is `RecipeHeader` (§{recipes.header-forms}). An indented line whose trimmed content begins with `recipe` falls through to test 12.
 8. If the line begins at column 0 and starts with `chore` followed by a separator (space, tab, or `"`), the token is `ChoreHeader`. The keyword separator rule of §{lexical.keywords} applies: `chores_cleanup` (no separator after `chore`) is not a `ChoreHeader`. (CS-0020 / v0.4.)
 9. If the line begins at column 0 and the trimmed content is exactly `config`, or begins with `config` followed by a keyword separator, the token is `ConfigHeader` (§{decl.config}). An indented line falls through to test 12.

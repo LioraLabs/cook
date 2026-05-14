@@ -58,8 +58,8 @@ A conforming implementation MUST accept a mix of `BARE_IDENTIFIER` and `STRING` 
 
 The dependency list is purely syntactic at parse time. The Standard requires only that:
 
-1. Each referenced recipe exists in the resolved Cookfile (itself, its `use` modules, or its `import` aliases). A conforming implementation MUST reject a Cookfile that references a non-existent recipe — this diagnostic MAY be deferred to the first resolution pass (§{exec}).
-2. The dependency graph is acyclic. A conforming implementation MUST reject a Cookfile whose dependency graph contains a cycle — this diagnostic MAY be deferred to DAG construction (§{exec}).
+1. Each referenced recipe exists in the resolved Cookfile (itself, its `use` modules, or its `import` aliases). A conforming implementation MUST reject a Cookfile that references a non-existent recipe — this diagnostic MAY be deferred to the first resolution pass (§{exec.phases}).
+2. The dependency graph is acyclic. A conforming implementation MUST reject a Cookfile whose dependency graph contains a cycle — this diagnostic MAY be deferred to DAG construction (§{exec.phases}).
 
 ### Example 6.2.1
 

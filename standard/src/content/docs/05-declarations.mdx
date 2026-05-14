@@ -96,7 +96,7 @@ A conforming implementation MUST report a load-time error when the selected name
 
 When a base config is present, its body MUST execute first against the Cook Lua API tables defined in §{lua} — including `cook.env` and any other mutable state those tables expose. When an overlay is selected, its body MUST execute second against the same tables. The overlay's writes therefore observe values established by the base; an overlay write to a key already set by the base replaces the base's value (last-write-wins). When no overlay is selected, only the base (if present) executes. When neither is present, no `config_block` Lua executes during the load phase.
 
-Both bodies execute during the load phase, after `use` resolution (§{mods.use}) and before recipe registration (§{exec}).
+Both bodies execute during the load phase, after `use` resolution (§{mods.use}) and before recipe registration (§{exec.phases}).
 
 #### Example 5.3.1.1
 
