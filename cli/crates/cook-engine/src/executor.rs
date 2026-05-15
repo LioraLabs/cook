@@ -1688,6 +1688,15 @@ pub fn execute_dag(
         pending -= 1;
         finished += 1;
 
+        // G3 (CS-0074): if this result carries a probe output, write it into
+        // the SharedProbeValueStore immediately so that consumer units
+        // dispatched after this point can read it via cook.cache.get (§22.5.7).
+        if let Some(ref probe_out) = result.probe_output {
+            let probe_store = pool.probe_value_store();
+            let mut store = probe_store.lock().unwrap();
+            store.insert(probe_out.key.clone(), probe_out.bytes.clone());
+        }
+
         let node = dag.node(result.id);
         let work_node = node.payload();
         let recipe_name = work_node.recipe_name.clone();
