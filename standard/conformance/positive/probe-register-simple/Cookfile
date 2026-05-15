@@ -1,0 +1,8 @@
+register
+    cook.probe("test:simple", {
+        inputs = { env = {"PATH"} },
+        produce = "return { found = true }",
+    })
+
+recipe build
+    > cook.sh("echo hello")

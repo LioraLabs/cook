@@ -49,6 +49,57 @@ fn case_dirs(sub: &str) -> Vec<PathBuf> {
 }
 
 #[test]
+fn register_positive_conformance_corpus() {
+    let mut failures: Vec<String> = Vec::new();
+    let mut cases_seen = 0usize;
+
+    for case in case_dirs("positive") {
+        let marker = case.join("register_ok.txt");
+        if !marker.exists() {
+            continue;
+        }
+        cases_seen += 1;
+
+        let name = case.file_name().unwrap().to_string_lossy().into_owned();
+        let input_path = case.join("Cookfile");
+        let input = fs::read_to_string(&input_path)
+            .unwrap_or_else(|e| panic!("read {}: {}", input_path.display(), e));
+
+        // Step 1: parse.
+        let cookfile = match parse(&input) {
+            Ok(c) => c,
+            Err(e) => {
+                failures.push(format!("case {}: parse failed: {}", name, e));
+                continue;
+            }
+        };
+
+        // Step 2: codegen.
+        let lua_source = generate(&cookfile);
+
+        // Step 3: register. Use the fixture directory as the working directory
+        // so any sibling files are visible to the register phase.
+        let registry = Registry::new(case.clone(), HashMap::new()).with_selected_config(None);
+        let recipe_name = match cookfile.recipes.first() {
+            Some(r) => r.name.clone(),
+            None => String::new(),
+        };
+
+        match registry.register_recipe(&lua_source, &recipe_name, None) {
+            Ok(_) => {}
+            Err(e) => failures.push(format!("case {}: register failed: {}", name, e)),
+        }
+    }
+
+    assert!(cases_seen > 0, "no register_ok fixtures found — check that register_ok.txt markers exist");
+    assert!(
+        failures.is_empty(),
+        "register-phase positive conformance failures:\n\n{}",
+        failures.join("\n"),
+    );
+}
+
+#[test]
 fn register_negative_conformance_corpus() {
     let mut failures: Vec<String> = Vec::new();
     let mut cases_seen = 0usize;
