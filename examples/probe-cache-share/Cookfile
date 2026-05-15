@@ -12,7 +12,7 @@ register
         inputs = {},
         outputs = {"build/probed.txt"},
         requires = {"demo:slow"},
-        command = "mkdir -p build && echo {{demo:slow.timestamp}} > build/probed.txt",
+        command = "mkdir -p build && echo $<demo:slow.timestamp> > build/probed.txt",
     })
 
 recipe build

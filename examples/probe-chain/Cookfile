@@ -22,7 +22,7 @@ register
         inputs = {},
         outputs = {"build/version.txt"},
         requires = {"demo:cc-version"},
-        command = "mkdir -p build && echo {{demo:cc-version.version}} > build/version.txt",
+        command = "mkdir -p build && echo $<demo:cc-version.version> > build/version.txt",
     })
 
 recipe build

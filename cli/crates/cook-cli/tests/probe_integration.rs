@@ -80,7 +80,7 @@ fn probe_consumer_end_to_end_first_run_then_cache_hit() {
     let tmp = TempDir::new().unwrap();
     let cookfile = r#"
 register
-    cook.probe("greet", {
+    cook.probe("test:greet", {
         inputs = {},
         produce = "return { word = \"hello-from-probe\" }",
     })
@@ -88,8 +88,8 @@ register
         name = "echo",
         inputs = {},
         outputs = {"done.marker"},
-        requires = {"greet"},
-        command = "echo {{greet.word}} > done.marker",
+        requires = {"test:greet"},
+        command = "echo $<test:greet.word> > done.marker",
     })
 
 recipe build

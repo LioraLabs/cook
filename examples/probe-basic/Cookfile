@@ -12,7 +12,7 @@ register
         inputs = {"main.c"},
         outputs = {"build/demo"},
         requires = {"demo:compiler"},
-        command = "{{demo:compiler.path}} main.c -o build/demo",
+        command = "$<demo:compiler.path> main.c -o build/demo",
     })
 
 recipe build

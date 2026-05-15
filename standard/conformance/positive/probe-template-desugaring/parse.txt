@@ -10,5 +10,5 @@ Cookfile
       steps:
         Lua code="cook.sh(\"true\")"
   chores:
-  register_blocks: [RegisterBlock body="    cook.probe(\"test:greet\", {\n        inputs = {},\n        produce = \"return { word = \\\"hello\\\" }\",\n    })\n    cook.add_unit({\n        name = \"echo\",\n        inputs = {},\n        outputs = {\"build/done.txt\"},\n        requires = {\"test:greet\"},\n        command = \"echo {{test:greet.word}} > build/done.txt\",\n    })" line=1]
+  register_blocks: [RegisterBlock body="    cook.probe(\"test:greet\", {\n        inputs = {},\n        produce = \"return { word = \\\"hello\\\" }\",\n    })\n    cook.add_unit({\n        name = \"echo\",\n        inputs = {},\n        outputs = {\"build/done.txt\"},\n        requires = {\"test:greet\"},\n        command = \"echo $<test:greet.word> > build/done.txt\",\n    })" line=1]
   top_level_module_calls: []

@@ -8,7 +8,7 @@ register
         inputs = {},
         outputs = {"build/done.txt"},
         requires = {"test:greet"},
-        command = "echo {{test:greet.word}} > build/done.txt",
+        command = "echo $<test:greet.word> > build/done.txt",
     })
 
 recipe build
