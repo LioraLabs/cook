@@ -65,19 +65,25 @@ The bare `env` inside the config body writes to `cook.env`; the keys `CC` and `C
 ### 24.4.1. `cook.cache.get` [#lua.cook-cache-get]
 **Signature.** `cook.cache.get(key: string) -> any`
 
-Returns the value previously stored under `key` via `cook.cache.set` (or `nil` if no value is stored). The value MUST round-trip through any serialisation the implementation uses for persistence; non-serialisable values (Lua functions, userdata, coroutines) MUST raise a Lua runtime error when passed to `cook.cache.set`.
+On the execute-phase VM, `cook.cache.get(key)` MUST read from the per-run probe-value store specified in §{cat.probes.exec}. The store is populated by completed probe units in topological order before any consuming unit dispatches. An unknown key returns `nil`. `cook.cache.set` is NOT available on the execute-phase VM (deprecated entirely per CS-0074).
+
+On the register-phase VM, `cook.cache.get(key)` returns the value previously stored under `key` via `cook.cache.set` (or `nil` if no value is stored). The value MUST round-trip through any serialisation the implementation uses for persistence; non-serialisable values (Lua functions, userdata, coroutines) MUST raise a Lua runtime error when passed to `cook.cache.set`.
 
 ### 24.4.2. `cook.cache.set` [#lua.cook-cache-set]
 **Signature.** `cook.cache.set(key: string, value: any) -> nil`
+
+> **Deprecated** (CS-0074, v0.11). Removed at v1.0. Use `cook.probe` (§{cat.probes}) for memoised values.
 
 Stores `value` under `key`. Subsequent `cook.cache.get(key)` returns `value` (or its deserialisation-equal counterpart).
 
 A register-phase write MUST be persisted by the implementation in a way that survives across Cook invocations: a register-phase `set` followed by a later register-phase `get` in a different Cook invocation MUST return the previously-stored value. The on-disk format is implementation-defined.
 
-An execute-phase write MAY be in-memory-only, scoped to the worker VM's lifetime; a conforming implementation MAY discard execute-phase writes between invocations. Modules that rely on cross-invocation persistence MUST perform the persistent writes from register phase.
+`cook.cache.set` is NOT available on the execute-phase VM; a conforming implementation MUST raise a Lua runtime error when `cook.cache.set` is called from execute-phase Lua.
 
 ### 24.4.3. `cook.cache.scope` [#lua.cook-cache-scope]
 **Signature.** `cook.cache.scope(label: string) -> table`
+
+> **Deprecated** (CS-0074, v0.11). Removed at v1.0. Use `cook.probe` (§{cat.probes}) for memoised values.
 
 Returns a "scoped" table view whose `get(key)` and `set(key, value)` operations are equivalent to `cook.cache.get(label .. ":" .. key)` and `cook.cache.set(label .. ":" .. key, value)` respectively. The label string MUST NOT contain the `:` character; a conforming implementation MUST raise a Lua runtime error on such a label.
 
