@@ -130,6 +130,61 @@ pub fn install_cook_probe(
     Ok(())
 }
 
+/// Three-color DFS state for cycle detection.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NodeState {
+    InProgress,
+    Done,
+}
+
+impl ProbeRegistry {
+    /// Detect cycles in the probe `requires` graph (§22.5.8).
+    ///
+    /// Returns `Ok(())` when the graph is acyclic, or `Err(msg)` with a
+    /// diagnostic of the form `"probe cycle detected: cc:a -> cc:b -> cc:a"`.
+    pub fn detect_cycles(&self) -> Result<(), String> {
+        let mut state: BTreeMap<&str, NodeState> = BTreeMap::new();
+        let mut stack: Vec<&str> = vec![];
+        for k in self.probes.keys() {
+            if !matches!(state.get(k.as_str()), Some(NodeState::Done)) {
+                self.dfs(k, &mut state, &mut stack)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn dfs<'a>(
+        &'a self,
+        node: &'a str,
+        state: &mut BTreeMap<&'a str, NodeState>,
+        stack: &mut Vec<&'a str>,
+    ) -> Result<(), String> {
+        state.insert(node, NodeState::InProgress);
+        stack.push(node);
+        if let Some(reg) = self.probes.get(node) {
+            for r in &reg.probe.inputs.requires {
+                match state.get(r.as_str()) {
+                    Some(NodeState::InProgress) => {
+                        // Cycle detected — trim stack to where `r` first appears.
+                        let start = stack.iter().position(|&n| n == r.as_str()).unwrap_or(0);
+                        let mut path: Vec<&str> = stack[start..].to_vec();
+                        path.push(r.as_str());
+                        return Err(format!(
+                            "probe cycle detected: {}",
+                            path.join(" -> ")
+                        ));
+                    }
+                    Some(NodeState::Done) => continue,
+                    None => self.dfs(r, state, stack)?,
+                }
+            }
+        }
+        stack.pop();
+        state.insert(node, NodeState::Done);
+        Ok(())
+    }
+}
+
 /// Read a named key from a Lua table as a `Vec<String>`.  Returns an empty
 /// `Vec` when the key is absent or `nil`.
 fn read_string_list(tbl: &LuaTable, key: &str) -> LuaResult<Vec<String>> {
