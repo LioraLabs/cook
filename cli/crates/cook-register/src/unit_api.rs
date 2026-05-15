@@ -354,6 +354,28 @@ pub fn register_unit_api(
             None
         };
 
+        // Parse opts.requires: optional list of probe-key strings (§{cat.probes.requires}).
+        let requires: Vec<String> = match tbl.get::<LuaValue>("requires") {
+            Ok(LuaValue::Nil) => vec![],
+            Ok(LuaValue::Table(t)) => {
+                let mut out = vec![];
+                for v in t.sequence_values::<String>() {
+                    out.push(v.map_err(|e| {
+                        LuaError::runtime(format!(
+                            "cook.add_unit: requires must be a list of strings: {e}"
+                        ))
+                    })?);
+                }
+                out
+            }
+            Ok(_) => {
+                return Err(LuaError::runtime(
+                    "cook.add_unit: requires must be a list of strings (or nil)".to_string(),
+                ));
+            }
+            Err(_) => vec![],
+        };
+
         // is_chore is read BEFORE the if/else below (and before the later
         // `cs.borrow_mut()`) so the borrow doesn't overlap with mutable use.
         let is_chore = cs.borrow().current_chore_active;
@@ -383,7 +405,7 @@ pub fn register_unit_api(
             payload,
             cache_meta,
             dep_kind: dep_kind.clone(),
-            requires: vec![],
+            requires,
         });
         if let DepKind::StepGroup(gi) = &dep_kind {
             state.step_groups[*gi].push(unit_idx);
@@ -1317,5 +1339,67 @@ mod tests {
             err.contains("build/artifacts"),
             "diagnostic must name the offending path; got: {err}"
         );
+    }
+
+    #[test]
+    fn add_unit_captures_requires_field() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "myapp.o",
+                inputs = { "myapp.c" },
+                outputs = { "build/myapp.o" },
+                requires = { "cc:zlib", "cc:compiler" },
+                command = "true",
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = capture_state.borrow();
+        let u = state.units.first().expect("one unit");
+        assert_eq!(u.requires, vec!["cc:zlib", "cc:compiler"]);
+    }
+
+    #[test]
+    fn add_unit_without_requires_defaults_to_empty() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                command = "echo hello",
+                cache = false,
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = capture_state.borrow();
+        let u = state.units.first().expect("one unit");
+        assert!(u.requires.is_empty());
+    }
+
+    #[test]
+    fn add_unit_requires_non_list_errors() {
+        let (lua, _capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        let result = lua.load(r#"
+            cook.add_unit({
+                command = "echo hello",
+                cache = false,
+                requires = "not-a-list",
+            })
+        "#).exec();
+
+        assert!(result.is_err(), "requires must be a list, not a string");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("requires"), "error must mention 'requires'; got: {err}");
     }
 }
