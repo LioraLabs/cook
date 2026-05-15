@@ -114,25 +114,27 @@ The relative order of `cook.probe` and `cook.add_unit` calls within one register
 
 ## 22.5.6. Command-template desugaring [#cat.probes.templates]
 
-Consumer unit commands MAY include `{{key}}`, `{{key.field}}`, and `{{key.field[i]}}` placeholders that refer to probe outputs whose keys appear in `requires`. A conforming implementation MUST detect these patterns at register time and rewrite the command into a Lua step that calls `cook.cache.get(key)` (§{lua.both}) and interpolates the result before invoking the shell. Implementations that perform this rewriting inside `cook.add_unit` (register-phase) rather than at a separate codegen phase are conformant.
+Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` placeholders that reference probe outputs declared in `requires`. The implementation MUST detect these placeholders during codegen (or register-time capture for direct `cook.add_unit` calls) and rewrite the command into a Lua step that calls `cook.cache.get(key)` (§{lua.both}) and interpolates the resolved value before invoking the shell.
+
+The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{lua.sigil}). A sigil whose IDENT contains a colon (`:`) is unambiguously a probe-value reference; the implementation MUST dispatch it to the cache-read path described here. A sigil whose IDENT contains no colon retains its existing register-time semantics (built-ins, recipe names, env vars).
 
 Substitution rules:
 
-- `{{key}}` substitutes the entire probe value, which MUST be a string. If the resolved value is not a string, the implementation MUST raise an execute-phase diagnostic.
-- `{{key.field}}` substitutes the named field of the probe's top-level table value. The resolved value MUST be a string or number; a non-string, non-number value MUST raise an execute-phase diagnostic.
-- `{{key.field[i]}}` substitutes a one-based integer index of a list-valued field. The index MUST be within the list bounds; an out-of-bounds index MUST raise an execute-phase diagnostic.
+- `$<key>` substitutes the entire probe value as a string. The value MUST be a string (or coercible via `tostring`).
+- `$<key.field>` substitutes a named field of the probe's table value.
+- `$<key.field[i]>` substitutes a one-based array element of a table-valued field.
 
-A placeholder referencing a key not present in `requires`, or accessing a field on a `nil` or non-table value, MUST raise a register-phase or execute-phase diagnostic naming the placeholder text.
+Malformed placeholders (referencing a key not in `requires`, or accessing a field on a non-table value) MUST raise a register-phase or execute-phase diagnostic naming the placeholder.
 
 ### Example 22.5.6.1
 
 ```lua
 cook.add_unit({
-  name    = "myapp.o",
-  inputs  = { "myapp.c" },
-  outputs = { "build/myapp.o" },
+  name     = "myapp.o",
+  inputs   = { "myapp.c" },
+  outputs  = { "build/myapp.o" },
   requires = { "cc:compiler", "cc:zlib" },
-  command  = "{{cc:compiler}} -c {{in}} -o {{out}} {{cc:zlib.cflags}}",
+  command  = "$<cc:compiler.path> -c $<in> -o $<out> $<cc:zlib.cflags>",
 })
 ```
 

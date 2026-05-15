@@ -1,13 +1,20 @@
-//! Strict `$<IDENT>` placeholder scanner per CS-0033 §3.1.
+//! Strict `$<IDENT>` placeholder scanner per CS-0033 §3.1 and CS-0074.
 //!
 //! A Cook placeholder in shell text matches exactly:
 //!   $<IDENT>
 //! where IDENT is one of:
-//!   bare_ident       := ALPHA (ALPHA | DIGIT | "_" | ".")*
+//!   bare_ident       := ALPHA (ALPHA | DIGIT | "_" | "." | ":" | "[" | "]")*
 //!   out_indexed      := "out_" DIGIT+
 //!   out_indexed_acc  := "out_" DIGIT+ "." accessor
+//!   probe_ref        := ALPHA (ALPHA | DIGIT | "_" | ".")* ":" ...
 //!   ACC              := "stem" | "name" | "ext" | "dir"
 //!   ALPHA            := "a"…"z" | "A"…"Z" | "_"
+//!
+//! CS-0074: IDENTs containing a colon (`:`) are probe-value references.
+//! The scanner admits `:`, `.`, `[`, `]`, and `-` as IDENT-continue characters
+//! so that `$<cc:zlib.cflags[2]>` and `$<demo:cc-version.ver>` tokenise as
+//! single spans. The resolver dispatches on the presence of `:` to select
+//! between existing register-time semantics and the new probe-cache-read path.
 //!
 //! Anything not matching the strict shape is literal shell text. The scanner
 //! does not search forward for a `>` past a malformed inner — a `$<foo bar>`
@@ -60,7 +67,7 @@ fn try_match_placeholder(text: &str, start: usize) -> Option<PlaceholderSpan> {
     }
     i += 1;
 
-    // Subsequent characters: ALPHA | DIGIT | _ | .
+    // Subsequent characters: ALPHA | DIGIT | _ | . | : | [ | ]
     while i < bytes.len() && is_ident_continue(bytes[i]) {
         i += 1;
     }
@@ -84,7 +91,7 @@ fn is_alpha(b: u8) -> bool {
 
 #[inline]
 fn is_ident_continue(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'.'
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b':' || b == b'[' || b == b']' || b == b'-'
 }
 
 #[cfg(test)]
@@ -143,9 +150,53 @@ mod tests {
         assert!(scan("$<a,b,c>").is_empty());
     }
 
+    // CS-0074: both `:` and `-` are now valid IDENT-continue characters.
+    // `$<HOME:-default>` is now tokenised as a single sigil with
+    // ident=`HOME:-default`. In practice, Cook authors do not use shell
+    // parameter-expansion syntax inside `$<...>` — probe keys may legitimately
+    // contain hyphens (e.g. `$<demo:cc-version.ver>`), so `-` must be admitted.
     #[test]
-    fn rejects_ident_with_colon() {
-        assert!(scan("$<HOME:-default>").is_empty());
+    fn ident_with_colon_and_dash_is_accepted() {
+        let spans = scan("$<HOME:-default>");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].ident, "HOME:-default");
+    }
+
+    #[test]
+    fn probe_ref_with_hyphen_in_key_is_accepted() {
+        assert_eq!(idents("$<demo:cc-version.version>"), vec!["demo:cc-version.version"]);
+    }
+
+    // CS-0074: probe-ref tokenization tests
+    #[test]
+    fn probe_ref_bare_key() {
+        assert_eq!(idents("$<cc:zlib>"), vec!["cc:zlib"]);
+    }
+
+    #[test]
+    fn probe_ref_key_dot_field() {
+        assert_eq!(idents("$<cc:zlib.cflags>"), vec!["cc:zlib.cflags"]);
+    }
+
+    #[test]
+    fn probe_ref_key_field_index() {
+        assert_eq!(idents("$<cc:zlib.libs[2]>"), vec!["cc:zlib.libs[2]"]);
+    }
+
+    #[test]
+    fn probe_ref_does_not_break_bare_ident() {
+        assert_eq!(idents("$<in>"), vec!["in"]);
+    }
+
+    #[test]
+    fn probe_ref_does_not_break_recipe_ident() {
+        assert_eq!(idents("$<my_recipe>"), vec!["my_recipe"]);
+    }
+
+    #[test]
+    fn probe_ref_mixed_with_other_sigils() {
+        let result = idents("$<cc:compiler.path> -c $<in> -o $<out>");
+        assert_eq!(result, vec!["cc:compiler.path", "in", "out"]);
     }
 
     #[test]
