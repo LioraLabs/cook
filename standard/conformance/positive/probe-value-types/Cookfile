@@ -1,0 +1,8 @@
+register
+    cook.probe("test:types", {
+        inputs = {},
+        produce = "return { n = 42, s = \"hi\", a = {1,2,3}, t = { nested = true } }",
+    })
+
+recipe noop
+    > cook.sh("true")

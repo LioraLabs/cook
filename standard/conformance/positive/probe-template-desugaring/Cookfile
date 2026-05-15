@@ -1,0 +1,15 @@
+register
+    cook.probe("test:greet", {
+        inputs = {},
+        produce = "return { word = \"hello\" }",
+    })
+    cook.add_unit({
+        name = "echo",
+        inputs = {},
+        outputs = {"build/done.txt"},
+        requires = {"test:greet"},
+        command = "echo {{test:greet.word}} > build/done.txt",
+    })
+
+recipe build
+    > cook.sh("true")
