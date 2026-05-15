@@ -3334,4 +3334,369 @@ mod tests {
             _ => unreachable!(),
         }
     }
+
+    // -----------------------------------------------------------------
+    // CS-0074 G4/G5: probe cache hit/miss/invalidation.
+    //
+    // These tests exercise the G4 (cache lookup before dispatch) and G5
+    // (persist probe output to backend after worker returns) paths in
+    // execute_dag. They require that:
+    //   - A cache hit populates the SharedProbeValueStore and skips the
+    //     worker (NodeCacheHit event, no NodeStarted).
+    //   - A cache miss dispatches to the worker, which runs the produce
+    //     source, and the result is persisted to the backend with
+    //     kind=probe_value.
+    //   - Changing a declared env var forces a different fingerprint and
+    //     a cache miss even when a prior entry exists.
+    // -----------------------------------------------------------------
+
+    fn probe_unit(key: &str, produce: &str) -> cook_contracts::ProbeUnit {
+        cook_contracts::ProbeUnit {
+            key: key.to_string(),
+            produce_source: produce.to_string(),
+            produce_line: 1,
+            inputs: cook_contracts::ProbeInputs::default(),
+        }
+    }
+
+    fn probe_unit_with_env(key: &str, produce: &str, env_var: &str) -> cook_contracts::ProbeUnit {
+        cook_contracts::ProbeUnit {
+            key: key.to_string(),
+            produce_source: produce.to_string(),
+            produce_line: 1,
+            inputs: cook_contracts::ProbeInputs {
+                env: vec![env_var.to_string()],
+                tools: vec![],
+                files: vec![],
+                requires: vec![],
+            },
+        }
+    }
+
+    fn probe_work_node(key: &str, produce: &str, wd: PathBuf) -> WorkNode {
+        WorkNode {
+            payload: Some(WorkPayload::Probe {
+                key: key.to_string(),
+                produce: produce.to_string(),
+                line: 1,
+            }),
+            recipe_name: format!("probe:{}", key),
+            cache_meta: None,
+            working_dir: wd,
+            env_vars: BTreeMap::new(),
+        }
+    }
+
+    fn probe_work_node_with_env(
+        key: &str,
+        produce: &str,
+        env_var: &str,
+        env_val: &str,
+        wd: PathBuf,
+    ) -> WorkNode {
+        let mut env_vars = BTreeMap::new();
+        env_vars.insert(env_var.to_string(), env_val.to_string());
+        WorkNode {
+            payload: Some(WorkPayload::Probe {
+                key: key.to_string(),
+                produce: produce.to_string(),
+                line: 1,
+            }),
+            recipe_name: format!("probe:{}", key),
+            cache_meta: None,
+            working_dir: wd,
+            env_vars,
+        }
+    }
+
+    /// Compute the fingerprint for a ProbeUnit with no env/tool/file/upstream
+    /// inputs, suitable for pre-seeding the backend in cache-hit tests.
+    fn fingerprint_for(pu: &cook_contracts::ProbeUnit, wd: &std::path::Path) -> [u8; 32] {
+        let inputs = cook_fingerprint::resolve_probe_inputs(
+            pu,
+            wd,
+            &|_| None,
+            &BTreeMap::new(),
+        )
+        .expect("fingerprint resolution should succeed for simple probe");
+        cook_fingerprint::compute_probe_fingerprint(&inputs)
+    }
+
+    /// Pre-populate the cache backend with known msgpack bytes under the given
+    /// fingerprint key. Used to set up the "cache hit" scenario for G4 tests.
+    fn seed_probe_cache(backend: &dyn cook_cache::backend::CacheBackend, fp: &[u8; 32], bytes: &[u8]) {
+        let mut meta = cook_fingerprint::ArtifactMeta {
+            recipe_namespace: "probe:test".into(),
+            command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            schema_version: cook_fingerprint::CACHE_VERSION,
+            size_bytes: bytes.len() as u64,
+            tags: std::collections::BTreeSet::new(),
+            consulted_env_keys: std::collections::BTreeSet::new(),
+            output_index: 0,
+            output_path: "probe:test".into(),
+            content_hash: cook_fingerprint::ArtifactMeta::zero_content_hash(),
+            kind: None,
+        }
+        .as_probe_value();
+        cook_cache::backend::put_bytes(backend, fp, bytes, &mut meta)
+            .expect("seed_probe_cache: backend put failed");
+    }
+
+    // G4 test: pre-populate the cache with canned bytes; the probe's produce
+    // source calls `error()` so execution would fail — but on a hit we MUST
+    // skip dispatch and deliver the cached bytes without ever invoking produce.
+    #[test]
+    fn probe_cache_hit_skips_produce_execution() {
+        use std::sync::mpsc;
+
+        let (_wd, _tmp) = tmp_dir();
+        let wd = _wd.clone();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        // Build the ProbeUnit and compute its fingerprint.
+        let pu = probe_unit("test:hit", "error('should not run')");
+        let fp = fingerprint_for(&pu, &wd);
+
+        // Seed the backend with the known bytes we expect to see in the store.
+        let expected_bytes: Vec<u8> = vec![0x91, 0xc3]; // msgpack: [true]
+        seed_probe_cache(cache_ctx.backend.as_ref(), &fp, &expected_bytes);
+
+        // Build a DAG with the probe node.
+        let mut dag = Dag::new();
+        let node_id = dag
+            .add_node(probe_work_node("test:hit", "error('should not run')", wd), &[])
+            .unwrap();
+
+        // Build probe_units_by_node: maps node 0 → our ProbeUnit.
+        let mut probe_units_by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = BTreeMap::new();
+        probe_units_by_node.insert(node_id, pu);
+
+        // Listen for events to verify NodeCacheHit (not NodeStarted).
+        let (tx, rx) = mpsc::channel();
+        let result = execute_dag(
+            dag,
+            2,
+            BTreeMap::new(),
+            Some(tx),
+            cache_ctx.clone(),
+            None,
+            &BTreeMap::new(),
+            &[],
+            &probe_units_by_node,
+        );
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+
+        // Verify NodeCacheHit was emitted (not NodeStarted).
+        let events: Vec<_> = rx.try_iter().collect();
+        let cache_hits: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, EngineEvent::NodeCacheHit { .. }))
+            .collect();
+        let node_started: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, EngineEvent::NodeStarted { .. }))
+            .collect();
+        assert_eq!(cache_hits.len(), 1, "expected exactly one NodeCacheHit; events: {events:#?}");
+        assert_eq!(node_started.len(), 0, "expected no NodeStarted on cache hit; events: {events:#?}");
+
+        // Also verify the cached bytes are still retrievable from the backend
+        // (the put_bytes call in the test harness must not corrupt the entry).
+        let post = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
+            .expect("post-hit get");
+        let stored = post.expect("cache entry must still exist after a hit read");
+        assert_eq!(stored, expected_bytes, "cached bytes must survive a hit read");
+    }
+
+    // G5 test: on a cache miss the worker executes the produce source, the
+    // output is persisted to the backend with kind=probe_value, and the result
+    // is available in the probe-value store.
+    #[test]
+    fn probe_cache_miss_persists_output() {
+        let (_wd, _tmp) = tmp_dir();
+        let wd = _wd.clone();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        // Produce source: return the integer 42.
+        let produce = "return 42";
+        let pu = probe_unit("test:miss", produce);
+        let fp = fingerprint_for(&pu, &wd);
+
+        // Backend starts empty — cache miss guaranteed.
+        let pre = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
+            .expect("pre-check get");
+        assert!(pre.is_none(), "backend must be empty before the run");
+
+        let mut dag = Dag::new();
+        let node_id = dag
+            .add_node(probe_work_node("test:miss", produce, wd), &[])
+            .unwrap();
+
+        let mut probe_units_by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = BTreeMap::new();
+        probe_units_by_node.insert(node_id, pu);
+
+        let result = execute_dag(
+            dag,
+            2,
+            BTreeMap::new(),
+            None,
+            cache_ctx.clone(),
+            None,
+            &BTreeMap::new(),
+            &[],
+            &probe_units_by_node,
+        );
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+
+        // G5: verify the artifact was persisted to the backend.
+        let post = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
+            .expect("post-run get");
+        assert!(
+            post.is_some(),
+            "probe artifact must be persisted to cache backend after execution (G5)"
+        );
+
+        // The value stored must be non-empty (msgpack-encoded 42).
+        let bytes = post.unwrap();
+        assert!(!bytes.is_empty(), "persisted probe bytes must be non-empty");
+
+        // G5: verify the persisted bytes are retrievable from the backend.
+        // (G3 — probe-value store — is internal to execute_dag and not
+        // accessible after the function returns, but the G5 backend entry
+        // serves as equivalent evidence that the produce path ran to completion.)
+        let post2 = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
+            .expect("second get");
+        let persisted = post2.expect("artifact must still be in backend on second read");
+        assert_eq!(persisted, bytes, "persisted bytes must round-trip through backend");
+    }
+
+    // G4/G5 invalidation test: changing a declared env var changes the probe's
+    // fingerprint, causing a cache miss even when a prior entry exists under
+    // the old fingerprint.
+    #[test]
+    fn probe_fingerprint_changes_invalidate_cache() {
+        let (_wd, _tmp) = tmp_dir();
+        let wd = _wd.clone();
+        let cache_ctx = make_cache_ctx(&_tmp);
+        let produce = "return 'result'";
+        let env_var = "PROBE_TEST_VAR";
+
+        // Build ProbeUnit for env_val="first".
+        let pu_v1 = probe_unit_with_env("test:inv", produce, env_var);
+        let fp_v1 = {
+            let inputs = cook_fingerprint::resolve_probe_inputs(
+                &pu_v1,
+                &wd,
+                &|name| if name == env_var { Some("first".into()) } else { None },
+                &BTreeMap::new(),
+            )
+            .unwrap();
+            cook_fingerprint::compute_probe_fingerprint(&inputs)
+        };
+
+        // Build ProbeUnit for env_val="second".
+        let pu_v2 = probe_unit_with_env("test:inv", produce, env_var);
+        let fp_v2 = {
+            let inputs = cook_fingerprint::resolve_probe_inputs(
+                &pu_v2,
+                &wd,
+                &|name| if name == env_var { Some("second".into()) } else { None },
+                &BTreeMap::new(),
+            )
+            .unwrap();
+            cook_fingerprint::compute_probe_fingerprint(&inputs)
+        };
+        assert_ne!(fp_v1, fp_v2, "fingerprints must differ when env var changes");
+
+        // --- Run 1: env_val="first" → cache miss → populate backend under fp_v1 ---
+        {
+            let mut dag = Dag::new();
+            let node_id = dag
+                .add_node(
+                    probe_work_node_with_env("test:inv", produce, env_var, "first", wd.clone()),
+                    &[],
+                )
+                .unwrap();
+            let mut by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = BTreeMap::new();
+            by_node.insert(node_id, pu_v1);
+
+            let result = execute_dag(
+                dag,
+                2,
+                BTreeMap::new(),
+                None,
+                cache_ctx.clone(),
+                None,
+                &BTreeMap::new(),
+                &[],
+                &by_node,
+            );
+            assert!(result.is_ok(), "run1 expected Ok, got: {result:?}");
+        }
+
+        // Verify fp_v1 is now in the backend.
+        assert!(
+            cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp_v1)
+                .unwrap()
+                .is_some(),
+            "fp_v1 must be in backend after run1"
+        );
+        // fp_v2 must NOT be in the backend yet.
+        assert!(
+            cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp_v2)
+                .unwrap()
+                .is_none(),
+            "fp_v2 must not be in backend before run2"
+        );
+
+        // --- Run 2: env_val="second" → different fingerprint → cache miss ---
+        {
+            use std::sync::mpsc;
+            let mut dag = Dag::new();
+            let node_id = dag
+                .add_node(
+                    probe_work_node_with_env("test:inv", produce, env_var, "second", wd.clone()),
+                    &[],
+                )
+                .unwrap();
+            let mut by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = BTreeMap::new();
+            by_node.insert(node_id, pu_v2);
+
+            let (tx, rx) = mpsc::channel();
+            let result = execute_dag(
+                dag,
+                2,
+                BTreeMap::new(),
+                Some(tx),
+                cache_ctx.clone(),
+                None,
+                &BTreeMap::new(),
+                &[],
+                &by_node,
+            );
+            assert!(result.is_ok(), "run2 expected Ok, got: {result:?}");
+
+            // run2 must NOT have emitted a NodeCacheHit — the env change must
+            // force a miss even though fp_v1 is in the backend.
+            let events: Vec<_> = rx.try_iter().collect();
+            let cache_hits: Vec<_> = events
+                .iter()
+                .filter(|e| matches!(e, EngineEvent::NodeCacheHit { .. }))
+                .collect();
+            assert_eq!(
+                cache_hits.len(),
+                0,
+                "run2 must not cache-hit because env var changed; events: {events:#?}"
+            );
+        }
+
+        // After run2, fp_v2 must now exist in the backend as well (G5 persisted it).
+        assert!(
+            cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp_v2)
+                .unwrap()
+                .is_some(),
+            "fp_v2 must be in backend after run2"
+        );
+    }
 }
