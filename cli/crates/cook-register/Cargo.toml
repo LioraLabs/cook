@@ -8,6 +8,7 @@ description = "Capture-mode Lua VM for discovering work units from Cookfiles"
 cook-contracts = { path = "../cook-contracts" }
 cook-cache = { path = "../cook-cache" }
 cook-lua-stdlib = { path = "../cook-lua-stdlib" }
+cook-luagen = { path = "../cook-luagen" }
 mlua = { version = "0.10", features = ["lua54", "vendored"] }
 glob = "0.3"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
