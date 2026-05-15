@@ -1,0 +1,21 @@
+register
+    cook.probe("demo:compiler", {
+        inputs = { env = {"PATH"}, tools = {"cc"} },
+        produce = [[
+            local f = io.popen("which cc")
+            local path = f:read("*l") or "cc"
+            f:close()
+            return { path = path }
+        ]],
+    })
+
+    cook.add_unit({
+        name = "demo-binary",
+        inputs = {"main.c"},
+        outputs = {"build/demo"},
+        requires = {"demo:compiler"},
+        command = "{{demo:compiler.path}} main.c -o build/demo",
+    })
+
+recipe build
+    > cook.sh("./build/demo")

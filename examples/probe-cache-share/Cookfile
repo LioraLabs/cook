@@ -1,0 +1,22 @@
+register
+    cook.probe("demo:slow", {
+        inputs = {},
+        produce = [[
+            local cmd = "sleep 1 && date +%s"
+            local f = io.popen(cmd)
+            local timestamp = f:read("*l")
+            f:close()
+            return { timestamp = timestamp }
+        ]],
+    })
+
+    cook.add_unit({
+        name = "record",
+        inputs = {},
+        outputs = {"build/probed.txt"},
+        requires = {"demo:slow"},
+        command = "mkdir -p build && echo {{demo:slow.timestamp}} > build/probed.txt",
+    })
+
+recipe build
+    > cook.sh("cat build/probed.txt")

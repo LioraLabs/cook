@@ -1,0 +1,32 @@
+register
+    cook.probe("demo:cc-path", {
+        inputs = { env = {"PATH"}, tools = {"cc"} },
+        produce = [[
+            local f = io.popen("which cc")
+            local path = f:read("*l") or "cc"
+            f:close()
+            return { path = path }
+        ]],
+    })
+
+    cook.probe("demo:cc-version", {
+        inputs = { requires = {"demo:cc-path"} },
+        produce = [[
+            local cc = cook.cache.get("demo:cc-path").path
+            local f = io.popen(cc .. " --version 2>&1 | head -1")
+            local first = f:read("*l") or "unknown"
+            f:close()
+            return { version = first }
+        ]],
+    })
+
+    cook.add_unit({
+        name = "print-version",
+        inputs = {},
+        outputs = {"build/version.txt"},
+        requires = {"demo:cc-version"},
+        command = "mkdir -p build && echo {{demo:cc-version.version}} > build/version.txt",
+    })
+
+recipe build
+    > cook.sh("cat build/version.txt")
