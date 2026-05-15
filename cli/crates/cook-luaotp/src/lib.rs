@@ -6,5 +6,6 @@
 //! execute-phase VMs see byte-identical behaviour for these surfaces.
 
 mod pool;
+pub(crate) mod probe_value;
 
-pub use pool::{WorkerPool, WorkItem, WorkResult, TestOutput, ProbeOutput};
+pub use pool::{SharedProbeValueStore, WorkerPool, WorkItem, WorkResult, TestOutput, ProbeOutput};

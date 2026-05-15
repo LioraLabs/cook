@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -5,6 +6,11 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 
 use cook_contracts::{OutputStream, StepKind, WorkPayload};
+
+/// Thread-safe map of probe key → msgpack bytes, shared across all workers in
+/// a pool and the engine scheduler. Workers read from it via `cook.cache.get`;
+/// the engine writes to it when a `WorkPayload::Probe` result arrives (§22.5.7).
+pub type SharedProbeValueStore = Arc<Mutex<BTreeMap<String, Vec<u8>>>>;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -66,6 +72,10 @@ pub struct WorkResult {
 pub struct WorkerPool {
     threads: Vec<std::thread::JoinHandle<()>>,
     queue: Arc<SharedQueue>,
+    /// Per-run probe-value store. Owned here so `probe_value_store()` returns
+    /// a clone that the engine scheduler can write probe outputs into after
+    /// workers complete their `WorkPayload::Probe` units (§22.5.7).
+    probe_store: SharedProbeValueStore,
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +106,11 @@ impl WorkerPool {
             condvar: Condvar::new(),
         });
 
+        // Per-run probe-value store: shared across all workers so that
+        // `cook.cache.get` on any worker VM sees the same store (§22.5.7).
+        let probe_store: SharedProbeValueStore =
+            Arc::new(Mutex::new(BTreeMap::new()));
+
         let (tx, rx) = mpsc::channel();
 
         let mut threads = Vec::with_capacity(n);
@@ -103,14 +118,22 @@ impl WorkerPool {
         for _ in 0..n {
             let q = Arc::clone(&shared);
             let tx = tx.clone();
+            let store = Arc::clone(&probe_store);
 
             let handle = std::thread::spawn(move || {
-                worker_loop(q, tx);
+                worker_loop(q, tx, store);
             });
             threads.push(handle);
         }
 
-        (WorkerPool { threads, queue: shared }, rx)
+        (WorkerPool { threads, queue: shared, probe_store }, rx)
+    }
+
+    /// Return a clone of the `SharedProbeValueStore` so the engine scheduler
+    /// can write probe outputs into it after each `WorkPayload::Probe` unit
+    /// completes (§22.5.7).
+    pub fn probe_value_store(&self) -> SharedProbeValueStore {
+        Arc::clone(&self.probe_store)
     }
 
     /// Push a work item into the shared queue.
@@ -165,6 +188,7 @@ impl Drop for WorkerPool {
 fn worker_loop(
     queue: Arc<SharedQueue>,
     tx: mpsc::Sender<WorkResult>,
+    probe_store: SharedProbeValueStore,
 ) {
     // Each worker creates its own Lua VM.  The VM is `!Send` but never
     // leaves this thread, so this is safe.
@@ -189,7 +213,7 @@ fn worker_loop(
         Arc::new(Mutex::new(cook_lua_stdlib::SandboxPolicy::Off));
 
     // Register the `cook` table once with closures that capture shared state.
-    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_recipe)
+    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_recipe, &probe_store)
         .expect("failed to register cook table");
 
     // Register the `fs` table once at startup with the Live cwd source
@@ -344,6 +368,7 @@ fn register_worker_cook_table(
     current_working_dir: &Arc<Mutex<PathBuf>>,
     current_env_vars: &Arc<Mutex<HashMap<String, String>>>,
     current_recipe: &Arc<Mutex<String>>,
+    probe_store: &SharedProbeValueStore,
 ) -> mlua::Result<()> {
     let cook = lua.create_table()?;
 
@@ -500,27 +525,16 @@ fn register_worker_cook_table(
     })?;
     cook.set("load_module", load_module_fn)?;
 
-    // CS-0070: cook.cache on the execute-phase VM (Standard §6.3.4).
+    // CS-0070 / CS-0074: cook.cache on the execute-phase VM (Standard §6.3.4).
     //
-    // Per-worker in-memory store; no cross-invocation persistence. The
-    // register-phase implementation (cook-register/src/module_loader.rs
-    // `register_cache_api`) handles persistent state and per-module scoping
-    // by writing `.cook/cache/<module>.json`. The execute-phase side only
-    // needs to satisfy the both-phase API surface so that modules like
-    // cook_cc whose `init()` calls `cook.cache.get("compiler")` do not
-    // raise `attempt to index a nil value (field 'cache')` when their
-    // init runs again on the worker VM (the second-phase init that
-    // happens because cook.load_module evaluates the module body on
-    // both VMs).
+    // `cook.cache.get(key)` reads from the per-run SharedProbeValueStore so
+    // that consumer units see probe values produced by upstream probe units
+    // (§22.5.7). `cook.cache.set` is deprecated and raises an error on the
+    // execute-phase VM (CS-0074).
     //
-    // The shape mirrors the register-phase API:
-    //   cook.cache.get(key) -> value | nil
-    //   cook.cache.set(key, value)
-    //   cook.cache.scope(label) -> { get, set } (prefixes keys with "<label>:")
-    //
-    // Cross-run persistence on the execute VM is intentionally out of
-    // scope here — see SHI-214 for the disk-persistent design.
-    install_execute_phase_cook_cache(lua, &cook)?;
+    // `cook.cache.scope(label)` is still supported for backwards compat with
+    // modules that use the scoped sub-table pattern.
+    install_execute_phase_cook_cache(lua, &cook, probe_store)?;
 
     // CS-0071: cook.export / cook.import on the execute-phase VM
     // (Standard §6.3.4). Per-worker in-memory store; no cross-invocation
@@ -623,60 +637,81 @@ fn register_worker_cook_table(
 }
 
 /// Install `cook.cache.{get,set,scope}` on the execute-phase VM
-/// (Standard §6.3.4, CS-0070). Storage is an in-memory Lua table held
-/// in the globals under `_cook_execute_cache` — keyed by stringified
-/// keys, valued by arbitrary Lua values. Per-worker; no cross-run
-/// persistence (see SHI-214 for the persistent design).
+/// (Standard §6.3.4, CS-0070, CS-0074).
 ///
-/// `scope(label)` returns a sub-table whose `get`/`set` prefix keys
-/// with `"<label>:"` so scoped consumers (e.g. cook_cc.toolchain) get
-/// the same isolation they'd see on the register-phase VM.
+/// `cook.cache.get(key)` reads from the `SharedProbeValueStore` — the same
+/// store the engine writes into when a probe unit completes (§22.5.7).
+/// Returns `nil` when the key has not been populated.
+///
+/// `cook.cache.set` is deprecated on the execute-phase VM (CS-0074): calling
+/// it raises a runtime error directing the author to use `cook.probe` instead.
+///
+/// `cook.cache.scope(label)` returns a sub-table whose `get` prefixes keys
+/// with `"<label>:"` for backwards compat with modules that use scoped cache.
 fn install_execute_phase_cook_cache(
     lua: &mlua::Lua,
     cook: &mlua::Table,
+    probe_store: &SharedProbeValueStore,
 ) -> mlua::Result<()> {
-    let cache_store = lua.create_table()?;
-    lua.globals().set("_cook_execute_cache", cache_store)?;
-
     let cache_tbl = lua.create_table()?;
 
-    let get_fn = lua.create_function(|lua, key: String| {
-        let store: mlua::Table = lua.globals().get("_cook_execute_cache")?;
-        store.get::<mlua::Value>(key)
+    // cook.cache.get(key) → value | nil
+    let store_for_get = Arc::clone(probe_store);
+    let get_fn = lua.create_function(move |lua, key: String| {
+        let store = store_for_get.lock().unwrap();
+        match store.get(&key) {
+            Some(bytes) => {
+                let mp = cook_contracts::probe_value::decode_msgpack(bytes)
+                    .map_err(|e| mlua::Error::runtime(format!(
+                        "cook.cache.get('{}'): decode failed: {}", key, e
+                    )))?;
+                crate::probe_value::msgpack_to_lua(lua, &mp)
+            }
+            None => Ok(mlua::Value::Nil),
+        }
     })?;
     cache_tbl.set("get", get_fn)?;
 
-    let set_fn =
-        lua.create_function(|lua, (key, value): (String, mlua::Value)| {
-            let store: mlua::Table = lua.globals().get("_cook_execute_cache")?;
-            store.set(key, value)?;
-            Ok(())
-        })?;
+    // cook.cache.set — deprecated and disabled on the execute-phase VM (CS-0074).
+    let set_fn = lua.create_function(|_, (_key, _val): (String, mlua::Value)| -> mlua::Result<()> {
+        Err(mlua::Error::runtime(
+            "cook.cache.set: deprecated and not available on execute-phase VM (CS-0074). \
+             Use cook.probe to declare memoised probe values."
+        ))
+    })?;
     cache_tbl.set("set", set_fn)?;
 
-    let scope_fn = lua.create_function(|lua, label: String| {
+    // cook.cache.scope(label) → { get } — scoped get still works for
+    // backwards compat; scoped set is also disabled.
+    let store_for_scope = Arc::clone(probe_store);
+    let scope_fn = lua.create_function(move |lua, label: String| {
         let scoped = lua.create_table()?;
-        let prefix_for_get = format!("{}:", label);
-        let prefix_for_set = prefix_for_get.clone();
+        let prefix = format!("{}:", label);
 
-        let scoped_get =
-            lua.create_function(move |lua, key: String| {
-                let store: mlua::Table =
-                    lua.globals().get("_cook_execute_cache")?;
-                let full = format!("{}{}", prefix_for_get, key);
-                store.get::<mlua::Value>(full)
-            })?;
+        let store_for_scoped_get = Arc::clone(&store_for_scope);
+        let prefix_for_get = prefix.clone();
+        let scoped_get = lua.create_function(move |lua, key: String| {
+            let full = format!("{}{}", prefix_for_get, key);
+            let store = store_for_scoped_get.lock().unwrap();
+            match store.get(&full) {
+                Some(bytes) => {
+                    let mp = cook_contracts::probe_value::decode_msgpack(bytes)
+                        .map_err(|e| mlua::Error::runtime(format!(
+                            "cook.cache.get('{}'): decode failed: {}", full, e
+                        )))?;
+                    crate::probe_value::msgpack_to_lua(lua, &mp)
+                }
+                None => Ok(mlua::Value::Nil),
+            }
+        })?;
         scoped.set("get", scoped_get)?;
 
-        let scoped_set = lua.create_function(
-            move |lua, (key, value): (String, mlua::Value)| {
-                let store: mlua::Table =
-                    lua.globals().get("_cook_execute_cache")?;
-                let full = format!("{}{}", prefix_for_set, key);
-                store.set(full, value)?;
-                Ok(())
-            },
-        )?;
+        let scoped_set = lua.create_function(|_, (_k, _v): (String, mlua::Value)| -> mlua::Result<()> {
+            Err(mlua::Error::runtime(
+                "cook.cache.set: deprecated and not available on execute-phase VM (CS-0074). \
+                 Use cook.probe to declare memoised probe values."
+            ))
+        })?;
         scoped.set("set", scoped_set)?;
 
         Ok(scoped)
@@ -969,6 +1004,9 @@ fn execute_work_item(
         WorkPayload::Test { cmd, line, timeout, should_fail, suite_name, test_name, .. } => {
             execute_test(work.id, cmd, *line, *timeout, *should_fail, suite_name, test_name, working_dir, env_vars, node_name)
         }
+        WorkPayload::Probe { key, produce, line } => {
+            execute_probe(lua, work.id, key, produce, *line, node_name)
+        }
         // `WorkPayload` is `#[non_exhaustive]` so the reference implementation
         // can introduce new payload kinds without an immediate breaking change.
         // Treat any unknown variant as a worker-side bug — the dispatcher
@@ -1064,6 +1102,69 @@ fn execute_shell(
                 }
             }
         }
+    }
+}
+
+/// Execute a `WorkPayload::Probe` unit on the worker Lua VM (§22.5.6).
+///
+/// Wraps `produce` in `function() ... end` and invokes it, captures the return
+/// value, converts it to msgpack, and returns a `WorkResult` with the
+/// `probe_output` field populated. Errors in the Lua source or in the
+/// msgpack conversion propagate as a normal unit failure.
+fn execute_probe(
+    lua: &mlua::Lua,
+    id: usize,
+    key: &str,
+    produce: &str,
+    _line: usize,
+    node_name: String,
+) -> WorkResult {
+    let chunk_name = format!("@probe:{}", key);
+    let wrapped = format!("return (function()\n{}\nend)()", produce);
+
+    let value: mlua::Value = match lua.load(&wrapped).set_name(&chunk_name).eval() {
+        Ok(v) => v,
+        Err(e) => {
+            return WorkResult {
+                id,
+                success: false,
+                error: Some(format!("probe '{}' produce raised: {}", key, e)),
+                test_output: None,
+                node_name,
+                output_lines: Vec::new(),
+                probe_output: None,
+            };
+        }
+    };
+
+    let mp = match crate::probe_value::lua_to_msgpack(&value) {
+        Ok(v) => v,
+        Err(e) => {
+            return WorkResult {
+                id,
+                success: false,
+                error: Some(format!("probe '{}': {}", key, e)),
+                test_output: None,
+                node_name,
+                output_lines: Vec::new(),
+                probe_output: None,
+            };
+        }
+    };
+
+    let bytes = cook_contracts::probe_value::encode_msgpack(&mp);
+
+    WorkResult {
+        id,
+        success: true,
+        error: None,
+        test_output: None,
+        node_name,
+        output_lines: Vec::new(),
+        probe_output: Some(ProbeOutput {
+            key: key.to_string(),
+            bytes,
+        }),
     }
 }
 
@@ -1977,16 +2078,15 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // CS-0070 regressions: execute-phase VM MUST expose `cook.cache`
-    // with the same get/set/scope surface as the register-phase VM
-    // (Standard §6.3.4). Storage is in-memory and per-worker; cross-run
-    // persistence is not required.
+    // CS-0070 / CS-0074 regressions: execute-phase VM cook.cache surface.
+    //
+    // CS-0074 changes: cook.cache.get reads from the SharedProbeValueStore
+    // (populated by upstream probe units); cook.cache.set is deprecated
+    // and raises on the execute-phase VM.
     // -----------------------------------------------------------------
 
-    /// CS-0070: `cook.cache.get(key)` on a missing key MUST return nil,
-    /// not raise — modules that probe the cache before populating it
-    /// (e.g. cook_cc.toolchain's compiler-detection cache miss) rely
-    /// on the nil sentinel.
+    /// CS-0070 / CS-0074: `cook.cache.get(key)` on a key not in the
+    /// probe-value store MUST return nil (§22.5.7).
     #[test]
     fn cook_cache_get_returns_nil_for_missing_key() {
         let code = r#"
@@ -2001,55 +2101,128 @@ mod tests {
         );
     }
 
-    /// CS-0070: a value written by `cook.cache.set(key, value)` MUST be
-    /// retrievable via `cook.cache.get(key)` on the same worker VM.
+    /// CS-0074: `cook.cache.get(key)` MUST return the msgpack-decoded value
+    /// that was written into the SharedProbeValueStore by the scheduler (§22.5.7).
     #[test]
-    fn cook_cache_set_then_get_round_trips() {
-        let code = r#"
-            cook.cache.set("compiler", "/usr/bin/cc")
-            local v = cook.cache.get("compiler")
-            assert(v == "/usr/bin/cc",
-                "expected /usr/bin/cc, got "..tostring(v))
+    fn cook_cache_get_reads_from_probe_value_store() {
+        let dir = TempDir::new().unwrap();
+        let (pool, rx) = WorkerPool::spawn(1);
 
-            cook.cache.set("count", 42)
-            assert(cook.cache.get("count") == 42,
-                "expected 42, got "..tostring(cook.cache.get("count")))
+        // Pre-populate the store as the scheduler would after a probe completes.
+        {
+            let mp = rmpv::Value::Map(vec![
+                (rmpv::Value::String("found".into()), rmpv::Value::Boolean(true)),
+                (rmpv::Value::String("version".into()), rmpv::Value::String("1.2.3".into())),
+            ]);
+            let bytes = cook_contracts::probe_value::encode_msgpack(&mp);
+            pool.probe_value_store().lock().unwrap().insert("cc:zlib".into(), bytes);
+        }
+
+        let code = r#"
+            local r = cook.cache.get("cc:zlib")
+            assert(r ~= nil, "expected non-nil result from probe store")
+            assert(r.found == true, "expected found=true, got "..tostring(r.found))
+            assert(r.version == "1.2.3", "expected version=1.2.3, got "..tostring(r.version))
         "#;
-        let result = run_lua_chunk_in_worker(code);
+
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::LuaChunk {
+                code: code.to_string(),
+                inputs: vec![],
+                outputs: vec![],
+                ingredient_groups: vec![],
+                step_kind: cook_contracts::StepKind::Cook,
+                is_chore: false,
+            },
+            recipe_name: "rec".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
+        });
+
+        let result = rx.recv().unwrap();
+        pool.shutdown();
         assert!(
             result.success,
-            "cook.cache.set then .get must round-trip; got error: {:?}",
+            "cook.cache.get must read from probe-value store; got error: {:?}",
             result.error
         );
     }
 
-    /// CS-0070: `cook.cache.scope(label)` MUST namespace keys so that
-    /// two distinct scopes do not collide. Mirrors the register-phase
-    /// scoping contract that cook_cc.toolchain depends on.
+    /// CS-0074: `cook.cache.set` is deprecated on the execute-phase VM and
+    /// MUST raise a runtime error directing the author to use `cook.probe`.
     #[test]
-    fn cook_cache_scope_isolates_keys() {
+    fn cook_cache_set_on_execute_vm_raises_deprecation_error() {
+        let result = run_lua_chunk_in_worker(r#"cook.cache.set("x", 1)"#);
+        assert!(!result.success, "expected cook.cache.set to fail on execute VM");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("cook.cache.set"),
+            "error must name cook.cache.set; got: {err}"
+        );
+        assert!(
+            err.contains("deprecated"),
+            "error must say 'deprecated'; got: {err}"
+        );
+    }
+
+    /// CS-0074: `cook.cache.scope(label).get(key)` MUST read from the
+    /// SharedProbeValueStore using the scoped key `"<label>:<key>"`.
+    #[test]
+    fn cook_cache_scope_get_reads_from_probe_value_store() {
+        let dir = TempDir::new().unwrap();
+        let (pool, rx) = WorkerPool::spawn(1);
+
+        // Pre-populate with scoped key format.
+        {
+            let mp = rmpv::Value::String("gcc-14".into());
+            let bytes = cook_contracts::probe_value::encode_msgpack(&mp);
+            pool.probe_value_store().lock().unwrap().insert("cc:compiler".into(), bytes);
+        }
+
         let code = r#"
-            local foo = cook.cache.scope("foo")
-            local bar = cook.cache.scope("bar")
-
-            foo.set("k", "in_foo")
-            bar.set("k", "in_bar")
-
-            assert(foo.get("k") == "in_foo",
-                "foo scope: expected in_foo, got "..tostring(foo.get("k")))
-            assert(bar.get("k") == "in_bar",
-                "bar scope: expected in_bar, got "..tostring(bar.get("k")))
-
-            -- scoped writes MUST NOT leak into the unscoped namespace.
-            assert(cook.cache.get("k") == nil,
-                "unscoped get for 'k' must be nil; got "
-                ..tostring(cook.cache.get("k")))
+            local v = cook.cache.get("cc:compiler")
+            assert(v == "gcc-14", "expected gcc-14, got "..tostring(v))
         "#;
-        let result = run_lua_chunk_in_worker(code);
+
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::LuaChunk {
+                code: code.to_string(),
+                inputs: vec![],
+                outputs: vec![],
+                ingredient_groups: vec![],
+                step_kind: cook_contracts::StepKind::Cook,
+                is_chore: false,
+            },
+            recipe_name: "rec".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
+        });
+
+        let result = rx.recv().unwrap();
+        pool.shutdown();
         assert!(
             result.success,
-            "cook.cache.scope must isolate keys per scope; got error: {:?}",
+            "scoped cook.cache.get must read from probe-value store; got error: {:?}",
             result.error
+        );
+    }
+
+    /// CS-0074: `cook.cache.scope(label).set` MUST raise on execute-phase VM.
+    #[test]
+    fn cook_cache_scope_set_on_execute_vm_raises_deprecation_error() {
+        let result = run_lua_chunk_in_worker(r#"
+            local s = cook.cache.scope("foo")
+            s.set("x", 1)
+        "#);
+        assert!(!result.success, "expected scoped cook.cache.set to fail on execute VM");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("deprecated"),
+            "scoped set error must say 'deprecated'; got: {err}"
         );
     }
 
@@ -2166,6 +2339,113 @@ mod tests {
         assert!(
             err.contains("share/lua/5.4/nonexistent_pkg/init.lua"),
             "diagnostic must mention share-tree init path; got: {err}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // G1: WorkPayload::Probe dispatch tests (CS-0074)
+    // -----------------------------------------------------------------
+
+    /// G1: dispatching a `WorkPayload::Probe` MUST produce a successful
+    /// `WorkResult` with `probe_output: Some(ProbeOutput { key, bytes })`
+    /// where `bytes` decodes back to the value returned by `produce` (§22.5.6).
+    #[test]
+    fn probe_unit_produces_msgpack_bytes() {
+        let dir = TempDir::new().unwrap();
+        let (pool, rx) = WorkerPool::spawn(1);
+
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::Probe {
+                key: "test:simple".into(),
+                produce: r#"return { found = true, paths = {"a", "b"} }"#.into(),
+                line: 1,
+            },
+            recipe_name: "probe_recipe".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
+        });
+
+        let result = rx.recv().unwrap();
+        pool.shutdown();
+
+        assert!(result.success, "probe dispatch must succeed; got error: {:?}", result.error);
+        assert!(result.probe_output.is_some(), "probe_output must be Some");
+
+        let probe_output = result.probe_output.unwrap();
+        assert_eq!(probe_output.key, "test:simple");
+        assert!(!probe_output.bytes.is_empty(), "probe bytes must be non-empty");
+
+        let mp = cook_contracts::probe_value::decode_msgpack(&probe_output.bytes)
+            .expect("must decode");
+        match mp {
+            rmpv::Value::Map(pairs) => {
+                assert_eq!(pairs.len(), 2, "expected 2 fields (found, paths)");
+            }
+            _ => panic!("expected msgpack Map, got {:?}", mp),
+        }
+    }
+
+    /// G1: a probe whose `produce` source raises a Lua error MUST fail the
+    /// WorkResult with a diagnostic naming the probe key (§22.5.6).
+    #[test]
+    fn probe_unit_lua_error_fails_with_key_in_diagnostic() {
+        let dir = TempDir::new().unwrap();
+        let (pool, rx) = WorkerPool::spawn(1);
+
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::Probe {
+                key: "test:error".into(),
+                produce: r#"error("intentional probe failure")"#.into(),
+                line: 1,
+            },
+            recipe_name: "probe_recipe".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
+        });
+
+        let result = rx.recv().unwrap();
+        pool.shutdown();
+
+        assert!(!result.success, "probe with Lua error must fail");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("test:error"),
+            "error must name the probe key; got: {err}"
+        );
+    }
+
+    /// G1: a probe that returns a non-serialisable value (function) MUST fail
+    /// with a diagnostic naming the probe key (§22.5.4).
+    #[test]
+    fn probe_unit_non_serialisable_value_fails() {
+        let dir = TempDir::new().unwrap();
+        let (pool, rx) = WorkerPool::spawn(1);
+
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::Probe {
+                key: "test:bad_type".into(),
+                produce: r#"return function() end"#.into(),
+                line: 1,
+            },
+            recipe_name: "probe_recipe".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
+        });
+
+        let result = rx.recv().unwrap();
+        pool.shutdown();
+
+        assert!(!result.success, "probe returning non-serialisable value must fail");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("test:bad_type"),
+            "error must name the probe key; got: {err}"
         );
     }
 }
