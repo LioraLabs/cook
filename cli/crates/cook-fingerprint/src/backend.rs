@@ -120,6 +120,11 @@ pub struct ArtifactMeta {
     /// both bytes and meta is out of scope (see CS-0054 spec §2).
     #[serde(default = "ArtifactMeta::zero_content_hash")]
     pub content_hash: [u8; 32],
+    /// Disambiguates the artifact body kind. `None` (or the default) is the
+    /// legacy "file artifact" case. `Some("probe_value")` is the new
+    /// msgpack-encoded probe-output artifact (CS-0074).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 impl ArtifactMeta {
@@ -128,6 +133,13 @@ impl ArtifactMeta {
     /// pre-CS-0054 sidecars that lack the field.
     pub fn zero_content_hash() -> [u8; 32] {
         [0u8; 32]
+    }
+
+    /// Convenience: construct a probe-value artifact meta with `kind = Some("probe_value")`.
+    /// All other fields must be filled in by the caller.
+    pub fn as_probe_value(mut self) -> Self {
+        self.kind = Some("probe_value".into());
+        self
     }
 }
 
@@ -411,4 +423,85 @@ mod tests {
         let k = cloud_key(&make_key_inputs());
         assert_eq!(k.len(), 32);
     }
+
+    // ---- CS-0074 ArtifactMeta.kind tests ----
+
+    fn minimal_meta_json(extra: &str) -> String {
+        format!(
+            r#"{{
+                "recipe_namespace": "ns",
+                "command_hash": 0,
+                "context_hash": 0,
+                "env_contribution": 0,
+                "schema_version": 1,
+                "size_bytes": 0,
+                "tags": [],
+                "consulted_env_keys": [],
+                "output_index": 0,
+                "output_path": "a.o"
+                {}
+            }}"#,
+            extra
+        )
+    }
+
+    #[test]
+    fn artifact_meta_kind_defaults_to_none_for_legacy_sidecars() {
+        let json = minimal_meta_json("");
+        let meta: ArtifactMeta = serde_json::from_str(&json).unwrap();
+        assert!(meta.kind.is_none());
+    }
+
+    #[test]
+    fn artifact_meta_kind_round_trips_when_set() {
+        let json = minimal_meta_json(r#", "kind": "probe_value""#);
+        let meta: ArtifactMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(meta.kind.as_deref(), Some("probe_value"));
+        // Round-trip through serde_json
+        let s = serde_json::to_string(&meta).unwrap();
+        let back: ArtifactMeta = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.kind.as_deref(), Some("probe_value"));
+    }
+
+    #[test]
+    fn artifact_meta_as_probe_value_sets_kind() {
+        let meta = ArtifactMeta {
+            recipe_namespace: "ns".into(),
+            command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            schema_version: 1,
+            size_bytes: 0,
+            tags: BTreeSet::new(),
+            consulted_env_keys: BTreeSet::new(),
+            output_index: 0,
+            output_path: "probe.bin".into(),
+            content_hash: ArtifactMeta::zero_content_hash(),
+            kind: None,
+        }
+        .as_probe_value();
+        assert_eq!(meta.kind.as_deref(), Some("probe_value"));
+    }
+
+    #[test]
+    fn artifact_meta_kind_none_not_serialised() {
+        let meta = ArtifactMeta {
+            recipe_namespace: "ns".into(),
+            command_hash: 0,
+            context_hash: 0,
+            env_contribution: 0,
+            schema_version: 1,
+            size_bytes: 0,
+            tags: BTreeSet::new(),
+            consulted_env_keys: BTreeSet::new(),
+            output_index: 0,
+            output_path: "a.o".into(),
+            content_hash: ArtifactMeta::zero_content_hash(),
+            kind: None,
+        };
+        let s = serde_json::to_string(&meta).unwrap();
+        assert!(!s.contains("kind"), "kind: None MUST be omitted from JSON: {s}");
+    }
+
+    // ---- end CS-0074 ----
 }

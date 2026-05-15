@@ -101,6 +101,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
         output_index: idx,
         output_path: path.to_string(),
         content_hash: ArtifactMeta::zero_content_hash(),
+        kind: None,
     };
     let mut obj_meta = mk_meta(0, "a.o", obj_bytes.len() as u64);
     let mut dep_meta = mk_meta(1, ".cook/deps/a.d", dep_bytes.len() as u64);

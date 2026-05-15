@@ -68,6 +68,7 @@ fn toggling_back_rehits_prior_entry() {
         output_index: 0,
         output_path: "build/main.o".into(),
         content_hash: ArtifactMeta::zero_content_hash(),
+        kind: None,
     };
 
     let mut m_o2 = meta_for(env_contrib_o2);

@@ -64,6 +64,7 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
         output_index: 0,
         output_path: "build/main.o".into(),
         content_hash: ArtifactMeta::zero_content_hash(),
+        kind: None,
     };
     put_bytes(&backend, &key, &artifact_bytes, &mut meta).expect("put");
 

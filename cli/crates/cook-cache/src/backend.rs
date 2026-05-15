@@ -451,6 +451,7 @@ mod tests {
             output_index: 0,
             output_path: "build/foo.o".into(),
             content_hash: ArtifactMeta::zero_content_hash(),
+            kind: None,
         }
     }
 

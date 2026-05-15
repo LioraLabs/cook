@@ -1542,6 +1542,7 @@ pub fn execute_dag(
                                                 output_path: output_path.clone(),
                                                 // CS-0054: stamped by the backend on put.
                                                 content_hash: ArtifactMeta::zero_content_hash(),
+                                                kind: None,
                                             };
                                             if let Err(e) = cook_cache::backend::put_bytes(
                                                 cache_ctx.backend.as_ref(),
@@ -1583,6 +1584,7 @@ pub fn execute_dag(
                                                         output_path: di.from.clone(),
                                                         // CS-0054: stamped by the backend on put.
                                                         content_hash: ArtifactMeta::zero_content_hash(),
+                                                        kind: None,
                                                     };
                                                     if let Err(e) = cook_cache::backend::put_bytes(
                                                         cache_ctx.backend.as_ref(),
@@ -1815,6 +1817,7 @@ pub fn execute_dag(
                                     output_path: output_path.clone(),
                                     // CS-0054: stamped by the backend on put.
                                     content_hash: ArtifactMeta::zero_content_hash(),
+                                    kind: None,
                                 };
                                 if let Err(e) = cook_cache::backend::put_bytes(
                                     cache_ctx.backend.as_ref(),
@@ -1856,6 +1859,7 @@ pub fn execute_dag(
                                             output_path: di.from.clone(),
                                             // CS-0054: stamped by the backend on put.
                                             content_hash: ArtifactMeta::zero_content_hash(),
+                                            kind: None,
                                         };
                                         if let Err(e) = cook_cache::backend::put_bytes(
                                             cache_ctx.backend.as_ref(),
