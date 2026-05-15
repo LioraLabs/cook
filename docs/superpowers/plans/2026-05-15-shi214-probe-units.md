@@ -2943,6 +2943,242 @@ git commit -m "test(integration): probe + consumer end-to-end with cache hit on 
 
 ---
 
+## Section EX — Verification examples in `examples/`
+
+These examples live in-tree (not gitignored) and serve two purposes: (a) demo the new surface for module authors, (b) double as end-to-end verification that the full pipeline works. Each example is a real Cookfile + supporting files that builds cleanly with `cook` from a fresh checkout.
+
+### Task EX1: `examples/probe-basic/` — minimal probe + consumer
+
+**Files:**
+- Create: `examples/probe-basic/Cookfile`
+- Create: `examples/probe-basic/README.md`
+- Create: `examples/probe-basic/main.c`
+
+- [ ] **Step 1: Create main.c**
+
+```c
+#include <stdio.h>
+int main(void) { puts("hello from probe-basic"); return 0; }
+```
+
+- [ ] **Step 2: Create Cookfile**
+
+```cook
+use cook_cc
+
+register
+    cook.probe("demo:compiler", {
+        inputs = { env = {"PATH"}, tools = {"cc"} },
+        produce = [[
+            local f = io.popen("which cc")
+            local path = f:read("*l") or "cc"
+            f:close()
+            return { path = path }
+        ]],
+    })
+
+    cook.add_unit({
+        name = "demo-binary",
+        inputs = {"main.c"},
+        outputs = {"build/demo"},
+        requires = {"demo:compiler"},
+        command = "{{demo:compiler.path}} main.c -o build/demo",
+    })
+end
+
+recipe build
+    > cook.sh("./build/demo")
+```
+
+- [ ] **Step 3: Create README**
+
+```markdown
+# probe-basic
+
+Minimal demo of `cook.probe`: a probe resolves the system C compiler once
+per build, and a consumer unit uses its value via `{{demo:compiler.path}}`
+template substitution.
+
+Run: `cook build`. First run executes the probe; second hits cache.
+```
+
+- [ ] **Step 4: Verify end-to-end build**
+
+```
+cd examples/probe-basic
+cargo run --bin cook -- build
+./build/demo   # prints "hello from probe-basic"
+cargo run --bin cook -- build  # second run; verify probe cache hit in logs
+```
+
+- [ ] **Step 5: Commit**
+
+```
+git add examples/probe-basic/
+git commit -m "examples: probe-basic — minimal cook.probe + consumer demo"
+```
+
+---
+
+### Task EX2: `examples/probe-chain/` — probe-depends-on-probe
+
+**Files:**
+- Create: `examples/probe-chain/Cookfile`
+- Create: `examples/probe-chain/README.md`
+
+- [ ] **Step 1: Create Cookfile**
+
+```cook
+use cook_cc
+
+register
+    cook.probe("demo:cc-path", {
+        inputs = { env = {"PATH"}, tools = {"cc"} },
+        produce = [[
+            local f = io.popen("which cc")
+            local path = f:read("*l") or "cc"
+            f:close()
+            return { path = path }
+        ]],
+    })
+
+    cook.probe("demo:cc-version", {
+        inputs = { requires = {"demo:cc-path"} },
+        produce = [[
+            local cc = cook.cache.get("demo:cc-path").path
+            local f = io.popen(cc .. " --version | head -1")
+            local first = f:read("*l") or "unknown"
+            f:close()
+            return { version = first }
+        ]],
+    })
+
+    cook.add_unit({
+        name = "print-version",
+        inputs = {},
+        outputs = {"build/version.txt"},
+        requires = {"demo:cc-version"},
+        command = "echo {{demo:cc-version.version}} > build/version.txt",
+    })
+end
+
+recipe build
+    > cook.sh("cat build/version.txt")
+```
+
+- [ ] **Step 2: Create README**
+
+```markdown
+# probe-chain
+
+Demonstrates probe-depends-on-probe topology. `demo:cc-version` declares
+`requires = {"demo:cc-path"}` — the engine wires a DAG edge so `cc-path`
+runs first.
+
+Run: `cook build`. Both probes execute on first invocation; both cached
+on second.
+```
+
+- [ ] **Step 3: Verify**
+
+```
+cd examples/probe-chain
+cargo run --bin cook -- build
+cat build/version.txt  # contains the cc version line
+```
+
+- [ ] **Step 4: Commit**
+
+```
+git add examples/probe-chain/
+git commit -m "examples: probe-chain — probe-requires-probe topology"
+```
+
+---
+
+### Task EX3: `examples/probe-cache-share/` — cache-hit demonstration
+
+**Files:**
+- Create: `examples/probe-cache-share/Cookfile`
+- Create: `examples/probe-cache-share/README.md`
+- Create: `examples/probe-cache-share/verify.sh`
+
+- [ ] **Step 1: Create Cookfile**
+
+```cook
+use cook_cc
+
+register
+    cook.probe("demo:slow", {
+        inputs = {},
+        produce = [[
+            local cmd = "sleep 1 && date +%s"
+            local f = io.popen(cmd)
+            local timestamp = f:read("*l")
+            f:close()
+            return { timestamp = timestamp }
+        ]],
+    })
+
+    cook.add_unit({
+        name = "record",
+        inputs = {},
+        outputs = {"build/probed.txt"},
+        requires = {"demo:slow"},
+        command = "echo {{demo:slow.timestamp}} > build/probed.txt",
+    })
+end
+
+recipe build
+    > cook.sh("cat build/probed.txt")
+```
+
+- [ ] **Step 2: Create verify.sh**
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+rm -rf build .cook
+echo "--- first run (probe executes; expect >=1s) ---"
+s1=$(date +%s%N); cargo run --bin cook -- build; e1=$(date +%s%N)
+echo "elapsed: $(( (e1 - s1) / 1000000 ))ms"
+
+echo "--- second run (probe cached; expect <500ms) ---"
+s2=$(date +%s%N); cargo run --bin cook -- build; e2=$(date +%s%N)
+echo "elapsed: $(( (e2 - s2) / 1000000 ))ms"
+
+echo "timestamp: $(cat build/probed.txt) (same across both runs = cache hit)"
+```
+
+- [ ] **Step 3: Create README**
+
+```markdown
+# probe-cache-share
+
+Demonstrates cross-invocation cache hit. Probe sleeps 1s then records a
+timestamp. First `cook build`: ~1100ms (probe runs). Second: ~200ms
+(cache hit). Both runs record the SAME timestamp = cache hit confirmed.
+
+Run: `bash verify.sh`.
+```
+
+- [ ] **Step 4: Verify**
+
+```
+cd examples/probe-cache-share
+chmod +x verify.sh
+./verify.sh
+```
+
+- [ ] **Step 5: Commit**
+
+```
+git add examples/probe-cache-share/
+git commit -m "examples: probe-cache-share — cross-invocation cache hit demo"
+```
+
+---
+
 ## Section K — Linear ticketing and final wrap-up
 
 ### Task K1: Update Linear
