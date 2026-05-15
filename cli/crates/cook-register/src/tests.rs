@@ -828,8 +828,11 @@ fn add_unit_with_requires_captured_in_recipe_units() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
 
+    // cook.probe must be registered first so the §22.5.5 requires-resolution
+    // check at end-of-pass can resolve "cc:zlib".
     let lua_src = r#"
 cook.recipe("build", {}, function()
+    cook.probe("cc:zlib", { inputs = {}, produce = "return 1" })
     cook.add_unit({
         command = "echo building",
         requires = { "cc:zlib" },
@@ -841,4 +844,100 @@ end)
     let result = rt.register_recipe(lua_src, "build", None).unwrap();
     assert_eq!(result.units.len(), 1);
     assert_eq!(result.units[0].requires, vec!["cc:zlib"]);
+}
+
+// -----------------------------------------------------------------------
+// C4: Requires resolution against probe registry (§22.5.5)
+// -----------------------------------------------------------------------
+
+#[test]
+fn unresolved_requires_key_errors() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.add_unit({
+        command = "true",
+        outputs = {"build/myapp.o"},
+        requires = {"cc:nonexistent"},
+        cache = false,
+    })
+end)
+"#;
+
+    let result = rt.register_recipe(lua_src, "build", None);
+    assert!(result.is_err(), "unknown requires key must fail");
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains("requires probe key 'cc:nonexistent' which was not declared"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn resolved_requires_key_succeeds() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.probe("cc:zlib", { inputs = {}, produce = "return 1" })
+    cook.add_unit({
+        command = "true",
+        outputs = {"build/myapp.o"},
+        requires = {"cc:zlib"},
+        cache = false,
+    })
+end)
+"#;
+
+    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    let u = result.units.first().unwrap();
+    assert_eq!(u.requires, vec!["cc:zlib"]);
+}
+
+// -----------------------------------------------------------------------
+// C5: Probe requires cycle detection (§22.5.8)
+// -----------------------------------------------------------------------
+
+#[test]
+fn probe_cycle_a_b_a_errors() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.probe("cc:a", {
+        inputs = { requires = {"cc:b"} },
+        produce = "return 1",
+    })
+    cook.probe("cc:b", {
+        inputs = { requires = {"cc:a"} },
+        produce = "return 2",
+    })
+end)
+"#;
+
+    let result = rt.register_recipe(lua_src, "build", None);
+    assert!(result.is_err(), "probe cycle must fail register_recipe");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("probe cycle detected"), "got: {err}");
+    assert!(err.contains("cc:a") && err.contains("cc:b"), "got: {err}");
+}
+
+#[test]
+fn probe_no_cycle_succeeds() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.probe("cc:a", { inputs = {}, produce = "return 1" })
+    cook.probe("cc:b", { inputs = { requires = {"cc:a"} }, produce = "return 2" })
+end)
+"#;
+
+    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    assert_eq!(result.probes.len(), 2);
 }

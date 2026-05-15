@@ -340,6 +340,52 @@ impl Registry {
             }
         }
 
+        // §22.5.8: Cycle detection on the probe `requires` graph.
+        // MUST run after the register pass so all probes are visible.
+        {
+            let probe_reg = probe_registry.borrow();
+            probe_reg
+                .detect_cycles()
+                .map_err(|msg| RegisterError::Lua(mlua::Error::runtime(msg)))?;
+        }
+
+        // §22.5.5: Resolve each cook.add_unit.requires key against the
+        // registered probe set.  Unknown keys are rejected with a diagnostic
+        // naming the unit and the missing key.  Resolution is deferred to
+        // end-of-pass so the relative order of cook.probe and cook.add_unit
+        // calls within one register pass is unconstrained.
+        {
+            use std::collections::BTreeSet;
+            let probe_reg = probe_registry.borrow();
+            let registered_keys: BTreeSet<&str> =
+                probe_reg.probes.keys().map(|s| s.as_str()).collect();
+            let cap = capture_state.borrow();
+            for (idx, unit) in cap.units.iter().enumerate() {
+                for key in &unit.requires {
+                    if !registered_keys.contains(key.as_str()) {
+                        // Derive a human-readable unit name from its first output
+                        // path (deterministic); fall back to positional index.
+                        let unit_name = unit
+                            .cache_meta
+                            .as_ref()
+                            .and_then(|m| m.output_paths.first())
+                            .map(|p| p.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let unit_label = if unit_name.is_empty() {
+                            format!("<unit-{}>", idx)
+                        } else {
+                            unit_name
+                        };
+                        return Err(RegisterError::Lua(mlua::Error::runtime(format!(
+                            "unit '{}' requires probe key '{}' which was not declared",
+                            unit_label, key
+                        ))));
+                    }
+                }
+            }
+        }
+
         let deps = recipe.metadata.requires.clone();
 
         // Extract results from capture state
