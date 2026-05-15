@@ -172,7 +172,6 @@ fn lua_type_name(v: &LuaValue) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mlua::prelude::*;
 
     fn setup(source_file: &str) -> (Lua, SharedProbeRegistry) {
         let lua = Lua::new();
