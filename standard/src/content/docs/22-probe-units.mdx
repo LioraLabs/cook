@@ -1,0 +1,163 @@
+---
+title: "§{cat.probes} — Probe units"
+sidebar:
+  order: 22.5
+---
+
+{/* CS-0074 — Probe units and the cook.probe Lua surface. Entry to be added to Appendix E by task A5. */}
+
+# 22.5. Probe units [#cat.probes]
+
+> **Normative.** This chapter specifies the `cook.probe` Lua API and the probe-unit execution model. A conforming implementation MUST honour every clause in this chapter.
+
+## 22.5.1. Synopsis [#cat.probes.synopsis]
+
+A *probe unit* is a DAG unit whose output is a Lua value rather than a file. A conforming implementation MUST expose the register-phase API `cook.probe(key, opts)` (§{cat.probes.api}) and MUST treat probe units as ordinary participants in the execution DAG (§{cat.probes.exec}). Probe outputs MUST be cached using the same machinery as recipe outputs (§{exec.cache}), enabling cross-invocation memoisation and cross-machine sharing via Cook Cloud.
+
+A unit MAY declare a dependency on one or more probe outputs via `requires = { key, ... }` on `cook.add_unit` (§{cat.probes.requires}). The implementation MUST add a DAG edge from each named probe to the consuming unit and MUST fold each probe's fingerprint into the consumer's fingerprint, ensuring transitive invalidation.
+
+## 22.5.2. The `cook.probe` API [#cat.probes.api]
+
+**Signature.** `cook.probe(key: string, opts: ProbeOpts) -> nil`
+
+**Phase.** Register-phase only.
+
+`cook.probe(key, opts)` registers a probe unit named `key`. The function MUST be available on the register-phase VM. Calls from the execute-phase VM MUST raise a Lua runtime error per §{rationale.execute-phase-api}.
+
+`key` MUST be a non-empty string. Implementations SHOULD recommend the convention `"<module-prefix>:<name>"` (e.g. `"cc:zlib"`) but MUST NOT enforce it syntactically.
+
+A second `cook.probe` call with the same `key` within one register pass MUST raise a register-phase diagnostic naming both source locations:
+
+```
+probe key 'cc:zlib' declared at <file>:<line>; previously declared at <file>:<line>
+```
+
+`opts` is a Lua table with the following keys:
+
+| Key | Type | Required | Semantics |
+|---|---|---|---|
+| `inputs` | table | yes | Declared inputs (§{cat.probes.inputs}). MAY be an empty table. |
+| `produce` | function | yes | A Lua function taking no arguments, invoked on a worker VM during the execute phase on a cache miss. MUST return a serialisable value (§{cat.probes.values}). |
+
+A conforming implementation MUST raise a register-phase error if `opts.inputs` is absent or not a table, or if `opts.produce` is absent or not a function.
+
+### Example 22.5.2.1
+
+```lua
+cook.probe("cc:zlib", {
+  inputs = {
+    env   = { "PKG_CONFIG_PATH", "PATH" },
+    tools = { "pkg-config" },
+  },
+  produce = function()
+    local r = run_pkg_config("zlib")
+    return { found = r.found, cflags = r.cflags, libs = r.libs }
+  end,
+})
+```
+
+## 22.5.3. Probe inputs [#cat.probes.inputs]
+
+`opts.inputs` is a table with optional sub-keys. Omitted sub-keys default to the empty list.
+
+| Sub-key | Type | Semantics |
+|---|---|---|
+| `env` | list[string] | Env-var names. The current value of each named variable contributes to the probe's fingerprint. Reuses the env-contribution mechanism of §{exec.cache.abstract}. |
+| `tools` | list[string] | Tool names (e.g. `"pkg-config"`). Resolved via PATH at probe execution time; the content hash of the resolved binary contributes to the fingerprint per §{exec.cache.tool-binary}. A tool not found on PATH folds as `(name, "<missing>")`; the probe runs and SHOULD surface a diagnostic. |
+| `files` | list[string] | File paths relative to the Cookfile root. The content hash of each file contributes to the fingerprint. A missing file folds as `(path, "<missing>")`. |
+| `requires` | list[string] | Upstream probe keys. Each named probe's full fingerprint is folded into this probe's fingerprint (chained invalidation). The `requires` graph among probes MUST be acyclic (§{cat.probes.cycles}). |
+
+A probe's fingerprint MUST fold inputs in this deterministic order: key string, produce-function source text (hashed), env (sorted by name), tools (sorted by name), files (sorted by path), requires (sorted by key). The implementation MUST use SHA-256 over the canonicalised representation, yielding a 32-byte fingerprint that addresses the artifact in the cache backend.
+
+## 22.5.4. Value types [#cat.probes.values]
+
+A probe's `produce` function MUST return one of:
+
+- `nil`
+- `boolean`
+- `number` (integer or float)
+- `string` (raw bytes; not constrained to UTF-8)
+- A table whose keys are all strings, OR all integers in `1..N` with no holes (array shape), and whose values are recursively of these types.
+
+Returning a `function`, `userdata`, `thread`, a mixed-key table, or a table containing a cycle MUST cause the probe to fail with a diagnostic naming the offending path. The diagnostic MUST follow the form:
+
+```
+probe 'cc:zlib' returned a non-serialisable value at .cflags[3] (function)
+```
+
+Probe values are serialised to msgpack for storage and cloud transport. The msgpack envelope MUST carry a `schema_version` field (value `1` for this Standard revision) and a `value` field holding the user-returned value. The `produced_at` timestamp MAY appear as an informative field but MUST NOT participate in fingerprinting.
+
+## 22.5.5. Consumer `requires` [#cat.probes.requires]
+
+`cook.add_unit({ ..., requires = { "key1", "key2" } })` declares that the unit consumes the named probe values. The `requires` field is an optional list of probe-key strings; omitting it is equivalent to `requires = {}`.
+
+A conforming implementation MUST, after the register pass completes:
+
+1. Resolve each key against the set of registered probes. An unknown key MUST raise:
+   ```
+   unit '<name>' requires probe key '<key>' which was not declared
+   ```
+2. Add a DAG edge from each resolved probe to the consumer unit.
+3. Fold each resolved probe's fingerprint into the consumer unit's fingerprint.
+
+The relative order of `cook.probe` and `cook.add_unit` calls within one register pass is unconstrained; resolution is deferred to end-of-pass.
+
+## 22.5.6. Command-template desugaring [#cat.probes.templates]
+
+Consumer unit commands MAY include `{{key}}` and `{{key.field}}` placeholders that refer to probe outputs whose keys appear in `requires`. A conforming implementation MUST detect these patterns at codegen time and rewrite the command into a Lua step that calls `cook.cache.get(key)` (§{lua.both}) and interpolates the result before invoking the shell.
+
+Substitution rules:
+
+- `{{key}}` substitutes the entire probe value, which MUST be a string. If the resolved value is not a string, the implementation MUST raise an execute-phase diagnostic.
+- `{{key.field}}` substitutes the named field of the probe's top-level table value. The resolved value MUST be a string or number; a non-string, non-number value MUST raise an execute-phase diagnostic.
+- `{{key.field[i]}}` substitutes a one-based integer index of a list-valued field. The index MUST be within the list bounds; an out-of-bounds index MUST raise an execute-phase diagnostic.
+
+A placeholder referencing a key not present in `requires`, or accessing a field on a `nil` or non-table value, MUST raise a register-phase or execute-phase diagnostic naming the placeholder text.
+
+### Example 22.5.6.1
+
+```lua
+cook.add_unit({
+  name    = "myapp.o",
+  inputs  = { "myapp.c" },
+  outputs = { "build/myapp.o" },
+  requires = { "cc:compiler", "cc:zlib" },
+  command  = "{{cc:compiler}} -c {{in}} -o {{out}} {{cc:zlib.cflags}}",
+})
+```
+
+The implementation rewrites this command at codegen time into a Lua step that reads `cook.cache.get("cc:compiler")` and `cook.cache.get("cc:zlib")` and interpolates the results before executing the shell command.
+
+## 22.5.7. Execution semantics [#cat.probes.exec]
+
+A probe unit MUST run at most once per build invocation.
+
+**Cache hit.** When the probe's fingerprint addresses an existing artifact in the cache backend, the implementation MUST load and deserialise the cached msgpack bytes, validate the `schema_version` field, populate the per-run probe-value store, and skip execution of the `produce` function.
+
+**Cache miss.** When no cached artifact is found, the implementation MUST dispatch the probe to a worker VM, invoke `produce()`, capture the return value, validate it against §{cat.probes.values}, msgpack-encode it, store the artifact via the cache backend, and populate the per-run probe-value store.
+
+The per-run probe-value store is keyed by probe key. Consumer units are dispatched after their `requires`-edge predecessors complete; at dispatch time, the store is fully populated for all required probes.
+
+`cook.cache.get(key)` (§{lua.both}) invoked from execute-phase Lua MUST read from the per-run probe-value store. A `cook.cache.get` call for a key that has not completed as a probe MUST return `nil`; the implementation MAY upgrade this to a diagnostic in a future Standard revision.
+
+A `produce` function MAY raise a Lua error. A conforming implementation MUST treat a raised error as a unit failure and MUST propagate failure to every downstream consumer via the DAG edge, consistent with the general unit-failure semantics of §{exec.two-phase}.
+
+**On-disk layout.** Probe artifacts reuse the existing recipe-cache layout. No new directories are introduced. The meta sidecar MUST carry a `kind: "probe_value"` field to disambiguate probe-artifact sidecars from file-artifact sidecars. All other fields of the meta sidecar (integrity hash, schema version) follow §{exec.cache.integrity}.
+
+## 22.5.8. Cycle detection [#cat.probes.cycles]
+
+The probe `requires` graph MUST be acyclic. A conforming implementation MUST detect cycles at the end of the register pass and MUST raise a diagnostic before any unit executes:
+
+```
+probe cycle detected: cc:a -> cc:b -> cc:a
+```
+
+The diagnostic MUST render the full cycle path. The order in which nodes are listed MUST be deterministic (implementation-defined ordering of cycle start); the path MUST close back to the first node.
+
+## 22.5.9. `cook.cache.set` deprecation [#cat.probes.cache-set-deprecation]
+
+The functions `cook.cache.set`, `cook.cache.invalidate`, and `cook.cache.clear` are **deprecated** by this chapter. A conforming implementation SHOULD emit a warning diagnostic on each call to a deprecated function. The warning MUST include the function name and the call site (`<file>:<line>`). Callers SHOULD migrate to `cook.probe` for cross-invocation memoisation.
+
+`cook.cache.get` is retained as the read-side primitive through which desugared command-Lua (§{cat.probes.templates}) and execute-phase Lua access probe values. Its semantics are tightened: it reads from the per-run probe-value store populated by completed probe units.
+
+The deprecated functions will be removed in a future major Standard revision (target: v1.x cut). The removal will be recorded as a CS-NNNN amendment when it occurs.
