@@ -67,6 +67,7 @@ pub fn register_test_api(lua: &Lua, capture_state: SharedCaptureState) -> LuaRes
             payload,
             cache_meta: None,
             dep_kind: dep_kind.clone(),
+            requires: vec![],
         });
         if let DepKind::TestSibling(gi) = &dep_kind {
             state.step_groups[*gi].push(unit_idx);

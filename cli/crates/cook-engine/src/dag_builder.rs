@@ -373,11 +373,13 @@ mod tests {
                     payload: shell("echo a"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
+                    requires: vec![],
                 },
                 CapturedUnit {
                     payload: shell("echo b"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
+                    requires: vec![],
                 },
             ],
             step_groups: vec![],
@@ -385,6 +387,7 @@ mod tests {
             env_vars: default_env(),
             terminal_outputs: vec![],
             dep_edges: vec![],
+            probes: vec![],
         };
         let dag = build_dag(vec![units]).expect("no collision");
         assert_eq!(dag.len(), 2);
@@ -404,16 +407,19 @@ mod tests {
                     payload: shell("gcc -c a.c"),
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
+                    requires: vec![],
                 },
                 CapturedUnit {
                     payload: shell("gcc -c b.c"),
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
+                    requires: vec![],
                 },
                 CapturedUnit {
                     payload: shell("ar rcs lib.a"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
+                    requires: vec![],
                 },
             ],
             step_groups: vec![vec![0, 1]],
@@ -421,6 +427,7 @@ mod tests {
             env_vars: default_env(),
             terminal_outputs: vec![],
             dep_edges: vec![],
+            probes: vec![],
         };
         let dag = build_dag(vec![units]).expect("no collision");
         assert_eq!(dag.len(), 3);
@@ -440,12 +447,14 @@ mod tests {
                 payload: shell("mkdir build"),
                 cache_meta: None,
                 dep_kind: DepKind::Sequential,
+                requires: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
             terminal_outputs: vec![],
             dep_edges: vec![],
+            probes: vec![],
         };
         let build = RecipeUnits {
             recipe_name: "build".into(),
@@ -454,12 +463,14 @@ mod tests {
                 payload: shell("gcc main.c"),
                 cache_meta: None,
                 dep_kind: DepKind::Sequential,
+                requires: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
             terminal_outputs: vec![],
             dep_edges: vec![],
+            probes: vec![],
         };
         let dag = build_dag(vec![setup, build]).expect("no collision");
         assert_eq!(dag.len(), 2);
@@ -484,16 +495,19 @@ mod tests {
                     payload: shell("gcc -c add.c"),
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
+                    requires: vec![],
                 },
                 CapturedUnit {
                     payload: shell("gcc -c mul.c"),
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
+                    requires: vec![],
                 },
                 CapturedUnit {
                     payload: shell("ar rcs libmath.a"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
+                    requires: vec![],
                 },
             ],
             step_groups: vec![vec![0, 1]],
@@ -501,6 +515,7 @@ mod tests {
             env_vars: default_env(),
             terminal_outputs: vec!["libmath.a".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
 
         // app: compile (1 unit, step group) -> link (sequential, depends on libmath)
@@ -512,11 +527,13 @@ mod tests {
                     payload: shell("gcc -c main.c"),
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
+                    requires: vec![],
                 },
                 CapturedUnit {
                     payload: shell("gcc -o app main.o libmath.a"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
+                    requires: vec![],
                 },
             ],
             step_groups: vec![vec![0]],
@@ -524,6 +541,7 @@ mod tests {
             env_vars: default_env(),
             terminal_outputs: vec!["app".into()],
             dep_edges: vec![(1, "libmath".into())], // unit 1 (link) depends on libmath
+            probes: vec![],
         };
 
         let dag = build_dag(vec![libmath, app]).expect("no collision");
@@ -559,12 +577,14 @@ mod tests {
                 payload: shell("mkdir build"),
                 cache_meta: None,
                 dep_kind: DepKind::Sequential,
+                requires: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
             terminal_outputs: vec![],
             dep_edges: vec![],
+            probes: vec![],
         };
         let build = RecipeUnits {
             recipe_name: "build".into(),
@@ -573,12 +593,14 @@ mod tests {
                 payload: shell("gcc main.c"),
                 cache_meta: None,
                 dep_kind: DepKind::Sequential,
+                requires: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
             terminal_outputs: vec![],
             dep_edges: vec![],
+            probes: vec![],
         };
         let dag = build_dag(vec![setup, build]).expect("no collision");
         assert_eq!(dag.len(), 2);
@@ -599,11 +621,13 @@ mod tests {
                     },
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
+                    requires: vec![],
                 },
                 CapturedUnit {
                     payload: shell("echo real work"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
+                    requires: vec![],
                 },
             ],
             step_groups: vec![],
@@ -611,6 +635,7 @@ mod tests {
             env_vars: default_env(),
             terminal_outputs: vec![],
             dep_edges: vec![],
+            probes: vec![],
         };
         let dag = build_dag(vec![units]).expect("no collision");
         assert_eq!(dag.len(), 2);
@@ -647,12 +672,14 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("a", &["build/shared.bin"])),
                 dep_kind: DepKind::Sequential,
+                requires: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
             terminal_outputs: vec!["build/shared.bin".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
         let b = RecipeUnits {
             recipe_name: "b".into(),
@@ -661,12 +688,14 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("b", &["build/shared.bin"])),
                 dep_kind: DepKind::Sequential,
+                requires: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
             terminal_outputs: vec!["build/shared.bin".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
         let err = build_dag(vec![a, b]).expect_err("expected OutputCollision");
         match err {
@@ -690,12 +719,14 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("a", &["build/shared.bin"])),
                 dep_kind: DepKind::Sequential,
+                requires: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
             terminal_outputs: vec!["build/shared.bin".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
         let b = RecipeUnits {
             recipe_name: "b".into(),
@@ -704,12 +735,14 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("b", &["build/shared.bin"])),
                 dep_kind: DepKind::Sequential,
+                requires: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
             terminal_outputs: vec!["build/shared.bin".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
         let dag = build_dag(vec![a, b]).expect("dep edge allows shared output");
         assert_eq!(dag.len(), 2);
@@ -724,12 +757,14 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("a", &["build/a.bin"])),
                 dep_kind: DepKind::Sequential,
+                requires: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
             terminal_outputs: vec!["build/a.bin".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
         let b = RecipeUnits {
             recipe_name: "b".into(),
@@ -738,12 +773,14 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("b", &["build/b.bin"])),
                 dep_kind: DepKind::Sequential,
+                requires: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
             env_vars: default_env(),
             terminal_outputs: vec!["build/b.bin".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
         let dag = build_dag(vec![a, b]).expect("distinct outputs OK");
         assert_eq!(dag.len(), 2);
@@ -771,6 +808,7 @@ mod test_slice_tests {
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
+            requires: vec![],
         }
     }
 
@@ -787,6 +825,7 @@ mod test_slice_tests {
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
+            requires: vec![],
         }
     }
 

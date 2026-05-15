@@ -338,6 +338,7 @@ impl Registry {
             env_vars: env_btree,
             terminal_outputs: terminal_outputs_list,
             dep_edges: cap.dep_edges.clone(),
+            probes: cap.probes.clone(),
         })
     }
 }

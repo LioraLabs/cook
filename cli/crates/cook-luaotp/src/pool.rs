@@ -38,6 +38,15 @@ pub struct TestOutput {
     pub exit_code: Option<i32>,
 }
 
+/// Payload returned by a completed probe unit (§22.5). `bytes` contains the
+/// msgpack-serialised return value of the `produce` Lua function.
+/// Handled by Task G; present as `None` on all non-probe WorkResults.
+#[derive(Clone, Debug)]
+pub struct ProbeOutput {
+    pub key: String,
+    pub bytes: Vec<u8>,
+}
+
 pub struct WorkResult {
     pub id: usize,
     pub success: bool,
@@ -49,6 +58,9 @@ pub struct WorkResult {
     /// stdout/stderr provenance (CS-0035).  Pre-CS-0035 this was `Vec<String>`
     /// and the engine attributed every line to stdout in the JSON event stream.
     pub output_lines: Vec<(OutputStream, String)>,
+    /// Set when this result comes from a `WorkPayload::Probe` unit (§22.5).
+    /// `None` for all non-probe units. Wired end-to-end by Task G.
+    pub probe_output: Option<ProbeOutput>,
 }
 
 pub struct WorkerPool {
@@ -300,6 +312,7 @@ fn worker_loop(
                             test_output: None,
                             node_name,
                             output_lines: Vec::new(),
+                            probe_output: None,
                         }
                     }
                 };
@@ -940,6 +953,7 @@ fn execute_work_item(
                 test_output: None,
                 node_name,
                 output_lines: Vec::new(),
+                probe_output: None,
             }
         }
         WorkPayload::Test { cmd, line, timeout, should_fail, suite_name, test_name, .. } => {
@@ -956,6 +970,7 @@ fn execute_work_item(
             test_output: None,
             node_name,
             output_lines: Vec::new(),
+            probe_output: None,
         },
     }
 }
@@ -988,6 +1003,7 @@ fn execute_shell(
             test_output: None,
             node_name,
             output_lines: Vec::new(),
+            probe_output: None,
         },
         Ok(output) => {
             let mut output_lines: Vec<(OutputStream, String)> = Vec::new();
@@ -1017,6 +1033,7 @@ fn execute_shell(
                     test_output: None,
                     node_name,
                     output_lines,
+                    probe_output: None,
                 }
             } else {
                 let code = output.status.code().unwrap_or(1);
@@ -1033,6 +1050,7 @@ fn execute_shell(
                     test_output: None,
                     node_name,
                     output_lines,
+                    probe_output: None,
                 }
             }
         }
@@ -1088,6 +1106,7 @@ fn execute_lua_chunk(
             test_output: None,
             node_name,
             output_lines: Vec::new(),
+            probe_output: None,
         },
         Err(e) => WorkResult {
             id,
@@ -1096,6 +1115,7 @@ fn execute_lua_chunk(
             test_output: None,
             node_name,
             output_lines: Vec::new(),
+            probe_output: None,
         },
     }
 }
@@ -1149,6 +1169,7 @@ fn execute_test(
                 }),
                 node_name,
                 output_lines: Vec::new(),
+                probe_output: None,
             };
         }
     };
@@ -1238,6 +1259,7 @@ fn execute_test(
         }),
         node_name,
         output_lines,
+        probe_output: None,
     }
 }
 

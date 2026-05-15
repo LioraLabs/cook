@@ -94,6 +94,7 @@ pub fn register_cook_api_capture(
                 },
                 cache_meta: None,
                 dep_kind: DepKind::Sequential,
+                requires: vec![],
             };
             state.units.push(unit);
         }
@@ -113,6 +114,7 @@ pub fn register_cook_api_capture(
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
+            requires: vec![],
         };
         state.units.push(unit);
         Ok("".to_string())

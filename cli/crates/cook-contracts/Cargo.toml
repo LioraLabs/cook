@@ -5,3 +5,7 @@ edition = "2021"
 description = "Shared kernel types for the Cook build system"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

@@ -591,6 +591,7 @@ mod tests {
             },
             cache_meta: Some(cache_meta),
             dep_kind: DepKind::Sequential,
+            requires: vec![],
         };
         let ru = RecipeUnits {
             recipe_name: recipe_name.into(),
@@ -601,6 +602,7 @@ mod tests {
             env_vars: BTreeMap::new(),
             terminal_outputs: vec![output.into()],
             dep_edges: vec![],
+            probes: vec![],
         };
         (recipe_name.into(), ru)
     }
@@ -700,6 +702,7 @@ mod tests {
             payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
             cache_meta: Some(cm_a),
             dep_kind: DepKind::Sequential,
+            requires: vec![],
         };
         let ru_a = RecipeUnits {
             recipe_name: "a".into(),
@@ -710,6 +713,7 @@ mod tests {
             env_vars: BTreeMap::new(),
             terminal_outputs: vec!["a.o".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
 
         let cm_b = cook_contracts::CacheMeta {
@@ -729,6 +733,7 @@ mod tests {
             payload: WorkPayload::Shell { cmd: "clang -c b.cpp".into(), line: 1 },
             cache_meta: Some(cm_b),
             dep_kind: DepKind::Sequential,
+            requires: vec![],
         };
         let ru_b = RecipeUnits {
             recipe_name: "b".into(),
@@ -739,6 +744,7 @@ mod tests {
             env_vars: BTreeMap::new(),
             terminal_outputs: vec!["b.o".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
 
         let all_units = vec![("a".into(), ru_a), ("b".into(), ru_b)];
@@ -847,6 +853,7 @@ mod tests {
             payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
             cache_meta: Some(cm_compile),
             dep_kind: DepKind::Sequential,
+            requires: vec![],
         };
         let ru_compile = RecipeUnits {
             recipe_name: "compile".into(),
@@ -857,6 +864,7 @@ mod tests {
             env_vars: BTreeMap::new(),
             terminal_outputs: vec!["a.o".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
 
         let cm_archive = cook_contracts::CacheMeta {
@@ -879,6 +887,7 @@ mod tests {
             payload: WorkPayload::Shell { cmd: "ar rcs libfoo.a a.o".into(), line: 1 },
             cache_meta: Some(cm_archive),
             dep_kind: DepKind::Sequential,
+            requires: vec![],
         };
         let ru_archive = RecipeUnits {
             recipe_name: "archive".into(),
@@ -889,6 +898,7 @@ mod tests {
             env_vars: BTreeMap::new(),
             terminal_outputs: vec!["libfoo.a".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
 
         let all_units = vec![("compile".into(), ru_compile), ("archive".into(), ru_archive)];

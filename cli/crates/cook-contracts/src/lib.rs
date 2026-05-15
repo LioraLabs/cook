@@ -52,6 +52,29 @@ pub enum StepKind {
     Chore,
 }
 
+/// Declared inputs for a probe unit. Each category contributes to the
+/// probe's fingerprint per §22.5.3.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProbeInputs {
+    #[serde(default)]
+    pub env: Vec<String>,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(default)]
+    pub files: Vec<String>,
+    #[serde(default)]
+    pub requires: Vec<String>,
+}
+
+/// A probe unit declared via `cook.probe(key, opts)` (§22.5.2).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProbeUnit {
+    pub key: String,
+    pub produce_source: String,
+    pub produce_line: usize,
+    pub inputs: ProbeInputs,
+}
+
 /// What kind of work a captured unit represents.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -96,6 +119,13 @@ pub enum WorkPayload {
         test_name: String,
         iteration_item: Option<String>,
     },
+    /// A probe unit (§22.5.2): runs `produce` (Lua source string) on a worker
+    /// VM and stashes the msgpack-serialised return value under `key`.
+    Probe {
+        key: String,
+        produce: String,
+        line: usize,
+    },
 }
 
 impl WorkPayload {
@@ -112,6 +142,7 @@ impl WorkPayload {
             Self::LuaChunk { .. } => "lua".to_string(),
             Self::Interactive { line, .. } => format!("@{line}"),
             Self::Test { test_name, .. } => test_name.clone(),
+            Self::Probe { key, .. } => format!("probe:{key}"),
         }
     }
 }
@@ -164,6 +195,8 @@ pub struct CapturedUnit {
     pub payload: WorkPayload,
     pub cache_meta: Option<CacheMeta>,
     pub dep_kind: DepKind,
+    /// Probe keys this unit consumes (§22.5.5). Empty for non-consumer units.
+    pub requires: Vec<String>,
 }
 
 /// How a captured unit relates to others in the recipe.
@@ -191,6 +224,8 @@ pub struct RecipeUnits {
     /// Fine-grained cross-recipe dependency edges.
     /// Each entry is (unit_index_in_this_recipe, dep_recipe_name).
     pub dep_edges: Vec<(usize, String)>,
+    /// Probe units registered during this register pass (§22.5.2).
+    pub probes: Vec<ProbeUnit>,
 }
 
 #[cfg(test)]
@@ -369,6 +404,7 @@ mod tests {
             payload: WorkPayload::Shell { cmd: "echo hi".into(), line: 1 },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
+            requires: vec![],
         };
         assert!(unit.cache_meta.is_none());
         assert!(matches!(unit.dep_kind, DepKind::Sequential));
@@ -400,11 +436,13 @@ mod tests {
                     payload: WorkPayload::Shell { cmd: "gcc -c a.c".into(), line: 1 },
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
+                    requires: vec![],
                 },
                 CapturedUnit {
                     payload: WorkPayload::Shell { cmd: "gcc -c b.c".into(), line: 2 },
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
+                    requires: vec![],
                 },
             ],
             step_groups: vec![vec![0, 1]],
@@ -412,6 +450,7 @@ mod tests {
             env_vars: env,
             terminal_outputs: vec![],
             dep_edges: vec![],
+            probes: vec![],
         };
 
         assert_eq!(recipe.recipe_name, "build");
@@ -435,6 +474,7 @@ mod tests {
             env_vars: BTreeMap::new(),
             terminal_outputs: vec!["build/lib/libmath.a".into()],
             dep_edges: vec![],
+            probes: vec![],
         };
         assert_eq!(recipe.terminal_outputs, vec!["build/lib/libmath.a"]);
         assert!(recipe.dep_edges.is_empty());
@@ -445,6 +485,85 @@ mod tests {
         let original = WorkPayload::Shell { cmd: "make".into(), line: 1 };
         let cloned = original.clone();
         assert!(matches!(cloned, WorkPayload::Shell { line: 1, .. }));
+    }
+
+    #[test]
+    fn probe_inputs_default_is_empty() {
+        let i = ProbeInputs::default();
+        assert!(i.env.is_empty());
+        assert!(i.tools.is_empty());
+        assert!(i.files.is_empty());
+        assert!(i.requires.is_empty());
+    }
+
+    #[test]
+    fn probe_unit_round_trips_through_serde() {
+        let p = ProbeUnit {
+            key: "cc:zlib".into(),
+            produce_source: "return run_pkg_config(\"zlib\")".into(),
+            produce_line: 42,
+            inputs: ProbeInputs {
+                env: vec!["PKG_CONFIG_PATH".into()],
+                tools: vec!["pkg-config".into()],
+                files: vec![],
+                requires: vec!["cc:compiler".into()],
+            },
+        };
+        let s = serde_json::to_string(&p).unwrap();
+        let r: ProbeUnit = serde_json::from_str(&s).unwrap();
+        assert_eq!(r.key, "cc:zlib");
+        assert_eq!(r.inputs.requires, vec!["cc:compiler"]);
+    }
+
+    #[test]
+    fn work_payload_probe_variant_constructs() {
+        let p = WorkPayload::Probe {
+            key: "cc:zlib".into(),
+            produce: "return 42".into(),
+            line: 1,
+        };
+        match &p {
+            WorkPayload::Probe { key, produce, line } => {
+                assert_eq!(key, "cc:zlib");
+                assert_eq!(produce, "return 42");
+                assert_eq!(*line, 1);
+            }
+            _ => panic!("expected Probe variant"),
+        }
+    }
+
+    #[test]
+    fn captured_unit_requires_defaults_to_empty() {
+        let p = WorkPayload::Shell { cmd: "echo hi".into(), line: 1 };
+        let cu = CapturedUnit {
+            payload: p,
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            requires: vec![],
+        };
+        assert!(cu.requires.is_empty());
+    }
+
+    #[test]
+    fn recipe_units_probes_defaults_to_empty() {
+        // If a literal RecipeUnits constructor in the existing tests has been
+        // updated, this test just confirms the field is accessible. Construct
+        // minimally using whatever helper exists, or by literal — match existing
+        // style.
+        use std::collections::BTreeMap;
+        use std::path::PathBuf;
+        let r = RecipeUnits {
+            recipe_name: "x".into(),
+            deps: vec![],
+            units: vec![],
+            step_groups: vec![],
+            working_dir: PathBuf::new(),
+            env_vars: BTreeMap::new(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        assert!(r.probes.is_empty());
     }
 
     #[test]
@@ -465,6 +584,7 @@ mod tests {
                 discovered_inputs: None,
             }),
             dep_kind: DepKind::StepGroup(0),
+            requires: vec![],
         };
         assert!(unit.cache_meta.is_some());
         assert_eq!(unit.cache_meta.unwrap().command_hash, 9999);

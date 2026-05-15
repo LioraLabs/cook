@@ -383,6 +383,7 @@ pub fn register_unit_api(
             payload,
             cache_meta,
             dep_kind: dep_kind.clone(),
+            requires: vec![],
         });
         if let DepKind::StepGroup(gi) = &dep_kind {
             state.step_groups[*gi].push(unit_idx);

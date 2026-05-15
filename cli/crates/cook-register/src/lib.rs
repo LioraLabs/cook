@@ -65,6 +65,8 @@ pub struct CaptureState {
     pub last_cook_step_outputs: Vec<String>,
     /// Fine-grained dep edges: (unit_idx, dep_recipe_name).
     pub dep_edges: Vec<(usize, String)>,
+    /// Probe units registered via `cook.probe(key, opts)` (§22.5.2).
+    pub probes: Vec<cook_contracts::ProbeUnit>,
     /// Dep refs accumulated during current step_group.
     /// Cleared when step_group ends. Each add_unit call within the group
     /// inherits all accumulated dep refs as edges.
@@ -98,6 +100,7 @@ impl CaptureState {
             current_step_outputs: Vec::new(),
             last_cook_step_outputs: Vec::new(),
             dep_edges: Vec::new(),
+            probes: Vec::new(),
             step_group_dep_refs: Vec::new(),
             step_group_dep_input_paths: Vec::new(),
             current_chore_active: false,

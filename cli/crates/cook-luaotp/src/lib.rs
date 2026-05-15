@@ -7,4 +7,4 @@
 
 mod pool;
 
-pub use pool::{WorkerPool, WorkItem, WorkResult, TestOutput};
+pub use pool::{WorkerPool, WorkItem, WorkResult, TestOutput, ProbeOutput};
