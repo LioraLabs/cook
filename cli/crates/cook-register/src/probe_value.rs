@@ -319,4 +319,26 @@ mod tests {
             assert_eq!(back, mp, "round-trip failed for source: {}", src);
         }
     }
+
+    #[test]
+    fn msgpack_round_trip_binary_string() {
+        // Non-UTF-8 bytes go through the Binary msgpack type; round-trip
+        // must preserve the raw bytes (§22.5.4: string is raw bytes).
+        let lua = Lua::new();
+        // Inject raw bytes via string.char.
+        let v: LuaValue = lua
+            .load("return string.char(0xFF, 0xFE, 0x00, 0x01)")
+            .eval()
+            .unwrap();
+        let mp = lua_to_msgpack(&v).unwrap();
+        // Should be Binary, not String.
+        assert!(
+            matches!(mp, MsgPackValue::Binary(_)),
+            "expected Binary for non-UTF-8 bytes, got {:?}",
+            mp
+        );
+        let bytes = encode_msgpack(&mp);
+        let back = decode_msgpack(&bytes).unwrap();
+        assert_eq!(back, mp);
+    }
 }
