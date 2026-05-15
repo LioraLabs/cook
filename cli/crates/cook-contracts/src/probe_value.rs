@@ -68,7 +68,9 @@ mod tests {
 
     #[test]
     fn decode_invalid_bytes_returns_error() {
-        let bad = vec![0xC1]; // 0xC1 is never-used in msgpack
+        // Truncated msgpack — a map header claiming 1 element but no data.
+        // 0x81 = fixmap with 1 entry; no key or value follows → decode error.
+        let bad = vec![0x81];
         assert!(decode_msgpack(&bad).is_err());
     }
 }
