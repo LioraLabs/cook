@@ -114,7 +114,7 @@ The relative order of `cook.probe` and `cook.add_unit` calls within one register
 
 ## 22.5.6. Command-template desugaring [#cat.probes.templates]
 
-Consumer unit commands MAY include `{{key}}`, `{{key.field}}`, and `{{key.field[i]}}` placeholders that refer to probe outputs whose keys appear in `requires`. A conforming implementation MUST detect these patterns at codegen time and rewrite the command into a Lua step that calls `cook.cache.get(key)` (§{lua.both}) and interpolates the result before invoking the shell.
+Consumer unit commands MAY include `{{key}}`, `{{key.field}}`, and `{{key.field[i]}}` placeholders that refer to probe outputs whose keys appear in `requires`. A conforming implementation MUST detect these patterns at register time and rewrite the command into a Lua step that calls `cook.cache.get(key)` (§{lua.both}) and interpolates the result before invoking the shell. Implementations that perform this rewriting inside `cook.add_unit` (register-phase) rather than at a separate codegen phase are conformant.
 
 Substitution rules:
 

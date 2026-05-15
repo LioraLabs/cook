@@ -1,6 +1,6 @@
 use mlua::prelude::*;
 use std::path::{Path, PathBuf};
-use cook_contracts::{CacheMeta, CapturedUnit, DepKind, WorkPayload};
+use cook_contracts::{CacheMeta, CapturedUnit, DepKind, StepKind, WorkPayload};
 
 use crate::dep_output_api::SharedTerminalOutputs;
 use crate::{hash_str, SharedCaptureState};
@@ -74,6 +74,177 @@ fn validate_output_not_directory(working_dir: &Path, path: &str) -> Result<(), S
         ));
     }
     Ok(())
+}
+
+/// A `{{key}}` or `{{key.field[i]}}` probe-value placeholder found in a command
+/// string. Minimal inline version of cook-luagen's ProbeRef for use at register
+/// time without a cross-crate dependency.
+struct InlineProbeRef {
+    key: String,
+    path: Vec<String>,
+    range: std::ops::Range<usize>,
+}
+
+/// Scan `cmd` for `{{key}}` / `{{key.field}}` / `{{key.field[i]}}` placeholders.
+/// Returns `Ok(vec)` or `Err(diagnostic)` for malformed paths.
+fn scan_probe_refs(cmd: &str) -> Result<Vec<InlineProbeRef>, String> {
+    let mut out = vec![];
+    let bytes = cmd.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'{' && bytes[i + 1] == b'{' {
+            let close = match cmd[i + 2..].find("}}") {
+                Some(p) => i + 2 + p,
+                None => break,
+            };
+            let inner = cmd[i + 2..close].trim();
+            let key_end = inner.find(|c: char| c == '.' || c == '[').unwrap_or(inner.len());
+            let key = inner[..key_end].trim().to_string();
+            if key.is_empty() {
+                i = close + 2;
+                continue;
+            }
+            let path = parse_probe_field_path(&inner[key_end..])?;
+            out.push(InlineProbeRef { key, path, range: i..close + 2 });
+            i = close + 2;
+        } else {
+            i += 1;
+        }
+    }
+    Ok(out)
+}
+
+/// Parse the field-path portion of a probe placeholder (everything after the key).
+fn parse_probe_field_path(s: &str) -> Result<Vec<String>, String> {
+    let mut out = vec![];
+    let mut chars = s.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        match c {
+            '.' => {
+                chars.next();
+                let mut name = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c.is_alphanumeric() || c == '_' {
+                        name.push(c);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                if name.is_empty() {
+                    return Err("empty field name after '.'".into());
+                }
+                out.push(name);
+            }
+            '[' => {
+                chars.next();
+                let mut idx = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c == ']' { chars.next(); break; }
+                    idx.push(c);
+                    chars.next();
+                }
+                if idx.parse::<usize>().is_err() {
+                    return Err(format!("non-integer array index '[{}]'", idx));
+                }
+                out.push(idx);
+            }
+            _ => return Err(format!("unexpected character in field path: {:?}", c)),
+        }
+    }
+    Ok(out)
+}
+
+/// Escape a string for embedding in a Lua double-quoted string literal.
+fn lua_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\0' => out.push_str("\\0"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// If `command` contains `{{...}}` probe-value placeholders, rewrite it into
+/// a Lua chunk string that performs the substitution using `cook.cache.get` at
+/// execute time and invokes `cook.sh` with the fully-resolved command.
+///
+/// Returns `Some(lua_code_string)` when placeholders are detected, `None`
+/// when the command is plain (no rewriting needed).
+///
+/// Also returns the set of probe keys referenced so callers can merge them
+/// into `unit.requires` automatically.
+fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<String>)>, String> {
+    let refs = scan_probe_refs(command)?;
+    if refs.is_empty() {
+        return Ok(None);
+    }
+
+    let keys: Vec<String> = {
+        let mut seen = std::collections::BTreeSet::new();
+        refs.iter().filter_map(|r| {
+            if seen.insert(r.key.clone()) { Some(r.key.clone()) } else { None }
+        }).collect()
+    };
+
+    // Build a Lua chunk: declare local vars for each distinct probe key, then
+    // build the final command string by concatenation, then call cook.sh.
+    let mut lua = String::new();
+
+    // One local per distinct probe key (keyed by first ref).
+    let mut key_var: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for r in &refs {
+        if !key_var.contains_key(&r.key) {
+            let var = format!("__probe_{}", r.key.replace(':', "_").replace(['.', '-'], "_"));
+            let access = format!("cook.cache.get(\"{}\")", lua_escape(&r.key));
+            lua.push_str(&format!("local {} = {}\n", var, access));
+            key_var.insert(r.key.clone(), var);
+        }
+    }
+
+    // Build the final command as a Lua concatenation expression.
+    let mut parts: Vec<String> = vec![];
+    let mut cursor = 0usize;
+    for r in &refs {
+        if r.range.start > cursor {
+            parts.push(format!("\"{}\"", lua_escape(&command[cursor..r.range.start])));
+        }
+        // Build access from local var + remaining path segments.
+        let var = &key_var[&r.key];
+        let access = if r.path.is_empty() {
+            format!("tostring({})", var)
+        } else {
+            let mut expr = var.clone();
+            for seg in &r.path {
+                if seg.chars().all(|c| c.is_ascii_digit()) {
+                    expr.push_str(&format!("[{}]", seg));
+                } else {
+                    expr.push_str(&format!(".{}", seg));
+                }
+            }
+            format!("tostring({})", expr)
+        };
+        parts.push(access);
+        cursor = r.range.end;
+    }
+    if cursor < command.len() {
+        parts.push(format!("\"{}\"", lua_escape(&command[cursor..])));
+    }
+
+    let concat_expr = if parts.len() == 1 {
+        parts.into_iter().next().unwrap()
+    } else {
+        parts.join(" .. ")
+    };
+    lua.push_str(&format!("cook.sh({} )", concat_expr));
+
+    Ok(Some((lua, keys)))
 }
 
 /// Register `cook.add_unit(table)`, `cook.step_group(fn)`, `cook._enter_chore()`,
@@ -355,7 +526,7 @@ pub fn register_unit_api(
         };
 
         // Parse opts.requires: optional list of probe-key strings (§{cat.probes.requires}).
-        let requires: Vec<String> = match tbl.get::<LuaValue>("requires") {
+        let mut requires: Vec<String> = match tbl.get::<LuaValue>("requires") {
             Ok(LuaValue::Nil) => vec![],
             Ok(LuaValue::Table(t)) => {
                 let mut out = vec![];
@@ -391,7 +562,33 @@ pub fn register_unit_api(
         } else if interactive {
             WorkPayload::Interactive { cmd: command, line, is_chore }
         } else {
-            WorkPayload::Shell { cmd: command, line: 0 }
+            // CS-0074 Bug 3: scan command for `{{key.field}}` probe-value
+            // placeholders. If found, rewrite as a LuaChunk that resolves
+            // the values at execute time via cook.cache.get and calls cook.sh.
+            // Also auto-add the detected probe keys to requires.
+            match try_expand_probe_templates(&command) {
+                Ok(Some((lua_code, detected_keys))) => {
+                    for k in detected_keys {
+                        if !requires.contains(&k) {
+                            requires.push(k);
+                        }
+                    }
+                    WorkPayload::LuaChunk {
+                        code: lua_code,
+                        inputs: inputs.clone(),
+                        outputs: output_paths.clone(),
+                        ingredient_groups: vec![],
+                        step_kind: StepKind::Cook,
+                        is_chore,
+                    }
+                }
+                Ok(None) => WorkPayload::Shell { cmd: command, line: 0 },
+                Err(e) => {
+                    return Err(LuaError::runtime(format!(
+                        "cook.add_unit: malformed probe placeholder in command: {e}"
+                    )));
+                }
+            }
         };
 
         let mut state = cs.borrow_mut();
@@ -1401,5 +1598,47 @@ mod tests {
         assert!(result.is_err(), "requires must be a list, not a string");
         let err = result.unwrap_err().to_string();
         assert!(err.contains("requires"), "error must mention 'requires'; got: {err}");
+    }
+
+    /// CS-0074 Bug 3 regression: cook.add_unit with a command containing
+    /// `{{probe.field}}` placeholders MUST be rewritten into a LuaChunk that
+    /// resolves the probe value at execute time via cook.cache.get.
+    #[test]
+    fn add_unit_command_with_probe_template_is_rewritten() {
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "u",
+                inputs = {}, outputs = {"out.txt"},
+                cache = false,
+                command = "echo {{k.v}} > out.txt",
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = capture_state.borrow();
+        let unit = state.units.first().expect("one unit");
+
+        let has_cache_get = match &unit.payload {
+            WorkPayload::LuaChunk { code, .. } => code.contains("cook.cache.get"),
+            WorkPayload::Shell { cmd, .. } => cmd.contains("cook.cache.get"),
+            _ => false,
+        };
+        assert!(
+            has_cache_get,
+            "expected template to be expanded; got payload: {:?}",
+            unit.payload
+        );
+
+        // The probe key must be auto-added to requires.
+        assert!(
+            unit.requires.contains(&"k".to_string()),
+            "detected probe key must be auto-added to requires; got: {:?}",
+            unit.requires
+        );
     }
 }
