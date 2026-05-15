@@ -13,6 +13,7 @@ pub mod backend;
 pub mod check;
 pub mod context;
 pub mod envkey;
+pub mod probe;
 pub mod record;
 
 use std::collections::BTreeSet;
@@ -31,6 +32,7 @@ pub use check::{
 pub use context::{
     compute_probe_fingerprint, ExecutionContext, MachineIdentity, ProbeFingerprintInputs, ToolHash,
 };
+pub use probe::resolve_probe_inputs;
 pub use envkey::{env_contribution, EnvDenylist};
 pub use record::{FileRecord, StepEntry, CACHE_VERSION};
 
