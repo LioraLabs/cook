@@ -151,58 +151,6 @@ fn parse_field_path(s: &str) -> Result<Vec<String>, String> {
 /// which the engine calls at execute time.
 ///
 /// When there are no probe refs the plain string form is returned (backward compat).
-pub fn desugar_command_with_probes(
-    cmd: &str,
-) -> Result<(String, BTreeSet<String>), String> {
-    let refs = find_probe_refs(cmd, None)?;
-    let keys: BTreeSet<String> = refs.iter().map(|r| r.key.clone()).collect();
-
-    if refs.is_empty() {
-        return Ok((format!("\"{}\"", escape_lua_string(cmd)), keys));
-    }
-
-    // Build interleaved expression: literal-chunk .. tostring(cache_read) .. ...
-    // We wrap in `function() return ... end` so execution is deferred to
-    // the worker execute-phase.
-    let parts = build_probe_concat_parts(cmd, &refs);
-    let concat_expr = if parts.len() == 1 {
-        parts.into_iter().next().unwrap()
-    } else {
-        parts.join(" .. ")
-    };
-
-    // Wrap in a deferred function so cook.cache.get runs at execute time.
-    let lua_expr = format!("function() return {} end", concat_expr);
-    Ok((lua_expr, keys))
-}
-
-/// Build the Lua concatenation parts for the probe-expanded command.
-/// Each probe ref becomes `tostring(cook.cache.get("key").field[idx])`.
-fn build_probe_concat_parts(cmd: &str, refs: &[ProbeRef]) -> Vec<String> {
-    let mut parts: Vec<String> = vec![];
-    let mut cursor = 0usize;
-
-    for r in refs {
-        let start = r.range.start;
-        if start > cursor {
-            parts.push(format!("\"{}\"", escape_lua_string(&cmd[cursor..start])));
-        }
-        let lua_access = probe_ref_to_lua_access(r);
-        parts.push(format!("tostring({})", lua_access));
-        cursor = r.range.end;
-    }
-
-    if cursor < cmd.len() {
-        parts.push(format!("\"{}\"", escape_lua_string(&cmd[cursor..])));
-    }
-
-    if parts.is_empty() {
-        parts.push("\"\"".to_string());
-    }
-
-    parts
-}
-
 /// Render a single `ProbeRef` as a Lua field-access expression.
 /// e.g. `cc:zlib` / `.cflags` / `[2]` → `cook.cache.get("cc:zlib").cflags[2]`
 fn probe_ref_to_lua_access(r: &ProbeRef) -> String {
@@ -976,22 +924,6 @@ pub(crate) fn expand_plate_test_body(
 /// Expand a shell command template using sigil substitution,
 /// recording consulted env keys into `out`.
 /// Used for cook-step `using { ... }` bodies.
-pub(crate) fn expand_template_to_lua_with_deps_tracked(
-    template: &str,
-    recipe_names: &BTreeSet<String>,
-    iter_mode: IterMode,
-    output_shape: OutputShape,
-    out: &mut ConsultedEnv,
-) -> String {
-    let ctx = cook_step_ctx(iter_mode, output_shape, recipe_names);
-    match expand_sigil_template(template, &ctx, out) {
-        Ok(s) => s,
-        Err(e) => {
-            // Emit an error sentinel (codegen validation should have caught this).
-            format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
-        }
-    }
-}
 
 // ─── Validation helpers (sigil-based) ───────────────────────────────────────
 
@@ -1340,51 +1272,6 @@ mod probe_template_tests {
     fn template_non_integer_array_index_is_error() {
         let err = find_probe_refs("{{key.field[abc]}}", None).unwrap_err();
         assert!(err.contains("non-integer"), "got: {}", err);
-    }
-
-    // ─── H2: desugar_command_with_probes ────────────────────────────────────
-
-    #[test]
-    fn desugar_plain_command_yields_string_literal() {
-        let (lua, keys) = desugar_command_with_probes("gcc foo.c").unwrap();
-        assert_eq!(lua, "\"gcc foo.c\"");
-        assert!(keys.is_empty());
-    }
-
-    #[test]
-    fn desugar_single_probe_field() {
-        let (lua, keys) = desugar_command_with_probes("{{cc:zlib.cflags}} foo.c").unwrap();
-        assert!(lua.contains(r#"cook.cache.get("cc:zlib")"#), "got: {}", lua);
-        assert!(lua.contains(".cflags"), "got: {}", lua);
-        assert!(lua.contains("function()"), "expected deferred function, got: {}", lua);
-        assert_eq!(keys.iter().next().map(String::as_str), Some("cc:zlib"));
-    }
-
-    #[test]
-    fn desugar_two_probes() {
-        let (lua, keys) =
-            desugar_command_with_probes("{{cc:compiler}} -c foo.c {{cc:zlib.cflags}}").unwrap();
-        assert!(lua.contains(r#"cook.cache.get("cc:compiler")"#), "got: {}", lua);
-        assert!(lua.contains(r#"cook.cache.get("cc:zlib")"#), "got: {}", lua);
-        assert_eq!(keys.len(), 2);
-    }
-
-    #[test]
-    fn desugar_array_index_probe() {
-        let (lua, _keys) = desugar_command_with_probes("{{cc:zlib.libs[1]}}").unwrap();
-        assert!(lua.contains(r#"cook.cache.get("cc:zlib").libs[1]"#), "got: {}", lua);
-    }
-
-    #[test]
-    fn desugar_bare_key_probe() {
-        let (lua, _keys) = desugar_command_with_probes("{{cc:compiler}}").unwrap();
-        assert!(lua.contains(r#"cook.cache.get("cc:compiler")"#), "got: {}", lua);
-        // Bare key: the access expression ends right after the closing paren — no `.field` suffix.
-        assert!(
-            lua.contains(r#"tostring(cook.cache.get("cc:compiler"))"#),
-            "expected bare tostring wrapping cache.get, got: {}",
-            lua
-        );
     }
 
     // ─── H2: expand_command_template (wired version) ─────────────────────────

@@ -185,3 +185,4 @@ H1 implemented: `find_probe_refs` in `cook-luagen/src/template.rs` scans command
 H2 implemented: all four `cook.add_unit(...)` shell-block emit sites in `cook_step.rs` (OneToOne, ManyToOne, OneToMany, BlockStep) now call `expand_command_template` instead of `expand_template_to_lua_with_deps_tracked`. When probe placeholders are detected, the emitted `command =` value is a `function() return ... end` closure resolving `cook.cache.get` at execute time; a new `requires = {...}` field listing the discovered probe keys is also emitted in the same `cook.add_unit` call.
 
 
+
