@@ -99,3 +99,5 @@ A conforming implementation that maintains a cache of recipe execution results M
 3. **`cache_meta.input_paths` is importer-relative.** For a unit registered by recipe R in Cookfile C with working directory W, every entry in `cache_meta.input_paths` MUST be a path relative to W. This holds for both same-Cookfile inputs and cross-Cookfile dep inputs; substitution-time path rewriting (§{comp.qualified-refs}) ensures cross-Cookfile dep paths arrive in importer-relative form. For sigil-anchored imports the path can contain `..` segments; the cache check uses `W.join(input_path)` to locate the file on disk, and `..` segments resolve correctly against W.
 
 A conforming implementation MAY layer additional content-addressed artifact storage atop the index files; that layer is outside the scope of this section.
+
+Probe units (§{cat.probes}) participate in the same cache machinery: a probe's fingerprint addresses its msgpack-serialised value in `CacheBackend`, and probe artifacts ride the same `events.jsonl` event stream and Cook Cloud wire protocol as file outputs.
