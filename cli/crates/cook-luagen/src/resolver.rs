@@ -56,6 +56,10 @@ pub enum Resolved {
     Builtin(BuiltinKind),
     Recipe { name: String, accessor: Option<String> },
     EnvRuntime(String),
+    /// CS-0074: a probe-value reference — `$<key>`, `$<key.field>`, or `$<key.field[i]>`.
+    /// `key` is the probe key (everything before the first `.` or `[`).
+    /// `access` is the ready-to-emit Lua expression (e.g. `cook.cache.get("cc:zlib").cflags`).
+    ProbeRef { key: String, access: String },
     Error(ResolveError),
 }
 
@@ -81,7 +85,80 @@ enum BuiltinMatch {
     No,
 }
 
+/// Parse the ident of a probe-shaped sigil into `(key, lua_access_expr)`.
+///
+/// `ident` must contain `:`. Everything before the first `.` or `[` that
+/// follows the `:` is the key; the rest is the path. Returns the Lua expression
+/// that reads `cook.cache.get(key)` with the path appended.
+fn parse_probe_ref(ident: &str, escape: impl Fn(&str) -> String) -> (String, String) {
+    // Find the boundary between key and path. The key ends at the first `.` or `[`
+    // that appears after the `:` discriminator.
+    let colon_pos = ident.find(':').expect("probe ident must contain ':'");
+    let after_colon = &ident[colon_pos + 1..];
+    let path_start = after_colon
+        .find(|c: char| c == '.' || c == '[')
+        .map(|p| colon_pos + 1 + p)
+        .unwrap_or(ident.len());
+
+    let key = &ident[..path_start];
+    let path_str = &ident[path_start..];
+
+    let mut access = format!("cook.cache.get(\"{}\")", escape(key));
+
+    // Walk the path string, building `.field` or `[N]` accesses.
+    let mut chars = path_str.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        match c {
+            '.' => {
+                chars.next();
+                let mut name = String::new();
+                while let Some(&nc) = chars.peek() {
+                    if nc.is_alphanumeric() || nc == '_' {
+                        name.push(nc);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                if !name.is_empty() {
+                    access.push('.');
+                    access.push_str(&name);
+                }
+            }
+            '[' => {
+                chars.next();
+                let mut idx = String::new();
+                while let Some(&nc) = chars.peek() {
+                    if nc == ']' {
+                        chars.next();
+                        break;
+                    }
+                    idx.push(nc);
+                    chars.next();
+                }
+                access.push('[');
+                access.push_str(&idx);
+                access.push(']');
+            }
+            _ => { chars.next(); }
+        }
+    }
+
+    (key.to_string(), access)
+}
+
 pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
+    // CS-0074: probe-value reference — IDENT contains `:`.
+    // Dispatched before builtin/recipe/env so the colon discriminator is
+    // unambiguous (no builtin or recipe name can contain `:`).
+    if ident.contains(':') {
+        let (key, access) = parse_probe_ref(ident, |s| {
+            // Escape for Lua double-quoted string (minimal — just `\` and `"`).
+            s.replace('\\', "\\\\").replace('"', "\\\"")
+        });
+        return Resolved::ProbeRef { key, access };
+    }
+
     // Try builtin first.
     match match_builtin(ident) {
         BuiltinMatch::Yes(b) => return validate_builtin(ident, b, ctx),
@@ -232,6 +309,61 @@ mod tests {
         ResolveCtx { mode: IterMode::OneShot, outputs: OutputShape::None, recipes_in_scope: recipes }
     }
     fn empty() -> BTreeSet<String> { BTreeSet::new() }
+
+    // CS-0074: probe-ref dispatch tests
+    #[test]
+    fn probe_ref_bare_key_resolves_to_cache_get() {
+        let r = empty();
+        let ctx = ctx_oneshot_none(&r);
+        match resolve("cc:zlib", &ctx) {
+            Resolved::ProbeRef { key, access } => {
+                assert_eq!(key, "cc:zlib");
+                assert_eq!(access, r#"cook.cache.get("cc:zlib")"#);
+            }
+            other => panic!("expected ProbeRef, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn probe_ref_key_dot_field_resolves_to_field_access() {
+        let r = empty();
+        let ctx = ctx_oneshot_none(&r);
+        match resolve("cc:zlib.cflags", &ctx) {
+            Resolved::ProbeRef { key, access } => {
+                assert_eq!(key, "cc:zlib");
+                assert_eq!(access, r#"cook.cache.get("cc:zlib").cflags"#);
+            }
+            other => panic!("expected ProbeRef, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn probe_ref_key_field_index_resolves_to_indexed_access() {
+        let r = empty();
+        let ctx = ctx_oneshot_none(&r);
+        match resolve("cc:zlib.libs[2]", &ctx) {
+            Resolved::ProbeRef { key, access } => {
+                assert_eq!(key, "cc:zlib");
+                assert_eq!(access, r#"cook.cache.get("cc:zlib").libs[2]"#);
+            }
+            other => panic!("expected ProbeRef, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn probe_ref_does_not_intercept_bare_in() {
+        let r = empty();
+        let ctx = ctx_oneone_single(&r);
+        assert_eq!(resolve("in", &ctx), Resolved::Builtin(BuiltinKind::In));
+    }
+
+    #[test]
+    fn probe_ref_does_not_intercept_recipe() {
+        let mut r = BTreeSet::new();
+        r.insert("my_recipe".to_string());
+        let ctx = ctx_oneshot_none(&r);
+        assert!(matches!(resolve("my_recipe", &ctx), Resolved::Recipe { .. }));
+    }
 
     #[test]
     fn resolves_in_to_builtin() {
