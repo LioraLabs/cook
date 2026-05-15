@@ -1,0 +1,6 @@
+register
+    cook.probe("dup", { inputs = {}, produce = "return 1" })
+    cook.probe("dup", { inputs = {}, produce = "return 2" })
+
+recipe noop
+    > cook.sh("true")

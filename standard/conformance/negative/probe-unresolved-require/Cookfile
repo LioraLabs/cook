@@ -1,0 +1,11 @@
+register
+    cook.add_unit({
+        name = "u",
+        inputs = {},
+        outputs = {"out"},
+        requires = {"missing"},
+        command = "true",
+    })
+
+recipe noop
+    > cook.sh("true")

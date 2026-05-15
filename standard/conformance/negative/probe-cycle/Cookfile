@@ -1,0 +1,6 @@
+register
+    cook.probe("a", { inputs = { requires = {"b"} }, produce = "return 1" })
+    cook.probe("b", { inputs = { requires = {"a"} }, produce = "return 2" })
+
+recipe noop
+    > cook.sh("true")
