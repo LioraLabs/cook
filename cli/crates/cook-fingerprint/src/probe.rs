@@ -7,7 +7,7 @@ use std::path::Path;
 use cook_contracts::ProbeUnit;
 use sha2::{Digest, Sha256};
 
-use crate::context::{compute_probe_fingerprint, ProbeFingerprintInputs};
+use crate::context::ProbeFingerprintInputs;
 
 /// Resolve a `ProbeUnit`'s declared inputs into `ProbeFingerprintInputs` by
 /// walking env/PATH/filesystem/upstream-fp-map.
