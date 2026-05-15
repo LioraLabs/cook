@@ -4,8 +4,8 @@ use cook_lang::ast::*;
 
 use crate::resolver::{IterMode, OutputShape};
 use crate::template::{
-    analyze_output_pattern, expand_output_pattern, expand_template_to_lua_with_deps_tracked,
-    ConsultedEnv, OutputPatternKind,
+    analyze_output_pattern, expand_command_template, expand_output_pattern, ConsultedEnv,
+    OutputPatternKind,
 };
 
 /// Modes for cook step code generation.
@@ -22,6 +22,19 @@ pub(crate) enum CookMode {
     /// Single invocation producing multiple declared outputs from a shell block
     /// or from a Lua block whose cook step declares more than one literal output.
     BlockStep,
+}
+
+/// Render a set of probe keys as a Lua array literal: `{"key1", "key2"}`.
+/// Returns `"{}"` for an empty set.
+fn probe_keys_to_lua_table(keys: &BTreeSet<String>) -> String {
+    if keys.is_empty() {
+        return "{}".to_string();
+    }
+    let parts: Vec<String> = keys
+        .iter()
+        .map(|k| format!("\"{}\"", crate::lua_string::escape_lua_string(k)))
+        .collect();
+    format!("{{{}}}", parts.join(", "))
 }
 
 fn format_ingredient_groups(n: usize) -> String {
@@ -171,12 +184,20 @@ pub(crate) fn generate_cook_step(
             match &cook_step.using_clause {
                 Some(UsingClause::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
-                    let lua_expr = expand_template_to_lua_with_deps_tracked(
-                        &combined, recipe_names, iter_mode, output_shape, &mut consulted,
-                    );
+                    let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
+                    let (lua_expr, probe_keys) = match expand_command_template(
+                        &combined, &ctx, &mut consulted,
+                    ) {
+                        Ok(pair) => pair,
+                        Err(e) => (
+                            format!("\"[[SIGIL_ERROR: {}]]\"", crate::lua_string::escape_lua_string(&e.to_string())),
+                            std::collections::BTreeSet::new(),
+                        ),
+                    };
+                    let requires_lua = probe_keys_to_lua_table(&probe_keys);
                     out.push_str(&format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, consulted_env_keys = {}}})\n",
-                        lua_expr, consulted.to_lua_table()
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, requires = {}, consulted_env_keys = {}}})\n",
+                        lua_expr, requires_lua, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
@@ -219,12 +240,20 @@ pub(crate) fn generate_cook_step(
             match &cook_step.using_clause {
                 Some(UsingClause::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
-                    let lua_expr = expand_template_to_lua_with_deps_tracked(
-                        &combined, recipe_names, iter_mode, output_shape, &mut consulted,
-                    );
+                    let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
+                    let (lua_expr, probe_keys) = match expand_command_template(
+                        &combined, &ctx, &mut consulted,
+                    ) {
+                        Ok(pair) => pair,
+                        Err(e) => (
+                            format!("\"[[SIGIL_ERROR: {}]]\"", crate::lua_string::escape_lua_string(&e.to_string())),
+                            std::collections::BTreeSet::new(),
+                        ),
+                    };
+                    let requires_lua = probe_keys_to_lua_table(&probe_keys);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = {}, output = _cook_out, command = {}, consulted_env_keys = {}}})\n",
-                        input_source, lua_expr, consulted.to_lua_table()
+                        "    cook.add_unit({{inputs = {}, output = _cook_out, command = {}, requires = {}, consulted_env_keys = {}}})\n",
+                        input_source, lua_expr, requires_lua, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
@@ -268,12 +297,24 @@ pub(crate) fn generate_cook_step(
                 Some(UsingClause::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
                     // OneToMany: multi-output, one-to-one iteration
-                    let lua_expr = expand_template_to_lua_with_deps_tracked(
-                        &combined, recipe_names, IterMode::OneToOne, OutputShape::Multi(cook_step.outputs.len()), &mut consulted,
+                    let oto_many_ctx = crate::template::cook_step_ctx(
+                        IterMode::OneToOne,
+                        OutputShape::Multi(cook_step.outputs.len()),
+                        recipe_names,
                     );
+                    let (lua_expr, probe_keys) = match expand_command_template(
+                        &combined, &oto_many_ctx, &mut consulted,
+                    ) {
+                        Ok(pair) => pair,
+                        Err(e) => (
+                            format!("\"[[SIGIL_ERROR: {}]]\"", crate::lua_string::escape_lua_string(&e.to_string())),
+                            std::collections::BTreeSet::new(),
+                        ),
+                    };
+                    let requires_lua = probe_keys_to_lua_table(&probe_keys);
                     out.push_str(&format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}, consulted_env_keys = {}}})\n",
-                        lua_expr, consulted.to_lua_table()
+                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}, requires = {}, consulted_env_keys = {}}})\n",
+                        lua_expr, requires_lua, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
@@ -317,12 +358,24 @@ pub(crate) fn generate_cook_step(
                     let combined = build_shell_block_command(lines, recipe_names);
                     let mut consulted = ConsultedEnv::new();
                     // BlockStep: many-to-one with multi outputs
-                    let lua_expr = expand_template_to_lua_with_deps_tracked(
-                        &combined, recipe_names, IterMode::ManyToOne, OutputShape::Multi(cook_step.outputs.len()), &mut consulted,
+                    let block_ctx = crate::template::cook_step_ctx(
+                        IterMode::ManyToOne,
+                        OutputShape::Multi(cook_step.outputs.len()),
+                        recipe_names,
                     );
+                    let (lua_expr, probe_keys) = match expand_command_template(
+                        &combined, &block_ctx, &mut consulted,
+                    ) {
+                        Ok(pair) => pair,
+                        Err(e) => (
+                            format!("\"[[SIGIL_ERROR: {}]]\"", crate::lua_string::escape_lua_string(&e.to_string())),
+                            std::collections::BTreeSet::new(),
+                        ),
+                    };
+                    let requires_lua = probe_keys_to_lua_table(&probe_keys);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, command = {}, consulted_env_keys = {}}})\n",
-                        lua_expr, consulted.to_lua_table()
+                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, command = {}, requires = {}, consulted_env_keys = {}}})\n",
+                        lua_expr, requires_lua, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {

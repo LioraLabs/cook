@@ -182,4 +182,6 @@ G5 implemented: after a worker returns with `probe_output: Some(...)` and `succe
 
 H1 implemented: `find_probe_refs` in `cook-luagen/src/template.rs` scans command strings for `{{key}}`, `{{key.field}}`, and `{{key.field[i]}}` placeholders, returning typed `ProbeRef` values with key, path segments, original text, and byte range. An optional `probe_keys` filter set is supported. `parse_field_path` handles `.field` and `[N]` segments and rejects malformed paths (empty field names, non-integer indices). `desugar_command_with_probes` and `expand_command_template` provide the Lua-expression rewriting API (see H2).
 
+H2 implemented: all four `cook.add_unit(...)` shell-block emit sites in `cook_step.rs` (OneToOne, ManyToOne, OneToMany, BlockStep) now call `expand_command_template` instead of `expand_template_to_lua_with_deps_tracked`. When probe placeholders are detected, the emitted `command =` value is a `function() return ... end` closure resolving `cook.cache.get` at execute time; a new `requires = {...}` field listing the discovered probe keys is also emitted in the same `cook.add_unit` call.
+
 
