@@ -28,7 +28,9 @@ pub use check::{
     hash_env, hash_file, install_depfile_parser, needs_rebuild_cook, needs_rebuild_plate,
     stat_mtime, RebuildReason, RebuildResult, RestoreCtx,
 };
-pub use context::{ExecutionContext, MachineIdentity, ToolHash};
+pub use context::{
+    compute_probe_fingerprint, ExecutionContext, MachineIdentity, ProbeFingerprintInputs, ToolHash,
+};
 pub use envkey::{env_contribution, EnvDenylist};
 pub use record::{FileRecord, StepEntry, CACHE_VERSION};
 
