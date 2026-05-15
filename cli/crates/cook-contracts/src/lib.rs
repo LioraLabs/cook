@@ -3,6 +3,8 @@
 //! This crate contains behavior-free structs and enums used across multiple
 //! Cook crates. It has zero dependencies on other Cook crates.
 
+pub mod probe_value;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

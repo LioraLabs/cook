@@ -168,4 +168,12 @@ The diagnostic MUST render the full cycle path. The order in which nodes are lis
 
 C4–C6 implemented: requires resolution (§22.5.5), cycle detection (§22.5.8), execute-VM guard (§22.5.2).
 
+F1–F3 implemented: rmpv dependency, Lua→msgpack walker (`probe_value.rs`), msgpack round-trip tests.
+
+G1 implemented: `WorkPayload::Probe` dispatched on worker VM; `produce` source wrapped in `function() ... end`, return value converted to msgpack bytes, stored in `ProbeOutput`.
+
+G2 implemented: `cook.cache.get(key)` on execute-phase VM reads from `SharedProbeValueStore`; `cook.cache.set` deprecated and raises a runtime error (CS-0074).
+
+G3 implemented: scheduler populates `SharedProbeValueStore` when a `WorkPayload::Probe` `WorkResult` with `probe_output: Some(...)` arrives, before scheduling downstream consumers.
+
 

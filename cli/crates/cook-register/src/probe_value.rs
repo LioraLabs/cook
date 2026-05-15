@@ -1,7 +1,14 @@
 //! Convert mlua::Value trees to rmpv::Value with value-type validation per §22.5.4.
+//!
+//! `encode_msgpack` and `decode_msgpack` are re-exported from `cook_contracts::probe_value`
+//! so callers that import this module continue to work without change.
 
 use mlua::prelude::*;
 use rmpv::Value as MsgPackValue;
+
+// Re-export the encode/decode helpers from cook-contracts so callers can use
+// either path interchangeably.
+pub use cook_contracts::probe_value::{decode_msgpack, encode_msgpack};
 
 /// Convert a Lua value to msgpack. Validates the value-type contract (§22.5.4)
 /// and rejects non-serialisable values with a path-tagged diagnostic.
@@ -156,18 +163,6 @@ fn render_path(path: &[String]) -> String {
     s
 }
 
-/// Encode an rmpv::Value to msgpack bytes.
-pub fn encode_msgpack(v: &MsgPackValue) -> Vec<u8> {
-    let mut buf = Vec::new();
-    rmpv::encode::write_value(&mut buf, v).expect("rmpv encode never fails for in-memory");
-    buf
-}
-
-/// Decode msgpack bytes into an rmpv::Value.
-pub fn decode_msgpack(bytes: &[u8]) -> Result<MsgPackValue, String> {
-    let mut cursor = std::io::Cursor::new(bytes);
-    rmpv::decode::read_value(&mut cursor).map_err(|e| format!("msgpack decode: {}", e))
-}
 
 #[cfg(test)]
 mod tests {
