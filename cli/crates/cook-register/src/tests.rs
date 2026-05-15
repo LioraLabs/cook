@@ -842,8 +842,12 @@ end)
 "#;
 
     let result = rt.register_recipe(lua_src, "build", None).unwrap();
-    assert_eq!(result.units.len(), 1);
-    assert_eq!(result.units[0].requires, vec!["cc:zlib"]);
+    // After CS-0074 Bug 1 fix: probe units also appear in units vec.
+    // 1 probe unit + 1 consumer unit = 2 total.
+    assert_eq!(result.units.len(), 2, "expected probe unit + consumer unit");
+    let consumer = result.units.iter().find(|u| matches!(u.payload, WorkPayload::Shell { .. }))
+        .expect("expected a consumer Shell unit");
+    assert_eq!(consumer.requires, vec!["cc:zlib"]);
 }
 
 // -----------------------------------------------------------------------
@@ -893,7 +897,8 @@ end)
 "#;
 
     let result = rt.register_recipe(lua_src, "build", None).unwrap();
-    let u = result.units.first().unwrap();
+    // After CS-0074 Bug 1 fix: first unit is the probe, second is the consumer.
+    let u = result.units.iter().find(|u| matches!(u.payload, WorkPayload::Shell { .. })).unwrap();
     assert_eq!(u.requires, vec!["cc:zlib"]);
 }
 
@@ -940,4 +945,36 @@ end)
 
     let result = rt.register_recipe(lua_src, "build", None).unwrap();
     assert_eq!(result.probes.len(), 2);
+}
+
+// -----------------------------------------------------------------------
+// CS-0074 regression tests: Bug 1 — cook.probe creates a CapturedUnit
+// -----------------------------------------------------------------------
+
+#[test]
+fn cook_probe_creates_a_capturedunit_with_workpayload_probe() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.probe("test:k", {
+        inputs = {},
+        produce = "return 42",
+    })
+    cook.exec("true", 1)
+end)
+"#;
+
+    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    let probe_unit = result.units.iter().find(|u| matches!(u.payload, WorkPayload::Probe { .. }));
+    assert!(
+        probe_unit.is_some(),
+        "expected a CapturedUnit with WorkPayload::Probe; units: {:?}",
+        result.units.iter().map(|u| format!("{:?}", u.payload)).collect::<Vec<_>>()
+    );
+    if let WorkPayload::Probe { key, produce, .. } = &probe_unit.unwrap().payload {
+        assert_eq!(key, "test:k");
+        assert_eq!(produce, "return 42");
+    }
 }

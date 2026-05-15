@@ -10,7 +10,9 @@ use std::rc::Rc;
 
 use mlua::prelude::*;
 
-use cook_contracts::{ProbeInputs, ProbeUnit};
+use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
+
+use crate::SharedCaptureState;
 
 /// Per-key registration record: the resolved [`ProbeUnit`] plus the source
 /// location where `cook.probe` was called (for duplicate-key diagnostics).
@@ -33,14 +35,18 @@ pub type SharedProbeRegistry = Rc<RefCell<ProbeRegistry>>;
 
 /// Install `cook.probe(key, opts)` on `cook`.
 ///
-/// * `lua`         — the register-phase Lua VM.
-/// * `cook`        — the `cook` table already present in `lua.globals()`.
-/// * `registry`    — receives each successful `cook.probe` call.
-/// * `source_file` — the Cookfile name included in duplicate-key diagnostics.
+/// * `lua`           — the register-phase Lua VM.
+/// * `cook`          — the `cook` table already present in `lua.globals()`.
+/// * `registry`      — receives each successful `cook.probe` call.
+/// * `capture_state` — shared capture state; each probe is also pushed as a
+///                     `CapturedUnit { payload: WorkPayload::Probe { … } }` so
+///                     the DAG builder schedules probe work (CS-0074 Bug 1).
+/// * `source_file`   — the Cookfile name included in duplicate-key diagnostics.
 pub fn install_cook_probe(
     lua: &Lua,
     cook: &LuaTable,
     registry: SharedProbeRegistry,
+    capture_state: SharedCaptureState,
     source_file: String,
 ) -> LuaResult<()> {
     let probe_fn = lua.create_function(move |lua, (key, opts): (String, LuaTable)| {
@@ -109,20 +115,37 @@ pub fn install_cook_probe(
             )));
         }
 
-        // 6. Insert.
+        // 6. Insert into registry.
         reg.probes.insert(
             key.clone(),
             ProbeRegistration {
                 probe: ProbeUnit {
-                    key,
-                    produce_source,
+                    key: key.clone(),
+                    produce_source: produce_source.clone(),
                     produce_line: call_line,
-                    inputs,
+                    inputs: inputs.clone(),
                 },
                 source_file: source_file.clone(),
                 source_line: call_line,
             },
         );
+
+        // 7. Also push a CapturedUnit so the DAG builder schedules probe
+        //    work (CS-0074 §22.5.2). Probe-to-probe edges come from
+        //    inputs.requires; probe-to-consumer edges are wired in the DAG
+        //    builder by reading each consumer unit's `requires` field.
+        let mut cap = capture_state.borrow_mut();
+        cap.units.push(CapturedUnit {
+            payload: WorkPayload::Probe {
+                key,
+                produce: produce_source,
+                line: call_line,
+            },
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            requires: inputs.requires,
+        });
+
         Ok(())
     })?;
 
@@ -227,19 +250,21 @@ fn lua_type_name(v: &LuaValue) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CaptureState;
 
-    fn setup(source_file: &str) -> (Lua, SharedProbeRegistry) {
+    fn setup(source_file: &str) -> (Lua, SharedProbeRegistry, SharedCaptureState) {
         let lua = Lua::new();
         let cook = lua.create_table().unwrap();
         lua.globals().set("cook", cook.clone()).unwrap();
         let reg: SharedProbeRegistry = Rc::new(RefCell::new(ProbeRegistry::default()));
-        install_cook_probe(&lua, &cook, reg.clone(), source_file.to_string()).unwrap();
-        (lua, reg)
+        let cap: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        install_cook_probe(&lua, &cook, reg.clone(), cap.clone(), source_file.to_string()).unwrap();
+        (lua, reg, cap)
     }
 
     #[test]
     fn cook_probe_registers_a_unit() {
-        let (lua, reg) = setup("Cookfile");
+        let (lua, reg, _cap) = setup("Cookfile");
 
         lua.load(r#"
             cook.probe("cc:zlib", {
@@ -260,7 +285,7 @@ mod tests {
 
     #[test]
     fn cook_probe_registers_requires_in_inputs() {
-        let (lua, reg) = setup("Cookfile");
+        let (lua, reg, _cap) = setup("Cookfile");
 
         lua.load(r#"
             cook.probe("cc:libfoo", {
@@ -278,7 +303,7 @@ mod tests {
 
     #[test]
     fn cook_probe_empty_inputs_table_is_ok() {
-        let (lua, reg) = setup("Cookfile");
+        let (lua, reg, _cap) = setup("Cookfile");
 
         lua.load(r#"
             cook.probe("cc:simple", {
@@ -295,7 +320,7 @@ mod tests {
 
     #[test]
     fn cook_probe_omitting_inputs_defaults_to_empty() {
-        let (lua, reg) = setup("Cookfile");
+        let (lua, reg, _cap) = setup("Cookfile");
 
         lua.load(r#"
             cook.probe("cc:noinputs", {
@@ -315,7 +340,7 @@ mod tests {
 
     #[test]
     fn duplicate_probe_key_errors_with_both_locations() {
-        let (lua, _reg) = setup("Cookfile");
+        let (lua, _reg, _cap) = setup("Cookfile");
 
         let result = lua
             .load(r#"
@@ -334,7 +359,7 @@ mod tests {
 
     #[test]
     fn produce_must_be_string_not_function() {
-        let (lua, _reg) = setup("Cookfile");
+        let (lua, _reg, _cap) = setup("Cookfile");
 
         let result = lua
             .load(r#"
@@ -351,7 +376,7 @@ mod tests {
 
     #[test]
     fn produce_missing_raises_error() {
-        let (lua, _reg) = setup("Cookfile");
+        let (lua, _reg, _cap) = setup("Cookfile");
 
         let result = lua
             .load(r#"cook.probe("k", { inputs = {} })"#)
@@ -364,7 +389,7 @@ mod tests {
 
     #[test]
     fn empty_key_raises_error() {
-        let (lua, _reg) = setup("Cookfile");
+        let (lua, _reg, _cap) = setup("Cookfile");
 
         let result = lua
             .load(r#"cook.probe("", { inputs = {}, produce = "return 1" })"#)
@@ -377,7 +402,7 @@ mod tests {
 
     #[test]
     fn multiple_distinct_probes_all_registered() {
-        let (lua, reg) = setup("Cookfile");
+        let (lua, reg, _cap) = setup("Cookfile");
 
         lua.load(r#"
             cook.probe("cc:zlib",  { inputs = {}, produce = "return 1" })

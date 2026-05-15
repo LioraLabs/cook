@@ -166,7 +166,7 @@ impl Registry {
             let cookfile_label = lua
                 .named_registry_value::<String>("__cook_cookfile_path")
                 .unwrap_or_else(|_| "Cookfile".to_string());
-            install_cook_probe(&lua, &cook_tbl, probe_registry.clone(), cookfile_label)?;
+            install_cook_probe(&lua, &cook_tbl, probe_registry.clone(), capture_state.clone(), cookfile_label)?;
         }
         // `fs.*`, `path.*`, `cook.platform.*` come from the shared
         // cook-lua-stdlib crate (CS-0044) so register-phase and
