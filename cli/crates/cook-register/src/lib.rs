@@ -13,6 +13,7 @@ pub mod export_api;
 pub mod module_cache;
 pub mod module_loader;
 pub mod probe_api;
+pub mod probe_value;
 pub mod test_api;
 pub mod unit_api;
 
