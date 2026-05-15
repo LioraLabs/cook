@@ -48,6 +48,24 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
     let mut recipe_leaves: BTreeMap<String, Vec<usize>> = BTreeMap::new();
 
     for ru in &recipe_units {
+        // Build a per-recipe index of probe key → unit index so we can
+        // wire probe→consumer edges from CapturedUnit.requires (CS-0074 Bug 2).
+        let probe_unit_index_by_key: BTreeMap<String, usize> = ru
+            .units
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, u)| {
+                if let WorkPayload::Probe { key, .. } = &u.payload {
+                    Some((key.clone(), idx))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // dag_id_by_unit_idx: populated as each unit is added; lets us resolve
+        // probe-unit dag IDs when wiring CapturedUnit.requires edges.
+        let mut dag_id_by_unit_idx: BTreeMap<usize, usize> = BTreeMap::new();
         // Collect cross-recipe dependency ids: the leaf nodes of every
         // prerequisite recipe.
         let mut cross_deps: Vec<usize> = Vec::new();
@@ -105,6 +123,25 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                 }
             }
 
+            // Probe→consumer edges from CapturedUnit.requires (CS-0074 Bug 2).
+            // For each probe key in unit.requires, find the probe's dag_id (which
+            // must already be known since probes appear before consumers) and add it
+            // as a dependency of this unit.
+            for req_key in &unit.requires {
+                if let Some(&probe_unit_idx) = probe_unit_index_by_key.get(req_key) {
+                    if let Some(&probe_dag_id) = dag_id_by_unit_idx.get(&probe_unit_idx) {
+                        if !all_deps.contains(&probe_dag_id) {
+                            all_deps.push(probe_dag_id);
+                        }
+                    }
+                    // If the probe dag_id isn't known yet (probe declared after consumer
+                    // in units), the edge is silently skipped. In practice this cannot
+                    // happen: engine.rs validates all requires keys exist as registered
+                    // probes, and probes are pushed into units when cook.probe is called
+                    // (before cook.add_unit in the same register block).
+                }
+            }
+
             // Build the WorkNode.
             let work_node = if is_presatisfied(unit) {
                 WorkNode {
@@ -130,6 +167,9 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
             let dag_id = dag
                 .add_node(work_node, &all_deps)
                 .expect("dag_builder produced an out-of-range dep id (bug)");
+
+            // Record dag_id so later units can resolve probe→consumer edges.
+            dag_id_by_unit_idx.insert(unit_idx, dag_id);
 
             // Update barrier / group tracking.
             match &unit.dep_kind {
@@ -361,6 +401,59 @@ mod tests {
 
     fn default_env() -> BTreeMap<String, String> {
         BTreeMap::new()
+    }
+
+    fn probe(key: &str) -> WorkPayload {
+        WorkPayload::Probe {
+            key: key.to_string(),
+            produce: "return 1".to_string(),
+            line: 0,
+        }
+    }
+
+    /// CS-0074 Bug 2 regression: DAG builder must add probe→consumer edges from
+    /// CapturedUnit.requires. This verifies that when a probe unit precedes a
+    /// consumer unit in units and the consumer's requires lists the probe key,
+    /// the resulting DAG consumer node has the probe node as a dependency.
+    #[test]
+    fn dag_builder_adds_probe_to_consumer_edge() {
+        let units = RecipeUnits {
+            recipe_name: "build".into(),
+            deps: vec![],
+            units: vec![
+                // Probe unit first (as cook.probe is called first in register block)
+                CapturedUnit {
+                    payload: probe("cc:zlib"),
+                    cache_meta: None,
+                    dep_kind: DepKind::Sequential,
+                    requires: vec![],
+                },
+                // Consumer unit with requires = ["cc:zlib"]
+                CapturedUnit {
+                    payload: shell("gcc -o app main.c"),
+                    cache_meta: None,
+                    dep_kind: DepKind::Sequential,
+                    requires: vec!["cc:zlib".to_string()],
+                },
+            ],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let dag = build_dag(vec![units]).expect("no collision");
+        assert_eq!(dag.len(), 2);
+        // Probe node (0) has no deps.
+        assert_eq!(dag.node(0).remaining_deps(), 0, "probe node must have no deps");
+        // Consumer node (1) depends on: sequential barrier (probe node 0) + requires edge (also probe 0).
+        // The requires edge is deduplicated since it's the same node, so remaining_deps = 1.
+        assert_eq!(
+            dag.node(1).remaining_deps(),
+            1,
+            "consumer must depend on probe node via requires edge"
+        );
     }
 
     #[test]
