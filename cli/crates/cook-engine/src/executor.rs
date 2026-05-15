@@ -277,6 +277,13 @@ fn iso8601_now() -> String {
 /// Only node ids whose `WorkPayload` is `Test` need entries; other ids are
 /// ignored. When empty or `None` for a given node, caching is skipped for
 /// that node.
+///
+/// `probe_units_by_node` — maps dag node id → `ProbeUnit` metadata (declared
+/// inputs for fingerprinting). Only nodes whose `WorkPayload` is
+/// `WorkPayload::Probe` need entries. When the map is empty or has no entry
+/// for a given probe node, probe caching is skipped for that node (the probe
+/// always executes). Populated by the call site in `run.rs` from
+/// `RecipeUnits.probes` cross-referenced by key.
 pub fn execute_dag(
     dag: Dag<WorkNode>,
     num_workers: usize,
@@ -286,6 +293,7 @@ pub fn execute_dag(
     test_cache: Option<&TestCache>,
     fingerprint_by_node: &BTreeMap<usize, String>,
     rerun_patterns: &[String],
+    probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
 ) -> Result<Vec<crate::TestResult>, EngineError> {
     // Install the depfile parser pointer so cook-fingerprint's pre-check
     // augmentation can call back into cook-cache without a runtime dep cycle.
@@ -320,6 +328,18 @@ pub fn execute_dag(
     let mut pending: usize = 0; // how many work results we're waiting for
     let mut failures: Vec<(usize, String, String)> = Vec::new();
     let mut test_results: Vec<crate::TestResult> = Vec::new();
+
+    // G4/G5 (CS-0074): probe fingerprint state.
+    //
+    // `upstream_probe_fingerprints`: populated as each probe completes (in
+    // topological order via DAG edges), so that subsequent probe fingerprints
+    // can include upstream fingerprints in their hash (§22.5.3 §7).
+    //
+    // `probe_fingerprint_by_node`: the fingerprint computed at dispatch time
+    // (G4) is stored here so the completion handler (G5) can reuse it without
+    // recomputation. Keyed by dag node id.
+    let mut upstream_probe_fingerprints: BTreeMap<String, [u8; 32]> = BTreeMap::new();
+    let mut probe_fingerprint_by_node: BTreeMap<usize, [u8; 32]> = BTreeMap::new();
     // Collects TestResult entries synthesized from test-cache hits in process_ready.
     let mut cached_test_results: Vec<crate::TestResult> = Vec::new();
     // Collects Blocked TestResult rows synthesized by cancel_subtree when a
@@ -573,6 +593,10 @@ pub fn execute_dag(
         cached_test_results: &mut Vec<crate::TestResult>,
         rerun_patterns: &[String],
         blocked_results: &mut Vec<crate::TestResult>,
+        // G4 (CS-0074): probe cache lookup state.
+        probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
+        upstream_probe_fingerprints: &BTreeMap<String, [u8; 32]>,
+        probe_fingerprint_by_node: &mut BTreeMap<usize, [u8; 32]>,
     ) -> usize {
         if cancelled[id] {
             *finished += 1;
@@ -618,6 +642,9 @@ pub fn execute_dag(
                         cached_test_results,
                         rerun_patterns,
                         blocked_results,
+                        probe_units_by_node,
+                        upstream_probe_fingerprints,
+                        probe_fingerprint_by_node,
                     );
                 }
                 submitted
@@ -727,6 +754,9 @@ pub fn execute_dag(
                                     cached_test_results,
                                     rerun_patterns,
                                     blocked_results,
+                                    probe_units_by_node,
+                                    upstream_probe_fingerprints,
+                                    probe_fingerprint_by_node,
                                 );
                             }
                             return submitted;
@@ -775,6 +805,9 @@ pub fn execute_dag(
                             cached_test_results,
                             rerun_patterns,
                             blocked_results,
+                            probe_units_by_node,
+                            upstream_probe_fingerprints,
+                            probe_fingerprint_by_node,
                         );
                     }
                     return submitted;
@@ -843,6 +876,167 @@ pub fn execute_dag(
                 });
                 1
             }
+            Some(WorkPayload::Probe { key, .. }) => {
+                // G4 (CS-0074): probe cache lookup before worker dispatch.
+                //
+                // If the probe has a `ProbeUnit` entry in `probe_units_by_node`
+                // (populated by the call site from `RecipeUnits.probes`), we
+                // compute its fingerprint and attempt a cache GET. On a hit we
+                // insert the cached bytes directly into the SharedProbeValueStore
+                // and complete the node without dispatching to a worker, unblocking
+                // downstream consumers. On a miss (or when probe metadata is
+                // absent), we fall through to normal worker dispatch.
+                //
+                // The fingerprint is also stored in `probe_fingerprint_by_node`
+                // so that the completion handler (G5) can reuse it without
+                // recomputation. Storing on dispatch — not on completion — means
+                // the map is populated regardless of whether the result came from
+                // cache or from the worker.
+                let probe_key = key.clone();
+                let node_name = format!("probe:{}", probe_key);
+
+                if let Some(probe_unit) = probe_units_by_node.get(&id) {
+                    // Resolve fingerprint inputs. The env_lookup reads from the
+                    // node's env_vars map (populated by the register phase from
+                    // the recipe's env_vars).
+                    let env_lookup = |name: &str| work_node.env_vars.get(name).cloned();
+                    match cook_fingerprint::probe::resolve_probe_inputs(
+                        probe_unit,
+                        &work_node.working_dir,
+                        &env_lookup,
+                        upstream_probe_fingerprints,
+                    ) {
+                        Ok(inputs) => {
+                            let fp = cook_fingerprint::compute_probe_fingerprint(&inputs);
+                            // Store fingerprint now so G5 and downstream probes
+                            // can find it regardless of cache-hit vs. miss path.
+                            probe_fingerprint_by_node.insert(id, fp);
+
+                            // Attempt cache GET.
+                            match cook_cache::backend::get_bytes(
+                                cache_ctx.backend.as_ref(),
+                                &fp,
+                            ) {
+                                Ok(Some(bytes)) => {
+                                    // Cache hit — populate store and complete without dispatch.
+                                    tracing::debug!(
+                                        "probe '{}': cache hit (fp={:x?})",
+                                        probe_key,
+                                        &fp[..4],
+                                    );
+                                    {
+                                        let probe_store = pool.probe_value_store();
+                                        let mut store = probe_store.lock().unwrap();
+                                        store.insert(probe_key.clone(), bytes);
+                                    }
+                                    ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                                    emit(
+                                        event_tx,
+                                        EngineEvent::NodeCacheHit {
+                                            recipe: work_node.recipe_name.clone(),
+                                            node_name: node_name.clone(),
+                                            artifact: None,
+                                        },
+                                    );
+                                    finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
+
+                                    *finished += 1;
+                                    let newly_ready = dag.complete(id);
+                                    let mut submitted = 0;
+                                    for nid in newly_ready {
+                                        submitted += process_ready(
+                                            dag,
+                                            nid,
+                                            pool,
+                                            cancelled,
+                                            finished,
+                                            interactive_queue,
+                                            event_tx,
+                                            trackers,
+                                            cache_managers,
+                                            cache_ctx,
+                                            failures,
+                                            test_cache,
+                                            fingerprint_by_node,
+                                            cached_test_results,
+                                            rerun_patterns,
+                                            blocked_results,
+                                            probe_units_by_node,
+                                            upstream_probe_fingerprints,
+                                            probe_fingerprint_by_node,
+                                        );
+                                    }
+                                    return submitted;
+                                }
+                                Ok(None) => {
+                                    // Cache miss — fall through to worker dispatch.
+                                    tracing::debug!(
+                                        "probe '{}': cache miss, dispatching to worker",
+                                        probe_key,
+                                    );
+                                }
+                                Err(e) => {
+                                    // Backend error — treat as miss, log, dispatch.
+                                    tracing::warn!(
+                                        "probe '{}': cache backend error on get ({e}); treating as miss",
+                                        probe_key,
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            // Fingerprint resolution failed (e.g. missing upstream).
+                            // This is a hard error — the probe cannot be fingerprinted
+                            // so it cannot safely proceed.
+                            let err_msg = format!("probe '{}': fingerprint resolution failed: {e}", probe_key);
+                            ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                            emit(
+                                event_tx,
+                                EngineEvent::NodeFailed {
+                                    recipe: work_node.recipe_name.clone(),
+                                    node_name: node_name.clone(),
+                                    elapsed: Duration::ZERO,
+                                    error: err_msg.clone(),
+                                },
+                            );
+                            failures.push((id, work_node.recipe_name.clone(), err_msg.clone()));
+                            finish_recipe_node(trackers, &work_node.recipe_name, false, true, event_tx);
+                            *finished += 1;
+                            let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
+                            for dep_id in dependents {
+                                cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &node_name, blocked_results);
+                            }
+                            return 0;
+                        }
+                    }
+                }
+
+                // Cache miss (or no probe metadata) — dispatch to worker as G1.
+                ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                emit(
+                    event_tx,
+                    EngineEvent::NodeStarted {
+                        recipe: work_node.recipe_name.clone(),
+                        node_name: node_name.clone(),
+                        artifact: None,
+                        fallback_label: node_name.clone(),
+                        kind: NodeKind::Cooked,
+                    },
+                );
+
+                let env_vars_hashmap: std::collections::HashMap<String, String> =
+                    work_node.env_vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let payload = work_node.payload.as_ref().expect("checked: Probe arm");
+                pool.submit(WorkItem {
+                    id,
+                    payload: payload.clone(),
+                    recipe_name: work_node.recipe_name.clone(),
+                    working_dir: work_node.working_dir.clone(),
+                    env_vars: env_vars_hashmap,
+                    project_root: cache_ctx.project_root.clone(),
+                });
+                1
+            }
             Some(payload) => {
                 // Check cache before executing
                 if check_node_cache(work_node, cache_managers, cache_ctx) {
@@ -879,6 +1073,9 @@ pub fn execute_dag(
                             cached_test_results,
                             rerun_patterns,
                             blocked_results,
+                            probe_units_by_node,
+                            upstream_probe_fingerprints,
+                            probe_fingerprint_by_node,
                         );
                     }
                     return submitted;
@@ -994,6 +1191,9 @@ pub fn execute_dag(
             &mut cached_test_results,
             rerun_patterns,
             &mut blocked_results,
+            probe_units_by_node,
+            &upstream_probe_fingerprints,
+            &mut probe_fingerprint_by_node,
         );
     }
 
@@ -1249,6 +1449,9 @@ pub fn execute_dag(
                             &mut cached_test_results,
                             rerun_patterns,
                             &mut blocked_results,
+                            probe_units_by_node,
+                            &upstream_probe_fingerprints,
+                            &mut probe_fingerprint_by_node,
                         );
                     }
                 }
@@ -1641,6 +1844,9 @@ pub fn execute_dag(
                                 &mut cached_test_results,
                                 rerun_patterns,
                                 &mut blocked_results,
+                                probe_units_by_node,
+                                &upstream_probe_fingerprints,
+                                &mut probe_fingerprint_by_node,
                             );
                         }
                     } else {
@@ -1695,6 +1901,70 @@ pub fn execute_dag(
             let probe_store = pool.probe_value_store();
             let mut store = probe_store.lock().unwrap();
             store.insert(probe_out.key.clone(), probe_out.bytes.clone());
+        }
+
+        // G5 (CS-0074): persist probe output to CacheBackend after the worker
+        // returns with bytes on a cache miss. Reuses the fingerprint computed at
+        // dispatch time (G4) stored in `probe_fingerprint_by_node`, so we never
+        // recompute for the same node. Also populates `upstream_probe_fingerprints`
+        // so downstream probes can include this probe's fingerprint in their own.
+        //
+        // This block runs for *every* result (success or failure) so that the
+        // fingerprint map is always populated before newly-ready nodes are
+        // processed (the `dag.complete(result.id)` call below may unblock
+        // downstream probes). On failure, we skip the backend put but still
+        // record the fingerprint so the map is consistent.
+        if let Some(ref probe_out) = result.probe_output {
+            if result.success {
+                if let Some(&fp) = probe_fingerprint_by_node.get(&result.id) {
+                    // G5a: populate upstream_fingerprints for downstream probes.
+                    upstream_probe_fingerprints.insert(probe_out.key.clone(), fp);
+
+                    // G5b: persist to CacheBackend with kind=probe_value.
+                    let mut artifact_meta = ArtifactMeta {
+                        recipe_namespace: format!("probe:{}", probe_out.key),
+                        command_hash: 0,
+                        context_hash: 0,
+                        env_contribution: 0,
+                        schema_version: CACHE_VERSION,
+                        size_bytes: probe_out.bytes.len() as u64,
+                        tags: std::collections::BTreeSet::new(),
+                        consulted_env_keys: std::collections::BTreeSet::new(),
+                        output_index: 0,
+                        output_path: format!("probe:{}", probe_out.key),
+                        content_hash: ArtifactMeta::zero_content_hash(),
+                        kind: None,
+                    }
+                    .as_probe_value();
+                    if let Err(e) = cook_cache::backend::put_bytes(
+                        cache_ctx.backend.as_ref(),
+                        &fp,
+                        &probe_out.bytes,
+                        &mut artifact_meta,
+                    ) {
+                        tracing::warn!(
+                            "probe '{}': cache backend put failed ({}); continuing without caching",
+                            probe_out.key, e,
+                        );
+                    } else {
+                        tracing::debug!(
+                            "probe '{}': cached output (fp={:x?})",
+                            probe_out.key, &fp[..4],
+                        );
+                    }
+                } else {
+                    // No fingerprint was computed at dispatch time (probe_units_by_node
+                    // had no entry for this node — caching disabled for this probe).
+                    // Still populate upstream_fingerprints with a sentinel so
+                    // downstream probes that `requires` this probe don't error.
+                    // We use a zero fingerprint as "unfingerprinted" (not cacheable).
+                    // Downstream probes that consume it will include this sentinel,
+                    // which means they too will be un-cacheable if they rely on it.
+                    // This is acceptable: the missing-metadata path is the "no probe
+                    // data available" edge case (tests, non-run.rs callers).
+                    upstream_probe_fingerprints.insert(probe_out.key.clone(), [0u8; 32]);
+                }
+            }
         }
 
         let node = dag.node(result.id);
@@ -1988,6 +2258,9 @@ pub fn execute_dag(
                     &mut cached_test_results,
                     rerun_patterns,
                     &mut blocked_results,
+                    probe_units_by_node,
+                    &upstream_probe_fingerprints,
+                    &mut probe_fingerprint_by_node,
                 );
             }
         } else {
@@ -2115,6 +2388,9 @@ pub fn execute_dag(
                         &mut cached_test_results,
                         rerun_patterns,
                         &mut blocked_results,
+                        probe_units_by_node,
+                        &upstream_probe_fingerprints,
+                        &mut probe_fingerprint_by_node,
                     );
                 }
             } else {
@@ -2243,7 +2519,7 @@ mod tests {
         let mut dag = Dag::new();
         dag.add_node(work_node(shell("true"), "single", wd), &[]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -2263,7 +2539,7 @@ mod tests {
             &[a],
         ).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -2285,7 +2561,7 @@ mod tests {
             &[a],
         ).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_err());
         match result.unwrap_err() {
             EngineError::TaskFailures { failures, .. } => {
@@ -2311,7 +2587,7 @@ mod tests {
         }
 
         let start = std::time::Instant::now();
-        let result = execute_dag(dag, 4, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 4, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         let elapsed = start.elapsed();
 
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -2329,7 +2605,7 @@ mod tests {
         let (_wd, _tmp) = tmp_dir();
         let cache_ctx = make_cache_ctx(&_tmp);
         let dag: Dag<WorkNode> = Dag::new();
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok());
     }
 
@@ -2344,7 +2620,7 @@ mod tests {
         let b = dag.add_node(presatisfied_node("cached_b", wd.clone()), &[a]).unwrap();
         dag.add_node(work_node(shell("true"), "real_work", wd), &[b]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -2360,7 +2636,7 @@ mod tests {
         // B is independent, should succeed
         dag.add_node(work_node(shell("true"), "ok_b", wd), &[]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_err());
         match result.unwrap_err() {
             EngineError::TaskFailures { failures, .. } => {
@@ -2393,7 +2669,7 @@ mod tests {
             &[a],
         ).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
@@ -2422,7 +2698,7 @@ mod tests {
         );
 
         let (tx, rx) = mpsc::channel::<EngineEvent>();
-        let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
         let mut got_stdout = false;
@@ -2499,7 +2775,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
         let out = wd.join("build/out/foo.txt");
@@ -2533,7 +2809,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         let err = result.expect_err("expected failure when parent is a regular file");
         match err {
             EngineError::TaskFailures { failures, .. } => {
@@ -2586,7 +2862,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 1, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
         assert!(wd.join("build/foo.txt").exists());
     }
@@ -2632,7 +2908,7 @@ mod tests {
             &[b]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok(), "got: {result:?}");
 
         let events: Vec<_> = rx.try_iter().collect();
@@ -2685,7 +2961,7 @@ mod tests {
             &[b]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
+        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
 
         let events: Vec<_> = rx.try_iter().collect();
         let node_failed: Vec<_> = events.iter().filter(|e| matches!(e, EngineEvent::NodeFailed { .. })).collect();
@@ -2725,7 +3001,7 @@ mod tests {
             &[]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
+        let _result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
 
         let events: Vec<_> = rx.try_iter().collect();
         let starts = events.iter().filter(|e| matches!(e, EngineEvent::InteractiveStart { .. })).count();
@@ -2778,7 +3054,7 @@ mod tests {
             &[b]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok(), "got: {result:?}");
 
         let events: Vec<_> = rx.try_iter().collect();
@@ -2833,7 +3109,7 @@ mod tests {
             &[a]).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok(), "got: {result:?}");
 
         let events: Vec<_> = rx.try_iter().collect();
@@ -2873,7 +3149,7 @@ mod tests {
                 "regular_lua", wd),
             &[]).unwrap();
 
-        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         assert!(result.is_ok(), "got: {result:?}");
     }
 
@@ -2915,7 +3191,7 @@ mod tests {
         ).unwrap();
 
         let result = execute_dag(
-            dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[],
+            dag, 2, BTreeMap::new(), None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new(),
         );
 
         // The cook node failed → EngineError::TaskFailures
@@ -2969,7 +3245,7 @@ mod tests {
         ).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         let test_results = result.expect("test node should pass");
 
         // TestResult.line must carry 17.
@@ -3026,7 +3302,7 @@ mod tests {
         ).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[]);
+        let result = execute_dag(dag, 2, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
         let test_results = result.expect("test node should pass");
 
         // TestResult.iteration_item must carry "a.cpp".

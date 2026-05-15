@@ -518,6 +518,14 @@ where
             wave_units.push(units);
         }
 
+        // Extract probe unit metadata keyed by probe key BEFORE wave_units is
+        // consumed by build_dag. We use this map after DAG construction to build
+        // probe_units_by_node (dag node id → ProbeUnit) for the executor.
+        let probe_units_by_key: BTreeMap<String, cook_contracts::ProbeUnit> = wave_units
+            .iter()
+            .flat_map(|ru| ru.probes.iter().cloned().map(|pu| (pu.key.clone(), pu)))
+            .collect();
+
         // Build work-unit DAG for this wave and execute it. `build_dag` may
         // return `EngineError::OutputCollision` at plan time when two
         // non-dep-related recipes claim the same canonical output path.
@@ -596,6 +604,22 @@ where
                 fp_map
             };
 
+            // G4 (CS-0074): build probe_units_by_node — maps DAG node id to
+            // the ProbeUnit (declared inputs) for that node, enabling the
+            // executor to fingerprint probes and look them up in the cache.
+            // Cross-references DAG nodes (WorkPayload::Probe { key }) with the
+            // probe_units_by_key map extracted from RecipeUnits.probes above.
+            let probe_units_by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = (0..dag.len())
+                .filter_map(|node_idx| {
+                    let work_node = dag.node(node_idx).payload();
+                    if let Some(WorkPayload::Probe { key, .. }) = &work_node.payload {
+                        probe_units_by_key.get(key).map(|pu| (node_idx, pu.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             // Bridge on_event through an mpsc channel so executor can use its
             // existing Option<Sender<EngineEvent>> interface.
             let (event_tx, event_rx) = mpsc::channel::<EngineEvent>();
@@ -619,6 +643,7 @@ where
                         Some(&test_cache),
                         &fingerprint_by_node,
                         rerun_patterns,
+                        &probe_units_by_node,
                     );
 
                     // Drop the sender end is handled by execute_dag returning

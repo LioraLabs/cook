@@ -176,4 +176,6 @@ G2 implemented: `cook.cache.get(key)` on execute-phase VM reads from `SharedProb
 
 G3 implemented: scheduler populates `SharedProbeValueStore` when a `WorkPayload::Probe` `WorkResult` with `probe_output: Some(...)` arrives, before scheduling downstream consumers.
 
+G4 implemented: `execute_dag` accepts `probe_units_by_node: &BTreeMap<usize, ProbeUnit>` (keyed by DAG node id). Before dispatching a `WorkPayload::Probe` node to a worker, the scheduler resolves its fingerprint via `resolve_probe_inputs` + `compute_probe_fingerprint` and attempts `CacheBackend::get`. On a hit, the cached msgpack bytes are inserted directly into the per-run probe-value store and the node is completed without worker dispatch (emits `NodeCacheHit`). On a miss, dispatch proceeds normally. Fingerprints are stored in `probe_fingerprint_by_node` keyed by DAG node id; `upstream_probe_fingerprints` is accumulated in topological order as probes complete, so downstream probe fingerprints chain correctly.
+
 
