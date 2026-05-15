@@ -67,7 +67,17 @@ cook.probe("cc:zlib", {
 | `files` | list[string] | File paths relative to the Cookfile root. The content hash of each file contributes to the fingerprint. A missing file folds as `(path, "<missing>")`. |
 | `requires` | list[string] | Upstream probe keys. Each named probe's full fingerprint is folded into this probe's fingerprint (chained invalidation). The `requires` graph among probes MUST be acyclic (§{cat.probes.cycles}). |
 
-A probe's fingerprint MUST fold inputs in this deterministic order: key string, `produce` source string (xxh3_64 over the UTF-8 bytes of the string value), env (sorted by name), tools (sorted by name), files (sorted by path), requires (sorted by key). The implementation MUST use SHA-256 over the canonicalised representation, yielding a 32-byte fingerprint that addresses the artifact in the cache backend.
+A probe's fingerprint MUST be a 32-byte SHA-256 digest over the canonicalised byte representation of its inputs. The canonical representation is built by concatenating, in this fixed order, each of the following sections separated by an ASCII `LF` (0x0A):
+
+1. The literal bytes `COOK_PROBE_FP_V1`.
+2. The probe `key` (UTF-8 bytes).
+3. The `produce` source string (UTF-8 bytes).
+4. The literal bytes `ENV`, followed by each declared env-var name and its current value (or the literal bytes `<unset>` if not set), `<name>=<value>`-formatted, sorted lexicographically by name.
+5. The literal bytes `TOOLS`, followed by each declared tool name and the 32-byte content hash of the resolved binary (32 zero bytes if missing), `<name>=<hex>`-formatted, sorted lexicographically by name.
+6. The literal bytes `FILES`, followed by each declared file path and its 32-byte content hash (32 zero bytes if missing), `<path>=<hex>`-formatted, sorted lexicographically by path.
+7. The literal bytes `UPSTREAM`, followed by each upstream probe key and its 32-byte fingerprint, `<key>=<hex>`-formatted, sorted lexicographically by key.
+
+The implementation MAY include a non-cryptographic hash (e.g. xxh3_64) as an internal optimisation provided the final 32-byte fingerprint matches what a direct SHA-256 over the canonical bytes would produce.
 
 ## 22.5.4. Value types [#cat.probes.values]
 
@@ -89,7 +99,7 @@ Probe values are serialised to msgpack for storage and cloud transport. The msgp
 
 ## 22.5.5. Consumer `requires` [#cat.probes.requires]
 
-`cook.add_unit({ ..., requires = { "key1", "key2" } })` declares that the unit consumes the named probe values. The `requires` field is an optional list of probe-key strings; omitting it is equivalent to `requires = {}`.
+`cook.add_unit({ ..., requires = { "key1", "key2" } })` declares that the unit consumes the named probe values. (Distinct from `opts.inputs.requires` per §{cat.probes.inputs}, which declares probe-to-probe dependencies.) The `requires` field is an optional list of probe-key strings; omitting it is equivalent to `requires = {}`.
 
 A conforming implementation MUST, after the register pass completes:
 
@@ -138,7 +148,7 @@ A probe unit MUST run at most once per build invocation.
 
 The per-run probe-value store is keyed by probe key. Consumer units are dispatched after their `requires`-edge predecessors complete; at dispatch time, the store is fully populated for all required probes.
 
-`cook.cache.get(key)` (§{lua.both}) invoked from execute-phase Lua MUST read from the per-run probe-value store. A `cook.cache.get` call for a key that has not completed as a probe MUST return `nil`; the implementation MAY upgrade this to a diagnostic in a future Standard revision.
+`cook.cache.get(key)` (§{lua.both}) invoked from execute-phase Lua MUST read from the per-run probe-value store. A `cook.cache.get` call for a key that has not completed as a probe MUST return `nil`.
 
 The wrapped `produce` function MAY raise a Lua error. A conforming implementation MUST treat a raised error as a unit failure and MUST propagate failure to every downstream consumer via the DAG edge, consistent with the general unit-failure semantics of §{exec.two-phase}.
 
@@ -153,8 +163,5 @@ probe cycle detected: cc:a -> cc:b -> cc:a
 ```
 
 The diagnostic MUST render the full cycle path. The order in which nodes are listed MUST be deterministic (implementation-defined ordering of cycle start); the path MUST close back to the first node.
-
-{/* CS-0074 entry does not yet exist in Appendix E; Task A5 will add it and this comment can be replaced with the rendered heading below. */}
-{/* ## 22.5.9. Pinned by [CS-0074] */}
 
 ## 22.5.9. Pinned by CS-0074
