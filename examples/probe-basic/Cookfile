@@ -2,9 +2,7 @@ register
     cook.probe("demo:compiler", {
         inputs = { env = {"PATH"}, tools = {"cc"} },
         produce = [[
-            local f = io.popen("which cc")
-            local path = f:read("*l") or "cc"
-            f:close()
+            local path = cook.sh("which cc"):gsub("%s+$", "")
             return { path = path }
         ]],
     })

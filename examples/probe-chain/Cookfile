@@ -2,9 +2,7 @@ register
     cook.probe("demo:cc-path", {
         inputs = { env = {"PATH"}, tools = {"cc"} },
         produce = [[
-            local f = io.popen("which cc")
-            local path = f:read("*l") or "cc"
-            f:close()
+            local path = cook.sh("which cc"):gsub("%s+$", "")
             return { path = path }
         ]],
     })
@@ -13,10 +11,9 @@ register
         inputs = { requires = {"demo:cc-path"} },
         produce = [[
             local cc = cook.cache.get("demo:cc-path").path
-            local f = io.popen(cc .. " --version 2>&1 | head -1")
-            local first = f:read("*l") or "unknown"
-            f:close()
-            return { version = first }
+            -- Extract just the major version number (a clean integer)
+            local ver = cook.sh(cc .. " -dumpversion 2>&1"):gsub("%s+$", "")
+            return { version = ver }
         ]],
     })
 

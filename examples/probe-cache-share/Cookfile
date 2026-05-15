@@ -2,10 +2,7 @@ register
     cook.probe("demo:slow", {
         inputs = {},
         produce = [[
-            local cmd = "sleep 1 && date +%s"
-            local f = io.popen(cmd)
-            local timestamp = f:read("*l")
-            f:close()
+            local timestamp = cook.sh("sleep 1 && date +%s"):gsub("%s+$", "")
             return { timestamp = timestamp }
         ]],
     })

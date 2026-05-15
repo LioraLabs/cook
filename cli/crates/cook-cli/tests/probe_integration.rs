@@ -76,7 +76,6 @@ fn run_cook(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
 /// probe_api.rs emits WorkPayload::Probe units and dag_builder.rs
 /// wires the `requires` edges.
 #[test]
-#[ignore = "probe-execution path not yet wired: probe nodes don't enter the DAG (CS-0074)"]
 fn probe_consumer_end_to_end_first_run_then_cache_hit() {
     let tmp = TempDir::new().unwrap();
     let cookfile = r#"
@@ -92,7 +91,6 @@ register
         requires = {"greet"},
         command = "echo {{greet.word}} > done.marker",
     })
-end
 
 recipe build
     > cook.sh("cat done.marker")

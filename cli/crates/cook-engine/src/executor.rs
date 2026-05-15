@@ -595,7 +595,7 @@ pub fn execute_dag(
         blocked_results: &mut Vec<crate::TestResult>,
         // G4 (CS-0074): probe cache lookup state.
         probe_units_by_node: &BTreeMap<usize, cook_contracts::ProbeUnit>,
-        upstream_probe_fingerprints: &BTreeMap<String, [u8; 32]>,
+        upstream_probe_fingerprints: &mut BTreeMap<String, [u8; 32]>,
         probe_fingerprint_by_node: &mut BTreeMap<usize, [u8; 32]>,
     ) -> usize {
         if cancelled[id] {
@@ -929,6 +929,10 @@ pub fn execute_dag(
                                         let mut store = probe_store.lock().unwrap();
                                         store.insert(probe_key.clone(), bytes);
                                     }
+                                    // Propagate fingerprint so downstream probes can resolve
+                                    // their own upstream_probe_fingerprints entries (mirrors
+                                    // what the worker-result handler does on a cache miss).
+                                    upstream_probe_fingerprints.insert(probe_key.clone(), fp);
                                     ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                                     emit(
                                         event_tx,
@@ -1192,7 +1196,7 @@ pub fn execute_dag(
             rerun_patterns,
             &mut blocked_results,
             probe_units_by_node,
-            &upstream_probe_fingerprints,
+            &mut upstream_probe_fingerprints,
             &mut probe_fingerprint_by_node,
         );
     }
@@ -1450,7 +1454,7 @@ pub fn execute_dag(
                             rerun_patterns,
                             &mut blocked_results,
                             probe_units_by_node,
-                            &upstream_probe_fingerprints,
+                            &mut upstream_probe_fingerprints,
                             &mut probe_fingerprint_by_node,
                         );
                     }
@@ -1845,7 +1849,7 @@ pub fn execute_dag(
                                 rerun_patterns,
                                 &mut blocked_results,
                                 probe_units_by_node,
-                                &upstream_probe_fingerprints,
+                                &mut upstream_probe_fingerprints,
                                 &mut probe_fingerprint_by_node,
                             );
                         }
@@ -2259,7 +2263,7 @@ pub fn execute_dag(
                     rerun_patterns,
                     &mut blocked_results,
                     probe_units_by_node,
-                    &upstream_probe_fingerprints,
+                    &mut upstream_probe_fingerprints,
                     &mut probe_fingerprint_by_node,
                 );
             }
@@ -2389,7 +2393,7 @@ pub fn execute_dag(
                         rerun_patterns,
                         &mut blocked_results,
                         probe_units_by_node,
-                        &upstream_probe_fingerprints,
+                        &mut upstream_probe_fingerprints,
                         &mut probe_fingerprint_by_node,
                     );
                 }
