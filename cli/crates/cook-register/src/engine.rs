@@ -13,6 +13,7 @@ use crate::dep_output_api::SharedTerminalOutputs;
 use crate::env_api::{install_require_env, EnvKeyset};
 use crate::export_api::SharedExportStore;
 use crate::module_loader::{ModuleLoaderState, SharedModuleLoaderState};
+use crate::probe_api::{install_cook_probe, ProbeRegistry};
 use crate::{CaptureState, RegisterError, SharedCaptureState};
 
 pub struct Registry {
@@ -139,6 +140,9 @@ impl Registry {
                 .map_err(RegisterError::Lua)?;
         }
 
+        // Create the probe registry for this register pass.
+        let probe_registry = Rc::new(RefCell::new(ProbeRegistry::default()));
+
         let recipes = register_cook_api_capture(
             &lua,
             self.env_vars.clone(),
@@ -152,6 +156,17 @@ impl Registry {
         {
             let cook_tbl: LuaTable = lua.globals().get("cook")?;
             install_require_env(&lua, &cook_tbl, self.env_keyset.clone())?;
+        }
+
+        // Install cook.probe on the same cook table.
+        {
+            let cook_tbl: LuaTable = lua.globals().get("cook")?;
+            // Use the Cookfile path relative to the project root (when available),
+            // or fall back to a bare "Cookfile" label for test/legacy call sites.
+            let cookfile_label = lua
+                .named_registry_value::<String>("__cook_cookfile_path")
+                .unwrap_or_else(|_| "Cookfile".to_string());
+            install_cook_probe(&lua, &cook_tbl, probe_registry.clone(), cookfile_label)?;
         }
         // `fs.*`, `path.*`, `cook.platform.*` come from the shared
         // cook-lua-stdlib crate (CS-0044) so register-phase and
@@ -312,6 +327,18 @@ impl Registry {
 
         // Flush module caches
         module_state.borrow().flush_all();
+
+        // Drain the probe registry into capture_state.probes.
+        // ProbeRegistry uses a BTreeMap keyed by probe key, so iteration order
+        // is deterministic. cook.probe calls made during this register pass
+        // (including those in imported modules) are all collected here.
+        {
+            let probe_reg = probe_registry.borrow();
+            let mut cap_mut = capture_state.borrow_mut();
+            for (_key, reg) in &probe_reg.probes {
+                cap_mut.probes.push(reg.probe.clone());
+            }
+        }
 
         let deps = recipe.metadata.requires.clone();
 

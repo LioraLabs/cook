@@ -4,7 +4,7 @@ sidebar:
   order: 22.5
 ---
 
-{/* CS-0074 — Probe units and the cook.probe Lua surface. Entry to be added to Appendix E by task A5. Implementation types: ProbeUnit, ProbeInputs, WorkPayload::Probe, CapturedUnit.requires, RecipeUnits.probes. C1: cook.probe Lua binding (probe_api.rs) + ProbeRegistry implemented. C2: cook.add_unit captures requires field (§22.5.5). */}
+{/* CS-0074 — Probe units and the cook.probe Lua surface. Entry to be added to Appendix E by task A5. Implementation types: ProbeUnit, ProbeInputs, WorkPayload::Probe, CapturedUnit.requires, RecipeUnits.probes. C1: cook.probe Lua binding (probe_api.rs) + ProbeRegistry implemented. C2: cook.add_unit captures requires field (§22.5.5). C3: Registry::register_recipe wires ProbeRegistry and drains into RecipeUnits.probes. */}
 
 # 22.5. Probe units [#cat.probes]
 

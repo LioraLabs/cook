@@ -738,3 +738,107 @@ end)
         map.keys().collect::<Vec<_>>()
     );
 }
+
+// -----------------------------------------------------------------------
+// Probe-unit registration tests (CS-0074 §22.5)
+// -----------------------------------------------------------------------
+
+#[test]
+fn registry_collects_probe_declarations_into_recipe_units() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.probe("cc:zlib", {
+        inputs = { tools = {"pkg-config"} },
+        produce = "return { found = true }",
+    })
+    cook.exec("echo hello", 1)
+end)
+"#;
+
+    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    assert_eq!(result.probes.len(), 1, "expected 1 probe, got: {:?}", result.probes);
+    assert_eq!(result.probes[0].key, "cc:zlib");
+    assert_eq!(result.probes[0].produce_source, "return { found = true }");
+    assert_eq!(result.probes[0].inputs.tools, vec!["pkg-config"]);
+}
+
+#[test]
+fn registry_collects_multiple_probes() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.probe("cc:zlib",   { inputs = {}, produce = "return 1" })
+    cook.probe("cc:openssl", { inputs = {}, produce = "return 2" })
+end)
+"#;
+
+    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    assert_eq!(result.probes.len(), 2);
+    let keys: Vec<&str> = result.probes.iter().map(|p| p.key.as_str()).collect();
+    assert!(keys.contains(&"cc:zlib"), "expected cc:zlib in probes");
+    assert!(keys.contains(&"cc:openssl"), "expected cc:openssl in probes");
+}
+
+#[test]
+fn registry_duplicate_probe_key_propagates_error() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.probe("cc:zlib", { inputs = {}, produce = "return 1" })
+    cook.probe("cc:zlib", { inputs = {}, produce = "return 2" })
+end)
+"#;
+
+    let result = rt.register_recipe(lua_src, "build", None);
+    assert!(result.is_err(), "duplicate probe key must fail register_recipe");
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains("cc:zlib"),
+        "error must name the duplicate key; got: {err}"
+    );
+}
+
+#[test]
+fn registry_probe_without_probes_has_empty_vec() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.exec("echo hello", 1)
+end)
+"#;
+
+    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    assert!(
+        result.probes.is_empty(),
+        "recipe with no cook.probe calls must have empty probes vec"
+    );
+}
+
+#[test]
+fn add_unit_with_requires_captured_in_recipe_units() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.add_unit({
+        command = "echo building",
+        requires = { "cc:zlib" },
+        cache = false,
+    })
+end)
+"#;
+
+    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    assert_eq!(result.units.len(), 1);
+    assert_eq!(result.units[0].requires, vec!["cc:zlib"]);
+}
