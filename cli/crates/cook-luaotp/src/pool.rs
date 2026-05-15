@@ -607,6 +607,16 @@ fn register_worker_cook_table(
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
          top-level `register` block.",
     )?;
+    install_register_only_guard(
+        lua,
+        &cook,
+        "probe",
+        "cook.probe: register-only API called from execute-phase Lua (Standard §22.5.2). \
+         Probe units are declared during the register phase; they cannot be created from a \
+         lua_line / lua_block / using >{ … } payload. \
+         Use `>>` instead of `>` to record this at register phase, or move the call to a \
+         top-level `register` block.",
+    )?;
 
     lua.globals().set("cook", cook)?;
     Ok(())
@@ -1787,6 +1797,27 @@ mod tests {
         let result =
             run_lua_chunk_in_worker(r#"cook.recipe("inner", {}, function() end)"#);
         assert_register_only_diagnostic(&result, "recipe");
+    }
+
+    /// §22.5.2: cook.probe MUST raise a register-only-API diagnostic on the
+    /// execute-phase VM (CS-0074).
+    #[test]
+    fn cook_probe_from_execute_phase_raises_register_only_diagnostic() {
+        let result =
+            run_lua_chunk_in_worker(r#"cook.probe("cc:x", { inputs = {}, produce = "return 1" })"#);
+        assert!(
+            !result.success,
+            "cook.probe on execute VM must fail; got success"
+        );
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("cook.probe: register-only API"),
+            "diagnostic must start with 'cook.probe: register-only API'; got: {err}"
+        );
+        assert!(
+            err.contains("§22.5.2"),
+            "diagnostic must cite §22.5.2; got: {err}"
+        );
     }
 
     /// SHI-216 / CS-0072: every register-only guard message MUST include
