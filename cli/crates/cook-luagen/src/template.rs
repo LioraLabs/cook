@@ -10,245 +10,57 @@ use crate::resolver::{
 };
 use crate::sigil;
 
-// ─── Probe-value placeholder types and parsers ────────────────────────────────
-
-/// A `{{key}}`, `{{key.field}}`, or `{{key.field[i]}}` placeholder reference
-/// found in a command string.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProbeRef {
-    /// The probe key (e.g. `"cc:zlib"`).
-    pub key: String,
-    /// The field path segments after the key. Each entry is either a field name
-    /// (alphanumeric/underscore) or a 1-based integer index stored as a decimal
-    /// string. Empty when the placeholder is bare `{{key}}`.
-    pub path: Vec<String>,
-    /// The verbatim placeholder text as it appears in the source, e.g.
-    /// `"{{cc:zlib.cflags[2]}}"`.
-    pub original: String,
-    /// Byte range of the placeholder within the scanned string.
-    pub range: std::ops::Range<usize>,
-}
-
-/// Scan `cmd` for `{{key}}` / `{{key.field}}` / `{{key.field[i]}}` placeholders.
+/// Expand a command string using the unified `$<IDENT>` sigil pipeline.
 ///
-/// When `probe_keys` is `Some(&set)` and the set is non-empty, only keys present
-/// in the set are recognised; any `{{...}}` whose key is absent is skipped. Pass
-/// `None` to detect **all** `{{...}}` patterns (the default — validation is
-/// deferred to runtime).
-///
-/// Returns `Err` only for a syntactically malformed field path (e.g. empty field
-/// name after `.`, non-integer array index).
-pub fn find_probe_refs(
-    cmd: &str,
-    probe_keys: Option<&BTreeSet<String>>,
-) -> Result<Vec<ProbeRef>, String> {
-    let mut out = vec![];
-    let bytes = cmd.as_bytes();
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'{' && bytes[i + 1] == b'{' {
-            // Look for closing `}}`.
-            let close = match cmd[i + 2..].find("}}") {
-                Some(p) => i + 2 + p,
-                None => break, // unclosed — stop scanning
-            };
-            let inner = cmd[i + 2..close].trim();
-            // Split off the key: everything before the first `.` or `[`.
-            let key_end = inner
-                .find(|c: char| c == '.' || c == '[')
-                .unwrap_or(inner.len());
-            let key = inner[..key_end].trim().to_string();
-            if key.is_empty() {
-                // `{{}}` — skip.
-                i = close + 2;
-                continue;
-            }
-            // Filter by declared probe keys when provided.
-            if let Some(set) = probe_keys {
-                if !set.is_empty() && !set.contains(&key) {
-                    i = close + 2;
-                    continue;
-                }
-            }
-            let path = parse_field_path(&inner[key_end..])?;
-            let original = cmd[i..close + 2].to_string();
-            out.push(ProbeRef {
-                key,
-                path,
-                original,
-                range: i..close + 2,
-            });
-            i = close + 2;
-        } else {
-            i += 1;
-        }
-    }
-    Ok(out)
-}
-
-/// Parse the field-path portion of a probe placeholder (everything after the
-/// key, e.g. `.cflags[2].sub`). Returns segments in order.
-fn parse_field_path(s: &str) -> Result<Vec<String>, String> {
-    let mut out = vec![];
-    let mut chars = s.chars().peekable();
-    while let Some(&c) = chars.peek() {
-        match c {
-            '.' => {
-                chars.next();
-                let mut name = String::new();
-                while let Some(&c) = chars.peek() {
-                    if c.is_alphanumeric() || c == '_' {
-                        name.push(c);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                if name.is_empty() {
-                    return Err("empty field name after '.'".into());
-                }
-                out.push(name);
-            }
-            '[' => {
-                chars.next();
-                let mut idx = String::new();
-                while let Some(&c) = chars.peek() {
-                    if c == ']' {
-                        chars.next();
-                        break;
-                    }
-                    idx.push(c);
-                    chars.next();
-                }
-                if idx.parse::<usize>().is_err() {
-                    return Err(format!("non-integer array index '[{}]'", idx));
-                }
-                out.push(idx);
-            }
-            _ => return Err(format!("unexpected character in field path: {:?}", c)),
-        }
-    }
-    Ok(out)
-}
-
-/// Rewrite a command string containing `{{key.field}}` probe-value placeholders
-/// into a Lua expression that reads from `cook.cache.get` and concatenates.
+/// CS-0074: probe-value references (`$<key:field>` etc.) are now handled
+/// entirely by the sigil scanner + resolver — no separate `{{...}}` scanner.
+/// A sigil whose IDENT contains `:` is dispatched to `Resolved::ProbeRef`
+/// by the resolver; the emitted Lua expression is `tostring(cook.cache.get(...))`.
 ///
 /// Returns `(lua_expr, probe_keys_referenced)`.
 ///
-/// - If the command has no probe placeholders the returned expression is a plain
-///   quoted string literal and the key set is empty.
-/// - The returned Lua expression is suitable as the value for `command = ...` in
-///   a `cook.add_unit(...)` call. It is evaluated at register time; at that point
-///   `cook.cache.get` is not yet meaningful — the resulting Lua expression is
-///   stored as a closure or string and executed during the unit's execute phase.
-///
-/// Note: the returned *Lua expression* is intentionally NOT pre-evaluated at
-/// register time. The command string must be wrapped so that at execute time the
-/// worker resolves `cook.cache.get(key)`. This is achieved by emitting a Lua
-/// function literal:
-///   `function() return <expr> end`
-/// which the engine calls at execute time.
-///
-/// When there are no probe refs the plain string form is returned (backward compat).
-/// Render a single `ProbeRef` as a Lua field-access expression.
-/// e.g. `cc:zlib` / `.cflags` / `[2]` → `cook.cache.get("cc:zlib").cflags[2]`
-fn probe_ref_to_lua_access(r: &ProbeRef) -> String {
-    let mut expr = format!("cook.cache.get(\"{}\")", escape_lua_string(&r.key));
-    for seg in &r.path {
-        if seg.chars().all(|c| c.is_ascii_digit()) {
-            // Numeric index (1-based as per spec).
-            expr.push_str(&format!("[{}]", seg));
-        } else {
-            expr.push_str(&format!(".{}", seg));
-        }
-    }
-    expr
-}
-
-/// Expand a command string that may contain both `$<sigil>` placeholders and
-/// `{{probe.field}}` probe-value placeholders.
-///
-/// Sigils are resolved immediately (register-time values); probe refs are
-/// wrapped in `function() ... end` for execute-time evaluation. When both
-/// appear together in the same command, the probe parts still go through a
-/// deferred function to call `cook.cache.get` at the right time — the sigil
-/// parts are inlined directly.
-///
-/// The returned expression is suitable as `command = ...` in `cook.add_unit`.
-/// When probe refs are present it is a function literal; when absent it is a
-/// plain Lua expression (string literal or concatenation).
+/// - If the command has no probe refs, the expression is a plain Lua string
+///   literal or concatenation (backward compat).
+/// - When probe refs ARE present, the expression is wrapped in
+///   `function() return <expr> end` so `cook.cache.get` is called at execute
+///   time rather than register time.
 pub(crate) fn expand_command_template(
     cmd: &str,
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
-    let probe_refs = find_probe_refs(cmd, None).map_err(|e| {
-        // Probe-path parse errors are extremely rare (malformed `{{...}}`);
-        // surface them as a MalformedOutIndex with the message in the ident field
-        // since ResolveError is non_exhaustive and has no generic variant.
-        // Using the sentinel ident so callers can detect vs. a real out_N error.
-        ResolveError::MalformedOutIndex { ident: format!("probe-path: {}", e) }
-    })?;
-    let probe_keys: BTreeSet<String> = probe_refs.iter().map(|r| r.key.clone()).collect();
+    let spans = sigil::scan(cmd);
 
-    if probe_refs.is_empty() {
+    // Collect probe keys by walking sigil spans before doing full expansion,
+    // so we know whether to wrap in a deferred function.
+    let mut probe_keys: BTreeSet<String> = BTreeSet::new();
+    for span in &spans {
+        if span.ident.contains(':') {
+            let resolved = crate::resolver::resolve(&span.ident, ctx);
+            if let Resolved::ProbeRef { key, .. } = &resolved {
+                probe_keys.insert(key.clone());
+            }
+        }
+    }
+
+    if probe_keys.is_empty() {
         // No probe refs — use existing sigil expansion unchanged.
         let lua = expand_sigil_template(cmd, ctx, consulted_env)?;
         return Ok((lua, probe_keys));
     }
 
-    // Build spans covering both probe refs and sigil placeholders, in order.
-    // Strategy: collect all spans (probe + sigil), sort by start position, emit.
-    let sigil_spans = sigil::scan(cmd);
-
-    // We'll walk the string emitting parts for: literal text, sigil refs, probe refs.
-    // Use a merge of the two span lists.
-    #[derive(Debug)]
-    enum Span<'a> {
-        Sigil(&'a sigil::PlaceholderSpan),
-        Probe(&'a ProbeRef),
-    }
-
-    let mut all_spans: Vec<(usize, Span<'_>)> = vec![];
-    for s in &sigil_spans {
-        all_spans.push((s.range.start, Span::Sigil(s)));
-    }
-    for p in &probe_refs {
-        all_spans.push((p.range.start, Span::Probe(p)));
-    }
-    all_spans.sort_by_key(|(start, _)| *start);
-
-    // Build parts list: literal text, then each span.
+    // Probe refs present — build the concatenation expression from sigil spans.
     let mut parts: Vec<String> = vec![];
     let mut cursor = 0usize;
 
-    for (_, span) in &all_spans {
-        let span_start = match span {
-            Span::Sigil(s) => s.range.start,
-            Span::Probe(p) => p.range.start,
-        };
-        if span_start < cursor {
-            // Overlapping spans should not happen — skip if they do.
-            continue;
+    for span in &spans {
+        if span.range.start > cursor {
+            parts.push(format!("\"{}\"", escape_lua_string(&cmd[cursor..span.range.start])));
         }
-        if span_start > cursor {
-            parts.push(format!("\"{}\"", escape_lua_string(&cmd[cursor..span_start])));
-        }
-        match span {
-            Span::Sigil(s) => {
-                let resolved = crate::resolver::resolve(&s.ident, ctx);
-                let lua_expr = resolved_to_lua(resolved, &s.ident, consulted_env)
-                    .map_err(|e| e)?;
-                parts.push(lua_expr);
-                cursor = s.range.end;
-            }
-            Span::Probe(p) => {
-                let access = probe_ref_to_lua_access(p);
-                parts.push(format!("tostring({})", access));
-                cursor = p.range.end;
-            }
-        }
+        let resolved = crate::resolver::resolve(&span.ident, ctx);
+        let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env)?;
+        parts.push(lua_expr);
+        cursor = span.range.end;
     }
 
     if cursor < cmd.len() {
@@ -359,6 +171,10 @@ pub(crate) fn expand_sigil_template(
 }
 
 /// Convert a `Resolved` value to a Lua expression string.
+///
+/// `probe_keys` is an optional accumulator for probe keys referenced during
+/// expansion; when `Some`, probe-ref keys are inserted into the set so callers
+/// can track which probe keys the command depends on.
 fn resolved_to_lua(
     resolved: Resolved,
     _ident: &str,
@@ -378,6 +194,9 @@ fn resolved_to_lua(
             consulted_env.record(&key);
             Ok(format!("cook.require_env(\"{}\")", escape_lua_string(&key)))
         }
+        // CS-0074: probe-value reference — emit a tostring-wrapped cache read.
+        // The access expression is pre-built by the resolver.
+        Resolved::ProbeRef { access, .. } => Ok(format!("tostring({})", access)),
         Resolved::Error(e) => Err(e),
     }
 }
@@ -582,6 +401,9 @@ fn output_pattern_ident_to_lua(
             out.record(&key);
             format!("cook.require_env(\"{}\")", escape_lua_string(&key))
         }
+        // CS-0074: probe refs are not expected in output patterns, but if they appear
+        // emit the access expression so they aren't silently swallowed.
+        Resolved::ProbeRef { access, .. } => format!("tostring({})", access),
         Resolved::Error(_) => {
             // In output patterns, errors fall through to env lookup for backward compat
             // with patterns that use $<TOKEN> where TOKEN is an env var name.
@@ -1194,87 +1016,12 @@ mod sigil_template_tests {
     }
 }
 
-// ─── H1/H2: probe-value placeholder tests ────────────────────────────────────
+// ─── CS-0074: probe-value placeholder tests (unified $<...> sigil pipeline) ──
 #[cfg(test)]
 mod probe_template_tests {
     use super::*;
 
-    // ─── H1: find_probe_refs ─────────────────────────────────────────────────
-
-    #[test]
-    fn template_detects_probe_placeholder_simple() {
-        let refs = find_probe_refs("gcc -c foo.c {{cc:zlib.cflags}}", None).unwrap();
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0].key, "cc:zlib");
-        assert_eq!(refs[0].path, vec!["cflags"]);
-    }
-
-    #[test]
-    fn template_detects_probe_placeholder_no_field() {
-        let refs = find_probe_refs("{{cc:compiler}} -c foo.c", None).unwrap();
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0].key, "cc:compiler");
-        assert_eq!(refs[0].path, Vec::<String>::new());
-    }
-
-    #[test]
-    fn template_detects_array_index() {
-        let refs = find_probe_refs("{{cc:zlib.cflags[2]}}", None).unwrap();
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0].key, "cc:zlib");
-        assert_eq!(refs[0].path, vec!["cflags", "2"]);
-    }
-
-    #[test]
-    fn template_detects_no_refs_in_plain_command() {
-        let refs = find_probe_refs("gcc -c foo.c -o foo.o", None).unwrap();
-        assert!(refs.is_empty());
-    }
-
-    #[test]
-    fn template_rejects_malformed_field_path() {
-        let err = find_probe_refs("{{cc:zlib.}}", None).unwrap_err();
-        assert!(err.contains("empty field"), "got: {}", err);
-    }
-
-    #[test]
-    fn template_detects_multiple_probe_refs() {
-        let refs = find_probe_refs("{{cc:compiler}} -c foo.c {{cc:zlib.cflags}}", None).unwrap();
-        assert_eq!(refs.len(), 2);
-        assert_eq!(refs[0].key, "cc:compiler");
-        assert_eq!(refs[1].key, "cc:zlib");
-    }
-
-    #[test]
-    fn template_probe_ref_original_verbatim() {
-        let refs = find_probe_refs("X {{cc:zlib.cflags[1]}} Y", None).unwrap();
-        assert_eq!(refs[0].original, "{{cc:zlib.cflags[1]}}");
-    }
-
-    #[test]
-    fn template_skips_key_not_in_filter_set() {
-        let mut set = BTreeSet::new();
-        set.insert("cc:zlib".to_string());
-        // cc:compiler is not in the filter set — should be skipped.
-        let refs = find_probe_refs("{{cc:compiler}} {{cc:zlib.cflags}}", Some(&set)).unwrap();
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0].key, "cc:zlib");
-    }
-
-    #[test]
-    fn template_no_double_brace_is_not_probe_ref() {
-        // Single-brace `{foo}` is NOT a probe ref (it's shell text or sigil territory).
-        let refs = find_probe_refs("{foo} bar", None).unwrap();
-        assert!(refs.is_empty());
-    }
-
-    #[test]
-    fn template_non_integer_array_index_is_error() {
-        let err = find_probe_refs("{{key.field[abc]}}", None).unwrap_err();
-        assert!(err.contains("non-integer"), "got: {}", err);
-    }
-
-    // ─── H2: expand_command_template (wired version) ─────────────────────────
+    // ─── expand_command_template: probe detection via $<...> sigils ──────────
 
     #[test]
     fn expand_command_template_plain_sigils_unchanged() {
@@ -1300,8 +1047,9 @@ mod probe_template_tests {
             recipes_in_scope: &r,
         };
         let mut env = ConsultedEnv::new();
+        // CS-0074: probe refs now use $<key:field> instead of {{key.field}}.
         let (lua, keys) =
-            expand_command_template("{{cc:zlib.cflags}} -c $<in>", &ctx, &mut env).unwrap();
+            expand_command_template("$<cc:zlib.cflags> -c $<in>", &ctx, &mut env).unwrap();
         // Must be wrapped in a deferred function since probe refs are present.
         assert!(lua.starts_with("function()"), "got: {}", lua);
         assert!(lua.contains(r#"cook.cache.get("cc:zlib")"#), "got: {}", lua);
@@ -1309,6 +1057,57 @@ mod probe_template_tests {
         // Sigil $<in> should also appear.
         assert!(lua.contains("_cook_in"), "got: {}", lua);
         assert_eq!(keys.iter().next().map(String::as_str), Some("cc:zlib"));
+    }
+
+    #[test]
+    fn expand_command_template_probe_bare_key() {
+        // $<cc:compiler> — no field path, bare key reference.
+        let r = BTreeSet::new();
+        let ctx = ResolveCtx {
+            mode: IterMode::OneShot,
+            outputs: OutputShape::None,
+            recipes_in_scope: &r,
+        };
+        let mut env = ConsultedEnv::new();
+        let (lua, keys) =
+            expand_command_template("$<cc:compiler> -c foo.c", &ctx, &mut env).unwrap();
+        assert!(lua.starts_with("function()"), "got: {}", lua);
+        assert!(lua.contains(r#"cook.cache.get("cc:compiler")"#), "got: {}", lua);
+        assert!(keys.contains("cc:compiler"), "expected cc:compiler in keys; got: {:?}", keys);
+    }
+
+    #[test]
+    fn expand_command_template_probe_indexed_field() {
+        // $<cc:zlib.libs[2]> — indexed array element.
+        let r = BTreeSet::new();
+        let ctx = ResolveCtx {
+            mode: IterMode::OneShot,
+            outputs: OutputShape::None,
+            recipes_in_scope: &r,
+        };
+        let mut env = ConsultedEnv::new();
+        let (lua, keys) =
+            expand_command_template("$<cc:zlib.libs[2]>", &ctx, &mut env).unwrap();
+        assert!(lua.starts_with("function()"), "got: {}", lua);
+        assert!(lua.contains(r#"cook.cache.get("cc:zlib")"#), "got: {}", lua);
+        assert!(lua.contains(".libs[2]"), "got: {}", lua);
+        assert!(keys.contains("cc:zlib"));
+    }
+
+    #[test]
+    fn expand_command_template_multiple_probe_refs_collected() {
+        let r = BTreeSet::new();
+        let ctx = ResolveCtx {
+            mode: IterMode::OneShot,
+            outputs: OutputShape::None,
+            recipes_in_scope: &r,
+        };
+        let mut env = ConsultedEnv::new();
+        let (lua, keys) =
+            expand_command_template("$<cc:compiler.path> -c foo.c $<cc:zlib.cflags>", &ctx, &mut env).unwrap();
+        assert!(lua.starts_with("function()"), "got: {}", lua);
+        assert!(keys.contains("cc:compiler"), "keys: {:?}", keys);
+        assert!(keys.contains("cc:zlib"), "keys: {:?}", keys);
     }
 
     #[test]

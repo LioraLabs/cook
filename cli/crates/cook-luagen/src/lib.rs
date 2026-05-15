@@ -3,7 +3,7 @@ mod lua_string;
 mod plate_step;
 mod recipe;
 pub(crate) mod resolver;
-pub(crate) mod sigil;
+pub mod sigil;
 mod template;
 mod test_step;
 
