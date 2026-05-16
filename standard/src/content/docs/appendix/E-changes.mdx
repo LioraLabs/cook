@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.11** (`cs-standard/v0.11`, 2026-05-15) — CS-0074. Probe units: new §22.5 `cook.probe` register-phase API; probe fingerprint + `CacheBackend` integration (§17); `cook.cache.set` deprecated (§24); `cook.cache.get` execute-phase behaviour tightened to read from the per-run probe-value store.
+- **v0.11** (`cs-standard/v0.11`, 2026-05-15) — CS-0074. Probe units: new §22.5 `cook.probe` register-phase API; `probes` field on `cook.add_unit` for consumer→probe DAG edges; demand-driven scheduling (probes execute only when reached); msgpack probe-value caching with `kind: "probe_value"` artifact-meta tag; `cook.cache.set` deprecated (§24); `cook.cache.get` execute-phase tightened.
 - **v0.10** (`cs-standard/v0.10`, 2026-05-13) — CS-0073. Structural redesign: Standard reorganised into four Parts (Cookfile language, Execution model, Cook Lua API, Standard module catalogue) with per-topic chapters. Retired slug prefixes `grammar.*`, `modules.*`, `stdmods.*`, plus several `lua.*` and `lexical.*` / `recipes.*` leaves; new prefixes `conf.*`, `toplevel.*`, `decl.*`, `steps.*`, `phl.*`, `exec.*`, `comp.*`, `mods.*`, `cat.*`, `pre-v1.*`, `corpus.*`. New normative prose for `cook.step_group` (§22.5), both-phase Cook Lua surfaces (§24.3–§24.7), and module lifecycle (§12.3). Annexes B/C and D/E swapped. Retired URLs resolve via page-level redirects. No normative behaviour changes for any conforming Cookfile.
 - **v0.9** (`cs-standard/v0.9`, 2026-05-13) — CS-0072. Top-level `register` blocks + top-level `module_call` + recipe-body module_call dispatch removal. New conformance fixtures `register-block-*`, `top-level-module-call-*`, `recipe-body-bare-module-call-is-shell`. Breaking grammar change; pairs with cook_cc 0.4.0-1 (target-makers wrap with `cook.recipe`).
 - **v0.8** (`cs-standard/v0.8`, 2026-05-07) — CS-0045, CS-0046, CS-0047, CS-0048, CS-0049, CS-0050, CS-0051, CS-0052, CS-0054, CS-0055, CS-0056, CS-0057, CS-0058, CS-0059, CS-0060, CS-0061, CS-0062, CS-0063, CS-0064, CS-0065, CS-0066
@@ -1271,35 +1271,40 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 
 ### v0.11 [#changes.v0-11]
 
-## CS-0074 — Probe units: `cook.probe`, CacheBackend integration, `cook.cache.set` deprecation [#cs-0074]
+## CS-0074 — Probe units: `cook.probe`, `probes` field on `cook.add_unit`, demand-driven scheduling [#cs-0074]
 
 **Date:** 2026-05-15
 **Version:** v0.11
-**Sections affected:**
-- `standard/src/content/docs/22-probe-units.mdx` (new chapter)
-- `standard/src/content/docs/17-cache.mdx` (§17.5 cross-ref added)
-- `standard/src/content/docs/21-lua-api.mdx` (§21.1 `cook.probe` pointer + `cook.cache.get` cross-phase note)
-- `standard/src/content/docs/24-both-phase.mdx` (§24.4.1 execute-phase behaviour tightened; §24.4.2 `cook.cache.set` deprecated; §24.4.3 `cook.cache.scope` deprecated)
 
-**Summary.** Introduces the probe-unit surface: `cook.probe(key, opts)` is a new register-phase API that declares a memoised configuration probe whose value is fingerprinted, stored in `CacheBackend`, and made available to execute-phase Lua via the per-run probe-value store. Consumers declare dependencies with a new `requires` field on `cook.add_unit`. Command templates may reference probe fields with `{{key.field}}` desugaring. Probe results participate in Cook Cloud sharing via the same `events.jsonl` wire protocol as file outputs. The `cook.cache.set`, `cook.cache.scope`, and the execute-phase variant of `cook.cache.set` are deprecated; `cook.cache.get` on the execute-phase VM now reads exclusively from the probe-value store. The register-phase `cook.cache.get/set` kv store is retained until v1.0.
+**Summary.** CS-0074 introduces probe units. New register-phase API `cook.probe(key, opts)` registers a DAG unit whose output is a Lua value rather than a file (§22.5). Consumer units declare probe-edge dependencies via a `probes` field on `cook.add_unit`; the `$<key:field>` sigil in command templates auto-populates this field (§22.5.5, §22.5.6). Probe values are msgpack-encoded and stored via the existing cache backend; the `ArtifactMeta.kind` field disambiguates probe-value artifacts from file artifacts (§22.5.4, §22.5.7). Probes execute on demand: a probe MUST NOT run unless at least one scheduled non-probe consumer transitively references its key (§22.5.7). `cook.cache.set` is deprecated and raises a runtime error on the execute-phase VM (§24). `cook.cache.get` on the execute-phase VM reads from a per-run probe-value store populated by the scheduler (§24).
+
+**Sections affected:** §22.5 (new chapter — Probe units), §17 (cache cross-reference), §21 (Lua-API §21.1 `cook.probe` pointer + `cook.cache.get` cross-phase note), §24 (both-phase `cook.cache.get` tightening), App. E (this entry).
 
 **Motivation.** Modules such as `cook_cc` have used `cook.cache.set`/`cook.cache.get` as a hand-rolled memoisation layer for configure-time probes (compiler detection, package finder results, toolchain version strings). This pattern has three problems: (1) probe values are not fingerprinted, so a changed compiler does not invalidate cached build units; (2) the kv store is local-machine only and cannot be shared via Cook Cloud; (3) the execute-phase `cook.cache.set` was in-memory-only (per CS-0070), making cross-invocation rehydration depend on register-phase-only writes that callers found confusing. `cook.probe` replaces the hand-rolled pattern with a first-class register-phase concept that plugs into the existing cache and cloud machinery end-to-end.
 
 **Normative scope.**
-- New §22.5 (`standard/src/content/docs/22-probe-units.mdx`): formal definition of `cook.probe(key, opts)` API (§22.5.2), probe inputs and fingerprint algorithm (§22.5.3), value types (§22.5.4), consumer `requires` field on `cook.add_unit` (§22.5.5), `{{key.field}}` command-template desugaring (§22.5.6), execution semantics and per-run probe-value store (§22.5.7), and cycle detection (§22.5.8).
-- Amendment to §17 (Cache): probe units join the cache machinery; probe fingerprint addresses a msgpack-serialised value in `CacheBackend`; probe artifacts ride the `events.jsonl` event stream and Cook Cloud wire protocol.
+- New §22.5: formal definition of `cook.probe(key, opts)` API (§22.5.2), probe inputs and fingerprint algorithm (§22.5.3), value types (§22.5.4), consumer `probes` field on `cook.add_unit` (§22.5.5), `$<key:field>` command-template sigil (§22.5.6), demand-driven execution semantics and per-run probe-value store (§22.5.7), and cycle detection (§22.5.8).
+- Amendment to §17 (Cache): probe units join the cache machinery; probe fingerprint addresses a msgpack-serialised value in `CacheBackend`; probe artifacts ride the `events.jsonl` event stream and Cook Cloud wire protocol; `ArtifactMeta.kind` distinguishes `"probe_value"` from file artifacts.
 - Amendment to §21 (Lua API overview): `cook.probe` pointer; `cook.cache.get` cross-phase note.
-- Amendment to §24.4 (Both-phase `cook.cache`): `cook.cache.get` on the execute-phase VM MUST read from the per-run probe-value store (not the persistent kv store); `cook.cache.set` and `cook.cache.scope` are deprecated for removal at v1.0.
+- Amendment to §24 (Both-phase `cook.cache`): `cook.cache.get` on the execute-phase VM MUST read from the per-run probe-value store (not the persistent kv store); `cook.cache.set` is deprecated and raises a runtime error on the execute-phase VM.
 
-**Reference implementation (planned).**
-- `cli/crates/cook-register/src/probe_api.rs` — `cook.probe` registration surface
-- `cli/crates/cook-fingerprint/src/probe.rs` — probe fingerprint computation
-- `cli/crates/cook-register/tests/probe_integration.rs` — integration tests
+**Reference implementation:**
+- `standard/src/content/docs/22-probe-units.mdx` (chapter)
+- `standard/src/content/docs/appendix/E-changes.mdx` (this entry)
+- `standard/src/content/docs/21-lua-api.mdx` (§21.1 `cook.probe` pointer + `cook.cache.get` cross-phase note)
+- `standard/src/content/docs/24-both-phase.mdx` (`cook.cache.get` tightening)
+- `cli/crates/cook-contracts/src/lib.rs` (`ProbeUnit`, `ProbeInputs`, `WorkPayload::Probe`, `RecipeUnits.probes`, `CapturedUnit.probes`)
+- `cli/crates/cook-register/src/probe_api.rs`, `src/unit_api.rs`, `src/engine.rs`, `src/probe_value.rs`
+- `cli/crates/cook-fingerprint/src/probe.rs`
+- `cli/crates/cook-engine/src/dag_builder.rs` (probe→consumer edges + demand-driven prune)
+- `cli/crates/cook-engine/src/executor.rs` (probe cache hit/miss + upstream fingerprint propagation)
+- `cli/crates/cook-luaotp/src/probe_value.rs` (worker-VM probe dispatch + probe-value store)
+- `cli/crates/cook-luagen/src/sigil.rs`, `src/resolver.rs`, `src/template.rs` (`$<key:field>` pipeline)
 
 **Test plan.**
 - Conformance fixtures: `standard/conformance/positive/probe-*`, `standard/conformance/negative/probe-*`
 - Integration tests: `cli/crates/cook-register/tests/probe_integration.rs`
 
-**Design spec.** `docs/superpowers/specs/2026-05-15-shi214-probe-units-design.md`
+**Design spec.** Initial: `docs/superpowers/specs/2026-05-15-shi214-probe-units-design.md`. Redesign (probes-field rename + demand-driven scheduling): `docs/superpowers/specs/2026-05-16-probe-units-redesign-design.md`.
 
 **Reference:** this commit (Tasks A2-A6).
