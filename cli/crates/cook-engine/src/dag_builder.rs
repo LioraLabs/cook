@@ -155,6 +155,16 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
             // barrier mutation; the probe→consumer edge wiring below
             // safely no-ops for these probes since their dag_ids are never
             // inserted into `dag_id_by_unit_idx`.
+            //
+            // Load-bearing invariant: probes are always emitted with
+            // `DepKind::Sequential` by `probe_api.rs::install_cook_probe`,
+            // so pruning them does not desync step-group accounting —
+            // step-group bookkeeping below (group_dag_ids, barrier
+            // promotion on group boundaries) only fires for the
+            // `DepKind::StepGroup` / `DepKind::TestSibling` variants,
+            // never for probes. A future change that broadens probes'
+            // `dep_kind` MUST revisit this skip to keep the accounting
+            // consistent.
             if skip_indices.contains(&unit_idx) {
                 continue;
             }
