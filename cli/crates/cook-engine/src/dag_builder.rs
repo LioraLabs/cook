@@ -23,6 +23,42 @@ use cook_dag::Dag;
 
 use crate::{EngineError, WorkNode};
 
+/// Compute the set of probe keys reached by at least one non-probe consumer
+/// in `units`, transitively closing under probe-on-probe `inputs.requires`
+/// looked up via `probes` (the ProbeUnit list from RecipeUnits.probes).
+/// Returns probe keys in deterministic sorted order via the underlying BTreeSet.
+fn compute_consumed_probe_keys(
+    units: &[CapturedUnit],
+    probes: &[cook_contracts::ProbeUnit],
+) -> BTreeSet<String> {
+    // Index ProbeUnit data by key, for upstream-requires lookup.
+    let probe_by_key: BTreeMap<&str, &cook_contracts::ProbeUnit> =
+        probes.iter().map(|p| (p.key.as_str(), p)).collect();
+
+    // Seed: keys listed by any non-probe unit's `probes`.
+    let mut consumed: BTreeSet<String> = BTreeSet::new();
+    for u in units {
+        if !matches!(u.payload, WorkPayload::Probe { .. }) {
+            for k in &u.probes {
+                consumed.insert(k.clone());
+            }
+        }
+    }
+
+    // Transitive close under probe-on-probe inputs.requires.
+    let mut worklist: Vec<String> = consumed.iter().cloned().collect();
+    while let Some(k) = worklist.pop() {
+        if let Some(probe) = probe_by_key.get(k.as_str()) {
+            for upstream in &probe.inputs.requires {
+                if consumed.insert(upstream.clone()) {
+                    worklist.push(upstream.clone());
+                }
+            }
+        }
+    }
+    consumed
+}
+
 /// Build a `Dag<WorkNode>` from a topologically-sorted list of `RecipeUnits`.
 ///
 /// Performs plan-time validation that no two non-dep-related recipes declare
@@ -32,6 +68,11 @@ use crate::{EngineError, WorkNode};
 /// [`EngineError::OutputCollision`] before any work is dispatched. This
 /// prevents silent races under `--jobs > 1` where two recipes write the same
 /// artifact concurrently with no enforced ordering.
+///
+/// Also performs demand-driven probe scheduling (§22.5.7): probe units whose
+/// keys are not transitively referenced by any non-probe unit's `probes`
+/// field are silently omitted from the DAG. No fingerprint is computed, no
+/// diagnostic is emitted.
 pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, EngineError> {
     // ── Plan-time output-collision check ─────────────────────────────────────
     // Accumulate every (canonical_output_path -> {recipe_name, ...}) pair from
@@ -66,6 +107,21 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
         // dag_id_by_unit_idx: populated as each unit is added; lets us resolve
         // probe-unit dag IDs when wiring CapturedUnit.probes edges.
         let mut dag_id_by_unit_idx: BTreeMap<usize, usize> = BTreeMap::new();
+
+        // Demand-driven probe scheduling (§22.5.7): compute which probe keys
+        // are transitively required by a non-probe consumer; probe units
+        // whose key is not in this set are pruned from the DAG.
+        let consumed = compute_consumed_probe_keys(&ru.units, &ru.probes);
+        let skip_indices: BTreeSet<usize> = ru
+            .units
+            .iter()
+            .enumerate()
+            .filter_map(|(i, u)| match &u.payload {
+                WorkPayload::Probe { key, .. } if !consumed.contains(key) => Some(i),
+                _ => None,
+            })
+            .collect();
+
         // Collect cross-recipe dependency ids: the leaf nodes of every
         // prerequisite recipe.
         let mut cross_deps: Vec<usize> = Vec::new();
@@ -93,6 +149,16 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
         let mut group_dag_ids: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
 
         for (unit_idx, unit) in ru.units.iter().enumerate() {
+            // Demand-driven prune (§22.5.7): probe units whose key is not
+            // transitively consumed are silently omitted. The `barrier`
+            // carries forward unchanged since we skip before any add_node /
+            // barrier mutation; the probe→consumer edge wiring below
+            // safely no-ops for these probes since their dag_ids are never
+            // inserted into `dag_id_by_unit_idx`.
+            if skip_indices.contains(&unit_idx) {
+                continue;
+            }
+
             // Determine within-recipe dependencies for this unit.
             let within_deps: Vec<usize> = match &unit.dep_kind {
                 DepKind::Sequential => barrier.clone(),
@@ -839,6 +905,187 @@ mod tests {
         };
         let dag = build_dag(vec![a, b]).expect("dep edge allows shared output");
         assert_eq!(dag.len(), 2);
+    }
+
+    #[test]
+    fn unreached_probe_is_pruned_from_dag() {
+        use cook_contracts::{CapturedUnit, DepKind, ProbeUnit, ProbeInputs, WorkPayload};
+
+        let probe_payload = WorkPayload::Probe {
+            key: "k:unused".to_string(),
+            produce: "return 1".to_string(),
+            line: 1,
+        };
+        let probe_meta = ProbeUnit {
+            key: "k:unused".to_string(),
+            produce_source: "return 1".to_string(),
+            produce_line: 1,
+            inputs: ProbeInputs::default(),
+        };
+
+        let units = RecipeUnits {
+            recipe_name: "r".to_string(),
+            deps: vec![],
+            units: vec![
+                CapturedUnit {
+                    payload: probe_payload,
+                    cache_meta: None,
+                    dep_kind: DepKind::Sequential,
+                    probes: vec![],
+                },
+                CapturedUnit {
+                    payload: WorkPayload::Shell {
+                        cmd: "echo hello".to_string(),
+                        line: 2,
+                    },
+                    cache_meta: None,
+                    dep_kind: DepKind::Sequential,
+                    probes: vec![],
+                },
+            ],
+            step_groups: vec![],
+            working_dir: std::path::PathBuf::from("/"),
+            env_vars: std::collections::BTreeMap::new(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![probe_meta],
+        };
+
+        let dag = build_dag(vec![units]).expect("dag build");
+        let probe_nodes: Vec<_> = (0..dag.len())
+            .map(|i| dag.node(i))
+            .filter(|n| matches!(n.payload().payload, Some(WorkPayload::Probe { .. })))
+            .collect();
+        assert!(probe_nodes.is_empty(), "unreached probe must not appear in DAG");
+    }
+
+    #[test]
+    fn probe_chain_keeps_upstream_when_downstream_consumed() {
+        use cook_contracts::{CapturedUnit, DepKind, ProbeUnit, ProbeInputs, WorkPayload};
+
+        let probe_a_payload = WorkPayload::Probe {
+            key: "k:a".to_string(),
+            produce: "return 1".to_string(),
+            line: 1,
+        };
+        let probe_b_payload = WorkPayload::Probe {
+            key: "k:b".to_string(),
+            produce: "return 2".to_string(),
+            line: 2,
+        };
+        let probe_a_meta = ProbeUnit {
+            key: "k:a".to_string(),
+            produce_source: "return 1".to_string(),
+            produce_line: 1,
+            inputs: ProbeInputs::default(),
+        };
+        let probe_b_meta = ProbeUnit {
+            key: "k:b".to_string(),
+            produce_source: "return 2".to_string(),
+            produce_line: 2,
+            inputs: ProbeInputs {
+                requires: vec!["k:a".to_string()],
+                ..ProbeInputs::default()
+            },
+        };
+        let probe_a = CapturedUnit {
+            payload: probe_a_payload,
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+        };
+        let probe_b = CapturedUnit {
+            payload: probe_b_payload,
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+        };
+        let consumer = CapturedUnit {
+            payload: WorkPayload::Shell { cmd: "echo".to_string(), line: 3 },
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec!["k:b".to_string()],
+        };
+
+        let make_ru = |units: Vec<CapturedUnit>| RecipeUnits {
+            recipe_name: "r".to_string(),
+            units,
+            deps: vec![],
+            step_groups: vec![],
+            working_dir: std::path::PathBuf::from("/"),
+            env_vars: std::collections::BTreeMap::new(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![probe_a_meta.clone(), probe_b_meta.clone()],
+        };
+
+        let with_consumer = make_ru(vec![probe_a.clone(), probe_b.clone(), consumer]);
+        let dag = build_dag(vec![with_consumer]).unwrap();
+        let probe_count = (0..dag.len())
+            .map(|i| dag.node(i))
+            .filter(|n| matches!(n.payload().payload, Some(WorkPayload::Probe { .. })))
+            .count();
+        assert_eq!(probe_count, 2, "both probes must be present when downstream is consumed");
+
+        let without_consumer = make_ru(vec![probe_a, probe_b]);
+        let dag2 = build_dag(vec![without_consumer]).unwrap();
+        let probe_count2 = (0..dag2.len())
+            .map(|i| dag2.node(i))
+            .filter(|n| matches!(n.payload().payload, Some(WorkPayload::Probe { .. })))
+            .count();
+        assert_eq!(probe_count2, 0, "both probes must be pruned when nothing consumes downstream");
+    }
+
+    #[test]
+    fn multi_recipe_wave_prunes_independently() {
+        use cook_contracts::{CapturedUnit, DepKind, ProbeUnit, ProbeInputs, WorkPayload};
+
+        fn make_recipe(name: &str, has_consumer: bool) -> RecipeUnits {
+            let probe_meta = ProbeUnit {
+                key: "k:p".to_string(),
+                produce_source: "return 1".to_string(),
+                produce_line: 1,
+                inputs: ProbeInputs::default(),
+            };
+            let mut units = vec![CapturedUnit {
+                payload: WorkPayload::Probe {
+                    key: "k:p".to_string(),
+                    produce: "return 1".to_string(),
+                    line: 1,
+                },
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+            }];
+            units.push(CapturedUnit {
+                payload: WorkPayload::Shell { cmd: "echo".to_string(), line: 2 },
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: if has_consumer { vec!["k:p".to_string()] } else { vec![] },
+            });
+            RecipeUnits {
+                recipe_name: name.to_string(),
+                units,
+                deps: vec![],
+                step_groups: vec![],
+                working_dir: std::path::PathBuf::from("/"),
+                env_vars: std::collections::BTreeMap::new(),
+                terminal_outputs: vec![],
+                dep_edges: vec![],
+                probes: vec![probe_meta],
+            }
+        }
+
+        let foo = make_recipe("foo", true);
+        let bar = make_recipe("bar", false);
+        let dag = build_dag(vec![foo, bar]).unwrap();
+        let probe_node_recipes: Vec<String> = (0..dag.len())
+            .map(|i| dag.node(i))
+            .filter(|n| matches!(n.payload().payload, Some(WorkPayload::Probe { .. })))
+            .map(|n| n.payload().recipe_name.clone())
+            .collect();
+        assert_eq!(probe_node_recipes, vec!["foo".to_string()],
+            "probe present only in the recipe that consumes it");
     }
 
     #[test]

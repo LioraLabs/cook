@@ -154,6 +154,35 @@ The per-run probe-value store is keyed by probe key. Consumer units are dispatch
 
 The wrapped `produce` function MAY raise a Lua error. A conforming implementation MUST treat a raised error as a unit failure and MUST propagate failure to every downstream consumer via the DAG edge, consistent with the general unit-failure semantics of §{exec.two-phase}.
 
+**Demand-driven scheduling.** A probe unit MUST NOT execute on an invocation unless at least one scheduled non-probe unit lists the probe's key in its `probes` field, directly or transitively through probe-on-probe `inputs.requires` chains. A conforming implementation MUST silently omit unreached probe nodes from the execution DAG. The implementation MUST NOT compute, look up, or persist the fingerprint of an unreached probe; MUST NOT emit a user-facing diagnostic; and MUST NOT log a warning at the user-facing diagnostic layer. Debug logging at lower verbosity tiers is permitted.
+
+### Example 22.5.7.1
+
+```
+register
+    cook.probe("env:slow", {
+        inputs = {},
+        produce = [[ return { ts = os.time() } ]],
+    })
+
+recipe foo
+    >>{
+        cook.add_unit({
+            name = "u1", inputs = {}, outputs = {"build/foo.txt"},
+            probes = {"env:slow"},
+            command = "echo $<env:slow.ts> > build/foo.txt",
+        })
+    }
+    > cook.sh("cat build/foo.txt")
+
+recipe bar
+    > cook.sh("echo bar")
+```
+
+`cook foo` MUST execute the `env:slow` probe and `u1` exactly once.
+`cook bar` MUST execute no probes; `env:slow` is unreached and its
+fingerprint MUST NOT be computed.
+
 **On-disk layout.** Probe artifacts reuse the existing recipe-cache layout. No new directories are introduced. The meta sidecar MUST carry a `kind: "probe_value"` field to disambiguate probe-artifact sidecars from file-artifact sidecars. All other fields of the meta sidecar (integrity hash, schema version) follow §{exec.cache.integrity}.
 
 ## 22.5.8. Cycle detection [#cat.probes.cycles]
