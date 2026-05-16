@@ -7,13 +7,14 @@ register
         ]],
     })
 
-    cook.add_unit({
-        name = "demo-binary",
-        inputs = {"main.c"},
-        outputs = {"build/demo"},
-        probes = {"demo:compiler"},
-        command = "$<demo:compiler.path> main.c -o build/demo",
-    })
-
 recipe build
+    >>{
+        cook.add_unit({
+            name    = "demo-binary",
+            inputs  = {"main.c"},
+            outputs = {"build/demo"},
+            probes  = {"demo:compiler"},
+            command = "$<demo:compiler.path> main.c -o build/demo",
+        })
+    }
     > cook.sh("./build/demo")

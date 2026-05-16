@@ -11,19 +11,19 @@ register
         inputs = { requires = {"demo:cc-path"} },
         produce = [[
             local cc = cook.cache.get("demo:cc-path").path
-            -- Extract just the major version number (a clean integer)
             local ver = cook.sh(cc .. " -dumpversion 2>&1"):gsub("%s+$", "")
             return { version = ver }
         ]],
     })
 
-    cook.add_unit({
-        name = "print-version",
-        inputs = {},
-        outputs = {"build/version.txt"},
-        probes = {"demo:cc-version"},
-        command = "mkdir -p build && echo $<demo:cc-version.version> > build/version.txt",
-    })
-
 recipe build
+    >>{
+        cook.add_unit({
+            name    = "print-version",
+            inputs  = {},
+            outputs = {"build/version.txt"},
+            probes  = {"demo:cc-version"},
+            command = "mkdir -p build && echo $<demo:cc-version.version> > build/version.txt",
+        })
+    }
     > cook.sh("cat build/version.txt")
