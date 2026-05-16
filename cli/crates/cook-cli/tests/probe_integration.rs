@@ -122,3 +122,72 @@ recipe build
     let marker2 = fs::read_to_string(tmp.path().join("done.marker")).unwrap();
     assert_eq!(marker, marker2, "probe output should be identical on second run (cache hit)");
 }
+
+/// Demand-driven scheduling: a probe that no recipe-reachable unit references
+/// MUST NOT be executed and MUST NOT write a probe-value artifact to
+/// `.cook/cache/`.
+///
+/// Locks the §22.5.7 demand-driven scheduling contract at the binary level:
+/// declaring `cook.probe("test:unused", ...)` in the register phase is not
+/// sufficient to trigger its execution — only consumer demand (a unit with
+/// `probes = {...}` reachable from the requested recipe) causes the probe
+/// to run.
+///
+/// Detection scheme: walk `.cook/cache/` and inspect every `*.meta.json`
+/// sidecar; an `ArtifactMeta` with `kind = Some("probe_value")` serializes
+/// to JSON containing the substring `"kind":"probe_value"`. The presence of
+/// that substring anywhere under `.cook/cache/` would indicate the probe
+/// ran and persisted its output. A missing `.cook/cache/` directory is a
+/// valid pass (no work executed at all).
+#[test]
+fn probe_unreached_is_not_executed() {
+    let tmp = TempDir::new().unwrap();
+    let cookfile = r#"
+register
+    cook.probe("test:unused", {
+        inputs = {},
+        produce = "return { v = 1 }",
+    })
+
+recipe build
+    > cook.sh("echo hello")
+"#;
+    fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
+
+    // `cook build` must succeed: the recipe body doesn't depend on the probe,
+    // so demand-driven scheduling should prune the probe entirely.
+    run_cook(tmp.path(), &["build"]).expect("cook build should succeed");
+
+    // No probe-value artifact should have been persisted. If `.cook/cache/`
+    // doesn't exist at all, the assertion trivially holds.
+    let cache_dir = tmp.path().join(".cook").join("cache");
+    if cache_dir.exists() {
+        let mut found = None;
+        for entry in walkdir::WalkDir::new(&cache_dir).into_iter().flatten() {
+            let path = entry.path();
+            if path.is_file()
+                && path.extension().and_then(|s| s.to_str()) == Some("json")
+                && path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|n| n.ends_with(".meta.json"))
+                    .unwrap_or(false)
+            {
+                if let Ok(content) = fs::read_to_string(path) {
+                    // ArtifactMeta with kind = Some("probe_value") serializes
+                    // to JSON containing this exact substring.
+                    if content.contains("\"kind\":\"probe_value\"") {
+                        found = Some(path.to_path_buf());
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(
+            found.is_none(),
+            "unreached probe must not write a probe-value artifact under .cook/cache/, \
+             but found one at: {}",
+            found.as_ref().map(|p| p.display().to_string()).unwrap_or_default()
+        );
+    }
+}
