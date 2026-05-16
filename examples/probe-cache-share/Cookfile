@@ -11,7 +11,7 @@ register
         name = "record",
         inputs = {},
         outputs = {"build/probed.txt"},
-        requires = {"demo:slow"},
+        probes = {"demo:slow"},
         command = "mkdir -p build && echo $<demo:slow.timestamp> > build/probed.txt",
     })
 

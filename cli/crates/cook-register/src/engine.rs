@@ -349,7 +349,7 @@ impl Registry {
                 .map_err(|msg| RegisterError::Lua(mlua::Error::runtime(msg)))?;
         }
 
-        // §22.5.5: Resolve each cook.add_unit.requires key against the
+        // §22.5.5: Resolve each cook.add_unit.probes key against the
         // registered probe set.  Unknown keys are rejected with a diagnostic
         // naming the unit and the missing key.  Resolution is deferred to
         // end-of-pass so the relative order of cook.probe and cook.add_unit
@@ -361,7 +361,7 @@ impl Registry {
                 probe_reg.probes.keys().map(|s| s.as_str()).collect();
             let cap = capture_state.borrow();
             for (idx, unit) in cap.units.iter().enumerate() {
-                for key in &unit.requires {
+                for key in &unit.probes {
                     if !registered_keys.contains(key.as_str()) {
                         // Derive a human-readable unit name from its first output
                         // path (deterministic); fall back to positional index.
@@ -378,7 +378,7 @@ impl Registry {
                             unit_name
                         };
                         return Err(RegisterError::Lua(mlua::Error::runtime(format!(
-                            "unit '{}' requires probe key '{}' which was not declared",
+                            "unit '{}' lists probe key '{}' in `probes` but no such probe was declared",
                             unit_label, key
                         ))));
                     }

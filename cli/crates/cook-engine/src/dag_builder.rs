@@ -49,7 +49,7 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
 
     for ru in &recipe_units {
         // Build a per-recipe index of probe key → unit index so we can
-        // wire probe→consumer edges from CapturedUnit.requires (CS-0074 Bug 2).
+        // wire probe→consumer edges from CapturedUnit.probes (CS-0074 Bug 2).
         let probe_unit_index_by_key: BTreeMap<String, usize> = ru
             .units
             .iter()
@@ -64,7 +64,7 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
             .collect();
 
         // dag_id_by_unit_idx: populated as each unit is added; lets us resolve
-        // probe-unit dag IDs when wiring CapturedUnit.requires edges.
+        // probe-unit dag IDs when wiring CapturedUnit.probes edges.
         let mut dag_id_by_unit_idx: BTreeMap<usize, usize> = BTreeMap::new();
         // Collect cross-recipe dependency ids: the leaf nodes of every
         // prerequisite recipe.
@@ -123,11 +123,11 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                 }
             }
 
-            // Probe→consumer edges from CapturedUnit.requires (CS-0074 Bug 2).
-            // For each probe key in unit.requires, find the probe's dag_id (which
+            // Probe→consumer edges from CapturedUnit.probes (CS-0074 Bug 2).
+            // For each probe key in unit.probes, find the probe's dag_id (which
             // must already be known since probes appear before consumers) and add it
             // as a dependency of this unit.
-            for req_key in &unit.requires {
+            for req_key in &unit.probes {
                 if let Some(&probe_unit_idx) = probe_unit_index_by_key.get(req_key) {
                     if let Some(&probe_dag_id) = dag_id_by_unit_idx.get(&probe_unit_idx) {
                         if !all_deps.contains(&probe_dag_id) {
@@ -136,7 +136,7 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                     }
                     // If the probe dag_id isn't known yet (probe declared after consumer
                     // in units), the edge is silently skipped. In practice this cannot
-                    // happen: engine.rs validates all requires keys exist as registered
+                    // happen: engine.rs validates all probe keys exist as registered
                     // probes, and probes are pushed into units when cook.probe is called
                     // (before cook.add_unit in the same register block).
                 }
@@ -412,8 +412,8 @@ mod tests {
     }
 
     /// CS-0074 Bug 2 regression: DAG builder must add probe→consumer edges from
-    /// CapturedUnit.requires. This verifies that when a probe unit precedes a
-    /// consumer unit in units and the consumer's requires lists the probe key,
+    /// CapturedUnit.probes. This verifies that when a probe unit precedes a
+    /// consumer unit in units and the consumer's probes lists the probe key,
     /// the resulting DAG consumer node has the probe node as a dependency.
     #[test]
     fn dag_builder_adds_probe_to_consumer_edge() {
@@ -426,14 +426,14 @@ mod tests {
                     payload: probe("cc:zlib"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
-                    requires: vec![],
+                    probes: vec![],
                 },
-                // Consumer unit with requires = ["cc:zlib"]
+                // Consumer unit with probes = ["cc:zlib"]
                 CapturedUnit {
                     payload: shell("gcc -o app main.c"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
-                    requires: vec!["cc:zlib".to_string()],
+                    probes: vec!["cc:zlib".to_string()],
                 },
             ],
             step_groups: vec![],
@@ -447,12 +447,12 @@ mod tests {
         assert_eq!(dag.len(), 2);
         // Probe node (0) has no deps.
         assert_eq!(dag.node(0).remaining_deps(), 0, "probe node must have no deps");
-        // Consumer node (1) depends on: sequential barrier (probe node 0) + requires edge (also probe 0).
-        // The requires edge is deduplicated since it's the same node, so remaining_deps = 1.
+        // Consumer node (1) depends on: sequential barrier (probe node 0) + probes edge (also probe 0).
+        // The probes edge is deduplicated since it's the same node, so remaining_deps = 1.
         assert_eq!(
             dag.node(1).remaining_deps(),
             1,
-            "consumer must depend on probe node via requires edge"
+            "consumer must depend on probe node via probes edge"
         );
     }
 
@@ -466,13 +466,13 @@ mod tests {
                     payload: shell("echo a"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
-                    requires: vec![],
+                    probes: vec![],
                 },
                 CapturedUnit {
                     payload: shell("echo b"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
-                    requires: vec![],
+                    probes: vec![],
                 },
             ],
             step_groups: vec![],
@@ -500,19 +500,19 @@ mod tests {
                     payload: shell("gcc -c a.c"),
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
-                    requires: vec![],
+                    probes: vec![],
                 },
                 CapturedUnit {
                     payload: shell("gcc -c b.c"),
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
-                    requires: vec![],
+                    probes: vec![],
                 },
                 CapturedUnit {
                     payload: shell("ar rcs lib.a"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
-                    requires: vec![],
+                    probes: vec![],
                 },
             ],
             step_groups: vec![vec![0, 1]],
@@ -540,7 +540,7 @@ mod tests {
                 payload: shell("mkdir build"),
                 cache_meta: None,
                 dep_kind: DepKind::Sequential,
-                requires: vec![],
+                probes: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -556,7 +556,7 @@ mod tests {
                 payload: shell("gcc main.c"),
                 cache_meta: None,
                 dep_kind: DepKind::Sequential,
-                requires: vec![],
+                probes: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -588,19 +588,19 @@ mod tests {
                     payload: shell("gcc -c add.c"),
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
-                    requires: vec![],
+                    probes: vec![],
                 },
                 CapturedUnit {
                     payload: shell("gcc -c mul.c"),
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
-                    requires: vec![],
+                    probes: vec![],
                 },
                 CapturedUnit {
                     payload: shell("ar rcs libmath.a"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
-                    requires: vec![],
+                    probes: vec![],
                 },
             ],
             step_groups: vec![vec![0, 1]],
@@ -620,13 +620,13 @@ mod tests {
                     payload: shell("gcc -c main.c"),
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
-                    requires: vec![],
+                    probes: vec![],
                 },
                 CapturedUnit {
                     payload: shell("gcc -o app main.o libmath.a"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
-                    requires: vec![],
+                    probes: vec![],
                 },
             ],
             step_groups: vec![vec![0]],
@@ -670,7 +670,7 @@ mod tests {
                 payload: shell("mkdir build"),
                 cache_meta: None,
                 dep_kind: DepKind::Sequential,
-                requires: vec![],
+                probes: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -686,7 +686,7 @@ mod tests {
                 payload: shell("gcc main.c"),
                 cache_meta: None,
                 dep_kind: DepKind::Sequential,
-                requires: vec![],
+                probes: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -714,13 +714,13 @@ mod tests {
                     },
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
-                    requires: vec![],
+                    probes: vec![],
                 },
                 CapturedUnit {
                     payload: shell("echo real work"),
                     cache_meta: None,
                     dep_kind: DepKind::Sequential,
-                    requires: vec![],
+                    probes: vec![],
                 },
             ],
             step_groups: vec![],
@@ -765,7 +765,7 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("a", &["build/shared.bin"])),
                 dep_kind: DepKind::Sequential,
-                requires: vec![],
+                probes: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -781,7 +781,7 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("b", &["build/shared.bin"])),
                 dep_kind: DepKind::Sequential,
-                requires: vec![],
+                probes: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -812,7 +812,7 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("a", &["build/shared.bin"])),
                 dep_kind: DepKind::Sequential,
-                requires: vec![],
+                probes: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -828,7 +828,7 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("b", &["build/shared.bin"])),
                 dep_kind: DepKind::Sequential,
-                requires: vec![],
+                probes: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -850,7 +850,7 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("a", &["build/a.bin"])),
                 dep_kind: DepKind::Sequential,
-                requires: vec![],
+                probes: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -866,7 +866,7 @@ mod tests {
                 payload: shell("touch out"),
                 cache_meta: Some(cache_meta_for("b", &["build/b.bin"])),
                 dep_kind: DepKind::Sequential,
-                requires: vec![],
+                probes: vec![],
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -901,7 +901,7 @@ mod test_slice_tests {
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
-            requires: vec![],
+            probes: vec![],
         }
     }
 
@@ -918,7 +918,7 @@ mod test_slice_tests {
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
-            requires: vec![],
+            probes: vec![],
         }
     }
 

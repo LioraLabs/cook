@@ -591,7 +591,7 @@ mod tests {
             },
             cache_meta: Some(cache_meta),
             dep_kind: DepKind::Sequential,
-            requires: vec![],
+            probes: vec![],
         };
         let ru = RecipeUnits {
             recipe_name: recipe_name.into(),
@@ -702,7 +702,7 @@ mod tests {
             payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
             cache_meta: Some(cm_a),
             dep_kind: DepKind::Sequential,
-            requires: vec![],
+            probes: vec![],
         };
         let ru_a = RecipeUnits {
             recipe_name: "a".into(),
@@ -733,7 +733,7 @@ mod tests {
             payload: WorkPayload::Shell { cmd: "clang -c b.cpp".into(), line: 1 },
             cache_meta: Some(cm_b),
             dep_kind: DepKind::Sequential,
-            requires: vec![],
+            probes: vec![],
         };
         let ru_b = RecipeUnits {
             recipe_name: "b".into(),
@@ -853,7 +853,7 @@ mod tests {
             payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
             cache_meta: Some(cm_compile),
             dep_kind: DepKind::Sequential,
-            requires: vec![],
+            probes: vec![],
         };
         let ru_compile = RecipeUnits {
             recipe_name: "compile".into(),
@@ -887,7 +887,7 @@ mod tests {
             payload: WorkPayload::Shell { cmd: "ar rcs libfoo.a a.o".into(), line: 1 },
             cache_meta: Some(cm_archive),
             dep_kind: DepKind::Sequential,
-            requires: vec![],
+            probes: vec![],
         };
         let ru_archive = RecipeUnits {
             recipe_name: "archive".into(),

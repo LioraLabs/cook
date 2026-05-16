@@ -198,7 +198,7 @@ pub struct CapturedUnit {
     pub cache_meta: Option<CacheMeta>,
     pub dep_kind: DepKind,
     /// Probe keys this unit consumes (§22.5.5). Empty for non-consumer units.
-    pub requires: Vec<String>,
+    pub probes: Vec<String>,
 }
 
 /// How a captured unit relates to others in the recipe.
@@ -406,7 +406,7 @@ mod tests {
             payload: WorkPayload::Shell { cmd: "echo hi".into(), line: 1 },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
-            requires: vec![],
+            probes: vec![],
         };
         assert!(unit.cache_meta.is_none());
         assert!(matches!(unit.dep_kind, DepKind::Sequential));
@@ -438,13 +438,13 @@ mod tests {
                     payload: WorkPayload::Shell { cmd: "gcc -c a.c".into(), line: 1 },
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
-                    requires: vec![],
+                    probes: vec![],
                 },
                 CapturedUnit {
                     payload: WorkPayload::Shell { cmd: "gcc -c b.c".into(), line: 2 },
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
-                    requires: vec![],
+                    probes: vec![],
                 },
             ],
             step_groups: vec![vec![0, 1]],
@@ -535,15 +535,15 @@ mod tests {
     }
 
     #[test]
-    fn captured_unit_requires_defaults_to_empty() {
+    fn captured_unit_probes_defaults_to_empty() {
         let p = WorkPayload::Shell { cmd: "echo hi".into(), line: 1 };
         let cu = CapturedUnit {
             payload: p,
             cache_meta: None,
             dep_kind: DepKind::Sequential,
-            requires: vec![],
+            probes: vec![],
         };
-        assert!(cu.requires.is_empty());
+        assert!(cu.probes.is_empty());
     }
 
     #[test]
@@ -586,7 +586,7 @@ mod tests {
                 discovered_inputs: None,
             }),
             dep_kind: DepKind::StepGroup(0),
-            requires: vec![],
+            probes: vec![],
         };
         assert!(unit.cache_meta.is_some());
         assert_eq!(unit.cache_meta.unwrap().command_hash, 9999);

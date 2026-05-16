@@ -11,7 +11,7 @@ register
         name = "demo-binary",
         inputs = {"main.c"},
         outputs = {"build/demo"},
-        requires = {"demo:compiler"},
+        probes = {"demo:compiler"},
         command = "$<demo:compiler.path> main.c -o build/demo",
     })
 

@@ -103,7 +103,7 @@ fn lua_escape(s: &str) -> String {
 /// when the command is plain (no rewriting needed).
 ///
 /// Also returns the distinct set of probe keys so callers can merge them into
-/// `unit.requires` automatically.
+/// `unit.probes` automatically.
 fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<String>)>, String> {
     let spans = cook_luagen::sigil::scan(command);
 
@@ -480,15 +480,28 @@ pub fn register_unit_api(
             None
         };
 
-        // Parse opts.requires: optional list of probe-key strings (§{cat.probes.requires}).
-        let mut requires: Vec<String> = match tbl.get::<LuaValue>("requires") {
+        // Reject legacy `requires` field name (CS-0074 phase 2 rename).
+        // The branch is unmerged and 0.11 is unreleased, so no compat shim.
+        // Fire on any non-Nil value at `requires` (string, number, table, etc.)
+        // so authors mid-migration don't silently slip past the guard.
+        match tbl.get::<LuaValue>("requires") {
+            Ok(LuaValue::Nil) | Err(_) => {}
+            Ok(_) => {
+                return Err(LuaError::runtime(
+                    "cook.add_unit: field `requires` is no longer accepted for probe references; rename to `probes`".to_string(),
+                ));
+            }
+        }
+
+        // Parse opts.probes: optional list of probe-key strings (§{cat.probes.consumer}).
+        let mut probes: Vec<String> = match tbl.get::<LuaValue>("probes") {
             Ok(LuaValue::Nil) => vec![],
             Ok(LuaValue::Table(t)) => {
                 let mut out = vec![];
                 for v in t.sequence_values::<String>() {
                     out.push(v.map_err(|e| {
                         LuaError::runtime(format!(
-                            "cook.add_unit: requires must be a list of strings: {e}"
+                            "cook.add_unit: probes must be a list of strings: {e}"
                         ))
                     })?);
                 }
@@ -496,7 +509,7 @@ pub fn register_unit_api(
             }
             Ok(_) => {
                 return Err(LuaError::runtime(
-                    "cook.add_unit: requires must be a list of strings (or nil)".to_string(),
+                    "cook.add_unit: probes must be a list of strings (or nil)".to_string(),
                 ));
             }
             Err(_) => vec![],
@@ -520,12 +533,12 @@ pub fn register_unit_api(
             // CS-0074: scan command for `$<key:field>` probe-value sigils.
             // If found, rewrite as a LuaChunk that resolves the values at
             // execute time via cook.cache.get and calls cook.sh. Also
-            // auto-add the detected probe keys to requires.
+            // auto-add the detected probe keys to probes.
             match try_expand_probe_templates(&command) {
                 Ok(Some((lua_code, detected_keys))) => {
                     for k in detected_keys {
-                        if !requires.contains(&k) {
-                            requires.push(k);
+                        if !probes.contains(&k) {
+                            probes.push(k);
                         }
                     }
                     WorkPayload::LuaChunk {
@@ -557,7 +570,7 @@ pub fn register_unit_api(
             payload,
             cache_meta,
             dep_kind: dep_kind.clone(),
-            requires,
+            probes,
         });
         if let DepKind::StepGroup(gi) = &dep_kind {
             state.step_groups[*gi].push(unit_idx);
@@ -1494,7 +1507,7 @@ mod tests {
     }
 
     #[test]
-    fn add_unit_captures_requires_field() {
+    fn add_unit_captures_probes_field() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
         lua.set_app_data(fake_cache_ctx());
         lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
@@ -1504,7 +1517,7 @@ mod tests {
                 name = "myapp.o",
                 inputs = { "myapp.c" },
                 outputs = { "build/myapp.o" },
-                requires = { "cc:zlib", "cc:compiler" },
+                probes = { "cc:zlib", "cc:compiler" },
                 command = "true",
             })
         "#)
@@ -1513,11 +1526,11 @@ mod tests {
 
         let state = capture_state.borrow();
         let u = state.units.first().expect("one unit");
-        assert_eq!(u.requires, vec!["cc:zlib", "cc:compiler"]);
+        assert_eq!(u.probes, vec!["cc:zlib", "cc:compiler"]);
     }
 
     #[test]
-    fn add_unit_without_requires_defaults_to_empty() {
+    fn add_unit_without_probes_defaults_to_empty() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
         lua.set_app_data(fake_cache_ctx());
         lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
@@ -1533,11 +1546,11 @@ mod tests {
 
         let state = capture_state.borrow();
         let u = state.units.first().expect("one unit");
-        assert!(u.requires.is_empty());
+        assert!(u.probes.is_empty());
     }
 
     #[test]
-    fn add_unit_requires_non_list_errors() {
+    fn add_unit_probes_non_list_errors() {
         let (lua, _capture_state) = make_lua_with_unit_api("recipe");
         lua.set_app_data(fake_cache_ctx());
         lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
@@ -1546,13 +1559,65 @@ mod tests {
             cook.add_unit({
                 command = "echo hello",
                 cache = false,
-                requires = "not-a-list",
+                probes = "not-a-list",
             })
         "#).exec();
 
-        assert!(result.is_err(), "requires must be a list, not a string");
+        assert!(result.is_err(), "probes must be a list, not a string");
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("requires"), "error must mention 'requires'; got: {err}");
+        assert!(err.contains("probes"), "error must mention 'probes'; got: {err}");
+    }
+
+    #[test]
+    fn add_unit_legacy_requires_field_is_rejected() {
+        let (lua, _capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        let result = lua.load(r#"
+            cook.add_unit({
+                name = "u",
+                inputs = {}, outputs = {"out.txt"},
+                cache = false,
+                requires = { "cc:zlib" },
+                command = "true",
+            })
+        "#).exec();
+
+        assert!(result.is_err(), "legacy `requires` field must be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("rename to `probes`"),
+            "diagnostic must direct user to `probes`; got: {err}"
+        );
+    }
+
+    #[test]
+    fn add_unit_legacy_requires_field_as_string_is_rejected() {
+        // A mid-migration Cookfile might write `requires = "cc:zlib"` (string)
+        // rather than a table. The guard MUST still fire so the author learns
+        // the field is gone — silently accepting non-table values would leave
+        // partial migrations undetected.
+        let (lua, _capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        let result = lua.load(r#"
+            cook.add_unit({
+                name = "u",
+                inputs = {}, outputs = {"out.txt"},
+                cache = false,
+                requires = "cc:zlib",
+                command = "true",
+            })
+        "#).exec();
+
+        assert!(result.is_err(), "legacy `requires` field must be rejected even when non-table");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("rename to `probes`"),
+            "diagnostic must direct user to `probes`; got: {err}"
+        );
     }
 
     /// CS-0074: cook.add_unit with a command containing `$<key:field>` probe-value
@@ -1590,11 +1655,11 @@ mod tests {
         );
 
         // The probe key (everything before the first `.` after the `:`) must be
-        // auto-added to requires.
+        // auto-added to probes.
         assert!(
-            unit.requires.contains(&"demo:k".to_string()),
-            "detected probe key must be auto-added to requires; got: {:?}",
-            unit.requires
+            unit.probes.contains(&"demo:k".to_string()),
+            "detected probe key must be auto-added to probes; got: {:?}",
+            unit.probes
         );
     }
 }

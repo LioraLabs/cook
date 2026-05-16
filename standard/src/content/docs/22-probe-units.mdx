@@ -14,7 +14,7 @@ sidebar:
 
 A *probe unit* is a DAG unit whose output is a Lua value rather than a file. A conforming implementation MUST expose the register-phase API `cook.probe(key, opts)` (§{cat.probes.api}) and MUST treat probe units as ordinary participants in the execution DAG (§{cat.probes.exec}). Probe outputs MUST be cached using the same machinery as recipe outputs (§{exec.cache}), enabling cross-invocation memoisation and cross-machine sharing via Cook Cloud.
 
-A unit MAY declare a dependency on one or more probe outputs via `requires = { key, ... }` on `cook.add_unit` (§{cat.probes.requires}). The implementation MUST add a DAG edge from each named probe to the consuming unit and MUST fold each probe's fingerprint into the consumer's fingerprint, ensuring transitive invalidation.
+A unit MAY declare a dependency on one or more probe outputs via `probes = { key, ... }` on `cook.add_unit` (§{cat.probes.consumer}). The implementation MUST add a DAG edge from each named probe to the consuming unit and MUST fold each probe's fingerprint into the consumer's fingerprint, ensuring transitive invalidation.
 
 ## 22.5.2. The `cook.probe` API [#cat.probes.api]
 
@@ -97,15 +97,15 @@ probe 'cc:zlib' returned a non-serialisable value at .cflags[3] (function)
 
 Probe values are serialised to msgpack for storage and cloud transport. The msgpack envelope MUST carry a `schema_version` field (value `1` for this Standard revision) and a `value` field holding the user-returned value. The `produced_at` timestamp MAY appear as an informative field but MUST NOT participate in fingerprinting.
 
-## 22.5.5. Consumer `requires` [#cat.probes.requires]
+## 22.5.5. Consumer `probes` [#cat.probes.consumer]
 
-`cook.add_unit({ ..., requires = { "key1", "key2" } })` declares that the unit consumes the named probe values. (Distinct from `opts.inputs.requires` per §{cat.probes.inputs}, which declares probe-to-probe dependencies.) The `requires` field is an optional list of probe-key strings; omitting it is equivalent to `requires = {}`.
+`cook.add_unit({ ..., probes = { "key1", "key2" } })` declares that the unit consumes the named probe values. The `probes` field is an optional list of probe-key strings; omitting it is equivalent to `probes = {}`. (Distinct from `opts.inputs.requires` per §{cat.probes.inputs}, which declares probe-to-probe dependencies inside a probe.)
 
 A conforming implementation MUST, after the register pass completes:
 
 1. Resolve each key against the set of registered probes. An unknown key MUST raise:
    ```
-   unit '<name>' requires probe key '<key>' which was not declared
+   unit '<name>' lists probe key '<key>' in `probes` but no such probe was declared
    ```
 2. Add a DAG edge from each resolved probe to the consumer unit.
 3. Fold each resolved probe's fingerprint into the consumer unit's fingerprint.
@@ -114,7 +114,7 @@ The relative order of `cook.probe` and `cook.add_unit` calls within one register
 
 ## 22.5.6. Command-template desugaring [#cat.probes.templates]
 
-Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` placeholders that reference probe outputs declared in `requires`. The implementation MUST detect these placeholders during codegen (or register-time capture for direct `cook.add_unit` calls) and rewrite the command into a Lua step that calls `cook.cache.get(key)` (§{lua.both}) and interpolates the resolved value before invoking the shell.
+Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` placeholders that reference probe outputs declared in `probes`. The implementation MUST detect these placeholders during codegen (or register-time capture for direct `cook.add_unit` calls) and rewrite the command into a Lua step that calls `cook.cache.get(key)` (§{lua.both}) and interpolates the resolved value before invoking the shell.
 
 The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{lua.sigil}). A sigil whose IDENT contains a colon (`:`) is unambiguously a probe-value reference; the implementation MUST dispatch it to the cache-read path described here. A sigil whose IDENT contains no colon retains its existing register-time semantics (built-ins, recipe names, env vars).
 
@@ -124,7 +124,7 @@ Substitution rules:
 - `$<key.field>` substitutes a named field of the probe's table value.
 - `$<key.field[i]>` substitutes a one-based array element of a table-valued field.
 
-Malformed placeholders (referencing a key not in `requires`, or accessing a field on a non-table value) MUST raise a register-phase or execute-phase diagnostic naming the placeholder.
+Malformed placeholders (referencing a key not in `probes`, or accessing a field on a non-table value) MUST raise a register-phase or execute-phase diagnostic naming the placeholder.
 
 ### Example 22.5.6.1
 
@@ -133,7 +133,7 @@ cook.add_unit({
   name     = "myapp.o",
   inputs   = { "myapp.c" },
   outputs  = { "build/myapp.o" },
-  requires = { "cc:compiler", "cc:zlib" },
+  probes   = { "cc:compiler", "cc:zlib" },
   command  = "$<cc:compiler.path> -c $<in> -o $<out> $<cc:zlib.cflags>",
 })
 ```

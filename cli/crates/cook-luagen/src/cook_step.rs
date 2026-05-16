@@ -194,10 +194,10 @@ pub(crate) fn generate_cook_step(
                             std::collections::BTreeSet::new(),
                         ),
                     };
-                    let requires_lua = probe_keys_to_lua_table(&probe_keys);
+                    let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     out.push_str(&format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, requires = {}, consulted_env_keys = {}}})\n",
-                        lua_expr, requires_lua, consulted.to_lua_table()
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
@@ -250,10 +250,10 @@ pub(crate) fn generate_cook_step(
                             std::collections::BTreeSet::new(),
                         ),
                     };
-                    let requires_lua = probe_keys_to_lua_table(&probe_keys);
+                    let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = {}, output = _cook_out, command = {}, requires = {}, consulted_env_keys = {}}})\n",
-                        input_source, lua_expr, requires_lua, consulted.to_lua_table()
+                        "    cook.add_unit({{inputs = {}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}}})\n",
+                        input_source, lua_expr, probes_lua, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
@@ -311,10 +311,10 @@ pub(crate) fn generate_cook_step(
                             std::collections::BTreeSet::new(),
                         ),
                     };
-                    let requires_lua = probe_keys_to_lua_table(&probe_keys);
+                    let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     out.push_str(&format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}, requires = {}, consulted_env_keys = {}}})\n",
-                        lua_expr, requires_lua, consulted.to_lua_table()
+                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}, probes = {}, consulted_env_keys = {}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {
@@ -372,10 +372,10 @@ pub(crate) fn generate_cook_step(
                             std::collections::BTreeSet::new(),
                         ),
                     };
-                    let requires_lua = probe_keys_to_lua_table(&probe_keys);
+                    let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, command = {}, requires = {}, consulted_env_keys = {}}})\n",
-                        lua_expr, requires_lua, consulted.to_lua_table()
+                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, command = {}, probes = {}, consulted_env_keys = {}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table()
                     ));
                 }
                 Some(UsingClause::LuaBlock(code)) => {

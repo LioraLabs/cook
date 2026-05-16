@@ -133,7 +133,7 @@ pub fn install_cook_probe(
         // 7. Also push a CapturedUnit so the DAG builder schedules probe
         //    work (CS-0074 §22.5.2). Probe-to-probe edges come from
         //    inputs.requires; probe-to-consumer edges are wired in the DAG
-        //    builder by reading each consumer unit's `requires` field.
+        //    builder by reading each consumer unit's `probes` field.
         let mut cap = capture_state.borrow_mut();
         cap.units.push(CapturedUnit {
             payload: WorkPayload::Probe {
@@ -143,7 +143,7 @@ pub fn install_cook_probe(
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
-            requires: inputs.requires,
+            probes: inputs.requires,
         });
 
         Ok(())

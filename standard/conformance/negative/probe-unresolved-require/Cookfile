@@ -3,7 +3,7 @@ register
         name = "u",
         inputs = {},
         outputs = {"out"},
-        requires = {"missing"},
+        probes = {"missing"},
         command = "true",
     })
 

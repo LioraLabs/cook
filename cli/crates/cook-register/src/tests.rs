@@ -824,18 +824,18 @@ end)
 }
 
 #[test]
-fn add_unit_with_requires_captured_in_recipe_units() {
+fn add_unit_with_probes_captured_in_recipe_units() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
 
-    // cook.probe must be registered first so the §22.5.5 requires-resolution
+    // cook.probe must be registered first so the §22.5.5 probes-resolution
     // check at end-of-pass can resolve "cc:zlib".
     let lua_src = r#"
 cook.recipe("build", {}, function()
     cook.probe("cc:zlib", { inputs = {}, produce = "return 1" })
     cook.add_unit({
         command = "echo building",
-        requires = { "cc:zlib" },
+        probes = { "cc:zlib" },
         cache = false,
     })
 end)
@@ -847,15 +847,15 @@ end)
     assert_eq!(result.units.len(), 2, "expected probe unit + consumer unit");
     let consumer = result.units.iter().find(|u| matches!(u.payload, WorkPayload::Shell { .. }))
         .expect("expected a consumer Shell unit");
-    assert_eq!(consumer.requires, vec!["cc:zlib"]);
+    assert_eq!(consumer.probes, vec!["cc:zlib"]);
 }
 
 // -----------------------------------------------------------------------
-// C4: Requires resolution against probe registry (§22.5.5)
+// C4: Probes resolution against probe registry (§22.5.5)
 // -----------------------------------------------------------------------
 
 #[test]
-fn unresolved_requires_key_errors() {
+fn unresolved_probes_key_errors() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
 
@@ -864,23 +864,23 @@ cook.recipe("build", {}, function()
     cook.add_unit({
         command = "true",
         outputs = {"build/myapp.o"},
-        requires = {"cc:nonexistent"},
+        probes = {"cc:nonexistent"},
         cache = false,
     })
 end)
 "#;
 
     let result = rt.register_recipe(lua_src, "build", None);
-    assert!(result.is_err(), "unknown requires key must fail");
+    assert!(result.is_err(), "unknown probes key must fail");
     let err = result.err().unwrap().to_string();
     assert!(
-        err.contains("requires probe key 'cc:nonexistent' which was not declared"),
+        err.contains("lists probe key 'cc:nonexistent' in `probes` but no such probe was declared"),
         "got: {err}"
     );
 }
 
 #[test]
-fn resolved_requires_key_succeeds() {
+fn resolved_probes_key_succeeds() {
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
 
@@ -890,7 +890,7 @@ cook.recipe("build", {}, function()
     cook.add_unit({
         command = "true",
         outputs = {"build/myapp.o"},
-        requires = {"cc:zlib"},
+        probes = {"cc:zlib"},
         cache = false,
     })
 end)
@@ -899,7 +899,35 @@ end)
     let result = rt.register_recipe(lua_src, "build", None).unwrap();
     // After CS-0074 Bug 1 fix: first unit is the probe, second is the consumer.
     let u = result.units.iter().find(|u| matches!(u.payload, WorkPayload::Shell { .. })).unwrap();
-    assert_eq!(u.requires, vec!["cc:zlib"]);
+    assert_eq!(u.probes, vec!["cc:zlib"]);
+}
+
+#[test]
+fn add_unit_legacy_requires_field_rejected() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.probe("cc:zlib", { inputs = {}, produce = "return 1" })
+    cook.add_unit({
+        name = "u",
+        inputs = {},
+        outputs = {"build/o"},
+        cache = false,
+        requires = {"cc:zlib"},
+        command = "true",
+    })
+end)
+"#;
+
+    let result = rt.register_recipe(lua_src, "build", None);
+    assert!(result.is_err(), "legacy `requires` field must be rejected");
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains("rename to `probes`"),
+        "diagnostic must direct to `probes`; got: {err}"
+    );
 }
 
 // -----------------------------------------------------------------------

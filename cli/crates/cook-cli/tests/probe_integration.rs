@@ -17,8 +17,8 @@
 //!    add a `CapturedUnit { payload: WorkPayload::Probe { … } }` to
 //!    `capture_state.units`, so probe work never reaches the scheduler.
 //!
-//! 2. **Consumer `requires` edges are never wired in `build_dag`.**
-//!    `CapturedUnit.requires` (set by `cook.add_unit({ requires = {…} })`)
+//! 2. **Consumer `probes` edges are never wired in `build_dag`.**
+//!    `CapturedUnit.probes` (set by `cook.add_unit({ probes = {…} })`)
 //!    is captured but never read by `cook-engine/src/dag_builder.rs` to
 //!    create DAG edges from probe nodes to consumer nodes.
 //!
@@ -28,7 +28,7 @@
 //!
 //!   a) `probe_api.rs`: also push `CapturedUnit { WorkPayload::Probe }` into
 //!      `capture_state.units` after adding to the registry.
-//!   b) `dag_builder.rs`: when building the DAG, read `unit.requires` and add
+//!   b) `dag_builder.rs`: when building the DAG, read `unit.probes` and add
 //!      DAG edges from the corresponding probe node to each consumer unit.
 //!
 //! Once those two wiring pieces land, remove the `#[ignore]` attribute.
@@ -74,7 +74,7 @@ fn run_cook(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
 /// Currently ignored because probe nodes are not wired into the DAG
 /// (see module-level doc for the two gaps).  Remove `#[ignore]` once
 /// probe_api.rs emits WorkPayload::Probe units and dag_builder.rs
-/// wires the `requires` edges.
+/// wires the `probes` edges.
 #[test]
 fn probe_consumer_end_to_end_first_run_then_cache_hit() {
     let tmp = TempDir::new().unwrap();
@@ -88,7 +88,7 @@ register
         name = "echo",
         inputs = {},
         outputs = {"done.marker"},
-        requires = {"test:greet"},
+        probes = {"test:greet"},
         command = "echo $<test:greet.word> > done.marker",
     })
 

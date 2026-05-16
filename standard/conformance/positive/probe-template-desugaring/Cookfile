@@ -7,7 +7,7 @@ register
         name = "echo",
         inputs = {},
         outputs = {"build/done.txt"},
-        requires = {"test:greet"},
+        probes = {"test:greet"},
         command = "echo $<test:greet.word> > build/done.txt",
     })
 
