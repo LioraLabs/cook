@@ -1,37 +1,17 @@
-//! End-to-end integration test for probe units (CS-0074).
+//! Probe-units integration tests (CS-0074).
 //!
-//! Builds a temporary Cookfile with a probe + consumer unit, runs `cook`
-//! against it twice, and verifies:
-//!   1. First run: probe executes, consumer reads its value, build succeeds.
-//!   2. Second run: probe cache hit (artifact persists in .cook/cache),
-//!      consumer still produces correct output.
+//! End-to-end tests exercising the `cook.probe` API and demand-driven
+//! scheduling at the binary level — write a Cookfile in a tempdir,
+//! invoke `cook build`, and inspect filesystem outputs and `.cook/cache/`.
 //!
-//! # Runtime bug (CS-0074, probe-execution path not wired)
-//!
-//! This test is currently `#[ignore]` because two gaps remain in the
-//! probe-execution path that prevent end-to-end runs:
-//!
-//! 1. **Probe nodes never enter the DAG.**  `cook.probe()` in
-//!    `cook-register/src/probe_api.rs` populates only the `ProbeRegistry` /
-//!    `RecipeUnits.probes` metadata (used for fingerprinting).  It does NOT
-//!    add a `CapturedUnit { payload: WorkPayload::Probe { … } }` to
-//!    `capture_state.units`, so probe work never reaches the scheduler.
-//!
-//! 2. **Consumer `probes` edges are never wired in `build_dag`.**
-//!    `CapturedUnit.probes` (set by `cook.add_unit({ probes = {…} })`)
-//!    is captured but never read by `cook-engine/src/dag_builder.rs` to
-//!    create DAG edges from probe nodes to consumer nodes.
-//!
-//! The executor and cache plumbing (`WorkPayload::Probe` dispatch,
-//! `SharedProbeValueStore`, fingerprint/cache lookup in `executor.rs`)
-//! are fully implemented and unit-tested.  What remains is:
-//!
-//!   a) `probe_api.rs`: also push `CapturedUnit { WorkPayload::Probe }` into
-//!      `capture_state.units` after adding to the registry.
-//!   b) `dag_builder.rs`: when building the DAG, read `unit.probes` and add
-//!      DAG edges from the corresponding probe node to each consumer unit.
-//!
-//! Once those two wiring pieces land, remove the `#[ignore]` attribute.
+//! Coverage:
+//!   * `probe_consumer_end_to_end_first_run_then_cache_hit` — a probe and
+//!     a consumer unit that references it; verifies the probe value reaches
+//!     the consumer, an artifact lands in `.cook/cache/`, and a second run
+//!     hits the cache with identical output.
+//!   * `probe_unreached_is_not_executed` — a probe no recipe-reachable unit
+//!     consumes; verifies demand-driven scheduling prunes it (no
+//!     `probe_value` artifact written under `.cook/cache/`).
 
 use std::fs;
 use std::path::Path;
@@ -69,12 +49,10 @@ fn run_cook(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
     Ok(out)
 }
 
-/// End-to-end probe + consumer test.
-///
-/// Currently ignored because probe nodes are not wired into the DAG
-/// (see module-level doc for the two gaps).  Remove `#[ignore]` once
-/// probe_api.rs emits WorkPayload::Probe units and dag_builder.rs
-/// wires the `probes` edges.
+/// First run: probe executes, consumer unit reads its value, output
+/// file `done.marker` is produced and a probe artifact lands in
+/// `.cook/cache/`.  Second run: probe + consumer both cache-hit and
+/// `done.marker` is identical.
 #[test]
 fn probe_consumer_end_to_end_first_run_then_cache_hit() {
     let tmp = TempDir::new().unwrap();
