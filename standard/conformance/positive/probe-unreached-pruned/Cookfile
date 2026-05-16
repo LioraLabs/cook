@@ -1,0 +1,8 @@
+register
+    cook.probe("test:unused", {
+        inputs = {},
+        produce = "return { v = 1 }",
+    })
+
+recipe build
+    > cook.sh("echo hello")
