@@ -10,9 +10,9 @@ sidebar:
 
 The `cc` module specifies a portable surface for declarative C and C++ native builds. It dispatches on source-file extension (`.c`, `.C` → `cc`; `.cpp`, `.cc`, `.cxx`, `.C++` → `cxx`) so a single target can mix C and C++ sources without per-target language opt-in.
 
-A conforming implementation MUST expose the thirteen public functions listed in §{cat.cc.surface} and MUST honour their option tables, return values, and propagation semantics. A conforming implementation SHOULD provide informative error diagnostics for the negative cases described per-function.
+A conforming implementation MUST expose the fifteen public functions listed in §{cat.cc.surface} (the thirteen from v0.5 plus the `cc.checks` namespace and `cc.config_header`) and MUST honour their option tables, return values, and propagation semantics. A conforming implementation SHOULD provide informative error diagnostics for the negative cases described per-function.
 
-The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. This chapter normatively specifies surface v0.5 (cook_cc 0.5.x). Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
+The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. This chapter normatively specifies surface v0.6 (cook_cc 0.6.x). Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
 
 ## 28.2. Identity, resolution, init hook [#cat.cc.identity]
 
@@ -254,7 +254,72 @@ Registers a `cc:find:<name>` probe whose `produce` callback consults the discove
 
 Failure is **demand-driven**: per §{cat.probes.exec}, the probe error fails the consuming unit at execute phase and propagates via DAG edge. Register-phase callers of `cc.find_or_error` MUST NOT observe a register-time error for missing libraries; a Cookfile that references `cc.find_or_error("missing")` solely from an unreached branch MUST register and analyse successfully. This is the only function in §{cat.cc} that raises on a missing package.
 
-### 28.3.14. Find semantics under probes [#cat.cc.needs-semantics]
+### 28.3.14. cc.checks namespace [#cat.cc.checks]
+
+```
+cc.checks.has_header(name: string, opts: CheckOpts?) -> sigil
+cc.checks.has_function(name: string, opts: CheckOpts?) -> sigil
+cc.checks.has_define(name: string, opts: CheckOpts?) -> sigil
+cc.checks.sizeof(type: string, opts: CheckOpts?) -> sigil
+cc.checks.endian() -> sigil
+cc.checks.has_compile_flag(flag: string) -> sigil
+cc.checks.has_link_flag(flag: string) -> sigil
+```
+
+Each function MUST register (or reuse) a `cc:check:<kind>:<name>:<short-fp>` probe and return the sigil string `"$<cc:check:<kind>:<name>:<short-fp>>"`. `<kind>` is one of `has-header`, `has-function`, `has-define`, `sizeof`, `endian`, `has-compile-flag`, `has-link-flag`. `<short-fp>` is an 8-hex-character hash of the canonicalised opts (standard, extra_cflags, extra_ldflags, defines, includes, system_libs). `<name>` is the probed identifier; for `endian` it MUST be the literal `_`; for `has-compile-flag` / `has-link-flag` it MUST be a sanitised form of the flag (characters outside `[A-Za-z0-9._+-]` replaced with `_`).
+
+`CheckOpts` (all optional):
+
+| Field | Type | Semantics |
+|---|---|---|
+| `standard` | string | `-std=` value for the probe compile (e.g., `"c11"`). |
+| `extra_cflags` | string | Raw flags appended at compile. |
+| `extra_ldflags` | string | Raw flags appended at link (link-stage kinds only). |
+| `defines` | list[string] | Macro names or `NAME=value`. |
+| `includes` | list[string] | Additional headers `#include`d before the probe's own header. |
+| `system_libs` | list[string] | Libraries linked when the kind requires a link stage. |
+
+Probe return types per kind:
+
+| Kind | Returns | On compile failure |
+|---|---|---|
+| `has-header` | boolean | `false` |
+| `has-function` | boolean | `false` |
+| `has-define` | boolean | `false` |
+| `sizeof` | integer | `nil` |
+| `endian` | `"little"` \| `"big"` | `nil` |
+| `has-compile-flag` | boolean | `false` |
+| `has-link-flag` | boolean | `false` |
+
+Each check function MUST be idempotent: a repeat call with the same name and equivalent opts MUST NOT re-register the probe and MUST return the same sigil. Different opts produce different fingerprints and therefore different probe keys; conflict-on-same-key is by construction impossible.
+
+The implementation MUST register each probe with `requires = { "cc:compiler:<override-or-auto>" }` so the toolchain probe is a transitive dependency of every check.
+
+### 28.3.15. cc.config_header [#cat.cc.config-header]
+
+```
+cc.config_header(template: string, output: string, vars: table) -> string
+```
+
+A conforming implementation MUST register a `cook.add_unit` whose `inputs = { template }`, `output = output`, and `command` invokes a CMake-compatible substitution renderer. For each `(k, v)` pair in `vars`:
+
+- If `v` is a string matching `^%$<(cc:check:.+)>$`, the implementation MUST add `<key>` to the unit's `probes` list and MUST emit `k = v` in the command's vars-literal argument verbatim (so the sigil pipeline expands it at execute time).
+- If `v` is a literal scalar (boolean, number, string not matching the sigil shape), the implementation MUST emit `k = <lua-syntax-literal>` (quoted for strings, `true`/`false` for booleans, decimal for numbers).
+
+The renderer MUST process the template's content per CMake's `configure_file` rules:
+
+- `@VAR@` → `tostring(vars[VAR])`; missing key → empty string.
+- `${VAR}` → identical to `@VAR@`.
+- `#cmakedefine SYMBOL [VALUE...]` → if `vars[SYMBOL]` is truthy: `#define SYMBOL <VALUE-after-@VAR@-substitution>`; if falsy: `/* #undef SYMBOL */`. When VALUE is absent or whitespace-only, emit `#define SYMBOL` with no value.
+- `#cmakedefine01 SYMBOL` → `#define SYMBOL 1` if truthy, `#define SYMBOL 0` if falsy.
+
+Truthiness MUST follow Lua semantics: only `false` and `nil` are falsy; `0`, `""`, and `{}` are truthy. This matches CMake's quirks for `#cmakedefine` (where `0` is truthy) and is documented explicitly.
+
+Returns `output` (echo for chaining).
+
+Error: a non-string-non-scalar value type in `vars` MUST raise `[cc.config_header] unsupported var type: <type>` at the caller's line.
+
+### 28.3.16. Find semantics under probes [#cat.cc.needs-semantics]
 
 A conforming implementation MUST treat each name passed via `opts.needs`
 as a probe-key suffix: `"cc:find:" .. name`. The implementation MUST
@@ -284,6 +349,7 @@ MUST use the keys:
 - `cc:linker-search-dirs` — bare-probe linker search paths
 - `cc:cmake-driver` — cmake-compat driver discovery
 - `cc:find:<name>` — per-library find result
+- `cc:check:<kind>:<name>:<short-fp>` — per-check feature-test result (per §{cat.cc.checks})
 
 ## 28.4. Transitive propagation [#cat.cc.transitive]
 
