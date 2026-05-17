@@ -372,6 +372,14 @@ fn negative_conformance_corpus() {
         if !expected_path.exists() && case.join("register_error.txt").exists() {
             continue;
         }
+        // Fixtures that carry only an `execute_error.txt` assert an
+        // execute-phase rejection (e.g. demand-driven probe failure when
+        // a `cc.find_or_error`-backed dependency is missing, § 28.3.13).
+        // The parser-only harness skips them; a future execute-phase
+        // runner consumes them.
+        if !expected_path.exists() && case.join("execute_error.txt").exists() {
+            continue;
+        }
 
         let input = fs::read_to_string(&input_path)
             .unwrap_or_else(|e| panic!("read {}: {}", input_path.display(), e));

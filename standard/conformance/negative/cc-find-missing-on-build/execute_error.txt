@@ -1,0 +1,1 @@
+[cc.find_or_error] could not locate 'definitely-not-installed-xyz123'

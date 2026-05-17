@@ -1,0 +1,8 @@
+use cook_cc
+
+register
+    cook_cc.find("raylib", { version = ">=4.0" })
+    cook_cc.find("raylib", { version = ">=5.0" })
+
+recipe noop
+    > cook.sh("true")
