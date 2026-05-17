@@ -1,0 +1,1 @@
+[cc.checks.has_compile_flag] probe returned false for '-Wbogus-nonexistent-warning'

@@ -1,0 +1,1 @@
+[cc.config_header] template variable not in vars

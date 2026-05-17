@@ -1,0 +1,7 @@
+use cook_cc
+
+register
+    -- The template references @MISSING@, but vars does not provide it.
+    -- Per §28.3.15, the renderer MUST substitute empty (not raise) and
+    -- emit an informational diagnostic.
+    cook_cc.config_header("in.h.in", "build/out.h", { OTHER = "value" })

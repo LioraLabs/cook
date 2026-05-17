@@ -1,0 +1,9 @@
+use cook_cc
+
+register
+    -- A syntactically-malformed compiler flag. has_compile_flag MUST register a
+    -- probe (no register-time error); the probe MUST return false at execute
+    -- time when the compiler rejects the flag.
+    local s = cook_cc.checks.has_compile_flag("-Wbogus-nonexistent-warning")
+    assert(s:match("^%$<cc:check:has%-compile%-flag:%-Wbogus%-nonexistent%-warning:[0-9a-f]+>$"),
+           "expected has_compile_flag to return a probe-sigil string")
