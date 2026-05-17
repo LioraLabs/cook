@@ -7,8 +7,7 @@ local db        = require("cook_cc.compile_db")
 local M = {}
 
 function M.init()
-    -- Loader-contract hook (Standard §6.3.4). Called once per VM.
-    toolchain.rehydrate()
+    -- Toolchain probe is registered lazily on first get_compiler() / target-maker call.
 end
 
 -- Public surface (Standard §9.2 contract).
@@ -22,25 +21,8 @@ M.lib              = targets.lib
 M.shared           = targets.shared
 M.headers          = targets.headers
 M.find             = finder.find
+M.find_or_error    = finder.find_or_error
 M.register_finder  = finder.register
 M.compile_commands = db.write
-
--- §9.2.3.13 — only function in §9.2 that raises on miss.
-function M.find_or_error(name, opts)
-    local r = M.find(name, opts)
-    if r.found then return r end
-    local lines = { "could not locate '" .. name .. "'" }
-    if opts and opts.version then
-        lines[1] = lines[1] .. " (version " .. opts.version .. ")"
-    end
-    lines[1] = lines[1] .. ":"
-    for _, a in ipairs(r.tried or {}) do
-        local line = "  - " .. a.strategy .. ": " .. a.outcome
-        if a.reason and a.reason ~= "" then line = line .. " (" .. a.reason .. ")" end
-        lines[#lines + 1] = line
-        if a.hint then lines[#lines + 1] = "    hint: " .. a.hint end
-    end
-    error("[cc.find_or_error] " .. table.concat(lines, "\n"), 2)
-end
 
 return M

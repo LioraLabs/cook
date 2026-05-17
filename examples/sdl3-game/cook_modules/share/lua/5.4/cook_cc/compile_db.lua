@@ -26,7 +26,7 @@ local function format_command(src, ci)
 end
 
 function M.write()
-    local targets = cook.cache.get("known_targets") or {}
+    local targets = require("cook_cc.targets")._known()
     if #targets == 0 then
         fs.write("compile_commands.json", "[]\n")
         return
