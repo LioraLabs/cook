@@ -1,18 +1,35 @@
 local M = {}
 
-local function search_dirs()
-    local cached = cook.cache.get("cc.linker-search-dirs")
-    if cached then return cached end
-    local dirs = { "/usr/lib", "/usr/local/lib" }
-    local ok, out = pcall(cook.sh, "cc -print-search-dirs")
-    if ok and out then
-        local libs_line = out:match("libraries:%s*=([^\n]+)")
-        if libs_line then
-            for d in libs_line:gmatch("[^:]+") do dirs[#dirs + 1] = d end
+local PROBE_KEY = "cc:linker-search-dirs"
+local probe_registered = false
+
+local function produce_body()
+    return [[
+        local dirs = { "/usr/lib", "/usr/local/lib" }
+        local ok, out = pcall(cook.sh, "cc -print-search-dirs 2>/dev/null")
+        if ok and out then
+            local libs_line = out:match("libraries:%s*=([^\n]+)")
+            if libs_line then
+                for d in libs_line:gmatch("[^:]+") do dirs[#dirs + 1] = d end
+            end
         end
-    end
-    cook.cache.set("cc.linker-search-dirs", dirs)
-    return dirs
+        return dirs
+    ]]
+end
+
+local function ensure_probe()
+    if probe_registered then return end
+    cook.probe(PROBE_KEY, {
+        inputs = { tools = { "cc" }, env = { "LIBRARY_PATH" } },
+        produce = produce_body(),
+    })
+    probe_registered = true
+end
+
+ensure_probe()
+
+local function search_dirs()
+    return cook.cache.get(PROBE_KEY) or { "/usr/lib", "/usr/local/lib" }
 end
 
 local function extensions()
@@ -29,14 +46,10 @@ local function blank_payload()
     }
 end
 
--- CS-0045 forbids `fs.exists(...)` on paths outside the project sandbox;
--- the bare probe by design walks system linker directories like /usr/lib
--- which are always outside. Existence checks therefore go through
--- `cook.sh`, which is unsandboxed and inherently shell-out. Single-quote
--- the path and escape any embedded `'` as `'\''` so a hostile lib name
--- cannot inject shell metacharacters. (Callers feed cc.find names that
--- are also passed to `-l<name>`; the linker already constrains those to
--- a tame charset, but defense in depth is free here.)
+-- CS-0045: bare probe walks system paths outside the project sandbox.
+-- Use cook.sh "test -e" with shell-quote escaping (single-quote, escape
+-- embedded ' as '\''). Linker constrains lib names to a tame charset;
+-- this is defense in depth.
 local function exists_unsandboxed(path)
     local quoted = "'" .. (path:gsub("'", "'\\''")) .. "'"
     local ok, out = pcall(cook.sh, "test -e " .. quoted .. " && echo y || echo n")

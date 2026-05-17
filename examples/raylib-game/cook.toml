@@ -2,4 +2,4 @@
 indexes = ["https://rocks.usecook.com"]
 
 [modules]
-cook_cc = "0.4.0-1"
+cook_cc = "0.5.0-1"

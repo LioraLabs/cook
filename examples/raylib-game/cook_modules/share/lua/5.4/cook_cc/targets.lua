@@ -1,14 +1,24 @@
 local cc         = require("cook_cc.cc")
 local toolchain  = require("cook_cc.toolchain")
 local transitive = require("cook_cc.transitive")
+local finder     = require("cook_cc.finder")
 
 local M = {}
+M._known_list = M._known_list or {}     -- per-VM accumulator
+
+function M._known()
+    return M._known_list
+end
 
 local function register_known(name)
-    local known = cook.cache.get("known_targets") or {}
-    for _, n in ipairs(known) do if n == name then return end end
-    known[#known + 1] = name
-    cook.cache.set("known_targets", known)
+    for _, n in ipairs(M._known_list) do if n == name then return end end
+    M._known_list[#M._known_list + 1] = name
+end
+
+local function register_needs(needs)
+    for _, name in ipairs(needs or {}) do
+        finder.find(name)   -- registers cc:find:<name> idempotently
+    end
 end
 
 local function gather_sources(opts)
@@ -83,6 +93,7 @@ local function compile_all(name, sources, b)
             warnings     = b.warnings,
             extra_cflags = b.extra_cflags,
             fpic         = b.fpic,
+            needs        = b.needs,
         })
     end
     return objs
@@ -142,7 +153,9 @@ end
 
 function M.bin(name, opts)
     cook.recipe(name, { requires = (opts and opts.links) or {} }, function()
+        register_needs(opts and opts.needs)
         local b = build_opts(opts, "bin")
+        b.needs = (opts and opts.needs) or {}
         local sources = gather_sources(opts or {})
         if #sources == 0 then
             error("[cc.bin] no sources found for target '" .. name .. "'", 2)
@@ -156,6 +169,7 @@ function M.bin(name, opts)
             system_libs   = merge_system_libs(merged.system_libs, b.system_libs),
             frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
             extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
+            needs         = b.needs,
         })
     end)
     return name
@@ -163,7 +177,9 @@ end
 
 function M.lib(name, opts)
     cook.recipe(name, { requires = (opts and opts.links) or {} }, function()
+        register_needs(opts and opts.needs)
         local b = build_opts(opts, "lib")
+        b.needs = (opts and opts.needs) or {}
         local sources = gather_sources(opts or {})
         if #sources == 0 then
             error("[cc.lib] no sources found for target '" .. name .. "'", 2)
@@ -181,7 +197,9 @@ end
 
 function M.shared(name, opts)
     cook.recipe(name, { requires = (opts and opts.links) or {} }, function()
+        register_needs(opts and opts.needs)
         local b = build_opts(opts, "shared")
+        b.needs = (opts and opts.needs) or {}
         local sources = gather_sources(opts or {})
         if #sources == 0 then
             error("[cc.shared] no sources found for target '" .. name .. "'", 2)
@@ -197,6 +215,7 @@ function M.shared(name, opts)
             frameworks    = merge_frameworks(merged.frameworks, b.frameworks),
             extra_ldflags = build_ldflags(merged.lib_paths, merged.extra_ldflags, b.extra_ldflags),
             shared        = true,
+            needs         = b.needs,
         })
     end)
     return name
@@ -204,6 +223,7 @@ end
 
 function M.headers(name, opts)
     cook.recipe(name, { requires = {} }, function()
+        register_needs(opts and opts.needs)
         local b = build_opts(opts, "headers")
         register_known(name)
         record_export(name, {}, b, "")

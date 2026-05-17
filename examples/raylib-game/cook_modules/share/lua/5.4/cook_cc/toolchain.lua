@@ -1,48 +1,68 @@
 local M = {}
 
--- File-local state. Per-VM; rehydrated from cook.cache by init.lua.
 local state = {
-    compiler         = nil,    -- { cxx = "...", cc = "..." }
-    default_standard = nil,    -- e.g. "c++17"
-    warnings         = "default",
-    defaults         = {},     -- additive-merge target defaults
+    compiler_override = nil,         -- nil means "auto"
+    default_standard  = nil,
+    warnings          = "default",
+    defaults          = {},
+    probe_registered  = {},          -- set: key -> true
 }
 
-local function compiler_present(cxx)
-    local ok = pcall(function() cook.sh("command -v " .. cxx) end)
-    return ok
+local function probe_key()
+    return "cc:compiler:" .. (state.compiler_override or "auto")
 end
 
-local function detect_compiler()
-    for _, candidate in ipairs({
-        { cxx = "g++",     cc = "gcc"   },
-        { cxx = "clang++", cc = "clang" },
-    }) do
-        if compiler_present(candidate.cxx) then return candidate end
-    end
-    error("[cc.toolchain] no C/C++ compiler on PATH (tried g++, clang++)")
+local function produce_body(override)
+    local override_literal = override and string.format("%q", override) or "nil"
+    return string.format([[
+        local override = %s
+        if override then
+            local out = cook.sh("command -v " .. override .. " 2>/dev/null")
+            if not out:match("%%S") then
+                error("[cc.toolchain] override compiler '" .. override .. "' not on PATH")
+            end
+            local cc
+            if override:match("clang") then cc = "clang"
+            elseif override:match("g%%+%%+") then cc = "gcc"
+            else cc = "cc" end
+            return { cxx = override, cc = cc }
+        end
+        for _, c in ipairs({ {cxx="g++",cc="gcc"}, {cxx="clang++",cc="clang"} }) do
+            local out = cook.sh("command -v " .. c.cxx .. " 2>/dev/null")
+            if out:match("%%S") then return c end
+        end
+        error("[cc.toolchain] no C/C++ compiler on PATH (tried g++, clang++)")
+    ]], override_literal)
 end
 
-function M.rehydrate()
-    local cached = cook.cache.get("compiler")
-    if cached and compiler_present(cached.cxx) then
-        state.compiler = cached
-        return
+function M.ensure_probe_registered()
+    local key = probe_key()
+    if state.probe_registered[key] then return end
+    local tools
+    if state.compiler_override then
+        tools = { state.compiler_override }
+    else
+        tools = { "g++", "clang++" }
     end
-    state.compiler = detect_compiler()
-    cook.cache.set("compiler", state.compiler)
+    cook.probe(key, {
+        inputs = { tools = tools },
+        produce = produce_body(state.compiler_override),
+    })
+    state.probe_registered[key] = true
+end
+
+function M.get_probe_key()
+    return probe_key()
+end
+
+function M.get_compiler()
+    M.ensure_probe_registered()
+    return cook.cache.get(probe_key())
 end
 
 function M.set(opts)
     opts = opts or {}
-    if opts.compiler then
-        local cxx = opts.compiler
-        local cc
-        if cxx:match("clang") then cc = "clang"
-        elseif cxx:match("g%+%+") then cc = "gcc"
-        else cc = "cc" end
-        state.compiler = { cxx = cxx, cc = cc }
-    end
+    if opts.compiler then state.compiler_override = opts.compiler end
     if opts.standard then state.default_standard = opts.standard end
     if opts.warnings then state.warnings = opts.warnings end
 end
@@ -72,7 +92,6 @@ function M.merge_defaults(opts)
     if opts.warnings then state.warnings = opts.warnings end
 end
 
-function M.get_compiler()         return state.compiler         end
 function M.get_default_standard() return state.default_standard end
 function M.get_warnings()         return state.warnings         end
 function M.get_defaults()         return state.defaults         end

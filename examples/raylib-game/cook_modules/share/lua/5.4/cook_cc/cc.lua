@@ -4,11 +4,6 @@ local M = {}
 
 local function is_c(source) return source:match("%.[cC]$") ~= nil end
 
-local function compiler_for(source)
-    local c = toolchain.get_compiler()
-    return is_c(source) and c.cc or c.cxx
-end
-
 function M.compile(source, opts)
     opts = opts or {}
     if not fs.exists(source) then
@@ -24,32 +19,46 @@ function M.compile(source, opts)
     fs.mkdir_p(obj_dir)
     fs.mkdir_p(dep_dir)
 
-    local flags = { "-c", "-MMD", "-MF", dep_file }
+    -- Compiler comes from the cc:compiler:<override> probe at execute time.
+    toolchain.ensure_probe_registered()
+    local cc_probe_key = toolchain.get_probe_key()
+    local cc_field = is_c(source) and "cc" or "cxx"
+    local compiler_sigil = "$<" .. cc_probe_key .. "." .. cc_field .. ">"
 
+    local flags = { "-c", "-MMD", "-MF", dep_file }
     local std = opts.standard or toolchain.get_default_standard()
     if std and not is_c(source) then
         flags[#flags + 1] = "-std=" .. std
     end
-
     for _, inc in ipairs(opts.includes or {}) do flags[#flags + 1] = "-I" .. inc end
     for _, def in ipairs(opts.defines  or {}) do flags[#flags + 1] = "-D" .. def end
-
     local wflags = toolchain.warning_flags(opts.warnings)
     if wflags ~= "" then flags[#flags + 1] = wflags end
-
     if opts.fpic then flags[#flags + 1] = "-fPIC" end
     if opts.extra_cflags and opts.extra_cflags ~= "" then
         flags[#flags + 1] = opts.extra_cflags
     end
 
-    -- Trailing space ensures assertions like " -c " match even when -c is the last token.
-    local cmd = compiler_for(source) .. " " .. table.concat(flags, " ")
-        .. " " .. source .. " -o " .. obj_out .. " "
+    local needs = opts.needs or {}
+    local probes = { cc_probe_key }
+    local cflags_sigils = {}
+    for _, n in ipairs(needs) do
+        probes[#probes + 1] = "cc:find:" .. n
+        cflags_sigils[#cflags_sigils + 1] = "$<cc:find:" .. n .. ".cflags>"
+    end
+
+    local cmd = compiler_sigil .. " " .. table.concat(flags, " ")
+        .. " " .. source .. " -o " .. obj_out
+    if #cflags_sigils > 0 then
+        cmd = cmd .. " " .. table.concat(cflags_sigils, " ")
+    end
+    cmd = cmd .. " "
 
     cook.add_unit({
-        inputs = { source },
-        output = obj_out,
-        command = cmd,
+        inputs            = { source },
+        output            = obj_out,
+        command           = cmd,
+        probes            = probes,
         discovered_inputs = { from = dep_file, format = "make" },
     })
 
@@ -71,8 +80,20 @@ end
 function M.link(objects, output, opts)
     opts = opts or {}
     fs.mkdir_p(path.dir(output))
-    local cxx = toolchain.get_compiler().cxx
-    local parts = { cxx, table.concat(objects, " "), "-o", output }
+
+    toolchain.ensure_probe_registered()
+    local cc_probe_key = toolchain.get_probe_key()
+    local compiler_sigil = "$<" .. cc_probe_key .. ".cxx>"
+
+    local needs = opts.needs or {}
+    local probes = { cc_probe_key }
+    local libs_sigils = {}
+    for _, n in ipairs(needs) do
+        probes[#probes + 1] = "cc:find:" .. n
+        libs_sigils[#libs_sigils + 1] = "$<cc:find:" .. n .. ".libs>"
+    end
+
+    local parts = { compiler_sigil, table.concat(objects, " "), "-o", output }
     for _, lib in ipairs(opts.system_libs or {}) do
         parts[#parts + 1] = "-l" .. lib
     end
@@ -86,13 +107,18 @@ function M.link(objects, output, opts)
         parts[#parts + 1] = opts.extra_ldflags
     end
     if opts.shared then parts[#parts + 1] = "-shared" end
+    if #libs_sigils > 0 then
+        parts[#parts + 1] = table.concat(libs_sigils, " ")
+    end
+
     -- Trailing space ensures assertions like " -lpthread " match the last token.
     local cmd = table.concat(parts, " ") .. " "
 
     cook.add_unit({
-        inputs = objects,
-        output = output,
+        inputs  = objects,
+        output  = output,
         command = cmd,
+        probes  = probes,
     })
     return output
 end

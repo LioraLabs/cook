@@ -1,5 +1,49 @@
 local M = {}
 
+local PROBE_KEY_DRIVER = "cc:cmake-driver"
+local driver_probe_registered = false
+
+local function produce_driver_body()
+    return [[
+        local path_out = cook.sh("command -v cmake 2>/dev/null") or ""
+        local binary = path_out:match("(%S+)")
+        if not binary then return nil end
+        local probe = cook.sh(
+            "cmake --find-package -DNAME=ZLIB -DCOMPILER_ID=GNU "
+            .. "-DLANGUAGE=C -DMODE=EXIST -DQUIET=TRUE 2>&1 || true") or ""
+        local legacy_supported = not probe:match("[Uu]nknown option")
+        local ver_out = cook.sh(binary .. " --version 2>/dev/null") or ""
+        local version = ver_out:match("cmake version (%S+)") or "unknown"
+        return {
+            ok = true,
+            path = binary,
+            binary = binary,
+            version = version,
+            legacy_supported = legacy_supported,
+        }
+    ]]
+end
+
+local function ensure_driver_probe()
+    if driver_probe_registered then return end
+    cook.probe(PROBE_KEY_DRIVER, {
+        inputs = { tools = { "cmake" }, env = { "CMAKE_PREFIX_PATH" } },
+        produce = produce_driver_body(),
+    })
+    driver_probe_registered = true
+end
+
+ensure_driver_probe()
+
+local function driver()
+    return cook.cache.get(PROBE_KEY_DRIVER)
+end
+
+-- Exported so tests and downstream callers can target the probe accessor
+-- directly. Returns nil when the probe has not produced a value (cmake
+-- absent or not yet executed); returns the driver record otherwise.
+M.driver = driver
+
 local lpeg = require("lpeg")
 local P, S, C, Ct = lpeg.P, lpeg.S, lpeg.C, lpeg.Ct
 
@@ -63,25 +107,14 @@ local function parse_link(out)
     return result
 end
 
+-- Driver detection now flows through the cc:cmake-driver probe registered
+-- at module load. `driver()` reads the probe value store; when nil, the
+-- probe has not produced a value (cmake absent or probe deferred). The
+-- legacy in-band detection that ran on every main_chain call is gone.
 local function detect_cmake()
-    local cached = cook.cache.get("cc.cmake-compat:driver")
-    if cached then return cached end
-
-    local path = cook.sh("command -v cmake 2>/dev/null") or ""
-    path = path:gsub("%s+$", "")
-    if path == "" then
-        local r = { ok = false }
-        cook.cache.set("cc.cmake-compat:driver", r)
-        return r
-    end
-
-    local probe = cook.sh(
-        "cmake --find-package -DNAME=ZLIB -DCOMPILER_ID=GNU "
-        .. "-DLANGUAGE=C -DMODE=EXIST -DQUIET=TRUE 2>&1 || true") or ""
-    local legacy_supported = not probe:match("[Uu]nknown option")
-    local r = { ok = true, path = path, legacy_supported = legacy_supported }
-    cook.cache.set("cc.cmake-compat:driver", r)
-    return r
+    local d = driver()
+    if not d then return { ok = false } end
+    return d
 end
 
 local FLAG_BASE = " -DCOMPILER_ID=GNU -DLANGUAGE=C -DQUIET=TRUE "
