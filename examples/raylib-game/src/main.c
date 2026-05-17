@@ -20,8 +20,18 @@ int main(void)
     puts("Cook M3 example -- generated config.h\n");
 
     printf("  RAYLIB_VERSION = %s\n", RAYLIB_VERSION);
-    printf("  HAVE_STDINT_H  = %d\n", HAVE_STDINT_H);
-    printf("  HAVE_STRDUP    = %d\n", HAVE_STRDUP);
+
+#ifdef HAVE_STDINT_H
+    puts("  HAVE_STDINT_H  = ON");
+#else
+    puts("  HAVE_STDINT_H  = OFF");
+#endif
+
+#ifdef HAVE_STRDUP
+    puts("  HAVE_STRDUP    = ON");
+#else
+    puts("  HAVE_STRDUP    = OFF");
+#endif
 
 #ifdef SUPPORT_MODULE_RCORE
     puts("  SUPPORT_MODULE_RCORE     = ON");
