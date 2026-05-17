@@ -1,0 +1,8 @@
+use cook_cc
+
+register
+    local raylib = cook_cc.find_or_error("raylib")
+    assert(raylib.cflags:match("^%$<cc:find:raylib%.cflags>$"),
+           "expected raylib.cflags to be a sigil placeholder")
+    assert(raylib.libs:match("^%$<cc:find:raylib%.libs>$"),
+           "expected raylib.libs to be a sigil placeholder")

@@ -1,0 +1,6 @@
+use cook_cc
+
+cook_cc.toolchain({ compiler = "g++" })
+
+recipe build
+    cook_cc.bin("hello", { sources = { "src/hello.c" } })

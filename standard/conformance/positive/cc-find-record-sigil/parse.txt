@@ -1,0 +1,8 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: [RegisterBlock body="    local raylib = cook_cc.find_or_error(\"raylib\")\n    assert(raylib.cflags:match(\"^%$<cc:find:raylib%.cflags>$\"),\n           \"expected raylib.cflags to be a sigil placeholder\")\n    assert(raylib.libs:match(\"^%$<cc:find:raylib%.libs>$\"),\n           \"expected raylib.libs to be a sigil placeholder\")" line=3]
+  top_level_module_calls: []

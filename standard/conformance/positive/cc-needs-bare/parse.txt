@@ -1,0 +1,14 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Shell interactive=false command="cook_cc.bin(\"calc\", { sources = { \"src/calc.c\" }, needs = { \"m\" } })"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
