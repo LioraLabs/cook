@@ -1,0 +1,6 @@
+use cook_cc
+
+register
+    local s = cook_cc.checks.has_header("stdint.h")
+    assert(s:match("^%$<cc:check:has%-header:stdint%.h:[0-9a-f]+>$"),
+           "expected has_header to return a probe-sigil string")

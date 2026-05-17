@@ -1,0 +1,7 @@
+use cook_cc
+
+register
+    cook_cc.config_header("in.h.in", "build/out.h", {
+        VERSION = "1.2.3",
+        HAVE_X  = cook_cc.checks.has_header("stdint.h"),
+    })

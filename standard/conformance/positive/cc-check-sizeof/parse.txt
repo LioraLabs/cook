@@ -1,0 +1,8 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: [RegisterBlock body="    local s = cook_cc.checks.sizeof(\"long\")\n    assert(s:match(\"^%$<cc:check:sizeof:long:[0-9a-f]+>$\"),\n           \"expected sizeof to return a probe-sigil string\")" line=3]
+  top_level_module_calls: []

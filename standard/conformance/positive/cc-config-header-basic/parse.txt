@@ -1,0 +1,8 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: [RegisterBlock body="    cook_cc.config_header(\"in.h.in\", \"build/out.h\", {\n        VERSION = \"1.2.3\",\n        HAVE_X  = cook_cc.checks.has_header(\"stdint.h\"),\n    })" line=3]
+  top_level_module_calls: []

@@ -1,0 +1,7 @@
+use cook_cc
+
+register
+    cook_cc.config_header("flag.h.in", "build/flag.h", {
+        ENABLE_FOO = true,
+        ENABLE_BAR = false,
+    })

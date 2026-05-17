@@ -1,0 +1,6 @@
+use cook_cc
+
+register
+    local s = cook_cc.checks.sizeof("long")
+    assert(s:match("^%$<cc:check:sizeof:long:[0-9a-f]+>$"),
+           "expected sizeof to return a probe-sigil string")

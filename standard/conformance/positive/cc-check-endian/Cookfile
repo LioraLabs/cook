@@ -1,0 +1,6 @@
+use cook_cc
+
+register
+    local s = cook_cc.checks.endian()
+    assert(s:match("^%$<cc:check:endian:_:[0-9a-f]+>$"),
+           "expected endian to return a probe-sigil string with name '_'")
