@@ -12,7 +12,7 @@ The `cc` module specifies a portable surface for declarative C and C++ native bu
 
 A conforming implementation MUST expose the thirteen public functions listed in §{cat.cc.surface} and MUST honour their option tables, return values, and propagation semantics. A conforming implementation SHOULD provide informative error diagnostics for the negative cases described per-function.
 
-The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
+The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. This chapter normatively specifies surface v0.5 (cook_cc 0.5.x). Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
 
 ## 28.2. Identity, resolution, init hook [#cat.cc.identity]
 
@@ -50,6 +50,7 @@ Registers an executable target named `name`. A conforming implementation MUST co
 | `extra_cflags` | string | Raw flags appended at compile. |
 | `extra_ldflags` | string | Raw flags appended at link. |
 | `links` | list[string] | Other cc-registered targets to link against (transitive propagation per §{cat.cc.transitive}). |
+| `needs` | list[string] | System-library names. Each name MUST be resolved via a `cc:find:<name>` probe registered by the implementation (§{cat.probes}). Compile units MUST carry `probes = {…, "cc:find:<name>", …}` and link units MUST weave the find probe's `libs` field via the `$<cc:find:<name>.libs>` sigil. See §{cat.cc.needs-semantics}. |
 | `standard` | string | e.g., `"c++17"`, `"c11"`. |
 | `warnings` | string | `"default"` (`-Wall`), `"strict"` (`-Wall -Wextra -Wpedantic`), `"none"`, or raw flags. |
 
@@ -65,6 +66,8 @@ cc.lib(name: string, opts: LibOpts) -> string
 
 Registers a static-library target. A conforming implementation MUST compile sources as for `cc.bin`, then archive the objects to `build/lib/lib<name>.a`. `LibOpts` is `BinOpts` minus link-time fields (`extra_ldflags`, `system_libs`, and `frameworks` apply at consumer link time, not at archive time, but MAY be recorded for propagation).
 
+`LibOpts.needs` behaves as on `BinOpts` (§{cat.cc.bin}): each name MUST be resolved via a `cc:find:<name>` probe and compile units MUST carry the corresponding `probes = {…, "cc:find:<name>", …}` entries. Because `cc.lib` produces an archive rather than a link unit, the find probe's `libs` field is not woven here; it is propagated to downstream consumers through `cook.export` (§{cat.cc.transitive}) so the eventual link site receives the `$<cc:find:<name>.libs>` sigil. See §{cat.cc.needs-semantics}.
+
 Error model identical to §{cat.cc.bin}.
 
 ### 28.3.3. cc.shared [#cat.cc.shared]
@@ -75,7 +78,7 @@ cc.shared(name: string, opts: SharedOpts) -> string
 
 Registers a shared-library target. A conforming implementation MUST compile sources with `-fPIC` and link the objects to `build/lib/lib<name>.<ext>`, where `<ext>` is `so` on Linux and macOS and `dll` on Windows. The linker MUST be invoked with `-shared` on Linux, `-dynamiclib` on macOS, and `/DLL` on Windows.
 
-`SharedOpts` fields are identical to `BinOpts`.
+`SharedOpts` fields are identical to `BinOpts`, including `needs`: compile units MUST carry `probes = {…, "cc:find:<name>", …}` and the shared-library link unit MUST weave `$<cc:find:<name>.libs>` for each entry. See §{cat.cc.needs-semantics}.
 
 ### 28.3.4. cc.headers [#cat.cc.headers]
 
@@ -84,6 +87,8 @@ cc.headers(name: string, opts: HeadersOpts) -> string
 ```
 
 Registers a header-only library: a logical target that records exports for transitive propagation but emits no compile or link units. `HeadersOpts` typically carries `export_includes` and `defines`. `cc.headers` MUST register the target in known-targets but MUST NOT call `cook.add_unit(...)`.
+
+`HeadersOpts.needs` (list[string]): system-library names. The implementation MUST register each as a `cc:find:<name>` probe but MUST NOT add compile- or link-unit edges (headers targets export propagation only). The find probe's `libs` and `cflags` MUST flow through `cook.export` (§{cat.cc.transitive}) to downstream consumers, which assemble the appropriate sigils at their own compile and link sites. See §{cat.cc.needs-semantics}.
 
 ### 28.3.5. cc.compile [#cat.cc.compile]
 
@@ -119,7 +124,7 @@ Links objects to `output`. `LinkOpts.system_libs` is appended as `-l<name>`; `Li
 cc.find(name: string, opts: FindOpts?) -> FindResult
 ```
 
-Discovers a package by name and returns a structured result record.
+Discovers a package by name. Returns a *sigil record* per §{cat.cc.needs-semantics}: a Lua table whose fields are `$<cc:find:<name>.<field>>` sigils for each documented `FindResult` field below. The implementation MUST register the underlying `cc:find:<name>` probe (idempotently) and MUST NOT execute discovery strategies at register phase; strategies run inside the probe's `produce` callback at execute phase per §{cat.probes.exec}.
 
 `FindOpts` (all optional):
 
@@ -245,7 +250,40 @@ Raising in the finder is permitted; the error surfaces at the `cc.find` call sit
 cc.find_or_error(name: string, opts: FindOpts?) -> FindResult
 ```
 
-Calls `cc.find(name, opts)`. If `result.found` is `true`, returns `result` unchanged. Otherwise raises an error at level 2 prefixed `[cc.find_or_error]`. The error message MUST list every Attempt in `result.tried` (strategy / outcome / reason) and MUST include any `hint` fields. This is the only function in §{cat.cc} that raises on a missing package.
+Registers a `cc:find:<name>` probe whose `produce` callback consults the discovery chain and raises a Lua error when no strategy reports `outcome = "hit"`. Returns a *sigil record* per §{cat.cc.needs-semantics}, structurally identical to `cc.find`. The raised error MUST be prefixed `[cc.find_or_error]`, MUST list every Attempt in the result's `tried` field (strategy / outcome / reason), and MUST include any `hint` fields.
+
+Failure is **demand-driven**: per §{cat.probes.exec}, the probe error fails the consuming unit at execute phase and propagates via DAG edge. Register-phase callers of `cc.find_or_error` MUST NOT observe a register-time error for missing libraries; a Cookfile that references `cc.find_or_error("missing")` solely from an unreached branch MUST register and analyse successfully. This is the only function in §{cat.cc} that raises on a missing package.
+
+### 28.3.14. Find semantics under probes [#cat.cc.needs-semantics]
+
+A conforming implementation MUST treat each name passed via `opts.needs`
+as a probe-key suffix: `"cc:find:" .. name`. The implementation MUST
+register the probe idempotently: subsequent `cc.find` or `needs`
+references to the same name MUST NOT re-register the probe. A probe
+registered with conflicting `opts` (e.g., two calls for `"raylib"` with
+different `version` constraints) MUST raise a register-phase diagnostic
+naming both call sites.
+
+The implementation's `cc.find(name, opts)` and `cc.find_or_error(name, opts)`
+public functions MUST register the probe (if not already) and MUST
+return a *sigil record*: a Lua table whose fields are strings of the
+form `"$<cc:find:" .. name .. "." .. field .. ">"`, one per documented
+field of the find result (§{cat.cc.find}). The sigil record's fields
+MUST NOT support mutation; assigning to a sigil-record field MUST raise.
+
+`cc.find_or_error` MUST register a probe whose `produce` raises a Lua
+error when no strategy reports `outcome == "hit"`. Per §{cat.probes.exec}
+the raised error fails the consuming unit and propagates via DAG edge.
+Register-phase callers of `cc.find_or_error` MUST NOT observe a
+register-time error for missing libraries; failure is demand-driven.
+
+The probe-key namespace is normative for this chapter. Implementations
+MUST use the keys:
+
+- `cc:compiler:<override-or-auto>` — toolchain detection
+- `cc:linker-search-dirs` — bare-probe linker search paths
+- `cc:cmake-driver` — cmake-compat driver discovery
+- `cc:find:<name>` — per-library find result
 
 ## 28.4. Transitive propagation [#cat.cc.transitive]
 
