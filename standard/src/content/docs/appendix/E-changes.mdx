@@ -1308,3 +1308,32 @@ The enclosing recipe's qualified name is tracked on the register-phase capture s
 **Design spec.** Initial: `docs/superpowers/specs/2026-05-15-shi214-probe-units-design.md`. Redesign (probes-field rename + demand-driven scheduling): `docs/superpowers/specs/2026-05-16-probe-units-redesign-design.md`.
 
 **Reference:** this commit (Tasks A2-A6).
+
+## CS-0075 — cc module probe-based migration
+
+**Affects:** `cook_cc` rock (§{cat.cc}), surface v0.4 → v0.5.
+
+The cc module's register-phase ad-hoc caches migrate to first-class
+`cook.probe` units (§{cat.probes}). The following probe keys are now
+canonical:
+
+- `cc:compiler:<override>` — toolchain detection
+- `cc:linker-search-dirs` — bare-probe linker search paths
+- `cc:cmake-driver` — cmake-compat driver discovery
+- `cc:find:<name>` — per-library find result
+
+Target makers (`cc.bin`, `cc.lib`, `cc.shared`, `cc.headers`) accept a
+`needs = {…}` field for declarative system-library discovery. The
+imperative `cc.find` and `cc.find_or_error` functions return a
+*sigil record* — a table of `$<cc:find:<name>.<field>>` placeholders
+resolved at execute time by the existing template-expansion pipeline
+(§{cat.probes.templates}).
+
+`cc.find_or_error` failure becomes demand-driven: missing libraries
+fail the build at execute time rather than raising during register.
+This is a deliberate tradeoff — recipes that do not consume the
+missing library no longer fail with register-time noise.
+
+The `cc:*` probe namespace is non-normative pattern documentation;
+cook_cc itself is not part of the conformance surface, but the design
+informs other blessed modules.
