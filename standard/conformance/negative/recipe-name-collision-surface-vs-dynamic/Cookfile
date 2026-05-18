@@ -1,0 +1,7 @@
+recipe build
+    > cook.sh("echo surface")
+
+register
+    cook.recipe("build", {requires = {}}, function()
+        cook.sh("echo dynamic")
+    end)
