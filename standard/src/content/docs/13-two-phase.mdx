@@ -9,7 +9,7 @@ sidebar:
 ## 13.1. Two-phase execution [#exec.two-phase]
 A conforming implementation MUST evaluate each selected recipe in two phases: a **register phase** and an **execute phase**. The register phase discovers the work a recipe wishes to perform; the execute phase performs it. The phases MUST NOT be interleaved within a single recipe: every unit of work produced by the register phase of a recipe MUST be known before the execute phase of that recipe begins.
 
-During the register phase, the implementation evaluates the recipe body as Lua code (§{lua}) in **capture mode**. Cook Lua API calls that declare work — `cook.add_unit`, `cook.step_group`, and the step kinds in §{recipes} that desugar to these calls — record the work into a list of **work units** rather than performing it. The register phase MUST run on a single thread with a single Lua VM per recipe registration.
+During the register phase, the implementation evaluates the recipe body as Lua code (§{lua}) in **capture mode**. Cook Lua API calls that declare work — `cook.add_unit`, `cook.step_group`, and the step kinds in §{recipes} that desugar to these calls — record the work into a list of **work units** rather than performing it. The register phase MUST run on a single thread with a single Lua VM per Cookfile registration pass; every recipe registered by that Cookfile shares the same VM for the duration of the pass.
 
 During the execute phase, the implementation arranges the recorded work units into a dependency graph (§{exec.step-groups}, §{exec.cross-recipe-ordering}) and executes the ready units. The execute phase MAY run work units in parallel where the dependency rules below permit it. The execute phase MUST respect every ordering relation established during the register phase.
 
@@ -58,3 +58,11 @@ Three corollaries:
 1. **The single-`>` family is execute-phase, the doubled-`>` family is register-phase.** This is the surface-level rule a Cookfile author needs to remember; everything else in the table follows from it plus the splicing rules in §{decl.register} and §{toplevel.module-call}.
 2. **`register_block` bodies and top-level module_calls are register-phase.** Both splice verbatim into the compiled register-phase Lua program at their source positions (§{decl.register-splicing}); the module's recorded `cook.add_unit` calls fire during registration and the work units run at execute. Note: recipe-body `module_call` dispatch was removed in CS-0072 — see §{toplevel.module-call} for the surviving top-level form.
 3. **Inside an execute-phase Lua chunk, register-only Cook Lua API helpers are unavailable.** `cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, and `cook.recipe` MUST raise a Lua runtime error when invoked from execute-phase Lua. `cook.sh` is available in both phases (§{lua.cook-sh}). See §{rationale.execute-phase-api}.
+
+## 13.3. Unified work-unit DAG [#exec.dag-unification]
+
+The register phase produces a single **work-unit DAG** covering every recipe reachable from any dispatched target within a Cookfile registration pass. Cross-recipe dependencies (§{exec.cross-recipe-ordering}) are edges of this unified DAG, not synchronisation boundaries between separate per-recipe partitions.
+
+A conforming implementation MAY use any topological ordering of recipe-body invocation at register time — for example, to resolve `cook.dep_output` references (§{lua.cook-dep-output}) cleanly when one recipe consumes another's terminal outputs. The choice of register-time ordering is not normative. The execute phase walks the unified DAG; the order in which recipe bodies were invoked during the register pass does not constrain execute-time parallelism of the resulting work units.
+
+A conforming implementation MUST NOT expose register-phase grouping (sometimes informally called "waves" in earlier reference implementations) as a normative concept to authoring users. See §{rationale.dag-unification}.
