@@ -553,52 +553,17 @@ pub fn register_cookfile(
         )?;
     }
 
-    // Sandbox + fs/path/platform API. Project root falls back to working_dir
-    // when no CacheContext is present (matches register_recipe).
-    let project_root: std::path::PathBuf = cache_ctx
-        .as_ref()
-        .map(|c| c.project_root.clone())
-        .unwrap_or_else(|| builder.working_dir.clone());
-    cook_lua_stdlib::register_fs_api_with_sandbox(
+    // 5b. Install the remaining API surface (fs/path/platform sandboxing,
+    //     module loader, unit/export/test/dep_output/codec APIs). Shared
+    //     with `list_names` via the extracted helper. The helper returns
+    //     the module-loader handle so we can `flush_all()` it after all
+    //     body invocations complete.
+    let module_state = install_remaining_apis(
         &lua,
-        cook_lua_stdlib::WorkingDirSource::Static(builder.working_dir.clone()),
-        cook_lua_stdlib::SandboxSource::confined(project_root.clone()),
-    )?;
-    cook_lua_stdlib::register_path_api(&lua)?;
-    cook_lua_stdlib::install_shell_escape_guards(
-        &lua,
-        cook_lua_stdlib::SandboxSource::confined(project_root),
-    )?;
-    {
-        let cook_tbl: LuaTable = lua.globals().get("cook")?;
-        cook_lua_stdlib::register_platform_api(&lua, &cook_tbl)?;
-    }
-
-    // Module loader + remaining cook APIs.
-    let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(
-        ModuleLoaderState::new(builder.working_dir.clone()),
-    ));
-    crate::module_loader::register_module_loader(&lua, module_state.clone())?;
-    crate::module_loader::register_cache_api(&lua, module_state.clone())?;
-    crate::unit_api::register_unit_api(
-        &lua,
+        &builder,
         body_slot.clone(),
-        "",
-        builder.terminal_outputs.clone(),
-        builder.working_dir.clone(),
+        cache_ctx.as_ref(),
     )?;
-    crate::export_api::register_export_api(&lua, builder.export_store.clone())?;
-    crate::test_api::register_test_api(&lua, body_slot.clone())?;
-    crate::dep_output_api::register_dep_output_api(
-        &lua,
-        builder.terminal_outputs.clone(),
-        body_slot.clone(),
-        builder.alias_dirs.clone(),
-        builder.qualified_prefix.clone(),
-        builder.alias_qualified_prefixes.clone(),
-    )?;
-    crate::context::register_resolve_ingredients(&lua, &builder.working_dir)?;
-    crate::codec_api::register_codec_api(&lua)?;
 
     // 6. Execute the top-level Lua. Name the chunk with an `@` prefix so
     //    `caller_line_in_cookfile`'s `ends_with(&target)` (target is the
@@ -609,71 +574,12 @@ pub fn register_cookfile(
     let chunk_name = format!("@{}", cookfile_label);
     lua.load(lua_source).set_name(chunk_name).exec()?;
 
-    // 7. Config block dispatch — identical to register_recipe.
-    let final_env: BTreeMap<String, String>;
-    if let Ok(dispatch) = lua.globals().get::<LuaFunction>("__cook_run_config_blocks") {
-        let cook_tbl: LuaTable = lua.globals().get("cook")?;
-        let env_tbl: LuaTable = cook_tbl.get("env")?;
-        lua.globals().set("env", env_tbl.clone())?;
-
-        let name_arg: Option<String> = builder.selected_config.clone();
-        dispatch.call::<()>(name_arg)?;
-
-        builder.env_keyset.freeze(&env_tbl)?;
-
-        for (k, v) in &builder.cli_overrides {
-            env_tbl.set(k.as_str(), v.as_str())?;
-        }
-
-        {
-            let mut env_map = builder.env_vars.borrow_mut();
-            for pair in env_tbl.pairs::<String, String>() {
-                let (k, v) = pair?;
-                env_map.insert(k, v);
-            }
-        }
-
-        // Shadowing diagnostic — same logic as register_recipe.
-        let declared_env: std::collections::BTreeSet<String> =
-            builder.env_keyset.declared_list().into_iter().collect();
-        let recipe_names_set: std::collections::BTreeSet<String> = recipes
-            .borrow()
-            .iter()
-            .map(|r| r.name.clone())
-            .collect();
-        let mut emitted = builder.shadow_warnings_emitted.borrow_mut();
-        for name in recipe_names_set.intersection(&declared_env) {
-            let key = (name.clone(), name.clone());
-            if emitted.insert(key) {
-                eprintln!(
-                    "cook: warning: recipe '{name}' shadows declared env var \
-                     'env.{name}': $<{name}> resolves to the recipe (Standard \
-                     §5.2.3). Use $<env.{name}> for the env-var value, or \
-                     rename one of them."
-                );
-            }
-        }
-
-        // Snapshot final env BEFORE removing the global so the table is
-        // still readable. `env_vars` was just refreshed above so it's the
-        // canonical source; copy from there to avoid re-borrowing `env_tbl`.
-        final_env = builder
-            .env_vars
-            .borrow()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-
-        lua.globals().set("env", mlua::Value::Nil)?;
-    } else {
-        // No config blocks — `final_env` is just the initial env_vars.
-        final_env = builder
-            .env_vars
-            .borrow()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-    }
+    // 7. Config block dispatch — shared with `list_names` via the
+    //    extracted helper. Returns the final env snapshot (post-config,
+    //    post-CLI-override) or just the initial env_vars when no config
+    //    blocks are present.
+    let final_env =
+        dispatch_config_blocks(&lua, &builder, &recipes.borrow())?;
 
     // 8. Collision detection — Task 2.3. A name registered more than once
     //    (surface vs dynamic, or dynamic vs dynamic) is a hard error per
@@ -980,16 +886,250 @@ fn detect_collisions(
 /// Cheap name-only register pass for surface dispatch (CS-0077 Phase 2).
 ///
 /// Runs the Cookfile's top-level Lua to collect the set of registered
-/// recipe names, but does NOT invoke any recipe body. Used by the
-/// surface CLI to list recipes and to validate `cook NAME` arguments
-/// without paying the full DAG-discovery cost.
+/// recipe names, runs the config block (so per-config recipe gating
+/// surfaces correctly), detects name collisions, and validates the probe
+/// `requires` graph — but does NOT invoke any recipe body and does NOT
+/// fire any probe queries. Used by the surface CLI to list recipes and
+/// to validate `cook NAME` arguments without paying the full
+/// DAG-discovery cost.
 ///
-/// Stub: lands in Task 2.4.
+/// `kind` on each returned [`crate::RegisteredRecipePub`] is hard-coded
+/// to [`crate::RecipeKind::Recipe`] for now — the codegen split between
+/// `recipe NAME` and `chore NAME` blocks lands in Task 3.1.
 pub fn list_names(
-    _builder: RegisterSessionBuilder,
-    _lua_source: &str,
+    builder: RegisterSessionBuilder,
+    lua_source: &str,
 ) -> Result<Vec<crate::RegisteredRecipePub>, RegisterError> {
-    unimplemented!("list_names lands in Task 2.4")
+    // SAFETY: matches register_cookfile/register_recipe — see comment there.
+    let lua = unsafe { Lua::unsafe_new() };
+
+    // body_slot stays `None` for the whole call: no recipe body executes,
+    // so any closure that requires an active body (cook.exec, cook.add_unit,
+    // …) returns a clean Lua error if invoked from top-level Lua. That
+    // keeps list_names cheap and honest. No SessionCaptureState is
+    // constructed — list_names doesn't surface probes.
+    let body_slot: SharedBodySlot = Rc::new(RefCell::new(None));
+    let probe_registry = Rc::new(RefCell::new(ProbeRegistry::default()));
+
+    // Cookfile label: list_names is called without a CacheContext, so fall
+    // back to the bare "Cookfile" label used by tests/legacy call sites.
+    let cookfile_label: String = "Cookfile".to_string();
+
+    // Install cook.* core surface. `recipe_name` is "" — list_names never
+    // invokes a body, so cook.add_unit's recipe_name capture is moot here.
+    let recipes = install_cook_api(
+        &lua,
+        builder.env_vars.clone(),
+        &builder.working_dir,
+        body_slot.clone(),
+        "",
+    )?;
+    {
+        let cook_tbl: LuaTable = lua.globals().get("cook")?;
+        install_require_env(&lua, &cook_tbl, builder.env_keyset.clone())?;
+    }
+    {
+        let cook_tbl: LuaTable = lua.globals().get("cook")?;
+        install_cook_probe(
+            &lua,
+            &cook_tbl,
+            probe_registry.clone(),
+            body_slot.clone(),
+            cookfile_label.clone(),
+        )?;
+    }
+    // list_names doesn't invoke any body, so the returned module-loader
+    // handle is dropped here — no flush needed (no module bodies ran).
+    let _module_state = install_remaining_apis(&lua, &builder, body_slot.clone(), None)?;
+
+    // Load top-level Lua. Recipe registration happens via `cook.recipe(...)`
+    // calls captured into `recipes`. Bodies are stashed as `LuaRegistryKey`
+    // values but never invoked here.
+    let chunk_name = format!("@{}", cookfile_label);
+    lua.load(lua_source).set_name(chunk_name).exec()?;
+
+    // Run config blocks so per-config gating (e.g. recipe registration
+    // inside a `config "release"` block) is reflected in the listed set.
+    let _final_env = dispatch_config_blocks(&lua, &builder, &recipes.borrow())?;
+
+    // Same hard-error checks register_cookfile applies. Probe cycle
+    // detection runs on the static `requires` graph — no probe BODY runs,
+    // so this is cheap.
+    detect_collisions(&recipes.borrow())?;
+    probe_registry
+        .borrow()
+        .detect_cycles()
+        .map_err(|msg| RegisterError::Lua(mlua::Error::runtime(msg)))?;
+
+    let out: Vec<crate::RegisteredRecipePub> = recipes
+        .borrow()
+        .iter()
+        .map(|r| crate::RegisteredRecipePub {
+            name: r.name.clone(),
+            source: r.source,
+            kind: crate::RecipeKind::Recipe,
+            requires: r.metadata.requires.clone(),
+        })
+        .collect();
+    Ok(out)
+}
+
+/// Install the non-`cook.recipe` / non-`cook.probe` part of the
+/// register-phase API surface on the given Lua VM: fs/path/platform
+/// sandboxes, module loader, unit/export/test/dep_output/codec APIs.
+///
+/// Extracted as a shared helper so `register_cookfile` and `list_names`
+/// see byte-identical API installation. `cook.recipe` and `cook.probe`
+/// (which need access to the per-pass `recipes` Rc and probe registry
+/// respectively) are still installed at the call site before this helper
+/// runs.
+///
+/// `cache_ctx` is `Some` when the caller has a project root resolved
+/// (`register_cookfile` in production); `None` for tests, legacy call
+/// sites, and `list_names`. The sandbox falls back to the recipe's
+/// working_dir in the `None` case, which matches single-Cookfile project
+/// behavior (CS-0045).
+fn install_remaining_apis(
+    lua: &Lua,
+    builder: &RegisterSessionBuilder,
+    body_slot: SharedBodySlot,
+    cache_ctx: Option<&Arc<cook_cache::cache_ctx::CacheContext>>,
+) -> Result<SharedModuleLoaderState, RegisterError> {
+    // Sandbox + fs/path/platform API. Project root falls back to
+    // working_dir when no CacheContext is present.
+    let project_root: std::path::PathBuf = cache_ctx
+        .map(|c| c.project_root.clone())
+        .unwrap_or_else(|| builder.working_dir.clone());
+    cook_lua_stdlib::register_fs_api_with_sandbox(
+        lua,
+        cook_lua_stdlib::WorkingDirSource::Static(builder.working_dir.clone()),
+        cook_lua_stdlib::SandboxSource::confined(project_root.clone()),
+    )?;
+    cook_lua_stdlib::register_path_api(lua)?;
+    cook_lua_stdlib::install_shell_escape_guards(
+        lua,
+        cook_lua_stdlib::SandboxSource::confined(project_root),
+    )?;
+    {
+        let cook_tbl: LuaTable = lua.globals().get("cook")?;
+        cook_lua_stdlib::register_platform_api(lua, &cook_tbl)?;
+    }
+
+    // Module loader + remaining cook APIs.
+    let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(
+        ModuleLoaderState::new(builder.working_dir.clone()),
+    ));
+    crate::module_loader::register_module_loader(lua, module_state.clone())?;
+    crate::module_loader::register_cache_api(lua, module_state.clone())?;
+    crate::unit_api::register_unit_api(
+        lua,
+        body_slot.clone(),
+        "",
+        builder.terminal_outputs.clone(),
+        builder.working_dir.clone(),
+    )?;
+    crate::export_api::register_export_api(lua, builder.export_store.clone())?;
+    crate::test_api::register_test_api(lua, body_slot.clone())?;
+    crate::dep_output_api::register_dep_output_api(
+        lua,
+        builder.terminal_outputs.clone(),
+        body_slot.clone(),
+        builder.alias_dirs.clone(),
+        builder.qualified_prefix.clone(),
+        builder.alias_qualified_prefixes.clone(),
+    )?;
+    crate::context::register_resolve_ingredients(lua, &builder.working_dir)?;
+    crate::codec_api::register_codec_api(lua)?;
+    Ok(module_state)
+}
+
+/// Dispatch any `__cook_run_config_blocks` function emitted by codegen
+/// and return the final post-dispatch env snapshot.
+///
+/// When codegen has emitted a config-block dispatcher, this:
+///
+/// 1. Exposes `env` as an alias of `cook.env` so the block body can write.
+/// 2. Calls the dispatcher with the builder's `selected_config`.
+/// 3. Freezes the env keyset against the post-dispatch table.
+/// 4. Re-applies any `--set KEY=VALUE` CLI overrides on top.
+/// 5. Snapshots the env back into the builder's shared `env_vars` map.
+/// 6. Emits one §5.2.3 shadowing warning per recipe-name / declared-env
+///    collision (deduped via `builder.shadow_warnings_emitted`).
+/// 7. Removes the `env` global so subsequent code (recipe bodies)
+///    accesses env only through `cook.env`.
+///
+/// When no config blocks are present, the helper returns the initial
+/// `env_vars` map unchanged.
+///
+/// Extracted from `register_cookfile`'s body so `list_names` can run
+/// the same config-block pass without duplicating the env / shadowing
+/// logic — listing surfaces MUST observe per-config recipe gating.
+fn dispatch_config_blocks(
+    lua: &Lua,
+    builder: &RegisterSessionBuilder,
+    recipes: &[crate::capture::RegisteredRecipe],
+) -> Result<BTreeMap<String, String>, RegisterError> {
+    if let Ok(dispatch) = lua.globals().get::<LuaFunction>("__cook_run_config_blocks") {
+        let cook_tbl: LuaTable = lua.globals().get("cook")?;
+        let env_tbl: LuaTable = cook_tbl.get("env")?;
+        lua.globals().set("env", env_tbl.clone())?;
+
+        let name_arg: Option<String> = builder.selected_config.clone();
+        dispatch.call::<()>(name_arg)?;
+
+        builder.env_keyset.freeze(&env_tbl)?;
+
+        for (k, v) in &builder.cli_overrides {
+            env_tbl.set(k.as_str(), v.as_str())?;
+        }
+
+        {
+            let mut env_map = builder.env_vars.borrow_mut();
+            for pair in env_tbl.pairs::<String, String>() {
+                let (k, v) = pair?;
+                env_map.insert(k, v);
+            }
+        }
+
+        // §5.2.3 shadowing diagnostic.
+        let declared_env: std::collections::BTreeSet<String> =
+            builder.env_keyset.declared_list().into_iter().collect();
+        let recipe_names_set: std::collections::BTreeSet<String> =
+            recipes.iter().map(|r| r.name.clone()).collect();
+        let mut emitted = builder.shadow_warnings_emitted.borrow_mut();
+        for name in recipe_names_set.intersection(&declared_env) {
+            let key = (name.clone(), name.clone());
+            if emitted.insert(key) {
+                eprintln!(
+                    "cook: warning: recipe '{name}' shadows declared env var \
+                     'env.{name}': $<{name}> resolves to the recipe (Standard \
+                     §5.2.3). Use $<env.{name}> for the env-var value, or \
+                     rename one of them."
+                );
+            }
+        }
+
+        // Snapshot final env BEFORE removing the global so the table is
+        // still readable. `env_vars` was just refreshed above so it's the
+        // canonical source; copy from there.
+        let final_env: BTreeMap<String, String> = builder
+            .env_vars
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        lua.globals().set("env", mlua::Value::Nil)?;
+        Ok(final_env)
+    } else {
+        // No config blocks — `final_env` is just the initial env_vars.
+        Ok(builder
+            .env_vars
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect())
+    }
 }
 
 /// Compute a forward-slash, project-relative path for the Cookfile being

@@ -1109,3 +1109,31 @@ fn register_cookfile_captures_all_sites_for_triple_collision() {
         other => panic!("expected RecipeCollision, got {other:?}"),
     }
 }
+
+// -----------------------------------------------------------------------
+// SHI-222 Phase 2 Task 2.4 — list_names entry point
+// -----------------------------------------------------------------------
+
+#[test]
+fn list_names_returns_registrations_without_invoking_bodies() {
+    use crate::{list_names, RegisterSessionBuilder};
+
+    // Body of recipe "a" would error if invoked — list_names must NOT run
+    // bodies, so the call must succeed and surface both "a" and "b" with
+    // their declared `requires` metadata.
+    let lua_src = r#"
+        cook.recipe("a", {requires = {}}, function()
+            error("body must not run during list_names")
+        end)
+        cook.recipe("b", {requires = {"a"}}, function() end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let names = list_names(builder, lua_src).unwrap();
+    let by_name: std::collections::BTreeMap<_, _> = names.iter()
+        .map(|r| (r.name.clone(), r))
+        .collect();
+    assert!(by_name.contains_key("a"));
+    assert!(by_name.contains_key("b"));
+    assert_eq!(by_name["b"].requires, vec!["a".to_string()]);
+}
