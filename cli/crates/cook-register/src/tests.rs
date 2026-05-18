@@ -1019,9 +1019,18 @@ fn register_cookfile_invokes_each_body_once_in_topo_order() {
     // topological order (z, m, a). This distinguishes "register_cookfile
     // walks the DAG in topo order" from "it happens to iterate the
     // recipe map alphabetically".
+    //
+    // Recipe "z" uses cook.add_unit (which produces Some(CacheMeta)) so we
+    // can verify the per-body drain loop patches cache_meta.recipe_name
+    // from the qualified name. The installer closures in
+    // register_unit_api/install_cook_api capture "" at API-install time
+    // (register_cookfile has no single recipe at install); the per-recipe
+    // drain loop in register_cookfile must overwrite that with the actual
+    // recipe name. cook.exec keeps cache_meta == None, so the other two
+    // recipes still validate the topo-order command-payload story.
     let lua_src = r#"
         cook.recipe("z", {requires = {}}, function()
-            cook.exec("touch z.txt", 1)
+            cook.add_unit({ command = "touch z.txt", inputs = {"src/z.c"}, output = "z.txt" })
         end)
         cook.recipe("m", {requires = {"z"}}, function()
             cook.exec("touch m.txt", 2)
@@ -1042,11 +1051,33 @@ fn register_cookfile_invokes_each_body_once_in_topo_order() {
     assert_eq!(registered.names[2].name, "a");
 
     // Each body must have been invoked exactly once. Asserting on the
-    // captured shell payload (rather than just unit count) catches a
-    // body that no-ops on a second invocation but would still leave
-    // units.len() == 1.
-    let expectations = [("z", "touch z.txt"), ("m", "touch m.txt"), ("a", "touch a.txt")];
-    for (name, expected_cmd) in expectations {
+    // captured payload (rather than just unit count) catches a body that
+    // no-ops on a second invocation but would still leave units.len() == 1.
+    let z_units = registered
+        .units_by_recipe
+        .get("z")
+        .expect("missing units_by_recipe entry for z");
+    assert_eq!(z_units.units.len(), 1, "recipe z should have produced exactly one unit");
+    match &z_units.units[0].payload {
+        WorkPayload::Shell { cmd, .. } => {
+            assert_eq!(cmd, "touch z.txt", "recipe z captured wrong command");
+        }
+        other => panic!("recipe z produced unexpected payload: {other:?}"),
+    }
+    // Per-body drain loop must have patched cache_meta.recipe_name from
+    // the qualified name (here just "z" — no qualified_prefix in tests).
+    // Without the patch this would be "" because install_cook_api was
+    // called with recipe_name: "" in register_cookfile.
+    let z_meta = z_units.units[0]
+        .cache_meta
+        .as_ref()
+        .expect("cook.add_unit must produce Some(CacheMeta)");
+    assert_eq!(
+        z_meta.recipe_name, "z",
+        "drain loop must patch cache_meta.recipe_name from qualified name"
+    );
+
+    for (name, expected_cmd) in [("m", "touch m.txt"), ("a", "touch a.txt")] {
         let recipe_units = registered
             .units_by_recipe
             .get(name)
@@ -1136,4 +1167,17 @@ fn list_names_returns_registrations_without_invoking_bodies() {
     assert!(by_name.contains_key("a"));
     assert!(by_name.contains_key("b"));
     assert_eq!(by_name["b"].requires, vec!["a".to_string()]);
+
+    // Lock down that the Task 2.2 chunk-naming wiring still flows through
+    // list_names: `cook.recipe` Lua calls are tagged Dynamic with a non-zero
+    // source line. A regression that breaks the call-stack walk would land
+    // line == 0.
+    assert!(matches!(
+        by_name["a"].source,
+        crate::RegistrationSource::Dynamic { line } if line > 0
+    ));
+    // RecipeKind is hard-coded to Recipe until Phase 3 codegen distinguishes
+    // chores. Locking this down catches an accidental kind flip during the
+    // upcoming codegen split.
+    assert_eq!(by_name["b"].kind, crate::RecipeKind::Recipe);
 }

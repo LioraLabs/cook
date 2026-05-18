@@ -674,10 +674,24 @@ pub fn register_cookfile(
         lua.remove_registry_value(func_key_clone)?;
 
         // Drain the body slot back to None.
-        let body = body_slot
+        let mut body = body_slot
             .borrow_mut()
             .take()
             .expect("body slot populated above");
+
+        // Patch the recipe_name on every unit's cache_meta. The closures in
+        // register_unit_api / install_cook_api capture an empty recipe_name
+        // at install time (since register_cookfile has no single recipe at
+        // API-install — see comments above the install_cook_api call).
+        // Per-body attribution happens here at drain time using the
+        // qualified name we already know. Downstream engine cache keying
+        // depends on cache_meta.recipe_name being the actual recipe name,
+        // not "".
+        for unit in &mut body.units {
+            if let Some(meta) = unit.cache_meta.as_mut() {
+                meta.recipe_name = qualified_name.clone();
+            }
+        }
 
         // Resolve probe references — same end-of-body check that
         // register_recipe runs, scoped to this recipe's units.
@@ -914,6 +928,15 @@ pub fn list_names(
     // Cookfile label: list_names is called without a CacheContext, so fall
     // back to the bare "Cookfile" label used by tests/legacy call sites.
     let cookfile_label: String = "Cookfile".to_string();
+
+    // Wire the named registry value used by `caller_line_in_cookfile` to
+    // match chunk source labels against the Cookfile path. Without this,
+    // `cook.recipe` calls would all record `line = 0`. register_cookfile
+    // sets this from CacheContext.project_root; list_names has no
+    // CacheContext, so seed it from `cookfile_label` directly so the
+    // chunk-naming line-tagging wiring still works.
+    lua.set_named_registry_value("__cook_cookfile_path", cookfile_label.clone())
+        .map_err(RegisterError::Lua)?;
 
     // Install cook.* core surface. `recipe_name` is "" — list_names never
     // invokes a body, so cook.add_unit's recipe_name capture is moot here.
