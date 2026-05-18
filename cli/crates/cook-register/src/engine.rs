@@ -15,8 +15,8 @@ use crate::export_api::SharedExportStore;
 use crate::module_loader::{ModuleLoaderState, SharedModuleLoaderState};
 use crate::probe_api::{install_cook_probe, ProbeRegistry};
 use crate::{
-    BodyCaptureState, RegisterError, SessionCaptureState, SharedBodySlot,
-    SharedSessionCaptureState,
+    BodyCaptureState, RegisterError, RegistrationSite, RegistrationSiteKind,
+    SessionCaptureState, SharedBodySlot, SharedSessionCaptureState,
 };
 
 pub struct RegisterSessionBuilder {
@@ -675,7 +675,12 @@ pub fn register_cookfile(
             .collect();
     }
 
-    // 8. Collision detection — Task 2.3.
+    // 8. Collision detection — Task 2.3. A name registered more than once
+    //    (surface vs dynamic, or dynamic vs dynamic) is a hard error per
+    //    spec §8. Phase 3 wires `cook.__register_surface` and surfaces the
+    //    headline surface-vs-dynamic case; for now only dynamic-vs-dynamic
+    //    collisions are reachable.
+    detect_collisions(&recipes.borrow())?;
 
     // 9. Probe cycle detection — once per session.
     probe_registry
@@ -923,6 +928,46 @@ fn local_topological_sort(
         visit(name, deps, &mut state, &mut order, &mut path)?;
     }
     Ok(order)
+}
+
+/// Diagnose duplicate recipe-name registrations within a single
+/// `register_cookfile` pass (spec §8). A name appearing more than once —
+/// surface-vs-dynamic or dynamic-vs-dynamic — is a hard error.
+///
+/// Each site is tagged by line and kind so the CLI can render a
+/// multi-line diagnostic naming both the surface declaration and the
+/// register-phase Lua call. Two `Static` entries for the same name
+/// cannot occur (codegen never emits duplicates from a single AST), so
+/// this helper does not special-case that.
+///
+/// Re-used by `list_names` in Task 2.4.
+fn detect_collisions(
+    recipes: &[crate::capture::RegisteredRecipe],
+) -> Result<(), RegisterError> {
+    use std::collections::BTreeMap;
+    let mut by_name: BTreeMap<&str, Vec<RegistrationSite>> = BTreeMap::new();
+    for r in recipes {
+        let site = match r.source {
+            crate::capture::RegistrationSource::Static { line } => RegistrationSite {
+                line,
+                kind: RegistrationSiteKind::SurfaceRecipe,
+            },
+            crate::capture::RegistrationSource::Dynamic { line } => RegistrationSite {
+                line,
+                kind: RegistrationSiteKind::Dynamic,
+            },
+        };
+        by_name.entry(r.name.as_str()).or_default().push(site);
+    }
+    for (name, sites) in by_name {
+        if sites.len() > 1 {
+            return Err(RegisterError::RecipeCollision {
+                name: name.to_string(),
+                sites,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Cheap name-only register pass for surface dispatch (CS-0077 Phase 2).

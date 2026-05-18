@@ -48,6 +48,22 @@ pub enum RegisterError {
     },
     #[error("recipe not found: {0}")]
     RecipeNotFound(String),
+    /// A name was registered more than once within a single Cookfile
+    /// registration pass — e.g. a surface `recipe NAME` block plus a
+    /// `cook.recipe("NAME", ...)` call, or two `cook.recipe(...)` calls
+    /// using the same name. Each site is identified by line and kind
+    /// (surface declaration vs. register-phase Lua call) so the CLI
+    /// can render a multi-line diagnostic naming both.
+    ///
+    /// Returned by `register_cookfile` (SHI-222 Phase 2 Task 2.3, spec §8).
+    #[error(
+        "recipe '{name}' is registered more than once: {}",
+        sites.iter().map(|s| format!("{} at line {}", s.kind.label(), s.line)).collect::<Vec<_>>().join(", ")
+    )]
+    RecipeCollision {
+        name: String,
+        sites: Vec<RegistrationSite>,
+    },
     /// A cycle in the recipe `requires` graph was detected by
     /// `register_cookfile`'s local topo-sort. `recipes` is the path
     /// of names that forms the cycle, with the recurring node
@@ -56,6 +72,46 @@ pub enum RegisterError {
     /// Returned by `register_cookfile` (SHI-222 Phase 2 Task 2.2).
     #[error("dependency cycle: {}", recipes.join(" -> "))]
     DependencyCycle { recipes: Vec<String> },
+}
+
+/// One site at which a recipe name was registered during a
+/// `register_cookfile` pass. Carried inside [`RegisterError::RecipeCollision`]
+/// so callers (e.g. the CLI's `cmd_run`) can render a diagnostic naming
+/// both the surface declaration and the register-phase Lua call.
+#[derive(Debug, Clone)]
+pub struct RegistrationSite {
+    /// Line number within the Cookfile where the registration was recorded.
+    pub line: usize,
+    /// What kind of registration this site is.
+    pub kind: RegistrationSiteKind,
+}
+
+/// The flavor of a [`RegistrationSite`]. Distinguishes codegen-emitted
+/// surface declarations (`recipe NAME` / `chore NAME` blocks) from
+/// register-phase `cook.recipe(...)` calls so collision diagnostics can
+/// name both sides of the conflict precisely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistrationSiteKind {
+    /// Surface `recipe NAME` block (codegen-emitted via
+    /// `cook.__register_surface`). Wired in Phase 3.
+    SurfaceRecipe,
+    /// Surface `chore NAME` block (codegen-emitted via
+    /// `cook.__register_surface`). Wired in Phase 3.
+    SurfaceChore,
+    /// `cook.recipe(...)` call from a `register` block, top-level module
+    /// call, or wrapper Lua function (e.g. `cook_cc.bin`).
+    Dynamic,
+}
+
+impl RegistrationSiteKind {
+    /// Short, human-readable label used inside collision diagnostics.
+    fn label(self) -> &'static str {
+        match self {
+            RegistrationSiteKind::SurfaceRecipe => "surface recipe",
+            RegistrationSiteKind::SurfaceChore => "surface chore",
+            RegistrationSiteKind::Dynamic => "cook.recipe call",
+        }
+    }
 }
 
 /// Session-level capture state. One instance per `register_cookfile` call;
@@ -165,7 +221,12 @@ pub fn hash_str(s: &str) -> u64 {
     xxhash_rust::xxh3::xxh3_64(s.as_bytes())
 }
 
-// Re-exports for convenience
+// Re-exports for convenience.
+//
+// `RegistrationSite` and `RegistrationSiteKind` are part of the public
+// API shipped with `RegisterError::RecipeCollision` — they're defined at
+// the crate root above and so are already accessible as
+// `cook_register::RegistrationSite{,Kind}`. No explicit re-export needed.
 pub use capture::RegistrationSource;
 pub use dep_output_api::SharedTerminalOutputs;
 pub use engine::{list_names, register_cookfile, RegisterSessionBuilder};

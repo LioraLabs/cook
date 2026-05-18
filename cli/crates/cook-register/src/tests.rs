@@ -1064,3 +1064,24 @@ fn register_cookfile_invokes_each_body_once_in_topo_order() {
         }
     }
 }
+
+#[test]
+fn register_cookfile_rejects_duplicate_dynamic_registration() {
+    use crate::{register_cookfile, RegisterError, RegisterSessionBuilder};
+
+    let lua_src = r#"
+        cook.recipe("build", {requires = {}}, function() end)
+        cook.recipe("build", {requires = {}}, function() end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let err = register_cookfile(builder, lua_src, None).unwrap_err();
+
+    match err {
+        RegisterError::RecipeCollision { name, sites } => {
+            assert_eq!(name, "build");
+            assert_eq!(sites.len(), 2);
+        }
+        other => panic!("expected RecipeCollision, got {other:?}"),
+    }
+}
