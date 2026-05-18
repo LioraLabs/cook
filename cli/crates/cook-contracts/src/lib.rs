@@ -214,6 +214,7 @@ pub enum DepKind {
 }
 
 /// Result of registering a single recipe.
+#[derive(Debug, Clone)]
 pub struct RecipeUnits {
     pub recipe_name: String,
     pub deps: Vec<String>,

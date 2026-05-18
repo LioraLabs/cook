@@ -174,11 +174,12 @@ pub use engine::{list_names, register_cookfile, RegisterSessionBuilder};
 /// legacy `RegisterSessionBuilder::register_recipe` entry point —
 /// `RegisteredCookfile` is the unified-DAG payload produced by
 /// the new `register_cookfile` entry point (CS-0077 Phase 2).
+#[derive(Debug, Clone)]
 pub struct RegisteredCookfile {
     pub names: Vec<RegisteredRecipePub>,
     pub units_by_recipe: std::collections::BTreeMap<String, cook_contracts::RecipeUnits>,
     pub probes: std::collections::BTreeMap<String, cook_contracts::ProbeUnit>,
-    pub final_env: std::collections::HashMap<String, String>,
+    pub final_env: std::collections::BTreeMap<String, String>,
 }
 
 /// Public summary of one registered recipe. Distinct from the internal

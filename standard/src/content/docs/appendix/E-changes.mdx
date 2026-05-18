@@ -1411,3 +1411,4 @@ Implementation closes the discovery gap that prevented `cook NAME` from dispatch
 - 2026-05-18: Phase 1 Task 1.4 — `RegistrationSource { Static { line }, Dynamic { line } }` enum added in `cook-register`; `RegisteredRecipe` gains a `source` field; `cook.recipe` records `Dynamic` registrations with line numbers via a Lua call-stack walk against the Cookfile source label.
 - 2026-05-18: Phase 1 Task 1.4 (review polish) — clarified `ends_with` rationale and named `MAX_LUA_STACK_DEPTH` in `caller_line_in_cookfile` helper.
 - 2026-05-18: Phase 2 Task 2.1 — `RegisteredCookfile`, `RegisteredRecipePub`, `RecipeKind` public types defined in `cook-register`; `register_cookfile` and `list_names` stubs added.
+- 2026-05-18: Phase 2 Task 2.1 (review polish) — `RegisteredCookfile` gains `#[derive(Debug, Clone)]`; `final_env` switched to `BTreeMap` for parity with `RecipeUnits.env_vars` and project determinism rule.
