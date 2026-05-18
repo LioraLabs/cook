@@ -1,27 +1,24 @@
 use cook_cc
 
-cook_cc.toolchain({ standard = "c99" })
+register
+    cook_cc.toolchain({ standard = "c99" })
 
--- Generate the raylib config header at build time using feature-test results.
-cook_cc.config_header(
-    "raylib-src/src/config.h.in",
-    "build/raylib-src/config.h",
-    {
-        HAVE_STDINT_H            = cook_cc.checks.has_header("stdint.h"),
-        HAVE_STRDUP              = cook_cc.checks.has_function("strdup", { includes = { "string.h" } }),
-        RAYLIB_VERSION           = "5.5",
-        SUPPORT_MODULE_RCORE     = true,
-        SUPPORT_MODULE_RSHAPES   = false,
-        SUPPORT_MODULE_RTEXTURES = false,
-        SUPPORT_QUADS_DRAW_MODE  = true,
-        SUPPORT_FILEFORMAT_PNG   = false,
-    }
-)
+    cook_cc.config_header(
+        "raylib-src/src/config.h.in",
+        "build/raylib-src/config.h",
+        {
+            HAVE_STDINT_H            = cook_cc.checks.has_header("stdint.h"),
+            HAVE_STRDUP              = cook_cc.checks.has_function("strdup", { includes = { "string.h" } }),
+            RAYLIB_VERSION           = "5.5",
+            SUPPORT_MODULE_RCORE     = true,
+            SUPPORT_MODULE_RSHAPES   = false,
+            SUPPORT_MODULE_RTEXTURES = false,
+            SUPPORT_QUADS_DRAW_MODE  = true,
+            SUPPORT_FILEFORMAT_PNG   = false,
+        }
+    )
 
--- Compile a tiny demo binary that consumes the generated header.
--- The full raylib library is intentionally out of scope (X11/OpenGL deps);
--- this example focuses on demonstrating cc.config_header + cc.checks.*.
-cook_cc.bin("game", {
-    sources  = { "src/main.c" },
-    includes = { "build/raylib-src", "raylib-src/src" },
-})
+    cook_cc.bin("game", {
+        sources  = { "src/main.c" },
+        includes = { "build/raylib-src", "raylib-src/src" },
+    })
