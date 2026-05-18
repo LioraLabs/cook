@@ -1,0 +1,4 @@
+register
+    cook.recipe("hello", {requires = {}}, function()
+        cook.exec("printf 'hello from register-block recipe\\n'", 3)
+    end)

@@ -1,0 +1,8 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: [RegisterBlock body="    cook.recipe(\"hello\", {requires = {}}, function()\n        cook.exec(\"printf 'hello from register-block recipe\\\\n'\", 3)\n    end)" line=1]
+  top_level_module_calls: []
