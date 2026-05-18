@@ -1,13 +1,17 @@
 rock_manifest = {
-   ["cook_cc-0.5.0-1.rockspec"] = "bb40950bec3ec596ae13c4812a23ee4d",
+   ["cook_cc-0.6.1-1.rockspec"] = "969d6a6de09e881ce929442fd657b0f1",
    doc = {
       ["README.md"] = "af20f8f92f147983316c39e1cc1431d4"
    },
    lua = {
       cook_cc = {
+         ["_check_helpers.lua"] = "e0f50c7c3b6c5e31fa5db14dfd974031",
          ["_probe_helpers.lua"] = "1e818cc0f72c77938a1435011ce74664",
          ["cc.lua"] = "d2c5fa34c8b9da742be14b452613a222",
+         ["checks.lua"] = "c9da79413a1be7821d060555af637595",
          ["compile_db.lua"] = "012cb65e0c5daa3b8c1727f712535352",
+         ["config_header.lua"] = "fd5f5780055087d2f11c90fccfa313bb",
+         ["config_header_renderer.lua"] = "d64d51eb0e011e67d78a6f4214c40c82",
          ["finder.lua"] = "26a3809ef91465682b6b2d469ddd8b38",
          finders = {
             ["bare_probe.lua"] = "2b8d9f76eb3719e9ced550e5123dd528",
@@ -27,7 +31,7 @@ rock_manifest = {
             ["tool_config.lua"] = "8374bb11d7eda41a7d5424eb68c4d5c1",
             ["zlib.lua"] = "adca812e5bf72d438786aba372e83c40"
          },
-         ["init.lua"] = "3614e05db8e7497b5f238e5bbad1b28f",
+         ["init.lua"] = "178425ba6b3f37a2c95481b9c620c33f",
          ["targets.lua"] = "68e634307b9e56510a2386472f9c44e2",
          ["toolchain.lua"] = "fa31baa9b28804582f1bf7d8c6a8755f",
          ["transitive.lua"] = "7fbf9f1ee069a70682c2dce62bf338c2",

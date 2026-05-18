@@ -151,8 +151,15 @@ local function merge_includes(local_incs, transitive_incs)
     return result
 end
 
+local function merge_requires(opts)
+    local out = {}
+    for _, r in ipairs((opts and opts.links) or {}) do out[#out + 1] = r end
+    for _, r in ipairs((opts and opts.requires) or {}) do out[#out + 1] = r end
+    return out
+end
+
 function M.bin(name, opts)
-    cook.recipe(name, { requires = (opts and opts.links) or {} }, function()
+    cook.recipe(name, { requires = merge_requires(opts) }, function()
         register_needs(opts and opts.needs)
         local b = build_opts(opts, "bin")
         b.needs = (opts and opts.needs) or {}
@@ -176,7 +183,7 @@ function M.bin(name, opts)
 end
 
 function M.lib(name, opts)
-    cook.recipe(name, { requires = (opts and opts.links) or {} }, function()
+    cook.recipe(name, { requires = merge_requires(opts) }, function()
         register_needs(opts and opts.needs)
         local b = build_opts(opts, "lib")
         b.needs = (opts and opts.needs) or {}
@@ -196,7 +203,7 @@ function M.lib(name, opts)
 end
 
 function M.shared(name, opts)
-    cook.recipe(name, { requires = (opts and opts.links) or {} }, function()
+    cook.recipe(name, { requires = merge_requires(opts) }, function()
         register_needs(opts and opts.needs)
         local b = build_opts(opts, "shared")
         b.needs = (opts and opts.needs) or {}
