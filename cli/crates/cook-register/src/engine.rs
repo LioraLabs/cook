@@ -594,10 +594,10 @@ pub fn register_cookfile(
         dispatch_config_blocks(&lua, &builder, &recipes.borrow())?;
 
     // 8. Collision detection — Task 2.3. A name registered more than once
-    //    (surface vs dynamic, or dynamic vs dynamic) is a hard error per
-    //    spec §8. Phase 3 wires `cook.__register_surface` and surfaces the
-    //    headline surface-vs-dynamic case; for now only dynamic-vs-dynamic
-    //    collisions are reachable.
+    //    (surface vs dynamic, dynamic vs dynamic, chore vs dynamic) is a
+    //    hard error per spec §8. Static-vs-static within a single Cookfile
+    //    is impossible: cook-lang's parser rejects duplicate
+    //    `recipe`/`chore` declarations at parse time.
     detect_collisions(&recipes.borrow())?;
 
     // 9. Probe cycle detection — once per session.

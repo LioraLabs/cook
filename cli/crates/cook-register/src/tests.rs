@@ -1269,3 +1269,71 @@ fn register_cookfile_surfaces_wrapper_registered_recipe() {
     }
     assert!(registered.units_by_recipe.contains_key("game"));
 }
+
+// -----------------------------------------------------------------------
+// SHI-222 Phase 3 Task 3.1 (review polish I3) — direct capture-layer
+// tests for the codegen-private cook.__register_surface[_chore] closures.
+//
+// These closures are otherwise only exercised through codegen-driven
+// integration tests, so a hand-written Lua call here pins the contract
+// in isolation: (name, kind, source line) end-to-end through
+// register_cookfile. The explicit `__line = N` assertion also locks down
+// the M1 silent-coercion class — any future change that breaks `__line`
+// parsing would fail at `line == 0` instead of `line == N`.
+// -----------------------------------------------------------------------
+
+#[test]
+fn register_cookfile_records_static_surface_recipe_with_line() {
+    use crate::{register_cookfile, RecipeKind, RegisterSessionBuilder, RegistrationSource};
+
+    // Hand-written codegen-style source: call the codegen-private
+    // `cook.__register_surface` helper directly with a populated meta
+    // table (the exact shape `cook-luagen` emits for `recipe NAME`).
+    let lua_src = r#"
+        cook.__register_surface("build",
+            {ingredients = {}, excludes = {}, requires = {}, __line = 7},
+            function()
+                cook.exec("touch ok.txt", 0)
+            end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder =
+        RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
+
+    assert_eq!(registered.names.len(), 1);
+    assert_eq!(registered.names[0].name, "build");
+    assert_eq!(registered.names[0].kind, RecipeKind::Recipe);
+    match registered.names[0].source {
+        RegistrationSource::Static { line } => assert_eq!(line, 7),
+        other => panic!("expected Static {{ line = 7 }}, got {other:?}"),
+    }
+    assert!(registered.units_by_recipe.contains_key("build"));
+}
+
+#[test]
+fn register_cookfile_records_static_surface_chore_with_kind_chore() {
+    use crate::{register_cookfile, RecipeKind, RegisterSessionBuilder, RegistrationSource};
+
+    // Chores have no ingredients/excludes (parser-enforced), so omit
+    // those fields to verify the defaults in `parse_meta_lists` work.
+    let lua_src = r#"
+        cook.__register_surface_chore("clean",
+            {requires = {}, __line = 12},
+            function()
+                cook.exec("rm -rf build", 0)
+            end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder =
+        RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
+
+    assert_eq!(registered.names.len(), 1);
+    assert_eq!(registered.names[0].name, "clean");
+    assert_eq!(registered.names[0].kind, RecipeKind::Chore);
+    match registered.names[0].source {
+        RegistrationSource::Static { line } => assert_eq!(line, 12),
+        other => panic!("expected Static {{ line = 12 }}, got {other:?}"),
+    }
+}

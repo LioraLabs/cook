@@ -5,7 +5,9 @@ use std::process::Command;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-use cook_contracts::{CapturedUnit, DepKind, WorkPayload};
+use cook_contracts::{
+    CapturedUnit, DepKind, WorkPayload, REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME,
+};
 
 use crate::{RecipeKind, SharedBodySlot};
 
@@ -158,7 +160,7 @@ pub fn install_cook_api(
             Ok(())
         },
     )?;
-    cook.set("__register_surface", surface_fn)?;
+    cook.set(REGISTER_SURFACE_NAME, surface_fn)?;
 
     // cook.__register_surface_chore(name, meta, body) — codegen-private API.
     //
@@ -186,7 +188,7 @@ pub fn install_cook_api(
             Ok(())
         },
     )?;
-    cook.set("__register_surface_chore", chore_fn)?;
+    cook.set(REGISTER_SURFACE_CHORE_NAME, chore_fn)?;
 
     // cook.exec(cmd, line) — capture mode
     let body_slot_exec = body_slot.clone();

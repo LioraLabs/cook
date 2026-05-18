@@ -16,6 +16,25 @@ use std::path::PathBuf;
 /// import it from here rather than defining its own copy.
 pub const ACCESSORS: &[&str] = &["stem", "name", "ext", "dir"];
 
+/// Bare name of the codegen-private register-phase helper that records a
+/// surface `recipe NAME` block (CS-0077 §6.4 implementation note).
+///
+/// Two consumers MUST agree on this string:
+/// - `cook-luagen` emits `cook.{REGISTER_SURFACE_NAME}(...)` calls when
+///   lowering a surface `recipe NAME` block.
+/// - `cook-register` installs a closure under this name on the register-
+///   phase `cook` Lua table.
+///
+/// Hoisted to this crate so renames are a single-file change rather than a
+/// silent emit/install mismatch at Lua-load time.
+pub const REGISTER_SURFACE_NAME: &str = "__register_surface";
+
+/// Bare name of the codegen-private register-phase helper that records a
+/// surface `chore NAME` block (CS-0077 §6.4 implementation note). Same
+/// emit/install contract as [`REGISTER_SURFACE_NAME`]; tags the
+/// registration with `RecipeKind::Chore` instead of `RecipeKind::Recipe`.
+pub const REGISTER_SURFACE_CHORE_NAME: &str = "__register_surface_chore";
+
 /// Which file descriptor a captured output line came from.
 ///
 /// Carried alongside each line in [`crate`]-level work-result output buffers so

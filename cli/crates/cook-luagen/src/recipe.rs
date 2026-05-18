@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use cook_contracts::ACCESSORS;
+use cook_contracts::{ACCESSORS, REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME};
 use cook_lang::ast::*;
 
 use crate::cook_step::generate_cook_step;
@@ -733,7 +733,8 @@ pub fn generate_with_names(
                 // `cook.recipe(...)` calls. The public `cook.recipe` API
                 // is unchanged; this is a Standard-internal split (CS-0077).
                 out.push_str(&format!(
-                    "cook.__register_surface(\"{}\", {}, function()\n",
+                    "cook.{}(\"{}\", {}, function()\n",
+                    REGISTER_SURFACE_NAME,
                     escape_lua_string(&recipe.name),
                     generate_metadata_with_line(recipe)
                 ));
@@ -929,7 +930,8 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
     let meta = format!("{{{}}}", fields.join(", "));
 
     out.push_str(&format!(
-        "cook.__register_surface_chore(\"{}\", {}, function()\n",
+        "cook.{}(\"{}\", {}, function()\n",
+        REGISTER_SURFACE_CHORE_NAME,
         escape_lua_string(&chore.name),
         meta,
     ));
