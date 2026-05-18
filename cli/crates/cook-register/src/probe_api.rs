@@ -39,11 +39,15 @@ pub type SharedProbeRegistry = Rc<RefCell<ProbeRegistry>>;
 /// * `lua`         — the register-phase Lua VM.
 /// * `cook`        — the `cook` table already present in `lua.globals()`.
 /// * `registry`    — receives each successful `cook.probe` call.
-/// * `body_slot`   — the active body capture state; each probe is also pushed
+/// * `body_slot`   — the active body capture state. When a body is active
+///                   (body-scoped `cook.probe`), each probe is also pushed
 ///                   as a `CapturedUnit { payload: WorkPayload::Probe { … } }`
 ///                   onto the body's units vector so the DAG builder schedules
-///                   probe work (CS-0074 Bug 1). Returns a clean Lua error if
-///                   called outside a recipe body.
+///                   probe work as a consumer of the recipe (CS-0074 Bug 1).
+///                   When the body slot is `None` (top-level `cook.probe` per
+///                   spec §6 step 4 / §7), the probe is session-scoped: it
+///                   lives only in the probe registry and no `CapturedUnit`
+///                   is emitted.
 /// * `source_file` — the Cookfile name included in duplicate-key diagnostics.
 pub fn install_cook_probe(
     lua: &Lua,
@@ -133,24 +137,32 @@ pub fn install_cook_probe(
             },
         );
 
-        // 7. Also push a CapturedUnit so the DAG builder schedules probe
-        //    work (CS-0074 §22.5.2). Probe-to-probe edges come from
+        // 7. Body-scoped probes (slot.is_some()) ALSO get a CapturedUnit so
+        //    the DAG builder can schedule the probe as a consumer work-unit
+        //    within the owning recipe and wire consumer→probe edges
+        //    (CS-0074 §22.5.2). Probe-to-probe edges come from
         //    inputs.requires; probe-to-consumer edges are wired in the DAG
         //    builder by reading each consumer unit's `probes` field.
+        //
+        //    Top-level probes (slot.is_none()) are session-scoped per spec
+        //    §6 step 4 / §7: they live only in `probe_registry` (drained
+        //    later into `session_state.probes`) and do NOT need to appear
+        //    in any recipe body's units vector. We deliberately skip the
+        //    body push instead of erroring — `register_cookfile` starts
+        //    with `body_slot == None` during top-level Lua load.
         let mut slot = body_slot.borrow_mut();
-        let body = slot.as_mut().ok_or_else(|| {
-            LuaError::runtime("cook.probe called outside a recipe body")
-        })?;
-        body.units.push(CapturedUnit {
-            payload: WorkPayload::Probe {
-                key,
-                produce: produce_source,
-                line: call_line,
-            },
-            cache_meta: None,
-            dep_kind: DepKind::Sequential,
-            probes: inputs.requires,
-        });
+        if let Some(body) = slot.as_mut() {
+            body.units.push(CapturedUnit {
+                payload: WorkPayload::Probe {
+                    key,
+                    produce: produce_source,
+                    line: call_line,
+                },
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: inputs.requires,
+            });
+        }
 
         Ok(())
     })?;

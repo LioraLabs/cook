@@ -1181,3 +1181,55 @@ fn list_names_returns_registrations_without_invoking_bodies() {
     // upcoming codegen split.
     assert_eq!(by_name["b"].kind, crate::RecipeKind::Recipe);
 }
+
+#[test]
+fn register_cookfile_accepts_top_level_probe() {
+    use crate::{register_cookfile, RegisterSessionBuilder};
+
+    // Probe at top level (outside any recipe body) — per spec §6 step 4 /
+    // §7 this is the session-scoped form and must succeed: the probe
+    // appears in RegisteredCookfile.probes but is NOT scheduled as a
+    // CapturedUnit inside any recipe body. Before the fix, the body push
+    // in install_cook_probe was unconditional, so the top-level call
+    // aborted lua.load(...).exec() with "called outside a recipe body".
+    let lua_src = r#"
+        cook.probe("os.kernel", {
+            inputs = { env = {"PATH"} },
+            produce = "return { found = true }",
+        })
+        cook.recipe("hello", {requires = {}}, function()
+            cook.exec("echo hi", 0)
+        end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
+
+    assert!(
+        registered.probes.contains_key("os.kernel"),
+        "top-level probe must land in RegisteredCookfile.probes; got keys: {:?}",
+        registered.probes.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(registered.names.len(), 1);
+    assert_eq!(registered.names[0].name, "hello");
+
+    // Body-scoped CapturedUnit emission is *only* for probes inside a
+    // recipe body. The top-level probe must NOT show up in the recipe's
+    // units vector — locking this down catches a regression that would
+    // re-introduce the unconditional push.
+    let hello_units = registered
+        .units_by_recipe
+        .get("hello")
+        .expect("missing units_by_recipe entry for hello");
+    let probe_units: Vec<_> = hello_units
+        .units
+        .iter()
+        .filter(|u| matches!(u.payload, WorkPayload::Probe { .. }))
+        .collect();
+    assert!(
+        probe_units.is_empty(),
+        "top-level probe must not be pushed as a CapturedUnit inside the recipe body; \
+         got {} probe-payload unit(s) in hello.units",
+        probe_units.len()
+    );
+}
