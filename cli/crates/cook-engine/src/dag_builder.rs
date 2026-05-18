@@ -61,6 +61,17 @@ fn compute_consumed_probe_keys(
 
 /// Build a `Dag<WorkNode>` from a topologically-sorted list of `RecipeUnits`.
 ///
+/// **Unified-call contract (SHI-222).** The caller passes _every_ reachable
+/// recipe in a single invocation; cross-recipe edges (both coarse `deps` and
+/// fine-grained `dep_edges`) are resolved intra-call against the running
+/// `recipe_leaves` accumulator. A recipe that references a dep name not
+/// present in the passed slice will silently get no edge for that dep, so
+/// the caller is responsible for ensuring closure under dep edges and for
+/// passing recipes in topological order. The old wave-based call-site hid
+/// this property externally by passing one wave per call; the unified-DAG
+/// path collapses to a single call. See `tests/unified_dag_build.rs` for the
+/// integration pin.
+///
 /// Performs plan-time validation that no two non-dep-related recipes declare
 /// the same canonical output path. If two recipes with no recipe-level
 /// dependency edge between them (in either direction) both claim the same
