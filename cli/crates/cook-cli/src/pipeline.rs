@@ -36,6 +36,28 @@ fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
         }
         PipelineError::Parse(msg) => CookError::ParseError(msg),
         PipelineError::Codegen(msg) => CookError::Other(msg),
+        PipelineError::RecipeCollision { name, sites } => {
+            // Multi-line diagnostic per spec §8: name each registration site
+            // by line + kind label. The CLI's outer harness will print this
+            // verbatim via `Display` and exit with code 3.
+            let mut msg = format!("error: recipe '{name}' is registered more than once:\n");
+            for s in &sites {
+                let kind_str = match s.kind {
+                    cook_engine::cook_register::RegistrationSiteKind::SurfaceRecipe => {
+                        "as a `recipe` block"
+                    }
+                    cook_engine::cook_register::RegistrationSiteKind::SurfaceChore => {
+                        "as a `chore` block"
+                    }
+                    cook_engine::cook_register::RegistrationSiteKind::Dynamic => {
+                        "by cook.recipe at register-phase"
+                    }
+                };
+                msg.push_str(&format!("  - Cookfile:{}: {}\n", s.line, kind_str));
+            }
+            msg.push_str("rename one of them.");
+            CookError::RecipeCollision(msg)
+        }
         PipelineError::UnknownConfig { .. }
         | PipelineError::Workspace(_)
         | PipelineError::InvalidSet(_)

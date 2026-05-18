@@ -64,7 +64,7 @@ pub fn register_single_cookfile(
         .with_cli_overrides(cli_overrides)
         .with_selected_config(selected_config.map(|s| s.to_string()));
     let registered = register_cookfile(builder, &lua_source, cache_ctx)
-        .map_err(|e| PipelineError::Other(e.to_string()))?;
+        .map_err(map_register_error)?;
 
     let mut ws = RegisteredWorkspace {
         names: registered.names,
@@ -138,7 +138,7 @@ pub fn register_workspace(
         &workspace.root.lua_source,
         cache_ctx.clone(),
     )
-    .map_err(|e| PipelineError::Other(e.to_string()))?;
+    .map_err(map_register_error)?;
     merge_into(&mut ws, "", root_registered);
     ws.working_dir_by_prefix
         .insert(String::new(), workspace.root.dir.clone());
@@ -170,7 +170,7 @@ pub fn register_workspace(
             &loaded.lua_source,
             cache_ctx.clone(),
         )
-        .map_err(|e| PipelineError::Other(e.to_string()))?;
+        .map_err(map_register_error)?;
         merge_into(&mut ws, &prefix, import_registered);
         ws.working_dir_by_prefix
             .insert(prefix.clone(), loaded.dir.clone());
@@ -199,8 +199,7 @@ pub fn list_single_cookfile_names(
     let builder = RegisterSessionBuilder::new(cookfile_dir.to_path_buf(), env_vars)
         .with_cli_overrides(cli_overrides)
         .with_selected_config(selected_config.map(|s| s.to_string()));
-    let names = cook_register::list_names(builder, &lua_source)
-        .map_err(|e| PipelineError::Other(e.to_string()))?;
+    let names = cook_register::list_names(builder, &lua_source).map_err(map_register_error)?;
     Ok(names.into_iter().map(|n| (n.name, n.kind)).collect())
 }
 
@@ -226,7 +225,7 @@ pub fn list_workspace_names(
         .with_cli_overrides(cli_overrides.clone())
         .with_selected_config(config.map(|s| s.to_string()));
     let root_names = cook_register::list_names(root_builder, &workspace.root.lua_source)
-        .map_err(|e| PipelineError::Other(e.to_string()))?;
+        .map_err(map_register_error)?;
     for n in root_names {
         out.push((n.name, n.kind));
     }
@@ -241,8 +240,8 @@ pub fn list_workspace_names(
             .with_cli_overrides(cli_overrides.clone())
             .with_selected_config(config.map(|s| s.to_string()))
             .with_qualified_prefix(prefix.clone());
-        let names = cook_register::list_names(builder, &loaded.lua_source)
-            .map_err(|e| PipelineError::Other(e.to_string()))?;
+        let names =
+            cook_register::list_names(builder, &loaded.lua_source).map_err(map_register_error)?;
         for n in names {
             out.push((format!("{prefix}.{}", n.name), n.kind));
         }
@@ -314,4 +313,87 @@ fn merge_into(
     }
     ws.final_env_by_cookfile
         .insert(prefix.to_string(), rc.final_env);
+}
+
+/// Map a [`cook_register::RegisterError`] from one of the helpers in this
+/// module onto a [`PipelineError`]. The collision variant is preserved as a
+/// structured `PipelineError::RecipeCollision { name, sites }` so the CLI can
+/// render the multi-line per-site diagnostic at emit time (SHI-222 Phase 5
+/// Task 5.6, spec §8); all other variants fall through to
+/// `PipelineError::Other` carrying `RegisterError`'s own `Display` impl —
+/// matching the pre-Task-5.6 behavior for non-collision errors.
+fn map_register_error(e: cook_register::RegisterError) -> PipelineError {
+    match e {
+        cook_register::RegisterError::RecipeCollision { name, sites } => {
+            PipelineError::RecipeCollision { name, sites }
+        }
+        other => PipelineError::Other(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SHI-222 Phase 5 Task 5.6: `register_single_cookfile` must surface
+    /// `RegisterError::RecipeCollision` as a structured
+    /// `PipelineError::RecipeCollision { name, sites }` (not as
+    /// `PipelineError::Other`), so the CLI can render the multi-line
+    /// per-site diagnostic at emit time (spec §8) and exit with code 3.
+    #[test]
+    fn register_single_cookfile_maps_collision_to_typed_variant() {
+        let lua_src = r#"
+            cook.recipe("build", {requires = {}}, function() end)
+            cook.recipe("build", {requires = {}}, function() end)
+        "#;
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        let result = register_single_cookfile(
+            tmpdir.path(),
+            HashMap::new(),
+            &[],
+            lua_src.to_string(),
+            None,
+            None,
+        );
+
+        match result {
+            Ok(_) => panic!("expected PipelineError::RecipeCollision, got Ok"),
+            Err(PipelineError::RecipeCollision { name, sites }) => {
+                assert_eq!(name, "build");
+                assert_eq!(sites.len(), 2, "both register-phase sites are captured");
+                // Both are dynamic `cook.recipe(...)` calls — confirms the
+                // typed mapping passes the kind through faithfully.
+                for s in &sites {
+                    assert_eq!(s.kind, cook_register::RegistrationSiteKind::Dynamic);
+                }
+            }
+            Err(other) => panic!("expected PipelineError::RecipeCollision, got {other:?}"),
+        }
+    }
+
+    /// `RegisterError` variants other than `RecipeCollision` continue to fall
+    /// through to `PipelineError::Other` (pre-Task-5.6 behavior preserved).
+    /// Exercises the fallthrough arm of `map_register_error` via a Lua-level
+    /// error in the cookfile source.
+    #[test]
+    fn register_single_cookfile_maps_non_collision_to_other() {
+        // Top-level Lua error (undefined function) → RegisterError::Lua →
+        // PipelineError::Other.
+        let lua_src = "this_function_does_not_exist()\n";
+        let tmpdir = tempfile::TempDir::new().unwrap();
+        let result = register_single_cookfile(
+            tmpdir.path(),
+            HashMap::new(),
+            &[],
+            lua_src.to_string(),
+            None,
+            None,
+        );
+
+        match result {
+            Ok(_) => panic!("expected PipelineError::Other, got Ok"),
+            Err(PipelineError::Other(_)) => {}
+            Err(other) => panic!("expected PipelineError::Other, got {other:?}"),
+        }
+    }
 }

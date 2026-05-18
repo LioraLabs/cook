@@ -50,6 +50,19 @@ pub enum PipelineError {
     #[error("--set value must be KEY=VALUE, got: {0}")]
     InvalidSet(String),
 
+    /// A recipe name was registered more than once within a single Cookfile
+    /// pass during the register helpers in [`super::registers`]. Carries the
+    /// name and the registration sites so the CLI can render a multi-line
+    /// diagnostic naming each site by line + kind (surface-recipe,
+    /// surface-chore, or `cook.recipe` call). The CLI lifts this to a
+    /// dedicated `CookError::RecipeCollision` with exit code 3 in SHI-222
+    /// Phase 5 Task 5.6 (spec §8).
+    #[error("recipe '{name}' is registered more than once")]
+    RecipeCollision {
+        name: String,
+        sites: Vec<cook_register::RegistrationSite>,
+    },
+
     /// Catch-all for orchestration-layer errors that don't fit a more
     /// specific variant. Mostly used for diagnostic messages where the
     /// CLI just needs to print the string.
