@@ -3041,3 +3041,81 @@ fn test_codegen_interleaves_top_level_module_calls_with_recipes() {
     assert!(a_pos < recipe_pos, "cpp.bin(\"a\") should precede recipe registration");
     assert!(recipe_pos < b_pos, "recipe registration should precede cpp.bin(\"b\")");
 }
+
+// ── SHI-222 Phase 3 Task 3.2: pin chore + requires-bearing recipe shapes ──
+//
+// Task 3.1 pinned the no-deps surface-recipe emission shape
+// (`cook.__register_surface("build", {__line = N}, ...)`). These two
+// tests round out that contract by pinning:
+//
+//   (a) chores lower to `cook.__register_surface_chore(name, ...)` with
+//       `__line = N` (so the capture layer can tag `RecipeKind::Chore`
+//       and feed `SurfaceChore` into collision diagnostics), and
+//   (b) recipes with declared `deps` emit `requires = {...}` in the
+//       metadata table — the field name the capture layer reads via
+//       `parse_meta_lists` and lands in `RegisteredRecipe.requires`.
+//
+// Together with `codegen_emits_register_surface_for_surface_recipes`
+// (Task 3.1) these lock down the full surface-emission shape that the
+// register-phase capture layer depends on, and that the surface-vs-
+// dynamic collision test in `cook-register::tests` exercises end-to-end.
+
+#[test]
+fn codegen_chore_uses_register_surface_chore() {
+    let cookfile = Cookfile {
+        config_blocks: vec![],
+        recipes: vec![],
+        chores: vec![Chore {
+            name: "clean".to_string(),
+            deps: vec![],
+            steps: vec![],
+            line: 8,
+        }],
+        uses: vec![],
+        imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![],
+    };
+    let lua = generate(&cookfile);
+    assert!(
+        lua.contains(r#"cook.__register_surface_chore("clean""#),
+        "expected cook.__register_surface_chore for surface chore, got:\n{lua}"
+    );
+    assert!(
+        lua.contains("__line = 8"),
+        "expected __line = 8 in chore metadata, got:\n{lua}"
+    );
+}
+
+#[test]
+fn codegen_register_surface_includes_requires() {
+    let cookfile = Cookfile {
+        config_blocks: vec![],
+        recipes: vec![Recipe {
+            name: "app".to_string(),
+            deps: vec!["lib".to_string()],
+            ingredients: vec![],
+            excludes: vec![],
+            steps: vec![],
+            line: 10,
+        }],
+        chores: vec![],
+        uses: vec![],
+        imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![],
+    };
+    let lua = generate(&cookfile);
+    assert!(
+        lua.contains(r#"cook.__register_surface("app""#),
+        "expected cook.__register_surface for surface recipe, got:\n{lua}"
+    );
+    assert!(
+        lua.contains(r#"requires = {"lib"}"#),
+        "expected requires = {{\"lib\"}} in metadata, got:\n{lua}"
+    );
+    assert!(
+        lua.contains("__line = 10"),
+        "expected __line = 10 in metadata, got:\n{lua}"
+    );
+}

@@ -1337,3 +1337,54 @@ fn register_cookfile_records_static_surface_chore_with_kind_chore() {
         other => panic!("expected Static {{ line = 12 }}, got {other:?}"),
     }
 }
+
+// -----------------------------------------------------------------------
+// SHI-222 Phase 3 Task 3.2 — surface-vs-dynamic collision is now
+// observable end-to-end.
+//
+// This is the headline SHI-222 collision case: a codegen-emitted surface
+// declaration (`recipe NAME`) colliding with a `cook.recipe(NAME, ...)`
+// call from a register block, top-level module call, or wrapper. Before
+// Task 3.1 split the registration paths, both sites tagged `Dynamic` and
+// the diagnostic could not name which side was the surface declaration.
+//
+// The hand-written Lua here matches the shape `cook-luagen` emits for
+// `recipe "build"` (cf. `codegen_emits_register_surface_for_surface_recipes`),
+// so the test pins the integration between the codegen surface emission
+// (Task 3.1, locked down in `cook-luagen::tests`) and the collision
+// diagnostic in `detect_collisions` (Phase 2 Task 2.3).
+// -----------------------------------------------------------------------
+
+#[test]
+fn register_cookfile_rejects_surface_vs_dynamic_collision() {
+    use crate::{register_cookfile, RegisterError, RegisterSessionBuilder};
+
+    // Simulate codegen output directly: surface recipe + register block
+    // both registering "build". The surface site lowers via
+    // `cook.__register_surface` (codegen-private); the dynamic site is
+    // a plain `cook.recipe(...)` call as a register block would emit.
+    let lua_src = r#"
+        cook.__register_surface("build",
+            {ingredients = {}, excludes = {}, requires = {}, __line = 3},
+            function() end)
+        cook.recipe("build", {requires = {}}, function() end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let err = register_cookfile(builder, lua_src, None).unwrap_err();
+    match err {
+        RegisterError::RecipeCollision { name, sites } => {
+            assert_eq!(name, "build");
+            assert_eq!(sites.len(), 2);
+            assert!(
+                sites.iter().any(|s| matches!(s.kind, crate::RegistrationSiteKind::SurfaceRecipe)),
+                "expected one site tagged SurfaceRecipe, got sites: {sites:?}"
+            );
+            assert!(
+                sites.iter().any(|s| matches!(s.kind, crate::RegistrationSiteKind::Dynamic)),
+                "expected one site tagged Dynamic, got sites: {sites:?}"
+            );
+        }
+        other => panic!("expected RecipeCollision, got {other:?}"),
+    }
+}
