@@ -14,7 +14,10 @@ use crate::env_api::{install_require_env, EnvKeyset};
 use crate::export_api::SharedExportStore;
 use crate::module_loader::{ModuleLoaderState, SharedModuleLoaderState};
 use crate::probe_api::{install_cook_probe, ProbeRegistry};
-use crate::{CaptureState, RegisterError, SharedCaptureState};
+use crate::{
+    BodyCaptureState, RegisterError, SessionCaptureState, SharedBodySlot,
+    SharedSessionCaptureState,
+};
 
 pub struct RegisterSessionBuilder {
     working_dir: PathBuf,
@@ -128,7 +131,25 @@ impl RegisterSessionBuilder {
         //   caller is responsible for sandboxing any dangerous surfaces through
         //   the cook API layer.  Consistent with cook-luaotp/src/pool.rs:159.
         let lua = unsafe { Lua::unsafe_new() };
-        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        // Split capture state: SessionCaptureState lives for the whole register
+        // pass (probes), and a SharedBodySlot holds the BodyCaptureState during
+        // body invocation.
+        //
+        // SHI-222 Phase 1 Task 1.2: the slot is `Option<BodyCaptureState>` so
+        // closures can detect "called outside a recipe body" cleanly once
+        // Phase 2 introduces the new `register_cookfile` entry point. In the
+        // current per-recipe `register_recipe` entry point, top-level
+        // register-block bodies and the recipe body share the same accumulator
+        // (units accumulated in a register block must surface through the
+        // returned RecipeUnits for the chosen recipe). To preserve that
+        // semantic for now, the slot is opened BEFORE `lua.load(...).exec()`
+        // (which runs the register-block splices) and drained after the
+        // recipe body returns. The Option shape still nails down the calling
+        // contract for Phase 2.
+        let session_state: SharedSessionCaptureState =
+            Rc::new(RefCell::new(SessionCaptureState::new()));
+        let body_slot: SharedBodySlot =
+            Rc::new(RefCell::new(Some(BodyCaptureState::new())));
 
         // Thread CacheContext into the Lua VM so cook.add_unit can compute
         // real context_hash and env_contribution values.
@@ -147,7 +168,7 @@ impl RegisterSessionBuilder {
             &lua,
             self.env_vars.clone(),
             &self.working_dir,
-            capture_state.clone(),
+            body_slot.clone(),
             recipe_name,
         )?;
         // Install cook.require_env immediately after the cook table is built.
@@ -166,7 +187,7 @@ impl RegisterSessionBuilder {
             let cookfile_label = lua
                 .named_registry_value::<String>("__cook_cookfile_path")
                 .unwrap_or_else(|_| "Cookfile".to_string());
-            install_cook_probe(&lua, &cook_tbl, probe_registry.clone(), capture_state.clone(), cookfile_label)?;
+            install_cook_probe(&lua, &cook_tbl, probe_registry.clone(), body_slot.clone(), cookfile_label)?;
         }
         // `fs.*`, `path.*`, `cook.platform.*` come from the shared
         // cook-lua-stdlib crate (CS-0044) so register-phase and
@@ -210,17 +231,17 @@ impl RegisterSessionBuilder {
         crate::module_loader::register_cache_api(&lua, module_state.clone())?;
         crate::unit_api::register_unit_api(
             &lua,
-            capture_state.clone(),
+            body_slot.clone(),
             recipe_name,
             self.terminal_outputs.clone(),
             self.working_dir.clone(),
         )?;
         crate::export_api::register_export_api(&lua, self.export_store.clone())?;
-        crate::test_api::register_test_api(&lua, capture_state.clone())?;
+        crate::test_api::register_test_api(&lua, body_slot.clone())?;
         crate::dep_output_api::register_dep_output_api(
             &lua,
             self.terminal_outputs.clone(),
-            capture_state.clone(),
+            body_slot.clone(),
             self.alias_dirs.clone(),
             self.qualified_prefix.clone(),
             self.alias_qualified_prefixes.clone(),
@@ -316,27 +337,42 @@ impl RegisterSessionBuilder {
 
         // Track the currently-executing recipe so cook.add_test can default
         // the suite field to the enclosing recipe's name (CS-0061 §3.2).
-        capture_state.borrow_mut().current_recipe = Some(qualified_name.clone());
+        // The body slot was opened at the start of register_recipe (see the
+        // Phase 1.2 comment there); we just stamp the recipe name on it now,
+        // immediately before invoking the body.
+        {
+            let mut slot = body_slot.borrow_mut();
+            let body = slot
+                .as_mut()
+                .expect("body slot populated at start of register_recipe");
+            body.current_recipe = Some(qualified_name.clone());
+        }
 
-        // Execute recipe function — capture_state gets populated
+        // Execute recipe function — body capture state gets populated via the
+        // cook.* closures, which now borrow `body_slot`.
         let func: LuaFunction = lua.registry_value(&recipe.function)?;
         func.call::<()>(())?;
 
-        // Clear the recipe tracking now that the body has finished.
-        capture_state.borrow_mut().current_recipe = None;
+        // Drain the body capture state — the slot returns to `None` so any
+        // post-body closure invocation (there shouldn't be any) would fail
+        // cleanly rather than silently appending to a stale body.
+        let body = body_slot
+            .borrow_mut()
+            .take()
+            .expect("body slot populated at start of register_recipe");
 
         // Flush module caches
         module_state.borrow().flush_all();
 
-        // Drain the probe registry into capture_state.probes.
-        // ProbeRegistry uses a BTreeMap keyed by probe key, so iteration order
-        // is deterministic. cook.probe calls made during this register pass
+        // Drain the probe registry into the session capture state. ProbeRegistry
+        // uses a BTreeMap keyed by probe key, so iteration order is
+        // deterministic. cook.probe calls made during this register pass
         // (including those in imported modules) are all collected here.
         {
             let probe_reg = probe_registry.borrow();
-            let mut cap_mut = capture_state.borrow_mut();
+            let mut sess = session_state.borrow_mut();
             for (_key, reg) in &probe_reg.probes {
-                cap_mut.probes.push(reg.probe.clone());
+                sess.probes.push(reg.probe.clone());
             }
         }
 
@@ -359,8 +395,7 @@ impl RegisterSessionBuilder {
             let probe_reg = probe_registry.borrow();
             let registered_keys: BTreeSet<&str> =
                 probe_reg.probes.keys().map(|s| s.as_str()).collect();
-            let cap = capture_state.borrow();
-            for (idx, unit) in cap.units.iter().enumerate() {
+            for (idx, unit) in body.units.iter().enumerate() {
                 for key in &unit.probes {
                     if !registered_keys.contains(key.as_str()) {
                         // Derive a human-readable unit name from its first output
@@ -388,10 +423,7 @@ impl RegisterSessionBuilder {
 
         let deps = recipe.metadata.requires.clone();
 
-        // Extract results from capture state
-        let cap = capture_state.borrow();
-
-        let terminal_outputs_list = cap.last_cook_step_outputs.clone();
+        let terminal_outputs_list = body.last_cook_step_outputs.clone();
         self.terminal_outputs
             .lock()
             .expect("terminal_outputs mutex poisoned")
@@ -402,16 +434,22 @@ impl RegisterSessionBuilder {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
+        // Build the per-recipe RecipeUnits from the drained body plus a clone
+        // of the session-scoped probe set (each recipe receives the same set;
+        // the unified-DAG work in Phase 2 will deduplicate probe units across
+        // recipes).
+        let probes = session_state.borrow().probes.clone();
+
         Ok(RecipeUnits {
             recipe_name: recipe_name.to_string(),
             deps,
-            units: cap.units.clone(),
-            step_groups: cap.step_groups.clone(),
+            units: body.units,
+            step_groups: body.step_groups,
             working_dir: self.working_dir.clone(),
             env_vars: env_btree,
             terminal_outputs: terminal_outputs_list,
-            dep_edges: cap.dep_edges.clone(),
-            probes: cap.probes.clone(),
+            dep_edges: body.dep_edges,
+            probes,
         })
     }
 }

@@ -2,7 +2,8 @@
 //!
 //! Installs the `cook.probe` function on the existing `cook` Lua table and
 //! accumulates registrations into a [`ProbeRegistry`]. The registry is later
-//! drained into [`CaptureState::probes`] after the register pass completes.
+//! drained into [`SessionCaptureState::probes`](crate::SessionCaptureState)
+//! after the register pass completes.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -12,7 +13,7 @@ use mlua::prelude::*;
 
 use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
 
-use crate::SharedCaptureState;
+use crate::SharedBodySlot;
 
 /// Per-key registration record: the resolved [`ProbeUnit`] plus the source
 /// location where `cook.probe` was called (for duplicate-key diagnostics).
@@ -35,18 +36,20 @@ pub type SharedProbeRegistry = Rc<RefCell<ProbeRegistry>>;
 
 /// Install `cook.probe(key, opts)` on `cook`.
 ///
-/// * `lua`           — the register-phase Lua VM.
-/// * `cook`          — the `cook` table already present in `lua.globals()`.
-/// * `registry`      — receives each successful `cook.probe` call.
-/// * `capture_state` — shared capture state; each probe is also pushed as a
-///                     `CapturedUnit { payload: WorkPayload::Probe { … } }` so
-///                     the DAG builder schedules probe work (CS-0074 Bug 1).
-/// * `source_file`   — the Cookfile name included in duplicate-key diagnostics.
+/// * `lua`         — the register-phase Lua VM.
+/// * `cook`        — the `cook` table already present in `lua.globals()`.
+/// * `registry`    — receives each successful `cook.probe` call.
+/// * `body_slot`   — the active body capture state; each probe is also pushed
+///                   as a `CapturedUnit { payload: WorkPayload::Probe { … } }`
+///                   onto the body's units vector so the DAG builder schedules
+///                   probe work (CS-0074 Bug 1). Returns a clean Lua error if
+///                   called outside a recipe body.
+/// * `source_file` — the Cookfile name included in duplicate-key diagnostics.
 pub fn install_cook_probe(
     lua: &Lua,
     cook: &LuaTable,
     registry: SharedProbeRegistry,
-    capture_state: SharedCaptureState,
+    body_slot: SharedBodySlot,
     source_file: String,
 ) -> LuaResult<()> {
     let probe_fn = lua.create_function(move |lua, (key, opts): (String, LuaTable)| {
@@ -134,8 +137,11 @@ pub fn install_cook_probe(
         //    work (CS-0074 §22.5.2). Probe-to-probe edges come from
         //    inputs.requires; probe-to-consumer edges are wired in the DAG
         //    builder by reading each consumer unit's `probes` field.
-        let mut cap = capture_state.borrow_mut();
-        cap.units.push(CapturedUnit {
+        let mut slot = body_slot.borrow_mut();
+        let body = slot.as_mut().ok_or_else(|| {
+            LuaError::runtime("cook.probe called outside a recipe body")
+        })?;
+        body.units.push(CapturedUnit {
             payload: WorkPayload::Probe {
                 key,
                 produce: produce_source,
@@ -250,16 +256,17 @@ fn lua_type_name(v: &LuaValue) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CaptureState;
+    use crate::BodyCaptureState;
 
-    fn setup(source_file: &str) -> (Lua, SharedProbeRegistry, SharedCaptureState) {
+    fn setup(source_file: &str) -> (Lua, SharedProbeRegistry, SharedBodySlot) {
         let lua = Lua::new();
         let cook = lua.create_table().unwrap();
         lua.globals().set("cook", cook.clone()).unwrap();
         let reg: SharedProbeRegistry = Rc::new(RefCell::new(ProbeRegistry::default()));
-        let cap: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
-        install_cook_probe(&lua, &cook, reg.clone(), cap.clone(), source_file.to_string()).unwrap();
-        (lua, reg, cap)
+        let body_slot: SharedBodySlot =
+            Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+        install_cook_probe(&lua, &cook, reg.clone(), body_slot.clone(), source_file.to_string()).unwrap();
+        (lua, reg, body_slot)
     }
 
     #[test]

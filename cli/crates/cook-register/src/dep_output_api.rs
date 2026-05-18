@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use mlua::prelude::*;
 
-use crate::SharedCaptureState;
+use crate::SharedBodySlot;
 
 /// Shared storage for terminal outputs of registered recipes, keyed by
 /// **fully-qualified** recipe name (e.g., `"lib.lib_build"` or just
@@ -42,7 +42,7 @@ pub type SharedTerminalOutputs = Arc<Mutex<BTreeMap<String, Vec<String>>>>;
 pub fn register_dep_output_api(
     lua: &Lua,
     terminal_outputs: SharedTerminalOutputs,
-    capture_state: SharedCaptureState,
+    body_slot: SharedBodySlot,
     alias_dirs: BTreeMap<String, PathBuf>,
     qualified_prefix: String,
     alias_qualified_prefixes: BTreeMap<String, String>,
@@ -57,7 +57,7 @@ pub fn register_dep_output_api(
     // Accumulates dep ref in step_group_dep_refs; actual edge recording
     // happens in cook.add_unit() which attaches the ref to the correct unit.
     let to = terminal_outputs.clone();
-    let cs = capture_state.clone();
+    let body_slot_do = body_slot.clone();
     let ad = alias_dirs.clone();
     let qp = qualified_prefix.clone();
     let aqp = alias_qualified_prefixes.clone();
@@ -72,13 +72,16 @@ pub fn register_dep_output_api(
         })?;
         let rewritten = rewrite_paths_for_importer(&name, outputs, &ad);
         {
-            let mut state = cs.borrow_mut();
-            if !state.step_group_dep_refs.contains(&global_key) {
-                state.step_group_dep_refs.push(global_key.clone());
+            let mut slot = body_slot_do.borrow_mut();
+            let body = slot.as_mut().ok_or_else(|| {
+                mlua::Error::runtime("cook.dep_output called outside a recipe body")
+            })?;
+            if !body.step_group_dep_refs.contains(&global_key) {
+                body.step_group_dep_refs.push(global_key.clone());
             }
             for p in &rewritten {
-                if !state.step_group_dep_input_paths.contains(p) {
-                    state.step_group_dep_input_paths.push(p.clone());
+                if !body.step_group_dep_input_paths.contains(p) {
+                    body.step_group_dep_input_paths.push(p.clone());
                 }
             }
         }
@@ -89,7 +92,7 @@ pub fn register_dep_output_api(
     // cook.dep_output_list(name) → Lua table
     // Same accumulation pattern as dep_output.
     let to2 = terminal_outputs.clone();
-    let cs2 = capture_state.clone();
+    let body_slot_dol = body_slot.clone();
     let ad2 = alias_dirs.clone();
     let qp2 = qualified_prefix.clone();
     let aqp2 = alias_qualified_prefixes.clone();
@@ -104,13 +107,16 @@ pub fn register_dep_output_api(
         })?;
         let rewritten = rewrite_paths_for_importer(&name, outputs, &ad2);
         {
-            let mut state = cs2.borrow_mut();
-            if !state.step_group_dep_refs.contains(&global_key) {
-                state.step_group_dep_refs.push(global_key.clone());
+            let mut slot = body_slot_dol.borrow_mut();
+            let body = slot.as_mut().ok_or_else(|| {
+                mlua::Error::runtime("cook.dep_output_list called outside a recipe body")
+            })?;
+            if !body.step_group_dep_refs.contains(&global_key) {
+                body.step_group_dep_refs.push(global_key.clone());
             }
             for p in &rewritten {
-                if !state.step_group_dep_input_paths.contains(p) {
-                    state.step_group_dep_input_paths.push(p.clone());
+                if !body.step_group_dep_input_paths.contains(p) {
+                    body.step_group_dep_input_paths.push(p.clone());
                 }
             }
         }
@@ -183,16 +189,23 @@ fn rewrite_paths_for_importer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CaptureState;
+    use crate::BodyCaptureState;
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    fn setup_lua() -> (Lua, SharedTerminalOutputs, SharedCaptureState) {
+    fn body_ref(body_slot: &SharedBodySlot) -> std::cell::Ref<'_, BodyCaptureState> {
+        std::cell::Ref::map(body_slot.borrow(), |slot| {
+            slot.as_ref().expect("body slot populated for test")
+        })
+    }
+
+    fn setup_lua() -> (Lua, SharedTerminalOutputs, SharedBodySlot) {
         let lua = Lua::new();
         lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
         let terminal_outputs: SharedTerminalOutputs = Arc::new(Mutex::new(BTreeMap::new()));
-        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
-        (lua, terminal_outputs, capture_state)
+        let body_slot: SharedBodySlot =
+            Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+        (lua, terminal_outputs, body_slot)
     }
 
     #[test]
@@ -244,7 +257,7 @@ mod tests {
         lua.load(r#"cook.dep_output("libmath")"#).exec().unwrap();
         // dep_output accumulates in step_group_dep_refs, not dep_edges directly.
         // Actual edge recording happens in cook.add_unit().
-        let state = cs.borrow();
+        let state = body_ref(&cs);
         assert_eq!(state.step_group_dep_refs, vec!["libmath".to_string()]);
         // No direct dep_edges yet — add_unit would create them.
         assert!(state.dep_edges.is_empty());
@@ -261,7 +274,7 @@ mod tests {
             cook.dep_output("libmath")
             cook.dep_output("libmath")
         "#).exec().unwrap();
-        let state = cs.borrow();
+        let state = body_ref(&cs);
         // Should not duplicate
         assert_eq!(state.step_group_dep_refs, vec!["libmath".to_string()]);
     }
@@ -368,7 +381,7 @@ mod tests {
         assert_eq!(result, "../proto/build/proto.bin");
         // The dep ref recorded must be the GLOBAL key so DAG edge wiring lines up
         // with recipe_leaves (which uses globally-qualified names).
-        let state = cs.borrow();
+        let state = body_ref(&cs);
         assert_eq!(
             state.step_group_dep_refs,
             vec!["server.queue.proto.proto_lib".to_string()]
@@ -412,7 +425,7 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(result, "../../libs/proto/build/proto.bin");
-        let state = cs.borrow();
+        let state = body_ref(&cs);
         assert_eq!(
             state.step_group_dep_refs,
             vec!["server.queue.proto.proto_lib".to_string()]
@@ -444,7 +457,7 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(result, "build/local.bin");
-        let state = cs.borrow();
+        let state = body_ref(&cs);
         assert_eq!(state.step_group_dep_refs, vec!["queue.local_recipe".to_string()]);
     }
 
@@ -472,7 +485,7 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(result, "build/local.bin");
-        let state = cs.borrow();
+        let state = body_ref(&cs);
         assert_eq!(state.step_group_dep_refs, vec!["local_recipe".to_string()]);
     }
 }

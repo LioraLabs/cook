@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use cook_contracts::{CacheMeta, CapturedUnit, DepKind, StepKind, WorkPayload};
 
 use crate::dep_output_api::SharedTerminalOutputs;
-use crate::{hash_str, SharedCaptureState};
+use crate::{hash_str, SharedBodySlot};
 
 /// Validate that a path string supplied as a `cook.add_unit` input does not
 /// resolve to a directory. Cook's cache hashing layer reads files, not
@@ -209,7 +209,7 @@ fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<Strin
 /// relative input/output paths for the directory-rejection check.
 pub fn register_unit_api(
     lua: &Lua,
-    capture_state: SharedCaptureState,
+    body_slot: SharedBodySlot,
     recipe_name: &str,
     terminal_outputs: SharedTerminalOutputs,
     working_dir: PathBuf,
@@ -217,28 +217,36 @@ pub fn register_unit_api(
     let cook: LuaTable = lua.globals().get("cook")?;
 
     // cook._enter_chore() — called by chore-generated Lua before the body runs.
-    let cs_enter = capture_state.clone();
+    let body_slot_enter = body_slot.clone();
     let enter_fn = lua.create_function(move |_, ()| {
-        cs_enter.borrow_mut().current_chore_active = true;
+        let mut slot = body_slot_enter.borrow_mut();
+        let body = slot.as_mut().ok_or_else(|| {
+            mlua::Error::runtime("cook._enter_chore called outside a recipe body")
+        })?;
+        body.current_chore_active = true;
         Ok(())
     })?;
     cook.set("_enter_chore", enter_fn)?;
 
     // cook._exit_chore() — called by chore-generated Lua after the body runs.
-    let cs_exit = capture_state.clone();
+    let body_slot_exit = body_slot.clone();
     let exit_fn = lua.create_function(move |_, ()| {
-        cs_exit.borrow_mut().current_chore_active = false;
+        let mut slot = body_slot_exit.borrow_mut();
+        let body = slot.as_mut().ok_or_else(|| {
+            mlua::Error::runtime("cook._exit_chore called outside a recipe body")
+        })?;
+        body.current_chore_active = false;
         Ok(())
     })?;
     cook.set("_exit_chore", exit_fn)?;
 
     // cook.add_unit(table)
-    let cs = capture_state.clone();
+    let body_slot_add = body_slot.clone();
     let rname = recipe_name.to_string();
     let wd_for_add_unit = working_dir.clone();
     // terminal_outputs is no longer consulted in add_unit; dep_output_api.rs
     // now accumulates importer-relative rewritten paths in
-    // capture_state.step_group_dep_input_paths so that cache_meta.input_paths
+    // body.step_group_dep_input_paths so that cache_meta.input_paths
     // contains stat-able paths from the importer's working directory.
     let _ = terminal_outputs;
     let add_unit_fn = lua.create_function(move |lua, tbl: LuaTable| {
@@ -266,12 +274,18 @@ pub fn register_unit_api(
         };
 
         // §{chores.no-caching}: cache = true is not permitted inside a chore body.
-        if cache_enabled && cs.borrow().current_chore_active {
-            return Err(LuaError::RuntimeError(
-                "cook.add_unit: cache = true is not permitted in a chore body \
-                 (§{chores.no-caching}); chore units are never cached"
-                    .into(),
-            ));
+        {
+            let slot = body_slot_add.borrow();
+            let body = slot.as_ref().ok_or_else(|| {
+                LuaError::runtime("cook.add_unit called outside a recipe body")
+            })?;
+            if cache_enabled && body.current_chore_active {
+                return Err(LuaError::RuntimeError(
+                    "cook.add_unit: cache = true is not permitted in a chore body \
+                     (§{chores.no-caching}); chore units are never cached"
+                        .into(),
+                ));
+            }
         }
         let inputs: Vec<String> = match tbl.get::<LuaTable>("inputs") {
             Ok(t) => t.sequence_values::<String>().filter_map(Result::ok).collect(),
@@ -342,8 +356,11 @@ pub fn register_unit_api(
         // stat'd from the importer's working directory — using them would cause
         // MissingFile errors in record_completion, silently dropping demo.bin.
         let dep_input_paths: Vec<String> = {
-            let state = cs.borrow();
-            state.step_group_dep_input_paths.clone()
+            let slot = body_slot_add.borrow();
+            let body = slot.as_ref().ok_or_else(|| {
+                LuaError::runtime("cook.add_unit called outside a recipe body")
+            })?;
+            body.step_group_dep_input_paths.clone()
         };
         let cache_input_paths: Vec<String> = inputs
             .iter()
@@ -516,8 +533,14 @@ pub fn register_unit_api(
         };
 
         // is_chore is read BEFORE the if/else below (and before the later
-        // `cs.borrow_mut()`) so the borrow doesn't overlap with mutable use.
-        let is_chore = cs.borrow().current_chore_active;
+        // mutable borrow) so the borrow doesn't overlap with mutable use.
+        let is_chore = {
+            let slot = body_slot_add.borrow();
+            let body = slot.as_ref().ok_or_else(|| {
+                LuaError::runtime("cook.add_unit called outside a recipe body")
+            })?;
+            body.current_chore_active
+        };
         let payload = if let Some(code) = lua_code {
             WorkPayload::LuaChunk {
                 code,
@@ -559,30 +582,33 @@ pub fn register_unit_api(
             }
         };
 
-        let mut state = cs.borrow_mut();
-        let dep_kind = if let Some(group_idx) = state.current_group {
+        let mut slot = body_slot_add.borrow_mut();
+        let body = slot.as_mut().ok_or_else(|| {
+            LuaError::runtime("cook.add_unit called outside a recipe body")
+        })?;
+        let dep_kind = if let Some(group_idx) = body.current_group {
             DepKind::StepGroup(group_idx)
         } else {
             DepKind::Sequential
         };
-        let unit_idx = state.units.len();
-        state.units.push(CapturedUnit {
+        let unit_idx = body.units.len();
+        body.units.push(CapturedUnit {
             payload,
             cache_meta,
             dep_kind: dep_kind.clone(),
             probes,
         });
         if let DepKind::StepGroup(gi) = &dep_kind {
-            state.step_groups[*gi].push(unit_idx);
+            body.step_groups[*gi].push(unit_idx);
         }
         for out in outputs_for_tracking {
-            state.current_step_outputs.push(out);
+            body.current_step_outputs.push(out);
         }
         // Record dep edges: every dep ref accumulated in this step_group
         // applies to this unit.
-        let dep_refs: Vec<String> = state.step_group_dep_refs.clone();
+        let dep_refs: Vec<String> = body.step_group_dep_refs.clone();
         for dep_name in dep_refs {
-            state.dep_edges.push((unit_idx, dep_name));
+            body.dep_edges.push((unit_idx, dep_name));
         }
         Ok(())
     })?;
@@ -602,38 +628,47 @@ pub fn register_unit_api(
     // step iterates over (`ingredients`, `_cook_outputs_N`, or a literal
     // list). The `step_group` close-out then drains the pushed values
     // into `last_cook_step_outputs` per the normal flow.
-    let cs_pt = capture_state.clone();
+    let body_slot_pt = body_slot.clone();
     let passthrough_fn = lua.create_function(move |_, list: LuaTable| {
-        let mut state = cs_pt.borrow_mut();
+        let mut slot = body_slot_pt.borrow_mut();
+        let body = slot.as_mut().ok_or_else(|| {
+            mlua::Error::runtime("cook.passthrough called outside a recipe body")
+        })?;
         for pair in list.sequence_values::<String>() {
             let item = pair.map_err(|e| {
                 mlua::Error::runtime(format!("cook.passthrough: bad list element: {e}"))
             })?;
-            state.current_step_outputs.push(item);
+            body.current_step_outputs.push(item);
         }
         Ok(())
     })?;
     cook.set("passthrough", passthrough_fn)?;
 
     // cook.step_group(fn)
-    let cs2 = capture_state.clone();
+    let body_slot_sg = body_slot.clone();
     let step_group_fn = lua.create_function(move |_, func: LuaFunction| {
         {
-            let mut state = cs2.borrow_mut();
-            let group_idx = state.step_groups.len();
-            state.step_groups.push(Vec::new());
-            state.current_group = Some(group_idx);
+            let mut slot = body_slot_sg.borrow_mut();
+            let body = slot.as_mut().ok_or_else(|| {
+                mlua::Error::runtime("cook.step_group called outside a recipe body")
+            })?;
+            let group_idx = body.step_groups.len();
+            body.step_groups.push(Vec::new());
+            body.current_group = Some(group_idx);
         }
         let result = func.call::<()>(());
         {
-            let mut state = cs2.borrow_mut();
-            state.current_group = None;
-            let outputs: Vec<String> = state.current_step_outputs.drain(..).collect();
+            let mut slot = body_slot_sg.borrow_mut();
+            let body = slot.as_mut().ok_or_else(|| {
+                mlua::Error::runtime("cook.step_group called outside a recipe body")
+            })?;
+            body.current_group = None;
+            let outputs: Vec<String> = body.current_step_outputs.drain(..).collect();
             if !outputs.is_empty() {
-                state.last_cook_step_outputs = outputs;
+                body.last_cook_step_outputs = outputs;
             }
-            state.step_group_dep_refs.clear();
-            state.step_group_dep_input_paths.clear();
+            body.step_group_dep_refs.clear();
+            body.step_group_dep_input_paths.clear();
         }
         result
     })?;
@@ -691,14 +726,24 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use crate::CaptureState;
+    use crate::BodyCaptureState;
     use std::collections::BTreeMap;
 
-    fn make_lua_with_unit_api(recipe_name: &str) -> (Lua, SharedCaptureState) {
+    /// Convenience accessor used throughout the unit_api test module: borrow
+    /// the body slot and panic if it's `None`. The slot is set to `Some(...)`
+    /// by `make_lua_with_unit_api` for the duration of every test.
+    fn body_ref(body_slot: &SharedBodySlot) -> std::cell::Ref<'_, BodyCaptureState> {
+        std::cell::Ref::map(body_slot.borrow(), |slot| {
+            slot.as_ref().expect("body slot populated for test")
+        })
+    }
+
+    fn make_lua_with_unit_api(recipe_name: &str) -> (Lua, SharedBodySlot) {
         use std::sync::{Arc, Mutex};
         let lua = Lua::new();
         lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
-        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        let body_slot: SharedBodySlot =
+            Rc::new(RefCell::new(Some(BodyCaptureState::new())));
         let terminal_outputs: SharedTerminalOutputs =
             Arc::new(Mutex::new(BTreeMap::new()));
         // Tests reference paths like "main.c" that don't exist; the
@@ -707,13 +752,13 @@ mod tests {
         let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         register_unit_api(
             &lua,
-            capture_state.clone(),
+            body_slot.clone(),
             recipe_name,
             terminal_outputs,
             working_dir,
         )
         .unwrap();
-        (lua, capture_state)
+        (lua, body_slot)
     }
 
     fn fake_cache_ctx() -> std::sync::Arc<cook_cache::cache_ctx::CacheContext> {
@@ -743,7 +788,7 @@ mod tests {
             })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         let unit = &state.units[0];
 
@@ -776,7 +821,7 @@ mod tests {
             })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         assert!(state.units[0].cache_meta.is_none());
     }
@@ -794,7 +839,7 @@ mod tests {
             })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         match &state.units[0].payload {
             WorkPayload::Interactive { cmd, .. } => {
@@ -814,7 +859,7 @@ mod tests {
             cook.add_unit({ command = "step2" })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 2);
         assert!(matches!(state.units[0].dep_kind, DepKind::Sequential));
         assert!(matches!(state.units[1].dep_kind, DepKind::Sequential));
@@ -832,7 +877,7 @@ mod tests {
             end)
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 2);
         assert!(matches!(state.units[0].dep_kind, DepKind::StepGroup(0)));
         assert!(matches!(state.units[1].dep_kind, DepKind::StepGroup(0)));
@@ -852,7 +897,7 @@ mod tests {
             cook.add_unit({ command = "sequential_unit" })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 2);
         assert!(matches!(state.units[0].dep_kind, DepKind::StepGroup(0)));
         assert!(matches!(state.units[1].dep_kind, DepKind::Sequential));
@@ -875,7 +920,7 @@ mod tests {
             end)
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         // Terminal outputs = from the LAST step group that produced outputs: ["lib.a"]
         assert_eq!(state.last_cook_step_outputs, vec!["lib.a"]);
     }
@@ -896,7 +941,7 @@ mod tests {
             end)
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.last_cook_step_outputs, vec!["app"]);
     }
 
@@ -913,7 +958,7 @@ mod tests {
             })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         let unit = &state.units[0];
         let meta = unit.cache_meta.as_ref().expect("expected cache_meta");
@@ -962,7 +1007,7 @@ mod tests {
         .exec()
         .unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         let unit = &state.units[0];
         match &unit.payload {
@@ -1004,7 +1049,7 @@ mod tests {
         .exec()
         .unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         match &state.units[0].payload {
             WorkPayload::LuaChunk {
@@ -1038,7 +1083,7 @@ mod tests {
             end)
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.last_cook_step_outputs, vec!["app"]);
     }
 
@@ -1056,7 +1101,7 @@ mod tests {
         cook_table.set("env", env_table).unwrap();
         lua.globals().set("cook", cook_table).unwrap();
 
-        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
         let terminal_outputs: SharedTerminalOutputs =
             std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
         let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -1081,7 +1126,7 @@ mod tests {
             })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         let meta = state.units[0].cache_meta.as_ref().expect("cache_meta");
         assert_eq!(
@@ -1103,7 +1148,7 @@ mod tests {
         cook_table.set("env", lua.create_table().unwrap()).unwrap();
         lua.globals().set("cook", cook_table).unwrap();
 
-        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
         let terminal_outputs: SharedTerminalOutputs = std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
         terminal_outputs
             .lock().unwrap()
@@ -1151,7 +1196,7 @@ mod tests {
         .exec()
         .unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         let meta = state.units[0]
             .cache_meta
@@ -1187,7 +1232,7 @@ mod tests {
             cook._exit_chore()
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         match &state.units[0].payload {
             WorkPayload::Interactive { is_chore, .. } => {
@@ -1212,7 +1257,7 @@ mod tests {
             cook._exit_chore()
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         match &state.units[0].payload {
             WorkPayload::LuaChunk { is_chore, .. } => {
@@ -1235,7 +1280,7 @@ mod tests {
             })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         match &state.units[0].payload {
             WorkPayload::Interactive { is_chore, .. } => {
@@ -1260,7 +1305,7 @@ mod tests {
             })
         "#).exec().expect("exec");
 
-        let st = capture_state.borrow();
+        let st = body_ref(&capture_state);
         let unit: &CapturedUnit = st.units.last().expect("one unit");
         let cm = unit.cache_meta.as_ref().expect("cache_meta");
         let di = cm.discovered_inputs.as_ref().expect("discovered_inputs");
@@ -1343,7 +1388,7 @@ mod tests {
         lua.globals()
             .set("cook", lua.create_table().unwrap())
             .unwrap();
-        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
         let terminal_outputs: SharedTerminalOutputs =
             Arc::new(Mutex::new(BTreeMap::new()));
         register_unit_api(
@@ -1391,7 +1436,7 @@ mod tests {
         );
         // No unit must have been recorded.
         assert!(
-            capture_state.borrow().units.is_empty(),
+            body_ref(&capture_state).units.is_empty(),
             "rejected add_unit must not record a unit"
         );
     }
@@ -1413,7 +1458,7 @@ mod tests {
         lua.globals()
             .set("cook", lua.create_table().unwrap())
             .unwrap();
-        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
         let terminal_outputs: SharedTerminalOutputs =
             Arc::new(Mutex::new(BTreeMap::new()));
         register_unit_api(
@@ -1445,7 +1490,7 @@ mod tests {
         .exec()
         .expect("file input must be accepted");
 
-        assert_eq!(capture_state.borrow().units.len(), 1);
+        assert_eq!(body_ref(&capture_state).units.len(), 1);
     }
 
     /// `outputs` (plural) is also covered: declaring a directory as a
@@ -1462,7 +1507,7 @@ mod tests {
         lua.globals()
             .set("cook", lua.create_table().unwrap())
             .unwrap();
-        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
+        let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
         let terminal_outputs: SharedTerminalOutputs =
             Arc::new(Mutex::new(BTreeMap::new()));
         register_unit_api(
@@ -1524,7 +1569,7 @@ mod tests {
         .exec()
         .unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         let u = state.units.first().expect("one unit");
         assert_eq!(u.probes, vec!["cc:zlib", "cc:compiler"]);
     }
@@ -1544,7 +1589,7 @@ mod tests {
         .exec()
         .unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         let u = state.units.first().expect("one unit");
         assert!(u.probes.is_empty());
     }
@@ -1640,7 +1685,7 @@ mod tests {
         .exec()
         .unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         let unit = state.units.first().expect("one unit");
 
         let has_cache_get = match &unit.payload {

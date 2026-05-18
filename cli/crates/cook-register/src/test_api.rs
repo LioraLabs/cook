@@ -2,16 +2,16 @@ use mlua::prelude::*;
 
 use cook_contracts::{CapturedUnit, DepKind, WorkPayload};
 
-use crate::SharedCaptureState;
+use crate::SharedBodySlot;
 
 /// Register `cook.add_test(table)` on the cook table.
 ///
 /// cook.add_test captures a test work unit with timeout/should_fail metadata.
 /// Uses DepKind::TestSibling so test failures don't cancel siblings.
-pub fn register_test_api(lua: &Lua, capture_state: SharedCaptureState) -> LuaResult<()> {
+pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> {
     let cook: LuaTable = lua.globals().get("cook")?;
 
-    let cs = capture_state.clone();
+    let body_slot_add = body_slot.clone();
     let add_test_fn = lua.create_function(move |_, tbl: LuaTable| {
         // CS-0061 §3.2: `command` is required and must be non-empty.
         let command: String = tbl
@@ -35,8 +35,11 @@ pub fn register_test_api(lua: &Lua, capture_state: SharedCaptureState) -> LuaRes
         let suite_name: String = match tbl.get::<Option<String>>("suite")? {
             Some(s) if !s.is_empty() => s,
             _ => {
-                let cs_borrow = cs.borrow();
-                cs_borrow.current_recipe.clone().unwrap_or_default()
+                let slot = body_slot_add.borrow();
+                let body = slot.as_ref().ok_or_else(|| {
+                    mlua::Error::runtime("cook.add_test called outside a recipe body")
+                })?;
+                body.current_recipe.clone().unwrap_or_default()
             }
         };
 
@@ -56,21 +59,24 @@ pub fn register_test_api(lua: &Lua, capture_state: SharedCaptureState) -> LuaRes
             iteration_item,
         };
 
-        let mut state = cs.borrow_mut();
-        let dep_kind = if let Some(group_idx) = state.current_group {
+        let mut slot = body_slot_add.borrow_mut();
+        let body = slot.as_mut().ok_or_else(|| {
+            mlua::Error::runtime("cook.add_test called outside a recipe body")
+        })?;
+        let dep_kind = if let Some(group_idx) = body.current_group {
             DepKind::TestSibling(group_idx)
         } else {
             DepKind::Sequential
         };
-        let unit_idx = state.units.len();
-        state.units.push(CapturedUnit {
+        let unit_idx = body.units.len();
+        body.units.push(CapturedUnit {
             payload,
             cache_meta: None,
             dep_kind: dep_kind.clone(),
             probes: vec![],
         });
         if let DepKind::TestSibling(gi) = &dep_kind {
-            state.step_groups[*gi].push(unit_idx);
+            body.step_groups[*gi].push(unit_idx);
         }
         // Mirrors cook.add_unit: every dep ref accumulated in this step_group
         // (e.g. via cook.dep_output("alias.recipe") calls inside the test
@@ -78,9 +84,9 @@ pub fn register_test_api(lua: &Lua, capture_state: SharedCaptureState) -> LuaRes
         // grouper schedules the upstream recipe before this test runs.
         // Without this, a test body refing a sibling recipe races that
         // sibling under --jobs > 1.
-        let dep_refs: Vec<String> = state.step_group_dep_refs.clone();
+        let dep_refs: Vec<String> = body.step_group_dep_refs.clone();
         for dep_name in dep_refs {
-            state.dep_edges.push((unit_idx, dep_name));
+            body.dep_edges.push((unit_idx, dep_name));
         }
 
         Ok(())
@@ -95,14 +101,21 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use crate::CaptureState;
+    use crate::BodyCaptureState;
 
-    fn make_lua_with_test_api() -> (Lua, SharedCaptureState) {
+    fn body_ref(body_slot: &SharedBodySlot) -> std::cell::Ref<'_, BodyCaptureState> {
+        std::cell::Ref::map(body_slot.borrow(), |slot| {
+            slot.as_ref().expect("body slot populated for test")
+        })
+    }
+
+    fn make_lua_with_test_api() -> (Lua, SharedBodySlot) {
         let lua = Lua::new();
         lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
-        let capture_state: SharedCaptureState = Rc::new(RefCell::new(CaptureState::new()));
-        register_test_api(&lua, capture_state.clone()).unwrap();
-        (lua, capture_state)
+        let body_slot: SharedBodySlot =
+            Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+        register_test_api(&lua, body_slot.clone()).unwrap();
+        (lua, body_slot)
     }
 
     #[test]
@@ -118,7 +131,7 @@ mod tests {
             })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         match &state.units[0].payload {
             WorkPayload::Test { cmd, timeout, should_fail, suite_name, test_name, .. } => {
@@ -146,6 +159,8 @@ mod tests {
         // body ref).
         capture_state
             .borrow_mut()
+            .as_mut()
+            .expect("body slot populated for test")
             .step_group_dep_refs
             .push("upstream".to_string());
 
@@ -157,7 +172,7 @@ mod tests {
             })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         // unit_idx 0 must have an edge to "upstream".
         assert_eq!(state.dep_edges, vec![(0usize, "upstream".to_string())]);
@@ -174,7 +189,7 @@ mod tests {
             })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         match &state.units[0].payload {
             WorkPayload::Test { timeout, should_fail, .. } => {
                 assert_eq!(*timeout, 300);
@@ -191,13 +206,17 @@ mod tests {
     #[test]
     fn add_test_defaults_suite_to_recipe_name() {
         let (lua, capture_state) = make_lua_with_test_api();
-        capture_state.borrow_mut().current_recipe = Some("frontend.unit".to_string());
+        capture_state
+            .borrow_mut()
+            .as_mut()
+            .expect("body slot populated for test")
+            .current_recipe = Some("frontend.unit".to_string());
 
         lua.load(r#"
             cook.add_test({ command = "true" })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         assert_eq!(state.units.len(), 1);
         let payload = match &state.units[0].payload {
             WorkPayload::Test { suite_name, .. } => suite_name,
@@ -209,7 +228,11 @@ mod tests {
     #[test]
     fn add_test_rejects_empty_command() {
         let (lua, capture_state) = make_lua_with_test_api();
-        capture_state.borrow_mut().current_recipe = Some("r".to_string());
+        capture_state
+            .borrow_mut()
+            .as_mut()
+            .expect("body slot populated for test")
+            .current_recipe = Some("r".to_string());
 
         let res = lua.load(r#"
             cook.add_test({ command = "" })
@@ -222,7 +245,11 @@ mod tests {
     #[test]
     fn add_test_rejects_missing_command() {
         let (lua, capture_state) = make_lua_with_test_api();
-        capture_state.borrow_mut().current_recipe = Some("r".to_string());
+        capture_state
+            .borrow_mut()
+            .as_mut()
+            .expect("body slot populated for test")
+            .current_recipe = Some("r".to_string());
 
         let res = lua.load(r#"
             cook.add_test({ name = "x" })
@@ -234,7 +261,11 @@ mod tests {
     #[test]
     fn add_test_rejects_non_positive_timeout() {
         let (lua, capture_state) = make_lua_with_test_api();
-        capture_state.borrow_mut().current_recipe = Some("r".to_string());
+        capture_state
+            .borrow_mut()
+            .as_mut()
+            .expect("body slot populated for test")
+            .current_recipe = Some("r".to_string());
 
         let res = lua.load(r#"
             cook.add_test({ command = "true", timeout = 0 })
@@ -247,13 +278,17 @@ mod tests {
     #[test]
     fn add_test_explicit_suite_overrides_default() {
         let (lua, capture_state) = make_lua_with_test_api();
-        capture_state.borrow_mut().current_recipe = Some("r".to_string());
+        capture_state
+            .borrow_mut()
+            .as_mut()
+            .expect("body slot populated for test")
+            .current_recipe = Some("r".to_string());
 
         lua.load(r#"
             cook.add_test({ command = "true", suite = "explicit" })
         "#).exec().unwrap();
 
-        let state = capture_state.borrow();
+        let state = body_ref(&capture_state);
         let suite = match &state.units[0].payload {
             WorkPayload::Test { suite_name, .. } => suite_name,
             _ => panic!(),

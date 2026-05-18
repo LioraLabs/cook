@@ -7,7 +7,7 @@ use std::cell::RefCell;
 
 use cook_contracts::{CapturedUnit, DepKind, WorkPayload};
 
-use crate::SharedCaptureState;
+use crate::SharedBodySlot;
 
 pub struct RegisteredRecipe {
     pub name: String,
@@ -28,7 +28,7 @@ pub fn register_cook_api_capture(
     lua: &Lua,
     env_vars: Rc<RefCell<HashMap<String, String>>>,
     working_dir: &PathBuf,
-    capture_state: SharedCaptureState,
+    body_slot: SharedBodySlot,
     recipe_name: &str,
 ) -> LuaResult<Rc<RefCell<Vec<RegisteredRecipe>>>> {
     let recipes: Rc<RefCell<Vec<RegisteredRecipe>>> = Rc::new(RefCell::new(Vec::new()));
@@ -81,11 +81,14 @@ pub fn register_cook_api_capture(
     cook.set("recipe", recipe_fn)?;
 
     // cook.exec(cmd, line) — capture mode
-    let cs = capture_state.clone();
+    let body_slot_exec = body_slot.clone();
     let exec_fn = lua.create_function(move |_, (cmd, line): (String, usize)| {
-        let mut state = cs.borrow_mut();
-        if state.inside_layer {
-            state.layer_commands.push((cmd, line));
+        let mut slot = body_slot_exec.borrow_mut();
+        let body = slot.as_mut().ok_or_else(|| {
+            mlua::Error::runtime("cook.exec called outside a recipe body")
+        })?;
+        if body.inside_layer {
+            body.layer_commands.push((cmd, line));
         } else {
             let unit = CapturedUnit {
                 payload: WorkPayload::Shell {
@@ -96,16 +99,19 @@ pub fn register_cook_api_capture(
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
             };
-            state.units.push(unit);
+            body.units.push(unit);
         }
         Ok("".to_string())
     })?;
     cook.set("exec", exec_fn)?;
 
     // cook.interactive(cmd, line) — capture mode
-    let cs_i = capture_state.clone();
+    let body_slot_i = body_slot.clone();
     let interactive_capture_fn = lua.create_function(move |_, (cmd, line): (String, usize)| {
-        let mut state = cs_i.borrow_mut();
+        let mut slot = body_slot_i.borrow_mut();
+        let body = slot.as_mut().ok_or_else(|| {
+            mlua::Error::runtime("cook.interactive called outside a recipe body")
+        })?;
         let unit = CapturedUnit {
             payload: WorkPayload::Interactive {
                 cmd: cmd.clone(),
@@ -116,30 +122,37 @@ pub fn register_cook_api_capture(
             dep_kind: DepKind::Sequential,
             probes: vec![],
         };
-        state.units.push(unit);
+        body.units.push(unit);
         Ok("".to_string())
     })?;
     cook.set("interactive", interactive_capture_fn)?;
 
     // cook.sh(cmd) — capture mode: inside a layer it captures like exec;
     // outside a layer it actually executes (user-facing utility that returns stdout).
-    let cs2 = capture_state.clone();
+    //
+    // cook.sh has a long-standing top-level use as a utility (e.g. version
+    // detection in module init code that returns the stdout). When called
+    // without an active body slot, behave as the "execute immediately" path:
+    // there is no layer context outside a body anyway, so this preserves the
+    // existing surface. Inside a body, the layer check applies as before.
+    let body_slot_sh = body_slot.clone();
     let wd_sh = working_dir.clone();
     let env_sh = env_vars.clone();
     let sh_recipe_name = recipe_name.to_string();
     let sh_fn = lua.create_function(move |_, cmd: String| {
-        let mut state = cs2.borrow_mut();
-        if state.inside_layer {
-            state.layer_commands.push((cmd, 0));
-            drop(state);
-            Ok("".to_string())
-        } else {
-            drop(state);
-            // Execute immediately — cook.sh is a user-facing utility
-            // and callers depend on its return value for control flow.
-            let env_snapshot = env_sh.borrow();
-            run_shell_command(&cmd, &wd_sh, &env_snapshot, 0, &sh_recipe_name)
+        {
+            let mut slot = body_slot_sh.borrow_mut();
+            if let Some(body) = slot.as_mut() {
+                if body.inside_layer {
+                    body.layer_commands.push((cmd, 0));
+                    return Ok("".to_string());
+                }
+            }
         }
+        // Execute immediately — cook.sh is a user-facing utility
+        // and callers depend on its return value for control flow.
+        let env_snapshot = env_sh.borrow();
+        run_shell_command(&cmd, &wd_sh, &env_snapshot, 0, &sh_recipe_name)
     })?;
     cook.set("sh", sh_fn)?;
 

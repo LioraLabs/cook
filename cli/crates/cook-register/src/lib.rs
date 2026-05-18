@@ -50,11 +50,37 @@ pub enum RegisterError {
     RecipeNotFound(String),
 }
 
-/// Shared state accumulated during capture-mode execution.
+/// Session-level capture state. One instance per `register_cookfile` call;
+/// shared by all body invocations within that call.
 ///
 /// Uses Rc<RefCell<>> and is therefore !Send. This is intentional —
 /// registration runs on a single thread with a single Lua VM.
-pub struct CaptureState {
+pub struct SessionCaptureState {
+    /// Probes drained from the per-session probe registry after top-level load.
+    /// Each invoked body receives a clone of this set in its RecipeUnits.probes.
+    pub probes: Vec<cook_contracts::ProbeUnit>,
+}
+
+impl SessionCaptureState {
+    pub fn new() -> Self {
+        Self {
+            probes: Vec::new(),
+        }
+    }
+}
+
+impl Default for SessionCaptureState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Per-recipe-body capture state. Constructed fresh inside `invoke_body`;
+/// drained into a `RecipeUnits` and dropped when the body returns.
+///
+/// Uses Rc<RefCell<>> and is therefore !Send. This is intentional —
+/// registration runs on a single thread with a single Lua VM.
+pub struct BodyCaptureState {
     pub inside_layer: bool,
     pub layer_commands: Vec<(String, usize)>,
     pub units: Vec<CapturedUnit>,
@@ -67,8 +93,6 @@ pub struct CaptureState {
     pub last_cook_step_outputs: Vec<String>,
     /// Fine-grained dep edges: (unit_idx, dep_recipe_name).
     pub dep_edges: Vec<(usize, String)>,
-    /// Probe units registered via `cook.probe(key, opts)` (§22.5.2).
-    pub probes: Vec<cook_contracts::ProbeUnit>,
     /// Dep refs accumulated during current step_group.
     /// Cleared when step_group ends. Each add_unit call within the group
     /// inherits all accumulated dep refs as edges.
@@ -91,7 +115,7 @@ pub struct CaptureState {
     pub current_recipe: Option<String>,
 }
 
-impl CaptureState {
+impl BodyCaptureState {
     pub fn new() -> Self {
         Self {
             inside_layer: false,
@@ -102,7 +126,6 @@ impl CaptureState {
             current_step_outputs: Vec::new(),
             last_cook_step_outputs: Vec::new(),
             dep_edges: Vec::new(),
-            probes: Vec::new(),
             step_group_dep_refs: Vec::new(),
             step_group_dep_input_paths: Vec::new(),
             current_chore_active: false,
@@ -111,13 +134,23 @@ impl CaptureState {
     }
 }
 
-impl Default for CaptureState {
+impl Default for BodyCaptureState {
     fn default() -> Self {
         Self::new()
     }
 }
 
-pub type SharedCaptureState = Rc<RefCell<CaptureState>>;
+/// Ref-counted, interior-mutable handle to a [`SessionCaptureState`].
+/// Threaded through every capture closure that needs to read or write
+/// session-scoped state (probes only at this point).
+pub type SharedSessionCaptureState = Rc<RefCell<SessionCaptureState>>;
+
+/// Ref-counted, interior-mutable handle to the *currently-active*
+/// [`BodyCaptureState`]. `None` when no recipe body is executing
+/// (e.g. during top-level load, between body invocations).
+/// Closures that touch body-scoped state borrow this slot and return
+/// a Lua error when the slot is `None`.
+pub type SharedBodySlot = Rc<RefCell<Option<BodyCaptureState>>>;
 
 /// Hash a string using xxh3 (for command templates, env vars, etc.)
 pub fn hash_str(s: &str) -> u64 {
