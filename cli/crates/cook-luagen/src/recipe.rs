@@ -726,10 +726,16 @@ pub fn generate_with_names(
                 out.push('\n');
             }
             TopLevelItem::Recipe(recipe) => {
+                // SHI-222 Phase 3 Task 3.1: surface `recipe NAME` blocks
+                // lower to the codegen-private `cook.__register_surface`
+                // helper (with `__line = N`) so collision detection can
+                // distinguish surface declarations from dynamic
+                // `cook.recipe(...)` calls. The public `cook.recipe` API
+                // is unchanged; this is a Standard-internal split (CS-0077).
                 out.push_str(&format!(
-                    "cook.recipe(\"{}\", {}, function()\n",
+                    "cook.__register_surface(\"{}\", {}, function()\n",
                     escape_lua_string(&recipe.name),
-                    generate_metadata(recipe)
+                    generate_metadata_with_line(recipe)
                 ));
 
                 // Emit local ingredients variable when recipe has ingredients
@@ -912,20 +918,18 @@ fn expand_shell_command_sigil(command: &str, recipe_names: &BTreeSet<String>) ->
 pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
     let mut out = String::new();
 
-    // Emit chore metadata (only deps, no ingredients/excludes for chores).
-    let meta = if chore.deps.is_empty() {
-        "{}".to_string()
-    } else {
-        let items: Vec<String> = chore
-            .deps
-            .iter()
-            .map(|s| format!("\"{}\"", escape_lua_string(s)))
-            .collect();
-        format!("{{requires = {{{}}}}}", items.join(", "))
-    };
+    // SHI-222 Phase 3 Task 3.1: surface `chore NAME` blocks lower to the
+    // codegen-private `cook.__register_surface_chore` helper (with
+    // `__line = N`). The register-phase capture closure tags the
+    // registration with `RecipeKind::Chore` so collision detection and
+    // CLI dispatch can distinguish chores from recipes. Chores have no
+    // ingredients/excludes (parser-enforced), only `requires`.
+    let mut fields = chore_metadata_fields(chore);
+    fields.push(format!("__line = {}", chore.line));
+    let meta = format!("{{{}}}", fields.join(", "));
 
     out.push_str(&format!(
-        "cook.recipe(\"{}\", {}, function()\n",
+        "cook.__register_surface_chore(\"{}\", {}, function()\n",
         escape_lua_string(&chore.name),
         meta,
     ));
@@ -1066,7 +1070,26 @@ fn emit_chore_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]
     ));
 }
 
-fn generate_metadata(recipe: &Recipe) -> String {
+/// Render a `Recipe`'s register-phase metadata table with an explicit
+/// `__line = N` field. Used by the surface codegen path
+/// (`cook.__register_surface(...)`) so the register-phase capture closure
+/// can tag the registration with the source line — `caller_line_in_cookfile`'s
+/// call-stack walk does not work here because the codegen splices into the
+/// top-level chunk and the call site line is the *generated* line, not the
+/// original Cookfile line. The `__line` field is always present so the
+/// emitted table is non-empty even for a recipe with no `requires` /
+/// `ingredients` / `excludes`.
+fn generate_metadata_with_line(recipe: &Recipe) -> String {
+    let mut fields = recipe_metadata_fields(recipe);
+    fields.push(format!("__line = {}", recipe.line));
+    format!("{{{}}}", fields.join(", "))
+}
+
+/// Field-builder for `generate_metadata_with_line`. Emits one
+/// `KEY = {...}` entry per non-empty list metadata field, in the historical
+/// order (`ingredients`, `excludes`, `requires`). The `__line = N` field is
+/// appended by the caller.
+fn recipe_metadata_fields(recipe: &Recipe) -> Vec<String> {
     let mut fields = Vec::new();
     if !recipe.ingredients.is_empty() {
         let items: Vec<String> = recipe
@@ -1092,9 +1115,23 @@ fn generate_metadata(recipe: &Recipe) -> String {
             .collect();
         fields.push(format!("requires = {{{}}}", items.join(", ")));
     }
-    if fields.is_empty() {
-        "{}".to_string()
-    } else {
-        format!("{{{}}}", fields.join(", "))
-    }
+    fields
 }
+
+/// Build chore metadata fields. Chores have no ingredients/excludes,
+/// only `requires` (chore `deps`). Used by `compile_chore` to assemble
+/// the surface-shape (with `__line`) metadata table for
+/// `cook.__register_surface_chore(...)`.
+fn chore_metadata_fields(chore: &Chore) -> Vec<String> {
+    let mut fields = Vec::new();
+    if !chore.deps.is_empty() {
+        let items: Vec<String> = chore
+            .deps
+            .iter()
+            .map(|s| format!("\"{}\"", escape_lua_string(s)))
+            .collect();
+        fields.push(format!("requires = {{{}}}", items.join(", ")));
+    }
+    fields
+}
+

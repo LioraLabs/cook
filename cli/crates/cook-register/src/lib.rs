@@ -93,10 +93,10 @@ pub struct RegistrationSite {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegistrationSiteKind {
     /// Surface `recipe NAME` block (codegen-emitted via
-    /// `cook.__register_surface`). Wired in Phase 3.
+    /// `cook.__register_surface`; SHI-222 Phase 3 Task 3.1).
     SurfaceRecipe,
     /// Surface `chore NAME` block (codegen-emitted via
-    /// `cook.__register_surface`). Wired in Phase 3.
+    /// `cook.__register_surface_chore`; SHI-222 Phase 3 Task 3.1).
     SurfaceChore,
     /// `cook.recipe(...)` call from a `register` block, top-level module
     /// call, or wrapper Lua function (e.g. `cook_cc.bin`).

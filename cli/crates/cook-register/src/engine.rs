@@ -486,9 +486,11 @@ impl RegisterSessionBuilder {
 ///     back to `None` immediately after.
 /// 13. Assemble `RegisteredCookfile { names, units_by_recipe, probes, final_env }`.
 ///
-/// `kind` on each `RegisteredRecipePub` is hard-coded to
-/// [`crate::RecipeKind::Recipe`] here — chore-vs-recipe tagging waits on
-/// the codegen change in Task 3.1 (no surface chore distinction yet).
+/// `kind` on each `RegisteredRecipePub` is copied from the internal
+/// `RegisteredRecipe.kind` — surface `chore NAME` blocks lower to
+/// `cook.__register_surface_chore` (codegen path; see SHI-222 Phase 3
+/// Task 3.1) which tags `RecipeKind::Chore`; everything else tags
+/// `RecipeKind::Recipe`.
 pub fn register_cookfile(
     builder: RegisterSessionBuilder,
     lua_source: &str,
@@ -638,8 +640,15 @@ pub fn register_cookfile(
             func_key_clone,
             requires,
             source,
+            kind,
             qualified_name,
-        ): (LuaRegistryKey, Vec<String>, crate::capture::RegistrationSource, String);
+        ): (
+            LuaRegistryKey,
+            Vec<String>,
+            crate::capture::RegistrationSource,
+            crate::RecipeKind,
+            String,
+        );
         {
             let registry = recipes.borrow();
             let recipe = registry
@@ -658,6 +667,7 @@ pub fn register_cookfile(
             func_key_clone = lua.create_registry_value(func)?;
             requires = recipe.metadata.requires.clone();
             source = recipe.source;
+            kind = recipe.kind;
             qualified_name = if builder.qualified_prefix.is_empty() {
                 recipe.name.clone()
             } else {
@@ -770,7 +780,7 @@ pub fn register_cookfile(
         names.push(crate::RegisteredRecipePub {
             name: name.clone(),
             source,
-            kind: crate::RecipeKind::Recipe,
+            kind,
             requires,
         });
     }
@@ -866,9 +876,15 @@ fn local_topological_sort(
 ///
 /// Each site is tagged by line and kind so the CLI can render a
 /// multi-line diagnostic naming both the surface declaration and the
-/// register-phase Lua call. Two `Static` entries for the same name
-/// cannot occur (codegen never emits duplicates from a single AST), so
-/// this helper does not special-case that.
+/// register-phase Lua call. With the Phase 3 codegen split, kind on
+/// `RegisteredRecipe` distinguishes a surface `recipe NAME` block from a
+/// surface `chore NAME` block; combined with `RegistrationSource` we map:
+///
+///   - `Static + Recipe` → `SurfaceRecipe`
+///   - `Static + Chore`  → `SurfaceChore`
+///   - `Dynamic + _`     → `Dynamic` (chores can't register dynamically;
+///     the Recipe constraint is enforced by `cook.recipe` itself which
+///     always tags `RecipeKind::Recipe`).
 ///
 /// Returns on the first colliding name (deterministic via `BTreeMap`
 /// key sort). Fail-fast is intentional per SHI-222 spec §8: collisions
@@ -884,16 +900,22 @@ fn detect_collisions(
     use std::collections::BTreeMap;
     let mut by_name: BTreeMap<&str, Vec<RegistrationSite>> = BTreeMap::new();
     for r in recipes {
-        let site = match r.source {
-            crate::capture::RegistrationSource::Static { line } => RegistrationSite {
-                line,
-                kind: RegistrationSiteKind::SurfaceRecipe,
-            },
-            crate::capture::RegistrationSource::Dynamic { line } => RegistrationSite {
-                line,
-                kind: RegistrationSiteKind::Dynamic,
-            },
+        let kind = match (r.source, r.kind) {
+            (crate::capture::RegistrationSource::Static { .. }, crate::RecipeKind::Recipe) => {
+                RegistrationSiteKind::SurfaceRecipe
+            }
+            (crate::capture::RegistrationSource::Static { .. }, crate::RecipeKind::Chore) => {
+                RegistrationSiteKind::SurfaceChore
+            }
+            (crate::capture::RegistrationSource::Dynamic { .. }, _) => {
+                RegistrationSiteKind::Dynamic
+            }
         };
+        let line = match r.source {
+            crate::capture::RegistrationSource::Static { line } => line,
+            crate::capture::RegistrationSource::Dynamic { line } => line,
+        };
+        let site = RegistrationSite { line, kind };
         by_name.entry(r.name.as_str()).or_default().push(site);
     }
     for (name, sites) in by_name {
@@ -917,9 +939,11 @@ fn detect_collisions(
 /// to validate `cook NAME` arguments without paying the full
 /// DAG-discovery cost.
 ///
-/// `kind` on each returned [`crate::RegisteredRecipePub`] is hard-coded
-/// to [`crate::RecipeKind::Recipe`] for now — the codegen split between
-/// `recipe NAME` and `chore NAME` blocks lands in Task 3.1.
+/// `kind` on each returned [`crate::RegisteredRecipePub`] is copied
+/// from the internal `RegisteredRecipe.kind`: surface `chore NAME`
+/// blocks (codegen path via `cook.__register_surface_chore`) surface
+/// as `RecipeKind::Chore`; everything else (including all dynamic
+/// `cook.recipe(...)` registrations) surfaces as `RecipeKind::Recipe`.
 pub fn list_names(
     builder: RegisterSessionBuilder,
     lua_source: &str,
@@ -1000,7 +1024,7 @@ pub fn list_names(
         .map(|r| crate::RegisteredRecipePub {
             name: r.name.clone(),
             source: r.source,
-            kind: crate::RecipeKind::Recipe,
+            kind: r.kind,
             requires: r.metadata.requires.clone(),
         })
         .collect();

@@ -122,13 +122,47 @@ fn test_minimal_recipe() {
         }],
     )]);
     let output = generate(&cookfile);
-    assert!(output.contains("cook.recipe(\"build\", {}, function()"));
+    // Surface recipes lower to `cook.__register_surface` (CS-0077 codegen).
+    assert!(output.contains("cook.__register_surface(\"build\""));
     assert!(
         output.contains("cook.add_unit({lua_code = ") && output.contains("cook.sh(") && output.contains("set -e\necho hello"),
         "Single shell line should produce one body unit calling cook.sh, got:\n{output}"
     );
     assert!(!output.contains("cook.layer"), "Shell steps should not use cook.layer");
     assert!(!output.contains("cook.exec"), "Shell steps should not use cook.exec");
+}
+
+#[test]
+fn codegen_emits_register_surface_for_surface_recipes() {
+    // SHI-222 Phase 3 Task 3.1: surface `recipe NAME` blocks must lower to
+    // `cook.__register_surface(name, meta, body)` with `__line = N` carrying
+    // the source line — distinct from `cook.recipe(...)` so collision
+    // detection can tag the registration kind correctly.
+    let cookfile = Cookfile {
+        config_blocks: vec![],
+        recipes: vec![Recipe {
+            name: "build".to_string(),
+            deps: vec![],
+            ingredients: vec![],
+            excludes: vec![],
+            steps: vec![],
+            line: 5,
+        }],
+        chores: vec![],
+        uses: vec![],
+        imports: vec![],
+        register_blocks: vec![],
+        top_level_module_calls: vec![],
+    };
+    let lua = generate(&cookfile);
+    assert!(
+        lua.contains(r#"cook.__register_surface("build""#),
+        "expected cook.__register_surface for surface recipe, got:\n{lua}"
+    );
+    assert!(
+        lua.contains("__line = 5"),
+        "expected __line = 5 in metadata, got:\n{lua}"
+    );
 }
 
 #[test]
@@ -666,7 +700,8 @@ fn test_use_generates_load_module() {
     let output = generate(&cookfile);
     assert!(output.contains(r#"local cpp = cook.load_module("cpp")"#));
     let load_pos = output.find("cook.load_module").unwrap();
-    let recipe_pos = output.find("cook.recipe").unwrap();
+    // Surface recipes lower to `cook.__register_surface` (CS-0077 codegen).
+    let recipe_pos = output.find("cook.__register_surface").unwrap();
     assert!(load_pos < recipe_pos);
 }
 
@@ -1422,9 +1457,12 @@ fn test_cross_recipe_deps_codegen_integration() {
     assert!(lua.contains(r#"cook.dep_output("libmath")"#), "missing dep_output for libmath");
     assert!(lua.contains(r#"cook.dep_output("libstr")"#), "missing dep_output for libstr");
 
-    // libmath recipe should NOT have dep_output calls (it has no deps)
-    let libmath_section = lua.split("cook.recipe(\"libmath\"").nth(1).unwrap();
-    let libmath_end = libmath_section.find("cook.recipe(").unwrap_or(libmath_section.len());
+    // libmath recipe should NOT have dep_output calls (it has no deps).
+    // Surface recipes lower to `cook.__register_surface` (CS-0077 codegen).
+    let libmath_section = lua.split("cook.__register_surface(\"libmath\"").nth(1).unwrap();
+    let libmath_end = libmath_section
+        .find("cook.__register_surface(")
+        .unwrap_or(libmath_section.len());
     let libmath_lua = &libmath_section[..libmath_end];
     assert!(!libmath_lua.contains("cook.dep_output"),
         "libmath should have no dep_output calls");
@@ -1769,9 +1807,12 @@ fn test_compile_chore_basic_shell_interactive_cache_false() {
         }],
     );
     let lua = compile_chore(&chore, &[]);
+    // Surface chores lower to `cook.__register_surface_chore` (CS-0077 codegen).
+    // The metadata table always carries `__line = N` even when the chore has
+    // no deps, so the table is non-empty.
     assert!(
-        lua.contains("cook.recipe(\"clean\", {}, function()"),
-        "chore should register as recipe, got:\n{lua}"
+        lua.contains("cook.__register_surface_chore(\"clean\", {__line = 1}, function()"),
+        "chore should register via __register_surface_chore, got:\n{lua}"
     );
     assert!(
         lua.contains("interactive = true"),
@@ -1945,10 +1986,13 @@ fn test_generate_includes_chores() {
         top_level_module_calls: vec![],
     };
     let lua = generate(&cookfile);
-    assert!(lua.contains("cook.recipe(\"build\""), "recipe missing, got:\n{lua}");
-    assert!(lua.contains("cook.recipe(\"clean\""), "chore missing, got:\n{lua}");
+    // Surface recipes/chores lower to `cook.__register_surface[_chore]`
+    // (CS-0077 codegen). The kind tag carries to `RegisteredRecipe.kind`
+    // through the register-phase capture closures in cook-register.
+    assert!(lua.contains("cook.__register_surface(\"build\""), "recipe missing, got:\n{lua}");
+    assert!(lua.contains("cook.__register_surface_chore(\"clean\""), "chore missing, got:\n{lua}");
     // Chore section must have cache = false.
-    let chore_section = lua.split("cook.recipe(\"clean\"").nth(1).unwrap_or("");
+    let chore_section = lua.split("cook.__register_surface_chore(\"clean\"").nth(1).unwrap_or("");
     assert!(
         chore_section.contains("cache = false"),
         "chore section must have cache = false, got section:\n{chore_section}"
@@ -2938,10 +2982,13 @@ fn test_codegen_interleaves_register_blocks_with_recipes() {
     };
     let out = generate(&cookfile);
     let before_pos = out.find("before()").expect("before() in output");
-    let recipe_pos = out.find("cook.recipe(\"mid\"").expect("recipe registration in output");
+    // Surface recipes lower to `cook.__register_surface` (CS-0077 codegen).
+    let recipe_pos = out
+        .find("cook.__register_surface(\"mid\"")
+        .expect("recipe registration in output");
     let after_pos  = out.find("after()").expect("after() in output");
-    assert!(before_pos < recipe_pos, "before() should precede `cook.recipe(\"mid\"`");
-    assert!(recipe_pos < after_pos, "`cook.recipe(\"mid\"` should precede after()");
+    assert!(before_pos < recipe_pos, "before() should precede `cook.__register_surface(\"mid\"`");
+    assert!(recipe_pos < after_pos, "`cook.__register_surface(\"mid\"` should precede after()");
 }
 
 #[test]
@@ -2986,7 +3033,10 @@ fn test_codegen_interleaves_top_level_module_calls_with_recipes() {
     };
     let out = generate(&cookfile);
     let a_pos      = out.find("cpp.bin(\"a\"").expect("`a` in output");
-    let recipe_pos = out.find("cook.recipe(\"mid\"").expect("recipe registration in output");
+    // Surface recipes lower to `cook.__register_surface` (CS-0077 codegen).
+    let recipe_pos = out
+        .find("cook.__register_surface(\"mid\"")
+        .expect("recipe registration in output");
     let b_pos      = out.find("cpp.bin(\"b\"").expect("`b` in output");
     assert!(a_pos < recipe_pos, "cpp.bin(\"a\") should precede recipe registration");
     assert!(recipe_pos < b_pos, "recipe registration should precede cpp.bin(\"b\")");

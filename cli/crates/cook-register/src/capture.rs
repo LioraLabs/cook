@@ -7,16 +7,20 @@ use std::cell::RefCell;
 
 use cook_contracts::{CapturedUnit, DepKind, WorkPayload};
 
-use crate::SharedBodySlot;
+use crate::{RecipeKind, SharedBodySlot};
 
 /// Where a `RegisteredRecipe` came from. Used by Phase 2 collision detection
 /// (and surface diagnostics) to name BOTH sites of a name conflict and
 /// identify the kind of each.
 ///
-/// - `Static`  — emitted by codegen from a surface `recipe NAME` block
-///   via `cook.__register_surface(...)`. Wired in Phase 3.
+/// - `Static`  — emitted by codegen from a surface `recipe NAME` /
+///   `chore NAME` block via `cook.__register_surface(...)` or
+///   `cook.__register_surface_chore(...)`. The `RecipeKind` carried alongside
+///   on `RegisteredRecipe` distinguishes recipe from chore so
+///   `detect_collisions` can label the site correctly.
 /// - `Dynamic` — recorded by user / wrapper Lua code calling
-///   `cook.recipe(...)` (e.g. `cook_cc.bin` target-makers).
+///   `cook.recipe(...)` (e.g. `cook_cc.bin` target-makers). Always
+///   recipe-kind: chores cannot be registered dynamically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegistrationSource {
     /// Emitted by codegen from a surface `recipe NAME` block.
@@ -30,6 +34,12 @@ pub struct RegisteredRecipe {
     pub function: LuaRegistryKey,
     pub metadata: RegisteredMetadata,
     pub source: RegistrationSource,
+    /// Whether the registered name is a normal recipe or a chore.
+    ///
+    /// Codegen sets `Chore` only via `cook.__register_surface_chore`
+    /// (surface `chore NAME` blocks). All other registration paths
+    /// (`cook.recipe`, `cook.__register_surface`) set `Recipe`.
+    pub kind: RecipeKind,
 }
 
 #[derive(Debug)]
@@ -37,6 +47,42 @@ pub struct RegisteredMetadata {
     pub ingredients: Vec<String>,
     pub excludes: Vec<String>,
     pub requires: Vec<String>,
+}
+
+/// Parse the (ingredients, excludes, requires) string-list fields from a
+/// Lua metadata table. Missing or non-table values yield empty vectors;
+/// individual non-string entries are silently skipped (matches the historical
+/// inline parser in `cook.recipe`).
+///
+/// Shared by `cook.recipe`, `cook.__register_surface`, and
+/// `cook.__register_surface_chore` so the three registration paths see
+/// identical metadata semantics.
+fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec<String>)> {
+    let mut ingredients = Vec::new();
+    if let Ok(t) = meta.get::<LuaTable>("ingredients") {
+        for pair in t.sequence_values::<String>() {
+            if let Ok(s) = pair {
+                ingredients.push(s);
+            }
+        }
+    }
+    let mut excludes = Vec::new();
+    if let Ok(t) = meta.get::<LuaTable>("excludes") {
+        for pair in t.sequence_values::<String>() {
+            if let Ok(s) = pair {
+                excludes.push(s);
+            }
+        }
+    }
+    let mut requires = Vec::new();
+    if let Ok(t) = meta.get::<LuaTable>("requires") {
+        for pair in t.sequence_values::<String>() {
+            if let Ok(s) = pair {
+                requires.push(s);
+            }
+        }
+    }
+    Ok((ingredients, excludes, requires))
 }
 
 /// Install the register-phase `cook.*` API surface on the given Lua VM.
@@ -52,39 +98,13 @@ pub fn install_cook_api(
     let recipes: Rc<RefCell<Vec<RegisteredRecipe>>> = Rc::new(RefCell::new(Vec::new()));
     let cook = lua.create_table()?;
 
-    // cook.recipe(name, metadata, fn) — same as normal
+    // cook.recipe(name, metadata, fn) — the public API.
+    // Always tagged Dynamic; chores cannot be registered through this path.
     let recipes_clone = recipes.clone();
     let recipe_fn =
         lua.create_function(move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
             let key = lua.create_registry_value(func)?;
-
-            let mut ingredients = Vec::new();
-            if let Ok(ing_table) = meta.get::<LuaTable>("ingredients") {
-                for pair in ing_table.sequence_values::<String>() {
-                    if let Ok(s) = pair {
-                        ingredients.push(s);
-                    }
-                }
-            }
-
-            let mut excludes = Vec::new();
-            if let Ok(exc_table) = meta.get::<LuaTable>("excludes") {
-                for pair in exc_table.sequence_values::<String>() {
-                    if let Ok(s) = pair {
-                        excludes.push(s);
-                    }
-                }
-            }
-
-            let mut requires = Vec::new();
-            if let Ok(req_table) = meta.get::<LuaTable>("requires") {
-                for pair in req_table.sequence_values::<String>() {
-                    if let Ok(s) = pair {
-                        requires.push(s);
-                    }
-                }
-            }
-
+            let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
             let line = caller_line_in_cookfile(lua).unwrap_or(0);
 
             recipes_clone.borrow_mut().push(RegisteredRecipe {
@@ -96,10 +116,77 @@ pub fn install_cook_api(
                     requires,
                 },
                 source: RegistrationSource::Dynamic { line },
+                kind: RecipeKind::Recipe,
             });
             Ok(())
         })?;
     cook.set("recipe", recipe_fn)?;
+
+    // cook.__register_surface(name, meta, body) — codegen-private API.
+    //
+    // Emitted by `cook-luagen` for surface `recipe NAME` blocks. Distinct
+    // from `cook.recipe` (which tags Dynamic) so collision diagnostics can
+    // identify a surface declaration vs. a register-phase Lua call by source
+    // kind, not just by line. The `__line = N` field in `meta` carries the
+    // Cookfile source line of the surface block; the Lua call-stack walk
+    // used by `cook.recipe` is not the right answer here because the codegen
+    // splices into the top-level chunk and the call site line is the
+    // generated chunk line, not the Cookfile source line.
+    //
+    // Not part of the public Cook Lua API (CS-0077 §6.4 implementation note).
+    let recipes_surface = recipes.clone();
+    let surface_fn = lua.create_function(
+        move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
+            let key = lua.create_registry_value(func)?;
+            // `__line` is always written by codegen (`generate_metadata_with_line`).
+            // The `unwrap_or(0)` is defensive — a hand-typed
+            // `cook.__register_surface` call without the field would land 0,
+            // matching the legacy `cook.recipe` "no line info" sentinel.
+            let line: usize = meta.get("__line").unwrap_or(0);
+            let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
+            recipes_surface.borrow_mut().push(RegisteredRecipe {
+                name,
+                function: key,
+                metadata: RegisteredMetadata {
+                    ingredients,
+                    excludes,
+                    requires,
+                },
+                source: RegistrationSource::Static { line },
+                kind: RecipeKind::Recipe,
+            });
+            Ok(())
+        },
+    )?;
+    cook.set("__register_surface", surface_fn)?;
+
+    // cook.__register_surface_chore(name, meta, body) — codegen-private API.
+    //
+    // Same shape as `cook.__register_surface` but tagged `RecipeKind::Chore`.
+    // Emitted by `cook-luagen` for surface `chore NAME` blocks. Chores have
+    // no `ingredients`/`excludes` (parser guarantees), but the helper parses
+    // them defensively to keep one code path for metadata extraction.
+    let recipes_chore = recipes.clone();
+    let chore_fn = lua.create_function(
+        move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
+            let key = lua.create_registry_value(func)?;
+            let line: usize = meta.get("__line").unwrap_or(0);
+            let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
+            recipes_chore.borrow_mut().push(RegisteredRecipe {
+                name,
+                function: key,
+                metadata: RegisteredMetadata {
+                    ingredients,
+                    excludes,
+                    requires,
+                },
+                source: RegistrationSource::Static { line },
+                kind: RecipeKind::Chore,
+            });
+            Ok(())
+        },
+    )?;
+    cook.set("__register_surface_chore", chore_fn)?;
 
     // cook.exec(cmd, line) — capture mode
     let body_slot_exec = body_slot.clone();
