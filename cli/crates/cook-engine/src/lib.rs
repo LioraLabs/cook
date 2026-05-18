@@ -34,6 +34,15 @@ pub use cook_register::{RegisteredCookfile, RegisteredRecipePub};
 // engine's own root namespace.
 pub use cook_register;
 
+// Re-export `cook_contracts` and `cook_cache` as modules so consumers
+// (notably `cook-cli`) can name `cook_engine::cook_contracts::RecipeUnits`
+// and `cook_engine::cook_cache::ThreadSafeCacheManager` without taking
+// direct dependencies on those crates. The Cargo.toml comment in cook-cli
+// explicitly calls out that contracts/cache/etc. are reached transitively
+// through the engine's public API; these re-exports honour that contract.
+pub use cook_cache;
+pub use cook_contracts;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;

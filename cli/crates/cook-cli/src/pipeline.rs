@@ -55,12 +55,6 @@ fn read_and_parse(globals: &Globals) -> Result<ParsedCookfile, CookError> {
     Ok(parsed)
 }
 
-fn print_dep_conflicts(warnings: &[String]) {
-    for w in warnings {
-        eprintln!("cook: warning: {w}");
-    }
-}
-
 // ---------------------------------------------------------------------------
 // EngineEvent → ProgressEvent bridge
 // ---------------------------------------------------------------------------
@@ -537,7 +531,7 @@ pub fn cmd_test(
     globals: &Globals,
     args: &crate::cli::TestArgs,
 ) -> Result<(), crate::error::CookError> {
-    use cook_engine::{run_for_test, TestScope};
+    use cook_engine::TestScope;
     use std::sync::{Arc, Mutex};
 
     let project_root = std::env::current_dir()
@@ -545,13 +539,14 @@ pub fn cmd_test(
 
     // Determine scope from positional `scope` argument.
     //
-    // To distinguish a recipe name from a namespace prefix we need the set of
-    // fully-qualified recipe names known to the workspace. Loading the workspace
-    // here is cheap relative to running the test suite, and the engine will load
-    // it again — `run_for_test` is the source of truth for the live recipe set.
-    // We tolerate workspace-load failures here (fall back to the raw arg as a
-    // Recipe scope) so a malformed Cookfile still gets a single, recognisable
-    // error from the engine instead of a duplicated diagnostic from the CLI.
+    // To distinguish a recipe name from a namespace prefix we use the cheap
+    // `list_workspace_names` path: it loads each Cookfile, runs register-phase
+    // Lua, and returns just the qualified names + kinds — no recipe bodies
+    // run, no probe queries fire. This sees Lua-registered recipes (e.g.
+    // `cook_cc.bin`) the same way `cook list` does. We tolerate listing
+    // failures (fall back to the raw arg as a Recipe scope) so a malformed
+    // Cookfile still gets a single, recognisable error from the engine
+    // instead of a duplicated diagnostic from the CLI.
     let scope: Option<TestScope> = match args.scope.as_deref() {
         None => None,
         Some(name) => {
@@ -582,48 +577,220 @@ pub fn cmd_test(
     let rerun_patterns: Vec<String> = args.rerun.clone().unwrap_or_default();
     let num_jobs = resolve_num_jobs(globals);
 
-    let reporter = Arc::new(Mutex::new(crate::test_reporter::Reporter::new(globals)));
-    let reporter_for_cb = reporter.clone();
+    // ── Register the workspace ────────────────────────────────────────────────
+    // Same path as `cmd_run`: build a unified `RegisteredWorkspace` covering
+    // every Cookfile (root + imports), then derive recipe_infos. This sees
+    // Lua-registered recipes (cook_cc.bin, dynamic chores, …) under their
+    // qualified names with `RecipeUnits` and `dep_edges` already wired.
+    let parsed = read_and_parse(globals)?;
+    let registered = if !parsed.cookfile.imports.is_empty() {
+        let workspace_root = pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
+            .map_err(pipeline_error_to_cook_error)?;
+        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
+            .map_err(pipeline_error_to_cook_error)?;
+        pipeline::register_workspace(&workspace, None, &globals.set, /*cache_ctx*/ None)
+            .map_err(pipeline_error_to_cook_error)?
+    } else {
+        let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
+        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+            std::path::Path::new(".")
+        } else {
+            cookfile_dir
+        };
+        let dotenv_vars = pipeline::load_env(cookfile_dir);
+        let env_vars = pipeline::resolve_env(None, dotenv_vars, &globals.set)
+            .map_err(pipeline_error_to_cook_error)?;
+        pipeline::register_single_cookfile(
+            cookfile_dir,
+            env_vars,
+            &globals.set,
+            parsed.lua_source,
+            None,
+            /*cache_ctx*/ None,
+        )
+        .map_err(pipeline_error_to_cook_error)?
+    };
+    let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 
-    let on_event = move |evt: cook_engine::EngineEvent| {
-        if let Ok(mut r) = reporter_for_cb.lock() {
-            r.on_event(evt);
+    // Chore names — chores are excluded from `cook test` because they are
+    // destructive by design (e.g. `cook clean` deletes build artefacts) and
+    // have no test steps. Including them would cause unintended side-effects.
+    let chore_names: std::collections::BTreeSet<String> = registered
+        .names
+        .iter()
+        .filter(|n| matches!(n.kind, cook_engine::cook_register::RecipeKind::Chore))
+        .map(|n| n.name.clone())
+        .collect();
+
+    // ── Determine candidate recipe names from scope ──────────────────────────
+    let candidate_recipe_names: Vec<String> = match &scope {
+        None => recipe_infos
+            .keys()
+            .filter(|n| !chore_names.contains(*n))
+            .cloned()
+            .collect(),
+        Some(TestScope::Recipe(name)) => {
+            cook_engine::analyzer::dependency_edges(&recipe_infos, name)
+                .map_err(|e| match e {
+                    cook_engine::analyzer::GraphError::CycleDetected(s) => {
+                        crate::error::CookError::Other(format!("dependency cycle involving: {s}"))
+                    }
+                    cook_engine::analyzer::GraphError::UnknownRecipe(s) => {
+                        crate::error::CookError::RecipeNotFound(s)
+                    }
+                    other => crate::error::CookError::Other(other.to_string()),
+                })?
+                .keys()
+                .filter(|n| !chore_names.contains(*n))
+                .cloned()
+                .collect()
+        }
+        Some(TestScope::Namespace(ns)) => {
+            let prefix = format!("{ns}.");
+            recipe_infos
+                .keys()
+                .filter(|n| !chore_names.contains(*n))
+                .filter(|n| n.starts_with(&prefix) || *n == ns)
+                .cloned()
+                .collect()
         }
     };
 
-    let result = run_for_test(
-        &project_root,
-        scope,
-        &args.filter,
-        rerun_failed_set.as_ref(),
-        &rerun_patterns,
-        args.fail_fast,
-        num_jobs,
-        on_event,
-    )
-    .map_err(|e| crate::error::CookError::Other(format!("{e}")))?;
+    // ── Recipe-level pre-filter by --filter glob ─────────────────────────────
+    // When filter_patterns are present, limit the target recipe set to those
+    // whose recipe name could plausibly match the glob. The glob pattern uses
+    // `<recipe>:<test_name>` format; we match the recipe portion by checking
+    // if any pattern matches `<recipe>:*`. This avoids running unrelated
+    // recipes whose build steps may fail hard when we only care about specific
+    // tests. Post-execution, we still apply the full per-TestId filter to
+    // handle the test_name portion.
+    let candidate_recipe_names: Vec<String> = if !args.filter.is_empty() {
+        candidate_recipe_names
+            .into_iter()
+            .filter(|recipe_name| {
+                args.filter.iter().any(|pat| {
+                    let recipe_pat = if let Some(colon_pos) = pat.find(':') {
+                        pat[..colon_pos].to_string()
+                    } else {
+                        pat.clone()
+                    };
+                    let wildcard_id_for_recipe = format!("{}:", recipe_name);
+                    let full_match = globset::Glob::new(pat)
+                        .map(|g| g.compile_matcher().is_match(&wildcard_id_for_recipe))
+                        .unwrap_or(false);
+                    let recipe_match = globset::Glob::new(&recipe_pat)
+                        .map(|g| g.compile_matcher().is_match(recipe_name.as_str()))
+                        .unwrap_or(false);
+                    full_match || recipe_match
+                })
+            })
+            .collect()
+    } else {
+        candidate_recipe_names
+    };
 
-    // SAFETY: on_event closure was moved into run_for_test (and it captured the
-    // clone); run_for_test has returned, so no other Arc references remain.
+    let reporter = Arc::new(Mutex::new(crate::test_reporter::Reporter::new(globals)));
+
+    // ── Drive the unified-DAG executor ───────────────────────────────────────
+    // The `on_event` closure clones the reporter Arc. It MUST be dropped
+    // before we reclaim the inner reporter via `Arc::try_unwrap` below; the
+    // simplest way to guarantee that is to scope the closure inside the
+    // run-or-skip branch so it falls out of scope by the end of the
+    // expression.
+    let test_results: Vec<cook_engine::TestResult> = if candidate_recipe_names.is_empty() {
+        // Nothing in the candidate set (e.g. `--filter` matched no recipe).
+        // Skip the executor and return an empty result. The reporter still
+        // gets `finish` called below with an empty slice.
+        Vec::new()
+    } else {
+        let edges = cook_engine::analyzer::dependency_edges_multi(
+            &recipe_infos,
+            &candidate_recipe_names,
+        )
+        .map_err(|e| match e {
+            cook_engine::analyzer::GraphError::CycleDetected(name) => {
+                crate::error::CookError::Other(format!("dependency cycle involving: {name}"))
+            }
+            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
+                crate::error::CookError::RecipeNotFound(name)
+            }
+            other => crate::error::CookError::Other(other.to_string()),
+        })?;
+        let reachable: std::collections::BTreeSet<String> = edges.keys().cloned().collect();
+
+        let reporter_for_cb = reporter.clone();
+        let on_event = move |evt: cook_engine::EngineEvent| {
+            if let Ok(mut r) = reporter_for_cb.lock() {
+                r.on_event(evt);
+            }
+        };
+
+        // In test mode, a cook-step failure should not short-circuit with
+        // EngineError::TaskFailures. The executor's cancel_subtree already
+        // pushed Blocked TestResult rows for every downstream test node into
+        // `partial_test_results`; carry them through so we return Ok with the
+        // Blocked results rather than propagating the error.
+        match cook_engine::run::run(
+            &project_root,
+            &registered,
+            &edges,
+            &reachable,
+            num_jobs,
+            &rerun_patterns,
+            on_event,
+        ) {
+            Ok(r) => r.test_results,
+            Err(cook_engine::EngineError::TaskFailures {
+                partial_test_results,
+                ..
+            }) => partial_test_results,
+            Err(other) => return Err(engine_error_to_cook_error(other)),
+        }
+    };
+
+    // SAFETY: the `on_event` closure (if any) was moved into run() above and
+    // has been dropped by now; no other Arc references remain.
     let mut reporter = Arc::try_unwrap(reporter)
-        .unwrap_or_else(|_| panic!("reporter Arc still has other references after run_for_test returned"))
+        .unwrap_or_else(|_| panic!("reporter Arc still has other references after run returned"))
         .into_inner()
         .expect("reporter Mutex is poisoned");
 
+    // Post-execution: filter test_results by --filter globs and --rerun-failed set.
+    let test_results: Vec<cook_engine::TestResult> = test_results
+        .into_iter()
+        .filter(|r| {
+            let id_matches = if args.filter.is_empty() {
+                true
+            } else {
+                args.filter.iter().any(|pat| {
+                    globset::Glob::new(pat)
+                        .map(|g| g.compile_matcher().is_match(&r.id.0))
+                        .unwrap_or(false)
+                })
+            };
+            let rerun_matches = if let Some(failed_set) = rerun_failed_set.as_ref() {
+                failed_set.contains(&r.id)
+            } else {
+                true
+            };
+            id_matches && rerun_matches
+        })
+        .collect();
+
     // Phase 7 stub: persist last-run state (no-op)
-    let _ = crate::test_state::save(&project_root, &result.test_results);
+    let _ = crate::test_state::save(&project_root, &test_results);
 
     // Phase 8: write JSON/JUnit sidecars.
     let _ = crate::test_reporter::write_json_sidecar(
         &project_root,
         args.report_json.as_deref(),
-        &result.test_results,
+        &test_results,
     );
     if let Some(path) = &args.report_junit {
-        let _ = crate::test_reporter::write_junit_sidecar(path, &result.test_results);
+        let _ = crate::test_reporter::write_junit_sidecar(path, &test_results);
     }
 
-    let any_failed = result.test_results.iter().any(|r| {
+    let any_failed = test_results.iter().any(|r| {
         matches!(
             r.outcome,
             cook_engine::TestOutcome::Failed
@@ -632,7 +799,7 @@ pub fn cmd_test(
         )
     });
 
-    reporter.finish(&result.test_results);
+    reporter.finish(&test_results);
 
     if any_failed {
         Err(crate::error::CookError::TestFailure(
@@ -704,47 +871,52 @@ fn resolve_test_scope(
     Err(crate::error::CookError::Other(msg))
 }
 
-/// Load the workspace and return the set of fully-qualified recipe names
-/// (recipes only, not chores — chores are filtered from `cook test` anyway).
+/// Return the set of fully-qualified recipe names (recipes only, not chores —
+/// chores are filtered from `cook test` anyway) using the cheap
+/// `list_names` path: register-phase Lua runs but no recipe bodies execute
+/// and no probe queries fire.
 ///
 /// Returns `None` when the workspace cannot be loaded so the caller can fall
 /// back to deferring to the engine's diagnostic path.
 ///
-/// Note: this calls the same register helpers as `cmd_run`, so Lua-registered
-/// recipes (e.g. via `cook_cc.bin`) are visible to `cook test`'s scope
-/// resolution. The register pass is heavier than the analyzer-only path it
-/// replaced, but `cook test` already runs the build, so the overhead is
-/// dominated by execution.
+/// Lua-registered recipes (e.g. via `cook_cc.bin`) appear here the same way
+/// they do in `cook list` — register-phase is enough to materialise their
+/// names.
 fn collect_workspace_recipe_names(
     globals: &Globals,
 ) -> Option<std::collections::BTreeSet<String>> {
     let parsed = pipeline::read_and_parse(&globals.file).ok()?;
-    let registered = if parsed.cookfile.imports.is_empty() {
-        let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
-        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
-            std::path::Path::new(".")
+    let names: Vec<(String, cook_engine::cook_register::RecipeKind)> =
+        if parsed.cookfile.imports.is_empty() {
+            let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
+            let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+                std::path::Path::new(".")
+            } else {
+                cookfile_dir
+            };
+            let dotenv_vars = pipeline::load_env(cookfile_dir);
+            let env_vars = pipeline::resolve_env(None, dotenv_vars, &globals.set).ok()?;
+            pipeline::list_single_cookfile_names(
+                cookfile_dir,
+                env_vars,
+                &globals.set,
+                parsed.lua_source,
+                None,
+            )
+            .ok()?
         } else {
-            cookfile_dir
+            let workspace_root =
+                pipeline::resolve_workspace_root(&globals.file, globals.root.clone()).ok()?;
+            let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set).ok()?;
+            pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set).ok()?
         };
-        let dotenv_vars = pipeline::load_env(cookfile_dir);
-        let env_vars = pipeline::resolve_env(None, dotenv_vars, &globals.set).ok()?;
-        pipeline::register_single_cookfile(
-            cookfile_dir,
-            env_vars,
-            &globals.set,
-            parsed.lua_source,
-            None,
-            /*cache_ctx*/ None,
-        )
-        .ok()?
-    } else {
-        let workspace_root =
-            pipeline::resolve_workspace_root(&globals.file, globals.root.clone()).ok()?;
-        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set).ok()?;
-        pipeline::register_workspace(&workspace, None, &globals.set, /*cache_ctx*/ None).ok()?
-    };
-    let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
-    Some(recipe_infos.into_keys().collect())
+    Some(
+        names
+            .into_iter()
+            .filter(|(_, kind)| matches!(kind, cook_engine::cook_register::RecipeKind::Recipe))
+            .map(|(name, _)| name)
+            .collect(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1271,6 +1443,8 @@ pub fn cmd_dag(_globals: &Globals, _args: &crate::cli::DagArgs) -> Result<(), Co
 
 #[cfg(feature = "viewer")]
 pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), CookError> {
+    use std::sync::Arc;
+
     let parsed = read_and_parse(globals)?;
     let recipe_name = args.recipe.as_deref().unwrap_or("build");
     let config = args.config.as_deref();
@@ -1279,27 +1453,23 @@ pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), Cook
 
     let targets = vec![recipe_name.to_string()];
 
-    // Workspace branch — App. E.10 closes the previous "cmd_dag has no
-    // workspace mode at all" gap by mirroring cmd_run's workspace setup and
-    // routing each ready recipe through its prefix's registry (the same
-    // dispatch cook_engine::run::run does internally).
-    let units = if !parsed.cookfile.imports.is_empty() {
+    // SHI-222 Phase 5 Task 5.5: cmd_dag now drives the same register pipeline
+    // as cmd_run/cmd_test. The unified `RegisteredWorkspace` carries every
+    // reachable recipe — including Lua-registered ones (`cook_cc.bin`, dynamic
+    // chores, …) — with `RecipeUnits` already wired. The viewer's
+    // `all_units` is the reachable slice of `registered.units_by_recipe`;
+    // `explicit_edges` is the recipe-level edge map; `inferred_deps` is empty
+    // in the unified-DAG world (cross-recipe edges now live on `dep_edges`
+    // inside each `RecipeUnits`, not on a separate inferred-dep map).
+    let registered = if !parsed.cookfile.imports.is_empty() {
         let workspace_root =
             pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
                 .map_err(pipeline_error_to_cook_error)?;
         let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
-
-        let recipe_infos = pipeline::build_workspace_recipe_info(&workspace);
-        let registries = pipeline::build_workspace_registries(&workspace, config, &globals.set)
-            .map_err(pipeline_error_to_cook_error)?;
-        let inferred_deps = pipeline::compute_workspace_inferred_deps(&workspace);
-        print_dep_conflicts(&pipeline::workspace_dep_conflicts(&workspace, &inferred_deps));
-
-        pipeline::collect_dag_units(&recipe_infos, &targets, &registries, &inferred_deps)
+        pipeline::register_workspace(&workspace, config, &globals.set, /*cache_ctx*/ None)
             .map_err(pipeline_error_to_cook_error)?
     } else {
-        // Single-Cookfile branch.
         let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
         let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
             std::path::Path::new(".")
@@ -1309,30 +1479,102 @@ pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), Cook
         let dotenv_vars = pipeline::load_env(cookfile_dir);
         let env_vars = pipeline::resolve_env(config, dotenv_vars, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
-
-        let recipe_infos = pipeline::build_single_recipe_infos(&parsed.cookfile);
-        let registries = pipeline::build_single_registries(
+        pipeline::register_single_cookfile(
             cookfile_dir,
             env_vars,
             &globals.set,
             parsed.lua_source,
             config,
+            /*cache_ctx*/ None,
         )
-        .map_err(pipeline_error_to_cook_error)?;
-        let inferred_deps = pipeline::compute_single_inferred_deps(&parsed.cookfile);
-        print_dep_conflicts(&pipeline::single_dep_conflicts(&parsed.cookfile));
-
-        pipeline::collect_dag_units(&recipe_infos, &targets, &registries, &inferred_deps)
-            .map_err(pipeline_error_to_cook_error)?
+        .map_err(pipeline_error_to_cook_error)?
     };
+
+    let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
+    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets).map_err(
+        |e| match e {
+            cook_engine::analyzer::GraphError::CycleDetected(name) => {
+                CookError::Other(format!("dependency cycle involving: {name}"))
+            }
+            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
+                CookError::RecipeNotFound(name)
+            }
+            other => CookError::Other(other.to_string()),
+        },
+    )?;
+    let reachable: BTreeSet<String> = edges.keys().cloned().collect();
+
+    // Assemble the inputs the viewer expects from the registered workspace.
+    // `all_units` is the reachable slice of `registered.units_by_recipe`,
+    // tagged with the qualified recipe name. Recipes missing from the units
+    // map (zero-unit meta-targets) get an empty `RecipeUnits` stub so the
+    // viewer still sees them as a node in the graph.
+    let all_units: Vec<(String, cook_engine::cook_contracts::RecipeUnits)> = reachable
+        .iter()
+        .map(|name| {
+            let units = registered
+                .units_by_recipe
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| cook_engine::cook_contracts::RecipeUnits {
+                    recipe_name: name.clone(),
+                    deps: edges.get(name).cloned().unwrap_or_default(),
+                    units: Vec::new(),
+                    step_groups: Vec::new(),
+                    working_dir: registered
+                        .working_dir_by_prefix
+                        .get(split_recipe_prefix(name))
+                        .cloned()
+                        .unwrap_or_else(|| std::path::PathBuf::from(".")),
+                    env_vars: std::collections::BTreeMap::new(),
+                    terminal_outputs: Vec::new(),
+                    dep_edges: Vec::new(),
+                    probes: Vec::new(),
+                });
+            (name.clone(), units)
+        })
+        .collect();
+
+    // Per-recipe cache managers anchored at each recipe's prefix's working_dir.
+    let cache_managers: BTreeMap<String, Arc<cook_engine::cook_cache::ThreadSafeCacheManager>> = reachable
+        .iter()
+        .map(|name| {
+            let prefix = split_recipe_prefix(name);
+            let wd = registered
+                .working_dir_by_prefix
+                .get(prefix)
+                .cloned()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let cache_dir = wd.join(".cook").join("cache");
+            (
+                name.clone(),
+                Arc::new(cook_engine::cook_cache::ThreadSafeCacheManager::new(cache_dir)),
+            )
+        })
+        .collect();
+
+    // inferred_deps is empty in the unified-DAG model — cross-recipe edges
+    // live directly on `RecipeUnits.dep_edges` inside `all_units`, not on a
+    // separate analyzer-level map. The viewer's wave_grouper still accepts
+    // the map (legacy compatibility), so we pass an empty one.
+    let inferred_deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     cook_dag_viewer::cmd_dag(&cook_dag_viewer::DagViewerInputs {
         target: recipe_name,
-        all_units: &units.all_units,
-        explicit_edges: &units.explicit_edges,
-        inferred_deps: &units.inferred_deps,
-        cache_managers: &units.cache_managers,
+        all_units: &all_units,
+        explicit_edges: &edges,
+        inferred_deps: &inferred_deps,
+        cache_managers: &cache_managers,
         theme: cook_dag_viewer::theme::Theme::from_str(&args.theme),
     })
     .map_err(|e| CookError::Other(e.to_string()))
+}
+
+/// Split off the namespace prefix from a qualified recipe name.
+///
+/// `"backend.proto.generate"` → `"backend.proto"`
+/// `"build"` → `""`
+#[cfg(feature = "viewer")]
+fn split_recipe_prefix(name: &str) -> &str {
+    name.rfind('.').map(|p| &name[..p]).unwrap_or("")
 }

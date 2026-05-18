@@ -253,7 +253,16 @@ pub fn list_workspace_names(
 
 /// Merge a per-Cookfile [`cook_register::RegisteredCookfile`] into the
 /// workspace-level [`RegisteredWorkspace`], qualifying every recipe name,
-/// unit key, and probe key with `prefix` (empty for the root).
+/// unit key, probe key, and intra-Cookfile `requires` entry with `prefix`
+/// (empty for the root).
+///
+/// Intra-Cookfile `requires` entries (e.g. `recipe wasm: generate` inside
+/// `tree-sitter-cook/Cookfile` imported as `ts`) must be rewritten from the
+/// local name `generate` to the qualified `ts.generate` so the analyzer's
+/// dep-graph walk sees a consistent fully-qualified namespace. Without this
+/// qualification `analyzer::build_adjacency` walks every recipe in the
+/// workspace and errors `UnknownRecipe("generate")` even when the target
+/// closure (e.g. `cook package`) does not transitively touch the import.
 fn merge_into(
     ws: &mut RegisteredWorkspace,
     prefix: &str,
@@ -266,9 +275,28 @@ fn merge_into(
             format!("{prefix}.{name}")
         }
     };
+    // Local recipe names registered by this Cookfile — used to distinguish
+    // intra-Cookfile dep references (`requires=["generate"]` resolving inside
+    // `tree-sitter-cook/Cookfile`) from already-qualified cross-Cookfile
+    // references that callers may have produced explicitly. Intra-Cookfile
+    // requires get the prefix; cross-Cookfile or already-qualified ones pass
+    // through untouched.
+    let local_names: std::collections::BTreeSet<String> =
+        rc.names.iter().map(|n| n.name.clone()).collect();
     for n in rc.names {
         let mut qn = n.clone();
         qn.name = qualify(&n.name);
+        qn.requires = n
+            .requires
+            .iter()
+            .map(|req| {
+                if local_names.contains(req) {
+                    qualify(req)
+                } else {
+                    req.clone()
+                }
+            })
+            .collect();
         ws.names.push(qn);
     }
     for (name, units) in rc.units_by_recipe {
