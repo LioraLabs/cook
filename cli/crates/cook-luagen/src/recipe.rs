@@ -736,7 +736,7 @@ pub fn generate_with_names(
                     "cook.{}(\"{}\", {}, function()\n",
                     REGISTER_SURFACE_NAME,
                     escape_lua_string(&recipe.name),
-                    generate_metadata_with_line(recipe)
+                    generate_metadata_with_line(recipe, recipe_names)
                 ));
 
                 // Emit local ingredients variable when recipe has ingredients
@@ -1081,8 +1081,8 @@ fn emit_chore_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]
 /// original Cookfile line. The `__line` field is always present so the
 /// emitted table is non-empty even for a recipe with no `requires` /
 /// `ingredients` / `excludes`.
-fn generate_metadata_with_line(recipe: &Recipe) -> String {
-    let mut fields = recipe_metadata_fields(recipe);
+fn generate_metadata_with_line(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> String {
+    let mut fields = recipe_metadata_fields(recipe, recipe_names);
     fields.push(format!("__line = {}", recipe.line));
     format!("{{{}}}", fields.join(", "))
 }
@@ -1091,7 +1091,15 @@ fn generate_metadata_with_line(recipe: &Recipe) -> String {
 /// `KEY = {...}` entry per non-empty list metadata field, in the historical
 /// order (`ingredients`, `excludes`, `requires`). The `__line = N` field is
 /// appended by the caller.
-fn recipe_metadata_fields(recipe: &Recipe) -> Vec<String> {
+///
+/// `requires` merges the explicit `requires`/`deps` declaration with cross-
+/// recipe `$<NAME>` body references found by `dep_ref::extract_dep_refs`. In
+/// the unified register-phase model (CS-0077), recipe bodies run in topo
+/// order during the register pass; a body that calls `cook.dep_output(NAME)`
+/// (the codegen lowering for `$<NAME>`) must have its target already
+/// registered when it runs. Inferring requires from body refs keeps the
+/// pre-unified behaviour where AST-walked inferred deps drove wave ordering.
+fn recipe_metadata_fields(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> Vec<String> {
     let mut fields = Vec::new();
     if !recipe.ingredients.is_empty() {
         let items: Vec<String> = recipe
@@ -1109,9 +1117,25 @@ fn recipe_metadata_fields(recipe: &Recipe) -> Vec<String> {
             .collect();
         fields.push(format!("excludes = {{{}}}", items.join(", ")));
     }
-    if !recipe.deps.is_empty() {
-        let items: Vec<String> = recipe
-            .deps
+
+    // Build the unified requires set: explicit `recipe.deps` ∪ inferred
+    // cross-recipe refs from `$<NAME>` body tokens. Preserves declared order
+    // (explicit first, then inferred in alphabetical order via BTreeSet).
+    let mut requires: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for d in &recipe.deps {
+        if seen.insert(d.clone()) {
+            requires.push(d.clone());
+        }
+    }
+    let inferred = crate::dep_ref::extract_dep_refs(recipe, recipe_names);
+    for r in inferred {
+        if seen.insert(r.recipe_name.clone()) {
+            requires.push(r.recipe_name);
+        }
+    }
+    if !requires.is_empty() {
+        let items: Vec<String> = requires
             .iter()
             .map(|s| format!("\"{}\"", escape_lua_string(s)))
             .collect();
