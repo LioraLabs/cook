@@ -254,6 +254,20 @@ The ordering rule in §{exec.diagnostic-ordering} — syntactic diagnostics befo
 
 The wording is not normative because diagnostic quality is a product concern where implementations should be free to differentiate. A terse parser-level message suitable for a CI log and a richly-formatted message suitable for an editor overlay are both conforming so long as the ordering holds and the class of error is identifiable. This matches the convention established in §{intro.non-scope} and §{intro.conformance}: exact wording is out of scope; the diagnostic class is in scope.
 
+### C.13.5. Why the work-unit DAG is unified across recipes [#rationale.dag-unification]
+
+Earlier reference implementations of the register phase maintained two graphs: a coarse recipe-level dependency graph and a per-wave work-unit DAG. The recipe-level graph drove a wave-grouping pass that grouped recipes into synchronisation barriers; the per-wave DAG handled fine-grained unit ordering within each wave. Cross-recipe edges were plumbed through the recipe-level structure rather than living on the work-unit graph directly. This was an implementation accident, not a design property, and §{exec.dag-unification} retires it.
+
+Two concrete costs motivated the unification.
+
+First, **same-wave merging logic was hidden in scheduler code.** When `{dep}`-style implicit cross-recipe edges (§{exec.cross-recipe-ordering}) appeared in a Cookfile, the wave grouper had to merge the producing and consuming recipes into one wave so the per-wave DAG could see them as intra-wave edges. The merging rule was correct, but bespoke; nothing in the Cookfile language motivated its existence — it was scaffolding to bridge the recipe-level and unit-level graphs.
+
+Second, **recipe boundaries leaked into scheduling.** Lifecycle events (`RecipeStarted`, `RecipeCompleted`) fired at wave boundaries rather than at the unit-state transitions that actually marked the start or end of a recipe's work. The reported timing did not match observable execution.
+
+The unified DAG eliminates both. Cross-recipe edges become ordinary edges between work units; the executor's existing parallelism rules (§{exec.step-groups}) handle them directly. Recipe boundaries survive only as labels on regions of the DAG — useful for lifecycle reporting, not load-bearing for scheduling. Lifecycle events fire at first/last unit transitions per recipe, giving event timing that mirrors observable work.
+
+The trade-off is a single ordering constraint at register time: `cook.dep_output(other_recipe)` is evaluated inside a recipe body and must observe the terminal outputs of `other_recipe`, which means `other_recipe`'s body must have been invoked first. A conforming implementation satisfies this by topologically sorting recipes by their declared `requires` before invoking bodies. That sort is a register-time sequencing helper, not a normative graph structure; §{exec.dag-unification} explicitly leaves the ordering implementation-defined.
+
 ### C.13.N. Name references as the sole implicit-dep source
 
 CS-0009 removed the implicit cross-recipe dependency rule based on byte-equality between an ingredient path of one recipe and a cook-output path of another (old §{xref.string-substitution}). Under the new rule (§{exec.cross-recipe-ordering}), only name references (§{xref}) establish cross-recipe edges.
@@ -322,6 +336,20 @@ Two spellings of the same concept (`$<stem>` and `$<in.stem>`) with position-dep
 
 ### C.21.8. Why `$<lib.ACCESSOR>` is rejected in using-clause bodies [#rationale.lib-accessor-firewall]
 The §{xref.dep-driven} firewall rejecting `$<lib.ACCESSOR>` in a step whose output pattern does not declare `lib` as the driver is preserved verbatim by CS-0022. Inside a step where `lib` *is* the driver, the spelling `$<in.ACCESSOR>` is used — the local name `in` for "the current iteration item" is universal across drivers, so the using-clause body never names the driver explicitly. Allowing `$<lib.ACCESSOR>` in the body would let an author smuggle a second iteration source past the output-pattern declaration, undoing §{recipes.iteration-mode}'s single-driver invariant.
+
+### C.21.9. Why recipe names within a Cookfile MUST be unique [#rationale.recipe-name-uniqueness]
+
+Earlier reference implementations of `cook.recipe` accepted duplicate registrations silently: whichever registration appeared first in the codegen-emitted Lua source won, and subsequent registrations of the same name became no-ops. The §22.3 uniqueness rule retires this behaviour and requires a hard error naming both sites.
+
+The motivation is two common authoring footguns.
+
+First, a surface `recipe build` block combined with a `cook_cc.bin("build", …)` call inside a `register` block. Authors writing these together expected one form to override the other; neither did so deterministically without documentation; the actual behaviour was source-order dependent. Source-order dependence is invisible at the Cookfile level — the author cannot see codegen output and would not think to consider it.
+
+Second, two wrapper calls registering the same name (for example, two `cook_cc.bin("game", …)` calls in different `register` blocks of the same Cookfile). The first call's registration won; the second silently no-op'd. An author writing the second call had no signal that it was being ignored short of running the build and noticing the second call's side effects (probes, output paths) were absent.
+
+Both patterns are authoring errors. The §22.3 rule makes them diagnosable. The diagnostic names both registration sites and identifies the kind of each so the author knows precisely what to rename.
+
+The choice not to designate a winner (i.e. to error rather than to define a precedence) reflects a broader principle: silent source-order precedence is a recurring source of long-lived bugs in build systems. When two declarations conflict, naming both sites pushes the resolution to the author at the moment of conflict, instead of compounding into mis-debugged runtime behaviour later.
 
 ## C.11. On §{modules} Cross-Cookfile composition and §{lua.use-env} `use` [#rationale.modules]
 Cross-Cookfile composition (§{modules}) and Lua module loading (§{lua.use-env}) are deliberately split into two declarations that look similar but answer different questions. `use` answers "give me additional Lua for my recipes to call"; `import` answers "tie another Cookfile's recipes into my dependency graph." Conflating them — for example, by making `import` also bring a Lua value into scope — would force authors to pick one semantics at every call site and would blur the two namespaces the dependency resolver walks. The Standard keeps them distinct so that each declaration has one job, and lives in a different chapter: `use` belongs with the Cook Lua API because it loads Lua code, whereas `import` belongs with cross-Cookfile composition because it binds an alias for cross-recipe references.

@@ -9,6 +9,7 @@ sidebar:
 
 ## Versions
 
+- **v0.13** (unreleased) — CS-0077. Unified register-phase + work-unit DAG: §13.3 (one DAG across every reachable recipe; "wave" grouping retired), §22.3 (recipe-name uniqueness within a Cookfile), §22.6 (recipe-discovery contract — surface and register-phase Lua names share one dispatch namespace).
 - **v0.12** (`cs-standard/v0.12`, 2026-05-17) — CS-0076. cc.checks.* feature-test namespace and cc.config_header CMake-compatible substitution; cc:check:<kind>:<name>:<short-fp> joins the canonical probe-key namespace; surface §28 v0.5 → v0.6.
 - **v0.11** (`cs-standard/v0.11`, 2026-05-15) — CS-0074. Probe units: new §22.5 `cook.probe` register-phase API; `probes` field on `cook.add_unit` for consumer→probe DAG edges; demand-driven scheduling (probes execute only when reached); msgpack probe-value caching with `kind: "probe_value"` artifact-meta tag; `cook.cache.set` deprecated (§24); `cook.cache.get` execute-phase tightened.
 - **v0.10** (`cs-standard/v0.10`, 2026-05-13) — CS-0073. Structural redesign: Standard reorganised into four Parts (Cookfile language, Execution model, Cook Lua API, Standard module catalogue) with per-topic chapters. Retired slug prefixes `grammar.*`, `modules.*`, `stdmods.*`, plus several `lua.*` and `lexical.*` / `recipes.*` leaves; new prefixes `conf.*`, `toplevel.*`, `decl.*`, `steps.*`, `phl.*`, `exec.*`, `comp.*`, `mods.*`, `cat.*`, `pre-v1.*`, `corpus.*`. New normative prose for `cook.step_group` (§22.5), both-phase Cook Lua surfaces (§24.3–§24.7), and module lifecycle (§12.3). Annexes B/C and D/E swapped. Retired URLs resolve via page-level redirects. No normative behaviour changes for any conforming Cookfile.
@@ -1380,3 +1381,23 @@ required.
 **Design spec:** `docs/superpowers/specs/2026-05-17-cook-cc-probes-and-checks-design.md` (§6, §7).
 
 **Reference:** this commit.
+
+### v0.13 (unreleased) [#changes.v0-13]
+
+## CS-0077 — Unified register-phase and work-unit DAG
+
+**Date:** 2026-05-18
+
+**Version:** v0.13
+
+**Sections affected:** §13.1 (clarification of "single Lua VM per Cookfile registration pass"), §13.3 (new — unified work-unit DAG), §22.3 (recipe-name uniqueness within a Cookfile), §22.6 (new — recipe-discovery contract), App. C.13.5 (new rationale — DAG unification), App. C.21.9 (new rationale — recipe-name uniqueness).
+
+**Summary:** Retires the dual recipe-level + per-wave work-unit DAG model in favour of a single unified work-unit DAG covering every recipe reachable from any dispatched target within a Cookfile registration pass. Cross-recipe dependencies become ordinary edges of the unified DAG; "wave" grouping is no longer a normative concept. Recipe-discovery is normatively defined as the union of surface declarations (`recipe`/`chore` blocks) and `cook.recipe` calls from `register` blocks, top-level module calls, or wrapper Lua functions (e.g. `cook_cc.bin`); `cook NAME` dispatch resolves against this unified set. Listing surfaces (e.g. `cook list`) MUST surface both sources without invoking recipe bodies. Within a single Cookfile registration pass, the set of names registered by `cook.recipe` MUST be unique; a duplicate produces a hard error naming both registration sites and identifying the kind of each (surface declaration or register-phase Lua call).
+
+Implementation closes the discovery gap that prevented `cook NAME` from dispatching recipes registered through `cook_cc.bin` (`examples/raylib-game/`, `examples/sdl3-game/`). Wire-compatible: the public `cook.recipe` API surface is unchanged; the reference implementation uses a codegen-private helper (`cook.__register_surface`) to tag surface registrations for diagnostic purposes, but this is implementation-defined and not part of the Standard.
+
+**Reference implementation:** SHI-222 in the `cook` repository.
+
+**Design spec:** `standard/specs/2026-05-18-unified-register-and-dag-design.md`.
+
+**Reference:** this commit chain (front-loaded as Phase 0; subsequent commits land the engine and CLI changes against this contract).
