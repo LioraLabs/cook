@@ -24,13 +24,25 @@ use crate::{EngineError, EngineEvent, NodeKind, RecipeKind, WorkNode};
 // ---------------------------------------------------------------------------
 // RecipeTracker
 // ---------------------------------------------------------------------------
+//
+// Per-recipe accumulator driving unit-driven `RecipeStarted` / `RecipeCompleted`
+// / `RecipeFailed` events. The executor seeds one tracker per recipe with at
+// least one unit in the DAG (zero-unit meta-targets are handled by synthetic
+// emission in `run.rs`). `ensure_recipe_started` fires `RecipeStarted` on the
+// first unit's transition out of Waiting and stamps `start` then;
+// `finish_recipe_node` fires `RecipeCompleted` / `RecipeFailed` on the last
+// unit's completion using `start.elapsed()`. There is no wave-aligned firing.
 
 struct RecipeTracker {
+    /// Stamped by `ensure_recipe_started` when the first unit transitions
+    /// out of Waiting. `RecipeCompleted.elapsed` is `start.elapsed()` at
+    /// the last unit's completion.
     start: Instant,
     total_nodes: usize,
     completed_nodes: usize,
     cached_nodes: usize,
     has_failure: bool,
+    /// True once `RecipeStarted` has been emitted for this recipe.
     started: bool,
     /// CS-0051: marked true when any chore-window step is observed for
     /// this recipe so `RecipeCompleted` can carry `kind: RecipeKind::Chore`.

@@ -333,9 +333,12 @@ where
         .collect();
 
     // 7. Execute the unified DAG. Lifecycle events (RecipeStarted /
-    //    RecipeCompleted) fire from the executor's recipe-tracker bookkeeping.
-    //    Task 4.5 will refine that to unit-driven transitions; for Phase 4
-    //    the per-recipe semantics already match the wave-loop behaviour.
+    //    RecipeCompleted) fire from the executor's recipe-tracker bookkeeping
+    //    at unit-state transitions: RecipeStarted on the first unit leaving
+    //    Waiting, RecipeCompleted when the last unit finishes (success or
+    //    cached) or RecipeFailed on the last completion when any unit failed.
+    //    Wave-aligned firing is gone — events now reflect actual unit motion.
+    //    Zero-unit (meta-target) recipes are emitted synthetically above.
     //
     //    Bridge on_event through an mpsc channel so executor can use its
     //    existing Option<Sender<EngineEvent>> interface.
