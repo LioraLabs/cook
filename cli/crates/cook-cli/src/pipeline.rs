@@ -12,10 +12,11 @@
 //! In particular: nothing in this file consumes a `cook_lang::ast::Cookfile`
 //! directly anymore — that's the engine's concern.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc;
 
 use cook_engine::pipeline::{self, ParsedCookfile, PipelineError, Workspace};
+use cook_engine::RegisteredWorkspace;
 
 use crate::cli::Globals;
 use crate::error::CookError;
@@ -393,15 +394,36 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
 // ---------------------------------------------------------------------------
 
 /// Run the engine with progress rendering wired up.
+///
+/// Walks the unified work-unit DAG built from `registered_workspace`. The
+/// recipe-level edge map (and therefore the reachable closure) is computed
+/// here from `recipe_infos` via `analyzer::dependency_edges_multi`; the
+/// engine takes responsibility for the topological order downstream.
 fn run_with_progress(
     globals: &Globals,
     recipe_infos: &BTreeMap<String, cook_engine::analyzer::RecipeInfo>,
     targets: &[String],
-    registries: &BTreeMap<String, cook_engine::RegistryEntry>,
+    registered_workspace: &RegisteredWorkspace,
     num_jobs: usize,
-    inferred_deps: &BTreeMap<String, Vec<String>>,
 ) -> Result<cook_engine::run::RunResult, CookError> {
     let project_root = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
+
+    // Recipe-level dependency edges across the reachable closure. The engine
+    // toposorts internally; we just need a complete edge map keyed by every
+    // reachable recipe name.
+    let edges = cook_engine::analyzer::dependency_edges_multi(recipe_infos, targets).map_err(
+        |e| match e {
+            cook_engine::analyzer::GraphError::CycleDetected(name) => {
+                CookError::Other(format!("dependency cycle involving: {name}"))
+            }
+            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
+                CookError::RecipeNotFound(name)
+            }
+            other => CookError::Other(other.to_string()),
+        },
+    )?;
+    let reachable: BTreeSet<String> = edges.keys().cloned().collect();
+
     let (progress_tx, progress_rx) = mpsc::channel::<cook_progress::ProgressEvent>();
     let render_thread = spawn_new_renderer(globals, project_root.clone(), progress_rx);
 
@@ -411,11 +433,11 @@ fn run_with_progress(
 
     let result = cook_engine::run::run(
         &project_root,
-        recipe_infos,
-        targets,
-        registries,
+        registered_workspace,
+        &edges,
+        &reachable,
         num_jobs,
-        inferred_deps,
+        &[],
         move |event| {
             let _ = engine_tx.send(event);
         },
@@ -452,22 +474,21 @@ pub fn cmd_run(globals: &Globals, recipe_name: &str, config: Option<&str>) -> Re
     let num_jobs = resolve_num_jobs(globals);
     let targets = vec![recipe_name.to_string()];
 
-    if !parsed.cookfile.imports.is_empty() {
-        let workspace_root =
-            pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
-                .map_err(pipeline_error_to_cook_error)?;
+    // Register every Cookfile in the workspace (root + imports) up front.
+    // The resulting `RegisteredWorkspace` carries every recipe — including
+    // Lua-registered ones from `cook.add_unit` / module helpers like
+    // `cook_cc.bin` — under their qualified names, with `RecipeUnits` and
+    // `dep_edges` already wired. Phase 5 Task 5.3: this replaces the prior
+    // per-wave register loop. `cache_ctx` lifting is deferred to a follow-up;
+    // for now register sees `None` and the executor builds its own.
+    let registered = if !parsed.cookfile.imports.is_empty() {
+        let workspace_root = pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
+            .map_err(pipeline_error_to_cook_error)?;
         let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
-        let recipe_infos = pipeline::build_workspace_recipe_info(&workspace);
-        let registries = pipeline::build_workspace_registries(&workspace, config, &globals.set)
-            .map_err(pipeline_error_to_cook_error)?;
-
-        let inferred_deps = pipeline::compute_workspace_inferred_deps(&workspace);
-        print_dep_conflicts(&pipeline::workspace_dep_conflicts(&workspace, &inferred_deps));
-
-        run_with_progress(globals, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
+        pipeline::register_workspace(&workspace, config, &globals.set, /*cache_ctx*/ None)
+            .map_err(pipeline_error_to_cook_error)?
     } else {
-        // Single Cookfile build
         let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
         let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
             std::path::Path::new(".")
@@ -477,23 +498,24 @@ pub fn cmd_run(globals: &Globals, recipe_name: &str, config: Option<&str>) -> Re
         let dotenv_vars = pipeline::load_env(cookfile_dir);
         let env_vars = pipeline::resolve_env(config, dotenv_vars, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
-
-        let recipe_infos = pipeline::build_single_recipe_infos(&parsed.cookfile);
-        let inferred_deps = pipeline::compute_single_inferred_deps(&parsed.cookfile);
-        print_dep_conflicts(&pipeline::single_dep_conflicts(&parsed.cookfile));
-
-        let registries = pipeline::build_single_registries(
+        pipeline::register_single_cookfile(
             cookfile_dir,
             env_vars,
             &globals.set,
             parsed.lua_source,
             config,
+            /*cache_ctx*/ None,
         )
-        .map_err(pipeline_error_to_cook_error)?;
+        .map_err(pipeline_error_to_cook_error)?
+    };
 
-        run_with_progress(globals, &recipe_infos, &targets, &registries, num_jobs, &inferred_deps)?;
-    }
+    // `inferred_deps` / `*_dep_conflicts` are obsolete in the unified-DAG
+    // model: cross-recipe edges come from `RecipeUnits.dep_edges` (recorded
+    // directly by `cook.dep_output` / `cook.add_unit` during the register
+    // pass), and recipe-level coarse deps come from `RegisteredRecipePub.requires`.
+    let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 
+    run_with_progress(globals, &recipe_infos, &targets, &registered, num_jobs)?;
     Ok(())
 }
 
@@ -687,18 +709,41 @@ fn resolve_test_scope(
 ///
 /// Returns `None` when the workspace cannot be loaded so the caller can fall
 /// back to deferring to the engine's diagnostic path.
+///
+/// Note: this calls the same register helpers as `cmd_run`, so Lua-registered
+/// recipes (e.g. via `cook_cc.bin`) are visible to `cook test`'s scope
+/// resolution. The register pass is heavier than the analyzer-only path it
+/// replaced, but `cook test` already runs the build, so the overhead is
+/// dominated by execution.
 fn collect_workspace_recipe_names(
     globals: &Globals,
 ) -> Option<std::collections::BTreeSet<String>> {
     let parsed = pipeline::read_and_parse(&globals.file).ok()?;
-    let recipe_infos = if parsed.cookfile.imports.is_empty() {
-        pipeline::build_single_recipe_infos(&parsed.cookfile)
+    let registered = if parsed.cookfile.imports.is_empty() {
+        let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
+        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+            std::path::Path::new(".")
+        } else {
+            cookfile_dir
+        };
+        let dotenv_vars = pipeline::load_env(cookfile_dir);
+        let env_vars = pipeline::resolve_env(None, dotenv_vars, &globals.set).ok()?;
+        pipeline::register_single_cookfile(
+            cookfile_dir,
+            env_vars,
+            &globals.set,
+            parsed.lua_source,
+            None,
+            /*cache_ctx*/ None,
+        )
+        .ok()?
     } else {
         let workspace_root =
             pipeline::resolve_workspace_root(&globals.file, globals.root.clone()).ok()?;
         let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set).ok()?;
-        pipeline::build_workspace_recipe_info(&workspace)
+        pipeline::register_workspace(&workspace, None, &globals.set, /*cache_ctx*/ None).ok()?
     };
+    let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
     Some(recipe_infos.into_keys().collect())
 }
 
@@ -1110,8 +1155,30 @@ pub fn cmd_serve(
         }
     }
 
-    // Resolve execution order via engine analyzer for glob collection
-    let recipe_infos = pipeline::build_single_recipe_infos(&parsed.cookfile);
+    // Resolve execution order via engine analyzer for glob collection. The
+    // analyzer's `recipe_infos` map now comes from the unified register
+    // pass: we register the single root Cookfile (cmd_serve doesn't support
+    // workspace imports for glob collection — imports only contribute file
+    // paths to watch below) and derive `RecipeInfo` from it.
+    let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
+    let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+        std::path::Path::new(".")
+    } else {
+        cookfile_dir
+    };
+    let serve_dotenv = pipeline::load_env(cookfile_dir);
+    let serve_env = pipeline::resolve_env(config, serve_dotenv, &globals.set)
+        .map_err(pipeline_error_to_cook_error)?;
+    let serve_registered = pipeline::register_single_cookfile(
+        cookfile_dir,
+        serve_env,
+        &globals.set,
+        parsed.lua_source.clone(),
+        config,
+        /*cache_ctx*/ None,
+    )
+    .map_err(pipeline_error_to_cook_error)?;
+    let recipe_infos = pipeline::build_recipe_infos_from_registered(&serve_registered);
     let order =
         cook_engine::analyzer::topological_sort(&recipe_infos, recipe_name).map_err(|e| match e {
             cook_engine::analyzer::GraphError::CycleDetected(name) => {
