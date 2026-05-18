@@ -940,6 +940,13 @@ fn local_topological_sort(
 /// cannot occur (codegen never emits duplicates from a single AST), so
 /// this helper does not special-case that.
 ///
+/// Returns on the first colliding name (deterministic via `BTreeMap`
+/// key sort). Fail-fast is intentional per SHI-222 spec §8: collisions
+/// are a hard error that prevents `register_cookfile` from producing a
+/// coherent registered set, and accumulating across names would only
+/// delay the same diagnostic by one CI cycle. Multiple sites for a
+/// single colliding name are all preserved in the error.
+///
 /// Re-used by `list_names` in Task 2.4.
 fn detect_collisions(
     recipes: &[crate::capture::RegisteredRecipe],

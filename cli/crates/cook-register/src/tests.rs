@@ -1085,3 +1085,27 @@ fn register_cookfile_rejects_duplicate_dynamic_registration() {
         other => panic!("expected RecipeCollision, got {other:?}"),
     }
 }
+
+#[test]
+fn register_cookfile_captures_all_sites_for_triple_collision() {
+    use crate::{register_cookfile, RegisterError, RegisterSessionBuilder};
+
+    // Three cook.recipe calls for the same name; all three sites must be
+    // captured in registration order so users can see every offender.
+    let lua_src = r#"
+        cook.recipe("build", {requires = {}}, function() end)
+        cook.recipe("build", {requires = {}}, function() end)
+        cook.recipe("build", {requires = {}}, function() end)
+    "#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let err = register_cookfile(builder, lua_src, None).unwrap_err();
+
+    match err {
+        RegisterError::RecipeCollision { name, sites } => {
+            assert_eq!(name, "build");
+            assert_eq!(sites.len(), 3, "all three sites must be captured");
+        }
+        other => panic!("expected RecipeCollision, got {other:?}"),
+    }
+}
