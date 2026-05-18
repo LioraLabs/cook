@@ -3,7 +3,7 @@
 //! Walks `standard/conformance/negative/` and processes every fixture that
 //! carries a `register_error.txt` (instead of, or in addition to,
 //! `error.txt` / `codegen_error.txt`). The fixture MUST parse cleanly,
-//! codegen cleanly, and then be rejected by `Registry::register_recipe`,
+//! codegen cleanly, and then be rejected by `RegisterSessionBuilder::register_recipe`,
 //! with a diagnostic containing the expected substring.
 //!
 //! Fixtures shaped this way exist because the rejection lives at register
@@ -23,7 +23,7 @@ use std::path::PathBuf;
 
 use cook_lang::parse;
 use cook_luagen::generate;
-use cook_register::engine::Registry;
+use cook_register::engine::RegisterSessionBuilder;
 
 fn corpus_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -79,7 +79,7 @@ fn register_positive_conformance_corpus() {
 
         // Step 3: register. Use the fixture directory as the working directory
         // so any sibling files are visible to the register phase.
-        let registry = Registry::new(case.clone(), HashMap::new()).with_selected_config(None);
+        let registry = RegisterSessionBuilder::new(case.clone(), HashMap::new()).with_selected_config(None);
         let recipe_name = match cookfile.recipes.first() {
             Some(r) => r.name.clone(),
             None => String::new(),
@@ -141,7 +141,7 @@ fn register_negative_conformance_corpus() {
         // working_dir. `cook.add_unit`'s directory check will then see
         // any sibling files the fixture set up.
         let registry =
-            Registry::new(case.clone(), HashMap::new()).with_selected_config(None);
+            RegisterSessionBuilder::new(case.clone(), HashMap::new()).with_selected_config(None);
         let recipe_name = match cookfile.recipes.first() {
             Some(r) => r.name.clone(),
             None => {

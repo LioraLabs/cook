@@ -30,7 +30,7 @@ pub fn build_single_registries(
     selected_config: Option<&str>,
 ) -> Result<BTreeMap<String, RegistryEntry>, PipelineError> {
     let cli_overrides = parse_cli_overrides(env_overrides)?;
-    let registry = cook_register::Registry::new(cookfile_dir.to_path_buf(), env_vars)
+    let registry = cook_register::RegisterSessionBuilder::new(cookfile_dir.to_path_buf(), env_vars)
         .with_cli_overrides(cli_overrides)
         .with_selected_config(selected_config.map(|s| s.to_string()));
     let mut registries = BTreeMap::new();
@@ -72,7 +72,7 @@ pub fn build_workspace_registries(
     let root_alias_dirs = workspace.alias_dirs_for(&workspace.root.dir);
     let root_alias_qp = workspace.alias_qualified_prefixes_for(&workspace.root.dir);
     // Root has empty prefix (already the default; explicit for clarity).
-    let root_registry = cook_register::Registry::new(workspace.root.dir.clone(), root_env)
+    let root_registry = cook_register::RegisterSessionBuilder::new(workspace.root.dir.clone(), root_env)
         .with_cli_overrides(cli_overrides.clone())
         .with_selected_config(config.map(|s| s.to_string()))
         .with_shared_terminal_outputs(shared_outputs.clone())
@@ -93,7 +93,7 @@ pub fn build_workspace_registries(
         let import_env = resolve_env(config, HashMap::new(), env_overrides)?;
         let alias_dirs = workspace.alias_dirs_for(&loaded.dir);
         let alias_qp = workspace.alias_qualified_prefixes_for(&loaded.dir);
-        let registry = cook_register::Registry::new(loaded.dir.clone(), import_env)
+        let registry = cook_register::RegisterSessionBuilder::new(loaded.dir.clone(), import_env)
             .with_cli_overrides(cli_overrides.clone())
             .with_selected_config(config.map(|s| s.to_string()))
             .with_shared_terminal_outputs(shared_outputs.clone())

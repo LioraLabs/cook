@@ -16,7 +16,7 @@ use crate::module_loader::{ModuleLoaderState, SharedModuleLoaderState};
 use crate::probe_api::{install_cook_probe, ProbeRegistry};
 use crate::{CaptureState, RegisterError, SharedCaptureState};
 
-pub struct Registry {
+pub struct RegisterSessionBuilder {
     working_dir: PathBuf,
     env_vars: Rc<RefCell<HashMap<String, String>>>,
     /// Explicit CLI `--set KEY=VALUE` overrides, kept separate so they can be
@@ -46,7 +46,7 @@ pub struct Registry {
     shadow_warnings_emitted: Rc<RefCell<std::collections::BTreeSet<(String, String)>>>,
 }
 
-impl Registry {
+impl RegisterSessionBuilder {
     pub fn new(working_dir: PathBuf, env_vars: HashMap<String, String>) -> Self {
         Self {
             working_dir,

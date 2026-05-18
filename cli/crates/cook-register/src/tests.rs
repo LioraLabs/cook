@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::fs;
 use tempfile::TempDir;
 
-fn make_registry(dir: &std::path::Path) -> Registry {
-    Registry::new(dir.to_path_buf(), HashMap::new())
+fn make_registry(dir: &std::path::Path) -> RegisterSessionBuilder {
+    RegisterSessionBuilder::new(dir.to_path_buf(), HashMap::new())
 }
 
 // -----------------------------------------------------------------------
@@ -261,7 +261,7 @@ end)
 
 /// CS-0061 §3.2: `suite` defaults to the enclosing recipe's qualified name
 /// when the caller omits the field. Exercises the engine path (current_recipe
-/// is set by Registry::register_recipe, not by the unit-level helper).
+/// is set by RegisterSessionBuilder::register_recipe, not by the unit-level helper).
 #[test]
 fn test_add_test_defaults_suite_to_recipe_name_via_engine() {
     let dir = TempDir::new().unwrap();
@@ -302,7 +302,7 @@ cook.recipe("tests", {}, function()
     })
 end)
 "#;
-    let rt = Registry::new(dir.path().to_path_buf(), HashMap::new())
+    let rt = RegisterSessionBuilder::new(dir.path().to_path_buf(), HashMap::new())
         .with_shared_terminal_outputs(shared)
         .with_qualified_prefix("mylib".to_string());
     let result = rt.register_recipe(lua_src, "tests", None).unwrap();
@@ -401,7 +401,7 @@ cook.recipe("build", {}, function() end)
 "#;
 
     let tmp = TempDir::new().unwrap();
-    let registry = Registry::new(tmp.path().to_path_buf(), initial_env)
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), initial_env)
         .with_selected_config(Some("release".to_string()));
 
     let units = registry.register_recipe(lua_source, "build", None).unwrap();
@@ -427,7 +427,7 @@ cook.recipe("build", {}, function() end)
 "#;
 
     let tmp = TempDir::new().unwrap();
-    let registry = Registry::new(tmp.path().to_path_buf(), initial_env);
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), initial_env);
     let units = registry.register_recipe(lua_source, "build", None).unwrap();
 
     assert_eq!(units.env_vars.get("BASE").map(|s| s.as_str()), Some("applied"));
@@ -438,7 +438,7 @@ cook.recipe("build", {}, function() end)
 fn test_registry_no_dispatcher_no_op() {
     let lua_source = r#"cook.recipe("build", {}, function() end)"#;
     let tmp = TempDir::new().unwrap();
-    let registry = Registry::new(tmp.path().to_path_buf(), HashMap::new());
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new());
     let units = registry.register_recipe(lua_source, "build", None).unwrap();
     assert_eq!(units.recipe_name, "build");
 }
@@ -466,7 +466,7 @@ cook.recipe("build", {}, function() end)
 "#;
 
     let tmp = TempDir::new().unwrap();
-    let registry = Registry::new(tmp.path().to_path_buf(), initial_env)
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), initial_env)
         .with_cli_overrides(cli_overrides);
     let units = registry.register_recipe(lua_source, "build", None).unwrap();
 
@@ -497,7 +497,7 @@ cook.recipe("build", {}, function() end)
 "#;
 
     let tmp = TempDir::new().unwrap();
-    let registry = Registry::new(tmp.path().to_path_buf(), initial_env)
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), initial_env)
         .with_cli_overrides(cli_overrides);
     let units = registry.register_recipe(lua_source, "build", None).unwrap();
 
@@ -527,7 +527,7 @@ cook.recipe("standalone", {}, function() end)
 "#;
 
     let tmp = TempDir::new().unwrap();
-    let registry = Registry::new(tmp.path().to_path_buf(), HashMap::new());
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new());
     // Multiple register calls (would have emitted duplicate warnings before
     // the dedup fix); just assert each succeeds.
     registry.register_recipe(lua_source, "foo", None).expect("foo register");
@@ -685,7 +685,7 @@ cook.recipe("build", {}, function()
     end)
 end)
 "#;
-    let registry = Registry::new(tmp.path().to_path_buf(), HashMap::new())
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new())
         .with_shared_terminal_outputs(shared.clone())
         .with_qualified_prefix("lib".to_string());
 
@@ -720,7 +720,7 @@ cook.recipe("build", {}, function()
     end)
 end)
 "#;
-    let registry = Registry::new(tmp.path().to_path_buf(), HashMap::new())
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new())
         .with_shared_terminal_outputs(shared.clone())
         .with_qualified_prefix(String::new());
 

@@ -5,14 +5,14 @@
 use cook_contracts::RecipeUnits;
 use cook_lang::parse;
 use cook_luagen::generate;
-use cook_register::engine::Registry;
+use cook_register::engine::RegisterSessionBuilder;
 use std::collections::HashMap;
 
 fn compile_and_run(source: &str, selected: Option<&str>) -> RecipeUnits {
     let cookfile = parse(source).expect("parse");
     let lua_source = generate(&cookfile);
     let tmp = tempfile::TempDir::new().unwrap();
-    let registry = Registry::new(tmp.path().to_path_buf(), HashMap::new())
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new())
         .with_selected_config(selected.map(|s| s.to_string()));
     // First recipe in the file is what we'll trigger.
     let name = cookfile.recipes[0].name.clone();
