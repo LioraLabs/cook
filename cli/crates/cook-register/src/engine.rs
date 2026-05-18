@@ -513,9 +513,19 @@ pub fn register_cookfile(
     // the lookup target inside `caller_line_in_cookfile`. When no CacheContext
     // is available (tests, legacy call sites) we fall back to a bare
     // "Cookfile" label so the helper's `ends_with` match still resolves.
-    let cookfile_label: String = lua
-        .named_registry_value::<String>("__cook_cookfile_path")
-        .unwrap_or_else(|_| "Cookfile".to_string());
+    // Seed the registry value in the fallback path too — `caller_line_in_cookfile`
+    // returns early when the registry value is absent, so without this seed
+    // the line tag on every recipe registered in the no-CacheContext path
+    // collapses to 0. Mirrors `list_names`'s setup.
+    let cookfile_label: String = match lua.named_registry_value::<String>("__cook_cookfile_path") {
+        Ok(s) => s,
+        Err(_) => {
+            let fallback = "Cookfile".to_string();
+            lua.set_named_registry_value("__cook_cookfile_path", fallback.clone())
+                .map_err(RegisterError::Lua)?;
+            fallback
+        }
+    };
 
     // 3. Session-scope state; body slot starts None (no active recipe body
     //    during top-level load — spec §6 step 4).

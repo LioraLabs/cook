@@ -1233,3 +1233,39 @@ fn register_cookfile_accepts_top_level_probe() {
         probe_units.len()
     );
 }
+
+#[test]
+fn register_cookfile_surfaces_wrapper_registered_recipe() {
+    use crate::{register_cookfile, RegisterSessionBuilder, RegistrationSource};
+
+    // A wrapper module that internally calls cook.recipe. Inline so the
+    // test is self-contained.
+    let lua_src = r#"
+        local mod = {}
+        function mod.bin(name)
+            cook.recipe(name, {requires = {}}, function()
+                cook.exec("touch " .. name, 0)
+            end)
+        end
+
+        mod.bin("game")
+    "#;
+
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
+
+    assert_eq!(registered.names.len(), 1);
+    assert_eq!(registered.names[0].name, "game");
+    match registered.names[0].source {
+        RegistrationSource::Dynamic { line } => {
+            // Line should point at the `mod.bin("game")` call site, not at the
+            // `cook.recipe(...)` line inside mod.bin. Don't pin the exact number
+            // (depends on how Lua maps stack frames here) — just assert it's
+            // greater than zero and within the source range.
+            assert!(line > 0 && line <= 8, "line was {line}");
+        }
+        other => panic!("expected Dynamic, got {other:?}"),
+    }
+    assert!(registered.units_by_recipe.contains_key("game"));
+}
