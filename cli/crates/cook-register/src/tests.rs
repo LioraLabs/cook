@@ -1015,12 +1015,19 @@ end)
 fn register_cookfile_invokes_each_body_once_in_topo_order() {
     use crate::{register_cookfile, RegisterSessionBuilder};
 
+    // Three recipes chosen so alphabetical order (a, m, z) differs from
+    // topological order (z, m, a). This distinguishes "register_cookfile
+    // walks the DAG in topo order" from "it happens to iterate the
+    // recipe map alphabetically".
     let lua_src = r#"
-        cook.recipe("lib", {requires = {}}, function()
-            cook.exec("touch lib.txt", 1)
+        cook.recipe("z", {requires = {}}, function()
+            cook.exec("touch z.txt", 1)
         end)
-        cook.recipe("app", {requires = {"lib"}}, function()
-            cook.exec("touch app.txt", 2)
+        cook.recipe("m", {requires = {"z"}}, function()
+            cook.exec("touch m.txt", 2)
+        end)
+        cook.recipe("a", {requires = {"m"}}, function()
+            cook.exec("touch a.txt", 3)
         end)
     "#;
 
@@ -1028,12 +1035,32 @@ fn register_cookfile_invokes_each_body_once_in_topo_order() {
     let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
     let registered = register_cookfile(builder, lua_src, None).unwrap();
 
-    assert_eq!(registered.names.len(), 2);
-    assert_eq!(registered.names[0].name, "lib"); // topo: lib first
-    assert_eq!(registered.names[1].name, "app");
+    // Topo order: z -> m -> a (alphabetical would be a, m, z).
+    assert_eq!(registered.names.len(), 3);
+    assert_eq!(registered.names[0].name, "z");
+    assert_eq!(registered.names[1].name, "m");
+    assert_eq!(registered.names[2].name, "a");
 
-    let lib_units = registered.units_by_recipe.get("lib").unwrap();
-    let app_units = registered.units_by_recipe.get("app").unwrap();
-    assert_eq!(lib_units.units.len(), 1);
-    assert_eq!(app_units.units.len(), 1);
+    // Each body must have been invoked exactly once. Asserting on the
+    // captured shell payload (rather than just unit count) catches a
+    // body that no-ops on a second invocation but would still leave
+    // units.len() == 1.
+    let expectations = [("z", "touch z.txt"), ("m", "touch m.txt"), ("a", "touch a.txt")];
+    for (name, expected_cmd) in expectations {
+        let recipe_units = registered
+            .units_by_recipe
+            .get(name)
+            .unwrap_or_else(|| panic!("missing units_by_recipe entry for {name}"));
+        assert_eq!(
+            recipe_units.units.len(),
+            1,
+            "recipe {name} should have produced exactly one unit"
+        );
+        match &recipe_units.units[0].payload {
+            WorkPayload::Shell { cmd, .. } => {
+                assert_eq!(cmd, expected_cmd, "recipe {name} captured wrong command");
+            }
+            other => panic!("recipe {name} produced unexpected payload: {other:?}"),
+        }
+    }
 }

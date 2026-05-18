@@ -54,7 +54,7 @@ pub enum RegisterError {
     /// appearing as both the first and last element.
     ///
     /// Returned by `register_cookfile` (SHI-222 Phase 2 Task 2.2).
-    #[error("dependency cycle: {recipes:?}")]
+    #[error("dependency cycle: {}", recipes.join(" -> "))]
     DependencyCycle { recipes: Vec<String> },
 }
 
