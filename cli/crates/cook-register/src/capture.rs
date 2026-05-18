@@ -191,6 +191,12 @@ pub fn install_cook_api(
     Ok(recipes)
 }
 
+/// Upper bound on the Lua call-stack walk in `caller_line_in_cookfile`.
+/// A safety cap — 40 frames comfortably exceeds any realistic Cookfile
+/// call chain; the early `None` return on missing frames is the
+/// expected termination.
+const MAX_LUA_STACK_DEPTH: usize = 40;
+
 /// Walk the Lua call stack and return the line number of the topmost frame
 /// whose source string matches the Cookfile path label set by
 /// `__cook_cookfile_path` (or any module loaded via `module_loader` with a
@@ -207,12 +213,14 @@ fn caller_line_in_cookfile(lua: &Lua) -> Option<usize> {
         .ok()?;
 
     // Lua call levels: 1 = the closure, 2 = the caller, 3+ = caller's caller, ...
-    for level in 1..40 {
+    for level in 1..MAX_LUA_STACK_DEPTH {
         match lua.inspect_stack(level) {
             None => return None,
             Some(dbg) => {
                 let src_opt = dbg.source().source;
                 let source: &str = src_opt.as_deref().unwrap_or("");
+                // Module-loaded chunks have an "@" prefix (see module_loader.rs); the
+                // `__cook_cookfile_path` registry value does not. Match either form.
                 if source == target || source.ends_with(&target) {
                     return Some(dbg.curr_line() as usize);
                 }
