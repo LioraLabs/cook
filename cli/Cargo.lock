@@ -517,7 +517,6 @@ name = "cook-luagen"
 version = "0.1.0"
 dependencies = [
  "cook-contracts",
- "cook-engine",
  "cook-lang",
  "thiserror 2.0.18",
 ]

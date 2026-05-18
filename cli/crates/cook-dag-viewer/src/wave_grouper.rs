@@ -8,6 +8,14 @@
 //!   land in a single wave.
 //! - Inferred merging respects wave boundaries: if A is constrained to wave N
 //!   by explicit deps, B using `{A}` joins wave N rather than pulling A earlier.
+//!
+//! **Historical note (SHI-222 Phase 4 Task 4.4).** This module was originally
+//! in `cook-engine` and drove the per-wave register / DAG / execute loop. The
+//! engine now walks a single unified work-unit DAG across every reachable
+//! recipe (no waves), so this module is retained here purely as a viewer-side
+//! presentation grouping: the TUI / JSON viewer groups recipes into "waves"
+//! purely for display, with no runtime semantics. Phase 5 will likely replace
+//! this with a topology projection derived directly from the unified DAG.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 

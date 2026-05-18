@@ -9,5 +9,5 @@ cook-contracts = { path = "../cook-contracts" }
 cook-lang = { path = "../cook-lang" }
 thiserror = "2"
 
-[dev-dependencies]
-cook-engine = { path = "../cook-engine" }
+# No dev-dependencies. The former `cook-engine` dev-dep was only used by the
+# wave-grouper integration test removed in SHI-222 Phase 4 Task 4.4.

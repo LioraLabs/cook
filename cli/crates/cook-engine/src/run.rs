@@ -1,7 +1,9 @@
 //! Unified engine entry point for both single-Cookfile and workspace builds.
 //!
 //! `run()` takes the full recipe graph, resolves dependencies, and executes
-//! recipes in wave-parallel order using the recipe DAG + work-unit DAG pipeline.
+//! recipes by building a single unified work-unit DAG and walking it with the
+//! shared executor pool. Cross-recipe edges live directly on the unified DAG;
+//! there is no per-wave register / DAG / execute loop (SHI-222 Phase 4).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -12,11 +14,14 @@ use cook_cache::{
     backend::LocalBackend, cache_ctx::CacheContext, cloud_backend::CloudBackend,
     cloud_config::CloudConfig, TestCache, ThreadSafeCacheManager,
 };
-use cook_contracts::WorkPayload;
+use cook_contracts::{RecipeUnits, WorkPayload};
 use cook_fingerprint::{CacheBackend, EnvDenylist, ExecutionContext, FingerprintInputs};
 
 use crate::analyzer::{self, GraphError};
-use crate::{dag_builder, executor, wave_grouper, EngineError, EngineEvent, RecipeKind, RegistryEntry};
+use crate::{
+    dag_builder, executor, EngineError, EngineEvent, RecipeKind, RegisteredWorkspace,
+    RegistryEntry,
+};
 
 // ---------------------------------------------------------------------------
 // TestScope — how to scope a `cook test` invocation
@@ -209,27 +214,18 @@ where
         return Ok(RunResult { test_results: vec![] });
     }
 
-    // Compute inferred deps for the workspace.
-    let inferred_deps: BTreeMap<String, Vec<String>> =
-        if workspace.imports.is_empty() {
-            crate::pipeline::inferred_deps::compute_single_inferred_deps(&workspace.root.cookfile)
-        } else {
-            crate::pipeline::inferred_deps::compute_workspace_inferred_deps(&workspace)
-        };
-
     // ── Phase 3-5: Execute ───────────────────────────────────────────────────
     // In test mode, a cook-step failure should not short-circuit the run with
     // EngineError::TaskFailures. Instead, execute_dag will have already pushed
     // Blocked TestResult rows via cancel_subtree for every downstream test node.
     // Those rows are carried in TaskFailures.partial_test_results so we can
     // return Ok with the Blocked results rather than propagating the error.
-    let raw_result = run_inner(
+    let raw_result = run_with_registries_inner(
         project_root,
         &recipe_infos,
         &targets,
         &registries,
         num_jobs,
-        &inferred_deps,
         on_event,
         rerun_patterns,
     );
@@ -296,9 +292,9 @@ fn split_recipe_name(name: &str) -> (String, String) {
 
 /// Unified engine entry point.
 ///
-/// Resolves the dependency graph for all `targets`, then executes recipes in
-/// wave-parallel order: each wave registers its recipes, builds a work-unit
-/// DAG, and executes it with `num_jobs` parallelism.
+/// Resolves the dependency graph for all `targets`, then executes the build
+/// by constructing a single work-unit DAG across every reachable recipe and
+/// walking it with the shared executor pool.
 ///
 /// # Arguments
 ///
@@ -309,25 +305,34 @@ fn split_recipe_name(name: &str) -> (String, String) {
 /// * `registries` - One `RegistryEntry` per namespace prefix. Root recipes use `""` as the key.
 /// * `num_jobs` - Maximum number of parallel worker threads.
 /// * `inferred_deps` - `{dep}` references: recipe -> recipes it references.
-///   These cause same-wave merging rather than wave boundaries.
+///   Retained in the signature for compatibility with the wave-grouper-era
+///   call sites; the unified-DAG path no longer treats them as wave-merging
+///   hints (cross-recipe edges live directly on the work-unit DAG).
 /// * `on_event` - Callback invoked for each engine event (progress, errors, etc.).
+///
+/// **SHI-222 transitional shape.** Until Phase 5 ports `cook-cli` to drive
+/// registration with `register_workspace`, this entry point continues to
+/// accept the per-prefix `RegistryEntry` map and internally aggregates it
+/// into a [`RegisteredWorkspace`] before dispatching to [`run_inner`]. The
+/// aggregation walks every reachable recipe and invokes the legacy
+/// `RegisterSessionBuilder::register_recipe` for each; Phase 5 will replace
+/// the aggregation helper with the proper `register_cookfile`-driven path.
 pub fn run(
     project_root: &Path,
     recipe_infos: &BTreeMap<String, analyzer::RecipeInfo>,
     targets: &[String],
     registries: &BTreeMap<String, RegistryEntry>,
     num_jobs: usize,
-    inferred_deps: &BTreeMap<String, Vec<String>>,
+    _inferred_deps: &BTreeMap<String, Vec<String>>,
     on_event: impl Fn(EngineEvent) + Send + Sync,
 ) -> Result<RunResult, EngineError> {
     let started = std::time::Instant::now();
-    let result = run_inner(
+    let result = run_with_registries_inner(
         project_root,
         recipe_infos,
         targets,
         registries,
         num_jobs,
-        inferred_deps,
         &on_event,
         &[],
     );
@@ -338,23 +343,365 @@ pub fn run(
     result
 }
 
-fn run_inner<F>(
+/// Transitional inner driver: aggregates the legacy per-prefix `RegistryEntry`
+/// map into a [`RegisteredWorkspace`] via [`register_workspace_from_registries`],
+/// then dispatches to [`run_inner`] which executes against the unified DAG.
+///
+/// Phase 5 will retire this shim in favour of a CLI that hands a fully built
+/// [`RegisteredWorkspace`] directly to [`run_inner`].
+fn run_with_registries_inner<F>(
     project_root: &Path,
     recipe_infos: &BTreeMap<String, analyzer::RecipeInfo>,
     targets: &[String],
     registries: &BTreeMap<String, RegistryEntry>,
     num_jobs: usize,
-    inferred_deps: &BTreeMap<String, Vec<String>>,
     on_event: &F,
     rerun_patterns: &[String],
 ) -> Result<RunResult, EngineError>
 where
     F: Fn(EngineEvent) + Send + Sync,
 {
-    // ── Cache bootstrap ──────────────────────────────────────────────────────
-    // Load .cook/cloud.toml (default if absent), build EnvDenylist, probe
-    // ExecutionContext (machine identity + tool-binary hashing), construct
-    // LocalBackend, and assemble CacheContext. Built once per build invocation.
+    // Build CacheContext once for the whole build invocation.
+    let cache_ctx = build_cache_ctx(project_root)?;
+
+    // Resolve the reachable recipe set BEFORE registration so the legacy
+    // aggregation only registers what's needed for this target invocation.
+    let edges = analyzer::dependency_edges_multi(recipe_infos, targets).map_err(|e| match e {
+        GraphError::CycleDetected(s) => EngineError::CycleDetected(s),
+        GraphError::UnknownRecipe(s) => EngineError::UnknownRecipe(s),
+        // Io/Parse cannot be produced by dependency_edges_multi (pure graph op).
+        e => EngineError::CycleDetected(e.to_string()),
+    })?;
+    let reachable: BTreeSet<String> = edges.keys().cloned().collect();
+
+    // Aggregate registries → RegisteredWorkspace by invoking the legacy
+    // per-recipe registration API for every reachable name.
+    let registered_workspace = register_workspace_from_registries(
+        registries,
+        &reachable,
+        Some(cache_ctx.clone()),
+    )?;
+
+    run_inner(
+        &registered_workspace,
+        &edges,
+        &reachable,
+        num_jobs,
+        cache_ctx,
+        on_event,
+        rerun_patterns,
+    )
+}
+
+/// Walk the unified work-unit DAG across every reachable recipe.
+///
+/// `edges` is the recipe-level dependency edge map (from
+/// [`analyzer::dependency_edges_multi`]) for the reachable target closure.
+/// `reachable` is the set of all reachable recipe names — must equal
+/// `edges.keys().cloned().collect()`.
+///
+/// **Unified-DAG contract (SHI-222 Phase 4).** This function builds the
+/// work-unit DAG in a single [`dag_builder::build_dag`] invocation across
+/// every reachable recipe, then dispatches it to a single
+/// [`executor::execute_dag`] walk. Cross-recipe edges (coarse `deps` and
+/// fine-grained `dep_edges`) are wired directly on the work-unit DAG; there
+/// is no per-wave loop and no per-wave registration.
+fn run_inner<F>(
+    registered_workspace: &RegisteredWorkspace,
+    edges: &BTreeMap<String, Vec<String>>,
+    reachable: &BTreeSet<String>,
+    num_jobs: usize,
+    cache_ctx: Arc<CacheContext>,
+    on_event: &F,
+    rerun_patterns: &[String],
+) -> Result<RunResult, EngineError>
+where
+    F: Fn(EngineEvent) + Send + Sync,
+{
+    // 1. Collect RecipeUnits for every reachable recipe and stamp the
+    //    cross-recipe deps from the recipe-level edge map. The DAG builder
+    //    wires both coarse `deps` and fine-grained `dep_edges` from this
+    //    slice in a single pass.
+    //
+    //    Recipes are passed in topological order (derived from `edges` via
+    //    a Kahn walk) so that `build_dag`'s intra-call `recipe_leaves`
+    //    accumulator has every dep present when wiring cross-recipe edges.
+    let topo_order = toposort_reachable(edges, reachable)?;
+    let mut all_units: Vec<RecipeUnits> = Vec::with_capacity(topo_order.len());
+    for name in &topo_order {
+        let units = registered_workspace
+            .units_by_recipe
+            .get(name)
+            .ok_or_else(|| EngineError::UnknownRecipe(name.clone()))?;
+        let mut u = units.clone();
+        if let Some(deps) = edges.get(name) {
+            u.deps = deps.clone();
+        }
+        all_units.push(u);
+    }
+
+    // 2. Build the unified work-unit DAG.
+    let dag = dag_builder::build_dag(all_units)?;
+
+    // 3. Emit BuildStarted in topological order, then RecipeQueued for each
+    //    reachable recipe. `expected_nodes` is the count of DAG nodes owned
+    //    by each recipe (matches what the executor tracks).
+    let recipe_node_counts: BTreeMap<String, usize> = {
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for i in 0..dag.len() {
+            let name = dag.node(i).payload().recipe_name.clone();
+            *counts.entry(name).or_insert(0) += 1;
+        }
+        counts
+    };
+
+    let topos: Vec<crate::RecipeTopology> = topo_order
+        .iter()
+        .map(|name| crate::RecipeTopology {
+            name: name.clone(),
+            deps: edges.get(name).cloned().unwrap_or_default(),
+            expected_nodes: recipe_node_counts.get(name).copied().unwrap_or(0),
+        })
+        .collect();
+    let total_nodes = topos.iter().map(|t| t.expected_nodes).sum();
+    on_event(EngineEvent::BuildStarted {
+        recipes: topos,
+        total_nodes,
+    });
+    for name in &topo_order {
+        on_event(EngineEvent::RecipeQueued {
+            name: name.clone(),
+        });
+    }
+
+    // 4. Synthetic lifecycle events for zero-unit recipes (meta-targets that
+    //    have no cook steps of their own, only deps). The executor never
+    //    sees these recipes, so without the synthetic pair they stay stuck
+    //    in `Waiting` in the progress renderer.
+    {
+        let recipes_in_dag: BTreeSet<String> = (0..dag.len())
+            .map(|i| dag.node(i).payload().recipe_name.clone())
+            .collect();
+        // Map qualified-recipe-name → cook_engine::RecipeKind (Recipe/Chore).
+        // The kind on `RegisteredRecipePub` is `cook_register::RecipeKind`,
+        // which has the same variants but is a distinct type (Task 4.1).
+        let kind_by_name: BTreeMap<&str, RecipeKind> = registered_workspace
+            .names
+            .iter()
+            .map(|r| {
+                let kind = match r.kind {
+                    cook_register::RecipeKind::Recipe => RecipeKind::Recipe,
+                    cook_register::RecipeKind::Chore => RecipeKind::Chore,
+                };
+                (r.name.as_str(), kind)
+            })
+            .collect();
+        for name in &topo_order {
+            if !recipes_in_dag.contains(name) {
+                let kind = kind_by_name
+                    .get(name.as_str())
+                    .copied()
+                    .unwrap_or(RecipeKind::Recipe);
+                on_event(EngineEvent::RecipeStarted {
+                    name: name.clone(),
+                    total_nodes: 0,
+                });
+                on_event(EngineEvent::RecipeCompleted {
+                    name: name.clone(),
+                    elapsed: std::time::Duration::ZERO,
+                    cached_nodes: 0,
+                    total_nodes: 0,
+                    kind,
+                });
+            }
+        }
+    }
+
+    // Empty DAG: every reachable recipe was zero-unit (synthetic events
+    // already emitted above). Nothing else to do.
+    if dag.is_empty() {
+        return Ok(RunResult { test_results: vec![] });
+    }
+
+    // 5. Per-recipe cache managers. One per reachable recipe, anchored at
+    //    that recipe's prefix's working_dir.
+    let cache_managers: BTreeMap<String, Arc<ThreadSafeCacheManager>> = reachable
+        .iter()
+        .map(|name| {
+            let prefix = split_recipe_name(name).0;
+            let wd = registered_workspace
+                .working_dir_by_prefix
+                .get(&prefix)
+                .cloned()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let cache_dir = wd.join(".cook").join("cache");
+            (name.clone(), Arc::new(ThreadSafeCacheManager::new(cache_dir)))
+        })
+        .collect();
+
+    // 6. Build per-node test fingerprints (Phase 5 fingerprint v1) and the
+    //    probe_units_by_node lookup. Both are derived from the unified DAG.
+    let test_cache = TestCache::new(cache_ctx.project_root.join(".cook"));
+    let probe_units_by_key: BTreeMap<String, cook_contracts::ProbeUnit> = registered_workspace
+        .probes
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let fingerprint_by_node: BTreeMap<usize, String> = {
+        let mut fp_map = BTreeMap::new();
+        for node_idx in 0..dag.len() {
+            let work_node = dag.node(node_idx).payload();
+            if let Some(WorkPayload::Test { .. }) = &work_node.payload {
+                let env_keys: Vec<(String, String)> = work_node
+                    .env_vars
+                    .iter()
+                    .filter(|(k, _)| !cache_ctx.denylist.is_ignored(k))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                let tool_hashes: Vec<(String, String)> = cache_ctx
+                    .exec_ctx
+                    .declared_tools
+                    .iter()
+                    .map(|(name, path)| {
+                        let hash = cook_fingerprint::hash_file(path)
+                            .map(|h| format!("{h:x}"))
+                            .unwrap_or_else(|| "0".to_string());
+                        (name.clone(), hash)
+                    })
+                    .collect();
+                let inputs = FingerprintInputs {
+                    cook_outputs: vec![],  // Phase 5 v1 stub
+                    dep_outputs: vec![],   // Phase 5 v1 stub
+                    env_keys,
+                    tool_hashes,
+                };
+                let fp = cook_fingerprint::compute_test_fingerprint(
+                    work_node.payload.as_ref().expect("checked above"),
+                    &inputs,
+                );
+                fp_map.insert(node_idx, fp);
+            }
+        }
+        fp_map
+    };
+
+    let probe_units_by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = (0..dag.len())
+        .filter_map(|node_idx| {
+            let work_node = dag.node(node_idx).payload();
+            if let Some(WorkPayload::Probe { key, .. }) = &work_node.payload {
+                probe_units_by_key.get(key).map(|pu| (node_idx, pu.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // 7. Execute the unified DAG. Lifecycle events (RecipeStarted /
+    //    RecipeCompleted) fire from the executor's recipe-tracker bookkeeping.
+    //    Task 4.5 will refine that to unit-driven transitions; for Phase 4
+    //    the per-recipe semantics already match the wave-loop behaviour.
+    //
+    //    Bridge on_event through an mpsc channel so executor can use its
+    //    existing Option<Sender<EngineEvent>> interface.
+    let (event_tx, event_rx) = mpsc::channel::<EngineEvent>();
+    let exec_result = std::thread::scope(|s| {
+        let on_event_ref = on_event;
+        let handle = s.spawn(move || {
+            while let Ok(event) = event_rx.recv() {
+                on_event_ref(event);
+            }
+        });
+
+        let exec_result = executor::execute_dag(
+            dag,
+            num_jobs,
+            cache_managers,
+            Some(event_tx),
+            cache_ctx.clone(),
+            Some(&test_cache),
+            &fingerprint_by_node,
+            rerun_patterns,
+            &probe_units_by_node,
+        );
+
+        // execute_dag drops the sender end on return, so the bridge thread's
+        // recv() loop exits and join() completes promptly.
+        let _ = handle.join();
+
+        exec_result
+    });
+
+    let test_results = exec_result?;
+    Ok(RunResult { test_results })
+}
+
+/// Topologically sort `reachable` against the recipe-level `edges` map.
+///
+/// Returns recipe names in dependency-first order so that
+/// [`dag_builder::build_dag`]'s intra-call `recipe_leaves` accumulator has
+/// every dep present before the dependent recipe is processed. Recipes
+/// missing from `edges` are placed first (no deps known).
+fn toposort_reachable(
+    edges: &BTreeMap<String, Vec<String>>,
+    reachable: &BTreeSet<String>,
+) -> Result<Vec<String>, EngineError> {
+    use std::collections::VecDeque;
+
+    // Restrict the dep set per node to deps that are in `reachable`.
+    let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut in_degree: BTreeMap<String, usize> = BTreeMap::new();
+    let mut forward: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for name in reachable {
+        deps.entry(name.clone()).or_default();
+        in_degree.entry(name.clone()).or_insert(0);
+    }
+    for name in reachable {
+        if let Some(dep_list) = edges.get(name) {
+            for d in dep_list {
+                if reachable.contains(d) && d != name {
+                    if deps.get_mut(name).unwrap().insert(d.clone()) {
+                        *in_degree.get_mut(name).unwrap() += 1;
+                        forward.entry(d.clone()).or_default().insert(name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut queue: VecDeque<String> = in_degree
+        .iter()
+        .filter_map(|(n, &deg)| if deg == 0 { Some(n.clone()) } else { None })
+        .collect();
+    let mut order: Vec<String> = Vec::with_capacity(reachable.len());
+    while let Some(n) = queue.pop_front() {
+        order.push(n.clone());
+        if let Some(deps_of) = forward.get(&n) {
+            for next in deps_of {
+                let deg = in_degree.get_mut(next).unwrap();
+                *deg -= 1;
+                if *deg == 0 {
+                    queue.push_back(next.clone());
+                }
+            }
+        }
+    }
+    if order.len() != reachable.len() {
+        return Err(EngineError::CycleDetected(format!(
+            "cycle in reachable recipe set: {:?}",
+            reachable
+        )));
+    }
+    Ok(order)
+}
+
+/// Build a [`CacheContext`] for this build invocation.
+///
+/// Loads `.cook/cloud.toml`, builds the env denylist, probes the execution
+/// context (machine identity + declared-tool hashing), selects either the
+/// local or cloud backend, and assembles the shared `CacheContext` carried
+/// by every register pass and worker.
+fn build_cache_ctx(project_root: &Path) -> Result<Arc<CacheContext>, EngineError> {
     let cloud_config = CloudConfig::load_or_default(project_root)
         .map_err(|e| EngineError::CacheError(format!("invalid .cook/cloud.toml: {e}")))?;
     let mut denylist = EnvDenylist::baseline();
@@ -383,15 +730,6 @@ where
                 .join("cook")
                 .join("cloud")
         });
-    // CS-0057: thread the BackendConfig from .cook/cloud.toml into the
-    // backend constructor. LocalBackend honours `max_artifact_bytes`;
-    // CloudBackend (CS-0058) honours all five tunables.
-    //
-    // CS-0058: branch on `cloud.enabled`. When true, build a CloudBackend
-    // pointing at the configured endpoint and authenticated with the
-    // resolved API key (env var preferred over TOML field).
-    // load_or_default has already validated `endpoint` and the resolved
-    // API key are non-empty when enabled — so unwrap is safe here.
     let backend: Arc<dyn CacheBackend> = if cloud_config.cloud.enabled {
         let endpoint = cloud_config
             .cloud
@@ -422,245 +760,99 @@ where
         tracing::warn!("cache backend unavailable: {e}; continuing with backend disabled");
     }
     let project_id = cloud_config.project_id_or_fallback(project_root);
-    let cache_ctx = Arc::new(CacheContext {
+    Ok(Arc::new(CacheContext {
         exec_ctx,
         denylist,
         backend,
         cloud_config: Arc::new(cloud_config),
         project_root: project_root.to_path_buf(),
         project_id,
-    });
-    // ─────────────────────────────────────────────────────────────────────────
+    }))
+}
 
-    // 1. Compute the full dependency graph for all targets.
-    let edges = analyzer::dependency_edges_multi(recipe_infos, targets).map_err(|e| match e {
-        GraphError::CycleDetected(s) => EngineError::CycleDetected(s),
-        GraphError::UnknownRecipe(s) => EngineError::UnknownRecipe(s),
-        // Io/Parse cannot be produced by dependency_edges_multi (pure graph op).
-        e => EngineError::CycleDetected(e.to_string()),
-    })?;
+/// Phase 4 transitional shim: aggregate per-prefix [`RegistryEntry`] map into
+/// a [`RegisteredWorkspace`] by invoking the legacy
+/// `RegisterSessionBuilder::register_recipe` for every reachable recipe name.
+///
+/// Each reachable recipe is split into `(prefix, local_name)`; the registry
+/// for that prefix is used to register the local name, producing a
+/// `RecipeUnits` whose `recipe_name` is rewritten to the fully-qualified
+/// name. The aggregation also captures the per-prefix `working_dir` so the
+/// executor can construct per-recipe cache managers.
+///
+/// Phase 5 Task 5.1 replaces this helper with a proper
+/// `register_cookfile`-driven workspace registration that captures probes
+/// and `final_env` at the Cookfile granularity.
+fn register_workspace_from_registries(
+    registries: &BTreeMap<String, RegistryEntry>,
+    reachable: &BTreeSet<String>,
+    cache_ctx: Option<Arc<CacheContext>>,
+) -> Result<RegisteredWorkspace, EngineError> {
+    use cook_register::{RecipeKind as RegKind, RegisteredRecipePub, RegistrationSource};
 
-    // 2. Compute waves using the two-tier grouping algorithm.
-    //    `edges` (from the analyzer) contains all non-inferred dependency edges
-    //    (`: dep` declarations + name references from codegen) and serves as
-    //    `explicit_deps` — these create wave boundaries.
-    //    `inferred_deps` (`{dep}` references) cause same-wave merging.
-    let all_recipe_names: BTreeSet<String> = edges.keys().cloned().collect();
-    let waves = wave_grouper::compute_waves(&edges, inferred_deps, &all_recipe_names)
-        .map_err(|e| EngineError::CycleDetected(e))?;
+    let mut units_by_recipe: BTreeMap<String, RecipeUnits> = BTreeMap::new();
+    let mut working_dir_by_prefix: BTreeMap<String, std::path::PathBuf> = BTreeMap::new();
+    let mut alias_dirs_by_prefix: BTreeMap<String, BTreeMap<String, std::path::PathBuf>> =
+        BTreeMap::new();
+    let mut names: Vec<RegisteredRecipePub> = Vec::new();
 
-    // Emit BuildStarted once. Include only recipes reachable from the target(s),
-    // in topological order derived from the computed waves.
-    let topos: Vec<crate::RecipeTopology> = waves
-        .iter()
-        .flat_map(|wave| wave.recipes.iter())
-        .filter_map(|name| {
-            recipe_infos.get(name).map(|info| crate::RecipeTopology {
-                name: name.clone(),
-                deps: info.requires.clone(),
-                expected_nodes: 0, // filled in by RecipeStarted's implied count
-            })
-        })
-        .collect();
-    let total_nodes = topos.iter().map(|t| t.expected_nodes).sum();
-    on_event(EngineEvent::BuildStarted {
-        recipes: topos,
-        total_nodes,
-    });
+    // Record working_dir for every present prefix once, before per-recipe work,
+    // so the engine can still build cache managers for namespaces whose
+    // recipes are all zero-unit or absent from `reachable`.
+    for (prefix, entry) in registries {
+        working_dir_by_prefix
+            .entry(prefix.clone())
+            .or_insert_with(|| entry.registry.working_dir().clone());
+        alias_dirs_by_prefix
+            .entry(prefix.clone())
+            .or_insert_with(|| entry.alias_dirs.clone());
+    }
 
-    // Emit RecipeQueued for every recipe in the graph.
-    for name in edges.keys() {
-        on_event(EngineEvent::RecipeQueued {
+    for name in reachable {
+        let (prefix, local_name) = split_recipe_name(name);
+        let entry = registries
+            .get(&prefix)
+            .ok_or_else(|| EngineError::RegistrationFailed {
+                recipe: name.clone(),
+                message: format!("no registry for prefix '{prefix}'"),
+            })?;
+        let registry = &entry.registry;
+        let lua_source = &entry.lua_source;
+
+        let mut units = registry
+            .register_recipe(lua_source, &local_name, cache_ctx.clone())
+            .map_err(|e| EngineError::RegistrationFailed {
+                recipe: name.clone(),
+                message: e.to_string(),
+            })?;
+
+        // Rewrite the recipe name to the fully-qualified workspace form so
+        // the DAG builder and executor see consistent identifiers across
+        // imports.
+        units.recipe_name = name.clone();
+
+        units_by_recipe.insert(name.clone(), units);
+
+        // Surface a `RegisteredRecipePub` stub so callers (and synthetic
+        // lifecycle-event emission) can branch on `kind`. The legacy
+        // per-recipe `register_recipe` API does not surface kind/source
+        // metadata, so we default to `Recipe` here; Phase 5 will replace
+        // this with the metadata captured by `register_cookfile`.
+        names.push(RegisteredRecipePub {
             name: name.clone(),
+            source: RegistrationSource::Static { line: 0 },
+            kind: RegKind::Recipe,
+            requires: vec![],
         });
     }
 
-    let mut all_test_results: Vec<crate::TestResult> = Vec::new();
-
-    // 3. Wave loop: iterate over pre-computed waves, register, build DAG, execute.
-    for wave in &waves {
-        // Register all recipes in this wave and collect their RecipeUnits.
-        let mut wave_units = Vec::new();
-        let mut wave_cache_managers: BTreeMap<String, Arc<ThreadSafeCacheManager>> = BTreeMap::new();
-
-        for name in &wave.recipes {
-            let (prefix, local_name) = split_recipe_name(name);
-            let entry = registries.get(&prefix).ok_or_else(|| {
-                EngineError::RegistrationFailed {
-                    recipe: name.clone(),
-                    message: format!("no registry for prefix '{prefix}'"),
-                }
-            })?;
-            let registry = &entry.registry;
-            let lua_source = &entry.lua_source;
-
-            let mut units = registry
-                .register_recipe(lua_source, &local_name, Some(cache_ctx.clone()))
-                .map_err(|e| EngineError::RegistrationFailed {
-                    recipe: name.clone(),
-                    message: e.to_string(),
-                })?;
-
-            // Rewrite recipe_name to the fully namespaced form.
-            units.recipe_name = name.clone();
-
-            // Set cross-recipe deps from the edge map so build_dag can wire them.
-            if let Some(deps) = edges.get(name) {
-                units.deps = deps.clone();
-            }
-
-            // Create a cache manager for this recipe based on its registry's working_dir.
-            let cache_dir = registry.working_dir().join(".cook").join("cache");
-            wave_cache_managers
-                .entry(name.clone())
-                .or_insert_with(|| Arc::new(ThreadSafeCacheManager::new(cache_dir)));
-
-            wave_units.push(units);
-        }
-
-        // Extract probe unit metadata keyed by probe key BEFORE wave_units is
-        // consumed by build_dag. We use this map after DAG construction to build
-        // probe_units_by_node (dag node id → ProbeUnit) for the executor.
-        let probe_units_by_key: BTreeMap<String, cook_contracts::ProbeUnit> = wave_units
-            .iter()
-            .flat_map(|ru| ru.probes.iter().cloned().map(|pu| (pu.key.clone(), pu)))
-            .collect();
-
-        // Build work-unit DAG for this wave and execute it. `build_dag` may
-        // return `EngineError::OutputCollision` at plan time when two
-        // non-dep-related recipes claim the same canonical output path.
-        let dag = dag_builder::build_dag(wave_units)?;
-
-        // Emit synthetic lifecycle events for zero-work recipes (meta-targets
-        // that have no cook steps of their own, only deps).  The executor never
-        // sees these recipes, so without this they stay stuck in Waiting.
-        {
-            let recipes_in_dag: BTreeSet<&str> = (0..dag.len())
-                .map(|i| dag.node(i).payload().recipe_name.as_str())
-                .collect();
-            for name in &wave.recipes {
-                if !recipes_in_dag.contains(name.as_str()) {
-                    on_event(EngineEvent::RecipeStarted {
-                        name: name.clone(),
-                        total_nodes: 0,
-                    });
-                    on_event(EngineEvent::RecipeCompleted {
-                        name: name.clone(),
-                        elapsed: std::time::Duration::ZERO,
-                        cached_nodes: 0,
-                        total_nodes: 0,
-                        kind: RecipeKind::Recipe,
-                    });
-                }
-            }
-        }
-
-        if !dag.is_empty() {
-            // Phase 5: build per-node fingerprints for Test nodes in this wave's DAG.
-            // We scan all nodes; non-Test nodes produce no entry and are skipped.
-            // The fingerprint inputs use:
-            //   - cook_outputs / dep_outputs: stubbed empty (Phase 5 v1 known gap)
-            //   - env_keys: recipe-level env vars filtered through the denylist
-            //   - tool_hashes: declared tools from cache_ctx.exec_ctx
-            let test_cache = TestCache::new(project_root.join(".cook"));
-            let fingerprint_by_node: BTreeMap<usize, String> = {
-                let mut fp_map = BTreeMap::new();
-                for node_idx in 0..dag.len() {
-                    let work_node = dag.node(node_idx).payload();
-                    if let Some(WorkPayload::Test { .. }) = &work_node.payload {
-                        // Build FingerprintInputs using available data.
-                        // env_keys: recipe-level env vars filtered through the denylist.
-                        let env_keys: Vec<(String, String)> = work_node
-                            .env_vars
-                            .iter()
-                            .filter(|(k, _)| !cache_ctx.denylist.is_ignored(k))
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect();
-                        // tool_hashes: declared tools from cache_ctx.exec_ctx.
-                        let tool_hashes: Vec<(String, String)> = cache_ctx
-                            .exec_ctx
-                            .declared_tools
-                            .iter()
-                            .map(|(name, path)| {
-                                let hash = cook_fingerprint::hash_file(path)
-                                    .map(|h| format!("{h:x}"))
-                                    .unwrap_or_else(|| "0".to_string());
-                                (name.clone(), hash)
-                            })
-                            .collect();
-                        let inputs = FingerprintInputs {
-                            cook_outputs: vec![],  // Phase 5 v1 stub
-                            dep_outputs: vec![],   // Phase 5 v1 stub
-                            env_keys,
-                            tool_hashes,
-                        };
-                        let fp = cook_fingerprint::compute_test_fingerprint(
-                            work_node.payload.as_ref().expect("checked above"),
-                            &inputs,
-                        );
-                        fp_map.insert(node_idx, fp);
-                    }
-                }
-                fp_map
-            };
-
-            // G4 (CS-0074): build probe_units_by_node — maps DAG node id to
-            // the ProbeUnit (declared inputs) for that node, enabling the
-            // executor to fingerprint probes and look them up in the cache.
-            // Cross-references DAG nodes (WorkPayload::Probe { key }) with the
-            // probe_units_by_key map extracted from RecipeUnits.probes above.
-            let probe_units_by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = (0..dag.len())
-                .filter_map(|node_idx| {
-                    let work_node = dag.node(node_idx).payload();
-                    if let Some(WorkPayload::Probe { key, .. }) = &work_node.payload {
-                        probe_units_by_key.get(key).map(|pu| (node_idx, pu.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            // Bridge on_event through an mpsc channel so executor can use its
-            // existing Option<Sender<EngineEvent>> interface.
-            let (event_tx, event_rx) = mpsc::channel::<EngineEvent>();
-            let bridge_handle = {
-                let on_event_ref = &on_event;
-                // We need to forward events in a separate thread because
-                // execute_dag blocks the current thread.
-                std::thread::scope(|s| {
-                    let handle = s.spawn(move || {
-                        while let Ok(event) = event_rx.recv() {
-                            on_event_ref(event);
-                        }
-                    });
-
-                    let exec_result = executor::execute_dag(
-                        dag,
-                        num_jobs,
-                        wave_cache_managers,
-                        Some(event_tx),
-                        cache_ctx.clone(),
-                        Some(&test_cache),
-                        &fingerprint_by_node,
-                        rerun_patterns,
-                        &probe_units_by_node,
-                    );
-
-                    // Drop the sender end is handled by execute_dag returning
-                    // (event_tx was moved in). Wait for bridge thread to drain.
-                    let _ = handle.join();
-
-                    exec_result
-                })
-            };
-
-            let wave_results = bridge_handle?;
-            all_test_results.extend(wave_results);
-        }
-    }
-
-    Ok(RunResult {
-        test_results: all_test_results,
+    Ok(RegisteredWorkspace {
+        names,
+        units_by_recipe,
+        probes: BTreeMap::new(),
+        final_env_by_cookfile: BTreeMap::new(),
+        working_dir_by_prefix,
+        alias_dirs_by_prefix,
     })
 }
 
@@ -731,7 +923,8 @@ mod tests {
         );
         let registries = BTreeMap::new();
         let inferred = BTreeMap::new();
-        // Empty targets means no edges, so the wave loop exits immediately.
+        // Empty targets means empty reachable set, so run_inner returns
+        // immediately with no test results and no DAG to execute.
         let result = run(&dummy_project_root(), &recipes, &[], &registries, 1, &inferred, |_| {});
         assert!(result.is_ok());
         assert!(result.unwrap().test_results.is_empty());
@@ -848,5 +1041,35 @@ mod tests {
             EngineError::RegistrationFailed { recipe, .. } => assert_eq!(recipe, "build"),
             other => panic!("expected RegistrationFailed, got: {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_toposort_reachable_diamond() {
+        // a -> b, a -> c, b -> d, c -> d
+        let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        edges.insert("a".into(), vec![]);
+        edges.insert("b".into(), vec!["a".into()]);
+        edges.insert("c".into(), vec!["a".into()]);
+        edges.insert("d".into(), vec!["b".into(), "c".into()]);
+        let reachable: BTreeSet<String> =
+            ["a", "b", "c", "d"].iter().map(|s| s.to_string()).collect();
+        let order = toposort_reachable(&edges, &reachable).expect("toposort");
+        let pos = |n: &str| order.iter().position(|x| x == n).unwrap();
+        assert!(pos("a") < pos("b"));
+        assert!(pos("a") < pos("c"));
+        assert!(pos("b") < pos("d"));
+        assert!(pos("c") < pos("d"));
+    }
+
+    #[test]
+    fn test_toposort_reachable_detects_cycle() {
+        let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        edges.insert("a".into(), vec!["b".into()]);
+        edges.insert("b".into(), vec!["a".into()]);
+        let reachable: BTreeSet<String> =
+            ["a", "b"].iter().map(|s| s.to_string()).collect();
+        let result = toposort_reachable(&edges, &reachable);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), EngineError::CycleDetected(_)));
     }
 }

@@ -15,6 +15,10 @@ pub mod render;
 pub mod state;
 pub mod theme;
 pub mod tui;
+// Viewer-local copy of the legacy `wave_grouper` module that cook-engine
+// shipped before SHI-222 Phase 4. The engine no longer waves at runtime;
+// the viewer groups recipes into waves purely for display.
+mod wave_grouper;
 
 pub use dag_data::{build_wave_dag_data, EdgeData, NodeData, WaveData, WaveDagData};
 pub use frame::{FrameEvent, NodeStatus, SnapshotFrame, ViewFrame};

@@ -1557,33 +1557,15 @@ end
     );
 }
 
-#[test]
-fn test_dep_ref_wave_grouping_integration() {
-    let names: std::collections::BTreeSet<String> =
-        ["libmath", "libstr", "app", "run"].iter().map(|s| s.to_string()).collect();
-
-    // app uses {libmath} and {libstr} -> inferred deps
-    // run: app -> explicit dep
-    let mut inferred_deps = std::collections::BTreeMap::new();
-    inferred_deps.insert("app".to_string(), vec!["libmath".to_string(), "libstr".to_string()]);
-
-    let mut explicit_deps = std::collections::BTreeMap::new();
-    explicit_deps.insert("run".to_string(), vec!["app".to_string()]);
-    explicit_deps.insert("app".to_string(), vec![]);
-    explicit_deps.insert("libmath".to_string(), vec![]);
-    explicit_deps.insert("libstr".to_string(), vec![]);
-
-    let waves = cook_engine::wave_grouper::compute_waves(&explicit_deps, &inferred_deps, &names).unwrap();
-
-    assert_eq!(waves.len(), 2, "should have 2 waves");
-    // Wave 1: libmath, libstr, app (same wave via inferred deps)
-    assert_eq!(waves[0].recipes.len(), 3);
-    assert!(waves[0].recipes.contains(&"libmath".to_string()));
-    assert!(waves[0].recipes.contains(&"libstr".to_string()));
-    assert!(waves[0].recipes.contains(&"app".to_string()));
-    // Wave 2: run (after explicit dep on app)
-    assert_eq!(waves[1].recipes, vec!["run".to_string()]);
-}
+// Removed by SHI-222 Phase 4 Task 4.4: `test_dep_ref_wave_grouping_integration`
+// pinned the legacy `cook_engine::wave_grouper::compute_waves` shape, which is
+// gone now that the engine walks a single unified work-unit DAG (no waves at
+// runtime). The codegen-side property the test was reaching for — that
+// `{dep}` references and `: dep` declarations surface distinct dep maps so the
+// engine can wire the right edges — is covered by:
+//   * `recipe_dep_ref_emits_inferred_deps` and related tests above
+//   * `cook-engine/tests/unified_dag_build.rs` (cross-recipe edges across the
+//     unified DAG).
 
 // ── CS-0009: empty-output warning + accessor-placement validation ──
 

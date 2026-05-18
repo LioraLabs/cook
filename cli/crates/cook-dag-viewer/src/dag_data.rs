@@ -8,7 +8,7 @@ use std::sync::Arc;
 use cook_cache::ThreadSafeCacheManager;
 use cook_fingerprint::{hash_file, needs_rebuild_cook, stat_mtime, RebuildResult};
 use cook_contracts::{DepKind, DiscoveredInputs, RecipeUnits, WorkPayload};
-use cook_engine::wave_grouper;
+use crate::wave_grouper;
 use std::collections::BTreeSet;
 
 use crate::VIEWER_SCHEMA_VERSION;
