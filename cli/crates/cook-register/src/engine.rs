@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use cook_contracts::RecipeUnits;
 
-use crate::capture::register_cook_api_capture;
+use crate::capture::install_cook_api;
 use crate::context::setup_recipe_context;
 use crate::dep_output_api::SharedTerminalOutputs;
 use crate::env_api::{install_require_env, EnvKeyset};
@@ -164,7 +164,7 @@ impl RegisterSessionBuilder {
         // Create the probe registry for this register pass.
         let probe_registry = Rc::new(RefCell::new(ProbeRegistry::default()));
 
-        let recipes = register_cook_api_capture(
+        let recipes = install_cook_api(
             &lua,
             self.env_vars.clone(),
             &self.working_dir,

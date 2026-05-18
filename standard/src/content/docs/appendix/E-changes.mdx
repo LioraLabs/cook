@@ -1407,3 +1407,4 @@ Implementation closes the discovery gap that prevented `cook NAME` from dispatch
 - 2026-05-18: Phase 0 — Standard amendments landed (§13.3, §22.3, §22.6, App. C rationale, this CS entry).
 - 2026-05-18: Phase 1 Task 1.1 — `Registry` renamed to `RegisterSessionBuilder` in `cook-register` and all callers.
 - 2026-05-18: Phase 1 Task 1.2 — `CaptureState` split into `SessionCaptureState` (probes; per register-pass) and `BodyCaptureState` (units, step-groups, dep-edges, layer state; per recipe-body invocation) in `cook-register`. Body state lives behind a `SharedBodySlot = Rc<RefCell<Option<BodyCaptureState>>>` so closures detect "called outside a recipe body" cleanly once the Phase 2 entry point lands.
+- 2026-05-18: Phase 1 Task 1.3 — `register_cook_api_capture` renamed to `install_cook_api` in `cook-register` (function installs the entire register-phase `cook.*` surface, not just `cook.recipe`).

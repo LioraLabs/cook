@@ -22,9 +22,10 @@ pub struct RegisteredMetadata {
     pub requires: Vec<String>,
 }
 
-/// Register cook.* APIs in capture mode. Same recipe registration as normal,
-/// but cook.exec/cook.sh capture instead of executing.
-pub fn register_cook_api_capture(
+/// Install the register-phase `cook.*` API surface on the given Lua VM.
+/// This is the whole namespace (recipe registration, capture-mode
+/// `cook.exec`/`cook.sh`, etc.), not just `cook.recipe`.
+pub fn install_cook_api(
     lua: &Lua,
     env_vars: Rc<RefCell<HashMap<String, String>>>,
     working_dir: &PathBuf,
