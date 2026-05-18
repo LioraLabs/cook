@@ -116,6 +116,10 @@ An implementation SHOULD include a brief migration hint in the diagnostic — fo
 
 Registers a recipe with the given name, metadata (`ingredients`, `excludes`, `requires`), and body function. Surface recipes (§{recipes.header-forms}) are compiled to exactly one `cook.recipe` call. A conforming implementation is not required to expose `cook.recipe` as a user-facing extension point; its contract here is what the code generator (§{grammar-appendix.top-level}) produces.
 
+**Name uniqueness within a Cookfile.** Within a single Cookfile registration pass (§{exec.two-phase}), the set of names registered by `cook.recipe` MUST be unique. This applies regardless of registration site — surface `recipe NAME` and `chore NAME` declarations (§{recipes.header-forms}, §{chores.header}) and dynamic `cook.recipe` calls from `register` blocks (§{decl.register}), top-level module calls (§{toplevel.module-call}), or wrapper Lua functions (such as `cook_cc.bin`, §{cat.cc}) all participate in the same uniqueness namespace.
+
+A conforming implementation MUST diagnose a duplicate name with a single error that names the offending recipe and identifies both registration sites by their source line. The diagnostic MUST distinguish surface declarations from register-phase Lua calls. The mechanism by which an implementation distinguishes the two registration paths is implementation-defined; the reference implementation tags surface registrations via a codegen-private helper while leaving the public `cook.recipe` API unchanged. See §{rationale.recipe-name-uniqueness}.
+
 ## 22.4. `cook.add_test` [#lua.cook-add-test]
 **Signature.** `cook.add_test(spec: table) -> nil`
 **Phase.** Register-phase only.
@@ -163,3 +167,11 @@ The N units registered inside the function body form one step group; the N compi
 ### Note 22.5.1
 
 The surface `cook` step (§{steps.cook-single}, §{steps.cook-multi}) routes through `cook.step_group` implicitly. Authors of Cook modules (Part IV) typically call `cook.step_group` explicitly to record a fan-out workload.
+
+## 22.6. Recipe discovery [#lua.reg.discovery]
+
+A conforming implementation's **recipe-discovery procedure** is the operation that enumerates the names a Cookfile registration pass has made available for dispatch. The discovered set MUST include every recipe registered by `cook.recipe` (§{lua.cook-recipe}) during the pass, regardless of registration site (surface `recipe NAME` declarations, surface `chore NAME` declarations, `register` block bodies, top-level module calls, or wrapper Lua functions).
+
+A `cook NAME` dispatch invocation MUST resolve `NAME` against the unified discovered set. A dispatch invocation that names a recipe registered only through register-phase Lua (for example, by a `cook_cc.bin(NAME, …)` call inside a `register` block) MUST execute identically to one naming a surface recipe declaration.
+
+A conforming implementation MAY expose a listing surface (such as a `cook list` CLI subcommand) that enumerates the same unified discovered set without invoking any recipe body. When such a listing surface exists, it MUST surface register-phase-Lua–registered names alongside surface declarations. A listing surface implemented as a no-body-invocation variant of the register pass MUST still evaluate `config` blocks (§{decl.config}) and top-level register-block code, since those may affect the set of names that `cook.recipe` ultimately registers.
