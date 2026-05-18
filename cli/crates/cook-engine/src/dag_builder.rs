@@ -115,6 +115,15 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
             })
             .collect();
 
+        // Probe metadata index keyed by probe key. `ru.probes` is the
+        // authoritative ProbeUnit list (it carries top-level register-block
+        // probes that are NOT present in `ru.units` as `WorkPayload::Probe`
+        // entries — see SHI-222 Phase 8). Body-scope probes appear in both,
+        // and `probe_unit_index_by_key` takes precedence for those when
+        // wiring consumer edges so we reuse the body-scope DAG node.
+        let probe_meta_by_key: BTreeMap<&str, &cook_contracts::ProbeUnit> =
+            ru.probes.iter().map(|p| (p.key.as_str(), p)).collect();
+
         // dag_id_by_unit_idx: populated as each unit is added; lets us resolve
         // probe-unit dag IDs when wiring CapturedUnit.probes edges.
         let mut dag_id_by_unit_idx: BTreeMap<usize, usize> = BTreeMap::new();
@@ -132,6 +141,137 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                 _ => None,
             })
             .collect();
+
+        // SHI-222 Phase 8 — pre-materialise Probe DAG nodes for consumer-
+        // referenced probe keys that have no `WorkPayload::Probe` entry in
+        // `ru.units`. These are top-level probes registered via
+        // `cook.probe(...)` at register-block scope (e.g. through helpers like
+        // `cook_cc.checks.has_header`). Their metadata lives in `ru.probes`
+        // (drained from `RegisteredCookfile.probes`) but they were silently
+        // dropped from the DAG before this fix, so the consumer's
+        // `cook.cache.get(probe_key)` returned nil at execute time.
+        //
+        // We honour the same demand-driven pruning rule as body-scope probes
+        // (§22.5.7): only keys present in `consumed` (the transitive closure
+        // of non-probe consumer `probes` lists under probe-on-probe
+        // `inputs.requires`) get a synthesised node. Synthesised nodes are
+        // wired in dependency order so a probe whose `inputs.requires`
+        // references another synthesised probe edges to it correctly.
+        //
+        // Synthesised nodes inherit the prevailing `cross_deps` (recipe-level
+        // coarse deps) as their root deps so they cannot run before
+        // prerequisite recipes finish. They do NOT participate in the
+        // sequential `barrier` because they are inserted up-front, before
+        // any `ru.units` are walked.
+        let mut cross_deps_for_synth: Vec<usize> = Vec::new();
+        for dep_name in &ru.deps {
+            if let Some(leaves) = recipe_leaves.get(dep_name) {
+                cross_deps_for_synth.extend(leaves);
+            }
+        }
+
+        let mut synthesised_probe_dag_ids: BTreeMap<String, usize> = BTreeMap::new();
+
+        // Collect keys to synthesise: any consumed key that lacks a unit-
+        // backed Probe payload but has metadata in `ru.probes`.
+        let synth_keys: Vec<String> = consumed
+            .iter()
+            .filter(|k| !probe_unit_index_by_key.contains_key(k.as_str()))
+            .filter(|k| probe_meta_by_key.contains_key(k.as_str()))
+            .cloned()
+            .collect();
+
+        // Topologically order synth_keys by probe-on-probe `inputs.requires`
+        // so an upstream probe is added before a downstream probe that wants
+        // it as a dep. Kahn-style walk over the induced subgraph restricted
+        // to keys actually being synthesised; cycles (unreachable in
+        // practice — engine.rs validates `inputs.requires` at register time)
+        // fall through and edges to the missing upstream are simply omitted.
+        let synth_key_set: BTreeSet<&str> = synth_keys.iter().map(|s| s.as_str()).collect();
+        let mut indegree: BTreeMap<&str, usize> = BTreeMap::new();
+        for k in &synth_keys {
+            indegree.insert(k.as_str(), 0);
+        }
+        for k in &synth_keys {
+            if let Some(meta) = probe_meta_by_key.get(k.as_str()) {
+                for upstream in &meta.inputs.requires {
+                    if synth_key_set.contains(upstream.as_str()) {
+                        *indegree.get_mut(k.as_str()).unwrap() += 1;
+                    }
+                }
+            }
+        }
+        let mut queue: VecDeque<&str> = indegree
+            .iter()
+            .filter_map(|(k, &d)| if d == 0 { Some(*k) } else { None })
+            .collect();
+        let mut ordered_synth: Vec<String> = Vec::with_capacity(synth_keys.len());
+        while let Some(k) = queue.pop_front() {
+            ordered_synth.push(k.to_string());
+            // For each other synth_key whose upstream list contains k, decrement.
+            for other in &synth_keys {
+                if other.as_str() == k {
+                    continue;
+                }
+                if let Some(meta) = probe_meta_by_key.get(other.as_str()) {
+                    if meta.inputs.requires.iter().any(|u| u == k) {
+                        let entry = indegree.get_mut(other.as_str()).unwrap();
+                        *entry = entry.saturating_sub(1);
+                        if *entry == 0 {
+                            queue.push_back(other.as_str());
+                        }
+                    }
+                }
+            }
+        }
+        // If any keys were not popped (cycle — should be unreachable),
+        // append them anyway so they at least get nodes (edges to upstream
+        // synthesised peers will be missing, mirroring the
+        // probe-declared-after-consumer fallback below).
+        for k in &synth_keys {
+            if !ordered_synth.contains(k) {
+                ordered_synth.push(k.clone());
+            }
+        }
+
+        for key in &ordered_synth {
+            let meta = probe_meta_by_key
+                .get(key.as_str())
+                .expect("synth_keys filtered on probe_meta_by_key membership");
+            let mut deps: Vec<usize> = cross_deps_for_synth.clone();
+            for upstream in &meta.inputs.requires {
+                if let Some(&id) = synthesised_probe_dag_ids.get(upstream) {
+                    if !deps.contains(&id) {
+                        deps.push(id);
+                    }
+                }
+                // Upstream that resolves to a body-scope probe in
+                // `probe_unit_index_by_key` cannot be wired here because
+                // that unit hasn't been added yet (we're pre-materialising
+                // before the unit walk). Body-scope probes wiring upstream
+                // to a top-level probe is the only direction we support
+                // (top-level → top-level transitive), which matches the
+                // typical helper-emitted probe shape. Future work: if
+                // body-scope probes start declaring `requires` against
+                // top-level keys, extend the unit walk to look up
+                // synthesised IDs.
+            }
+            let work_node = WorkNode {
+                payload: Some(WorkPayload::Probe {
+                    key: meta.key.clone(),
+                    produce: meta.produce_source.clone(),
+                    line: meta.produce_line,
+                }),
+                recipe_name: ru.recipe_name.clone(),
+                cache_meta: None,
+                working_dir: ru.working_dir.clone(),
+                env_vars: ru.env_vars.clone(),
+            };
+            let dag_id = dag
+                .add_node(work_node, &deps)
+                .expect("synthesised probe deps originated from prior add_node calls");
+            synthesised_probe_dag_ids.insert(key.clone(), dag_id);
+        }
 
         // Collect cross-recipe dependency ids: the leaf nodes of every
         // prerequisite recipe.
@@ -214,18 +354,37 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
             // For each probe key in unit.probes, find the probe's dag_id (which
             // must already be known since probes appear before consumers) and add it
             // as a dependency of this unit.
+            //
+            // Resolution order (SHI-222 Phase 8):
+            //   1. Body-scope probe units (`probe_unit_index_by_key` →
+            //      `dag_id_by_unit_idx`). These were captured as
+            //      `WorkPayload::Probe` entries inside `ru.units`.
+            //   2. Synthesised top-level probes (`synthesised_probe_dag_ids`).
+            //      These were pre-materialised above from `ru.probes` for
+            //      keys with no unit-backed entry.
+            // A key present in BOTH categories prefers the body-scope unit so
+            // sequencing relative to its surrounding units is preserved.
             for req_key in &unit.probes {
+                let mut wired = false;
                 if let Some(&probe_unit_idx) = probe_unit_index_by_key.get(req_key) {
                     if let Some(&probe_dag_id) = dag_id_by_unit_idx.get(&probe_unit_idx) {
                         if !all_deps.contains(&probe_dag_id) {
                             all_deps.push(probe_dag_id);
                         }
+                        wired = true;
                     }
                     // If the probe dag_id isn't known yet (probe declared after consumer
                     // in units), the edge is silently skipped. In practice this cannot
                     // happen: engine.rs validates all probe keys exist as registered
                     // probes, and probes are pushed into units when cook.probe is called
                     // (before cook.add_unit in the same register block).
+                }
+                if !wired {
+                    if let Some(&probe_dag_id) = synthesised_probe_dag_ids.get(req_key) {
+                        if !all_deps.contains(&probe_dag_id) {
+                            all_deps.push(probe_dag_id);
+                        }
+                    }
                 }
             }
 
@@ -1055,6 +1214,157 @@ mod tests {
             .filter(|n| matches!(n.payload().payload, Some(WorkPayload::Probe { .. })))
             .count();
         assert_eq!(probe_count2, 0, "both probes must be pruned when nothing consumes downstream");
+    }
+
+    /// SHI-222 Phase 8 regression: top-level register-scope probes (whose
+    /// metadata flows into `RecipeUnits.probes` but which are NOT present as
+    /// `WorkPayload::Probe` entries in `RecipeUnits.units`) must materialise
+    /// as DAG nodes when a consumer's `probes` field references them.
+    /// Pre-fix, these probes were silently dropped; the consumer's
+    /// `cook.cache.get` returned nil at execute time.
+    #[test]
+    fn top_level_probe_materialises_when_consumer_references_it() {
+        use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
+
+        let probe_meta = ProbeUnit {
+            key: "cc:has_stdint_h".to_string(),
+            produce_source: "return { ok = true }".to_string(),
+            produce_line: 7,
+            inputs: ProbeInputs::default(),
+        };
+        let ru = RecipeUnits {
+            recipe_name: "game".into(),
+            deps: vec![],
+            // Note: NO Probe entry in units — only the consumer.
+            units: vec![CapturedUnit {
+                payload: shell("cc -o game main.c"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec!["cc:has_stdint_h".into()],
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![probe_meta],
+        };
+        let dag = build_dag(vec![ru]).expect("no collision");
+        assert_eq!(
+            dag.len(),
+            2,
+            "expected synthesised probe node + consumer; got {} nodes",
+            dag.len()
+        );
+        // Node 0 should be the synthesised Probe (no deps).
+        assert!(
+            matches!(dag.node(0).payload().payload, Some(WorkPayload::Probe { .. })),
+            "node 0 must be the synthesised Probe"
+        );
+        assert_eq!(dag.node(0).remaining_deps(), 0);
+        // Node 1 (consumer) depends on the synthesised probe.
+        assert_eq!(
+            dag.node(1).remaining_deps(),
+            1,
+            "consumer must depend on synthesised probe"
+        );
+    }
+
+    /// SHI-222 Phase 8: synthesis must respect demand-driven scheduling —
+    /// a top-level probe that no consumer references is not synthesised.
+    #[test]
+    fn top_level_probe_not_synthesised_when_no_consumer() {
+        use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
+
+        let probe_meta = ProbeUnit {
+            key: "cc:unused".to_string(),
+            produce_source: "return 1".to_string(),
+            produce_line: 1,
+            inputs: ProbeInputs::default(),
+        };
+        let ru = RecipeUnits {
+            recipe_name: "r".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("true"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![], // no references
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![probe_meta],
+        };
+        let dag = build_dag(vec![ru]).expect("no collision");
+        let probe_nodes = (0..dag.len())
+            .filter(|i| matches!(dag.node(*i).payload().payload, Some(WorkPayload::Probe { .. })))
+            .count();
+        assert_eq!(probe_nodes, 0, "unreferenced top-level probe must not be synthesised");
+    }
+
+    /// SHI-222 Phase 8: probe-on-probe transitive synthesis. If consumer
+    /// references probe B, and probe B's `inputs.requires` lists probe A,
+    /// both A and B must be synthesised, with B depending on A.
+    #[test]
+    fn top_level_probe_chain_synthesised_transitively() {
+        use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};
+
+        let probe_a = ProbeUnit {
+            key: "cc:a".into(),
+            produce_source: "return 1".into(),
+            produce_line: 1,
+            inputs: ProbeInputs::default(),
+        };
+        let probe_b = ProbeUnit {
+            key: "cc:b".into(),
+            produce_source: "return 2".into(),
+            produce_line: 2,
+            inputs: ProbeInputs {
+                requires: vec!["cc:a".into()],
+                ..ProbeInputs::default()
+            },
+        };
+        let ru = RecipeUnits {
+            recipe_name: "r".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("true"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec!["cc:b".into()],
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![probe_a, probe_b],
+        };
+        let dag = build_dag(vec![ru]).expect("no collision");
+        // 2 probes + 1 consumer = 3
+        assert_eq!(dag.len(), 3);
+        // Find nodes by key.
+        let mut a_id = None;
+        let mut b_id = None;
+        for i in 0..dag.len() {
+            if let Some(WorkPayload::Probe { key, .. }) = &dag.node(i).payload().payload {
+                if key == "cc:a" {
+                    a_id = Some(i);
+                } else if key == "cc:b" {
+                    b_id = Some(i);
+                }
+            }
+        }
+        let a_id = a_id.expect("probe A must be synthesised");
+        let b_id = b_id.expect("probe B must be synthesised");
+        // A has no deps, B depends on A.
+        assert_eq!(dag.node(a_id).remaining_deps(), 0, "probe A must have no deps");
+        assert_eq!(dag.node(b_id).remaining_deps(), 1, "probe B must depend on probe A");
+        // Topo order: A added before B (A's dag_id < B's).
+        assert!(a_id < b_id, "probe A must be added before probe B");
     }
 
     #[test]
