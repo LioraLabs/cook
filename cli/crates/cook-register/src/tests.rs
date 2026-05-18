@@ -1,4 +1,4 @@
-use cook_contracts::{DepKind, WorkPayload};
+use cook_contracts::{DepKind, RecipeUnits, WorkPayload};
 
 use super::*;
 use std::collections::HashMap;
@@ -7,6 +7,24 @@ use tempfile::TempDir;
 
 fn make_registry(dir: &std::path::Path) -> RegisterSessionBuilder {
     RegisterSessionBuilder::new(dir.to_path_buf(), HashMap::new())
+}
+
+/// Helper: drive `register_cookfile` and return the `RecipeUnits` for a
+/// named recipe. Migrated from the deleted `register_recipe` convenience
+/// (SHI-222 Phase 6 Tasks 6.1+6.2). Panics if the named recipe is missing.
+fn register_one(rt: RegisterSessionBuilder, lua_src: &str, name: &str) -> RecipeUnits {
+    let registered = register_cookfile(rt, lua_src, None)
+        .unwrap_or_else(|e| panic!("register_cookfile failed: {e:?}"));
+    registered
+        .units_by_recipe
+        .get(name)
+        .unwrap_or_else(|| {
+            panic!(
+                "recipe {name:?} not registered; got: {:?}",
+                registered.units_by_recipe.keys().collect::<Vec<_>>()
+            )
+        })
+        .clone()
 }
 
 // -----------------------------------------------------------------------
@@ -22,7 +40,7 @@ cook.recipe("hello", {}, function()
     cook.exec("echo hello", 1)
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "hello", None).unwrap();
+    let result = register_one(rt, lua_src, "hello");
     assert_eq!(result.recipe_name, "hello");
     assert_eq!(result.units.len(), 1);
     match &result.units[0].payload {
@@ -45,7 +63,7 @@ cook.recipe("multi", {}, function()
     cook.exec("echo second", 2)
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "multi", None).unwrap();
+    let result = register_one(rt, lua_src, "multi");
     assert_eq!(result.units.len(), 2);
     assert!(matches!(result.units[0].dep_kind, DepKind::Sequential));
     assert!(matches!(result.units[1].dep_kind, DepKind::Sequential));
@@ -75,7 +93,7 @@ cook.recipe("clean", {}, function()
     cook.exec("echo cleaning", 1)
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    let result = register_one(rt, lua_src, "build");
     assert_eq!(result.deps, vec!["clean"]);
 }
 
@@ -91,7 +109,7 @@ cook.recipe("build", {}, function()
     end)
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    let result = register_one(rt, lua_src, "build");
     assert_eq!(result.units.len(), 2);
     assert_eq!(result.step_groups.len(), 1);
     assert_eq!(result.step_groups[0].len(), 2);
@@ -134,7 +152,7 @@ cook.recipe("build", {}, function()
     test_mod.add_steps()
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    let result = register_one(rt, lua_src, "build");
     assert_eq!(result.units.len(), 2);
     assert!(matches!(result.units[0].dep_kind, DepKind::StepGroup(0)));
     assert!(matches!(result.units[1].dep_kind, DepKind::StepGroup(0)));
@@ -175,12 +193,14 @@ cook.recipe("app", {requires = {"lib"}}, function()
 end)
 "#;
 
-    // Register "lib" first — it exports
-    let lib_result = rt.register_recipe(lua_src, "lib", None).unwrap();
+    // Single register_cookfile pass invokes both bodies in topo order
+    // (lib before app, since app requires lib), so the cook.export from
+    // lib's body is visible by the time app's body calls cook.import.
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    let lib_result = registered.units_by_recipe.get("lib").expect("lib missing");
     assert_eq!(lib_result.units.len(), 0);
 
-    // Register "app" — it imports
-    let app_result = rt.register_recipe(lua_src, "app", None).unwrap();
+    let app_result = registered.units_by_recipe.get("app").expect("app missing");
     assert_eq!(app_result.units.len(), 1);
     match &app_result.units[0].payload {
         WorkPayload::Shell { cmd, .. } => {
@@ -208,7 +228,7 @@ cook.recipe("check", {}, function()
     cook.add_unit({ command = test_mod.detected_os, cache = false })
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "check", None).unwrap();
+    let result = register_one(rt, lua_src, "check");
     match &result.units[0].payload {
         WorkPayload::Shell { cmd, .. } => {
             assert_eq!(cmd, std::env::consts::OS);
@@ -239,7 +259,7 @@ cook.recipe("tests", {}, function()
     end)
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "tests", None).unwrap();
+    let result = register_one(rt, lua_src, "tests");
     assert_eq!(result.units.len(), 2);
     match &result.units[0].payload {
         WorkPayload::Test { cmd, timeout, should_fail, suite_name, test_name, .. } => {
@@ -261,7 +281,7 @@ end)
 
 /// CS-0061 §3.2: `suite` defaults to the enclosing recipe's qualified name
 /// when the caller omits the field. Exercises the engine path (current_recipe
-/// is set by RegisterSessionBuilder::register_recipe, not by the unit-level helper).
+/// is set by `register_cookfile`'s per-body drain loop, not by the unit-level helper).
 #[test]
 fn test_add_test_defaults_suite_to_recipe_name_via_engine() {
     let dir = TempDir::new().unwrap();
@@ -274,7 +294,7 @@ cook.recipe("my_tests", {}, function()
     })
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "my_tests", None).unwrap();
+    let result = register_one(rt, lua_src, "my_tests");
     assert_eq!(result.units.len(), 1);
     match &result.units[0].payload {
         WorkPayload::Test { suite_name, .. } => {
@@ -305,7 +325,7 @@ end)
     let rt = RegisterSessionBuilder::new(dir.path().to_path_buf(), HashMap::new())
         .with_shared_terminal_outputs(shared)
         .with_qualified_prefix("mylib".to_string());
-    let result = rt.register_recipe(lua_src, "tests", None).unwrap();
+    let result = register_one(rt, lua_src, "tests");
     match &result.units[0].payload {
         WorkPayload::Test { suite_name, .. } => {
             assert_eq!(suite_name, "mylib.tests",
@@ -325,7 +345,7 @@ cook.recipe("r", {}, function()
     cook.add_test({ command = "" })
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "r", None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "empty command must be rejected");
     let err = result.err().unwrap().to_string();
     assert!(err.contains("command"), "error should mention 'command', got: {err}");
@@ -341,7 +361,7 @@ cook.recipe("r", {}, function()
     cook.add_test({ command = "true", timeout = 0 })
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "r", None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "timeout = 0 must be rejected");
     let err = result.err().unwrap().to_string();
     assert!(err.contains("timeout"), "error should mention 'timeout', got: {err}");
@@ -404,7 +424,7 @@ cook.recipe("build", {}, function() end)
     let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), initial_env)
         .with_selected_config(Some("release".to_string()));
 
-    let units = registry.register_recipe(lua_source, "build", None).unwrap();
+    let units = register_one(registry, lua_source, "build");
 
     assert_eq!(units.env_vars.get("CC").map(|s| s.as_str()), Some("from_base"));
     assert_eq!(units.env_vars.get("CXXFLAGS").map(|s| s.as_str()), Some("-O3"));
@@ -428,7 +448,7 @@ cook.recipe("build", {}, function() end)
 
     let tmp = TempDir::new().unwrap();
     let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), initial_env);
-    let units = registry.register_recipe(lua_source, "build", None).unwrap();
+    let units = register_one(registry, lua_source, "build");
 
     assert_eq!(units.env_vars.get("BASE").map(|s| s.as_str()), Some("applied"));
     assert!(units.env_vars.get("SHOULD_NOT_APPEAR").is_none());
@@ -439,7 +459,7 @@ fn test_registry_no_dispatcher_no_op() {
     let lua_source = r#"cook.recipe("build", {}, function() end)"#;
     let tmp = TempDir::new().unwrap();
     let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new());
-    let units = registry.register_recipe(lua_source, "build", None).unwrap();
+    let units = register_one(registry, lua_source, "build");
     assert_eq!(units.recipe_name, "build");
 }
 
@@ -468,7 +488,7 @@ cook.recipe("build", {}, function() end)
     let tmp = TempDir::new().unwrap();
     let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), initial_env)
         .with_cli_overrides(cli_overrides);
-    let units = registry.register_recipe(lua_source, "build", None).unwrap();
+    let units = register_one(registry, lua_source, "build");
 
     // CLI override wins over the config block's `env.OPT_LEVEL = "3"`.
     assert_eq!(units.env_vars.get("OPT_LEVEL").map(|s| s.as_str()), Some("0"));
@@ -499,7 +519,7 @@ cook.recipe("build", {}, function() end)
     let tmp = TempDir::new().unwrap();
     let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), initial_env)
         .with_cli_overrides(cli_overrides);
-    let units = registry.register_recipe(lua_source, "build", None).unwrap();
+    let units = register_one(registry, lua_source, "build");
 
     assert_eq!(units.env_vars.get("ARBITRARY").map(|s| s.as_str()), Some("42"));
     assert_eq!(units.env_vars.get("DECLARED").map(|s| s.as_str()), Some("yes"));
@@ -512,8 +532,7 @@ fn test_recipe_shadows_env_var_does_not_panic() {
     // capture stderr from the integration-shaped test here, so we just
     // confirm that registering succeeds (no panic, no error returned) when
     // a recipe shadows an env var. The end-to-end smoke test in the CLI
-    // covers the actual diagnostic text. The dedup of the warning across
-    // multiple recipe-register calls is also exercised end-to-end.
+    // covers the actual diagnostic text.
     let lua_source = r#"
 function __cook_run_config_blocks(selected_name)
     env.foo = "shadowed"
@@ -528,11 +547,15 @@ cook.recipe("standalone", {}, function() end)
 
     let tmp = TempDir::new().unwrap();
     let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new());
-    // Multiple register calls (would have emitted duplicate warnings before
-    // the dedup fix); just assert each succeeds.
-    registry.register_recipe(lua_source, "foo", None).expect("foo register");
-    registry.register_recipe(lua_source, "bar", None).expect("bar register");
-    registry.register_recipe(lua_source, "standalone", None).expect("standalone register");
+    // A single register_cookfile pass invokes every body and emits the
+    // shadowing warning at the config-block dispatch step. We only assert
+    // it does not error.
+    let registered = register_cookfile(registry, lua_source, None)
+        .expect("register_cookfile must succeed despite shadowing");
+    // All three recipes must have been registered.
+    assert!(registered.units_by_recipe.contains_key("foo"));
+    assert!(registered.units_by_recipe.contains_key("bar"));
+    assert!(registered.units_by_recipe.contains_key("standalone"));
 }
 
 // -----------------------------------------------------------------------
@@ -554,7 +577,7 @@ cook.recipe("clean", {}, function()
     cook._exit_chore()
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "clean", None).unwrap();
+    let result = register_one(rt, lua_src, "clean");
     assert_eq!(result.units.len(), 1);
     // cache_meta must be None (cache = false).
     assert!(result.units[0].cache_meta.is_none(), "chore unit must have no cache_meta");
@@ -581,7 +604,7 @@ cook.recipe("evil", {}, function()
     cook._exit_chore()
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "evil", None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(
         result.is_err(),
         "cache = true inside a chore must raise an error, but succeeded"
@@ -608,13 +631,17 @@ cook.recipe("chore_then_recipe", {}, function()
     cook.add_unit({command = "echo normal", cache = true})
 end)
 "#;
-    let result = rt.register_recipe(lua_src, "chore_then_recipe", None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(
         result.is_ok(),
         "cache = true after _exit_chore should be allowed, got: {:?}",
         result.err()
     );
-    let units = result.unwrap();
+    let registered = result.unwrap();
+    let units = registered
+        .units_by_recipe
+        .get("chore_then_recipe")
+        .expect("chore_then_recipe missing");
     assert_eq!(units.units.len(), 2);
     assert!(units.units[0].cache_meta.is_none());   // chore unit: no cache
     assert!(units.units[1].cache_meta.is_some());   // normal unit: cached
@@ -622,7 +649,7 @@ end)
 
 #[test]
 fn test_compile_chore_and_register_integration() {
-    // Full parse → compile_chore → register_recipe pipeline.
+    // Full parse → compile_chore → register_cookfile pipeline.
     use cook_lang::parse;
     use cook_luagen::compile_chore;
 
@@ -642,13 +669,17 @@ fn test_compile_chore_and_register_integration() {
         compile_chore(&cookfile.chores[0], &[])
     );
 
-    let result = rt.register_recipe(&lua, "clean", None);
+    let result = register_cookfile(rt, &lua, None);
     assert!(
         result.is_ok(),
         "chore registration should succeed, got: {:?}",
         result.err()
     );
-    let units = result.unwrap();
+    let registered = result.unwrap();
+    let units = registered
+        .units_by_recipe
+        .get("clean")
+        .expect("clean missing");
     // Two shell steps → two interactive units.
     assert_eq!(units.units.len(), 2, "expected 2 units, got: {:#?}", units.units);
     for unit in &units.units {
@@ -670,7 +701,7 @@ fn test_compile_chore_and_register_integration() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn test_register_recipe_inserts_with_qualified_prefix() {
+fn test_register_cookfile_inserts_with_qualified_prefix() {
     use crate::dep_output_api::SharedTerminalOutputs;
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
@@ -689,7 +720,7 @@ end)
         .with_shared_terminal_outputs(shared.clone())
         .with_qualified_prefix("lib".to_string());
 
-    registry.register_recipe(lua_src, "build", None).unwrap();
+    register_cookfile(registry, lua_src, None).unwrap();
 
     let map = shared.lock().unwrap();
     assert!(
@@ -705,7 +736,7 @@ end)
 }
 
 #[test]
-fn test_register_recipe_empty_prefix_uses_bare_name() {
+fn test_register_cookfile_empty_prefix_uses_bare_name() {
     use crate::dep_output_api::SharedTerminalOutputs;
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
@@ -724,7 +755,7 @@ end)
         .with_shared_terminal_outputs(shared.clone())
         .with_qualified_prefix(String::new());
 
-    registry.register_recipe(lua_src, "build", None).unwrap();
+    register_cookfile(registry, lua_src, None).unwrap();
 
     let map = shared.lock().unwrap();
     assert!(
@@ -745,6 +776,10 @@ end)
 
 #[test]
 fn registry_collects_probe_declarations_into_recipe_units() {
+    // Under the unified `register_cookfile` design, `cook.probe` calls inside
+    // a recipe body land as `WorkPayload::Probe` capture units on `RecipeUnits.units`
+    // (so the DAG builder can schedule them as in-recipe work). The session-scoped
+    // `RecipeUnits.probes` view is reserved for top-level probes (spec §7).
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
 
@@ -758,15 +793,24 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = rt.register_recipe(lua_src, "build", None).unwrap();
-    assert_eq!(result.probes.len(), 1, "expected 1 probe, got: {:?}", result.probes);
-    assert_eq!(result.probes[0].key, "cc:zlib");
-    assert_eq!(result.probes[0].produce_source, "return { found = true }");
-    assert_eq!(result.probes[0].inputs.tools, vec!["pkg-config"]);
+    let result = register_one(rt, lua_src, "build");
+    // Body-scoped probe → CapturedUnit on `units`.
+    let probe_units: Vec<_> = result
+        .units
+        .iter()
+        .filter_map(|u| match &u.payload {
+            WorkPayload::Probe { key, produce, .. } => Some((key.as_str(), produce.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(probe_units.len(), 1, "expected 1 probe unit, got: {:?}", probe_units);
+    assert_eq!(probe_units[0], ("cc:zlib", "return { found = true }"));
 }
 
 #[test]
 fn registry_collects_multiple_probes() {
+    // See `registry_collects_probe_declarations_into_recipe_units` — body-scoped
+    // probes appear as CapturedUnit entries in `units` under register_cookfile.
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
 
@@ -777,9 +821,16 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = rt.register_recipe(lua_src, "build", None).unwrap();
-    assert_eq!(result.probes.len(), 2);
-    let keys: Vec<&str> = result.probes.iter().map(|p| p.key.as_str()).collect();
+    let result = register_one(rt, lua_src, "build");
+    let keys: Vec<&str> = result
+        .units
+        .iter()
+        .filter_map(|u| match &u.payload {
+            WorkPayload::Probe { key, .. } => Some(key.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(keys.len(), 2);
     assert!(keys.contains(&"cc:zlib"), "expected cc:zlib in probes");
     assert!(keys.contains(&"cc:openssl"), "expected cc:openssl in probes");
 }
@@ -796,8 +847,8 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = rt.register_recipe(lua_src, "build", None);
-    assert!(result.is_err(), "duplicate probe key must fail register_recipe");
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_err(), "duplicate probe key must fail register_cookfile");
     let err = result.err().unwrap().to_string();
     assert!(
         err.contains("cc:zlib"),
@@ -816,7 +867,7 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    let result = register_one(rt, lua_src, "build");
     assert!(
         result.probes.is_empty(),
         "recipe with no cook.probe calls must have empty probes vec"
@@ -841,7 +892,7 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    let result = register_one(rt, lua_src, "build");
     // After CS-0074 Bug 1 fix: probe units also appear in units vec.
     // 1 probe unit + 1 consumer unit = 2 total.
     assert_eq!(result.units.len(), 2, "expected probe unit + consumer unit");
@@ -870,7 +921,7 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = rt.register_recipe(lua_src, "build", None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "unknown probes key must fail");
     let err = result.err().unwrap().to_string();
     assert!(
@@ -896,7 +947,7 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    let result = register_one(rt, lua_src, "build");
     // After CS-0074 Bug 1 fix: first unit is the probe, second is the consumer.
     let u = result.units.iter().find(|u| matches!(u.payload, WorkPayload::Shell { .. })).unwrap();
     assert_eq!(u.probes, vec!["cc:zlib"]);
@@ -921,7 +972,7 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = rt.register_recipe(lua_src, "build", None);
+    let result = register_cookfile(rt, lua_src, None);
     assert!(result.is_err(), "legacy `requires` field must be rejected");
     let err = result.err().unwrap().to_string();
     assert!(
@@ -936,24 +987,26 @@ end)
 
 #[test]
 fn probe_cycle_a_b_a_errors() {
+    // Probe cycle detection runs against the session probe set — declared
+    // probes at top level (or inside body but visible after the body loop)
+    // form a deterministic graph that `register_cookfile` must reject.
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
 
     let lua_src = r#"
-cook.recipe("build", {}, function()
-    cook.probe("cc:a", {
-        inputs = { requires = {"cc:b"} },
-        produce = "return 1",
-    })
-    cook.probe("cc:b", {
-        inputs = { requires = {"cc:a"} },
-        produce = "return 2",
-    })
-end)
+cook.probe("cc:a", {
+    inputs = { requires = {"cc:b"} },
+    produce = "return 1",
+})
+cook.probe("cc:b", {
+    inputs = { requires = {"cc:a"} },
+    produce = "return 2",
+})
+cook.recipe("build", {}, function() end)
 "#;
 
-    let result = rt.register_recipe(lua_src, "build", None);
-    assert!(result.is_err(), "probe cycle must fail register_recipe");
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_err(), "probe cycle must fail register_cookfile");
     let err = result.err().unwrap().to_string();
     assert!(err.contains("probe cycle detected"), "got: {err}");
     assert!(err.contains("cc:a") && err.contains("cc:b"), "got: {err}");
@@ -961,18 +1014,19 @@ end)
 
 #[test]
 fn probe_no_cycle_succeeds() {
+    // Top-level (session-scoped) probes — declared before the recipe body
+    // runs, surface on `RegisteredCookfile.probes`.
     let dir = TempDir::new().unwrap();
     let rt = make_registry(dir.path());
 
     let lua_src = r#"
-cook.recipe("build", {}, function()
-    cook.probe("cc:a", { inputs = {}, produce = "return 1" })
-    cook.probe("cc:b", { inputs = { requires = {"cc:a"} }, produce = "return 2" })
-end)
+cook.probe("cc:a", { inputs = {}, produce = "return 1" })
+cook.probe("cc:b", { inputs = { requires = {"cc:a"} }, produce = "return 2" })
+cook.recipe("build", {}, function() end)
 "#;
 
-    let result = rt.register_recipe(lua_src, "build", None).unwrap();
-    assert_eq!(result.probes.len(), 2);
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(registered.probes.len(), 2);
 }
 
 // -----------------------------------------------------------------------
@@ -994,7 +1048,7 @@ cook.recipe("build", {}, function()
 end)
 "#;
 
-    let result = rt.register_recipe(lua_src, "build", None).unwrap();
+    let result = register_one(rt, lua_src, "build");
     let probe_unit = result.units.iter().find(|u| matches!(u.payload, WorkPayload::Probe { .. }));
     assert!(
         probe_unit.is_some(),

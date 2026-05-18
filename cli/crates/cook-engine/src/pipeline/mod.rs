@@ -26,13 +26,11 @@
 //! | `RecipeInfo` map assembly | `pipeline::recipe_info` |
 //! | `RegistryEntry` map assembly | `pipeline::registries` |
 //! | `{NAME}` inferred-dep computation | `pipeline::inferred_deps` |
-//! | DAG-unit collection (for viewer) | `pipeline::dag_units` |
 //! | Pipeline-layer error type | `pipeline::error` |
 //!
 //! Errors at this layer surface as `PipelineError`; the CLI maps it onto
 //! its `CookError` for display + exit-code mapping.
 
-pub mod dag_units;
 pub mod env;
 pub mod error;
 pub mod inferred_deps;
@@ -42,7 +40,6 @@ pub mod registers;
 pub mod registries;
 pub mod workspace;
 
-pub use dag_units::{collect_dag_units, DagUnits};
 pub use env::{load_env, parse_cli_overrides, resolve_env};
 pub use error::PipelineError;
 pub use inferred_deps::{

@@ -5,7 +5,7 @@
 use cook_contracts::RecipeUnits;
 use cook_lang::parse;
 use cook_luagen::generate;
-use cook_register::engine::RegisterSessionBuilder;
+use cook_register::engine::{register_cookfile, RegisterSessionBuilder};
 use std::collections::HashMap;
 
 fn compile_and_run(source: &str, selected: Option<&str>) -> RecipeUnits {
@@ -14,9 +14,14 @@ fn compile_and_run(source: &str, selected: Option<&str>) -> RecipeUnits {
     let tmp = tempfile::TempDir::new().unwrap();
     let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new())
         .with_selected_config(selected.map(|s| s.to_string()));
-    // First recipe in the file is what we'll trigger.
+    // First recipe in the file is what we'll inspect.
     let name = cookfile.recipes[0].name.clone();
-    registry.register_recipe(&lua_source, &name, None).expect("register")
+    let registered = register_cookfile(registry, &lua_source, None).expect("register");
+    registered
+        .units_by_recipe
+        .get(&name)
+        .unwrap_or_else(|| panic!("recipe {name:?} missing from units_by_recipe"))
+        .clone()
 }
 
 #[test]
