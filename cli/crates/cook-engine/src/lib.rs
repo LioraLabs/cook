@@ -15,7 +15,7 @@ pub mod run;
 
 pub use registered_workspace::RegisteredWorkspace;
 pub use registry_entry::RegistryEntry;
-pub use run::{run_for_test, RunResult, TestScope};
+pub use run::{run, RunResult, TestScope};
 
 // Re-export the registration-phase public types so consumers can build a
 // `RegisteredWorkspace` without taking a direct `cook-register` dependency.

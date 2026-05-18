@@ -1,5 +1,13 @@
 //! Pipeline orchestration: load Cookfile(s) → assemble registries → infer
-//! deps → hand off to `crate::run::run`.
+//! deps → (Phase 5) hand off to `crate::run::run` via the upcoming
+//! `register_workspace` helper.
+//!
+//! NOTE (SHI-222 Phase 4): the Phase 4 transitional shim that bridged the
+//! per-prefix `RegistryEntry` map produced by [`registries`] into the
+//! unified `run` entry point has been removed. Until Phase 5 Task 5.1 lands
+//! the `register_workspace` helper, the assembly helpers in this module are
+//! only directly consumed by `cook-cli`, which is intentionally broken
+//! against `cook-engine` until that helper exists.
 //!
 //! This module owns everything between "the user gave me a path" and "the
 //! engine has every input it needs to start the wave loop". It does not
