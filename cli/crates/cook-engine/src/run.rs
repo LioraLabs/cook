@@ -7,14 +7,10 @@
 //! Cross-recipe edges live directly on the unified DAG; there is no per-wave
 //! register / DAG / execute loop (SHI-222 Phase 4).
 //!
-//! Phase 5 Task 5.1 will add a `register_workspace` helper that builds the
-//! [`RegisteredWorkspace`] from `register_cookfile` + per-import merging. The
-//! Phase 4 transitional shim (`register_workspace_from_registries`) that
-//! aggregated a per-prefix `RegistryEntry` map via the legacy
-//! `RegisterSessionBuilder::register_recipe` API has been removed; callers
-//! that still hold registries must port to the upcoming Phase 5 helper.
-//! `cook-cli` is intentionally non-compiling against this crate until that
-//! port lands.
+//! Callers build the [`RegisteredWorkspace`] via `pipeline::register_workspace`
+//! (or `register_single_cookfile` for single-Cookfile inputs), which runs
+//! `cook_register::register_cookfile` once per Cookfile and merges per-import
+//! results.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -38,10 +34,8 @@ use crate::{
 
 /// How to scope a `cook test` invocation.
 ///
-/// Retained as a public type because `cook-cli` constructs it; the test-mode
-/// engine entry point that consumes it will be reintroduced in Phase 5 Task
-/// 5.1 on top of `register_workspace`, after the Phase 4 transitional shim
-/// (`register_workspace_from_registries`) was removed.
+/// Constructed by `cook-cli` and consumed by the test-mode engine path
+/// built on top of `pipeline::register_workspace`.
 #[derive(Debug, Clone)]
 pub enum TestScope {
     /// `cook test <recipe>` — scope to a single recipe and its dep closure.

@@ -10,11 +10,9 @@ pub mod id;
 pub mod pipeline;
 pub mod recipe_dag;
 pub mod registered_workspace;
-pub mod registry_entry;
 pub mod run;
 
 pub use registered_workspace::RegisteredWorkspace;
-pub use registry_entry::RegistryEntry;
 pub use run::{run, RunResult, TestScope};
 
 // Re-export the registration-phase public types so consumers can build a
