@@ -687,9 +687,17 @@ fn toposort_reachable(
         }
     }
     if order.len() != reachable.len() {
+        // Only nodes with unresolved in-degree are part of (or downstream of)
+        // the cycle. Naming them is far more useful than dumping the entire
+        // reachable set, which can include dozens of unrelated recipes.
+        let unresolved: Vec<&String> = in_degree
+            .iter()
+            .filter(|(_, &d)| d > 0)
+            .map(|(name, _)| name)
+            .collect();
         return Err(EngineError::CycleDetected(format!(
-            "cycle in reachable recipe set: {:?}",
-            reachable
+            "cycle among recipes: {:?}",
+            unresolved
         )));
     }
     Ok(order)
@@ -780,6 +788,13 @@ fn build_cache_ctx(project_root: &Path) -> Result<Arc<CacheContext>, EngineError
 /// name. The aggregation also captures the per-prefix `working_dir` so the
 /// executor can construct per-recipe cache managers.
 ///
+/// Probes are aggregated from each `RecipeUnits.probes` into the
+/// workspace-level `probes` map keyed by probe key; collisions across
+/// recipes are resolved first-wins. Per CS-0074 probe keys are global, so
+/// collisions shouldn't occur in well-formed input; Phase 5 will source
+/// probes directly from `RegisteredCookfile.probes` instead, where conflict
+/// detection happens at registration time.
+///
 /// Phase 5 Task 5.1 replaces this helper with a proper
 /// `register_cookfile`-driven workspace registration that captures probes
 /// and `final_env` at the Cookfile granularity.
@@ -788,6 +803,7 @@ fn register_workspace_from_registries(
     reachable: &BTreeSet<String>,
     cache_ctx: Option<Arc<CacheContext>>,
 ) -> Result<RegisteredWorkspace, EngineError> {
+    use cook_contracts::ProbeUnit;
     use cook_register::{RecipeKind as RegKind, RegisteredRecipePub, RegistrationSource};
 
     let mut units_by_recipe: BTreeMap<String, RecipeUnits> = BTreeMap::new();
@@ -795,6 +811,7 @@ fn register_workspace_from_registries(
     let mut alias_dirs_by_prefix: BTreeMap<String, BTreeMap<String, std::path::PathBuf>> =
         BTreeMap::new();
     let mut names: Vec<RegisteredRecipePub> = Vec::new();
+    let mut probes: BTreeMap<String, ProbeUnit> = BTreeMap::new();
 
     // Record working_dir for every present prefix once, before per-recipe work,
     // so the engine can still build cache managers for namespaces whose
@@ -831,6 +848,15 @@ fn register_workspace_from_registries(
         // imports.
         units.recipe_name = name.clone();
 
+        // Aggregate this recipe's probes into the workspace-level map. This
+        // is what `run_inner` consults to build `probe_units_by_node` for
+        // the executor's probe-value cache fast path (CS-0074). Without this
+        // step every probe re-executes on every run because the executor
+        // can't look up the unit by key.
+        for pu in &units.probes {
+            probes.entry(pu.key.clone()).or_insert_with(|| pu.clone());
+        }
+
         units_by_recipe.insert(name.clone(), units);
 
         // Surface a `RegisteredRecipePub` stub so callers (and synthetic
@@ -849,7 +875,7 @@ fn register_workspace_from_registries(
     Ok(RegisteredWorkspace {
         names,
         units_by_recipe,
-        probes: BTreeMap::new(),
+        probes,
         final_env_by_cookfile: BTreeMap::new(),
         working_dir_by_prefix,
         alias_dirs_by_prefix,
@@ -1070,6 +1096,56 @@ mod tests {
             ["a", "b"].iter().map(|s| s.to_string()).collect();
         let result = toposort_reachable(&edges, &reachable);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), EngineError::CycleDetected(_)));
+        match result.unwrap_err() {
+            EngineError::CycleDetected(msg) => {
+                assert!(
+                    msg.contains("\"a\""),
+                    "error should name cycle node 'a', got: {msg}"
+                );
+                assert!(
+                    msg.contains("\"b\""),
+                    "error should name cycle node 'b', got: {msg}"
+                );
+            }
+            other => panic!("expected CycleDetected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_toposort_reachable_cycle_names_only_cycle_nodes() {
+        // Build a graph with a long unrelated chain (x -> y -> z, all
+        // resolvable) plus a 2-node cycle (a <-> b). The error should
+        // name only the cycle nodes, not the resolvable ones.
+        let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        edges.insert("x".into(), vec![]);
+        edges.insert("y".into(), vec!["x".into()]);
+        edges.insert("z".into(), vec!["y".into()]);
+        edges.insert("a".into(), vec!["b".into()]);
+        edges.insert("b".into(), vec!["a".into()]);
+        let reachable: BTreeSet<String> = ["x", "y", "z", "a", "b"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let result = toposort_reachable(&edges, &reachable);
+        match result.unwrap_err() {
+            EngineError::CycleDetected(msg) => {
+                assert!(msg.contains("\"a\""), "missing cycle node 'a': {msg}");
+                assert!(msg.contains("\"b\""), "missing cycle node 'b': {msg}");
+                // The resolvable nodes must NOT appear in the cycle list.
+                assert!(
+                    !msg.contains("\"x\""),
+                    "resolvable node 'x' should not be in cycle error: {msg}"
+                );
+                assert!(
+                    !msg.contains("\"y\""),
+                    "resolvable node 'y' should not be in cycle error: {msg}"
+                );
+                assert!(
+                    !msg.contains("\"z\""),
+                    "resolvable node 'z' should not be in cycle error: {msg}"
+                );
+            }
+            other => panic!("expected CycleDetected, got {other:?}"),
+        }
     }
 }

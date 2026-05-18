@@ -101,6 +101,90 @@ recipe build
     assert_eq!(marker, marker2, "probe output should be identical on second run (cache hit)");
 }
 
+/// CS-0074 probe-cache regression (SHI-222 Task 4.4 review C1).
+///
+/// The unified-DAG transitional shim aggregates per-recipe probes into a
+/// workspace-level map; the executor consults that map to enable the
+/// probe-value cache fast path on subsequent runs. If the shim drops the
+/// probes (which an earlier draft did), the cache lookup misses every time
+/// and the probe re-executes on every build.
+///
+/// This test pins the contract with an observable side effect: the probe's
+/// produce body appends a single line to `probe-runs.log` each time it
+/// runs. After two `cook build` invocations the log MUST contain exactly
+/// one line — proving the second run took the cache fast path and did NOT
+/// re-invoke the produce body.
+///
+/// The probe key and produce-source contents are uniquified per test
+/// invocation so the host-wide cache (~/.cache/cook/cloud/) cannot serve a
+/// stale hit from a prior `cargo test` run — the probe fingerprint folds
+/// in both the key and the produce source (§22.5.3).
+#[test]
+fn probe_produce_does_not_re_execute_on_cache_hit() {
+    let tmp = TempDir::new().unwrap();
+    // Uniquify the probe key per test invocation so we never collide with
+    // a cached probe-value from a prior test run.
+    let uniq = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let probe_key = format!("test:counter-{uniq}");
+    // Embed the same uniquifier in the produce source itself so the
+    // fingerprint differs even from a same-key prior run (key changes
+    // already do this, but defence in depth is cheap).
+    let cookfile = format!(
+        r#"
+register
+    cook.probe("{probe_key}", {{
+        inputs = {{}},
+        produce = [[
+            -- uniq={uniq}
+            local f = io.open("probe-runs.log", "a")
+            f:write("ran\n")
+            f:close()
+            return {{ v = 1 }}
+        ]],
+    }})
+    cook.add_unit({{
+        name = "consume",
+        inputs = {{}},
+        outputs = {{"done.marker"}},
+        probes = {{"{probe_key}"}},
+        command = "echo $<{probe_key}.v> > done.marker",
+    }})
+
+recipe build
+    > cook.sh("cat done.marker")
+"#
+    );
+    fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();
+
+    // First run: produce body MUST execute (cache miss).
+    run_cook(tmp.path(), &["build"]).expect("first run should succeed");
+    let log1 = fs::read_to_string(tmp.path().join("probe-runs.log"))
+        .expect("probe-runs.log should exist after first run");
+    assert_eq!(
+        log1, "ran\n",
+        "first run: produce body should have executed exactly once, got log: {log1:?}"
+    );
+
+    // Second run: probe-cache fast path MUST be taken — produce body MUST
+    // NOT re-execute. If the workspace-level `probes` map is empty (the
+    // C1 bug), the executor can't find the ProbeUnit by key, falls
+    // through to fresh execution, and the log grows to "ran\nran\n".
+    run_cook(tmp.path(), &["build"]).expect("second run should succeed");
+    let log2 = fs::read_to_string(tmp.path().join("probe-runs.log")).unwrap();
+    assert_eq!(
+        log2, "ran\n",
+        "second run: probe MUST hit cache and NOT re-execute produce body; \
+         got log: {log2:?} (expected \"ran\\n\")"
+    );
+}
+
 /// Demand-driven scheduling: a probe that no recipe-reachable unit references
 /// MUST NOT be executed and MUST NOT write a probe-value artifact to
 /// `.cook/cache/`.
