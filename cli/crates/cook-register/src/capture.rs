@@ -9,10 +9,27 @@ use cook_contracts::{CapturedUnit, DepKind, WorkPayload};
 
 use crate::SharedBodySlot;
 
+/// Where a `RegisteredRecipe` came from. Used by Phase 2 collision detection
+/// (and surface diagnostics) to name BOTH sites of a name conflict and
+/// identify the kind of each.
+///
+/// - `Static`  — emitted by codegen from a surface `recipe NAME` block
+///   via `cook.__register_surface(...)`. Wired in Phase 3.
+/// - `Dynamic` — recorded by user / wrapper Lua code calling
+///   `cook.recipe(...)` (e.g. `cook_cc.bin` target-makers).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistrationSource {
+    /// Emitted by codegen from a surface `recipe NAME` block.
+    Static { line: usize },
+    /// Recorded by user / wrapper Lua code calling `cook.recipe(...)`.
+    Dynamic { line: usize },
+}
+
 pub struct RegisteredRecipe {
     pub name: String,
     pub function: LuaRegistryKey,
     pub metadata: RegisteredMetadata,
+    pub source: RegistrationSource,
 }
 
 #[derive(Debug)]
@@ -68,6 +85,8 @@ pub fn install_cook_api(
                 }
             }
 
+            let line = caller_line_in_cookfile(lua).unwrap_or(0);
+
             recipes_clone.borrow_mut().push(RegisteredRecipe {
                 name,
                 function: key,
@@ -76,6 +95,7 @@ pub fn install_cook_api(
                     excludes,
                     requires,
                 },
+                source: RegistrationSource::Dynamic { line },
             });
             Ok(())
         })?;
@@ -169,6 +189,37 @@ pub fn install_cook_api(
 
     lua.globals().set("cook", cook)?;
     Ok(recipes)
+}
+
+/// Walk the Lua call stack and return the line number of the topmost frame
+/// whose source string matches the Cookfile path label set by
+/// `__cook_cookfile_path` (or any module loaded via `module_loader` with a
+/// `@{module_path}` chunk name that ends with the cookfile-relative label).
+/// Returns `None` if the Cookfile frame can't be located.
+///
+/// Used by `cook.recipe` to tag each `RegisteredRecipe` with the line number
+/// of the user-code site that registered it. When the registry value isn't
+/// populated (legacy/test call sites) or the matching frame can't be found,
+/// callers default to `line = 0`.
+fn caller_line_in_cookfile(lua: &Lua) -> Option<usize> {
+    let target: String = lua
+        .named_registry_value::<String>("__cook_cookfile_path")
+        .ok()?;
+
+    // Lua call levels: 1 = the closure, 2 = the caller, 3+ = caller's caller, ...
+    for level in 1..40 {
+        match lua.inspect_stack(level) {
+            None => return None,
+            Some(dbg) => {
+                let src_opt = dbg.source().source;
+                let source: &str = src_opt.as_deref().unwrap_or("");
+                if source == target || source.ends_with(&target) {
+                    return Some(dbg.curr_line() as usize);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Maximum bytes per captured stream included in a COOK_CMD_FAILED error

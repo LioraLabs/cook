@@ -158,5 +158,6 @@ pub fn hash_str(s: &str) -> u64 {
 }
 
 // Re-exports for convenience
+pub use capture::RegistrationSource;
 pub use dep_output_api::SharedTerminalOutputs;
 pub use engine::RegisterSessionBuilder;
