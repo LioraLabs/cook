@@ -1,11 +1,10 @@
-register
-    cook.add_unit({
-        name = "u",
-        inputs = {},
-        outputs = {"out"},
-        probes = {"missing"},
-        command = "true",
-    })
-
 recipe noop
-    > cook.sh("true")
+    >>{
+        cook.add_unit({
+            name = "u",
+            inputs = {},
+            outputs = {"out"},
+            probes = {"missing"},
+            command = "true",
+        })
+    }

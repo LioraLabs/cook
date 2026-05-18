@@ -48,27 +48,6 @@ fn case_dirs(sub: &str) -> Vec<PathBuf> {
     out
 }
 
-/// Conformance fixtures authored against the legacy `register_recipe` API
-/// that called `cook.add_unit` from a top-level `register` block.
-///
-/// Under `register_cookfile` (CS-0077, SHI-222 Phase 6) the top-level
-/// register-block body executes with no active recipe `body_slot`, so
-/// `cook.add_unit` cleanly errors out instead of silently appending to a
-/// recipe. Fixtures shaped this way must be rewritten in Phase 7 to lower
-/// the `cook.add_unit` calls into the recipe body that consumes them
-/// (the §22.5 probe-template desugaring rules will need to land alongside).
-fn is_legacy_top_level_add_unit_fixture(name: &str) -> bool {
-    matches!(
-        name,
-        // Positive fixture: cook.add_unit at top-level used to be accepted.
-        "probe-template-desugaring"
-        // Negative fixture: expected error was the unknown-probe-key
-        // diagnostic, but cook.add_unit at top-level now errors earlier
-        // with a different (still valid) diagnostic.
-        | "probe-unresolved-require"
-    )
-}
-
 #[test]
 fn register_positive_conformance_corpus() {
     let mut failures: Vec<String> = Vec::new();
@@ -81,11 +60,6 @@ fn register_positive_conformance_corpus() {
         }
 
         let name = case.file_name().unwrap().to_string_lossy().into_owned();
-        if is_legacy_top_level_add_unit_fixture(&name) {
-            // Phase 7 will lower the cook.add_unit calls back into the
-            // owning recipe body; see helper comment above.
-            continue;
-        }
         cases_seen += 1;
         let input_path = case.join("Cookfile");
         let input = fs::read_to_string(&input_path)
@@ -136,11 +110,6 @@ fn register_negative_conformance_corpus() {
         }
 
         let name = case.file_name().unwrap().to_string_lossy().into_owned();
-        if is_legacy_top_level_add_unit_fixture(&name) {
-            // Phase 7 will lower the cook.add_unit calls back into the
-            // owning recipe body; see helper comment above.
-            continue;
-        }
         cases_seen += 1;
         let input_path = case.join("Cookfile");
 

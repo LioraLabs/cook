@@ -442,11 +442,20 @@ pub fn register_cookfile(
     module_state.borrow().flush_all();
 
     // 13. Probes view: BTreeMap keyed by probe key (deterministic).
-    let probes: BTreeMap<String, cook_contracts::ProbeUnit> = session_state
+    //
+    // Source is the probe_registry (not session_state.probes) so that
+    // body-scope probes — registered during the recipe-body invocations
+    // in step 12, after the session_state drain in step 10 — are also
+    // included. The workspace-level probes map feeds the executor's
+    // probe-cache fast path (cli/crates/cook-engine/src/run.rs builds
+    // `probe_units_by_node` from this map); a body-scope probe that
+    // doesn't appear here would re-execute on every run instead of
+    // hitting the cache (CS-0074 §22.5.7).
+    let probes: BTreeMap<String, cook_contracts::ProbeUnit> = probe_registry
         .borrow()
         .probes
         .iter()
-        .map(|p| (p.key.clone(), p.clone()))
+        .map(|(key, reg)| (key.clone(), reg.probe.clone()))
         .collect();
 
     Ok(crate::RegisteredCookfile {

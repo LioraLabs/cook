@@ -3,13 +3,14 @@ register
         inputs = {},
         produce = "return { word = \"hello\" }",
     })
-    cook.add_unit({
-        name = "echo",
-        inputs = {},
-        outputs = {"build/done.txt"},
-        probes = {"test:greet"},
-        command = "echo $<test:greet.word> > build/done.txt",
-    })
 
 recipe build
-    > cook.sh("true")
+    >>{
+        cook.add_unit({
+            name = "echo",
+            inputs = {},
+            outputs = {"build/done.txt"},
+            probes = {"test:greet"},
+            command = "echo $<test:greet.word> > build/done.txt",
+        })
+    }

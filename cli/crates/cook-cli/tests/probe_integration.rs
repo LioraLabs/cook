@@ -54,34 +54,37 @@ fn run_cook(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
 /// `.cook/cache/`.  Second run: probe + consumer both cache-hit and
 /// `done.marker` is identical.
 ///
-/// SHI-222 Phase 5 Task 5.5: ignored pending Task 8.1 audit. The new
-/// `register_cookfile` entry point executes top-level Lua with
-/// `body_slot = None` per spec §6 step 4, so a `register` block that calls
-/// `cook.add_unit` directly fails with "called outside a recipe body". The
-/// legacy `register_recipe` path opened the body slot before top-level
-/// `exec()` so register-block units surfaced through the recipe accumulator.
-/// Re-wiring this for the unified register-phase pipeline is out of scope
-/// for Task 5.5; tracked for Task 8.1.
+/// SHI-222 Phase 7 Task 7 carry-forward: the legacy `register` block
+/// that called `cook.add_unit` directly is reshaped so the `cook.add_unit`
+/// call lives inside the recipe body (`>>{ ... }`), matching the
+/// CS-0077 contract that top-level register-block execution has no
+/// active recipe `body_slot`. Top-level `cook.probe` is still
+/// session-scoped per spec §6 step 4 and §7.
 #[test]
-#[ignore = "SHI-222 Task 8.1: register-block cook.add_unit needs body-slot wiring in register_cookfile"]
 fn probe_consumer_end_to_end_first_run_then_cache_hit() {
     let tmp = TempDir::new().unwrap();
+    // Both `cook.probe` and `cook.add_unit` live inside the recipe body
+    // so the probe lowers to a body-scope `CapturedUnit` (`WorkPayload::Probe`)
+    // and the dag-builder can wire the consumer→probe edge from the
+    // consumer's `probes` field (see `dag_builder::build_dag`, CS-0074
+    // Bug 2 wiring). Top-level (session-scope) probes are not edge-targets
+    // for body-scope consumers in the current dag-builder; that's an
+    // orthogonal limitation not exercised by this test.
     let cookfile = r#"
-register
-    cook.probe("test:greet", {
-        inputs = {},
-        produce = "return { word = \"hello-from-probe\" }",
-    })
-    cook.add_unit({
-        name = "echo",
-        inputs = {},
-        outputs = {"done.marker"},
-        probes = {"test:greet"},
-        command = "echo $<test:greet.word> > done.marker",
-    })
-
 recipe build
-    > cook.sh("cat done.marker")
+    >>{
+        cook.probe("test:greet", {
+            inputs = {},
+            produce = "return { word = \"hello-from-probe\" }",
+        })
+        cook.add_unit({
+            name = "echo",
+            inputs = {},
+            outputs = {"done.marker"},
+            probes = {"test:greet"},
+            command = "echo $<test:greet.word> > done.marker",
+        })
+    }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
 
@@ -130,12 +133,12 @@ recipe build
 /// stale hit from a prior `cargo test` run — the probe fingerprint folds
 /// in both the key and the produce source (§22.5.3).
 ///
-/// SHI-222 Phase 5 Task 5.5: ignored pending Task 8.1 audit — same root
-/// cause as `probe_consumer_end_to_end_first_run_then_cache_hit`. Top-level
-/// `register` blocks calling `cook.add_unit` need the body slot opened
-/// during `register_cookfile`'s top-level `exec()`.
+/// SHI-222 Phase 7 Task 7 carry-forward: same reshape as
+/// `probe_consumer_end_to_end_first_run_then_cache_hit` — the
+/// `cook.add_unit` call moves into the recipe body so the test
+/// composes against the CS-0077 register-pass contract (top-level
+/// `register` blocks execute with no active recipe `body_slot`).
 #[test]
-#[ignore = "SHI-222 Task 8.1: register-block cook.add_unit needs body-slot wiring in register_cookfile"]
 fn probe_produce_does_not_re_execute_on_cache_hit() {
     let tmp = TempDir::new().unwrap();
     // Uniquify the probe key per test invocation so we never collide with
@@ -152,29 +155,31 @@ fn probe_produce_does_not_re_execute_on_cache_hit() {
     // Embed the same uniquifier in the produce source itself so the
     // fingerprint differs even from a same-key prior run (key changes
     // already do this, but defence in depth is cheap).
+    // Body-scope probe + body-scope consumer: the dag-builder wires the
+    // consumer→probe edge from the consumer's `probes` field against the
+    // probe `CapturedUnit` it finds in the same recipe body.
     let cookfile = format!(
         r#"
-register
-    cook.probe("{probe_key}", {{
-        inputs = {{}},
-        produce = [[
-            -- uniq={uniq}
-            local f = io.open("probe-runs.log", "a")
-            f:write("ran\n")
-            f:close()
-            return {{ v = 1 }}
-        ]],
-    }})
-    cook.add_unit({{
-        name = "consume",
-        inputs = {{}},
-        outputs = {{"done.marker"}},
-        probes = {{"{probe_key}"}},
-        command = "echo $<{probe_key}.v> > done.marker",
-    }})
-
 recipe build
-    > cook.sh("cat done.marker")
+    >>{{
+        cook.probe("{probe_key}", {{
+            inputs = {{}},
+            produce = [[
+                -- uniq={uniq}
+                local f = io.open("probe-runs.log", "a")
+                f:write("ran\n")
+                f:close()
+                return {{ v = 1 }}
+            ]],
+        }})
+        cook.add_unit({{
+            name = "consume",
+            inputs = {{}},
+            outputs = {{"done.marker"}},
+            probes = {{"{probe_key}"}},
+            command = "echo $<{probe_key}.v> > done.marker",
+        }})
+    }}
 "#
     );
     fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();
