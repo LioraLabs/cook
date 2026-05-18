@@ -20,11 +20,19 @@ pub use run::{run, RunResult, TestScope};
 // Re-export the registration-phase public types so consumers can build a
 // `RegisteredWorkspace` without taking a direct `cook-register` dependency.
 //
-// Note: `cook_register::RecipeKind` is intentionally NOT re-exported here —
-// it would collide with the engine's own `RecipeKind` (Recipe vs Chore for
-// progress events). Consumers that need the registration-phase kind import
-// it from `cook_register` directly.
+// Note: `cook_register::RecipeKind` is intentionally NOT re-exported at the
+// engine root — it would collide with the engine's own `RecipeKind` (the
+// progress-event mirror enum a few lines below). Consumers that need the
+// registration-phase kind reach it through the re-exported `cook_register`
+// module path: `cook_engine::cook_register::RecipeKind`.
 pub use cook_register::{RegisteredCookfile, RegisteredRecipePub};
+
+// Re-export the `cook_register` crate as a module so consumers (notably
+// `cook-cli`) can name `cook_engine::cook_register::RecipeKind` and other
+// registration-phase types without taking a direct `cook-register`
+// dependency. The collision-avoidance rule above still applies to the
+// engine's own root namespace.
+pub use cook_register;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

@@ -751,47 +751,50 @@ fn collect_workspace_recipe_names(
 // cmd_menu
 // ---------------------------------------------------------------------------
 
+/// Print recipe and chore names, one per kind-prefixed line.
+///
+/// Backed by the cheap `cook_register::list_names` path through the
+/// pipeline-layer `list_workspace_names` / `list_single_cookfile_names`
+/// helpers, so Lua-registered recipes (e.g. `cook_cc.bin`) appear in the
+/// menu alongside surface `recipe NAME` blocks — no recipe body runs and
+/// no probes fire. The previous AST-walk only saw `parsed.cookfile.recipes`
+/// / `parsed.cookfile.chores`, missing every dynamically-registered
+/// recipe.
 pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     let parsed = read_and_parse(globals)?;
 
-    for recipe in &parsed.cookfile.recipes {
-        let mut desc = format!("  recipe {}", recipe.name);
-        if !recipe.ingredients.is_empty() {
-            desc.push_str(&format!("  ingredients: {:?}", recipe.ingredients));
-        }
-        if !recipe.deps.is_empty() {
-            desc.push_str(&format!("  deps: {:?}", recipe.deps));
-        }
-        for step in &recipe.steps {
-            if let cook_lang::ast::Step::Cook { step: cook_step, .. } = step {
-                desc.push_str(&format!("  cook: {}", cook_step.outputs.join(" ")));
-            }
-        }
-        println!("{desc}");
-    }
-
-    for chore in &parsed.cookfile.chores {
-        let mut desc = format!("  chore  {}", chore.name);
-        if !chore.deps.is_empty() {
-            desc.push_str(&format!("  deps: {:?}", chore.deps));
-        }
-        println!("{desc}");
-    }
-
-    if !parsed.cookfile.imports.is_empty() {
+    let names = if !parsed.cookfile.imports.is_empty() {
         let workspace_root =
             pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
                 .map_err(pipeline_error_to_cook_error)?;
         let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
-        for (canonical_path, loaded) in &workspace.imports {
-            let prefix = pipeline::find_full_prefix(&workspace, canonical_path);
-            for recipe in &loaded.cookfile.recipes {
-                println!("  recipe {}.{}", prefix, recipe.name);
-            }
-            for chore in &loaded.cookfile.chores {
-                println!("  chore  {}.{}", prefix, chore.name);
-            }
+        pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
+            .map_err(pipeline_error_to_cook_error)?
+    } else {
+        let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
+        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+            std::path::Path::new(".")
+        } else {
+            cookfile_dir
+        };
+        let dotenv_vars = pipeline::load_env(cookfile_dir);
+        let env_vars = pipeline::resolve_env(None, dotenv_vars, &globals.set)
+            .map_err(pipeline_error_to_cook_error)?;
+        pipeline::list_single_cookfile_names(
+            cookfile_dir,
+            env_vars,
+            &globals.set,
+            parsed.lua_source,
+            None,
+        )
+        .map_err(pipeline_error_to_cook_error)?
+    };
+
+    for (name, kind) in &names {
+        match kind {
+            cook_engine::cook_register::RecipeKind::Recipe => println!("  recipe {name}"),
+            cook_engine::cook_register::RecipeKind::Chore => println!("  chore  {name}"),
         }
     }
 
@@ -809,6 +812,11 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
 /// import alias for workspace imports). Designed for shell pipelines such
 /// as `cook list | fzf | xargs -r cook`.
 ///
+/// Backed by the cheap `cook_register::list_names` path through the
+/// pipeline-layer `list_workspace_names` / `list_single_cookfile_names`
+/// helpers, so Lua-registered recipes (e.g. `cook_cc.bin`) appear in the
+/// listing without invoking any recipe body or firing probe queries.
+///
 /// `--recipes-only` and `--chores-only` filter the output. They are
 /// mutually exclusive at the clap layer; this function trusts that.
 pub fn cmd_list(globals: &Globals, args: &crate::cli::ListArgs) -> Result<(), CookError> {
@@ -825,35 +833,38 @@ pub fn cmd_list(globals: &Globals, args: &crate::cli::ListArgs) -> Result<(), Co
     let want_recipes = !args.chores_only;
     let want_chores = !args.recipes_only;
 
-    if want_recipes {
-        for recipe in &parsed.cookfile.recipes {
-            println!("{}", recipe.name);
-        }
-    }
-    if want_chores {
-        for chore in &parsed.cookfile.chores {
-            println!("{}", chore.name);
-        }
-    }
-
-    if !parsed.cookfile.imports.is_empty() {
+    let names = if !parsed.cookfile.imports.is_empty() {
         let workspace_root =
             pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
                 .map_err(pipeline_error_to_cook_error)?;
         let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
-        for (canonical_path, loaded) in &workspace.imports {
-            let prefix = pipeline::find_full_prefix(&workspace, canonical_path);
-            if want_recipes {
-                for recipe in &loaded.cookfile.recipes {
-                    println!("{}.{}", prefix, recipe.name);
-                }
-            }
-            if want_chores {
-                for chore in &loaded.cookfile.chores {
-                    println!("{}.{}", prefix, chore.name);
-                }
-            }
+        pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
+            .map_err(pipeline_error_to_cook_error)?
+    } else {
+        let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
+        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+            std::path::Path::new(".")
+        } else {
+            cookfile_dir
+        };
+        let dotenv_vars = pipeline::load_env(cookfile_dir);
+        let env_vars = pipeline::resolve_env(None, dotenv_vars, &globals.set)
+            .map_err(pipeline_error_to_cook_error)?;
+        pipeline::list_single_cookfile_names(
+            cookfile_dir,
+            env_vars,
+            &globals.set,
+            parsed.lua_source,
+            None,
+        )
+        .map_err(pipeline_error_to_cook_error)?
+    };
+
+    for (name, kind) in names {
+        let is_chore = matches!(kind, cook_engine::cook_register::RecipeKind::Chore);
+        if (is_chore && want_chores) || (!is_chore && want_recipes) {
+            println!("{name}");
         }
     }
 

@@ -180,6 +180,77 @@ pub fn register_workspace(
     Ok(ws)
 }
 
+/// Run the cheap [`cook_register::list_names`] path for a single Cookfile
+/// (no imports) and return the registered names with their kinds.
+///
+/// This is the listing-surface counterpart to [`register_single_cookfile`]:
+/// it loads the Cookfile, runs only register-phase Lua (no recipe bodies,
+/// no probe queries), and returns just the names + kinds — enough for
+/// `cook list` / `cook menu` to enumerate the full surface, including
+/// Lua-registered recipes (e.g. `cook_cc.bin`).
+pub fn list_single_cookfile_names(
+    cookfile_dir: &Path,
+    env_vars: HashMap<String, String>,
+    env_overrides: &[String],
+    lua_source: String,
+    selected_config: Option<&str>,
+) -> Result<Vec<(String, cook_register::RecipeKind)>, PipelineError> {
+    let cli_overrides = parse_cli_overrides(env_overrides)?;
+    let builder = RegisterSessionBuilder::new(cookfile_dir.to_path_buf(), env_vars)
+        .with_cli_overrides(cli_overrides)
+        .with_selected_config(selected_config.map(|s| s.to_string()));
+    let names = cook_register::list_names(builder, &lua_source)
+        .map_err(|e| PipelineError::Other(e.to_string()))?;
+    Ok(names.into_iter().map(|n| (n.name, n.kind)).collect())
+}
+
+/// Run [`cook_register::list_names`] for every Cookfile in `workspace`
+/// (root + every import) and return the qualified name set with kinds.
+///
+/// Workspace-level counterpart to [`register_workspace`]: each import's
+/// names are prefixed with its qualified workspace prefix. Like
+/// [`list_single_cookfile_names`], this avoids invoking any recipe body
+/// and avoids firing probe queries — it's the cheap path used by
+/// `cook list` / `cook menu`.
+pub fn list_workspace_names(
+    workspace: &Workspace,
+    config: Option<&str>,
+    env_overrides: &[String],
+) -> Result<Vec<(String, cook_register::RecipeKind)>, PipelineError> {
+    let dotenv_vars = load_env(&workspace.root.dir);
+    let root_env = resolve_env(config, dotenv_vars, env_overrides)?;
+    let cli_overrides = parse_cli_overrides(env_overrides)?;
+    let mut out: Vec<(String, cook_register::RecipeKind)> = Vec::new();
+
+    let root_builder = RegisterSessionBuilder::new(workspace.root.dir.clone(), root_env)
+        .with_cli_overrides(cli_overrides.clone())
+        .with_selected_config(config.map(|s| s.to_string()));
+    let root_names = cook_register::list_names(root_builder, &workspace.root.lua_source)
+        .map_err(|e| PipelineError::Other(e.to_string()))?;
+    for n in root_names {
+        out.push((n.name, n.kind));
+    }
+
+    for (canonical_path, loaded) in &workspace.imports {
+        let prefix = find_full_prefix(workspace, canonical_path);
+        // Imports do not inherit the root's .env layering — mirror the
+        // `register_workspace` policy: each sub-Cookfile starts from a
+        // fresh env baseline; system env + CLI overrides still apply.
+        let import_env = resolve_env(config, HashMap::new(), env_overrides)?;
+        let builder = RegisterSessionBuilder::new(loaded.dir.clone(), import_env)
+            .with_cli_overrides(cli_overrides.clone())
+            .with_selected_config(config.map(|s| s.to_string()))
+            .with_qualified_prefix(prefix.clone());
+        let names = cook_register::list_names(builder, &loaded.lua_source)
+            .map_err(|e| PipelineError::Other(e.to_string()))?;
+        for n in names {
+            out.push((format!("{prefix}.{}", n.name), n.kind));
+        }
+    }
+
+    Ok(out)
+}
+
 /// Merge a per-Cookfile [`cook_register::RegisteredCookfile`] into the
 /// workspace-level [`RegisteredWorkspace`], qualifying every recipe name,
 /// unit key, and probe key with `prefix` (empty for the root).
