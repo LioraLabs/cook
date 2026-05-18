@@ -380,6 +380,68 @@ pub enum EngineError {
     },
 }
 
+// Map `cook_register::RegisterError` onto `EngineError` so callers that
+// drive the register-phase via this crate can propagate failures with `?`
+// without reaching into `cook-register` directly.
+//
+// `RecipeCollision` is mapped onto `RegistrationFailed` here; the CLI lifts
+// it to a structured `CookError::RecipeCollision` in Phase 5 Task 5.6.
+impl From<cook_register::RegisterError> for EngineError {
+    fn from(e: cook_register::RegisterError) -> Self {
+        match e {
+            cook_register::RegisterError::DependencyCycle { recipes } => {
+                EngineError::CycleDetected(format!(
+                    "recipe cycle: {}",
+                    recipes.join(" -> ")
+                ))
+            }
+            cook_register::RegisterError::RecipeCollision { name, sites } => {
+                let sites_str = sites
+                    .iter()
+                    .map(|s| {
+                        let kind = match s.kind {
+                            cook_register::RegistrationSiteKind::SurfaceRecipe => {
+                                "surface recipe"
+                            }
+                            cook_register::RegistrationSiteKind::SurfaceChore => {
+                                "surface chore"
+                            }
+                            cook_register::RegistrationSiteKind::Dynamic => {
+                                "cook.recipe call"
+                            }
+                        };
+                        format!("{} at line {}", kind, s.line)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                EngineError::RegistrationFailed {
+                    recipe: name.clone(),
+                    message: format!(
+                        "recipe '{name}' is registered more than once: {sites_str}"
+                    ),
+                }
+            }
+            cook_register::RegisterError::Lua(le) => EngineError::RegistrationFailed {
+                recipe: String::new(),
+                message: le.to_string(),
+            },
+            cook_register::RegisterError::CommandFailed {
+                command,
+                line,
+                code,
+            } => EngineError::RegistrationFailed {
+                recipe: String::new(),
+                message: format!(
+                    "Cookfile:{line}: command failed (exit {code}): {command}"
+                ),
+            },
+            cook_register::RegisterError::RecipeNotFound(name) => {
+                EngineError::UnknownRecipe(name)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test_result_tests {
     use super::*;
