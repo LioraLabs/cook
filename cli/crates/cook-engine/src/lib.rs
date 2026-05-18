@@ -9,12 +9,23 @@ pub mod executor;
 pub mod id;
 pub mod pipeline;
 pub mod recipe_dag;
+pub mod registered_workspace;
 pub mod registry_entry;
 pub mod run;
 pub mod wave_grouper;
 
+pub use registered_workspace::RegisteredWorkspace;
 pub use registry_entry::RegistryEntry;
 pub use run::{run_for_test, RunResult, TestScope};
+
+// Re-export the registration-phase public types so consumers can build a
+// `RegisteredWorkspace` without taking a direct `cook-register` dependency.
+//
+// Note: `cook_register::RecipeKind` is intentionally NOT re-exported here —
+// it would collide with the engine's own `RecipeKind` (Recipe vs Chore for
+// progress events). Consumers that need the registration-phase kind import
+// it from `cook_register` directly.
+pub use cook_register::{RegisteredCookfile, RegisteredRecipePub};
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
