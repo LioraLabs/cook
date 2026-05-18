@@ -160,4 +160,47 @@ pub fn hash_str(s: &str) -> u64 {
 // Re-exports for convenience
 pub use capture::RegistrationSource;
 pub use dep_output_api::SharedTerminalOutputs;
-pub use engine::RegisterSessionBuilder;
+pub use engine::{list_names, register_cookfile, RegisterSessionBuilder};
+
+/// The artifact of a full `register_cookfile` pass.
+///
+/// Aggregates every recipe registered during the pass (both
+/// surface `recipe NAME` blocks and dynamic `cook.recipe(...)`
+/// calls), the per-recipe `RecipeUnits` discovered by invoking
+/// each body, the deduplicated probe set for the whole register
+/// pass, and the final environment after config-block dispatch.
+///
+/// Distinct from the per-recipe `RecipeUnits` returned by the
+/// legacy `RegisterSessionBuilder::register_recipe` entry point —
+/// `RegisteredCookfile` is the unified-DAG payload produced by
+/// the new `register_cookfile` entry point (CS-0077 Phase 2).
+pub struct RegisteredCookfile {
+    pub names: Vec<RegisteredRecipePub>,
+    pub units_by_recipe: std::collections::BTreeMap<String, cook_contracts::RecipeUnits>,
+    pub probes: std::collections::BTreeMap<String, cook_contracts::ProbeUnit>,
+    pub final_env: std::collections::HashMap<String, String>,
+}
+
+/// Public summary of one registered recipe. Distinct from the internal
+/// `capture::RegisteredRecipe` (which holds a `LuaRegistryKey` closure
+/// that cannot cross the public API boundary).
+#[derive(Debug, Clone)]
+pub struct RegisteredRecipePub {
+    pub name: String,
+    pub source: RegistrationSource,
+    pub kind: RecipeKind,
+    pub requires: Vec<String>,
+}
+
+/// Whether a registered name is a normal recipe or a chore.
+///
+/// Chores are register-phase-only side-effecting blocks that
+/// MUST NOT pass `cache = true` to `cook.add_unit` (§{chores.no-caching}).
+/// Tracked on the public summary so consumers (CLI dispatch, surface
+/// diagnostics) can branch on it without reaching into the internal
+/// `RegisteredRecipe` shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecipeKind {
+    Recipe,
+    Chore,
+}

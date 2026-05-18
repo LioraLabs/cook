@@ -454,6 +454,39 @@ impl RegisterSessionBuilder {
     }
 }
 
+/// Unified register-phase entry point (CS-0077 Phase 2).
+///
+/// Runs the Cookfile's top-level Lua exactly once, collects every
+/// registered recipe (surface `recipe NAME` blocks and dynamic
+/// `cook.recipe(...)` calls alike), invokes each registered body
+/// to discover its work units, and returns the aggregate as a
+/// [`RegisteredCookfile`].
+///
+/// Stub: lands in Task 2.2. The legacy [`RegisterSessionBuilder::register_recipe`]
+/// path continues to serve every caller until then.
+pub fn register_cookfile(
+    _builder: RegisterSessionBuilder,
+    _lua_source: &str,
+    _cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
+) -> Result<crate::RegisteredCookfile, RegisterError> {
+    unimplemented!("register_cookfile lands in Task 2.2")
+}
+
+/// Cheap name-only register pass for surface dispatch (CS-0077 Phase 2).
+///
+/// Runs the Cookfile's top-level Lua to collect the set of registered
+/// recipe names, but does NOT invoke any recipe body. Used by the
+/// surface CLI to list recipes and to validate `cook NAME` arguments
+/// without paying the full DAG-discovery cost.
+///
+/// Stub: lands in Task 2.4.
+pub fn list_names(
+    _builder: RegisterSessionBuilder,
+    _lua_source: &str,
+) -> Result<Vec<crate::RegisteredRecipePub>, RegisterError> {
+    unimplemented!("list_names lands in Task 2.4")
+}
+
 /// Compute a forward-slash, project-relative path for the Cookfile being
 /// registered.  Falls back to the file name (or "Cookfile") on any failure.
 fn cookfile_path_relative_to(project_root: &Path, abs: &Path) -> String {
