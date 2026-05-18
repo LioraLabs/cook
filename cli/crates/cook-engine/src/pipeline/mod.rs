@@ -50,7 +50,7 @@ pub use inferred_deps::{
     workspace_dep_conflicts,
 };
 pub use parse::{read_and_parse, validate_selected_config, ParsedCookfile};
-pub use recipe_info::{build_single_recipe_infos, build_workspace_recipe_info, find_full_prefix};
+pub use recipe_info::{build_recipe_infos_from_registered, find_full_prefix};
 pub use registers::{register_single_cookfile, register_workspace};
 pub use registries::{build_single_registries, build_workspace_registries};
 pub use workspace::{resolve_workspace_root, LoadedCookfile, Workspace};
