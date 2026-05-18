@@ -1006,3 +1006,34 @@ end)
         assert_eq!(produce, "return 42");
     }
 }
+
+// -----------------------------------------------------------------------
+// SHI-222 Phase 2 Task 2.2 — register_cookfile entry point
+// -----------------------------------------------------------------------
+
+#[test]
+fn register_cookfile_invokes_each_body_once_in_topo_order() {
+    use crate::{register_cookfile, RegisterSessionBuilder};
+
+    let lua_src = r#"
+        cook.recipe("lib", {requires = {}}, function()
+            cook.exec("touch lib.txt", 1)
+        end)
+        cook.recipe("app", {requires = {"lib"}}, function()
+            cook.exec("touch app.txt", 2)
+        end)
+    "#;
+
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    let registered = register_cookfile(builder, lua_src, None).unwrap();
+
+    assert_eq!(registered.names.len(), 2);
+    assert_eq!(registered.names[0].name, "lib"); // topo: lib first
+    assert_eq!(registered.names[1].name, "app");
+
+    let lib_units = registered.units_by_recipe.get("lib").unwrap();
+    let app_units = registered.units_by_recipe.get("app").unwrap();
+    assert_eq!(lib_units.units.len(), 1);
+    assert_eq!(app_units.units.len(), 1);
+}

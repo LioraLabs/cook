@@ -462,14 +462,467 @@ impl RegisterSessionBuilder {
 /// to discover its work units, and returns the aggregate as a
 /// [`RegisteredCookfile`].
 ///
-/// Stub: lands in Task 2.2. The legacy [`RegisterSessionBuilder::register_recipe`]
-/// path continues to serve every caller until then.
+/// Pipeline (Standard §6, SHI-222 Phase 2 Task 2.2):
+///
+/// 1. Build a fresh `Lua::unsafe_new()` VM.
+/// 2. Wire `cache_ctx` app_data and `__cook_cookfile_path` registry value.
+/// 3. Construct empty `SessionCaptureState` and a `SharedBodySlot` starting
+///    as `None` (top-level Lua runs without an active body — closures that
+///    require one return clean Lua errors if invoked at top level).
+/// 4. Build a fresh `ProbeRegistry`.
+/// 5. Install the full `cook.*` / `fs.*` / `path.*` / module-loader API
+///    surface on the VM (identical to `register_recipe`'s setup phase).
+/// 6. Execute the source as a named chunk so the call-stack helper used by
+///    `cook.recipe`'s line tagging matches the Cookfile's source label.
+/// 7. Dispatch `__cook_run_config_blocks` if present; freeze the env keyset;
+///    re-apply CLI overrides; snapshot the final env back into `env_vars`.
+/// 8. (Task 2.3 will insert collision detection here.)
+/// 9. Run probe cycle detection ONCE per session.
+/// 10. Drain the probe registry into `session_state.probes`.
+/// 11. Topologically sort registered recipes by `metadata.requires` (local
+///     DFS; reports cycles via `RegisterError::DependencyCycle`).
+/// 12. Invoke each recipe body in topo order, opening a fresh
+///     `BodyCaptureState` immediately before the call and draining it
+///     back to `None` immediately after.
+/// 13. Assemble `RegisteredCookfile { names, units_by_recipe, probes, final_env }`.
+///
+/// `kind` on each `RegisteredRecipePub` is hard-coded to
+/// [`crate::RecipeKind::Recipe`] here — chore-vs-recipe tagging waits on
+/// the codegen change in Task 3.1 (no surface chore distinction yet).
 pub fn register_cookfile(
-    _builder: RegisterSessionBuilder,
-    _lua_source: &str,
-    _cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
+    builder: RegisterSessionBuilder,
+    lua_source: &str,
+    cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
 ) -> Result<crate::RegisteredCookfile, RegisterError> {
-    unimplemented!("register_cookfile lands in Task 2.2")
+    // 1. Fresh Lua VM. unsafe_new() matches register_recipe — see the
+    //    comment block there for the C-extension rationale.
+    // SAFETY: mlua's unsafe_new() opens all Lua standard libraries; the
+    //   cook API layer below sandboxes the dangerous surfaces.
+    let lua = unsafe { Lua::unsafe_new() };
+
+    // 2. Wire CacheContext + cookfile path label.
+    if let Some(ref ctx) = cache_ctx {
+        lua.set_app_data(ctx.clone());
+        let cookfile_rel =
+            cookfile_path_relative_to(&ctx.project_root, &builder.working_dir.join("Cookfile"));
+        lua.set_named_registry_value("__cook_cookfile_path", cookfile_rel)
+            .map_err(RegisterError::Lua)?;
+    }
+
+    // Compute the source label used both as the loaded chunk's name and as
+    // the lookup target inside `caller_line_in_cookfile`. When no CacheContext
+    // is available (tests, legacy call sites) we fall back to a bare
+    // "Cookfile" label so the helper's `ends_with` match still resolves.
+    let cookfile_label: String = lua
+        .named_registry_value::<String>("__cook_cookfile_path")
+        .unwrap_or_else(|_| "Cookfile".to_string());
+
+    // 3. Session-scope state; body slot starts None (no active recipe body
+    //    during top-level load — spec §6 step 4).
+    let session_state: SharedSessionCaptureState =
+        Rc::new(RefCell::new(SessionCaptureState::new()));
+    let body_slot: SharedBodySlot = Rc::new(RefCell::new(None));
+
+    // 4. Probe registry for this register pass.
+    let probe_registry = Rc::new(RefCell::new(ProbeRegistry::default()));
+
+    // 5. Install `cook.*` core API. `recipe_name` here is the legacy
+    //    closure-capture argument used by `cook.add_unit` for
+    //    `cache_meta.recipe_name`; in register_cookfile there is no single
+    //    recipe, so pass an empty string. Per-recipe attribution happens
+    //    through `body.current_recipe` instead.
+    let recipes = install_cook_api(
+        &lua,
+        builder.env_vars.clone(),
+        &builder.working_dir,
+        body_slot.clone(),
+        "",
+    )?;
+    {
+        let cook_tbl: LuaTable = lua.globals().get("cook")?;
+        install_require_env(&lua, &cook_tbl, builder.env_keyset.clone())?;
+    }
+    {
+        let cook_tbl: LuaTable = lua.globals().get("cook")?;
+        install_cook_probe(
+            &lua,
+            &cook_tbl,
+            probe_registry.clone(),
+            body_slot.clone(),
+            cookfile_label.clone(),
+        )?;
+    }
+
+    // Sandbox + fs/path/platform API. Project root falls back to working_dir
+    // when no CacheContext is present (matches register_recipe).
+    let project_root: std::path::PathBuf = cache_ctx
+        .as_ref()
+        .map(|c| c.project_root.clone())
+        .unwrap_or_else(|| builder.working_dir.clone());
+    cook_lua_stdlib::register_fs_api_with_sandbox(
+        &lua,
+        cook_lua_stdlib::WorkingDirSource::Static(builder.working_dir.clone()),
+        cook_lua_stdlib::SandboxSource::confined(project_root.clone()),
+    )?;
+    cook_lua_stdlib::register_path_api(&lua)?;
+    cook_lua_stdlib::install_shell_escape_guards(
+        &lua,
+        cook_lua_stdlib::SandboxSource::confined(project_root),
+    )?;
+    {
+        let cook_tbl: LuaTable = lua.globals().get("cook")?;
+        cook_lua_stdlib::register_platform_api(&lua, &cook_tbl)?;
+    }
+
+    // Module loader + remaining cook APIs.
+    let module_state: SharedModuleLoaderState = Rc::new(RefCell::new(
+        ModuleLoaderState::new(builder.working_dir.clone()),
+    ));
+    crate::module_loader::register_module_loader(&lua, module_state.clone())?;
+    crate::module_loader::register_cache_api(&lua, module_state.clone())?;
+    crate::unit_api::register_unit_api(
+        &lua,
+        body_slot.clone(),
+        "",
+        builder.terminal_outputs.clone(),
+        builder.working_dir.clone(),
+    )?;
+    crate::export_api::register_export_api(&lua, builder.export_store.clone())?;
+    crate::test_api::register_test_api(&lua, body_slot.clone())?;
+    crate::dep_output_api::register_dep_output_api(
+        &lua,
+        builder.terminal_outputs.clone(),
+        body_slot.clone(),
+        builder.alias_dirs.clone(),
+        builder.qualified_prefix.clone(),
+        builder.alias_qualified_prefixes.clone(),
+    )?;
+    crate::context::register_resolve_ingredients(&lua, &builder.working_dir)?;
+    crate::codec_api::register_codec_api(&lua)?;
+
+    // 6. Execute the top-level Lua. Name the chunk with an `@` prefix so
+    //    `caller_line_in_cookfile`'s `ends_with(&target)` (target is the
+    //    raw cookfile-relative path) still matches — see Task 1.4 review.
+    //    Recipe registration happens here via `cook.recipe(...)` calls,
+    //    which capture each body's `LuaRegistryKey` into the shared
+    //    `recipes` Rc returned from `install_cook_api`.
+    let chunk_name = format!("@{}", cookfile_label);
+    lua.load(lua_source).set_name(chunk_name).exec()?;
+
+    // 7. Config block dispatch — identical to register_recipe.
+    let final_env: BTreeMap<String, String>;
+    if let Ok(dispatch) = lua.globals().get::<LuaFunction>("__cook_run_config_blocks") {
+        let cook_tbl: LuaTable = lua.globals().get("cook")?;
+        let env_tbl: LuaTable = cook_tbl.get("env")?;
+        lua.globals().set("env", env_tbl.clone())?;
+
+        let name_arg: Option<String> = builder.selected_config.clone();
+        dispatch.call::<()>(name_arg)?;
+
+        builder.env_keyset.freeze(&env_tbl)?;
+
+        for (k, v) in &builder.cli_overrides {
+            env_tbl.set(k.as_str(), v.as_str())?;
+        }
+
+        {
+            let mut env_map = builder.env_vars.borrow_mut();
+            for pair in env_tbl.pairs::<String, String>() {
+                let (k, v) = pair?;
+                env_map.insert(k, v);
+            }
+        }
+
+        // Shadowing diagnostic — same logic as register_recipe.
+        let declared_env: std::collections::BTreeSet<String> =
+            builder.env_keyset.declared_list().into_iter().collect();
+        let recipe_names_set: std::collections::BTreeSet<String> = recipes
+            .borrow()
+            .iter()
+            .map(|r| r.name.clone())
+            .collect();
+        let mut emitted = builder.shadow_warnings_emitted.borrow_mut();
+        for name in recipe_names_set.intersection(&declared_env) {
+            let key = (name.clone(), name.clone());
+            if emitted.insert(key) {
+                eprintln!(
+                    "cook: warning: recipe '{name}' shadows declared env var \
+                     'env.{name}': $<{name}> resolves to the recipe (Standard \
+                     §5.2.3). Use $<env.{name}> for the env-var value, or \
+                     rename one of them."
+                );
+            }
+        }
+
+        // Snapshot final env BEFORE removing the global so the table is
+        // still readable. `env_vars` was just refreshed above so it's the
+        // canonical source; copy from there to avoid re-borrowing `env_tbl`.
+        final_env = builder
+            .env_vars
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        lua.globals().set("env", mlua::Value::Nil)?;
+    } else {
+        // No config blocks — `final_env` is just the initial env_vars.
+        final_env = builder
+            .env_vars
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+    }
+
+    // 8. Collision detection — Task 2.3.
+
+    // 9. Probe cycle detection — once per session.
+    probe_registry
+        .borrow()
+        .detect_cycles()
+        .map_err(|msg| RegisterError::Lua(mlua::Error::runtime(msg)))?;
+
+    // 10. Drain probe registry into session state.
+    {
+        let probe_reg = probe_registry.borrow();
+        let mut sess = session_state.borrow_mut();
+        for (_key, reg) in &probe_reg.probes {
+            sess.probes.push(reg.probe.clone());
+        }
+    }
+
+    // 11. Topological sort of registered names by `requires`.
+    let names_to_requires: BTreeMap<String, Vec<String>> = recipes
+        .borrow()
+        .iter()
+        .map(|r| (r.name.clone(), r.metadata.requires.clone()))
+        .collect();
+    let topo = local_topological_sort(&names_to_requires)?;
+
+    // 12. Invoke each recipe body in topo order. The body slot is opened
+    //     immediately before the call and drained back to `None` afterwards
+    //     so a stray closure invocation between bodies fails cleanly rather
+    //     than silently appending to a stale body.
+    let mut units_by_recipe: BTreeMap<String, RecipeUnits> = BTreeMap::new();
+    let mut names: Vec<crate::RegisteredRecipePub> = Vec::with_capacity(topo.len());
+
+    for name in &topo {
+        // Open fresh body slot.
+        *body_slot.borrow_mut() = Some(BodyCaptureState::new());
+
+        // Look up the recipe entry. Borrow scope kept tight so we can mutate
+        // body_slot below without overlapping the recipes borrow.
+        let (
+            func_key_clone,
+            requires,
+            source,
+            qualified_name,
+        ): (LuaRegistryKey, Vec<String>, crate::capture::RegistrationSource, String);
+        {
+            let registry = recipes.borrow();
+            let recipe = registry
+                .iter()
+                .find(|r| &r.name == name)
+                .ok_or_else(|| RegisterError::RecipeNotFound(name.clone()))?;
+
+            // Run recipe context setup (ingredient resolution).
+            setup_recipe_context(&lua, recipe, &builder.working_dir)?;
+
+            // The `LuaRegistryKey` doesn't impl Clone, so we materialize the
+            // function now and stash it for the call below; the registry
+            // entry itself stays untouched.
+            let func: LuaFunction = lua.registry_value(&recipe.function)?;
+            // Re-stash so we can drop the `registry` borrow before calling.
+            func_key_clone = lua.create_registry_value(func)?;
+            requires = recipe.metadata.requires.clone();
+            source = recipe.source;
+            qualified_name = if builder.qualified_prefix.is_empty() {
+                recipe.name.clone()
+            } else {
+                format!("{}.{}", builder.qualified_prefix, recipe.name)
+            };
+        }
+
+        // Stamp current_recipe on the body so cook.add_test defaults the
+        // suite field correctly (CS-0061 §3.2).
+        {
+            let mut slot = body_slot.borrow_mut();
+            let body = slot
+                .as_mut()
+                .expect("body slot just opened above");
+            body.current_recipe = Some(qualified_name.clone());
+        }
+
+        // Call the body. Any error short-circuits — earlier bodies' captures
+        // are dropped along with the function return.
+        let func: LuaFunction = lua.registry_value(&func_key_clone)?;
+        func.call::<()>(())?;
+        // Cleanup the transient registry entry to avoid leaking refs across
+        // many recipes in large Cookfiles.
+        lua.remove_registry_value(func_key_clone)?;
+
+        // Drain the body slot back to None.
+        let body = body_slot
+            .borrow_mut()
+            .take()
+            .expect("body slot populated above");
+
+        // Resolve probe references — same end-of-body check that
+        // register_recipe runs, scoped to this recipe's units.
+        {
+            use std::collections::BTreeSet;
+            let probe_reg = probe_registry.borrow();
+            let registered_keys: BTreeSet<&str> =
+                probe_reg.probes.keys().map(|s| s.as_str()).collect();
+            for (idx, unit) in body.units.iter().enumerate() {
+                for key in &unit.probes {
+                    if !registered_keys.contains(key.as_str()) {
+                        let unit_name = unit
+                            .cache_meta
+                            .as_ref()
+                            .and_then(|m| m.output_paths.first())
+                            .map(|p| p.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let unit_label = if unit_name.is_empty() {
+                            format!("<unit-{}>", idx)
+                        } else {
+                            unit_name
+                        };
+                        return Err(RegisterError::Lua(mlua::Error::runtime(format!(
+                            "unit '{}' lists probe key '{}' in `probes` but no such probe was declared",
+                            unit_label, key
+                        ))));
+                    }
+                }
+            }
+        }
+
+        // Record terminal outputs for cross-recipe dep_output lookups.
+        let terminal_outputs_list = body.last_cook_step_outputs.clone();
+        builder
+            .terminal_outputs
+            .lock()
+            .expect("terminal_outputs mutex poisoned")
+            .insert(qualified_name.clone(), terminal_outputs_list.clone());
+
+        let env_btree: BTreeMap<String, String> = builder
+            .env_vars
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        // Each per-recipe RecipeUnits carries a clone of the session probe
+        // set today; Phase 3 dedup will replace this with a session-level
+        // probe view consumed off the RegisteredCookfile directly.
+        let probes = session_state.borrow().probes.clone();
+
+        let units = RecipeUnits {
+            recipe_name: name.clone(),
+            deps: requires.clone(),
+            units: body.units,
+            step_groups: body.step_groups,
+            working_dir: builder.working_dir.clone(),
+            env_vars: env_btree,
+            terminal_outputs: terminal_outputs_list,
+            dep_edges: body.dep_edges,
+            probes,
+        };
+        units_by_recipe.insert(name.clone(), units);
+
+        names.push(crate::RegisteredRecipePub {
+            name: name.clone(),
+            source,
+            kind: crate::RecipeKind::Recipe,
+            requires,
+        });
+    }
+
+    // Flush module caches once at the end of the pass.
+    module_state.borrow().flush_all();
+
+    // 13. Probes view: BTreeMap keyed by probe key (deterministic).
+    let probes: BTreeMap<String, cook_contracts::ProbeUnit> = session_state
+        .borrow()
+        .probes
+        .iter()
+        .map(|p| (p.key.clone(), p.clone()))
+        .collect();
+
+    Ok(crate::RegisteredCookfile {
+        names,
+        units_by_recipe,
+        probes,
+        final_env,
+    })
+}
+
+/// Local DFS-based topological sort of recipe names by their declared
+/// `requires`. Returns names in dependency-first order (a recipe appears
+/// after every recipe it requires that is also present in `deps`).
+///
+/// Edges to recipe names absent from `deps` are skipped — those are
+/// cross-Cookfile `requires` whose resolution is the engine's
+/// responsibility. Unknown references are surfaced by the cross-cookfile
+/// dep analyzer downstream, not here.
+///
+/// Cycles are reported as [`RegisterError::DependencyCycle`] with the
+/// path of names forming the cycle (first and last elements coincide).
+fn local_topological_sort(
+    deps: &BTreeMap<String, Vec<String>>,
+) -> Result<Vec<String>, RegisterError> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum State {
+        Unvisited,
+        Visiting,
+        Visited,
+    }
+    let mut state: BTreeMap<&str, State> =
+        deps.keys().map(|k| (k.as_str(), State::Unvisited)).collect();
+    let mut order: Vec<String> = Vec::new();
+    let mut path: Vec<String> = Vec::new();
+    fn visit<'a>(
+        node: &'a str,
+        deps: &'a BTreeMap<String, Vec<String>>,
+        state: &mut BTreeMap<&'a str, State>,
+        order: &mut Vec<String>,
+        path: &mut Vec<String>,
+    ) -> Result<(), RegisterError> {
+        match state.get(node) {
+            Some(State::Visited) => return Ok(()),
+            Some(State::Visiting) => {
+                let cycle_start = path.iter().position(|n| n == node).unwrap_or(0);
+                let mut cycle: Vec<String> = path[cycle_start..].to_vec();
+                cycle.push(node.to_string());
+                return Err(RegisterError::DependencyCycle { recipes: cycle });
+            }
+            _ => {}
+        }
+        state.insert(node, State::Visiting);
+        path.push(node.to_string());
+        if let Some(children) = deps.get(node) {
+            for child in children {
+                // Skip references the local set doesn't know about — those
+                // are cross-recipe `requires` to dependencies registered
+                // elsewhere (e.g. workspace imports). The engine's
+                // cross-cookfile dep analyzer will reject genuinely unknown
+                // names later.
+                if deps.contains_key(child) {
+                    visit(child, deps, state, order, path)?;
+                }
+            }
+        }
+        path.pop();
+        state.insert(node, State::Visited);
+        order.push(node.to_string());
+        Ok(())
+    }
+    for name in deps.keys() {
+        visit(name, deps, &mut state, &mut order, &mut path)?;
+    }
+    Ok(order)
 }
 
 /// Cheap name-only register pass for surface dispatch (CS-0077 Phase 2).

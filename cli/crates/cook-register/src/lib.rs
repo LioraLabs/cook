@@ -48,6 +48,14 @@ pub enum RegisterError {
     },
     #[error("recipe not found: {0}")]
     RecipeNotFound(String),
+    /// A cycle in the recipe `requires` graph was detected by
+    /// `register_cookfile`'s local topo-sort. `recipes` is the path
+    /// of names that forms the cycle, with the recurring node
+    /// appearing as both the first and last element.
+    ///
+    /// Returned by `register_cookfile` (SHI-222 Phase 2 Task 2.2).
+    #[error("dependency cycle: {recipes:?}")]
+    DependencyCycle { recipes: Vec<String> },
 }
 
 /// Session-level capture state. One instance per `register_cookfile` call;
