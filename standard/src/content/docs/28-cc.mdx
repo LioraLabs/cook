@@ -94,7 +94,7 @@ The PRIVATE/PUBLIC distinction introduced by CS-0080 (§{cat.cc.transitive.priv-
 cc.headers(name: string, opts: HeadersOpts) -> string
 ```
 
-Registers a header-only library: a logical target that records exports for transitive propagation but emits no compile or link units. `HeadersOpts` typically carries `export_includes` and `defines`. `cc.headers` MUST register the target in known-targets but MUST NOT call `cook.add_unit(...)`.
+Registers a header-only library: a logical target that records exports for transitive propagation but emits no compile or link units. `HeadersOpts` typically carries `export_includes` and `export_defines`. `cc.headers` MUST register the target in known-targets but MUST NOT call `cook.add_unit(...)`.
 
 `HeadersOpts.needs` (list[string]): system-library names. The implementation MUST register each as a `cc:find:<name>` probe but MUST NOT add compile- or link-unit edges (headers targets export propagation only). The find probe's `libs` and `cflags` MUST flow through `cook.export` (§{cat.cc.transitive}) to downstream consumers, which assemble the appropriate sigils at their own compile and link sites. See §{cat.cc.needs-semantics}.
 
@@ -392,9 +392,11 @@ A conforming implementation of surface v0.7 MUST NOT export bare `defines`/`syst
 
 `extra_cflags` has no propagation channel by design: compile flags are target-local.
 
-### 28.4.2. Toolchain defaults [#cat.cc.transitive.defaults]
+### 28.4.2. Module-wide defaults stay target-local [#cat.cc.transitive.defaults]
 
-Per §{cat.cc.toolchain}, `cc.toolchain({ ... })` records project-wide defaults that the target makers merge into each target's bare fields. Under PRIVATE-by-default (CS-0080), these defaults are target-local: they do NOT leak through `cook.export` to consumers. A project that wants a global default propagated to every target's consumers MUST declare it on each target's `export_*` field (or via a headers-only target that consumers `link` against).
+Per §{cat.cc.defaults}, `cc.defaults({ ... })` records module-wide defaults that subsequent target makers MUST additively merge into each target's bare fields. Under PRIVATE-by-default (CS-0080), these merged defaults are target-local: they do NOT leak through `cook.export` to consumers. A project that wants a global default propagated to every target's consumers MUST declare it on each target's `export_*` field (or via a headers-only target that consumers `link` against).
+
+`cc.toolchain({ ... })` (§{cat.cc.toolchain}) sets compiler/standard/warnings only and does not interact with the PRIVATE/PUBLIC matrix.
 
 ## 28.5. Error model [#cat.cc.errors]
 
