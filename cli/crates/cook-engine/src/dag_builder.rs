@@ -24,16 +24,48 @@ use cook_dag::Dag;
 use crate::{EngineError, WorkNode};
 
 /// Compute the set of probe keys reached by at least one non-probe consumer
-/// in `units`, transitively closing under probe-on-probe `inputs.requires`
-/// looked up via `probes` (the ProbeUnit list from RecipeUnits.probes).
+/// in `units`, transitively closing under probe-on-probe `inputs.requires`.
+///
+/// A probe's upstream `inputs.requires` is read from two sources, depending on
+/// where the probe was registered:
+///
+/// * **Top-level probes** (`cook.probe(...)` called outside any recipe body)
+///   live in `probes` — the [`RecipeUnits.probes`] view drained from
+///   `session_state.probes` in `register_cookfile`. Their `inputs.requires`
+///   lives on the [`ProbeUnit`] directly.
+/// * **Body-scope probes** (`cook.probe(...)` called inside a recipe body — or
+///   inside a `require`d module first-loaded during a body) are pushed onto
+///   `body.units` by `install_cook_probe` as `WorkPayload::Probe` entries with
+///   their `inputs.requires` mirrored onto the surrounding [`CapturedUnit.probes`]
+///   field. They do NOT appear in `probes` because the registry is drained
+///   once before any body runs (see `cook-register::engine::register_cookfile`).
+///
+/// Both indexes are consulted during the transitive closure so a body-scope
+/// consumer probe can legitimately pull its body-scope upstream into
+/// `consumed` (without this, demand-driven pruning silently drops the upstream
+/// and the executor later reports "requires upstream X which has no
+/// fingerprint" — the canonical cook_cc `needs = {…}` shape that registers
+/// `cc:find:NAME → cc:linker-search-dirs` chains body-scope).
+///
 /// Returns probe keys in deterministic sorted order via the underlying BTreeSet.
 fn compute_consumed_probe_keys(
     units: &[CapturedUnit],
     probes: &[cook_contracts::ProbeUnit],
 ) -> BTreeSet<String> {
-    // Index ProbeUnit data by key, for upstream-requires lookup.
-    let probe_by_key: BTreeMap<&str, &cook_contracts::ProbeUnit> =
+    // Top-level probes (ru.probes): inputs.requires lives on the ProbeUnit.
+    let top_level_probe_by_key: BTreeMap<&str, &cook_contracts::ProbeUnit> =
         probes.iter().map(|p| (p.key.as_str(), p)).collect();
+
+    // Body-scope probes (WorkPayload::Probe entries in ru.units): their
+    // inputs.requires is carried on the CapturedUnit.probes field by
+    // install_cook_probe.
+    let body_probe_requires_by_key: BTreeMap<&str, &[String]> = units
+        .iter()
+        .filter_map(|u| match &u.payload {
+            WorkPayload::Probe { key, .. } => Some((key.as_str(), u.probes.as_slice())),
+            _ => None,
+        })
+        .collect();
 
     // Seed: keys listed by any non-probe unit's `probes`.
     let mut consumed: BTreeSet<String> = BTreeSet::new();
@@ -48,8 +80,15 @@ fn compute_consumed_probe_keys(
     // Transitive close under probe-on-probe inputs.requires.
     let mut worklist: Vec<String> = consumed.iter().cloned().collect();
     while let Some(k) = worklist.pop() {
-        if let Some(probe) = probe_by_key.get(k.as_str()) {
+        if let Some(probe) = top_level_probe_by_key.get(k.as_str()) {
             for upstream in &probe.inputs.requires {
+                if consumed.insert(upstream.clone()) {
+                    worklist.push(upstream.clone());
+                }
+            }
+        }
+        if let Some(requires) = body_probe_requires_by_key.get(k.as_str()) {
+            for upstream in *requires {
                 if consumed.insert(upstream.clone()) {
                     worklist.push(upstream.clone());
                 }
@@ -1365,6 +1404,83 @@ mod tests {
         assert_eq!(dag.node(b_id).remaining_deps(), 1, "probe B must depend on probe A");
         // Topo order: A added before B (A's dag_id < B's).
         assert!(a_id < b_id, "probe A must be added before probe B");
+    }
+
+    /// Regression: body-scope probe-on-body-scope-probe chains must NOT be
+    /// demand-pruned. The cook_cc `needs = {...}` shape registers a chain
+    /// where `cc:find:NAME` (body-scope) declares `inputs.requires =
+    /// ["cc:linker-search-dirs", ...]` and `cc:linker-search-dirs` is also a
+    /// body-scope probe. Pre-fix, `compute_consumed_probe_keys` only walked
+    /// upstreams through `ru.probes` (top-level), so the body-scope upstream
+    /// was never added to `consumed` and got dropped from the DAG, causing
+    /// `cook-fingerprint` to fail with "requires upstream X which has no
+    /// fingerprint" at execute time.
+    #[test]
+    fn body_scope_probe_chain_not_pruned() {
+        use cook_contracts::{CapturedUnit, DepKind, WorkPayload};
+
+        // Body-scope upstream probe (e.g. `cc:linker-search-dirs`).
+        let upstream_probe = CapturedUnit {
+            payload: WorkPayload::Probe {
+                key: "cc:linker-search-dirs".into(),
+                produce: "return {}".into(),
+                line: 1,
+            },
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![], // no upstream of its own
+        };
+        // Body-scope consumer probe (e.g. `cc:find:SDL3`) requiring the
+        // upstream body-scope probe.
+        let downstream_probe = CapturedUnit {
+            payload: WorkPayload::Probe {
+                key: "cc:find:SDL3".into(),
+                produce: "return {}".into(),
+                line: 2,
+            },
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec!["cc:linker-search-dirs".into()],
+        };
+        // Non-probe consumer (the link unit) listing only the downstream
+        // probe in its `probes`. The upstream must still survive the
+        // demand-driven prune via the transitive closure across body-scope
+        // probes.
+        let link_unit = CapturedUnit {
+            payload: shell("link"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec!["cc:find:SDL3".into()],
+        };
+
+        let ru = RecipeUnits {
+            recipe_name: "game".into(),
+            deps: vec![],
+            units: vec![upstream_probe, downstream_probe, link_unit],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![], // body-scope probes are NOT mirrored into ru.probes
+        };
+        let dag = build_dag(vec![ru]).expect("no collision");
+        // Both probe nodes must survive; otherwise pruning regressed.
+        let probe_keys: BTreeSet<String> = (0..dag.len())
+            .filter_map(|i| match &dag.node(i).payload().payload {
+                Some(WorkPayload::Probe { key, .. }) => Some(key.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            probe_keys.contains("cc:linker-search-dirs"),
+            "body-scope upstream probe must survive demand prune, got nodes: {probe_keys:?}"
+        );
+        assert!(
+            probe_keys.contains("cc:find:SDL3"),
+            "body-scope consumer probe must survive demand prune, got nodes: {probe_keys:?}"
+        );
+        assert_eq!(dag.len(), 3, "expected 2 probes + 1 link unit");
     }
 
     #[test]
