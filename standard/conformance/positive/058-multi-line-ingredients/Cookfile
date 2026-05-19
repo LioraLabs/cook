@@ -1,0 +1,7 @@
+recipe "build"
+    ingredients "neo/sys/*.cpp"
+                "neo/sys/posix/*.cpp"
+                !"neo/sys/sdl/*.cpp"
+    cook "build/sys.o" using {
+        echo build
+    }

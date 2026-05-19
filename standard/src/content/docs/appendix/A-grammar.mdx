@@ -153,6 +153,33 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
                              alternative. See § 3.8. */
 ```
 
+**Multi-line patterns (CS-0078).** In both `ingredients_step` and `cook_step`, whitespace between successive `STRING` (or `ingredient`) tokens MAY include line breaks. A conforming implementation MUST accept continuation lines that begin with `"` (or `!"` in the case of `ingredients_step`) as part of the same declaration. Pattern collection terminates at the first non-quote token on the same physical line as a quoted pattern, which then resolves per the surrounding production (`using` for `cook_step`, end-of-declaration for `ingredients_step`); a non-quote token on the same line as a quoted pattern that is not the legal terminator MUST produce a diagnostic naming the offending text. A continuation line whose first token after leading whitespace is not `"` (or `!"` for `ingredients_step`) terminates the declaration silently — the declaration is treated as complete, and the line is dispatched per §A.4's step-dispatch-priority order. The latter case is genuinely ambiguous between an intended-but-misspelled continuation and the start of a new step; the Standard chooses non-diagnosis to preserve the unambiguous declaration-only form of `cook_step` (App. A.4, "Declaration-only cook step") and the analogous "ingredients without trailing patterns" idiom.
+
+### Example A.4.1
+
+Both forms are equivalent:
+
+```
+cook "a.o" "b.o" "c.o" using { ... }
+```
+
+```
+cook "a.o"
+     "b.o"
+     "c.o" using { ... }
+```
+
+Similarly for `ingredients`:
+
+```
+ingredients "src/*.c" !"src/legacy.c"
+```
+
+```
+ingredients "src/*.c"
+            !"src/legacy.c"
+```
+
 **Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before `using`, the `using_clause` resolves per the unrestricted production above — the bare-`STRING` arm having been removed in CS-0022, the form `cook "a" "b" using STRING` is rejected by the production itself rather than by a separate well-formedness rule.
 
 **Iteration coherence (CS-0022).** All `STRING` output patterns of a single `cook_step` MUST share an iteration source: every output is literal (no accessor placeholder), or every output bears `$<in.ACCESSOR>` (own-input driver), or every output bears `$<lib.ACCESSOR>` for the same recipe `lib` (dep-driven driver). A conforming implementation MUST reject a `cook_step` whose output patterns mix sources, with a diagnostic naming the offending outputs. See §{steps.iteration-mode}.

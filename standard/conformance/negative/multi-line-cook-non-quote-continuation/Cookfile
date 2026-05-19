@@ -1,0 +1,5 @@
+recipe "bad"
+    cook "build/a.o"
+         "build/b.o" garbage_line_here using {
+        echo bad
+    }

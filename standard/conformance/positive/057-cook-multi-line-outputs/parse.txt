@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="maps" line=1
+      deps: []
+      ingredients: ["src/*.map"]
+      excludes: []
+      steps:
+        Cook outputs=["build/$<in.stem>.aas48", "build/$<in.stem>.aas96", "build/$<in.stem>.aas120"] using=ShellBlock(["runaas $<in>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

@@ -427,9 +427,13 @@ pub(crate) fn parse_recipe(
                             message: "duplicate 'ingredients' line".to_string(),
                         });
                     }
-                    let (inc, exc) = parse_ingredients_line(rest, tok.line)?;
+                    let (inc, exc, new_pos) = parse_ingredients_line(
+                        rest, tok.line, tokens, pos, source_lines,
+                    )?;
                     ingredients = inc;
                     excludes = exc;
+                    pos = new_pos;
+                    continue;
                 } else if let Some(rest) = strip_keyword(text, "cook") {
                     if let Some(started) = imperative_began {
                         return Err(region_violation("cook", tok.line, started));

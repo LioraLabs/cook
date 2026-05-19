@@ -81,37 +81,127 @@ pub(crate) fn strip_keyword<'a>(text: &'a str, keyword: &str) -> Option<&'a str>
     None
 }
 
-/// Parse an ingredients line into (includes, excludes).
-/// Includes are bare `"pattern"`, excludes are `!"pattern"`.
-pub(crate) fn parse_ingredients_line(text: &str, line: usize) -> Result<(Vec<String>, Vec<String>), ParseError> {
+/// Collect a run of quoted patterns from `initial_text`, then keep
+/// collecting from subsequent physical source lines as long as each
+/// continuation line begins with `"` (or `!"` when `allow_exclude` is true).
+///
+/// Returns:
+///  * `patterns` — collected pattern values (without the surrounding quotes)
+///  * `excludes` — parallel `bool` array marking exclude (`!"…"`) entries.
+///    Always `false` when `allow_exclude` is false; the caller may ignore.
+///  * `leftover` — the unparsed remainder of the line where collection
+///    stopped. For `cook`, this is the text starting at `using`. For
+///    `ingredients`, this is empty (no trailing clause).
+///  * `new_pos` — token-stream position pointing at the first token of the
+///    line where collection stopped (e.g. the line containing `using` for
+///    `cook`, or the line that broke the pattern run). NOTE: this differs
+///    from `collect_lua_block`/`collect_shell_block`, which return a
+///    position PAST the consumed block. Callers that want "past the stop
+///    line" must advance one more line themselves.
+///
+/// The caller must inspect `leftover` to decide whether the stopping line
+/// is well-formed (e.g. begins with `using` for cook, is empty for
+/// ingredients).
+pub(crate) fn collect_quoted_patterns_multiline(
+    initial_text: &str,
+    initial_line: usize,
+    tokens: &[Located<Token>],
+    current_pos: usize,
+    source_lines: &[&str],
+    allow_exclude: bool,
+) -> Result<(Vec<String>, Vec<bool>, String, usize), ParseError> {
+    let mut patterns: Vec<String> = Vec::new();
+    let mut excludes: Vec<bool> = Vec::new();
+    let mut cursor = initial_text.trim().to_string();
+    let mut cur_line = initial_line;
+    let mut pos = current_pos;
+
+    loop {
+        // Consume as many quoted patterns as possible from `cursor`.
+        loop {
+            let trimmed = cursor.trim_start();
+            let is_exclude = allow_exclude && trimmed.starts_with('!');
+            let after_bang = if is_exclude { &trimmed[1..] } else { trimmed };
+            if !after_bang.starts_with('"') {
+                cursor = trimmed.to_string();
+                break;
+            }
+            let rest = &after_bang[1..];
+            let end = rest.find('"').ok_or_else(|| ParseError::Parse {
+                line: cur_line,
+                message: "unterminated string".to_string(),
+            })?;
+            patterns.push(rest[..end].to_string());
+            excludes.push(is_exclude);
+            cursor = rest[end + 1..].to_string();
+        }
+
+        // If the cursor is non-empty here, we hit a non-quote token. Stop.
+        if !cursor.trim().is_empty() {
+            return Ok((patterns, excludes, cursor.trim().to_string(), pos));
+        }
+
+        // Look at the next physical line. If it starts with `"` (or `!"`
+        // when allow_exclude), consume it and continue.
+        let next_line_num = cur_line + 1;
+        let next_line_text = match source_lines.get(next_line_num.saturating_sub(1)) {
+            Some(t) => t.trim_start(),
+            None => return Ok((patterns, excludes, String::new(), pos)),
+        };
+        let starts_pattern = next_line_text.starts_with('"')
+            || (allow_exclude && next_line_text.starts_with('!')
+                && next_line_text.get(1..2) == Some("\""));
+        if !starts_pattern {
+            return Ok((patterns, excludes, String::new(), pos));
+        }
+
+        // Advance pos past every token on lines <= cur_line.
+        while pos < tokens.len() && tokens[pos].line <= cur_line {
+            pos += 1;
+        }
+        cur_line = next_line_num;
+        cursor = next_line_text.to_string();
+    }
+}
+
+/// Parse an ingredients declaration. Patterns may span multiple physical
+/// lines as long as each continuation line begins with `"` or `!"`.
+/// Returns (includes, excludes, new_pos).
+pub(crate) fn parse_ingredients_line(
+    text: &str,
+    line: usize,
+    tokens: &[Located<Token>],
+    current_pos: usize,
+    source_lines: &[&str],
+) -> Result<(Vec<String>, Vec<String>, usize), ParseError> {
+    let (patterns, excludes_flags, leftover, pos_after) =
+        collect_quoted_patterns_multiline(
+            text, line, tokens, current_pos, source_lines, /*allow_exclude=*/ true,
+        )?;
+    if !leftover.trim().is_empty() {
+        return Err(ParseError::Parse {
+            line,
+            message: format!("ingredients: expected '\"' or '!\"', found: {}", leftover),
+        });
+    }
     let mut includes = Vec::new();
     let mut excludes = Vec::new();
-    let mut remaining = text.trim();
-    while !remaining.is_empty() {
-        let is_exclude = remaining.starts_with('!');
-        if is_exclude {
-            remaining = &remaining[1..];
-        }
-        if !remaining.starts_with('"') {
-            return Err(ParseError::Parse {
-                line,
-                message: format!("expected '\"', found: {}", remaining),
-            });
-        }
-        let rest = &remaining[1..];
-        let end = rest.find('"').ok_or(ParseError::Parse {
-            line,
-            message: "unterminated string".to_string(),
-        })?;
-        let value = rest[..end].to_string();
-        if is_exclude {
-            excludes.push(value);
-        } else {
-            includes.push(value);
-        }
-        remaining = rest[end + 1..].trim();
+    for (pat, is_exc) in patterns.into_iter().zip(excludes_flags.into_iter()) {
+        if is_exc { excludes.push(pat); } else { includes.push(pat); }
     }
-    Ok((includes, excludes))
+    // Advance past every token on the line where collection stopped. Explicit
+    // walk (matches the pattern used in `parse_cook_line`'s declaration-only
+    // branch) so this stays correct if the lexer ever emits more than one
+    // token per source line.
+    let stop_line = tokens
+        .get(pos_after)
+        .map(|t| t.line)
+        .unwrap_or(line);
+    let mut pos = pos_after;
+    while pos < tokens.len() && tokens[pos].line <= stop_line {
+        pos += 1;
+    }
+    Ok((includes, excludes, pos))
 }
 
 
@@ -130,27 +220,29 @@ pub(crate) fn parse_cook_line(
         });
     }
 
-    // Collect all leading quoted strings.
-    let mut outputs: Vec<String> = Vec::new();
-    let mut cursor = rest;
-    while cursor.starts_with('"') {
-        let after_quote = &cursor[1..];
-        let end = after_quote.find('"').ok_or(ParseError::Parse {
-            line,
-            message: "cook: unterminated output pattern".to_string(),
-        })?;
-        outputs.push(after_quote[..end].to_string());
-        cursor = after_quote[end + 1..].trim_start();
-    }
-    let after_pattern = cursor.trim();
+    let (outputs, _excludes, leftover, pos_after_patterns) =
+        collect_quoted_patterns_multiline(
+            rest, line, tokens, current_pos, source_lines, /*allow_exclude=*/ false,
+        )?;
+
+    let after_pattern = leftover.trim();
 
     if after_pattern.is_empty() {
+        // Declaration-only cook step. Advance past every token on the line
+        // where collection stopped (the line containing the last quoted
+        // pattern). Explicit walk instead of `pos + 1` so this stays correct
+        // if the lexer ever emits more than one token per source line.
+        let stop_line = tokens
+            .get(pos_after_patterns)
+            .map(|t| t.line)
+            .unwrap_or(line);
+        let mut pos = pos_after_patterns;
+        while pos < tokens.len() && tokens[pos].line <= stop_line {
+            pos += 1;
+        }
         return Ok((
-            CookStep {
-                outputs,
-                using_clause: None,
-            },
-            current_pos + 1,
+            CookStep { outputs, using_clause: None },
+            pos,
         ));
     }
 
@@ -163,13 +255,16 @@ pub(crate) fn parse_cook_line(
 
     let after_using = after_pattern["using".len()..].trim_start();
 
+    // parse_body_payload needs the line that the `using` keyword sits on.
+    // After our multiline pattern walk, pos_after_patterns points at the
+    // first token on the line where pattern collection stopped — which is
+    // the line `leftover` came from. Read its line number off the token.
+    let using_line = tokens.get(pos_after_patterns).map(|t| t.line).unwrap_or(line);
+
     let (body, new_pos) =
-        parse_body_payload(after_using, line, tokens, current_pos, source_lines, "cook using")?;
+        parse_body_payload(after_using, using_line, tokens, pos_after_patterns, source_lines, "cook using")?;
     Ok((
-        CookStep {
-            outputs,
-            using_clause: Some(body),
-        },
+        CookStep { outputs, using_clause: Some(body), },
         new_pos,
     ))
 }
