@@ -1451,3 +1451,13 @@ Implementation closes the discovery gap that prevented `cook NAME` from dispatch
 **Rationale.** Multi-output `cook` steps with three or more outputs (and ingredients declarations with several patterns) become unreadable on a single line. The Doom 3 demo Cookfile uses three-output AAS `cook` steps as the forcing example. The change is backward-compatible: single-line forms continue to parse unchanged; only the previously-rejected multi-line form now parses. The decision to NOT diagnose a standalone non-quote line preserves the declaration-only `cook_step` shape (the user might have intended to terminate the declaration and start a new step).
 
 **Conformance impact.** A conforming parser MUST accept multi-line forms. Positive fixtures `057-cook-multi-line-outputs` and `058-multi-line-ingredients` pin the new shape. Negative fixtures `multi-line-cook-non-quote-continuation` and `multi-line-ingredients-non-quote-continuation` pin the diagnostic behavior when a non-quote token appears trailing a quoted pattern on the same physical line. The silent-termination case for standalone non-quote continuation lines is intentionally not pinned by a negative fixture (the behavior is "no error, declaration treated as complete," which is observed via the absence of a diagnostic, not via a specific diagnostic match).
+
+## CS-0079 — `fs.glob` accepts an array of patterns [#changes.cs-0079]
+
+**Summary.** §25.7 widens the signature of `fs.glob` from `(pattern: string)` to `(pattern: string | array of string)`. When given an array, a conforming implementation MUST glob each pattern in call order and concatenate the per-pattern results in that order, preserving per-pattern internal order. The CS-0064 directory-filter rule applies independently to each pattern. Invalid argument types raise a Lua runtime error tagged `fs.glob`.
+
+**Rationale.** The Doom 3 demo Cookfile (see `docs/superpowers/specs/2026-05-19-doom3-demo-roadmap-design.md` §1.2a and §4) selects platform sources by globbing several patterns and concatenating the results. The single-string form forced a `for` + `table.insert` loop per joined pattern, which dominated the Cookfile's platform-source block visually. The array form expresses the intent in one call.
+
+**Backward compatibility.** Single-string callers continue to work bit-for-bit identically; the array form is purely additive.
+
+**Conformance impact.** A conforming implementation MUST accept both forms. Positive fixtures `fs-glob-array-of-patterns` and `fs-glob-array-preserves-order` pin the Cookfile surface; the runtime contract (call-order concatenation, per-pattern CS-0064 filter, sandbox check applied per pattern, error on bad argument types) is verified by `cook-lua-stdlib::fs_api` unit tests.

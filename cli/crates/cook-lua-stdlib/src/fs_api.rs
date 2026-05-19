@@ -23,6 +23,39 @@ use mlua::prelude::*;
 use crate::sandbox::{SandboxPolicy, SandboxSource};
 use crate::WorkingDirSource;
 
+/// Match `pattern` against the filesystem, applying the sandbox guard
+/// once on the pattern itself and once per match, and dropping
+/// directory matches per CS-0064. Returns the matched paths as strings,
+/// in the order `glob::glob` yields them.
+///
+/// Shared between the single-string and array-of-string forms of
+/// `fs.glob`. CS-0079.
+fn glob_one_pattern(
+    sandbox: &SandboxSource,
+    working_dir: &std::path::Path,
+    pattern: &str,
+) -> LuaResult<Vec<String>> {
+    let full_pattern_path = check_path(sandbox, "fs.glob", working_dir, pattern)?;
+    let full_pattern = full_pattern_path.to_string_lossy().to_string();
+    let policy = sandbox.resolve();
+    let mut paths: Vec<String> = Vec::new();
+    for entry in glob::glob(&full_pattern)
+        .map_err(|e| mlua::Error::runtime(format!("fs.glob: {e}")))?
+    {
+        let path = match entry {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let lossy = path.to_string_lossy().to_string();
+        if policy.resolve("fs.glob", working_dir, &lossy).is_ok()
+            && !resolves_to_directory(&path)
+        {
+            paths.push(lossy);
+        }
+    }
+    Ok(paths)
+}
+
 /// Register the `fs` table on the supplied Lua VM, with no sandbox
 /// (pre-CS-0045 behavior). Kept as a thin wrapper for callers that
 /// have not yet been ported to the sandbox-aware factory; new call
@@ -82,39 +115,56 @@ pub fn register_fs_api_with_sandbox(
     let sb = sandbox.clone();
     fs.set(
         "glob",
-        lua.create_function(move |lua, pattern: String| {
+        lua.create_function(move |lua, pattern: LuaValue| {
+            // CS-0079: pattern is either a single Lua string or an array
+            // of Lua strings. Build a Vec<String> of pattern texts, then
+            // glob each in call order and concatenate the results,
+            // preserving per-pattern internal order. The single-string
+            // form is preserved bit-for-bit (one element vec, one call
+            // into the helper, identical result table shape).
+            //
             // Glob's pattern is itself a path-like string; sandbox it
             // with the same resolution as fs.read/fs.write so
             // `fs.glob("/etc/*")` raises rather than enumerating
             // outside the project. The resulting matches are also
             // re-checked: a glob that crosses a `..` boundary mid-
             // pattern (`fs.glob("../*")`) must reject every match.
-            let full_pattern_path = check_path(&sb, "fs.glob", &s.resolve(), &pattern)?;
-            let full_pattern = full_pattern_path.to_string_lossy().to_string();
-            let policy = sb.resolve();
-            let wd = s.resolve();
-            let mut paths: Vec<String> = Vec::new();
-            for entry in glob::glob(&full_pattern)
-                .map_err(|e| mlua::Error::runtime(format!("fs.glob: {e}")))?
-            {
-                let path = match entry {
-                    Ok(p) => p,
-                    Err(_) => continue,
-                };
-                // Re-check each match against the sandbox. This guards
-                // the case where `pattern` itself sandbox-checked clean
-                // but a wildcard expands to a symlink target that
-                // escapes the root (best-effort: see Note 6.5.3 — we
-                // do not chase hostile symlinks).
-                let lossy = path.to_string_lossy().to_string();
-                if policy.resolve("fs.glob", &wd, &lossy).is_ok()
-                    && !resolves_to_directory(&path)
-                {
-                    paths.push(lossy);
+            let patterns: Vec<String> = match pattern {
+                LuaValue::String(luastr) => vec![luastr.to_str()?.to_string()],
+                LuaValue::Table(t) => {
+                    let mut v: Vec<String> = Vec::new();
+                    for entry in t.sequence_values::<LuaValue>() {
+                        let val = entry.map_err(|e| mlua::Error::runtime(
+                            format!("fs.glob: array iteration failed: {e}")
+                        ))?;
+                        match val {
+                            LuaValue::String(ls) => v.push(ls.to_str()?.to_string()),
+                            other => {
+                                return Err(mlua::Error::runtime(format!(
+                                    "fs.glob: array elements must be strings, got {}",
+                                    other.type_name()
+                                )));
+                            }
+                        }
+                    }
+                    v
                 }
+                other => {
+                    return Err(mlua::Error::runtime(format!(
+                        "fs.glob: expected string or array of string, got {}",
+                        other.type_name()
+                    )));
+                }
+            };
+
+            let wd = s.resolve();
+            let mut all_paths: Vec<String> = Vec::new();
+            for pat in &patterns {
+                let matched = glob_one_pattern(&sb, &wd, pat)?;
+                all_paths.extend(matched);
             }
             let table = lua.create_table()?;
-            for (i, path) in paths.iter().enumerate() {
+            for (i, path) in all_paths.iter().enumerate() {
                 table.set(i + 1, path.as_str())?;
             }
             Ok(table)
@@ -528,5 +578,176 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(s, "data");
+    }
+
+    // ---- Array-form tests (CS-0079) --------------------------------------
+
+    /// CS-0079: `fs.glob` accepts an array of patterns. Results are
+    /// concatenated in call order.
+    #[test]
+    fn static_glob_array_concatenates_in_call_order() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::create_dir_all(dir.path().join("b")).unwrap();
+        std::fs::write(dir.path().join("a/x.txt"), "").unwrap();
+        std::fs::write(dir.path().join("b/y.txt"), "").unwrap();
+
+        let lua = setup_static(dir.path());
+        let table: LuaTable = lua
+            .load(r#"return fs.glob({"a/*.txt", "b/*.txt"})"#)
+            .eval()
+            .unwrap();
+        let got: Vec<String> = table
+            .sequence_values::<String>()
+            .map(Result::unwrap)
+            .map(|p| std::path::Path::new(&p)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned())
+            .collect();
+        assert_eq!(got, vec!["x.txt".to_string(), "y.txt".to_string()]);
+    }
+
+    /// CS-0079: reversing pattern order reverses result blocks. This pins
+    /// "concat in call order" rather than "sort across all matches".
+    #[test]
+    fn static_glob_array_order_follows_pattern_order() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::create_dir_all(dir.path().join("b")).unwrap();
+        std::fs::write(dir.path().join("a/x.txt"), "").unwrap();
+        std::fs::write(dir.path().join("b/y.txt"), "").unwrap();
+
+        let lua = setup_static(dir.path());
+        let table: LuaTable = lua
+            .load(r#"return fs.glob({"b/*.txt", "a/*.txt"})"#)
+            .eval()
+            .unwrap();
+        let got: Vec<String> = table
+            .sequence_values::<String>()
+            .map(Result::unwrap)
+            .map(|p| std::path::Path::new(&p)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned())
+            .collect();
+        assert_eq!(got, vec!["y.txt".to_string(), "x.txt".to_string()]);
+    }
+
+    /// CS-0079: per-pattern CS-0064 directory-filter MUST apply to each
+    /// element of the array independently.
+    #[test]
+    fn static_glob_array_filters_directories_per_pattern() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::create_dir_all(dir.path().join("src/legacy")).unwrap();
+        std::fs::write(dir.path().join("src/a.c"), "").unwrap();
+        std::fs::write(dir.path().join("src/b.c"), "").unwrap();
+
+        let lua = setup_static(dir.path());
+        let table: LuaTable = lua
+            .load(r#"return fs.glob({"src/*"})"#)
+            .eval()
+            .unwrap();
+        let mut got: Vec<String> = table
+            .sequence_values::<String>()
+            .map(Result::unwrap)
+            .map(|p| std::path::Path::new(&p)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned())
+            .collect();
+        got.sort();
+        // `legacy/` is a sub-directory and MUST be filtered out per CS-0064;
+        // a.c and b.c remain.
+        assert_eq!(got, vec!["a.c".to_string(), "b.c".to_string()]);
+    }
+
+    /// CS-0079: empty array returns empty sequence; no error.
+    #[test]
+    fn static_glob_empty_array_returns_empty() {
+        let dir = TempDir::new().unwrap();
+        let lua = setup_static(dir.path());
+        let len: usize = lua
+            .load(r#"return #fs.glob({})"#)
+            .eval()
+            .unwrap();
+        assert_eq!(len, 0);
+    }
+
+    /// CS-0079: a single-string call MUST still return the same result as
+    /// it did before the array form was added. Backcompat smoke.
+    #[test]
+    fn static_glob_string_form_unchanged() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "").unwrap();
+
+        let lua = setup_static(dir.path());
+        let table: LuaTable = lua
+            .load(r#"return fs.glob("*.txt")"#)
+            .eval()
+            .unwrap();
+        let mut got: Vec<String> = table
+            .sequence_values::<String>()
+            .map(Result::unwrap)
+            .map(|p| std::path::Path::new(&p)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned())
+            .collect();
+        got.sort();
+        assert_eq!(got, vec!["a.txt".to_string(), "b.txt".to_string()]);
+    }
+
+    /// CS-0079: a non-string element inside the array MUST raise a Lua
+    /// runtime error naming `fs.glob`. (Holes in the sequence — i.e. a
+    /// `nil` mid-array — terminate iteration at the first hole per Lua
+    /// sequence semantics; we accept that as the implementation-defined
+    /// behavior and don't test it.)
+    #[test]
+    fn static_glob_array_non_string_element_raises() {
+        let dir = TempDir::new().unwrap();
+        let lua = setup_static(dir.path());
+        let err = lua
+            .load(r#"return fs.glob({"a.txt", 42})"#)
+            .exec()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("fs.glob"), "diagnostic missing api tag: {err}");
+    }
+
+    /// CS-0079: a non-string non-table argument MUST raise a Lua runtime
+    /// error naming `fs.glob`.
+    #[test]
+    fn static_glob_bad_argument_type_raises() {
+        let dir = TempDir::new().unwrap();
+        let lua = setup_static(dir.path());
+        let err = lua
+            .load(r#"return fs.glob(42)"#)
+            .exec()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("fs.glob"), "diagnostic missing api tag: {err}");
+    }
+
+    /// CS-0079: sandbox check MUST apply to every pattern in the array.
+    /// A confined `fs.glob` rejects an absolute pattern outside the
+    /// project root even when it appears in position 2+ of the array.
+    #[test]
+    fn confined_fs_glob_array_rejects_outside_pattern() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        let lua = setup_confined(dir.path(), dir.path());
+        let err = lua
+            .load(r#"return fs.glob({"*.txt", "/etc/*"})"#)
+            .exec()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("CS-0045"), "got: {err}");
     }
 }

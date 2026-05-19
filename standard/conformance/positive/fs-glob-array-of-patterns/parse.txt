@@ -1,0 +1,17 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="list_sources" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Lua code="local files = fs.glob({\"src/*.c\", \"src/legacy/*.c\"})"
+        Lua code="for _, f in ipairs(files) do"
+        Lua code="  print(f)"
+        Lua code="end"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

@@ -37,11 +37,31 @@ Writes `content` to `path`, creating parent directories as needed. Any existing 
 Creates the directory at `path`, and any missing parent components, if they do not already exist. This function MUST succeed when `path` already exists and is a directory.
 
 ## 25.7. `fs.glob` [#lua.fs-glob]
-**Signature.** `fs.glob(pattern: string) -> array of string`
+**Signature.** `fs.glob(pattern: string | array of string) -> array of string`
 
-Returns a 1-indexed sequence of absolute paths matching the glob `pattern`, interpreted relative to the working directory. A path is included only when it resolves to a regular file; entries whose final (symlink-resolved) type is a directory MUST be dropped, and MUST NOT raise an error (CS-0064). The order of returned paths is implementation-defined. An invalid glob pattern is a Lua runtime error; a valid pattern with no matches MUST return an empty sequence.
+The `pattern` argument is either a single Lua string (a glob pattern) or a 1-indexed Lua sequence of strings (an array of glob patterns).
+
+When given a single string, returns a 1-indexed sequence of absolute paths matching `pattern`, interpreted relative to the working directory. When given an array of strings, the implementation MUST glob each pattern in call order and concatenate the resulting per-pattern sequences in that same order; within each per-pattern block, the order is the order produced by the single-string form for that pattern (CS-0079).
+
+A path is included only when it resolves to a regular file; entries whose final (symlink-resolved) type is a directory MUST be dropped, and MUST NOT raise an error (CS-0064). The directory-filter rule is applied per pattern, so a directory match produced by one pattern in the array does not preempt regular-file matches from other patterns. The order of returned paths within a single pattern's result block is implementation-defined. An invalid glob pattern is a Lua runtime error; a valid pattern with no matches contributes an empty block to the concatenated result and MUST NOT raise.
+
+If `pattern` is neither a Lua string nor a Lua sequence of strings, the implementation MUST raise a Lua runtime error tagged `fs.glob`.
 
 > The directory-filter rule pairs with §{lua.add-unit}'s path-shape restriction (CS-0063): downstream `cook.add_unit` inputs reject directory paths, so a glob like `dir/*` against a tree that mixes files and sub-directories would otherwise fail with `is a directory` for paths the author never wrote. Filtering at the glob layer makes the common "all files under a directory" pattern well-defined.
+
+### Example 25.7.1 — single-string form
+
+```lua
+local sources = fs.glob("src/*.c")
+```
+
+### Example 25.7.2 — array form
+
+```lua
+local sources = fs.glob({"src/*.c", "src/legacy/*.c"})
+```
+
+Both forms return an array of absolute path strings; the array form's result is the concatenation of the per-pattern results in call order. The two patterns above contribute their matches consecutively: every `src/*.c` match precedes every `src/legacy/*.c` match.
 
 ## 25.8. `fs.mtime` [#lua.fs-mtime]
 **Signature.** `fs.mtime(path: string) -> number`
