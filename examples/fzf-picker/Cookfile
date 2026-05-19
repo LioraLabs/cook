@@ -3,20 +3,12 @@ use cook_cc
 config
     env.CFLAGS = "-O2 -Wall"
 
-recipe colorize
-    >> cook_cc.bin("colorize", {
-        sources = { "src/colorize.c" },
-    })
+register
+    cook_cc.bin("colorize",  { sources = { "src/colorize.c"  } })
+    cook_cc.bin("wordcount", { sources = { "src/wordcount.c" } })
+    cook_cc.bin("reverse",   { sources = { "src/reverse.c"   } })
 
-recipe wordcount
-    >> cook_cc.bin("wordcount", {
-        sources = { "src/wordcount.c" },
-    })
-
-recipe reverse
-    >> cook_cc.bin("reverse", {
-        sources = { "src/reverse.c" },
-    })
+    cook_cc.compile_commands()
 
 recipe build: colorize wordcount reverse
 
@@ -27,9 +19,6 @@ chore play: tools
     @printf 'colorize\nwordcount\nreverse\n' | fzf --prompt='tool> ' --height=40% --border --header='pick a tool' > .cook/scratch/tool
     @find data -type f | fzf --prompt='file> ' --height=40% --border --header='pick a file' --preview='cat {}' --preview-window=right:60% > .cook/scratch/file
     @printf '\n\033[1m── running %s on %s ──\033[0m\n\n' "$(cat .cook/scratch/tool)" "$(cat .cook/scratch/file)" && ./build/bin/$(cat .cook/scratch/tool) < "$(cat .cook/scratch/file)"
-
-recipe compile-commands: tools
-    >> cook_cc.compile_commands()
 
 chore clean
     rm -rf build .cook

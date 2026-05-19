@@ -1,0 +1,26 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="libfoo" line=3
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Shell interactive=false command="cook_cc.lib(\"foo\", {"
+        Shell interactive=false command="sources = { \"src/lib.cpp\" },"
+        Shell interactive=false command="includes = { \"include/\" },"
+        Shell interactive=false command="})"
+    Recipe name="build" line=9
+      deps: ["libfoo"]
+      ingredients: []
+      excludes: []
+      steps:
+        Shell interactive=false command="cook_cc.bin(\"app\", {"
+        Shell interactive=false command="sources = { \"src/main.cpp\" },"
+        Shell interactive=false command="links = { \"foo\" },"
+        Shell interactive=false command="})"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

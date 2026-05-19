@@ -1,0 +1,13 @@
+use cook_cc
+
+recipe libfoo
+    cook_cc.lib("foo", {
+        sources = { "src/lib.cpp" },
+        export_defines = { "USE_FOO" },
+    })
+
+recipe build: libfoo
+    cook_cc.bin("app", {
+        sources = { "src/main.cpp" },
+        links = { "foo" },
+    })

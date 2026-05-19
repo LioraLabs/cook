@@ -13,33 +13,36 @@ config release
     env.CFLAGS = "-O3 -DNDEBUG"
     env.CXXFLAGS = "-O3 -DNDEBUG"
 
-recipe liblua
-    ingredients "lua-5.4.7/src/*.c" !"lua-5.4.7/src/lua.c" !"lua-5.4.7/src/luac.c"
-    >> cook_cc.lib("liblua", {
-        sources = ingredients,
-        system_libs = { "m", "dl" },
+register
+    local liblua_sources = {}
+    for _, src in ipairs(fs.glob("lua-5.4.7/src/*.c")) do
+        if src ~= "lua-5.4.7/src/lua.c" and src ~= "lua-5.4.7/src/luac.c" then
+            liblua_sources[#liblua_sources + 1] = src
+        end
+    end
+
+    cook_cc.lib("liblua", {
+        sources            = liblua_sources,
+        export_system_libs = { "m", "dl" },
     })
 
-recipe lua: liblua
-    >> cook_cc.bin("lua", {
-        sources = { "lua-5.4.7/src/lua.c" },
-        links = { "liblua" },
+    cook_cc.bin("lua", {
+        sources     = { "lua-5.4.7/src/lua.c" },
+        links       = { "liblua" },
         system_libs = { "readline" },
     })
 
-recipe luac: liblua
-    >> cook_cc.bin("luac", {
+    cook_cc.bin("luac", {
         sources = { "lua-5.4.7/src/luac.c" },
-        links = { "liblua" },
+        links   = { "liblua" },
     })
+
+    cook_cc.compile_commands()
 
 recipe build: lua luac
 
 recipe test: lua
     test { build/bin/lua -e 'print("hello from lua built by cook")' }
-
-recipe compile-commands: liblua lua luac
-    >> cook_cc.compile_commands()
 
 chore clean
     rm -rf build .cook

@@ -1,42 +1,38 @@
 use cook_cc
 
-recipe mathlib
-    >> cook_cc.lib("mathlib", {
-        dir = "src/math/",
-        includes = { "include/" },
+register
+    cook_cc.lib("mathlib", {
+        dir             = "src/math/",
+        includes        = { "include/" },
         export_includes = { "include/" },
+        standard        = "c++17",
+    })
+
+    cook_cc.bin("app", {
+        sources  = { "src/app/main.cpp" },
+        links    = { "mathlib" },
         standard = "c++17",
     })
 
-recipe app: mathlib
-    >> cook_cc.bin("app", {
-        sources = { "src/app/main.cpp" },
-        links = { "mathlib" },
+    cook_cc.bin("test_vec", {
+        sources  = { "tests/test_vec.cpp" },
+        links    = { "mathlib" },
         standard = "c++17",
     })
 
-recipe test-vec: mathlib
-    >> cook_cc.bin("test_vec", {
-        sources = { "tests/test_vec.cpp" },
-        links = { "mathlib" },
+    cook_cc.bin("test_util", {
+        sources  = { "tests/test_util.cpp" },
+        links    = { "mathlib" },
         standard = "c++17",
     })
 
-recipe test-util: mathlib
-    >> cook_cc.bin("test_util", {
-        sources = { "tests/test_util.cpp" },
-        links = { "mathlib" },
-        standard = "c++17",
-    })
+    cook_cc.compile_commands()
 
-recipe run-tests: test-vec test-util
+recipe run-tests: test_vec test_util
     ingredients "build/bin/test_*"
     test { ./$<in> } timeout 30
 
-recipe compile-commands: mathlib app test-vec test-util
-    >> cook_cc.compile_commands()
-
-recipe build: mathlib app test-vec test-util
+recipe build: mathlib app test_vec test_util
 
 chore clean
     rm -rf build .cook

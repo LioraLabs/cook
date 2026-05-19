@@ -1461,3 +1461,20 @@ Implementation closes the discovery gap that prevented `cook NAME` from dispatch
 **Backward compatibility.** Single-string callers continue to work bit-for-bit identically; the array form is purely additive.
 
 **Conformance impact.** A conforming implementation MUST accept both forms. Positive fixtures `fs-glob-array-of-patterns` and `fs-glob-array-preserves-order` pin the Cookfile surface; the runtime contract (call-order concatenation, per-pattern CS-0064 filter, sandbox check applied per pattern, error on bad argument types) is verified by `cook-lua-stdlib::fs_api` unit tests.
+
+## CS-0080 — `cook_cc` PRIVATE/PUBLIC propagation, surface v0.7 [#changes.cs-0080]
+
+**Summary.** §28.4 introduces a PRIVATE/PUBLIC distinction for `cook_cc` target options. The bare fields `defines`, `system_libs`, `frameworks`, `extra_ldflags` are PRIVATE-by-default: a conforming implementation MUST use them only for the target's own compile/link and MUST NOT export them through `cook.export(name, info)`. The new fields `export_defines`, `export_system_libs`, `export_frameworks`, `export_extra_ldflags` are the explicit-public counterparts and propagate to consumers via the transitive `links` walk. `export_includes` retains its existing fall-back to bare `includes` (the sole backcompat carve-out). Toolchain defaults (`cc.toolchain({ ... })`) are merged into the target's bare fields under this rule and therefore stay target-local. The conformance surface bumps from v0.6 to v0.7; the reference implementation is `cook_cc-0.8.0-1`.
+
+**Rationale.** dhewm3 has 8+ static libs that consume each other via `links = { ... }`. Under v0.6 implicit-public propagation, every define a lib carried leaked to consumers. `idLib`'s `ID_LIB_INTERNAL` would pollute every consumer's compile; `idLib`'s `USE_OPENAL` (which DOES want to be public) was indistinguishable from `ID_LIB_INTERNAL` in the surface. M4-narrow draws the line. The doom 3 demo Cookfile (`docs/superpowers/specs/2026-05-19-doom3-demo-roadmap-design.md` §4) is the forcing example.
+
+**Backward compatibility.** Single-target Cookfiles that use only `cc.bin` (no downstream consumer) observe no behavior change. Multi-target Cookfiles that relied on bare-field propagation through `links = { ... }` must rename the leaking field to `export_*` to preserve the v0.6 behavior. The `export_includes` fall-back means `includes`-only projects (the majority of single-lib examples) continue to work unchanged. The Standard's example corpus required one migration (`examples/lua-build/Cookfile`, `liblua`'s `system_libs` → `export_system_libs`).
+
+**Conformance impact.** Surface v0.7 implementations MUST:
+- Set `info.defines = opts.export_defines or {}` (NO fall-back to bare `defines`).
+- Set `info.system_libs = opts.export_system_libs or {}`.
+- Set `info.frameworks = opts.export_frameworks or {}`.
+- Set `info.extra_ldflags = opts.export_extra_ldflags or ""`.
+- Set `info.includes = opts.export_includes or opts.includes` (fall-back kept).
+
+Three positive conformance fixtures pin the new surface: `cc-private-define-does-not-propagate` (negative-shape positive fixture: parses a Cookfile that relies on the PRIVATE rule), `cc-export-define-propagates` (the PUBLIC path), and `cc-export-includes-backcompat-fallback` (locks the fall-back carve-out). Runtime semantics are verified by the `cook_cc` busted suite (`cook_cc/spec/targets_spec.lua` "cc PRIVATE/PUBLIC propagation" describe-block).
