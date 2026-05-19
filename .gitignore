@@ -10,6 +10,7 @@ dist/
 # per spec §9 and is meant to be tracked).
 .cook/**
 **/.cook/**
+**/cook_modules/**
 !**/.cook/
 !**/.cook/cloud.toml
 build/
@@ -49,3 +50,5 @@ cook_modules/lib/
 # cmake-compat finder (cook_cc §9.2.3.8.1) shells out to `cmake --find-package`,
 # which side-effects a CMakeFiles/ directory in the caller's cwd. Build output.
 CMakeFiles/
+examples/raylib-game/cook_modules/lib/luarocks/rocks-5.4
+examples/sdl3-game/cook_modules

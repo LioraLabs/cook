@@ -151,6 +151,13 @@ local function merge_includes(local_incs, transitive_incs)
     return result
 end
 
+-- Merge link-deps and explicit-deps into the recipe's `requires` set.
+-- `opts.links` carries the cc-level link graph (libraries this target links
+-- against, each being a recipe in its own right). `opts.requires` (added in
+-- 0.7.0) is the escape hatch for declaring a non-link dependency — typically
+-- a synthetic recipe like the one returned by `cc.config_header(...)` whose
+-- output (a generated header) participates in the build via include paths
+-- rather than the linker.
 local function merge_requires(opts)
     local out = {}
     for _, r in ipairs((opts and opts.links) or {}) do out[#out + 1] = r end
@@ -229,7 +236,7 @@ function M.shared(name, opts)
 end
 
 function M.headers(name, opts)
-    cook.recipe(name, { requires = {} }, function()
+    cook.recipe(name, { requires = (opts and opts.requires) or {} }, function()
         register_needs(opts and opts.needs)
         local b = build_opts(opts, "headers")
         register_known(name)
