@@ -244,11 +244,30 @@ fn build_wave(
         // Issue 4: Load cache once per recipe, outside the unit loop.
         let recipe_cache = cm.as_ref().map(|mgr| mgr.get_or_load(recipe_name));
 
+        // Probe key → unit id index. Used to wire probe→consumer edges from
+        // each unit's `probes` field (mirrored from `inputs.requires` /
+        // `needs`). The engine's dag_builder does the equivalent wiring in
+        // `probe_unit_index_by_key`. Without this, the viewer would lose
+        // probe-to-consumer edges once probes stop participating in the
+        // sequential barrier below.
+        let probe_unit_id_by_key: BTreeMap<String, String> = ru
+            .units
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, u)| match &u.payload {
+                WorkPayload::Probe { key, .. } => {
+                    Some((key.clone(), format!("unit:{}:{}", recipe_name, idx)))
+                }
+                _ => None,
+            })
+            .collect();
+
         let mut barrier: Vec<String> = Vec::new();
         let mut recipe_root_recorded = false;
 
         for (unit_idx, unit) in ru.units.iter().enumerate() {
             let unit_id = format!("unit:{}:{}", recipe_name, unit_idx);
+            let is_probe = matches!(unit.payload, WorkPayload::Probe { .. });
 
             // --- Command label ---
             let command = match &unit.payload {
@@ -428,7 +447,33 @@ fn build_wave(
                 }
             }
 
+            // --- Probe → consumer edges (from this unit's `probes` field) ---
+            // Mirror of the engine's CapturedUnit.probes wiring. Works for
+            // any consumer kind (including a probe whose `inputs.requires`
+            // names another probe in the same recipe).
+            for req_key in &unit.probes {
+                if let Some(probe_uid) = probe_unit_id_by_key.get(req_key) {
+                    edges.push(EdgeData {
+                        from: probe_uid.clone(),
+                        to: unit_id.clone(),
+                    });
+                }
+            }
+
             // --- Barrier / intra-recipe unit→unit edges ---
+            // Probes never read or advance the barrier (mirrors dag_builder.rs):
+            // they are pure fact-gathering, ordered only via `inputs.requires`.
+            if is_probe {
+                // Still record the recipe root if we haven't yet, so the wave
+                // visualisation has a reasonable entry point.
+                if !recipe_root_recorded {
+                    recipe_roots
+                        .entry(recipe_name.clone())
+                        .or_insert_with(|| vec![unit_id.clone()]);
+                    recipe_root_recorded = true;
+                }
+                continue;
+            }
             match &unit.dep_kind {
                 DepKind::Sequential => {
                     for b in &barrier {
@@ -625,6 +670,87 @@ mod tests {
             }
             std::fs::write(&path, "").unwrap();
         }
+    }
+
+    /// Probe-to-probe edges via `inputs.requires` must be the only sequencing
+    /// the viewer renders between probes. Independent sibling probes must NOT
+    /// have a barrier-driven chain edge between them — that misrepresents
+    /// parallelism in the visualisation and contradicts the engine's
+    /// dag_builder which (post-fix) keeps independent probes parallel.
+    #[test]
+    fn independent_probes_have_no_edges_between_them() {
+        let probe_a = CapturedUnit {
+            payload: WorkPayload::Probe {
+                key: "cc:a".into(),
+                produce: "return 1".into(),
+                line: 1,
+            },
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+        };
+        let probe_b = CapturedUnit {
+            payload: WorkPayload::Probe {
+                key: "cc:b".into(),
+                produce: "return 2".into(),
+                line: 2,
+            },
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+        };
+        let consumer = CapturedUnit {
+            payload: WorkPayload::Shell { cmd: "link".into(), line: 3 },
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec!["cc:a".into(), "cc:b".into()],
+        };
+        let ru = RecipeUnits {
+            recipe_name: "game".into(),
+            deps: vec![],
+            units: vec![probe_a, probe_b, consumer],
+            step_groups: vec![],
+            working_dir: std::path::PathBuf::from("/"),
+            env_vars: BTreeMap::new(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let all_units = vec![("game".into(), ru)];
+        let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
+
+        let g = build_wave_dag_data("game", &all_units, &explicit, &inferred, &cms);
+        assert_eq!(g.waves.len(), 1);
+        let edges = &g.waves[0].edges;
+        // No edge between the two independent probes.
+        let probe_to_probe = edges.iter().any(|e| {
+            (e.from == "unit:game:0" && e.to == "unit:game:1")
+                || (e.from == "unit:game:1" && e.to == "unit:game:0")
+        });
+        assert!(
+            !probe_to_probe,
+            "independent probes must not be chained; edges: {}",
+            edges
+                .iter()
+                .map(|e| format!("{}->{}", e.from, e.to))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        // Consumer must still depend on both probes — sequencing flows through
+        // each unit's `probes` field, not the barrier.
+        let has_edge = |from: &str, to: &str| {
+            edges.iter().any(|e| e.from == from && e.to == to)
+        };
+        assert!(
+            has_edge("unit:game:0", "unit:game:2"),
+            "consumer must depend on probe A",
+        );
+        assert!(
+            has_edge("unit:game:1", "unit:game:2"),
+            "consumer must depend on probe B",
+        );
     }
 
     #[test]

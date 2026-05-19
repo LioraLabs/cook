@@ -359,15 +359,29 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
                 continue;
             }
 
+            // Probes are pure fact-gathering and do not participate in the
+            // sequential barrier — they only depend on cross-recipe deps,
+            // explicit `dep_edges`, and their own `inputs.requires` upstream
+            // probes (wired below via `unit.probes`). Without this, every
+            // sibling probe within a recipe ended up chained one-after-another
+            // because `install_cook_probe` emits all probes with
+            // `DepKind::Sequential`, and the consumer's `probes`-edges
+            // already guarantee correct ordering relative to non-probe work.
+            let is_probe = matches!(unit.payload, WorkPayload::Probe { .. });
+
             // Determine within-recipe dependencies for this unit.
-            let within_deps: Vec<usize> = match &unit.dep_kind {
-                DepKind::Sequential => barrier.clone(),
-                DepKind::StepGroup(_) => barrier.clone(),
-                DepKind::TestSibling(_) => barrier.clone(),
-                // `DepKind` is `#[non_exhaustive]`; treat any future variant
-                // conservatively as a sequential barrier until the dag-builder
-                // is taught the new semantics.
-                _ => barrier.clone(),
+            let within_deps: Vec<usize> = if is_probe {
+                Vec::new()
+            } else {
+                match &unit.dep_kind {
+                    DepKind::Sequential => barrier.clone(),
+                    DepKind::StepGroup(_) => barrier.clone(),
+                    DepKind::TestSibling(_) => barrier.clone(),
+                    // `DepKind` is `#[non_exhaustive]`; treat any future variant
+                    // conservatively as a sequential barrier until the dag-builder
+                    // is taught the new semantics.
+                    _ => barrier.clone(),
+                }
             };
 
             // Combine within-recipe and cross-recipe deps.
@@ -456,7 +470,13 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
             // Record dag_id so later units can resolve probe→consumer edges.
             dag_id_by_unit_idx.insert(unit_idx, dag_id);
 
-            // Update barrier / group tracking.
+            // Update barrier / group tracking. Probes never advance the
+            // barrier: they're pure fact-gathering and must not serialise
+            // surrounding work. The pre-existing barrier flows through to the
+            // next non-probe unit unchanged.
+            if is_probe {
+                continue;
+            }
             match &unit.dep_kind {
                 DepKind::Sequential => {
                     barrier = vec![dag_id];
@@ -1481,6 +1501,183 @@ mod tests {
             "body-scope consumer probe must survive demand prune, got nodes: {probe_keys:?}"
         );
         assert_eq!(dag.len(), 3, "expected 2 probes + 1 link unit");
+    }
+
+    /// Independent body-scope probes (no `inputs.requires` between them) must
+    /// not be serialised through the per-recipe barrier. Each must have zero
+    /// remaining deps so the executor can dispatch them in parallel.
+    ///
+    /// This is the sdl3-game case: `cook_cc.bin` registers `cc:compiler:auto`,
+    /// `cc:linker-search-dirs`, `cc:cmake-driver` (all sibling, none requires
+    /// another) before the link unit. Pre-fix the dag-builder treated the
+    /// probes' `DepKind::Sequential` as advancing the barrier and produced a
+    /// chain A→B→C, so they ran one at a time.
+    #[test]
+    fn independent_body_scope_probes_run_in_parallel() {
+        let probe_a = CapturedUnit {
+            payload: probe("cc:a"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+        };
+        let probe_b = CapturedUnit {
+            payload: probe("cc:b"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+        };
+        let probe_c = CapturedUnit {
+            payload: probe("cc:c"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+        };
+        let consumer = CapturedUnit {
+            payload: shell("link"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec!["cc:a".into(), "cc:b".into(), "cc:c".into()],
+        };
+        let ru = RecipeUnits {
+            recipe_name: "game".into(),
+            deps: vec![],
+            units: vec![probe_a, probe_b, probe_c, consumer],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let dag = build_dag(vec![ru]).expect("no collision");
+        assert_eq!(dag.len(), 4, "3 probes + 1 consumer");
+        // Each probe is a root (no deps).
+        for i in 0..3 {
+            assert_eq!(
+                dag.node(i).remaining_deps(),
+                0,
+                "probe node {i} must have no deps; got {}",
+                dag.node(i).remaining_deps()
+            );
+        }
+        // Consumer (node 3) depends on all 3 probes via its `probes` list.
+        assert_eq!(
+            dag.node(3).remaining_deps(),
+            3,
+            "consumer must depend on all 3 probes"
+        );
+    }
+
+    /// Probe chains via `inputs.requires` must still serialise correctly even
+    /// when the dag-builder skips barrier participation for probes.
+    /// Companion to `independent_body_scope_probes_run_in_parallel`.
+    #[test]
+    fn dependent_body_scope_probes_still_serialise_through_inputs_requires() {
+        let probe_a = CapturedUnit {
+            payload: probe("cc:a"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+        };
+        let probe_b = CapturedUnit {
+            payload: probe("cc:b"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec!["cc:a".into()],
+        };
+        let probe_c = CapturedUnit {
+            payload: probe("cc:c"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+        };
+        let consumer = CapturedUnit {
+            payload: shell("link"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec!["cc:b".into(), "cc:c".into()],
+        };
+        let ru = RecipeUnits {
+            recipe_name: "game".into(),
+            deps: vec![],
+            units: vec![probe_a, probe_b, probe_c, consumer],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let dag = build_dag(vec![ru]).expect("no collision");
+        assert_eq!(dag.len(), 4);
+        // A: root (no deps).
+        assert_eq!(dag.node(0).remaining_deps(), 0, "probe A has no deps");
+        // B: depends on A only.
+        assert_eq!(
+            dag.node(1).remaining_deps(),
+            1,
+            "probe B depends only on A"
+        );
+        // C: root (no deps, sibling to A).
+        assert_eq!(dag.node(2).remaining_deps(), 0, "probe C has no deps");
+        // Consumer: depends on B and C (2 distinct edges).
+        assert_eq!(
+            dag.node(3).remaining_deps(),
+            2,
+            "consumer depends on B and C"
+        );
+    }
+
+    /// A non-probe unit appearing between probes must still impose a sequential
+    /// barrier: probes do not advance the barrier, but they do not break an
+    /// existing one either. This keeps the build/link ordering correct in
+    /// recipes that interleave probes with shell work.
+    #[test]
+    fn non_probe_units_around_probes_keep_barrier() {
+        let pre_shell = CapturedUnit {
+            payload: shell("pre"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+        };
+        let p = CapturedUnit {
+            payload: probe("cc:x"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+        };
+        let post_shell = CapturedUnit {
+            payload: shell("post"),
+            cache_meta: None,
+            dep_kind: DepKind::Sequential,
+            probes: vec!["cc:x".into()],
+        };
+        let ru = RecipeUnits {
+            recipe_name: "r".into(),
+            deps: vec![],
+            units: vec![pre_shell, p, post_shell],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let dag = build_dag(vec![ru]).expect("no collision");
+        assert_eq!(dag.len(), 3);
+        assert_eq!(dag.node(0).remaining_deps(), 0, "pre shell is root");
+        // Probe sees barrier=[pre_shell] but does not depend on it sequentially.
+        // (Per design: probes are pure fact-gathering; ordering vs surrounding
+        // work flows through inputs.requires / consumer.probes.)
+        assert_eq!(dag.node(1).remaining_deps(), 0, "probe is independent");
+        // post_shell depends on pre_shell (barrier preserved through the probe)
+        // and on the probe (via probes edge). Dedup keeps it at 2 if both are
+        // distinct nodes — they are.
+        assert_eq!(
+            dag.node(2).remaining_deps(),
+            2,
+            "post shell depends on pre shell (barrier) + probe (probes edge)"
+        );
     }
 
     #[test]
