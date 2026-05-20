@@ -420,3 +420,82 @@ Every error MUST be prefixed with `[cc.<fn>]` and named at level 2 (`error(msg, 
 Per §{cat.bootstrap.vendor}, a project MAY hand-vendor a copy of `cook_cc` by placing `cook_modules/cook_cc.lua` (or `cook_modules/cook_cc/init.lua`) at the top of the project's `cook_modules/` directory. The hand-vendored file becomes the source of truth for that project; subsequent `cook modules install` invocations MUST leave it untouched (the install only writes under `cook_modules/share/lua/5.4/`).
 
 A re-installed rock at `share/lua/5.4/cook_cc/init.lua` coexisting with a hand-vendored `cook_cc.lua` at the top level is unambiguously resolved: §{mods.use} specifies hand-vendored top-level wins.
+
+## 28.7. Per-platform source selection [#cat.cc.platform-sources]
+
+Cookfiles that target multiple host operating systems often need to compile a different set of source files per platform: a POSIX backend on Linux and macOS, a Win32 backend on Windows, an SDL or framework-specific shim split by platform, and so on. The `cc.bin`/`cc.lib`/`cc.shared` target makers take `sources` as a plain Lua `array of string`; Cook deliberately does NOT provide a structured per-platform option (e.g. `sources_per_platform = { linux = ..., darwin = ... }`), nor a `cc.platform_split` helper, nor any other declarative shape that branches on the host. Per-platform selection MUST be expressed in user Lua using `cook.platform` (§{lua.cook-platform}) and `fs.glob` (§{lua.fs-glob}).
+
+### 28.7.1. Canonical pattern [#cat.cc.platform-sources.canonical]
+
+The canonical idiom is a plain Lua block that builds the `sources` array by globbing the common patterns first, then conditionally extending the array with per-platform patterns gated on `cook.platform.os`:
+
+```lua
+local sys_sources = fs.glob({ "neo/sys/*.cpp", "neo/sys/sdl/*.cpp" })
+if cook.platform.os == "linux" then
+    for _, s in ipairs(fs.glob({ "neo/sys/posix/*.cpp",
+                                 "neo/sys/linux/*.cpp" })) do
+        table.insert(sys_sources, s)
+    end
+end
+
+cook_cc.bin("dhewm3", {
+    sources = sys_sources,
+    links   = { "idLib", "framework", "renderer", "sound", "game" },
+})
+```
+
+A conforming implementation MUST evaluate this pattern at register time on the register-phase Lua VM (§{lua.reg}); `cook.platform.os` is a both-phase API (§{lua.cook-platform}), so the read at register time observes the host that ran `cook`, and the resulting `cook.add_unit` calls record only the platform-appropriate sources. The execute phase sees no platform branching — the work-unit DAG is already specialised.
+
+`fs.glob` (§{lua.fs-glob}) accepts an array of patterns (CS-0079), so the per-platform extension MAY be expressed in a single `fs.glob` call when ordering does not matter:
+
+```lua
+local sys_sources = fs.glob({
+    "neo/sys/*.cpp",
+    "neo/sys/sdl/*.cpp",
+})
+if cook.platform.os == "linux" then
+    local posix = fs.glob({ "neo/sys/posix/*.cpp", "neo/sys/linux/*.cpp" })
+    for _, s in ipairs(posix) do sys_sources[#sys_sources + 1] = s end
+end
+```
+
+Both forms are conforming. The `table.insert` form and the `t[#t+1]` form are interchangeable plain-Lua idioms.
+
+### 28.7.2. Non-pattern: structured per-platform tables [#cat.cc.platform-sources.non-pattern]
+
+Cook does NOT define and a conforming implementation MUST NOT recognise a structured per-platform option on cc target makers. The following Cookfile is non-conforming and a conforming implementation MUST raise an error (the surface is "unknown option key" per §{cat.cc.errors}) if the key reaches the target maker:
+
+```lua
+-- NON-CONFORMING. Cook does not specify this surface.
+cook_cc.bin("dhewm3", {
+    sources_per_platform = {
+        linux  = { "neo/sys/posix/*.cpp", "neo/sys/linux/*.cpp" },
+        darwin = { "neo/sys/posix/*.cpp", "neo/sys/osx/*.cpp" },
+    },
+})
+```
+
+The reasons this surface is deliberately excluded:
+
+1. **The Lua escape hatch already exists and reads cleanly.** Wrapping `cook.platform.os` checks in a declarative table buys no clarity over the four-line `if` block in §{cat.cc.platform-sources.canonical}; it adds a parallel surface that must be specified, conformance-tested, and version-evolved.
+2. **The matrix is open-ended.** Real projects branch on compiler, bitness, libc, and feature probes (`cc.checks` — §{cat.cc.checks}), not just on `os`. Any structured surface would either be incomplete or balloon into a mini-DSL. Plain Lua composes with every existing both-phase API uniformly.
+3. **Platform branching is not the only conditional source-selection use case.** Toolchain detection, feature probes, optional dependencies — all branch sources the same way. Privileging the OS axis with structured syntax would distort the design.
+
+`cc.find` results (§{cat.cc.find}) and `cc.checks` results (§{cat.cc.checks}) MAY participate in the same source-selection Lua block when a feature probe gates whole files (e.g. a vendored fallback only compiled when a system library is absent). The same `cook.platform`/`fs.glob`/`table.insert` shape applies.
+
+### 28.7.3. Interaction with PRIVATE/PUBLIC propagation [#cat.cc.platform-sources.propagation]
+
+Per-platform source selection is orthogonal to the PRIVATE/PUBLIC distinction introduced by CS-0080 (§{cat.cc.transitive.priv-pub}). When per-platform sources rely on a per-platform define (e.g. `ID_PC_LINUX` only on Linux), the define goes on `defines` (or `export_defines`) per the propagation rules of §{cat.cc.transitive}; the per-platform set of defines is constructed in the same `if cook.platform.os == ...` block that builds the per-platform sources:
+
+```lua
+local defs = { "_GNU_SOURCE" }
+if cook.platform.os == "linux"  then defs[#defs + 1] = "ID_PC_LINUX"  end
+if cook.platform.os == "darwin" then defs[#defs + 1] = "ID_PC_OSX"    end
+
+cook_cc.bin("dhewm3", {
+    sources = sys_sources,
+    defines = defs,                              -- PRIVATE: target-local
+})
+```
+
+A conforming implementation MUST treat the resulting bare `defines` (or `export_defines`) array as defined by §{cat.cc.transitive.priv-pub} — the per-platform construction is invisible to the propagation rules, which see only the final array.

@@ -1,0 +1,12 @@
+use cook_cc
+
+register
+    > local sys_sources = fs.glob({ "neo/sys/*.cpp", "neo/sys/sdl/*.cpp" })
+    > if cook.platform.os == "linux" then
+    >   for _, s in ipairs(fs.glob({ "neo/sys/posix/*.cpp", "neo/sys/linux/*.cpp" })) do
+    >     table.insert(sys_sources, s)
+    >   end
+    > end
+    > cook_cc.bin("dhewm3", {
+    >   sources = sys_sources,
+    > })

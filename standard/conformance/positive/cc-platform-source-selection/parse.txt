@@ -1,0 +1,8 @@
+Cookfile
+  uses: [UseStatement module_name="cook_cc" line=1]
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: [RegisterBlock body="    > local sys_sources = fs.glob({ \"neo/sys/*.cpp\", \"neo/sys/sdl/*.cpp\" })\n    > if cook.platform.os == \"linux\" then\n    >   for _, s in ipairs(fs.glob({ \"neo/sys/posix/*.cpp\", \"neo/sys/linux/*.cpp\" })) do\n    >     table.insert(sys_sources, s)\n    >   end\n    > end\n    > cook_cc.bin(\"dhewm3\", {\n    >   sources = sys_sources,\n    > })" line=3]
+  top_level_module_calls: []
