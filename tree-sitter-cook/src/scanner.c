@@ -20,9 +20,23 @@ enum TokenType {
 // scan across multiple calls; without persisting the in-string state,
 // the resumed scan would mistreat the closing `"` as opening a new
 // string and the trailing `}` would land in the wrong context.
+//
+// CS-0035 (COOK-54): POSIX heredoc opaque-span tracking. When a `<<TAG`
+// (or `<<-TAG`, `<<'TAG'`, `<<"TAG"`) opener is seen, we record the
+// tag in `heredoc_tag[]` and set `in_heredoc=1`. While in_heredoc is
+// non-zero, `{` / `}` / quotes are inert. The heredoc terminates on a
+// line whose first non-whitespace (or first column-0 char for `<<-=0`)
+// is the recorded tag followed by a newline or EOF. Tags exceeding
+// HEREDOC_TAG_CAP are an exotic edge case and are NOT tracked (the
+// scanner falls back to the pre-CS-0035 behaviour for those).
+#define HEREDOC_TAG_CAP 31
 typedef struct {
   uint8_t depth;
-  uint8_t in_string;  // 0 = outside, 1 = double-quoted, 2 = single-quoted
+  uint8_t in_string;          // 0 = outside, 1 = double, 2 = single
+  uint8_t in_heredoc;         // 0 = no, 1 = inside heredoc body
+  uint8_t heredoc_dash;       // 1 if opener was `<<-` (strip leading tabs)
+  uint8_t heredoc_tag_len;
+  char    heredoc_tag[HEREDOC_TAG_CAP];
 } ShellBlockState;
 
 // §2.11 placeholder lookahead. Returns true if the bytes at the current
@@ -202,6 +216,105 @@ static bool scan_lua_block_content(TSLexer *lexer) {
 // closing `}` that balances the opening one. Handles shell quoting
 // (`"..."`, `'...'`) and `#` line comments so a `{` inside them does
 // not affect depth tracking.
+//
+// CS-0035 (COOK-54): POSIX heredoc opaque-span tracking. After parsing
+// a `<<TAG` (or `<<-TAG`, `<<'TAG'`, `<<"TAG"`) opener, the body —
+// starting at the next newline — is treated opaquely until the line
+// containing the closing TAG. Braces / quotes inside the body are
+// inert. State persists across scanner calls so a placeholder on the
+// opener line doesn't corrupt heredoc bookkeeping.
+
+// Attempts to parse a heredoc opener at the current cursor (which MUST
+// be at the first `<`). Always advances the cursor — caller treats any
+// consumed bytes as ordinary body content if the parse fails. Returns
+// true and sets `state->in_heredoc = 1` (pending) on a valid opener;
+// returns false and leaves `state->in_heredoc = 0` on a malformed
+// opener (or just a single `<` redirect).
+static bool try_parse_heredoc_opener(TSLexer *lexer, ShellBlockState *state) {
+  if (lexer->lookahead != '<') return false;
+  lexer->advance(lexer, false);
+  if (lexer->lookahead != '<') {
+    // Single `<` — likely a redirect operator. Not a heredoc opener.
+    return false;
+  }
+  lexer->advance(lexer, false);
+  uint8_t dash = 0;
+  if (lexer->lookahead == '-') {
+    dash = 1;
+    lexer->advance(lexer, false);
+  }
+  int32_t open_quote = 0;
+  if (lexer->lookahead == '\'' || lexer->lookahead == '"') {
+    open_quote = lexer->lookahead;
+    lexer->advance(lexer, false);
+  }
+  // TAG = LUA_IDENT-ish. POSIX is broader but the common case is
+  // alphanumeric + underscore. Reject anything else as a malformed
+  // opener — the consumed `<<` bytes stay as ordinary content.
+  if (!(iswalpha(lexer->lookahead) || lexer->lookahead == '_')) {
+    return false;
+  }
+  uint8_t len = 0;
+  while (iswalnum(lexer->lookahead) || lexer->lookahead == '_') {
+    if (len < HEREDOC_TAG_CAP) {
+      state->heredoc_tag[len] = (char)lexer->lookahead;
+      len++;
+      lexer->advance(lexer, false);
+    } else {
+      // Tag too long — bail. The bytes we've already consumed stay as
+      // ordinary content; the heredoc is not tracked.
+      return false;
+    }
+  }
+  if (open_quote != 0) {
+    if (lexer->lookahead != open_quote) return false;
+    lexer->advance(lexer, false);
+  }
+  state->in_heredoc = 1;
+  state->heredoc_dash = dash;
+  state->heredoc_tag_len = len;
+  return true;
+}
+
+// Consumes a single line of heredoc body and checks whether the line
+// is the closing TAG line. Returns true (and resets heredoc state) on
+// match; returns false to continue body consumption. Always advances
+// at least one line on a non-match; on EOF before a match, advances
+// to EOF and returns false.
+static bool heredoc_try_close_at_line_start(TSLexer *lexer,
+                                            ShellBlockState *state) {
+  // POSIX says `<<TAG` requires the closing TAG at column 0; `<<-TAG`
+  // strips leading tabs. Cook's SHELL_BLOCK_CONTENT normalises by
+  // trimming each line's leading/trailing whitespace (App. A.5), so
+  // for the in-body close check we strip leading whitespace
+  // unconditionally — the indented `        EOF` style used by every
+  // Cookfile fixture has to match.
+  while (lexer->lookahead == '\t' || lexer->lookahead == ' ') {
+    lexer->advance(lexer, false);
+  }
+  // Attempt to match TAG.
+  uint8_t i = 0;
+  while (i < state->heredoc_tag_len &&
+         lexer->lookahead == (int32_t)state->heredoc_tag[i]) {
+    lexer->advance(lexer, false);
+    i++;
+  }
+  if (i == state->heredoc_tag_len &&
+      (lexer->lookahead == '\n' || lexer->eof(lexer))) {
+    if (lexer->lookahead == '\n') lexer->advance(lexer, false);
+    state->in_heredoc = 0;
+    state->heredoc_tag_len = 0;
+    state->heredoc_dash = 0;
+    return true;
+  }
+  // Not a closing line — drain the rest of this line. The partial
+  // TAG-match bytes are body content (advanced already).
+  while (!lexer->eof(lexer) && lexer->lookahead != '\n') {
+    lexer->advance(lexer, false);
+  }
+  if (lexer->lookahead == '\n') lexer->advance(lexer, false);
+  return false;
+}
 
 static bool scan_shell_block_content(TSLexer *lexer, ShellBlockState *state) {
   bool has_content = false;
@@ -209,6 +322,15 @@ static bool scan_shell_block_content(TSLexer *lexer, ShellBlockState *state) {
 
   while (!lexer->eof(lexer)) {
     int32_t c = lexer->lookahead;
+
+    // CS-0035: heredoc body is opaque. At line start, try to match the
+    // closing TAG line; otherwise drain the line as opaque content.
+    if (state->in_heredoc == 2) {
+      has_content = true;
+      heredoc_try_close_at_line_start(lexer, state);
+      at_line_start = true;
+      continue;
+    }
 
     // Inside a shell-quoted string: only the matching close quote, an
     // escape (in double-quoted), or a `$<IDENT>` placeholder is special.
@@ -296,10 +418,21 @@ static bool scan_shell_block_content(TSLexer *lexer, ShellBlockState *state) {
       while (!lexer->eof(lexer) && lexer->lookahead != '\n') {
         lexer->advance(lexer, false);
       }
+    } else if (c == '<') {
+      // Try heredoc opener (`<<TAG`, `<<-TAG`, `<<'TAG'`, `<<"TAG"`).
+      // try_parse_heredoc_opener always advances; on failure the bytes
+      // are ordinary body content (single `<` redirect, etc.).
+      has_content = true;
+      at_line_start = false;
+      try_parse_heredoc_opener(lexer, state);
     } else if (c == '\n') {
       has_content = true;
       lexer->advance(lexer, false);
       at_line_start = true;
+      // Pending heredoc → enter body on this newline.
+      if (state->in_heredoc == 1) {
+        state->in_heredoc = 2;
+      }
     } else if (c == ' ' || c == '\t') {
       has_content = true;
       lexer->advance(lexer, false);
@@ -771,24 +904,54 @@ void tree_sitter_cook_external_scanner_destroy(void *payload) {
   free(payload);
 }
 
+// Byte layout (versioned by length so older serialised payloads still
+// load gracefully):
+//   [0]      depth
+//   [1]      in_string
+//   [2]      in_heredoc            (CS-0035 addition)
+//   [3]      heredoc_dash          (CS-0035 addition)
+//   [4]      heredoc_tag_len       (CS-0035 addition)
+//   [5..5+N] heredoc_tag bytes (length = heredoc_tag_len)
 unsigned tree_sitter_cook_external_scanner_serialize(void *payload,
                                                      char *buffer) {
   ShellBlockState *state = (ShellBlockState *)payload;
   buffer[0] = (char)state->depth;
   buffer[1] = (char)state->in_string;
-  return 2;
+  buffer[2] = (char)state->in_heredoc;
+  buffer[3] = (char)state->heredoc_dash;
+  buffer[4] = (char)state->heredoc_tag_len;
+  unsigned n = 5;
+  for (unsigned i = 0; i < state->heredoc_tag_len && i < HEREDOC_TAG_CAP; i++) {
+    buffer[n++] = state->heredoc_tag[i];
+  }
+  return n;
 }
 
 void tree_sitter_cook_external_scanner_deserialize(void *payload,
                                                    const char *buffer,
                                                    unsigned length) {
   ShellBlockState *state = (ShellBlockState *)payload;
+  // Zero-init all fields so leftover bytes from an older layout don't
+  // leak through.
+  state->depth = 0;
+  state->in_string = 0;
+  state->in_heredoc = 0;
+  state->heredoc_dash = 0;
+  state->heredoc_tag_len = 0;
+  for (unsigned i = 0; i < HEREDOC_TAG_CAP; i++) state->heredoc_tag[i] = 0;
   if (length >= 2) {
     state->depth = (uint8_t)buffer[0];
     state->in_string = (uint8_t)buffer[1];
-  } else {
-    state->depth = 0;
-    state->in_string = 0;
+  }
+  if (length >= 5) {
+    state->in_heredoc = (uint8_t)buffer[2];
+    state->heredoc_dash = (uint8_t)buffer[3];
+    state->heredoc_tag_len = (uint8_t)buffer[4];
+    unsigned cap = state->heredoc_tag_len < HEREDOC_TAG_CAP
+                   ? state->heredoc_tag_len : HEREDOC_TAG_CAP;
+    for (unsigned i = 0; i < cap && (5 + i) < length; i++) {
+      state->heredoc_tag[i] = buffer[5 + i];
+    }
   }
 }
 

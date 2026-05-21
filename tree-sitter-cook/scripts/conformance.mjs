@@ -110,10 +110,7 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
 // conformance.
 const KNOWN_STALE_POSITIVES = new Map([
   // CS-0035 multi-line Lua opaque-span tracking — closed by COOK-53.
-  ['042-shell-heredoc-brace-in-body',
-   'CS-0035: POSIX heredoc opaque-span tracking not in tree-sitter scanner'],
-  ['043-shell-heredoc-quoted-delim',
-   'CS-0035: POSIX heredoc with quoted delimiter not in tree-sitter scanner'],
+  // CS-0035 POSIX heredoc opaque-span tracking — closed by COOK-54.
   ['044-test-as-modifier',
    'CS-0061: tree-sitter STRING is double-quoted only; fixture uses single quotes'],
   ['045-test-as-with-substitution',

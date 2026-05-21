@@ -515,3 +515,51 @@ recipe build
       name: (identifier))
     (lua_block
       (lua_code))))
+
+================
+Shell block with POSIX heredoc opaque-span (CS-0035)
+================
+
+recipe emit
+    cook "out.txt" using {
+        cat <<EOF > out.txt
+        a heredoc with a } brace
+        and a } here too
+        EOF
+        echo done
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string)
+      (using_clause
+        shell: (shell_block
+          (shell_content))))))
+
+================
+Shell block with quoted-delim heredoc (CS-0035)
+================
+
+recipe emit
+    cook "out.txt" using {
+        cat <<'END' > out.txt
+        } stays literal
+        END
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string)
+      (using_clause
+        shell: (shell_block
+          (shell_content))))))
