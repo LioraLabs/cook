@@ -95,6 +95,10 @@ pub enum RegisterError {
         chore: String,
         declared: usize,
         supplied: usize,
+        /// COOK-36 Task 9: when declared=0 and supplied=1, this is the
+        /// unmatched argv that the migration-hint diagnostic refers to.
+        /// Empty in all other cases.
+        first_unmatched: String,
     },
 
     /// A non-chore recipe received positional argv (not permitted; use @PRESET).

@@ -765,12 +765,21 @@ fn build_chore_params_table(
     }
 
     if !variadic_consumed {
-        let remaining = argv_iter.count();
-        if remaining > 0 {
+        let remaining: Vec<&String> = argv_iter.collect();
+        if !remaining.is_empty() {
+            // COOK-36 Task 9: when a paramless chore (declared==0) receives
+            // exactly one extra positional, surface it in first_unmatched so
+            // the engine-level From impl can append a migration hint.
+            let first_unmatched = if params_meta.is_empty() && remaining.len() == 1 {
+                remaining[0].clone()
+            } else {
+                String::new()
+            };
             return Err(RegisterError::ChoreTooManyArgv {
                 chore: chore_name.to_string(),
                 declared: params_meta.len(),
                 supplied: argv.len(),
+                first_unmatched,
             });
         }
     }

@@ -84,16 +84,81 @@ fn dispatch_recipe(globals: &cli::Globals, parts: &[String]) -> Result<(), CookE
     // `+foo`, which is defensible and consistent with the spec's "leading
     // `+`" wording.
     //
-    // COOK-36 Task 4: all positionals past the recipe name are argv passed to
-    // the chore body. Task 9 will partition out @PRESET / --config markers;
-    // for now the legacy "second positional = preset" rule is intentionally
-    // dropped (see also the commit message note).
+    // COOK-36 Task 9: partition_argv splits out @PRESET / --config / -c
+    // markers and the `--` end-of-options separator from the positional argv.
     let (first, rest) = parts
         .split_first()
         .expect("external_subcommand variant always carries ≥1 element");
 
     let recipe = first.strip_prefix('+').unwrap_or(first).to_string();
-    let argv: Vec<String> = rest.to_vec();
+    let (argv, preset) = partition_argv(rest, &recipe)?;
 
-    cmd_run(globals, &recipe, &argv, None)
+    cmd_run(globals, &recipe, &argv, preset.as_deref())
+}
+
+/// COOK-36 Task 9: partition the positionals after the recipe name into
+/// `(argv, preset)`. The preset can come from `@TOKEN` sigil or `--config NAME`
+/// / `-c NAME` / `--config=NAME` flag forms. The `--` end-of-options separator
+/// switches off sigil/flag interpretation for the rest of the line. At most
+/// one preset is permitted across all forms.
+fn partition_argv(
+    rest: &[String],
+    recipe: &str,
+) -> Result<(Vec<String>, Option<String>), CookError> {
+    let mut argv: Vec<String> = Vec::new();
+    let mut preset: Option<String> = None;
+    let mut end_of_options = false;
+    let mut iter = rest.iter();
+    while let Some(tok) = iter.next() {
+        if end_of_options {
+            argv.push(tok.clone());
+            continue;
+        }
+        if tok == "--" {
+            end_of_options = true;
+            continue;
+        }
+        // @PRESET sigil — but only when the token is `@<bare-ident-shape>`.
+        // A token like `@something/else` is treated as a literal param value.
+        if let Some(name) = tok.strip_prefix('@') {
+            if !name.is_empty() && name.chars().all(is_preset_char) {
+                if preset.is_some() {
+                    return Err(CookError::Other(format!(
+                        "chore '{recipe}': multiple config presets supplied; use only one of '@PRESET' or '--config PRESET'"
+                    )));
+                }
+                preset = Some(name.to_string());
+                continue;
+            }
+        }
+        // --config NAME / -c NAME (two-token form)
+        if tok == "--config" || tok == "-c" {
+            let next = iter.next().ok_or_else(|| {
+                CookError::Other(format!("'{tok}' requires an argument"))
+            })?;
+            if preset.is_some() {
+                return Err(CookError::Other(format!(
+                    "chore '{recipe}': --config / -c and @PRESET are equivalent; supply only one"
+                )));
+            }
+            preset = Some(next.clone());
+            continue;
+        }
+        // --config=NAME single-token form
+        if let Some(name) = tok.strip_prefix("--config=") {
+            if preset.is_some() {
+                return Err(CookError::Other(format!(
+                    "chore '{recipe}': --config / -c and @PRESET are equivalent; supply only one"
+                )));
+            }
+            preset = Some(name.to_string());
+            continue;
+        }
+        argv.push(tok.clone());
+    }
+    Ok((argv, preset))
+}
+
+fn is_preset_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
 }

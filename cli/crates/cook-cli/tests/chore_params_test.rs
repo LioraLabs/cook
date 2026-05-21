@@ -414,3 +414,106 @@ fn defaulted_param_env_var_uses_default_when_argv_absent() {
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert!(stdout.contains("env=staging"), "stdout: {stdout}");
 }
+
+// ── COOK-36 Task 9: @PRESET sigil + --config/-c flag + -- separator ──────────
+
+#[test]
+fn preset_via_at_sigil() {
+    let tmp = TempDir::new().unwrap();
+    // Use sh -c with $target (env var form, no quoting artifact) to avoid
+    // the shell-quoting that $<target> introduces around the value.
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    @sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
+    ).unwrap();
+    let out = run_cook_raw(tmp.path(), &["show", "production", "@rel"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stderr: {stderr}");
+    assert!(stdout.contains("target=production"), "stdout: {stdout}");
+    assert!(stdout.contains("mode=rel"), "stdout: {stdout}");
+}
+
+#[test]
+fn preset_via_long_flag() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    @sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
+    ).unwrap();
+    let out = run_cook_raw(tmp.path(), &["show", "production", "--config", "rel"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("target=production"));
+    assert!(stdout.contains("mode=rel"));
+}
+
+#[test]
+fn preset_via_short_flag() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    @sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
+    ).unwrap();
+    let out = run_cook_raw(tmp.path(), &["show", "production", "-c", "rel"]);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("target=production"));
+    assert!(stdout.contains("mode=rel"));
+}
+
+#[test]
+fn end_of_options_separator_treats_at_as_literal() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore show target\n    > print(target)\n",
+    ).unwrap();
+    let out = run_cook_raw(tmp.path(), &["show", "--", "@latest"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("@latest"), "stdout: {stdout}");
+}
+
+#[test]
+fn two_presets_via_sigil_errors() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "config a\n\nconfig b\n\nchore noop\n    > print(\"ok\")\n",
+    ).unwrap();
+    let out = run_cook_raw(tmp.path(), &["noop", "@a", "@b"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(stderr.contains("multiple config presets"), "stderr: {stderr}");
+}
+
+#[test]
+fn mixed_sigil_and_flag_errors() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "config a\n\nchore noop\n    > print(\"ok\")\n",
+    ).unwrap();
+    let out = run_cook_raw(tmp.path(), &["noop", "@a", "--config", "a"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(stderr.contains("supply only one") || stderr.contains("multiple config presets"), "stderr: {stderr}");
+}
+
+#[test]
+fn legacy_second_positional_emits_migration_hint() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "config release\n\nchore noop\n    > print(\"ok\")\n",
+    ).unwrap();
+    let out = run_cook_raw(tmp.path(), &["noop", "release"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    // Diagnostic should suggest @release or --config release
+    assert!(
+        stderr.contains("@release") || stderr.contains("--config release"),
+        "expected migration hint in stderr: {stderr}"
+    );
+}

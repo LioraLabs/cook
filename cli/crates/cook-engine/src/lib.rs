@@ -464,10 +464,26 @@ impl From<cook_register::RegisterError> for EngineError {
                     message: e.to_string(),
                 }
             }
-            ref e @ cook_register::RegisterError::ChoreTooManyArgv { ref chore, .. } => {
+            ref e @ cook_register::RegisterError::ChoreTooManyArgv {
+                ref chore,
+                declared,
+                supplied,
+                ref first_unmatched,
+            } => {
+                let mut msg = e.to_string();
+                if declared == 0 && supplied == 1 && !first_unmatched.is_empty()
+                    && first_unmatched.chars().all(|c| {
+                        c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
+                    })
+                {
+                    msg.push_str(&format!(
+                        ". Did you mean a config preset? Use 'cook {chore} @{first_unmatched}' \
+                         or 'cook {chore} --config {first_unmatched}'."
+                    ));
+                }
                 EngineError::RegistrationFailed {
                     recipe: chore.clone(),
-                    message: e.to_string(),
+                    message: msg,
                 }
             }
             ref e @ cook_register::RegisterError::RecipeWithArgv { ref name, .. } => {

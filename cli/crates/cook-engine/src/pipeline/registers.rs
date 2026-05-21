@@ -452,6 +452,28 @@ fn map_register_error(e: cook_register::RegisterError) -> PipelineError {
         cook_register::RegisterError::RecipeCollision { name, sites } => {
             PipelineError::RecipeCollision { name, sites }
         }
+        // COOK-36 Task 9: append a migration hint when a paramless chore
+        // receives exactly one bare-ident-shaped positional — the user likely
+        // meant to select a config preset with the old positional form.
+        cook_register::RegisterError::ChoreTooManyArgv {
+            ref chore,
+            declared,
+            supplied,
+            ref first_unmatched,
+        } if declared == 0
+            && supplied == 1
+            && !first_unmatched.is_empty()
+            && first_unmatched
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') =>
+        {
+            let base = e.to_string();
+            PipelineError::Other(format!(
+                "{base}. Did you mean a config preset? \
+                 Use 'cook {chore} @{first_unmatched}' or \
+                 'cook {chore} --config {first_unmatched}'."
+            ))
+        }
         other => PipelineError::Other(other.to_string()),
     }
 }
