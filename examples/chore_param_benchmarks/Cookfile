@@ -1,0 +1,76 @@
+# Chore Parameter Benchmarks — verification fixture for COOK-36.
+#
+# Each chore exercises one parameter form. See README.md and verify.sh
+# for the matrix of scenarios and the expected diagnostic / output.
+#
+# Quick reference:
+#   cook greet alice                 — required param (`who`)
+#   cook deploy production           — required + defaulted-string (host default)
+#   cook deploy production myhost    — required + defaulted-string (override)
+#   cook release                     — Lua-expression default fires
+#   RELEASE_TAG=v1.2.3 cook release  — Lua-expression default reads env
+#   cook lint a.lua b.lua            — variadic +files (one-or-more)
+#   cook lint                        — error: +files requires ≥1
+#   cook fmt                         — variadic *files (zero allowed, binds {})
+#   cook fmt main.lua                — variadic with one element
+#   cook demo production myhost v1 a.lua b.lua  — comprehensive: all four forms
+#   cook demo production @release    — required + config preset via sigil
+#   cook demo production --config release       — same via --config flag
+#   cook demo production -c release             — same via -c short flag
+#   cook demo -- @latest             — '--' escapes literal '@'
+#   cook greet                       — error: missing required 'who'
+#   cook greet a b                   — error: takes 1, supplied 2
+#   cook noop release                — migration hint suggesting @release
+#
+# Note on placeholder quoting: `$<name>` substitutes the bound value with
+# POSIX-safe single-quote escaping (§9, COOK-36). That makes it safe to
+# pass values containing spaces or shell metacharacters as a single shell
+# word. When you want the *literal* value pasted into a larger string,
+# read the env-var form (`$who`) inside double quotes instead.
+
+config
+    env.MODE = "default"
+
+config release
+    env.MODE = "release"
+
+# ─── Required parameter ─────────────────────────────────────────────────────
+# `name` is reserved (§A.2), so we use `who`.
+chore greet who
+    @echo hello $<who>
+
+# ─── Required + defaulted-string ────────────────────────────────────────────
+chore deploy target host="prod.example.com"
+    >> log_msg = "deploy target=" .. target .. " host=" .. host
+    @echo deploy target=$<target> host=$<host>
+    > print("post-deploy: " .. target .. "@" .. host)
+
+# ─── Lua-expression default (evaluates at invocation time) ──────────────────
+# Reads RELEASE_TAG from the process environment via `os.getenv`. If unset,
+# falls back to a literal. The expression runs only when argv is exhausted
+# at this position; supplying `cook release v1.2.3` skips the eval entirely.
+chore release version=(os.getenv("RELEASE_TAG") or "auto-vNULL")
+    @echo release version=$<version>
+
+# ─── One-or-more variadic ───────────────────────────────────────────────────
+chore lint +files
+    @echo linting $<files>
+    > print("count=" .. #files)
+
+# ─── Zero-or-more variadic ──────────────────────────────────────────────────
+# Use Lua to assert table shape — env-var would expand to empty string for
+# zero elements which is correct but less informative.
+chore fmt *files
+    > print("fmt #files=" .. #files)
+    > for i, f in ipairs(files) do print("  [" .. i .. "] " .. f) end
+
+# ─── Comprehensive: required + defaulted-string + Lua-default + variadic ───
+chore demo target host="prod" version=("v0") *extras
+    >> print("register: target=" .. target .. " host=" .. host .. " version=" .. version)
+    @echo shell-sub: $<target> $<host> $<version> $<extras>
+    @sh -c 'echo "env-vars: target=$target host=$host version=$version extras=\"$extras\" mode=${MODE-default}"'
+    > print("exec-lua: " .. target .. " " .. host .. " " .. version .. " #extras=" .. #extras)
+
+# ─── Paramless chore — for the migration-hint test ──────────────────────────
+chore noop
+    @echo noop
