@@ -30,6 +30,7 @@ fn recipe(name: &str, cmd: &str) -> RecipeUnits {
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec![],
+            unit_env_vars: Default::default(),
         }],
         step_groups: vec![],
         working_dir: PathBuf::from("."),

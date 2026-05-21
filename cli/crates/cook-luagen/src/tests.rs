@@ -3147,3 +3147,28 @@ fn codegen_register_surface_includes_requires() {
         "expected __line = 10 in metadata, got:\n{lua}"
     );
 }
+
+/// COOK-36 Task 8: chore shell units with params must emit `env = {...}` in
+/// the `cook.add_unit` call so the register phase captures param values as
+/// per-unit env vars, exported to the child shell at execution time.
+#[test]
+fn compile_chore_shell_step_emits_env_table_for_param() {
+    use cook_lang::ast::{Chore, ChoreParam, Step};
+    let chore = Chore {
+        name: "say".into(),
+        params: vec![
+            ChoreParam::Required { name: "target".into(), line: 1, col: 5 },
+        ],
+        deps: vec![],
+        steps: vec![Step::Shell {
+            command: "sh -c 'echo $target'".into(),
+            line: 2,
+            interactive: true,
+        }],
+        line: 1,
+    };
+    let lua = compile_chore(&chore, &[]);
+    // Must emit env = {["target"] = __cook_params.target}
+    assert!(lua.contains("env ="), "env field missing from add_unit. lua:\n{lua}");
+    assert!(lua.contains(r#"["target"] = __cook_params.target"#), "env key should be string literal, not variable reference. lua:\n{lua}");
+}

@@ -363,3 +363,54 @@ fn shell_step_with_unknown_sigil_in_chore_errors() {
     assert!(!out.status.success());
     assert!(stderr.contains("unknown") || stderr.contains("placeholder"), "stderr: {stderr}");
 }
+
+// ── COOK-36 Task 8: chore params exported as env vars to shell children ───────
+
+/// `cook say production` where `chore say target` uses `$target` in a shell step
+/// (the env-var form, not the $<target> sigil). The param must be exported as an
+/// env var so the child shell can read it.
+#[test]
+fn chore_param_exported_as_env_var_to_shell_child() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore say target\n    @sh -c 'echo \"env_target=$target\"'\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["say", "production"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("env_target=production"), "stdout: {stdout}");
+}
+
+/// `cook lint a.lua b.lua` where `chore lint +files` uses `$files` in a shell step.
+/// The variadic must be space-joined into a single flat env-var string.
+#[test]
+fn variadic_param_exported_as_space_joined_env_var() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore lint +files\n    @sh -c 'echo \"env_files=$files\"'\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["lint", "a.lua", "b.lua"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("env_files=a.lua b.lua"), "stdout: {stdout}");
+}
+
+/// `cook say` (no argv) where `chore say target="staging"` uses the default.
+/// The env var must carry the default value when no argv is supplied.
+#[test]
+fn defaulted_param_env_var_uses_default_when_argv_absent() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore say target=\"staging\"\n    @sh -c 'echo \"env=$target\"'\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["say"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("env=staging"), "stdout: {stdout}");
+}

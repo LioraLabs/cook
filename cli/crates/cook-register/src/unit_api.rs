@@ -598,6 +598,17 @@ pub fn register_unit_api(
             }
         };
 
+        // Read optional per-unit env table (used by chore shell units to export
+        // bound param values as env vars — COOK-36 §7.1.2).
+        let unit_env_vars: std::collections::BTreeMap<String, String> =
+            match tbl.get::<LuaValue>("env") {
+                Ok(LuaValue::Table(t)) => t
+                    .pairs::<String, String>()
+                    .filter_map(Result::ok)
+                    .collect(),
+                _ => std::collections::BTreeMap::new(),
+            };
+
         let mut slot = body_slot_add.borrow_mut();
         let body = slot.as_mut().ok_or_else(|| {
             LuaError::runtime("cook.add_unit called outside a recipe body")
@@ -613,6 +624,7 @@ pub fn register_unit_api(
             cache_meta,
             dep_kind: dep_kind.clone(),
             probes,
+            unit_env_vars,
         });
         if let DepKind::StepGroup(gi) = &dep_kind {
             body.step_groups[*gi].push(unit_idx);

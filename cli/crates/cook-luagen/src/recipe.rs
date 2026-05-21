@@ -937,6 +937,43 @@ fn expand_chore_shell_command(command: &str, has_params: bool) -> String {
 ///
 /// 1. Every `Step::Shell` is emitted with `interactive = true`.  The parser
 ///    already enforces this; codegen passes it through.
+/// Build a Lua `env = {...}` table expression from the chore's declared params.
+///
+/// Each param name maps to the bound value expression that is valid at
+/// register-phase time (i.e. after `__cook_params` has been populated):
+///   - scalars:   `__cook_params.NAME`
+///   - variadics: `table.concat(__cook_params.NAME, " ")` (space-joined flat string)
+///
+/// Returns `None` when the chore has no params (the field is then omitted from
+/// the generated `cook.add_unit(...)` call, keeping paramless chores unchanged).
+fn chore_param_env_table(params: &[cook_lang::ast::ChoreParam]) -> Option<String> {
+    if params.is_empty() {
+        return None;
+    }
+    let entries: Vec<String> = params
+        .iter()
+        .map(|p| {
+            let n = p.name();
+            let value_expr = match p {
+                cook_lang::ast::ChoreParam::VariadicPlus { .. }
+                | cook_lang::ast::ChoreParam::VariadicStar { .. } => {
+                    // Space-join the sequence into a flat env-var string.
+                    // Per §7.1.2: env vars are flat strings; per-element access
+                    // uses the Lua local or $<NAME> placeholder.
+                    format!("table.concat(__cook_params.{n}, \" \")")
+                }
+                _ => format!("__cook_params.{n}"),
+            };
+            // Param names are bare-idents (§7.1.1 reserved-name ban); no
+            // special characters that would need escaping in a Lua string key.
+            // We use ["name"] = expr (quoted bracket key) so the key is always
+            // a string literal, never resolved as a Lua variable reference.
+            format!("[\"{}\"] = {}", escape_lua_string(n), value_expr)
+        })
+        .collect();
+    Some(format!("{{{}}}", entries.join(", ")))
+}
+
 /// 2. Every `cook.add_unit` records `cache = false`.  No body-bundling
 ///    across shell steps: because all chore shells are interactive, the
 ///    existing `is_bundleable` predicate already breaks the bundle at each
@@ -1018,9 +1055,17 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
                 // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                 // units that are never cached. The cacheable cook-step path in
                 // cook_step.rs is the only emission site that includes it.
+                //
+                // env = {...}: when the chore declares parameters, export them
+                // as env vars to the child shell (COOK-36 §7.1.2). Omitted for
+                // paramless chores so the generated Lua stays identical to pre-
+                // COOK-36 output for that case.
+                let env_field = chore_param_env_table(&chore.params)
+                    .map(|t| format!(", env = {}", t))
+                    .unwrap_or_default();
                 out.push_str(&format!(
-                    "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
-                    cmd_expr, line
+                    "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false{}}})\n",
+                    cmd_expr, line, env_field
                 ));
                 i += 1;
             }
@@ -1032,9 +1077,12 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
                     // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                     // units that are never cached. The cacheable cook-step path in
                     // cook_step.rs is the only emission site that includes it.
+                    let env_field = chore_param_env_table(&chore.params)
+                        .map(|t| format!(", env = {}", t))
+                        .unwrap_or_default();
                     out.push_str(&format!(
-                        "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false}})\n",
-                        cmd_expr, line
+                        "    cook.add_unit({{command = {}, interactive = true, line = {}, cache = false{}}})\n",
+                        cmd_expr, line, env_field
                     ));
                 }
                 i += 1;

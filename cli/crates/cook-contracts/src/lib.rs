@@ -218,6 +218,10 @@ pub struct CapturedUnit {
     pub dep_kind: DepKind,
     /// Probe keys this unit consumes (§22.5.5). Empty for non-consumer units.
     pub probes: Vec<String>,
+    /// Per-unit environment variables that override the recipe-level env vars.
+    /// Used by chore shell units to export bound param values (COOK-36 §7.1.2).
+    /// Empty for non-chore units and chores without parameters.
+    pub unit_env_vars: BTreeMap<String, String>,
 }
 
 /// How a captured unit relates to others in the recipe.
@@ -427,6 +431,7 @@ mod tests {
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec![],
+            unit_env_vars: Default::default(),
         };
         assert!(unit.cache_meta.is_none());
         assert!(matches!(unit.dep_kind, DepKind::Sequential));
@@ -459,12 +464,14 @@ mod tests {
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
                     probes: vec![],
+                    unit_env_vars: Default::default(),
                 },
                 CapturedUnit {
                     payload: WorkPayload::Shell { cmd: "gcc -c b.c".into(), line: 2 },
                     cache_meta: None,
                     dep_kind: DepKind::StepGroup(0),
                     probes: vec![],
+                    unit_env_vars: Default::default(),
                 },
             ],
             step_groups: vec![vec![0, 1]],
@@ -562,6 +569,7 @@ mod tests {
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec![],
+            unit_env_vars: Default::default(),
         };
         assert!(cu.probes.is_empty());
     }
@@ -607,6 +615,7 @@ mod tests {
             }),
             dep_kind: DepKind::StepGroup(0),
             probes: vec![],
+            unit_env_vars: Default::default(),
         };
         assert!(unit.cache_meta.is_some());
         assert_eq!(unit.cache_meta.unwrap().command_hash, 9999);

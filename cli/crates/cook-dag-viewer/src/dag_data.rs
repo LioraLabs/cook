@@ -637,6 +637,7 @@ mod tests {
             cache_meta: Some(cache_meta),
             dep_kind: DepKind::Sequential,
             probes: vec![],
+            unit_env_vars: Default::default(),
         };
         let ru = RecipeUnits {
             recipe_name: recipe_name.into(),
@@ -688,6 +689,7 @@ mod tests {
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec![],
+            unit_env_vars: Default::default(),
         };
         let probe_b = CapturedUnit {
             payload: WorkPayload::Probe {
@@ -698,12 +700,14 @@ mod tests {
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec![],
+            unit_env_vars: Default::default(),
         };
         let consumer = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "link".into(), line: 3 },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
             probes: vec!["cc:a".into(), "cc:b".into()],
+            unit_env_vars: Default::default(),
         };
         let ru = RecipeUnits {
             recipe_name: "game".into(),
@@ -829,6 +833,7 @@ mod tests {
             cache_meta: Some(cm_a),
             dep_kind: DepKind::Sequential,
             probes: vec![],
+            unit_env_vars: Default::default(),
         };
         let ru_a = RecipeUnits {
             recipe_name: "a".into(),
@@ -860,6 +865,7 @@ mod tests {
             cache_meta: Some(cm_b),
             dep_kind: DepKind::Sequential,
             probes: vec![],
+            unit_env_vars: Default::default(),
         };
         let ru_b = RecipeUnits {
             recipe_name: "b".into(),
@@ -980,6 +986,7 @@ mod tests {
             cache_meta: Some(cm_compile),
             dep_kind: DepKind::Sequential,
             probes: vec![],
+            unit_env_vars: Default::default(),
         };
         let ru_compile = RecipeUnits {
             recipe_name: "compile".into(),
@@ -1014,6 +1021,7 @@ mod tests {
             cache_meta: Some(cm_archive),
             dep_kind: DepKind::Sequential,
             probes: vec![],
+            unit_env_vars: Default::default(),
         };
         let ru_archive = RecipeUnits {
             recipe_name: "archive".into(),
