@@ -517,3 +517,79 @@ fn legacy_second_positional_emits_migration_hint() {
         "expected migration hint in stderr: {stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// COOK-36 Task 11 — end-to-end smoke
+// ---------------------------------------------------------------------------
+//
+// A single Cookfile exercises every chore-parameter surface in one go:
+//   - Required parameter (`target`)
+//   - Defaulted-string parameter (`host="prod"`)
+//   - Lua-expression-default parameter (`version=("v0")`)
+//   - Zero-or-more variadic (`*extras`)
+// And every binding surface:
+//   - Inline Lua (`>>`) — register-phase locals
+//   - Shell `$<name>` placeholder substitution (scalar + variadic)
+//   - Shell env-var export
+//   - Execute-phase Lua (`>`) locals (via the prelude prepended to LuaChunk units)
+//
+// Two invocations: one where defaults fire (small argv) and one where every
+// position is explicitly supplied (full argv including variadic).
+
+#[test]
+fn comprehensive_chore_params_smoke_defaults_fire() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore demo target host=\"prod\" version=(\"v0\") *extras\n\
+         \x20\x20\x20\x20>> print(\"register: target=\" .. target)\n\
+         \x20\x20\x20\x20@echo \"shell-sub: $<target> $<host> $<version> $<extras>\"\n\
+         \x20\x20\x20\x20@sh -c 'echo \"env: $target/$host/$version/$extras\"'\n\
+         \x20\x20\x20\x20> print(\"exec-lua: \" .. target .. \" \" .. host .. \" \" .. version .. \" #extras=\" .. #extras)\n",
+    ).unwrap();
+
+    let out = run_cook_raw(tmp.path(), &["demo", "production"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
+
+    // Inline-Lua (`>>`) sees the register-phase locals.
+    assert!(stdout.contains("register: target=production"), "stdout: {stdout}");
+    // Shell placeholders resolve via cook.__expand_chore_sigils.
+    assert!(stdout.contains("shell-sub: 'production' 'prod' 'v0' "), "stdout: {stdout}");
+    // Env-vars: defaults fire when argv is exhausted.
+    assert!(stdout.contains("env: production/prod/v0/"), "stdout: {stdout}");
+    // Execute-phase Lua sees the prelude-injected locals.
+    assert!(stdout.contains("exec-lua: production prod v0 #extras=0"), "stdout: {stdout}");
+}
+
+#[test]
+fn comprehensive_chore_params_smoke_argv_overrides_defaults() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore demo target host=\"prod\" version=(\"v0\") *extras\n\
+         \x20\x20\x20\x20>> print(\"register: target=\" .. target)\n\
+         \x20\x20\x20\x20@echo \"shell-sub: $<target> $<host> $<version> $<extras>\"\n\
+         \x20\x20\x20\x20@sh -c 'echo \"env: $target/$host/$version/$extras\"'\n\
+         \x20\x20\x20\x20> print(\"exec-lua: \" .. target .. \" \" .. host .. \" \" .. version .. \" extras=\" .. table.concat(extras, \",\"))\n",
+    ).unwrap();
+
+    // argv: target, host, version, then two variadic elements.
+    let out = run_cook_raw(tmp.path(), &[
+        "demo", "production", "myhost", "v1.2.3", "a.lua", "b.lua",
+    ]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
+
+    assert!(stdout.contains("register: target=production"), "stdout: {stdout}");
+    // Variadic placeholder is shell-quoted per element.
+    assert!(
+        stdout.contains("shell-sub: 'production' 'myhost' 'v1.2.3' 'a.lua' 'b.lua'"),
+        "stdout: {stdout}"
+    );
+    // Variadic env-var is space-joined.
+    assert!(stdout.contains("env: production/myhost/v1.2.3/a.lua b.lua"), "stdout: {stdout}");
+    assert!(stdout.contains("exec-lua: production myhost v1.2.3 extras=a.lua,b.lua"), "stdout: {stdout}");
+}
