@@ -62,7 +62,7 @@ Placeholder substitution (`$<NAME>`) is governed by a later subsection. Environm
 
 **When parameters bind (normative).** At chore-invocation time, before the chore body's register phase runs:
 
-1. The implementation collects positional argv after the chore name (excluding config-preset markers per §27.X).
+1. The implementation collects positional argv after the chore name. Implementation-defined argv-partitioning rules — for example, sigil-marked config-preset selection or `--`-style end-of-options separators — MAY remove tokens from this stream before binding. This Standard does not prescribe a CLI surface for those rules; the reference Cook CLI implements them per the conventions described in its CHANGELOG and `cook --help` output, but a conforming implementation MAY choose other CLI surfaces.
 2. argv is matched against the declared `param_list` in source order.
 3. For each required parameter: argv at this position MUST exist; a missing element is a diagnostic per the table below.
 4. For each defaulted parameter: if argv is exhausted at this position, the default is evaluated.

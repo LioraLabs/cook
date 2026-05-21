@@ -593,3 +593,17 @@ fn comprehensive_chore_params_smoke_argv_overrides_defaults() {
     assert!(stdout.contains("env: production/myhost/v1.2.3/a.lua b.lua"), "stdout: {stdout}");
     assert!(stdout.contains("exec-lua: production myhost v1.2.3 extras=a.lua,b.lua"), "stdout: {stdout}");
 }
+
+#[test]
+fn chore_variadic_star_with_one_argv_binds_single_element_table() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore fmt *files\n    > print(\"count=\" .. #files .. \" first=\" .. (files[1] or \"<nil>\"))\n",
+    ).unwrap();
+    let out = run_cook_raw(tmp.path(), &["fmt", "main.lua"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("count=1"), "stdout: {stdout}");
+    assert!(stdout.contains("first=main.lua"), "stdout: {stdout}");
+}

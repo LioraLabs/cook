@@ -202,6 +202,12 @@ fn parse_chore_params<'a>(
 ) -> Result<(Vec<crate::ast::ChoreParam>, &'a str), LexError> {
     use crate::ast::ChoreParam;
 
+    // NOTE: every `col: 0` below is a known placeholder. The ChoreParam AST
+    // variants carry a `col` field for future column-precise diagnostics
+    // ("bad chore param at line 3, col 12"), but parse_chore_params operates
+    // on the already-trimmed slice after the chore-name and doesn't know the
+    // absolute column. Threading the original-line offset through is tracked
+    // separately and will be wired up when a diagnostic renderer needs it.
     let mut params: Vec<ChoreParam> = Vec::new();
     let mut seen_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut seen_defaulted = false;

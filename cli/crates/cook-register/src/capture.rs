@@ -140,6 +140,16 @@ fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec
 /// `mlua::RegistryKey` which is not `Clone`). The key is scoped to the
 /// current Lua VM instance; a fresh counter value is assigned for each
 /// parameter at registration time.
+///
+/// COOK-36 known stub: `COUNTER` is process-global (`static AtomicU64`) and
+/// never decrements. Each `register_cookfile` pass currently builds a fresh
+/// Lua VM, so named-registry slots from older VMs are GC'd correctly when
+/// the VM is dropped — there is no leak under normal CLI runs. If future
+/// work caches the Lua VM across multiple register passes (e.g. a long-
+/// running watch loop reusing one VM), each pass for a chore with Lua-
+/// expression defaults will allocate new registry slots without reclaiming
+/// the old ones. A small cleanup helper that purges keys matching the
+/// `__cook_chore_default:` prefix after each pass would close that gap.
 fn next_lua_default_serial() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(1);

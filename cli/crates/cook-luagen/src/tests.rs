@@ -3052,6 +3052,51 @@ fn compile_chore_emits_param_metadata_and_locals() {
 }
 
 #[test]
+fn compile_chore_emits_defaulted_lua_param_metadata() {
+    use cook_lang::ast::{Chore, ChoreParam, Step};
+    let chore = Chore {
+        name: "release".into(),
+        params: vec![
+            ChoreParam::DefaultedLua {
+                name: "version".into(),
+                default_lua: "cook.git.head_tag() or \"v0\"".into(),
+                line: 1, col: 0,
+            },
+        ],
+        deps: vec![],
+        steps: vec![Step::Lua { code: "release.cut(version)".into(), line: 2 }],
+        line: 1,
+    };
+    let lua = compile_chore(&chore, &[]);
+    assert!(
+        lua.contains(r#"{name = "version", kind = "defaulted_lua", default = function() return (cook.git.head_tag() or "v0") end}"#),
+        "lua: {lua}"
+    );
+    assert!(lua.contains("function(__cook_params)"), "lua: {lua}");
+    assert!(lua.contains("local version = __cook_params.version"), "lua: {lua}");
+}
+
+#[test]
+fn compile_chore_emits_variadic_param_metadata() {
+    use cook_lang::ast::{Chore, ChoreParam, Step};
+    let chore = Chore {
+        name: "lint".into(),
+        params: vec![
+            ChoreParam::VariadicPlus { name: "files".into(), line: 1, col: 0 },
+        ],
+        deps: vec![],
+        steps: vec![Step::Lua { code: "linter.run(files)".into(), line: 2 }],
+        line: 1,
+    };
+    let lua = compile_chore(&chore, &[]);
+    assert!(
+        lua.contains(r#"{name = "files", kind = "variadic_plus"}"#),
+        "lua: {lua}"
+    );
+    assert!(lua.contains("local files = __cook_params.files"), "lua: {lua}");
+}
+
+#[test]
 fn compile_chore_with_no_params_does_not_emit_param_metadata_or_prelude() {
     use cook_lang::ast::{Chore, Step};
     let chore = Chore {
