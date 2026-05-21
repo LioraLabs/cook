@@ -56,7 +56,55 @@ static bool match_placeholder_lookahead(TSLexer *lexer) {
 
 // ── Lua block scanner ──────────────────────────────────────────
 // Scans brace-balanced content after `>{`, stopping before the
-// closing `}` that balances the opening one.
+// closing `}` that balances the opening one. Per CS-0035 / App. A.5,
+// braces are inert inside:
+//   • double-quoted strings    `"…"`
+//   • single-quoted strings    `'…'`
+//   • Lua line comments        `-- …` to EOL
+//   • leveled long-strings     `[==[ … ]==]` (any `=`-level, multi-line)
+//   • leveled block comments   `--[==[ … ]==]` (any `=`-level, multi-line)
+
+// Attempts to consume a leveled long-string opener at the current
+// cursor (which MUST be at `[`). Returns the `=`-level (≥ 0) on
+// success, leaving the cursor immediately AFTER the opening `[…[`.
+// Returns -1 on no match, leaving the cursor unchanged-in-spirit:
+// callers that don't want to commit must `mark_end` first.
+static int try_long_string_opener(TSLexer *lexer) {
+  if (lexer->lookahead != '[') return -1;
+  lexer->advance(lexer, false);
+  int level = 0;
+  while (lexer->lookahead == '=') {
+    level++;
+    lexer->advance(lexer, false);
+  }
+  if (lexer->lookahead != '[') return -1;
+  lexer->advance(lexer, false);
+  return level;
+}
+
+// Consumes from the current cursor up to and including the matching
+// `]==…]` closer of the given level. Treats every other byte as opaque
+// content (including `{` `}` `"` `'`).
+static void skip_long_string_body(TSLexer *lexer, int level) {
+  while (!lexer->eof(lexer)) {
+    if (lexer->lookahead == ']') {
+      lexer->advance(lexer, false);
+      int eq = 0;
+      while (lexer->lookahead == '=') {
+        eq++;
+        lexer->advance(lexer, false);
+      }
+      if (eq == level && lexer->lookahead == ']') {
+        lexer->advance(lexer, false);
+        return;
+      }
+      // Not a closer — continue scanning, but the `=` chars we
+      // consumed are part of the body.
+      continue;
+    }
+    lexer->advance(lexer, false);
+  }
+}
 
 static bool scan_lua_block_content(TSLexer *lexer) {
   int depth = 0;
@@ -102,10 +150,33 @@ static bool scan_lua_block_content(TSLexer *lexer) {
       }
       if (!lexer->eof(lexer))
         lexer->advance(lexer, false);
+    } else if (c == '[') {
+      // CS-0035: leveled long-string `[==[ … ]==]` may span newlines.
+      // Braces and quotes inside are inert.
+      int level = try_long_string_opener(lexer);
+      if (level >= 0) {
+        has_content = true;
+        skip_long_string_body(lexer, level);
+      } else {
+        // Not a long-string opener — the `[` was consumed by the
+        // probe but is otherwise harmless plain content.
+        has_content = true;
+      }
     } else if (c == '-') {
       has_content = true;
       lexer->advance(lexer, false);
       if (!lexer->eof(lexer) && lexer->lookahead == '-') {
+        lexer->advance(lexer, false);
+        // CS-0035: distinguish line comment from leveled block comment.
+        if (lexer->lookahead == '[') {
+          int level = try_long_string_opener(lexer);
+          if (level >= 0) {
+            skip_long_string_body(lexer, level);
+            continue;
+          }
+          // Fall through: `--[` without a balanced opener is a line
+          // comment (the `[` is part of the comment text).
+        }
         // Lua line comment — skip to end of line
         while (!lexer->eof(lexer) && lexer->lookahead != '\n') {
           lexer->advance(lexer, false);

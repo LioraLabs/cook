@@ -449,3 +449,69 @@ recipe x
       (using_clause
         shell: (shell_block
           (shell_content))))))
+
+================
+Lua block with multi-line long-string opaque-span (CS-0035)
+================
+
+recipe build
+    >{
+        local s = [[
+            this string contains a } brace
+            and another } here
+        ]]
+        print(s)
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (lua_block
+      (lua_code))))
+
+================
+Lua block with multi-line block-comment opaque-span (CS-0035)
+================
+
+recipe build
+    >{
+        --[[
+            here is a } in a block comment
+            and another } here
+        ]]
+        local x = 1
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (lua_block
+      (lua_code))))
+
+================
+Lua block with leveled long-string opaque-span (CS-0035)
+================
+
+recipe build
+    >{
+        local s = [==[
+            this is opaque text
+            with } and ]] inside
+        ]==]
+        print(s)
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (lua_block
+      (lua_code))))

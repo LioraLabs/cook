@@ -109,12 +109,7 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
 // these is part of the CS-0002 follow-up to bring tree-sitter into
 // conformance.
 const KNOWN_STALE_POSITIVES = new Map([
-  ['039-lua-multiline-long-string',
-   'CS-0035: multi-line Lua long-string opaque-span tracking not in tree-sitter scanner'],
-  ['040-lua-multiline-block-comment',
-   'CS-0035: multi-line Lua block-comment opaque-span tracking not in tree-sitter scanner'],
-  ['041-lua-long-string-leveled',
-   'CS-0035: leveled Lua long-string (`[==[…]==]`) tracking not in tree-sitter scanner'],
+  // CS-0035 multi-line Lua opaque-span tracking — closed by COOK-53.
   ['042-shell-heredoc-brace-in-body',
    'CS-0035: POSIX heredoc opaque-span tracking not in tree-sitter scanner'],
   ['043-shell-heredoc-quoted-delim',
