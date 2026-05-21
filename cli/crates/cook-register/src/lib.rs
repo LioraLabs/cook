@@ -110,6 +110,31 @@ pub enum RegisterError {
          supply at least one, or change to '*{name}' to allow zero"
     )]
     ChoreVariadicEmpty { chore: String, name: String, line: usize },
+
+    /// A Lua-expression default for a chore parameter raised a Lua error
+    /// when evaluated at invocation time.
+    #[error(
+        "chore '{chore}': default for parameter '{name}' raised a Lua error \
+         (defined at line {line}): {message}"
+    )]
+    ChoreParamDefaultLuaError {
+        chore: String,
+        name: String,
+        line: usize,
+        message: String,
+    },
+
+    /// A Lua-expression default for a chore parameter returned a non-string value.
+    #[error(
+        "chore '{chore}': default for parameter '{name}' must evaluate to a string; \
+         got {ty} (defined at line {line})"
+    )]
+    ChoreParamDefaultLuaNonString {
+        chore: String,
+        name: String,
+        line: usize,
+        ty: String,
+    },
 }
 
 /// One site at which a recipe name was registered during a

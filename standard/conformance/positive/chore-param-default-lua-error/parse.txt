@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+    Chore name="greet" line=1
+      params: [DefaultedLua name="who" default_lua="error(\"boom\")"]
+      deps: []
+      steps:
+        Lua code="print(who)"
+  register_blocks: []
+  top_level_module_calls: []

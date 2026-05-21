@@ -679,6 +679,47 @@ fn build_chore_params_table(
                 let escaped = lua_escape_string(value);
                 prelude.push_str(&format!("local {} = \"{}\"\n", name, escaped));
             }
+            ChoreParamMeta::DefaultedLua { name, default_key_name } => {
+                if let Some(arg) = argv_iter.next() {
+                    table.set(name.as_str(), arg.as_str()).map_err(RegisterError::Lua)?;
+                    let escaped = lua_escape_string(arg);
+                    prelude.push_str(&format!("local {} = \"{}\"\n", name, escaped));
+                } else {
+                    // Retrieve and call the default closure.
+                    let func: LuaFunction = lua
+                        .named_registry_value(default_key_name.as_str())
+                        .map_err(RegisterError::Lua)?;
+                    let result: mlua::Value = match func.call::<mlua::Value>(()) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Err(RegisterError::ChoreParamDefaultLuaError {
+                                chore: chore_name.to_string(),
+                                name: name.clone(),
+                                line: source_line,
+                                message: e.to_string(),
+                            });
+                        }
+                    };
+                    match result {
+                        mlua::Value::String(s) => {
+                            let s_str = s.to_str()
+                                .map_err(RegisterError::Lua)?
+                                .to_string();
+                            table.set(name.as_str(), s_str.as_str()).map_err(RegisterError::Lua)?;
+                            let escaped = lua_escape_string(&s_str);
+                            prelude.push_str(&format!("local {} = \"{}\"\n", name, escaped));
+                        }
+                        other => {
+                            return Err(RegisterError::ChoreParamDefaultLuaNonString {
+                                chore: chore_name.to_string(),
+                                name: name.clone(),
+                                line: source_line,
+                                ty: other.type_name().to_string(),
+                            });
+                        }
+                    }
+                }
+            }
             ChoreParamMeta::VariadicPlus { name } => {
                 // Collect ALL remaining argv elements.
                 let values: Vec<String> = argv_iter.by_ref().cloned().collect();

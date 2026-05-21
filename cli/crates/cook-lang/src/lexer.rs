@@ -47,8 +47,6 @@ pub enum LexError {
     RequiredAfterDefaulted { line: usize, chore: String, required: String, defaulted: String },
     #[error("line {line}: chore '{chore}': default for parameter '{name}' must be a quoted string")]
     BadChoreParamDefault { line: usize, chore: String, name: String },
-    #[error("line {line}: chore '{chore}': Lua-expression default '=( … )' for parameter '{name}' is not yet supported in this version of cook (planned for a later release)")]
-    ChoreParamLuaDefaultNotYetSupported { line: usize, chore: String, name: String },
     #[error("line {line}: chore '{chore}': unclosed default for parameter '{name}' (expected closing '\"' or ')')")]
     UnclosedChoreParamDefault { line: usize, chore: String, name: String },
     #[error("line {line}: recipe '{name}': recipes don't take parameters; use a 'chore' (§7) or a config preset (§5)")]
@@ -126,14 +124,75 @@ fn parse_name(text: &str, line: usize) -> Result<(String, &str), LexError> {
     }
 }
 
+/// Brace-balanced scan for a Lua-expression default (`=( EXPR )`).
+///
+/// `text` is the content AFTER the opening `(`. Scans until the matching
+/// `)` is found, honouring nested parens and basic double/single-quoted
+/// string literals. Returns `(trimmed_expr, text_after_close_paren)`.
+///
+/// **Limitation (v1):** Lua long-bracket strings (`[[...]]`) inside the
+/// expression are NOT handled by this scanner; they are treated as ordinary
+/// bracket characters. Authors who need a long-bracket string inside a
+/// default expression must use a regular double-quoted string instead.
+/// This limitation is documented in §7.1.1 of the Cook Standard.
+fn scan_balanced_paren<'a>(
+    text: &'a str,
+    line: usize,
+    chore: &str,
+    name: &str,
+) -> Result<(String, &'a str), LexError> {
+    let bytes = text.as_bytes();
+    let mut depth = 1usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok((text[..i].trim().to_string(), &text[i + 1..]));
+                }
+                i += 1;
+            }
+            b'"' | b'\'' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                if i >= bytes.len() {
+                    return Err(LexError::UnclosedChoreParamDefault {
+                        line,
+                        chore: chore.into(),
+                        name: name.into(),
+                    });
+                }
+                i += 1; // skip closing quote
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    Err(LexError::UnclosedChoreParamDefault {
+        line,
+        chore: chore.into(),
+        name: name.into(),
+    })
+}
+
 /// Parse the chore parameter list from `text`.
 ///
-/// Reads bare-identifier params with optional `="STRING"` defaults, enforces
-/// required-before-defaulted ordering, duplicate-name rejection, and
-/// reserved-name rejection. Stops at `:` or end-of-input.
-///
-/// For `=(...)` (Lua-expression default), rejects with `BadChoreParamDefault`
-/// for now. Task 6 will support it.
+/// Reads bare-identifier params with optional `="STRING"` or `=( EXPR )`
+/// defaults, enforces required-before-defaulted ordering, duplicate-name
+/// rejection, and reserved-name rejection. Stops at `:` or end-of-input.
 ///
 /// Returns `(params, remaining_text)`.
 fn parse_chore_params<'a>(
@@ -296,14 +355,19 @@ fn parse_chore_params<'a>(
                 });
                 seen_defaulted = true;
             } else if after_eq.starts_with('(') {
-                // Lua-expression default — accepted shape but not yet
-                // wired through codegen/runtime. Task 6 of COOK-36
-                // replaces this rejection with a brace-balanced scan.
-                return Err(LexError::ChoreParamLuaDefaultNotYetSupported {
-                    line,
-                    chore: chore_name.to_string(),
+                // Lua-expression default: brace-balanced scan.
+                let rest = &after_eq[1..];
+                let (lua_expr, after_close) =
+                    scan_balanced_paren(rest, line, chore_name, &param_name)?;
+                params.push(ChoreParam::DefaultedLua {
                     name: param_name,
+                    default_lua: lua_expr,
+                    line,
+                    col: 0,
                 });
+                seen_defaulted = true;
+                remaining = after_close.trim_start();
+                continue;
             } else {
                 return Err(LexError::BadChoreParamDefault {
                     line,
@@ -318,12 +382,10 @@ fn parse_chore_params<'a>(
                 let defaulted_name = params
                     .iter()
                     .rev()
-                    .find_map(|p| {
-                        if let ChoreParam::DefaultedString { name, .. } = p {
-                            Some(name.clone())
-                        } else {
-                            None
-                        }
+                    .find_map(|p| match p {
+                        ChoreParam::DefaultedString { name, .. }
+                        | ChoreParam::DefaultedLua { name, .. } => Some(name.clone()),
+                        _ => None,
                     })
                     .unwrap_or_default();
                 return Err(LexError::RequiredAfterDefaulted {

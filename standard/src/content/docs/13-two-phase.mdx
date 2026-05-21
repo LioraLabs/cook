@@ -40,6 +40,7 @@ Every Lua expression in a Cookfile is evaluated in exactly one of three timings.
 |---|---|---|---|
 | `config` block body                          | §{decl.config}, §{decl.config-composition} | **load** (before any register phase begins) | no — runs against Cook Lua API state directly |
 | Cook module top level (`return mod`) and `init()` | §{comp.overview} | **load** (when the importing Cookfile's `use` resolves) | no |
+| Chore parameter default (Lua expression)     | §{chores.params} | **load** (Cookfile-scope VM, evaluated lazily when argv is absent; read-only `cook.*` — register-only API calls from inside the expression raise an error) | no |
 | `register_block` body                        | §{decl.register} | **register** | no — spliced verbatim into the compiled register-phase Lua program |
 | top-level `module_call` (`alias.fn(…)`)      | §{toplevel.module-call} | **register** | no — spliced verbatim at source position |
 | `inline_lua_line` (`>>` *body*)              | §{steps.lua} | **register** | no — inlined into the recipe-body Lua function |

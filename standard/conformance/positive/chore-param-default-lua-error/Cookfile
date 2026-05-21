@@ -1,0 +1,2 @@
+chore greet who=(error("boom"))
+    > print(who)

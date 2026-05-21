@@ -55,6 +55,17 @@ pub enum ChoreParamMeta {
     /// A defaulted positional — falls back to `default` when argv
     /// is exhausted at this position.
     DefaultedString { name: String, default: String },
+    /// A defaulted positional with a Lua-expression default — evaluates
+    /// the closure when argv is exhausted at this position.
+    ///
+    /// `default_key_name` is a named-registry key (set via
+    /// `lua.set_named_registry_value`) referencing the closure
+    /// `function() return (EXPR) end` emitted by codegen. Retrieved at
+    /// binding time via `lua.named_registry_value::<LuaFunction>(&name)`.
+    ///
+    /// Named registry keys use a unique string per registration pass;
+    /// the key is `"__cook_chore_default:<chore>:<param>:<serial>"`.
+    DefaultedLua { name: String, default_key_name: String },
     /// A one-or-more variadic — collects all remaining argv into a Lua sequence;
     /// zero remaining argv is an error.
     VariadicPlus { name: String },
@@ -69,6 +80,7 @@ impl ChoreParamMeta {
         match self {
             ChoreParamMeta::Required { name } => name,
             ChoreParamMeta::DefaultedString { name, .. } => name,
+            ChoreParamMeta::DefaultedLua { name, .. } => name,
             ChoreParamMeta::VariadicPlus { name } => name,
             ChoreParamMeta::VariadicStar { name } => name,
         }
@@ -121,6 +133,19 @@ fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec
     Ok((ingredients, excludes, requires))
 }
 
+/// Next serial for named-registry keys used by `DefaultedLua` params.
+///
+/// Each `defaulted_lua` parameter stores its default closure under a unique
+/// named-registry key so that `ChoreParamMeta` remains `Clone` (unlike
+/// `mlua::RegistryKey` which is not `Clone`). The key is scoped to the
+/// current Lua VM instance; a fresh counter value is assigned for each
+/// parameter at registration time.
+fn next_lua_default_serial() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Extract the `__params` metadata array from a chore's registration table.
 ///
 /// Returns an empty `Vec` when `meta` has no `__params` key (i.e. a recipe or
@@ -129,8 +154,15 @@ fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec
 ///
 /// - `"required"` → `ChoreParamMeta::Required { name }`
 /// - `"defaulted_string"` → `ChoreParamMeta::DefaultedString { name, default }`
-/// - anything else → runtime error (planned for Tasks 5/6)
-fn parse_chore_params_meta(meta: &LuaTable) -> LuaResult<Vec<ChoreParamMeta>> {
+/// - `"defaulted_lua"` → `ChoreParamMeta::DefaultedLua { name, default_key_name }`
+/// - `"variadic_plus"` → `ChoreParamMeta::VariadicPlus { name }`
+/// - `"variadic_star"` → `ChoreParamMeta::VariadicStar { name }`
+/// - anything else → runtime error
+///
+/// For `defaulted_lua`, the `default` field (a Lua function) is stored in the
+/// named registry under a unique key, and the key name is recorded on the
+/// `ChoreParamMeta` so that `build_chore_params_table` can retrieve it.
+fn parse_chore_params_meta(lua: &Lua, meta: &LuaTable) -> LuaResult<Vec<ChoreParamMeta>> {
     let params_tbl = match meta.get::<Option<LuaTable>>("__params")? {
         Some(t) => t,
         None => return Ok(Vec::new()),
@@ -148,6 +180,13 @@ fn parse_chore_params_meta(meta: &LuaTable) -> LuaResult<Vec<ChoreParamMeta>> {
                 let default: String = entry.get("default")?;
                 out.push(ChoreParamMeta::DefaultedString { name, default });
             }
+            "defaulted_lua" => {
+                let func: LuaFunction = entry.get("default")?;
+                let serial = next_lua_default_serial();
+                let key_name = format!("__cook_chore_default:{}:{}", name, serial);
+                lua.set_named_registry_value(&key_name, func)?;
+                out.push(ChoreParamMeta::DefaultedLua { name, default_key_name: key_name });
+            }
             "variadic_plus" => {
                 out.push(ChoreParamMeta::VariadicPlus { name });
             }
@@ -156,7 +195,7 @@ fn parse_chore_params_meta(meta: &LuaTable) -> LuaResult<Vec<ChoreParamMeta>> {
             }
             other => {
                 return Err(mlua::Error::runtime(format!(
-                    "chore parameter kind '{other}' is not yet supported in this build"
+                    "chore parameter kind '{other}' is not supported"
                 )));
             }
         }
@@ -253,7 +292,7 @@ pub fn install_cook_api(
             let key = lua.create_registry_value(func)?;
             let line: usize = meta.get("__line").unwrap_or(0);
             let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
-            let params = parse_chore_params_meta(&meta)?;
+            let params = parse_chore_params_meta(lua, &meta)?;
             recipes_chore.borrow_mut().push(RegisteredRecipe {
                 name,
                 function: key,

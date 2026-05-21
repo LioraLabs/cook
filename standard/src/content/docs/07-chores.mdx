@@ -37,8 +37,9 @@ A `param` is one of:
 
 - **Required parameter:** a `BARE_IDENTIFIER`. Must be supplied at invocation as a positional argument.
 - **Defaulted parameter (string literal):** `BARE_IDENTIFIER "=" STRING`. If no argv is supplied at this position at invocation time, the literal string binds.
+- **Defaulted parameter (Lua expression):** `BARE_IDENTIFIER "=" "(" LUA_EXPR ")"`. If no argv is supplied at this position, the Lua expression is evaluated lazily against the Cookfile-scope Lua VM (§13.2 load phase). The result MUST be a string; a non-string return raises a diagnostic. The expression is evaluated only when argv is exhausted at this position — it is NOT evaluated when an explicit argv value is supplied. Note: Lua long-bracket strings (`[[...]]`) are NOT honoured inside the default expression in this version of the Standard; authors who need a long-bracket string inside a default MUST use a regular double-quoted string instead.
 
-**Ordering rule (normative).** Within a `param_list`, every required parameter MUST precede every defaulted parameter. A conforming implementation MUST reject a chore header that violates this order.
+**Ordering rule (normative).** Within a `param_list`, every required parameter MUST precede every defaulted parameter (string-literal or Lua-expression form). A conforming implementation MUST reject a chore header that violates this order.
 
 **Reserved-name rule (normative).** Parameter names MUST NOT equal one of the reserved identifiers from §A.2 (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`). Parameter names MUST NOT contain `.`. Duplicate parameter names within one header MUST be rejected at parse time.
 
@@ -72,6 +73,8 @@ Placeholder substitution (`$<NAME>`) and environment-variable export to shell ch
 | Required arg missing | `chore 'NAME' requires parameter 'PARAM' (declared at line LINE); supply it as a positional argument` |
 | Excess argv with no variadic | `chore 'NAME' takes K parameter(s) but M positional argument(s) were supplied` |
 | Recipe receives argv | `recipe 'NAME': recipes do not take parameters; received N positional argument(s) (use '@PRESET' to select a config preset)` |
+| Lua-expression default raises a Lua error | `chore 'NAME': default for parameter 'PARAM' raised a Lua error (defined at line LINE): MESSAGE` |
+| Lua-expression default returns non-string | `chore 'NAME': default for parameter 'PARAM' must evaluate to a string; got TYPE (defined at line LINE)` |
 
 ## 7.1.3. Variadic parameters [#chores.variadic]
 

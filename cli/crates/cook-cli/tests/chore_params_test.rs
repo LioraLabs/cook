@@ -232,3 +232,79 @@ fn cook_list_does_not_crash_on_parametric_chore() {
         "cook list with a parametric chore should succeed (the chore body must be skipped, not invoked)\nstdout: {stdout}\nstderr: {stderr}"
     );
 }
+
+// ── COOK-36 Task 6: Lua-expression chore param defaults ─────────────────────
+
+/// `cook greet` (no argv) where `chore greet who=(os.getenv("USER") or "world")`
+/// declares a Lua-expression default. The default evaluates and the body runs.
+#[test]
+fn chore_lua_default_evaluates_when_argv_absent() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore greet who=(os.getenv(\"USER\") or \"world\")\n    > print(\"hello \" .. who)\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["greet"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {stderr}");
+    // Either USER env var value or "world" fallback — both are valid.
+    assert!(stdout.contains("hello "), "stdout: {stdout}");
+}
+
+/// `cook greet alice` where `chore greet who=("fallback")` declares a
+/// Lua-expression default. The explicit argv overrides the default.
+#[test]
+fn chore_lua_default_overridden_by_explicit_argv() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore greet who=(\"fallback\")\n    > print(\"hello \" .. who)\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["greet", "alice"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stderr: {stderr}");
+    assert!(stdout.contains("hello alice"), "stdout: {stdout}");
+    assert!(!stdout.contains("fallback"), "stdout should not contain 'fallback': {stdout}");
+}
+
+/// `cook greet` (no argv) where the default expression calls `error("boom")`.
+/// The runtime MUST surface a diagnostic containing "default for parameter 'who' raised a Lua error".
+#[test]
+fn chore_lua_default_error_surfaces_diagnostic() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore greet who=(error(\"boom\"))\n    > print(who)\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["greet"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "expected failure, stderr: {stderr}");
+    assert!(
+        stderr.contains("default for parameter 'who' raised a Lua error"),
+        "stderr: {stderr}"
+    );
+}
+
+/// `cook greet` (no argv) where the default expression returns a non-string (`{1,2,3}`).
+/// The runtime MUST surface a diagnostic containing "must evaluate to a string".
+#[test]
+fn chore_lua_default_non_string_surfaces_diagnostic() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore greet who=({1,2,3})\n    > print(who)\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["greet"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "expected failure, stderr: {stderr}");
+    assert!(
+        stderr.contains("must evaluate to a string"),
+        "stderr: {stderr}"
+    );
+}

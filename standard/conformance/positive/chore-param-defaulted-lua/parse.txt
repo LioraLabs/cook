@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+    Chore name="release" line=1
+      params: [DefaultedLua name="version" default_lua="cook.git.head_tag() or \"v0\""]
+      deps: []
+      steps:
+        Lua code="release.cut(version)"
+  register_blocks: []
+  top_level_module_calls: []
