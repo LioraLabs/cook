@@ -47,7 +47,8 @@ module.exports = grammar({
 
     // ── Top-level declarations ─────────────────────────────────
 
-    use_declaration: ($) => seq("use", field("module", $._name), $._newline),
+    use_declaration: ($) =>
+      seq("use", field("module", $._lua_ident_name), $._newline),
 
     import_declaration: ($) =>
       seq(
@@ -98,7 +99,7 @@ module.exports = grammar({
         1,
         seq(
           "recipe",
-          field("name", $._name),
+          field("name", $._decl_name),
           optional(seq(":", $.dependency_list)),
         ),
       ),
@@ -119,7 +120,7 @@ module.exports = grammar({
     chore_header: ($) =>
       seq(
         "chore",
-        field("name", $._name),
+        field("name", $._decl_name),
         optional(seq(":", $.dependency_list)),
       ),
 
@@ -325,6 +326,28 @@ module.exports = grammar({
 
     _bare_identifier: ($) => /[a-zA-Z_][a-zA-Z0-9_.\-]*/,
 
+    // CS-0035 declaration-site no-dots. `recipe_header` and `chore_header`
+    // use this stricter name shape: dots are rejected. Hyphens remain
+    // legal (e.g. `recipe my-task`). The quoted form is also dot-free.
+    _decl_name: ($) =>
+      choice(
+        alias($._decl_bare, $.identifier),
+        alias($._decl_string, $.string),
+      ),
+    _decl_bare: ($) => /[A-Za-z_][A-Za-z0-9_\-]*/,
+    _decl_string: ($) => /"[^"\.\n]*"/,
+
+    // CS-0035 use_name LUA_IDENT constraint. `use_declaration`'s name is
+    // bound at load time as a Lua local under the same spelling, so it
+    // MUST be a strict Lua identifier: no dots, no hyphens, no spaces.
+    _lua_ident_name: ($) =>
+      choice(
+        alias($._lua_ident, $.identifier),
+        alias($._lua_ident_string, $.string),
+      ),
+    _lua_ident: ($) => /[A-Za-z_][A-Za-z0-9_]*/,
+    _lua_ident_string: ($) => /"[A-Za-z_][A-Za-z0-9_]*"/,
+
     // §2.11 placeholder. The seq is structured (rather than `token(...)`)
     // so the `$<`/`>` punctuation and the inner identifier can each be
     // captured separately for highlighting. Two surfaces share the byte
@@ -360,23 +383,52 @@ module.exports = grammar({
     // pair. NOTE: §2.11 strict-bail says a malformed `$<bad spaces>`
     // is literal text; with this structured rule the seq commits to
     // `$<` and errors at the missing `>`. The Rust parser remains the
-    // source of truth for that edge case (tree-sitter-cook is stale).
+    // source of truth for that edge case.
+    // CS-0061: STRING admits both double- and single-quoted forms.
     string: ($) =>
-      seq(
-        '"',
-        repeat(
-          choice(
-            alias($._string_placeholder, $.placeholder),
-            $._string_chunk,
+      choice(
+        seq(
+          '"',
+          repeat(
+            choice(
+              alias($._string_placeholder, $.placeholder),
+              $._dq_string_chunk,
+            ),
           ),
+          token.immediate('"'),
         ),
-        token.immediate('"'),
+        seq(
+          "'",
+          repeat(
+            choice(
+              alias($._sq_string_placeholder, $.placeholder),
+              $._sq_string_chunk,
+            ),
+          ),
+          token.immediate("'"),
+        ),
       ),
 
-    _string_chunk: ($) =>
+    _dq_string_chunk: ($) =>
       choice(
         token.immediate(/[^"$]+/),
         token.immediate("$"),
+      ),
+
+    _sq_string_chunk: ($) =>
+      choice(
+        token.immediate(/[^'$]+/),
+        token.immediate("$"),
+      ),
+
+    _sq_string_placeholder: ($) =>
+      seq(
+        token.immediate("$<"),
+        alias(
+          token.immediate(/[A-Za-z_][A-Za-z0-9_.]*/),
+          $.placeholder_ident,
+        ),
+        token.immediate(">"),
       ),
 
     path: ($) => /[^\s\n]+/,

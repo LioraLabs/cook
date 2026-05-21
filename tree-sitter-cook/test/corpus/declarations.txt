@@ -223,3 +223,33 @@ cook_cc.bin("a", { sources = { "a.c" } })
       (shell_content)))
   (top_level_module_call
     (module_call_text)))
+
+================
+Use declaration (CS-0035 LUA_IDENT — accepts bare ident)
+================
+
+use cook_cc
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier)))
+
+================
+Test step with single-quoted as_name (CS-0061)
+================
+
+recipe r
+    test { true } as 'name'
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (test_step
+      body: (shell_block
+        (shell_content))
+      as_name: (string))))

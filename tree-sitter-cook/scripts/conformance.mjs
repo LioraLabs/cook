@@ -86,21 +86,16 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0026: absolute import path — parse-time semantic rejection, not syntactic'],
   ['036-import-sigil-dotdot-rejected',
    'CS-0026: sigil import path with `..` segments — parse-time semantic rejection, not syntactic'],
-  // CS-0035: env reserved-word check for first segment of recipe name.
-  ['037-reserved-env-recipe-rejected',
-   'CS-0035: `env.*` recipe name — parse-time reserved-word rejection, not syntactic'],
+  // CS-0035: env reserved-word check — closed: `env.*` recipe names are
+  // rejected by the grammar's `_decl_name` (no-dots rule, COOK-55) which
+  // means `env.foo` produces ERROR before any reserved-name check fires.
   // CS-0033: sigil-placeholder semantic rules.
   ['038-out-zero-rejected-sigil',
    'CS-0033: `$<out_0>` (zero index) — codegen rejection, not syntactic'],
   ['039-in-in-many-to-one-sigil',
    'CS-0033: `$<in>` in many-to-one body — codegen rejection, not syntactic'],
-  // CS-0035: use_name LUA_IDENT constraint.
-  ['040-use-name-with-spaces-rejected',
-   'CS-0035: `use` name with spaces — parse-time LUA_IDENT rejection, not syntactic'],
-  ['041-use-name-with-dash-rejected',
-   'CS-0035: `use` name with `-` — parse-time LUA_IDENT rejection, not syntactic'],
-  ['042-use-name-with-dot-rejected',
-   'CS-0035: `use` name with `.` — parse-time LUA_IDENT rejection, not syntactic'],
+  // CS-0035 use_name LUA_IDENT constraint — closed by COOK-55: 040/041/042
+  // are now grammar-rejected by `_lua_ident_name`.
 ]);
 
 // Positive fixtures the Rust parser accepts but tree-sitter-cook cannot
@@ -111,12 +106,10 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
 const KNOWN_STALE_POSITIVES = new Map([
   // CS-0035 multi-line Lua opaque-span tracking — closed by COOK-53.
   // CS-0035 POSIX heredoc opaque-span tracking — closed by COOK-54.
-  ['044-test-as-modifier',
-   'CS-0061: tree-sitter STRING is double-quoted only; fixture uses single quotes'],
-  ['045-test-as-with-substitution',
-   'CS-0061: tree-sitter STRING is double-quoted only; fixture uses single quotes'],
-  ['048-test-cache-key-independence',
-   'CS-0061: tree-sitter STRING is double-quoted only; fixture uses single quotes'],
+  // CS-0061 single-quoted STRING — closed by COOK-55.
+  // (List is empty; the conformance audit is complete for v0.12.
+  // Re-add entries here for fixtures that exercise a newly-spec'd
+  // grammar feature pending implementation.)
 ]);
 
 function corpusRoot() {
