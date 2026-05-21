@@ -45,8 +45,10 @@ pub enum LexError {
     ReservedChoreParam { line: usize, chore: String, name: String },
     #[error("line {line}: chore '{chore}': required parameter '{required}' must precede defaulted parameter '{defaulted}'")]
     RequiredAfterDefaulted { line: usize, chore: String, required: String, defaulted: String },
-    #[error("line {line}: chore '{chore}': default for parameter '{name}' must be a quoted string or a parenthesised Lua expression")]
+    #[error("line {line}: chore '{chore}': default for parameter '{name}' must be a quoted string")]
     BadChoreParamDefault { line: usize, chore: String, name: String },
+    #[error("line {line}: chore '{chore}': Lua-expression default '=( … )' for parameter '{name}' is not yet supported in this version of cook (planned for a later release)")]
+    ChoreParamLuaDefaultNotYetSupported { line: usize, chore: String, name: String },
     #[error("line {line}: chore '{chore}': unclosed default for parameter '{name}' (expected closing '\"' or ')')")]
     UnclosedChoreParamDefault { line: usize, chore: String, name: String },
     #[error("line {line}: recipe '{name}': recipes don't take parameters; use a 'chore' (§7) or a config preset (§5)")]
@@ -201,8 +203,10 @@ fn parse_chore_params<'a>(
                 });
                 seen_defaulted = true;
             } else if after_eq.starts_with('(') {
-                // Lua-expression default — not yet supported (Task 6).
-                return Err(LexError::BadChoreParamDefault {
+                // Lua-expression default — accepted shape but not yet
+                // wired through codegen/runtime. Task 6 of COOK-36
+                // replaces this rejection with a brace-balanced scan.
+                return Err(LexError::ChoreParamLuaDefaultNotYetSupported {
                     line,
                     chore: chore_name.to_string(),
                     name: param_name,

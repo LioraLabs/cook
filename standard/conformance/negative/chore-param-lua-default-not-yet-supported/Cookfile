@@ -1,0 +1,2 @@
+chore release version=(cook.git.head_tag() or "v0")
+    > release.cut(version)
