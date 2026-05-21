@@ -1769,6 +1769,7 @@ fn test_accessor_placeholder_with_driver_in_output_pattern_ok() {
 fn make_chore(name: &str, deps: Vec<&str>, steps: Vec<Step>) -> Chore {
     Chore {
         name: name.to_string(),
+        params: vec![],
         deps: deps.into_iter().map(String::from).collect(),
         steps,
         line: 1,
@@ -3049,6 +3050,7 @@ fn codegen_chore_uses_register_surface_chore() {
         recipes: vec![],
         chores: vec![Chore {
             name: "clean".to_string(),
+            params: vec![],
             deps: vec![],
             steps: vec![],
             line: 8,

@@ -668,7 +668,7 @@ pub(crate) fn parse_chore(
             | Token::ImportDecl { .. }
             | Token::RegisterHeader => {
                 return Ok((
-                    Chore { name, deps, steps, line: chore_line },
+                    Chore { name, params: vec![], deps, steps, line: chore_line },
                     pos,
                 ));
             }
@@ -685,7 +685,7 @@ pub(crate) fn parse_chore(
                         .unwrap_or("");
                     if !raw.starts_with(|c: char| c.is_whitespace()) {
                         return Ok((
-                            Chore { name, deps, steps, line: chore_line },
+                            Chore { name, params: vec![], deps, steps, line: chore_line },
                             pos,
                         ));
                     }
@@ -787,5 +787,5 @@ pub(crate) fn parse_chore(
     }
 
     // EOF terminates
-    Ok((Chore { name, deps, steps, line: chore_line }, pos))
+    Ok((Chore { name, params: vec![], deps, steps, line: chore_line }, pos))
 }

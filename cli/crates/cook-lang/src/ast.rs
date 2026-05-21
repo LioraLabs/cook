@@ -56,8 +56,30 @@ pub struct TopLevelModuleCall {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ChoreParam {
+    Required { name: String, line: usize, col: usize },
+    DefaultedString { name: String, default: String, line: usize, col: usize },
+    DefaultedLua { name: String, default_lua: String, line: usize, col: usize },
+    VariadicPlus { name: String, line: usize, col: usize },
+    VariadicStar { name: String, line: usize, col: usize },
+}
+
+impl ChoreParam {
+    pub fn name(&self) -> &str {
+        match self {
+            ChoreParam::Required { name, .. }
+            | ChoreParam::DefaultedString { name, .. }
+            | ChoreParam::DefaultedLua { name, .. }
+            | ChoreParam::VariadicPlus { name, .. }
+            | ChoreParam::VariadicStar { name, .. } => name,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Chore {
     pub name: String,
+    pub params: Vec<ChoreParam>,
     pub deps: Vec<String>,
     pub steps: Vec<Step>,
     pub line: usize,
@@ -309,6 +331,37 @@ mod tests {
         };
         assert_eq!(call.line, 3);
         assert!(call.code.contains("cook_cc.bin"));
+    }
+
+    // ── COOK-36: ChoreParam AST scaffold ─────────────────────────────
+
+    #[test]
+    fn chore_carries_empty_params_by_default() {
+        let chore = Chore {
+            name: "clean".to_string(),
+            params: vec![],
+            deps: vec![],
+            steps: vec![],
+            line: 1,
+        };
+        assert!(chore.params.is_empty());
+    }
+
+    #[test]
+    fn chore_param_variants_construct() {
+        let p_req = ChoreParam::Required { name: "target".into(), line: 1, col: 13 };
+        let p_def_str = ChoreParam::DefaultedString {
+            name: "host".into(), default: "prod".into(), line: 1, col: 20,
+        };
+        let p_def_lua = ChoreParam::DefaultedLua {
+            name: "version".into(), default_lua: "cook.git.head_tag() or \"v0\"".into(),
+            line: 1, col: 27,
+        };
+        let p_var_plus = ChoreParam::VariadicPlus { name: "FILES".into(), line: 1, col: 36 };
+        let p_var_star = ChoreParam::VariadicStar { name: "EXTRAS".into(), line: 1, col: 44 };
+        for p in [p_req, p_def_str, p_def_lua, p_var_plus, p_var_star] {
+            let _ = p.clone();
+        }
     }
 
     #[test]
