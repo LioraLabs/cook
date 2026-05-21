@@ -455,33 +455,25 @@ impl From<cook_register::RegisterError> for EngineError {
             }
             // COOK-36 Task 4: argv-binding diagnostics surface as
             // RegistrationFailed so the CLI can render the message and exit.
-            cook_register::RegisterError::ChoreParamMissing { chore, name, line } => {
+            // The variants below carry the user-visible string in their
+            // `#[error(...)]` attribute (`cook-register/src/lib.rs`); pull
+            // it via `to_string()` so the wording lives in one place.
+            ref e @ cook_register::RegisterError::ChoreParamMissing { ref chore, .. } => {
                 EngineError::RegistrationFailed {
                     recipe: chore.clone(),
-                    message: format!(
-                        "chore '{chore}' requires parameter '{name}' \
-                         (declared at line {line}); supply it as a positional argument"
-                    ),
+                    message: e.to_string(),
                 }
             }
-            cook_register::RegisterError::ChoreTooManyArgv {
-                chore,
-                declared,
-                supplied,
-            } => EngineError::RegistrationFailed {
-                recipe: chore.clone(),
-                message: format!(
-                    "chore '{chore}' takes {declared} parameter(s) but {supplied} \
-                     positional argument(s) were supplied"
-                ),
-            },
-            cook_register::RegisterError::RecipeWithArgv { name, supplied } => {
+            ref e @ cook_register::RegisterError::ChoreTooManyArgv { ref chore, .. } => {
+                EngineError::RegistrationFailed {
+                    recipe: chore.clone(),
+                    message: e.to_string(),
+                }
+            }
+            ref e @ cook_register::RegisterError::RecipeWithArgv { ref name, .. } => {
                 EngineError::RegistrationFailed {
                     recipe: name.clone(),
-                    message: format!(
-                        "recipe '{name}': recipes do not take parameters; received {supplied} \
-                         positional argument(s) (use '@PRESET' to select a config preset)"
-                    ),
+                    message: e.to_string(),
                 }
             }
         }

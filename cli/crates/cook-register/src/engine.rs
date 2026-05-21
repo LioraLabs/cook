@@ -447,12 +447,48 @@ pub fn register_cookfile(
                     },
                 );
                 continue;
-            } else {
+            } else if !params_meta.is_empty() {
                 // No specific target requested (e.g. cook list, cook dag,
-                // or a test that doesn't set target_recipe). Call with no
-                // arguments — the body may fail if it dereferences __cook_params,
-                // but that is the expected behavior for list/dag paths (they
-                // don't run chore bodies anyway via the dispatch path).
+                // or a test that doesn't set target_recipe) AND this chore
+                // declares parameters. Skip the body invocation for the same
+                // reason as the targeted-but-not-this-one case above: the
+                // body would raise a nil-index Lua error on its first
+                // `local NAME = __cook_params.NAME` prelude line. Paramless
+                // chores fall through to the regular `func.call::<()>(())`
+                // arm below (those bodies don't reference __cook_params, and
+                // capturing their units is useful for list/dag enumeration).
+                lua.remove_registry_value(func_key_clone)?;
+                let _ = body_slot.borrow_mut().take();
+                names.push(crate::RegisteredRecipePub {
+                    name: name.clone(),
+                    source,
+                    kind,
+                    requires: requires.clone(),
+                });
+                units_by_recipe.insert(
+                    name.clone(),
+                    RecipeUnits {
+                        recipe_name: name.clone(),
+                        deps: requires,
+                        units: vec![],
+                        step_groups: vec![],
+                        working_dir: builder.working_dir.clone(),
+                        env_vars: builder
+                            .env_vars
+                            .borrow()
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                        terminal_outputs: vec![],
+                        dep_edges: vec![],
+                        probes: vec![],
+                    },
+                );
+                continue;
+            } else {
+                // No specific target, paramless chore — call normally. This
+                // path preserves the pre-COOK-36 behavior of capturing chore
+                // units during list/dag enumeration so tools can inspect them.
                 func.call::<()>(()).map_err(RegisterError::Lua)?;
             }
         } else {

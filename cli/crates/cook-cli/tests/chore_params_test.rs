@@ -105,3 +105,72 @@ fn chore_missing_required_argv_errors() {
         "expected stderr to contain \"requires parameter 'msg'\"\nstderr: {stderr}"
     );
 }
+
+/// `cook greet a b` where `chore greet msg` declares one required parameter.
+/// The extra argv must surface the "takes K parameter(s) but M supplied"
+/// diagnostic from §7.1.2.
+#[test]
+fn chore_too_many_argv_errors() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore greet msg\n    > print(msg)\n",
+    )
+    .unwrap();
+
+    let out = run_cook_raw(tmp.path(), &["greet", "hello", "world"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "cook greet hello world (1 declared, 2 supplied) should have failed\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("takes 1 parameter") && stderr.contains("2 positional"),
+        "expected stderr to contain the takes/supplied diagnostic\nstderr: {stderr}"
+    );
+}
+
+/// `cook build foo` where `recipe build` declares no parameters. Recipes never
+/// take parameters (§6.1); the extra argv must raise the canonical diagnostic.
+#[test]
+fn recipe_with_argv_errors() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "recipe build\n    > print(\"building\")\n",
+    )
+    .unwrap();
+
+    let out = run_cook_raw(tmp.path(), &["build", "foo"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "cook build foo should have failed (recipes take no params)\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("recipes do not take parameters")
+            || stderr.contains("recipe 'build'"),
+        "expected stderr to mention recipes-take-no-params\nstderr: {stderr}"
+    );
+}
+
+/// `cook list` on a Cookfile that has a parametric chore must not crash with
+/// a nil-index Lua error. This guards against regressing the no-target branch
+/// of the register-engine chore dispatch.
+#[test]
+fn cook_list_does_not_crash_on_parametric_chore() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore greet msg\n    > print(msg)\n",
+    )
+    .unwrap();
+
+    let out = run_cook_raw(tmp.path(), &["list"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "cook list with a parametric chore should succeed (the chore body must be skipped, not invoked)\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
