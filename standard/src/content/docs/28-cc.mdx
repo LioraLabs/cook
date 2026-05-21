@@ -12,7 +12,7 @@ The `cc` module specifies a portable surface for declarative C and C++ native bu
 
 A conforming implementation MUST expose the fifteen public functions listed in §{cat.cc.surface} (the thirteen from v0.5 plus the `cc.checks` namespace and `cc.config_header`) and MUST honour their option tables, return values, and propagation semantics. A conforming implementation SHOULD provide informative error diagnostics for the negative cases described per-function.
 
-The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. This chapter normatively specifies surface v0.7 (cook_cc 0.8.x): the v0.6 surface plus the PRIVATE/PUBLIC propagation distinction introduced by CS-0080 (§{cat.cc.transitive.priv-pub}). Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
+The official `cook_cc` rock at `rocks.usecook.com` is the reference implementation. This chapter normatively specifies surface v0.8 (cook_cc 0.10.x): the v0.7 surface plus the additive `SharedOpts.output` field introduced by CS-0084 (§{cat.cc.shared}). The v0.7 surface (cook_cc 0.8.x–0.9.x) is the v0.6 surface plus the PRIVATE/PUBLIC propagation distinction introduced by CS-0080 (§{cat.cc.transitive.priv-pub}). Conformance is independent of the rock's internal file decomposition; only the surface returned from `require("cook_cc")` is normative.
 
 ## 28.2. Identity, resolution, init hook [#cat.cc.identity]
 
@@ -82,9 +82,11 @@ Error model identical to §{cat.cc.bin}.
 cc.shared(name: string, opts: SharedOpts) -> string
 ```
 
-Registers a shared-library target. A conforming implementation MUST compile sources with `-fPIC` and link the objects to `build/lib/lib<name>.<ext>`, where `<ext>` is `so` on Linux and macOS and `dll` on Windows. The linker MUST be invoked with `-shared` on Linux, `-dynamiclib` on macOS, and `/DLL` on Windows.
+Registers a shared-library target. A conforming implementation MUST compile sources with `-fPIC` and link the objects to `build/lib/lib<name>.<ext>`, where `<ext>` is `so` on Linux and macOS and `dll` on Windows — unless `opts.output` is provided (see below). The linker MUST be invoked with `-shared` on Linux, `-dynamiclib` on macOS, and `/DLL` on Windows.
 
 `SharedOpts` fields are identical to `BinOpts`, including `needs`: compile units MUST carry `probes = {…, "cc:find:<name>", …}` and the shared-library link unit MUST weave `$<cc:find:<name>.libs>` for each entry. See §{cat.cc.needs-semantics}.
+
+`SharedOpts.output` (string, optional, CS-0084): explicit override of the link output path. When present, the implementation MUST use it verbatim as the `cc.link` output and MUST record it on the recipe's export so transitive linkers (§{cat.cc.transitive}) see the actual artifact location. The override is taken verbatim, including the filename portion — the implementation MUST NOT inject a `lib` prefix or replace the suffix. Authors targeting Windows MUST author `.dll`; authors targeting macOS MUST author `.dylib` or `.so` as their runtime loader expects. The field exists for plugin shapes where the host runtime loads the library by a fixed filename and directory (e.g., engine plugins that `dlopen("base.so")` from the binary's directory); when absent, the default `build/lib/lib<name>.<ext>` of §28.3.3 applies.
 
 The PRIVATE/PUBLIC distinction introduced by CS-0080 (§{cat.cc.transitive.priv-pub}) applies to `SharedOpts` as it does to `BinOpts`.
 
