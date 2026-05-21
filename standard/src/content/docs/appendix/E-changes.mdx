@@ -1498,3 +1498,19 @@ Three positive conformance fixtures pin the new surface: `cc-private-define-does
 **Backward compatibility.** Purely additive. No existing Cookfile becomes non-conforming. Implementations that already accept arbitrary unknown option keys (rather than erroring) are out of compliance with §28.5 independently of CS-0084; this entry does not change that. Default behaviour (no `output`) is byte-identical to v0.7.
 
 **Conformance impact.** A conforming implementation MUST honour `opts.output` verbatim when present and MUST flow the override through `cook.export`'s `lib_path` so consumers' transitive link steps see the right artifact location. No new positive conformance fixture is required at the parse layer (the field is a Lua table key); the reference implementation's busted suite locks the behaviour with a `targets.shared("plug", { output = "build/bin/plug.so" })` case asserting `units[#units].output == "build/bin/plug.so"`. Windows and macOS authors are responsible for authoring the platform-correct suffix in `output`; the implementation MUST NOT replace it.
+
+## CS-0086 — `tree-sitter-cook` v0.12 conformance audit (closes CS-0002 again) [#changes.cs-0086]
+
+**Date:** 2026-05-21
+**Version:** N/A (no normative grammar change; conformance audit only)
+**Sections affected:** none in the Standard itself. App. E (this entry); CS-0002 is now closed by this CS (analogous to CS-0014).
+
+**Summary.** Brings `tree-sitter-cook/grammar.js` and its external scanner (`tree-sitter-cook/src/scanner.c`) into syntactic conformance with Cook Standard v0.12 (App. A), addressing divergences accumulated since CS-0014's v0.2 audit. No normative grammar change — `tree-sitter-cook` was simply lagging the Rust parser, which has been the v0.x reference implementation per pre-v1 checklist E.4 throughout.
+
+**Grammar changes since v0.2** (each bullet documents one sub-issue in the cook-side milestone; bullets are populated incrementally as the sub-issues land):
+
+- _bullets are filled in as each sub-issue lands; see milestone `tree-sitter-cook v0.12 conformance` under cliban project COOK (issues COOK-50…COOK-57)_
+
+**Conformance harness.** `tree-sitter-cook/scripts/conformance.mjs` is tightened in lockstep: every entry leaves `KNOWN_STALE_POSITIVES` as the corresponding sub-issue lands, and `SEMANTIC_ONLY_NEGATIVES` is audited to remove entries that the grammar can now syntactically reject. Once the audit closes, a STALE or NOTE label on any positive becomes a non-zero exit and a regression.
+
+**Version banner.** `tree-sitter-cook/grammar.js` banner, `package.json#version+description`, and `tree-sitter.json#version+description` are bumped to claim **Cook Standard v0.12**. The Standard site's bundled wasm parser (`standard/public/tree-sitter-cook.wasm`) is rebuilt in the same change. CS-0002's "tree-sitter-cook is known stale" note is superseded by this entry.
