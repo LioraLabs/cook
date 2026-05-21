@@ -49,6 +49,8 @@ Both recipes above are semantically identical; the first uses a quoted name, the
 
 The token `recipe` is recognised as a top-level keyword only when followed by a separator (space, tab, or `"`). An identifier whose first word merely begins with `recipe` (for example, `recipes_cleanup`) is a `Content` token, not a header. See lexer test `test_recipe_prefix_is_shell_command`.
 
+A `recipe_header` MUST NOT carry parameters. Parameters are a chore-only feature (§{chores.params}). A conforming implementation MUST reject a recipe header containing any token between the name and the `:` (or end of header) that is not part of a dependency list. Recommended diagnostic form: `recipe 'NAME': recipes don't take parameters; use a 'chore' (§7) or a config preset (§5)`.
+
 ## 6.2. Dependency list [#recipes.dep-list]
 A **dependency list** is a sequence of one or more `name`s following the `:` in a recipe header (§{grammar-appendix.recipes}, `dependency_list`). Each name in a dependency list is a name reference; its resolution rules are given in §{xref.resolution} and its effect on execution ordering in §{xref.dep-implications} and §{exec.cross-recipe-ordering}.
 

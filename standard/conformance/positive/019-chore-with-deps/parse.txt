@@ -11,6 +11,7 @@ Cookfile
         Cook outputs=["out/app"] using=None
   chores:
     Chore name="play" line=4
+      params: []
       deps: ["build"]
       steps:
         Shell interactive=true command="./out/app"

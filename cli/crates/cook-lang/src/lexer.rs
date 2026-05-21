@@ -4,7 +4,7 @@ use thiserror::Error;
 pub enum Token {
     Comment(String),
     RecipeHeader { name: String, deps: Vec<String> },
-    ChoreHeader { name: String, deps: Vec<String> },
+    ChoreHeader { name: String, params: Vec<crate::ast::ChoreParam>, deps: Vec<String> },
     ConfigHeader { name: Option<String> },
     UseDecl { name: String },
     ImportDecl { name: String, path: String },
@@ -39,6 +39,18 @@ pub enum LexError {
     DottedDeclaredRecipeName { name: String, line: usize },
     #[error("line {line}: chore name '{name}': dotted chore names are not permitted at the declaration site; use 'import alias path' for cross-Cookfile namespacing")]
     DottedDeclaredChoreName { name: String, line: usize },
+    #[error("line {line}: chore '{chore}': duplicate parameter '{name}'")]
+    DuplicateChoreParam { line: usize, chore: String, name: String },
+    #[error("line {line}: chore '{chore}': parameter '{name}' uses reserved identifier")]
+    ReservedChoreParam { line: usize, chore: String, name: String },
+    #[error("line {line}: chore '{chore}': required parameter '{required}' must precede defaulted parameter '{defaulted}'")]
+    RequiredAfterDefaulted { line: usize, chore: String, required: String, defaulted: String },
+    #[error("line {line}: chore '{chore}': default for parameter '{name}' must be a quoted string or a parenthesised Lua expression")]
+    BadChoreParamDefault { line: usize, chore: String, name: String },
+    #[error("line {line}: chore '{chore}': unclosed default for parameter '{name}' (expected closing '\"' or ')')")]
+    UnclosedChoreParamDefault { line: usize, chore: String, name: String },
+    #[error("line {line}: recipe '{name}': recipes don't take parameters; use a 'chore' (§7) or a config preset (§5)")]
+    RecipeWithParams { line: usize, name: String },
 }
 
 const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "all", "env"];
@@ -106,6 +118,131 @@ fn parse_name(text: &str, line: usize) -> Result<(String, &str), LexError> {
     }
 }
 
+/// Parse the chore parameter list from `text`.
+///
+/// Reads bare-identifier params with optional `="STRING"` defaults, enforces
+/// required-before-defaulted ordering, duplicate-name rejection, and
+/// reserved-name rejection. Stops at `:` or end-of-input.
+///
+/// For `=(...)` (Lua-expression default), rejects with `BadChoreParamDefault`
+/// for now. Task 6 will support it.
+///
+/// Returns `(params, remaining_text)`.
+fn parse_chore_params<'a>(
+    text: &'a str,
+    chore_name: &str,
+    line: usize,
+) -> Result<(Vec<crate::ast::ChoreParam>, &'a str), LexError> {
+    use crate::ast::ChoreParam;
+
+    let mut params: Vec<ChoreParam> = Vec::new();
+    let mut seen_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut seen_defaulted = false;
+    let mut remaining = text.trim_start();
+
+    loop {
+        // Stop if we're at a `:` (dep list) or end of input.
+        if remaining.is_empty() || remaining.starts_with(':') {
+            break;
+        }
+
+        // Must start with an ident-start character; otherwise stop (unknown token).
+        if !is_ident_start(remaining.as_bytes()[0] as char) {
+            break;
+        }
+
+        // Parse bare identifier (param name). Param names use only [A-Za-z0-9_];
+        // dots and hyphens are NOT allowed in param names.
+        let end = remaining
+            .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .unwrap_or(remaining.len());
+        let param_name = remaining[..end].to_string();
+        remaining = remaining[end..].trim_start();
+
+        // Reserved-name check.
+        if RESERVED_RECIPE_SEGMENTS.contains(&param_name.as_str()) {
+            return Err(LexError::ReservedChoreParam {
+                line,
+                chore: chore_name.to_string(),
+                name: param_name,
+            });
+        }
+
+        // Duplicate-name check.
+        if !seen_names.insert(param_name.clone()) {
+            return Err(LexError::DuplicateChoreParam {
+                line,
+                chore: chore_name.to_string(),
+                name: param_name,
+            });
+        }
+
+        // Check for a default value.
+        if remaining.starts_with('=') {
+            let after_eq = &remaining[1..];
+            if after_eq.starts_with('"') {
+                // String default: parse up to closing `"`.
+                let inner = &after_eq[1..];
+                let close = inner
+                    .find('"')
+                    .ok_or_else(|| LexError::UnclosedChoreParamDefault {
+                        line,
+                        chore: chore_name.to_string(),
+                        name: param_name.clone(),
+                    })?;
+                let default_val = inner[..close].to_string();
+                remaining = inner[close + 1..].trim_start();
+
+                params.push(ChoreParam::DefaultedString {
+                    name: param_name,
+                    default: default_val,
+                    line,
+                    col: 0,
+                });
+                seen_defaulted = true;
+            } else if after_eq.starts_with('(') {
+                // Lua-expression default — not yet supported (Task 6).
+                return Err(LexError::BadChoreParamDefault {
+                    line,
+                    chore: chore_name.to_string(),
+                    name: param_name,
+                });
+            } else {
+                return Err(LexError::BadChoreParamDefault {
+                    line,
+                    chore: chore_name.to_string(),
+                    name: param_name,
+                });
+            }
+        } else {
+            // Required param — must precede any defaulted param.
+            if seen_defaulted {
+                // Find the name of the most-recently-added defaulted param.
+                let defaulted_name = params
+                    .iter()
+                    .rev()
+                    .find_map(|p| {
+                        if let ChoreParam::DefaultedString { name, .. } = p {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+                return Err(LexError::RequiredAfterDefaulted {
+                    line,
+                    chore: chore_name.to_string(),
+                    required: param_name,
+                    defaulted: defaulted_name,
+                });
+            }
+            params.push(ChoreParam::Required { name: param_name, line, col: 0 });
+        }
+    }
+
+    Ok((params, remaining))
+}
+
 /// Parse a space-separated list of names (quoted or bare).
 fn parse_names(text: &str, line: usize) -> Result<Vec<String>, LexError> {
     let mut result = Vec::new();
@@ -164,6 +301,13 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                 return Err(LexError::DottedDeclaredRecipeName { name, line: line_num });
             }
 
+            // Recipes don't take parameters. Reject any token between the name
+            // and the `:` (or end of header) that is not a dep list.
+            let after_name_trimmed = after_name.trim_start();
+            if !after_name_trimmed.is_empty() && !after_name_trimmed.starts_with(':') {
+                return Err(LexError::RecipeWithParams { line: line_num, name });
+            }
+
             let deps = if let Some(after_colon) = after_name.strip_prefix(':') {
                 parse_names(after_colon.trim(), line_num)?
             } else {
@@ -185,13 +329,14 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                 return Err(LexError::DottedDeclaredChoreName { name, line: line_num });
             }
 
-            let deps = if let Some(after_colon) = after_name.strip_prefix(':') {
+            let (params, after_params) = parse_chore_params(after_name, &name, line_num)?;
+            let deps = if let Some(after_colon) = after_params.strip_prefix(':') {
                 parse_names(after_colon.trim(), line_num)?
             } else {
                 vec![]
             };
 
-            Token::ChoreHeader { name, deps }
+            Token::ChoreHeader { name, params, deps }
         } else if !line.starts_with(|c: char| c.is_whitespace()) && trimmed == "config" {
             Token::ConfigHeader { name: None }
         } else if !line.starts_with(|c: char| c.is_whitespace())
@@ -752,7 +897,7 @@ recipe "build"
         assert_eq!(tokens.len(), 1);
         assert_eq!(
             tokens[0].value,
-            Token::ChoreHeader { name: "clean".to_string(), deps: vec![] },
+            Token::ChoreHeader { name: "clean".to_string(), params: vec![], deps: vec![] },
         );
     }
 
@@ -761,7 +906,7 @@ recipe "build"
         let tokens = tokenize(r#"chore "play""#).unwrap();
         assert_eq!(
             tokens[0].value,
-            Token::ChoreHeader { name: "play".to_string(), deps: vec![] },
+            Token::ChoreHeader { name: "play".to_string(), params: vec![], deps: vec![] },
         );
     }
 
@@ -772,6 +917,7 @@ recipe "build"
             tokens[0].value,
             Token::ChoreHeader {
                 name: "play".to_string(),
+                params: vec![],
                 deps: vec!["build".to_string(), "setup".to_string()],
             },
         );

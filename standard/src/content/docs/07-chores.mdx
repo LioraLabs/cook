@@ -29,6 +29,28 @@ chore play: build
 
 Two chores: `clean` (no deps), `play` (depends on the recipe `build`).
 
+## 7.1.1. Parameters [#chores.params]
+
+A chore header MAY declare zero or more **parameters** between the chore name and the optional `:`. The full parameter grammar (including variadic and Lua-expression-default forms) is given in App. A.3.1; this subsection covers the **required** and **defaulted-string** forms.
+
+A `param` is one of:
+
+- **Required parameter:** a `BARE_IDENTIFIER`. Must be supplied at invocation as a positional argument.
+- **Defaulted parameter (string literal):** `BARE_IDENTIFIER "=" STRING`. If no argv is supplied at this position at invocation time, the literal string binds.
+
+**Ordering rule (normative).** Within a `param_list`, every required parameter MUST precede every defaulted parameter. A conforming implementation MUST reject a chore header that violates this order.
+
+**Reserved-name rule (normative).** Parameter names MUST NOT equal one of the reserved identifiers from §A.2 (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`). Parameter names MUST NOT contain `.`. Duplicate parameter names within one header MUST be rejected at parse time.
+
+### Example 7.1.1.1
+
+```cook
+chore deploy target host="prod.example.com"
+    > deploy.run(target, host)
+```
+
+`deploy` declares a required parameter `target` and a defaulted-string parameter `host`. Invoking `cook deploy production` binds `target="production"` and `host="prod.example.com"`.
+
 ## 7.2. Chore body — allowed and banned step kinds [#chores.body]
 
 A chore body MAY contain any of the following step kinds:

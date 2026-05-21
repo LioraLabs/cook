@@ -207,10 +207,11 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 recipes.push(recipe);
                 pos = new_pos;
             }
-            Token::ChoreHeader { name, deps } => {
+            Token::ChoreHeader { name, params, deps } => {
                 seen_recipe = true;  // chores count toward the ordering rule
                 let chore_line = tok.line;
                 let name = name.clone();
+                let params = params.clone();
                 let deps = deps.clone();
                 if let Some(&(prior_kind, prior_line)) = callable_decls.get(&name) {
                     return Err(duplicate_callable_error(
@@ -224,7 +225,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 callable_decls.insert(name.clone(), (CallableKind::Chore, chore_line));
                 pos += 1;
                 let (chore, new_pos) =
-                    parse_chore(name, deps, chore_line, &tokens, pos, &source_lines)?;
+                    parse_chore(name, params, deps, chore_line, &tokens, pos, &source_lines)?;
                 chores.push(chore);
                 pos = new_pos;
             }

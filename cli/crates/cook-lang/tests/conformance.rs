@@ -246,6 +246,24 @@ fn format_top_level_module_call(mc: &TopLevelModuleCall) -> String {
     format!("TopLevelModuleCall code={} line={}", repr(&mc.code), mc.line)
 }
 
+fn format_chore_params(params: &[ChoreParam]) -> String {
+    if params.is_empty() {
+        return "[]".to_string();
+    }
+    let parts: Vec<String> = params.iter().map(|p| match p {
+        ChoreParam::Required { name, .. } => format!("Required name={}", repr(name)),
+        ChoreParam::DefaultedString { name, default, .. } => {
+            format!("DefaultedString name={} default={}", repr(name), repr(default))
+        }
+        ChoreParam::DefaultedLua { name, default_lua, .. } => {
+            format!("DefaultedLua name={} default_lua={}", repr(name), repr(default_lua))
+        }
+        ChoreParam::VariadicPlus { name, .. } => format!("VariadicPlus name={}", repr(name)),
+        ChoreParam::VariadicStar { name, .. } => format!("VariadicStar name={}", repr(name)),
+    }).collect();
+    format!("[{}]", parts.join(", "))
+}
+
 fn format_cookfile(c: &Cookfile) -> String {
     let mut out = String::new();
     out.push_str("Cookfile\n");
@@ -282,6 +300,7 @@ fn format_cookfile(c: &Cookfile) -> String {
             repr(&ch.name),
             ch.line,
         ));
+        out.push_str(&format!("      params: {}\n", format_chore_params(&ch.params)));
         out.push_str(&format!("      deps: {}\n", repr_list(&ch.deps)));
         out.push_str("      steps:\n");
         for s in &ch.steps {

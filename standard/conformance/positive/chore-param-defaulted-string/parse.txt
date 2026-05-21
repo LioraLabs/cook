@@ -4,10 +4,10 @@ Cookfile
   config_blocks: []
   recipes:
   chores:
-    Chore name="cleanup" line=1
-      params: []
+    Chore name="deploy" line=1
+      params: [DefaultedString name="target" default="staging"]
       deps: []
       steps:
-        Shell interactive=true command="find . -name '*.tmp' -exec rm {} \\;"
+        Lua code="deploy.run(target)"
   register_blocks: []
   top_level_module_calls: []

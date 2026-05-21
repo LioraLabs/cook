@@ -621,6 +621,7 @@ pub(crate) fn parse_recipe(
 
 pub(crate) fn parse_chore(
     name: String,
+    params: Vec<ChoreParam>,
     deps: Vec<String>,
     chore_line: usize,
     tokens: &[Located<Token>],
@@ -668,7 +669,7 @@ pub(crate) fn parse_chore(
             | Token::ImportDecl { .. }
             | Token::RegisterHeader => {
                 return Ok((
-                    Chore { name, params: vec![], deps, steps, line: chore_line },
+                    Chore { name, params, deps, steps, line: chore_line },
                     pos,
                 ));
             }
@@ -685,7 +686,7 @@ pub(crate) fn parse_chore(
                         .unwrap_or("");
                     if !raw.starts_with(|c: char| c.is_whitespace()) {
                         return Ok((
-                            Chore { name, params: vec![], deps, steps, line: chore_line },
+                            Chore { name, params, deps, steps, line: chore_line },
                             pos,
                         ));
                     }
@@ -787,5 +788,5 @@ pub(crate) fn parse_chore(
     }
 
     // EOF terminates
-    Ok((Chore { name, params: vec![], deps, steps, line: chore_line }, pos))
+    Ok((Chore { name, params, deps, steps, line: chore_line }, pos))
 }

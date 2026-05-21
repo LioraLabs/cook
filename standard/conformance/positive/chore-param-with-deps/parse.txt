@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+    Chore name="deploy" line=1
+      params: [Required name="target", DefaultedString name="host" default="prod.example.com"]
+      deps: ["build"]
+      steps:
+        Lua code="deploy.run(target, host)"
+  register_blocks: []
+  top_level_module_calls: []

@@ -5,6 +5,7 @@ Cookfile
   recipes:
   chores:
     Chore name="clean" line=1
+      params: []
       deps: []
       steps:
         Shell interactive=true command="rm -rf build"

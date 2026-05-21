@@ -5,6 +5,7 @@ Cookfile
   recipes:
   chores:
     Chore name="status" line=1
+      params: []
       deps: []
       steps:
         InlineLua code="local hostname = \"localhost\""

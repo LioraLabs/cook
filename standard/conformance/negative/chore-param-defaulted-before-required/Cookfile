@@ -1,0 +1,2 @@
+chore deploy host="prod" target
+    > deploy.run(target, host)
