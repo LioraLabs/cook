@@ -101,3 +101,7 @@ A conforming implementation that maintains a cache of recipe execution results M
 A conforming implementation MAY layer additional content-addressed artifact storage atop the index files; that layer is outside the scope of this section.
 
 Probe units (§{cat.probes}) participate in the same cache machinery: a probe's fingerprint addresses its msgpack-serialised value in `CacheBackend`, and probe artifacts ride the same `events.jsonl` event stream and Cook Cloud wire protocol as file outputs.
+
+### Note 17.5.1 — Chore parameters and caching (informative) [#exec.cache.chore-params]
+
+A reader landing here looking for how chore parameters (§{chores.params}) interact with the cache should consult §{chores.no-caching} (§7.4): a chore body MUST NOT register a cached work unit, so chore parameters never enter the cache fingerprint. Recipes do not take parameters (§{recipes.header}, §{chores.params}), so the parametric-cache-key question does not arise in the current Standard. This note exists so that searches for "parameter" within the cache chapter point readers at the right section.
