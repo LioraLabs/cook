@@ -927,10 +927,34 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
     // ingredients/excludes (parser-enforced), only `requires`.
     let mut fields = chore_metadata_fields(chore);
     fields.push(format!("__line = {}", chore.line));
+
+    // COOK-36 Task 3: emit __params metadata when the chore declares parameters.
+    if !chore.params.is_empty() {
+        let entries: Vec<String> = chore.params.iter().filter_map(|p| match p {
+            cook_lang::ast::ChoreParam::Required { name, .. } => Some(format!(
+                "{{name = \"{}\", kind = \"required\"}}",
+                escape_lua_string(name),
+            )),
+            cook_lang::ast::ChoreParam::DefaultedString { name, default, .. } => Some(format!(
+                "{{name = \"{}\", kind = \"defaulted_string\", default = \"{}\"}}",
+                escape_lua_string(name),
+                escape_lua_string(default),
+            )),
+            // Variadic and Lua-expression-default variants are emitted in
+            // Tasks 5 & 6 of COOK-36.
+            cook_lang::ast::ChoreParam::DefaultedLua { .. }
+            | cook_lang::ast::ChoreParam::VariadicPlus { .. }
+            | cook_lang::ast::ChoreParam::VariadicStar { .. } => None,
+        }).collect();
+        if !entries.is_empty() {
+            fields.push(format!("__params = {{{}}}", entries.join(", ")));
+        }
+    }
+
     let meta = format!("{{{}}}", fields.join(", "));
 
     out.push_str(&format!(
-        "cook.{}(\"{}\", {}, function()\n",
+        "cook.{}(\"{}\", {}, function(__cook_params)\n",
         REGISTER_SURFACE_CHORE_NAME,
         escape_lua_string(&chore.name),
         meta,
@@ -938,6 +962,12 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
 
     // Mark chore-body start so cook.add_unit can enforce §{chores.no-caching}.
     out.push_str("    cook._enter_chore()\n");
+
+    // COOK-36 Task 3: bind each declared parameter as a Lua local in the body's scope.
+    for p in &chore.params {
+        let n = p.name();
+        out.push_str(&format!("    local {} = __cook_params.{}\n", n, n));
+    }
 
     // Emit steps. All shell steps are interactive (parser guarantees this).
     // Consecutive Lua steps may still coalesce into a body unit, but shell

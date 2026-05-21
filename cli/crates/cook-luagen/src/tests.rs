@@ -1794,7 +1794,7 @@ fn test_compile_chore_basic_shell_interactive_cache_false() {
     // The metadata table always carries `__line = N` even when the chore has
     // no deps, so the table is non-empty.
     assert!(
-        lua.contains("cook.__register_surface_chore(\"clean\", {__line = 1}, function()"),
+        lua.contains("cook.__register_surface_chore(\"clean\", {__line = 1}, function(__cook_params)"),
         "chore should register via __register_surface_chore, got:\n{lua}"
     );
     assert!(
@@ -3023,6 +3023,50 @@ fn test_codegen_interleaves_top_level_module_calls_with_recipes() {
     let b_pos      = out.find("cpp.bin(\"b\"").expect("`b` in output");
     assert!(a_pos < recipe_pos, "cpp.bin(\"a\") should precede recipe registration");
     assert!(recipe_pos < b_pos, "recipe registration should precede cpp.bin(\"b\")");
+}
+
+// ── COOK-36 Task 3: __params metadata + body-fn local-binding prelude ──────
+
+#[test]
+fn compile_chore_emits_param_metadata_and_locals() {
+    use cook_lang::ast::{Chore, ChoreParam, Step};
+    let chore = Chore {
+        name: "deploy".into(),
+        params: vec![
+            ChoreParam::Required { name: "target".into(), line: 1, col: 13 },
+            ChoreParam::DefaultedString {
+                name: "host".into(), default: "prod".into(), line: 1, col: 20,
+            },
+        ],
+        deps: vec![],
+        steps: vec![Step::Lua { code: "deploy.run(target, host)".into(), line: 2 }],
+        line: 1,
+    };
+    let lua = compile_chore(&chore, &[]);
+    assert!(lua.contains("__params"), "lua: {lua}");
+    assert!(lua.contains(r#"{name = "target", kind = "required""#), "lua: {lua}");
+    assert!(lua.contains(r#"{name = "host", kind = "defaulted_string", default = "prod""#), "lua: {lua}");
+    assert!(lua.contains("function(__cook_params)"), "lua: {lua}");
+    assert!(lua.contains("local target = __cook_params.target"), "lua: {lua}");
+    assert!(lua.contains("local host = __cook_params.host"), "lua: {lua}");
+}
+
+#[test]
+fn compile_chore_with_no_params_does_not_emit_param_metadata_or_prelude() {
+    use cook_lang::ast::{Chore, Step};
+    let chore = Chore {
+        name: "clean".into(),
+        params: vec![],
+        deps: vec![],
+        steps: vec![Step::Lua { code: "fs.remove('build')".into(), line: 2 }],
+        line: 1,
+    };
+    let lua = compile_chore(&chore, &[]);
+    assert!(!lua.contains("__params"), "lua: {lua}");
+    assert!(!lua.contains("local "), "no local-binding prelude expected for paramless chore. lua: {lua}");
+    // Paramless chores still take `function(__cook_params)` so the runtime
+    // can pass nil/{} uniformly. Confirm.
+    assert!(lua.contains("function(__cook_params)"), "lua: {lua}");
 }
 
 // ── SHI-222 Phase 3 Task 3.2: pin chore + requires-bearing recipe shapes ──

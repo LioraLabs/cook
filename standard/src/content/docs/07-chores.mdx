@@ -51,6 +51,14 @@ chore deploy target host="prod.example.com"
 
 `deploy` declares a required parameter `target` and a defaulted-string parameter `host`. Invoking `cook deploy production` binds `target="production"` and `host="prod.example.com"`.
 
+## 7.1.2. Parameter binding inside the body [#chores.param-binding]
+
+When a chore body is executed, every declared parameter binds as a **Lua local** in the body's scope, visible to inline-Lua (`>>`, `>>{}`), execute-Lua (`>`, `>{}`), and lua_block forms. The local's value is a Lua string for required and defaulted parameters; for variadics (§7.1.3) it is a Lua sequence (list-style table) of strings.
+
+A conforming implementation MUST make these bindings available before any step of the chore body (including the first `>>` inline-Lua line) is executed.
+
+Placeholder substitution (`$<NAME>`) and environment-variable export to shell children are governed by later subsections (§9 and §7.1.2.X respectively).
+
 ## 7.2. Chore body — allowed and banned step kinds [#chores.body]
 
 A chore body MAY contain any of the following step kinds:
