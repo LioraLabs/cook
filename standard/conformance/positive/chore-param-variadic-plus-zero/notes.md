@@ -1,0 +1,1 @@
+Parse succeeds (same shape as chore-param-variadic-plus). Runtime expectation: when dispatched as `cook lint` with no argv, this MUST surface `requires one or more values for variadic '+FILES'`. The integration test in `chore_params_test.rs` (`chore_variadic_plus_with_zero_argv_errors`) exercises this runtime error.

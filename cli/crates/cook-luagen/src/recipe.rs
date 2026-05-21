@@ -940,11 +940,16 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
                 escape_lua_string(name),
                 escape_lua_string(default),
             )),
-            // Variadic and Lua-expression-default variants are emitted in
-            // Tasks 5 & 6 of COOK-36.
-            cook_lang::ast::ChoreParam::DefaultedLua { .. }
-            | cook_lang::ast::ChoreParam::VariadicPlus { .. }
-            | cook_lang::ast::ChoreParam::VariadicStar { .. } => None,
+            cook_lang::ast::ChoreParam::VariadicPlus { name, .. } => Some(format!(
+                "{{name = \"{}\", kind = \"variadic_plus\"}}",
+                escape_lua_string(name),
+            )),
+            cook_lang::ast::ChoreParam::VariadicStar { name, .. } => Some(format!(
+                "{{name = \"{}\", kind = \"variadic_star\"}}",
+                escape_lua_string(name),
+            )),
+            // Lua-expression-default variant is emitted in Task 6 of COOK-36.
+            cook_lang::ast::ChoreParam::DefaultedLua { .. } => None,
         }).collect();
         if !entries.is_empty() {
             fields.push(format!("__params = {{{}}}", entries.join(", ")));

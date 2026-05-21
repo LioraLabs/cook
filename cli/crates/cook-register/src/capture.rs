@@ -47,9 +47,7 @@ pub struct RegisteredRecipe {
 /// One parameter declared in a `chore NAME param …` header.
 ///
 /// Mirrors the `kind` strings emitted by `cook-luagen` into the
-/// `__params` metadata table. Only `required` and `defaulted_string`
-/// are supported in this build; other kinds (from future Tasks 5/6)
-/// are rejected at registration time with a runtime error.
+/// `__params` metadata table.
 #[derive(Debug, Clone)]
 pub enum ChoreParamMeta {
     /// A required positional — must be supplied by argv.
@@ -57,6 +55,12 @@ pub enum ChoreParamMeta {
     /// A defaulted positional — falls back to `default` when argv
     /// is exhausted at this position.
     DefaultedString { name: String, default: String },
+    /// A one-or-more variadic — collects all remaining argv into a Lua sequence;
+    /// zero remaining argv is an error.
+    VariadicPlus { name: String },
+    /// A zero-or-more variadic — collects all remaining argv into a Lua sequence;
+    /// zero remaining argv binds to an empty table.
+    VariadicStar { name: String },
 }
 
 impl ChoreParamMeta {
@@ -65,6 +69,8 @@ impl ChoreParamMeta {
         match self {
             ChoreParamMeta::Required { name } => name,
             ChoreParamMeta::DefaultedString { name, .. } => name,
+            ChoreParamMeta::VariadicPlus { name } => name,
+            ChoreParamMeta::VariadicStar { name } => name,
         }
     }
 }
@@ -141,6 +147,12 @@ fn parse_chore_params_meta(meta: &LuaTable) -> LuaResult<Vec<ChoreParamMeta>> {
             "defaulted_string" => {
                 let default: String = entry.get("default")?;
                 out.push(ChoreParamMeta::DefaultedString { name, default });
+            }
+            "variadic_plus" => {
+                out.push(ChoreParamMeta::VariadicPlus { name });
+            }
+            "variadic_star" => {
+                out.push(ChoreParamMeta::VariadicStar { name });
             }
             other => {
                 return Err(mlua::Error::runtime(format!(

@@ -1,0 +1,2 @@
+chore lint +A +B
+    > linter.run(A, B)

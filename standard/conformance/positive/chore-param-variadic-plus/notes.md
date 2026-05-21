@@ -1,0 +1,1 @@
+One-or-more variadic parameter (`+NAME`). Parse succeeds; at invocation time, all remaining argv collect into a Lua sequence bound to FILES.

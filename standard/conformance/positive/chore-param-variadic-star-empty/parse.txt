@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+    Chore name="fmt" line=1
+      params: [VariadicStar name="FILES"]
+      deps: []
+      steps:
+        Lua code="fmt.run(FILES)"
+  register_blocks: []
+  top_level_module_calls: []

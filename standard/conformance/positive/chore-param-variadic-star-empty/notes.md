@@ -1,0 +1,1 @@
+Zero-or-more variadic parameter (`*NAME`). Parse succeeds; with zero argv at invocation the local binds to `{}`.

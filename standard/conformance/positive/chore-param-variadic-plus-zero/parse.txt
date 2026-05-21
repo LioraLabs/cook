@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+    Chore name="lint" line=1
+      params: [VariadicPlus name="FILES"]
+      deps: []
+      steps:
+        Lua code="linter.run(FILES)"
+  register_blocks: []
+  top_level_module_calls: []

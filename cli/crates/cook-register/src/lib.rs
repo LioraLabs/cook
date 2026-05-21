@@ -103,6 +103,13 @@ pub enum RegisterError {
          argument(s) (use '@PRESET' to select a config preset)"
     )]
     RecipeWithArgv { name: String, supplied: usize },
+
+    /// A `+NAME` variadic received zero argv elements (requires at least one).
+    #[error(
+        "chore '{chore}' requires one or more values for variadic '+{name}' (declared at line {line}); \
+         supply at least one, or change to '*{name}' to allow zero"
+    )]
+    ChoreVariadicEmpty { chore: String, name: String, line: usize },
 }
 
 /// One site at which a recipe name was registered during a

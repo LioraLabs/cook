@@ -91,10 +91,11 @@ imperative_item       ::= lua_line
 ```ebnf
 chore                    ::= chore_header NEWLINE chore_body
 chore_header             ::= "chore" name param_list (":" dependency_list)?
-param_list               ::= param*
-param                    ::= required_param | defaulted_param
+param_list               ::= positional_params variadic_param?
+positional_params        ::= required_param* defaulted_param*
 required_param           ::= BARE_IDENTIFIER
 defaulted_param          ::= BARE_IDENTIFIER "=" STRING
+variadic_param           ::= ("+" | "*") BARE_IDENTIFIER
 chore_body               ::= chore_declarative_region chore_imperative_region?
 chore_declarative_region ::= chore_declarative_item*
 chore_declarative_item   ::= inline_lua_line
@@ -110,11 +111,13 @@ chore_imperative_item    ::= lua_line
                            | NEWLINE
 ```
 
-**Chore parameter ordering rule (normative).** Within a `param_list`, every `required_param` MUST precede every `defaulted_param`. A conforming implementation MUST reject a violating header.
+**Chore parameter ordering rule (normative).** Within a `param_list`, every `required_param` MUST precede every `defaulted_param`, and the optional `variadic_param` MUST be the final parameter. A conforming implementation MUST reject a header that violates this order.
 
 **Chore parameter reserved-name rule (normative).** Parameter names MUST NOT equal a reserved identifier from §A.2 (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`). Parameter names MUST NOT contain `.`. Duplicate parameter names within one header MUST be rejected at parse time.
 
-(Variadic and Lua-expression-default productions extend `param` and `defaulted_param` in later revisions of this Standard — see §7.1.3 (variadics) and §7.1.1 (Lua-expression defaults).)
+**Variadic rules (normative).** A `variadic_param` with sigil `+` (one-or-more) MUST be the final parameter; at invocation time, all remaining argv collect into a Lua sequence. If zero remain, a diagnostic MUST be raised (§7.1.3). A `variadic_param` with sigil `*` (zero-or-more) behaves identically except that zero remaining argv is valid and binds `{}`. At most one `variadic_param` is permitted per `param_list`; a `variadic_param` MUST NOT carry an `=default`.
+
+(Lua-expression-default productions extend `defaulted_param` in a later revision of this Standard — see §7.1.1.)
 
 **Chore step-kind ban (normative).** A `chore_body` MUST NOT contain `ingredients_step`, `cook_step`, `plate_step`, or `test_step`. A conforming implementation MUST reject a chore body that contains any of these. The diagnostic MUST identify the offending step's keyword.
 

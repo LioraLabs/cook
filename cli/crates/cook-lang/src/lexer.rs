@@ -53,6 +53,12 @@ pub enum LexError {
     UnclosedChoreParamDefault { line: usize, chore: String, name: String },
     #[error("line {line}: recipe '{name}': recipes don't take parameters; use a 'chore' (§7) or a config preset (§5)")]
     RecipeWithParams { line: usize, name: String },
+    #[error("line {line}: chore '{chore}': variadic parameter '{name}' must be the final parameter")]
+    VariadicNotLast { line: usize, chore: String, name: String },
+    #[error("line {line}: chore '{chore}': at most one variadic parameter permitted; found '{first}' and '{second}'")]
+    MultipleVariadics { line: usize, chore: String, first: String, second: String },
+    #[error("line {line}: chore '{chore}': variadic parameter '{name}' cannot have a default; use '*{name}' for an optional variadic")]
+    VariadicWithDefault { line: usize, chore: String, name: String },
 }
 
 const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "all", "env"];
@@ -140,6 +146,7 @@ fn parse_chore_params<'a>(
     let mut params: Vec<ChoreParam> = Vec::new();
     let mut seen_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut seen_defaulted = false;
+    let mut seen_variadic: Option<String> = None; // name of the variadic param if one was seen
     let mut remaining = text.trim_start();
 
     loop {
@@ -148,8 +155,22 @@ fn parse_chore_params<'a>(
             break;
         }
 
+        // Check for variadic sigil (`+` or `*`).
+        let variadic_sigil: Option<char>;
+        if remaining.starts_with('+') || remaining.starts_with('*') {
+            let sigil = remaining.as_bytes()[0] as char;
+            variadic_sigil = Some(sigil);
+            remaining = remaining[1..].trim_start_matches(' ');
+        } else {
+            variadic_sigil = None;
+        }
+
+        // If a variadic was already seen and we're still parsing params,
+        // that means there's a non-variadic (or another variadic) after the variadic.
+        // We detect this after parsing the name below.
+
         // Must start with an ident-start character; otherwise stop (unknown token).
-        if !is_ident_start(remaining.as_bytes()[0] as char) {
+        if remaining.is_empty() || !is_ident_start(remaining.as_bytes()[0] as char) {
             break;
         }
 
@@ -176,6 +197,78 @@ fn parse_chore_params<'a>(
                 line,
                 chore: chore_name.to_string(),
                 name: param_name,
+            });
+        }
+
+        // Handle variadic sigil path.
+        if let Some(sigil) = variadic_sigil {
+            // Multiple-variadic check: if a prior variadic was already seen, error.
+            if let Some(ref first_var) = seen_variadic {
+                return Err(LexError::MultipleVariadics {
+                    line,
+                    chore: chore_name.to_string(),
+                    first: first_var.clone(),
+                    second: param_name,
+                });
+            }
+
+            // Variadic-with-default check: `=` immediately after name is an error.
+            if remaining.starts_with('=') {
+                return Err(LexError::VariadicWithDefault {
+                    line,
+                    chore: chore_name.to_string(),
+                    name: param_name,
+                });
+            }
+
+            // Record variadic name (clone before moving into the ChoreParam).
+            seen_variadic = Some(param_name.clone());
+
+            // Push the variadic variant.
+            match sigil {
+                '+' => params.push(ChoreParam::VariadicPlus { name: param_name.clone(), line, col: 0 }),
+                '*' => params.push(ChoreParam::VariadicStar { name: param_name.clone(), line, col: 0 }),
+                _ => unreachable!(),
+            }
+
+            // After a variadic, only `:` or end-of-input is legal.
+            // If the next token looks like a bare identifier or another sigil, error.
+            if !remaining.is_empty() && !remaining.starts_with(':') {
+                let next_byte = remaining.as_bytes()[0] as char;
+                if next_byte == '+' || next_byte == '*' {
+                    // Another variadic sigil follows — MultipleVariadics.
+                    // Peek past the sigil to get the second variadic's name.
+                    let after_sigil = remaining[1..].trim_start_matches(' ');
+                    let name2_end = after_sigil
+                        .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                        .unwrap_or(after_sigil.len());
+                    let second = after_sigil[..name2_end].to_string();
+                    return Err(LexError::MultipleVariadics {
+                        line,
+                        chore: chore_name.to_string(),
+                        first: param_name,
+                        second,
+                    });
+                } else if is_ident_start(next_byte) {
+                    // A non-variadic param after the variadic — VariadicNotLast.
+                    return Err(LexError::VariadicNotLast {
+                        line,
+                        chore: chore_name.to_string(),
+                        name: param_name,
+                    });
+                }
+            }
+
+            // Continue loop — the next iteration will see `:` or EOF and break.
+            continue;
+        }
+
+        // Non-variadic path: if a variadic was already seen, this param comes after it.
+        if let Some(ref var_name) = seen_variadic {
+            return Err(LexError::VariadicNotLast {
+                line,
+                chore: chore_name.to_string(),
+                name: var_name.clone(),
             });
         }
 

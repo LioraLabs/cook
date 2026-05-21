@@ -651,8 +651,11 @@ fn build_chore_params_table(
     use crate::capture::ChoreParamMeta;
 
     let table = lua.create_table().map_err(RegisterError::Lua)?;
-    let mut argv_iter = argv.iter();
+    let mut argv_iter = argv.iter().peekable();
     let mut prelude = String::new();
+    // Once a variadic absorbs the remaining argv, no further params are processed
+    // and the too-many-argv check is suppressed.
+    let mut variadic_consumed = false;
 
     for param in params_meta {
         match param {
@@ -676,16 +679,59 @@ fn build_chore_params_table(
                 let escaped = lua_escape_string(value);
                 prelude.push_str(&format!("local {} = \"{}\"\n", name, escaped));
             }
+            ChoreParamMeta::VariadicPlus { name } => {
+                // Collect ALL remaining argv elements.
+                let values: Vec<String> = argv_iter.by_ref().cloned().collect();
+                if values.is_empty() {
+                    return Err(RegisterError::ChoreVariadicEmpty {
+                        chore: chore_name.to_string(),
+                        name: name.clone(),
+                        line: source_line,
+                    });
+                }
+                // Build Lua sequence table.
+                let seq = lua
+                    .create_sequence_from(values.iter().map(|s| s.as_str()))
+                    .map_err(RegisterError::Lua)?;
+                table.set(name.as_str(), seq).map_err(RegisterError::Lua)?;
+                // Build execute-phase prelude: `local NAME = {"a", "b", "c"}`
+                let items: Vec<String> = values
+                    .iter()
+                    .map(|v| format!("\"{}\"", lua_escape_string(v)))
+                    .collect();
+                prelude.push_str(&format!("local {} = {{{}}}\n", name, items.join(", ")));
+                variadic_consumed = true;
+            }
+            ChoreParamMeta::VariadicStar { name } => {
+                // Collect ALL remaining argv elements (zero is fine).
+                let values: Vec<String> = argv_iter.by_ref().cloned().collect();
+                let seq = if values.is_empty() {
+                    lua.create_table().map_err(RegisterError::Lua)?
+                } else {
+                    lua.create_sequence_from(values.iter().map(|s| s.as_str()))
+                        .map_err(RegisterError::Lua)?
+                };
+                table.set(name.as_str(), seq).map_err(RegisterError::Lua)?;
+                // Build execute-phase prelude (empty table or populated).
+                let items: Vec<String> = values
+                    .iter()
+                    .map(|v| format!("\"{}\"", lua_escape_string(v)))
+                    .collect();
+                prelude.push_str(&format!("local {} = {{{}}}\n", name, items.join(", ")));
+                variadic_consumed = true;
+            }
         }
     }
 
-    let remaining = argv_iter.count();
-    if remaining > 0 {
-        return Err(RegisterError::ChoreTooManyArgv {
-            chore: chore_name.to_string(),
-            declared: params_meta.len(),
-            supplied: argv.len(),
-        });
+    if !variadic_consumed {
+        let remaining = argv_iter.count();
+        if remaining > 0 {
+            return Err(RegisterError::ChoreTooManyArgv {
+                chore: chore_name.to_string(),
+                declared: params_meta.len(),
+                supplied: argv.len(),
+            });
+        }
     }
 
     Ok((table, prelude))

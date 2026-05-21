@@ -476,6 +476,12 @@ impl From<cook_register::RegisterError> for EngineError {
                     message: e.to_string(),
                 }
             }
+            ref e @ cook_register::RegisterError::ChoreVariadicEmpty { ref chore, .. } => {
+                EngineError::RegistrationFailed {
+                    recipe: chore.clone(),
+                    message: e.to_string(),
+                }
+            }
         }
     }
 }

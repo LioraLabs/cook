@@ -154,6 +154,64 @@ fn recipe_with_argv_errors() {
     );
 }
 
+/// `cook lint a.lua b.lua` where `chore lint +files` declares a variadic
+/// parameter. The body runs `print(table.concat(files, ","))` and we assert
+/// stdout contains "a.lua,b.lua".
+#[test]
+fn chore_variadic_plus_collects_argv_into_lua_table() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore lint +files\n    > print(table.concat(files, \",\"))\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["lint", "a.lua", "b.lua"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stderr: {stderr}");
+    assert!(stdout.contains("a.lua,b.lua"), "stdout: {stdout}");
+}
+
+/// `cook fmt` (no argv) where `chore fmt *files` declares a zero-or-more
+/// variadic. The body runs `print("count=" .. #files)` and we assert
+/// stdout contains "count=0".
+#[test]
+fn chore_variadic_star_with_zero_argv_binds_empty_table() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore fmt *files\n    > print(\"count=\" .. #files)\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["fmt"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("count=0"), "stdout: {stdout}");
+}
+
+/// `cook lint` (no argv) where `chore lint +files` declares a one-or-more
+/// variadic. The invocation must fail with the variadic-empty diagnostic.
+#[test]
+fn chore_variadic_plus_with_zero_argv_errors() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore lint +files\n    > print(table.concat(files, \",\"))\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["lint"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(
+        stderr.contains("requires one or more values for variadic '+files'"),
+        "stderr: {stderr}"
+    );
+}
+
 /// `cook list` on a Cookfile that has a parametric chore must not crash with
 /// a nil-index Lua error. This guards against regressing the no-target branch
 /// of the register-engine chore dispatch.
