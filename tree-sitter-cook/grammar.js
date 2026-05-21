@@ -1,13 +1,23 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-// tree-sitter-cook claims conformance with Cook Standard v0.4 + CS-0022.
-// The grammar is STALE relative to v0.7 (cs-standard/v0.7); it does not
-// implement CS-0023 onward (plate/test block bodies, `//`-anchored sigil
-// imports). The `$<IDENT>` placeholder shape from §2.11 IS recognized
-// inside string literals and shell text; resolution is the Rust parser's
-// concern. See standard/src/content/docs/appendix/A-grammar.mdx for the
-// normative grammar; the broader catch-up is tracked by CS-0002.
+// tree-sitter-cook claims conformance with Cook Standard v0.12
+// (`cs-standard/v0.12`). The CS-0086 audit (see
+// standard/src/content/docs/appendix/E-changes.mdx) brings the grammar
+// up to:
+//   • CS-0072: top-level `register` block + top-level `module_call`
+//     (single + multi-line, brace-balanced); recipe-body bare
+//     module-calls are now `shell_command`.
+//   • CS-0078: multi-line `cook` outputs + `ingredients` continuation
+//     via an external `STEP_CONTINUATION_NEWLINE` token.
+//   • CS-0035: leveled Lua long-string and block-comment opaque-span
+//     tracking; POSIX heredoc opaque-span tracking in shell blocks;
+//     `use_name` LUA_IDENT constraint; declaration-site no-dots for
+//     `recipe_header` / `chore_header` names.
+//   • CS-0061: STRING admits both double- and single-quoted forms.
+// The `$<IDENT>` placeholder shape from §2.11 is recognised in string
+// literals and shell text (CS-0033). See standard/src/content/docs/
+// appendix/A-grammar.mdx for the normative grammar.
 
 module.exports = grammar({
   name: "cook",

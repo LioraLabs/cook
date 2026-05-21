@@ -96,6 +96,38 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0033: `$<in>` in many-to-one body — codegen rejection, not syntactic'],
   // CS-0035 use_name LUA_IDENT constraint — closed by COOK-55: 040/041/042
   // are now grammar-rejected by `_lua_ident_name`.
+  //
+  // Recipe / chore semantic-only rules (CS-0022 / App. A.3 / App. A.5
+  // — Rust parser + codegen territory, not syntactic):
+  ['051-bare-recipe-ref-in-output-pattern-rejected',
+   'bare {NAME} ref inside cook_step output pattern — codegen rejection'],
+  ['052-directory-input-rejected',
+   'directory input rejection — register/execute-time semantic, not syntactic'],
+  ['053-duplicate-recipe-name-rejected',
+   'App. A.2 duplicate recipe-vs-recipe name — parse-time semantic, not syntactic'],
+  ['054-duplicate-chore-name-rejected',
+   'App. A.2 duplicate chore-vs-chore name — parse-time semantic, not syntactic'],
+  ['055-recipe-chore-name-collision-rejected',
+   'App. A.2 recipe-vs-chore name collision — parse-time semantic, not syntactic'],
+  ['recipe-name-collision-surface-vs-dynamic',
+   'recipe name collision between surface and dynamic — register-time semantic'],
+  // §28 cc-module semantic rules (§28.3 — execute-phase / probe-time
+  // rejections; the Cookfile parses cleanly):
+  ['cc-check-bad-flag',
+   '§28.3.14 cc.checks.has_compile_flag — execute-time probe rejection, not syntactic'],
+  ['cc-config-header-missing-var',
+   '§28.3.15 cc.config_header — missing-var rejection at render time, not syntactic'],
+  ['cc-find-conflicting-opts',
+   '§28.3.13 cc.find — conflicting-opts rejection at register time, not syntactic'],
+  ['cc-find-missing-on-build',
+   '§28.3.13/§28.3.14 cc.find — demand-driven build-time rejection, not syntactic'],
+  // §22 probe-unit semantic rules (register-time validation):
+  ['probe-cycle',
+   '§22.5 cook.probe — dependency cycle detection, register-time semantic'],
+  ['probe-duplicate-key',
+   '§22.5 cook.probe — duplicate-key detection, register-time semantic'],
+  ['probe-unresolved-require',
+   '§22.5 cook.probe — unresolved require detection, register-time semantic'],
 ]);
 
 // Positive fixtures the Rust parser accepts but tree-sitter-cook cannot
@@ -152,16 +184,19 @@ function fmtBlock(text, indent = '  ') {
 async function runPositives() {
   const cases = await listCases('positive');
   const failures = [];
+  const notes = [];
   for (const name of cases) {
     const file = join(corpusRoot(), 'positive', name, 'Cookfile');
     const result = await parseCase(file);
     const stale = KNOWN_STALE_POSITIVES.get(name);
     if (result.ok) {
       if (stale) {
-        // Tree-sitter accepted something we listed as known-stale. The
-        // grammar may have caught up — surface as a NOTE so the skip
-        // list can be tightened — but do not fail the run.
-        console.log(`NOTE   positive/${name} now parses cleanly (consider removing from KNOWN_STALE_POSITIVES)`);
+        // Tree-sitter accepted something we listed as known-stale.
+        // Post-CS-0086 (v0.12 audit), KNOWN_STALE_POSITIVES is
+        // expected to be empty; any entry here that now passes is
+        // a regression in the skip list and is fatal.
+        console.log(`NOTE   positive/${name} now parses cleanly — remove from KNOWN_STALE_POSITIVES`);
+        notes.push({ name, output: 'KNOWN_STALE_POSITIVES entry now parses cleanly' });
       } else {
         console.log(`OK     positive/${name}`);
       }
@@ -169,17 +204,21 @@ async function runPositives() {
     }
     if (stale) {
       console.log(`STALE  positive/${name} (${stale})`);
+      // Treat STALE as a soft failure too — the v0.12 audit closed
+      // every entry; a new STALE entry signals a re-divergence.
+      notes.push({ name, output: `STALE: ${stale}` });
       continue;
     }
     failures.push({ name, output: result.output });
     console.log(`FAIL   positive/${name}`);
   }
-  return failures;
+  return { failures, notes };
 }
 
 async function runNegatives() {
   const cases = await listCases('negative');
   const failures = [];
+  const notes = [];
   for (const name of cases) {
     const file = join(corpusRoot(), 'negative', name, 'Cookfile');
     const result = await parseCase(file);
@@ -190,9 +229,12 @@ async function runNegatives() {
         console.log(`SKIP   negative/${name} (${skip})`);
       } else {
         // Tree-sitter rejected something we expected it to accept.
-        // That is not a failure of the Standard — record it so the
-        // skip list can be tightened — but do not fail the run.
-        console.log(`NOTE   negative/${name} now rejected (consider removing from skip list)`);
+        // Post-CS-0086 (v0.12 audit), SEMANTIC_ONLY_NEGATIVES is
+        // expected to be tight; if a skip entry's fixture now rejects
+        // at the grammar level, the entry has been overtaken by a
+        // grammar tightening and the skip list should shrink.
+        console.log(`NOTE   negative/${name} now rejected — remove from SEMANTIC_ONLY_NEGATIVES`);
+        notes.push({ name, output: 'SEMANTIC_ONLY_NEGATIVES entry now rejects at grammar level' });
       }
       continue;
     }
@@ -206,7 +248,7 @@ async function runNegatives() {
       console.log(`OK     negative/${name} (rejected)`);
     }
   }
-  return failures;
+  return { failures, notes };
 }
 
 async function main() {
@@ -221,20 +263,33 @@ async function main() {
   console.log(`corpus: ${root}`);
   console.log('');
 
-  const posFailures = await runPositives();
+  const pos = await runPositives();
   console.log('');
-  const negFailures = await runNegatives();
+  const neg = await runNegatives();
 
   console.log('');
-  if (posFailures.length === 0 && negFailures.length === 0) {
+  const failures = [...pos.failures, ...neg.failures];
+  const notes = [...pos.notes, ...neg.notes];
+
+  if (failures.length === 0 && notes.length === 0) {
     console.log('All conformance checks passed.');
     process.exit(0);
   }
 
-  console.log('Failures:');
-  for (const f of [...posFailures, ...negFailures]) {
-    console.log(`\n  ${f.name}:`);
-    console.log(fmtBlock(f.output, '    '));
+  if (failures.length > 0) {
+    console.log('Failures:');
+    for (const f of failures) {
+      console.log(`\n  ${f.name}:`);
+      console.log(fmtBlock(f.output, '    '));
+    }
+  }
+  if (notes.length > 0) {
+    if (failures.length > 0) console.log('');
+    console.log('Stale-list entries (audit the skip lists):');
+    for (const n of notes) {
+      console.log(`\n  ${n.name}:`);
+      console.log(fmtBlock(n.output, '    '));
+    }
   }
   process.exit(1);
 }
