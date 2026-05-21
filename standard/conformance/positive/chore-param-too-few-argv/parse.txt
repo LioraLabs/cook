@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+    Chore name="greet" line=1
+      params: [Required name="msg"]
+      deps: []
+      steps:
+        Lua code="print(msg)"
+  register_blocks: []
+  top_level_module_calls: []

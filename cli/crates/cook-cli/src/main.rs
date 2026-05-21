@@ -42,7 +42,7 @@ fn main() {
 fn dispatch(cli: Cli) -> Result<(), CookError> {
     let Cli { globals, cmd } = cli;
     match cmd {
-        None => cmd_run(&globals, "build", None),
+        None => cmd_run(&globals, "build", &[], None),
         Some(Cmd::Init) => cmd_init(),
         Some(Cmd::Menu) => cmd_menu(&globals),
         Some(Cmd::List(args)) => cmd_list(&globals, &args),
@@ -83,20 +83,17 @@ fn dispatch_recipe(globals: &cli::Globals, parts: &[String]) -> Result<(), CookE
     // leading `+`; `cook ++foo` therefore runs a recipe literally named
     // `+foo`, which is defensible and consistent with the spec's "leading
     // `+`" wording.
+    //
+    // COOK-36 Task 4: all positionals past the recipe name are argv passed to
+    // the chore body. Task 9 will partition out @PRESET / --config markers;
+    // for now the legacy "second positional = preset" rule is intentionally
+    // dropped (see also the commit message note).
     let (first, rest) = parts
         .split_first()
         .expect("external_subcommand variant always carries ≥1 element");
 
     let recipe = first.strip_prefix('+').unwrap_or(first).to_string();
-    let config = match rest {
-        [] => None,
-        [c] => Some(c.as_str()),
-        _ => {
-            return Err(CookError::Other(format!(
-                "too many positional arguments after recipe `{recipe}`"
-            )));
-        }
-    };
+    let argv: Vec<String> = rest.to_vec();
 
-    cmd_run(globals, &recipe, config)
+    cmd_run(globals, &recipe, &argv, None)
 }

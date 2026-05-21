@@ -180,6 +180,131 @@ pub fn register_workspace(
     Ok(ws)
 }
 
+/// Variant of [`register_single_cookfile`] that binds argv to the targeted
+/// recipe / chore (COOK-36 Task 4).
+///
+/// `target` is the unqualified recipe or chore name being dispatched.
+/// `argv` contains the positional arguments following the chore name on the
+/// CLI. For normal recipes, `argv` must be empty; a non-empty `argv` will
+/// surface `RegisterError::RecipeWithArgv` at body-invocation time.
+#[allow(clippy::too_many_arguments)]
+pub fn register_single_cookfile_with_argv(
+    cookfile_dir: &Path,
+    env_vars: HashMap<String, String>,
+    env_overrides: &[String],
+    lua_source: String,
+    selected_config: Option<&str>,
+    target: &str,
+    argv: &[String],
+    cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
+) -> Result<RegisteredWorkspace, PipelineError> {
+    let cli_overrides = parse_cli_overrides(env_overrides)?;
+    let builder = RegisterSessionBuilder::new(cookfile_dir.to_path_buf(), env_vars)
+        .with_cli_overrides(cli_overrides)
+        .with_selected_config(selected_config.map(|s| s.to_string()))
+        .with_target_argv(target.to_string(), argv.to_vec());
+    let registered = register_cookfile(builder, &lua_source, cache_ctx)
+        .map_err(map_register_error)?;
+
+    let mut ws = RegisteredWorkspace {
+        names: registered.names,
+        units_by_recipe: registered.units_by_recipe,
+        probes: registered.probes,
+        final_env_by_cookfile: BTreeMap::new(),
+        working_dir_by_prefix: BTreeMap::new(),
+        alias_dirs_by_prefix: BTreeMap::new(),
+    };
+    ws.final_env_by_cookfile
+        .insert(String::new(), registered.final_env);
+    ws.working_dir_by_prefix
+        .insert(String::new(), cookfile_dir.to_path_buf());
+    ws.alias_dirs_by_prefix
+        .insert(String::new(), BTreeMap::new());
+    Ok(ws)
+}
+
+/// Variant of [`register_workspace`] that binds argv to the targeted recipe /
+/// chore in the root Cookfile (COOK-36 Task 4).
+///
+/// `target` and `argv` are passed only to the root Cookfile's builder.
+/// Import Cookfiles are registered without argv (they are not the dispatch
+/// target). This is correct because chores are always defined in the root
+/// Cookfile and dispatch is always rooted there.
+pub fn register_workspace_with_argv(
+    workspace: &Workspace,
+    config: Option<&str>,
+    env_overrides: &[String],
+    target: &str,
+    argv: &[String],
+    cache_ctx: Option<Arc<cook_cache::cache_ctx::CacheContext>>,
+) -> Result<RegisteredWorkspace, PipelineError> {
+    let dotenv_vars = load_env(&workspace.root.dir);
+    let root_env = resolve_env(config, dotenv_vars, env_overrides)?;
+    let cli_overrides = parse_cli_overrides(env_overrides)?;
+    let shared_outputs: SharedTerminalOutputs =
+        Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+
+    let mut ws = RegisteredWorkspace {
+        names: Vec::new(),
+        units_by_recipe: BTreeMap::new(),
+        probes: BTreeMap::new(),
+        final_env_by_cookfile: BTreeMap::new(),
+        working_dir_by_prefix: BTreeMap::new(),
+        alias_dirs_by_prefix: BTreeMap::new(),
+    };
+
+    // Root Cookfile: empty qualified prefix, with argv binding.
+    let root_alias_dirs = workspace.alias_dirs_for(&workspace.root.dir);
+    let root_alias_qp = workspace.alias_qualified_prefixes_for(&workspace.root.dir);
+    let root_builder = RegisterSessionBuilder::new(workspace.root.dir.clone(), root_env)
+        .with_cli_overrides(cli_overrides.clone())
+        .with_selected_config(config.map(|s| s.to_string()))
+        .with_shared_terminal_outputs(shared_outputs.clone())
+        .with_qualified_prefix(String::new())
+        .with_alias_dirs(root_alias_dirs.clone())
+        .with_alias_qualified_prefixes(root_alias_qp)
+        .with_target_argv(target.to_string(), argv.to_vec());
+    let root_registered = register_cookfile(
+        root_builder,
+        &workspace.root.lua_source,
+        cache_ctx.clone(),
+    )
+    .map_err(map_register_error)?;
+    merge_into(&mut ws, "", root_registered);
+    ws.working_dir_by_prefix
+        .insert(String::new(), workspace.root.dir.clone());
+    ws.alias_dirs_by_prefix
+        .insert(String::new(), root_alias_dirs);
+
+    // Imports: each one gets its canonical workspace qualified prefix.
+    // No argv for imports — dispatch is always rooted at the root Cookfile.
+    for (canonical_path, loaded) in &workspace.imports {
+        let prefix = find_full_prefix(workspace, canonical_path);
+        let import_env = resolve_env(config, HashMap::new(), env_overrides)?;
+        let alias_dirs = workspace.alias_dirs_for(&loaded.dir);
+        let alias_qp = workspace.alias_qualified_prefixes_for(&loaded.dir);
+        let builder = RegisterSessionBuilder::new(loaded.dir.clone(), import_env)
+            .with_cli_overrides(cli_overrides.clone())
+            .with_selected_config(config.map(|s| s.to_string()))
+            .with_shared_terminal_outputs(shared_outputs.clone())
+            .with_qualified_prefix(prefix.clone())
+            .with_alias_dirs(alias_dirs.clone())
+            .with_alias_qualified_prefixes(alias_qp);
+        let import_registered = register_cookfile(
+            builder,
+            &loaded.lua_source,
+            cache_ctx.clone(),
+        )
+        .map_err(map_register_error)?;
+        merge_into(&mut ws, &prefix, import_registered);
+        ws.working_dir_by_prefix
+            .insert(prefix.clone(), loaded.dir.clone());
+        ws.alias_dirs_by_prefix.insert(prefix.clone(), alias_dirs);
+    }
+
+    Ok(ws)
+}
+
 /// Run the cheap [`cook_register::list_names`] path for a single Cookfile
 /// (no imports) and return the registered names with their kinds.
 ///

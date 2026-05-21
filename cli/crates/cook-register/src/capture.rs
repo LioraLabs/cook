@@ -44,11 +44,39 @@ pub struct RegisteredRecipe {
     pub kind: RecipeKind,
 }
 
+/// One parameter declared in a `chore NAME param …` header.
+///
+/// Mirrors the `kind` strings emitted by `cook-luagen` into the
+/// `__params` metadata table. Only `required` and `defaulted_string`
+/// are supported in this build; other kinds (from future Tasks 5/6)
+/// are rejected at registration time with a runtime error.
+#[derive(Debug, Clone)]
+pub enum ChoreParamMeta {
+    /// A required positional — must be supplied by argv.
+    Required { name: String },
+    /// A defaulted positional — falls back to `default` when argv
+    /// is exhausted at this position.
+    DefaultedString { name: String, default: String },
+}
+
+impl ChoreParamMeta {
+    /// The parameter name (for binding into the Lua table).
+    pub fn param_name(&self) -> &str {
+        match self {
+            ChoreParamMeta::Required { name } => name,
+            ChoreParamMeta::DefaultedString { name, .. } => name,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RegisteredMetadata {
     pub ingredients: Vec<String>,
     pub excludes: Vec<String>,
     pub requires: Vec<String>,
+    /// Ordered list of declared chore parameters. Empty for normal
+    /// recipes (which do not take parameters).
+    pub params: Vec<ChoreParamMeta>,
 }
 
 /// Parse the (ingredients, excludes, requires) string-list fields from a
@@ -87,6 +115,43 @@ fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec
     Ok((ingredients, excludes, requires))
 }
 
+/// Extract the `__params` metadata array from a chore's registration table.
+///
+/// Returns an empty `Vec` when `meta` has no `__params` key (i.e. a recipe or
+/// a chore with no declared parameters). Iterates the sequence and dispatches
+/// on the `kind` string field:
+///
+/// - `"required"` → `ChoreParamMeta::Required { name }`
+/// - `"defaulted_string"` → `ChoreParamMeta::DefaultedString { name, default }`
+/// - anything else → runtime error (planned for Tasks 5/6)
+fn parse_chore_params_meta(meta: &LuaTable) -> LuaResult<Vec<ChoreParamMeta>> {
+    let params_tbl = match meta.get::<Option<LuaTable>>("__params")? {
+        Some(t) => t,
+        None => return Ok(Vec::new()),
+    };
+    let mut out = Vec::new();
+    for pair in params_tbl.sequence_values::<LuaTable>() {
+        let entry = pair?;
+        let kind: String = entry.get("kind")?;
+        let name: String = entry.get("name")?;
+        match kind.as_str() {
+            "required" => {
+                out.push(ChoreParamMeta::Required { name });
+            }
+            "defaulted_string" => {
+                let default: String = entry.get("default")?;
+                out.push(ChoreParamMeta::DefaultedString { name, default });
+            }
+            other => {
+                return Err(mlua::Error::runtime(format!(
+                    "chore parameter kind '{other}' is not yet supported in this build"
+                )));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Install the register-phase `cook.*` API surface on the given Lua VM.
 /// This is the whole namespace (recipe registration, capture-mode
 /// `cook.exec`/`cook.sh`, etc.), not just `cook.recipe`.
@@ -116,6 +181,7 @@ pub fn install_cook_api(
                     ingredients,
                     excludes,
                     requires,
+                    params: vec![],
                 },
                 source: RegistrationSource::Dynamic { line },
                 kind: RecipeKind::Recipe,
@@ -153,6 +219,7 @@ pub fn install_cook_api(
                     ingredients,
                     excludes,
                     requires,
+                    params: vec![],
                 },
                 source: RegistrationSource::Static { line },
                 kind: RecipeKind::Recipe,
@@ -174,6 +241,7 @@ pub fn install_cook_api(
             let key = lua.create_registry_value(func)?;
             let line: usize = meta.get("__line").unwrap_or(0);
             let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
+            let params = parse_chore_params_meta(&meta)?;
             recipes_chore.borrow_mut().push(RegisteredRecipe {
                 name,
                 function: key,
@@ -181,6 +249,7 @@ pub fn install_cook_api(
                     ingredients,
                     excludes,
                     requires,
+                    params,
                 },
                 source: RegistrationSource::Static { line },
                 kind: RecipeKind::Chore,

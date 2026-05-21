@@ -72,6 +72,37 @@ pub enum RegisterError {
     /// Returned by `register_cookfile` (SHI-222 Phase 2 Task 2.2).
     #[error("dependency cycle: {}", recipes.join(" -> "))]
     DependencyCycle { recipes: Vec<String> },
+
+    /// A required chore parameter was not supplied via argv.
+    ///
+    /// `cook CHORE_NAME` without the expected positional argument.
+    #[error(
+        "chore '{chore}' requires parameter '{name}' (declared at line {line}); \
+         supply it as a positional argument"
+    )]
+    ChoreParamMissing {
+        chore: String,
+        name: String,
+        line: usize,
+    },
+
+    /// More positional arguments were supplied than the chore declares parameters.
+    #[error(
+        "chore '{chore}' takes {declared} parameter(s) but {supplied} positional argument(s) \
+         were supplied"
+    )]
+    ChoreTooManyArgv {
+        chore: String,
+        declared: usize,
+        supplied: usize,
+    },
+
+    /// A non-chore recipe received positional argv (not permitted; use @PRESET).
+    #[error(
+        "recipe '{name}': recipes do not take parameters; received {supplied} positional \
+         argument(s) (use '@PRESET' to select a config preset)"
+    )]
+    RecipeWithArgv { name: String, supplied: usize },
 }
 
 /// One site at which a recipe name was registered during a
@@ -171,6 +202,17 @@ pub struct BodyCaptureState {
     /// `cook.add_unit` raises a Lua error if `cache = true` is passed
     /// while this flag is set (§{chores.no-caching}).
     pub current_chore_active: bool,
+    /// Lua source prelude prepended to every `lua_code` unit captured inside
+    /// the current chore body. Set by the engine at body-invocation time when
+    /// chore parameter values are bound (COOK-36 Task 4); empty for all other
+    /// recipe/chore bodies (where params are either absent or not targeted).
+    ///
+    /// Example value for `chore greet msg` invoked with argv `["world"]`:
+    ///   `local msg = "world"\n`
+    ///
+    /// `cook.add_unit` prepends this string to `lua_code` before storing the
+    /// `LuaChunk` payload so the execute-phase worker sees the resolved locals.
+    pub chore_param_prelude: String,
     /// The fully-qualified name of the recipe currently executing in
     /// the register phase (e.g. "lib.build" for an imported recipe).
     /// Set just before the recipe body function is called; cleared after.
@@ -194,6 +236,7 @@ impl BodyCaptureState {
             step_group_dep_input_paths: Vec::new(),
             current_chore_active: false,
             current_recipe: None,
+            chore_param_prelude: String::new(),
         }
     }
 }

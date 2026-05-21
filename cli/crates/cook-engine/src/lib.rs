@@ -453,6 +453,37 @@ impl From<cook_register::RegisterError> for EngineError {
             cook_register::RegisterError::RecipeNotFound(name) => {
                 EngineError::UnknownRecipe(name)
             }
+            // COOK-36 Task 4: argv-binding diagnostics surface as
+            // RegistrationFailed so the CLI can render the message and exit.
+            cook_register::RegisterError::ChoreParamMissing { chore, name, line } => {
+                EngineError::RegistrationFailed {
+                    recipe: chore.clone(),
+                    message: format!(
+                        "chore '{chore}' requires parameter '{name}' \
+                         (declared at line {line}); supply it as a positional argument"
+                    ),
+                }
+            }
+            cook_register::RegisterError::ChoreTooManyArgv {
+                chore,
+                declared,
+                supplied,
+            } => EngineError::RegistrationFailed {
+                recipe: chore.clone(),
+                message: format!(
+                    "chore '{chore}' takes {declared} parameter(s) but {supplied} \
+                     positional argument(s) were supplied"
+                ),
+            },
+            cook_register::RegisterError::RecipeWithArgv { name, supplied } => {
+                EngineError::RegistrationFailed {
+                    recipe: name.clone(),
+                    message: format!(
+                        "recipe '{name}': recipes do not take parameters; received {supplied} \
+                         positional argument(s) (use '@PRESET' to select a config preset)"
+                    ),
+                }
+            }
         }
     }
 }

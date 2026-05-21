@@ -482,7 +482,12 @@ fn resolve_num_jobs(globals: &Globals) -> usize {
 // cmd_run
 // ---------------------------------------------------------------------------
 
-pub fn cmd_run(globals: &Globals, recipe_name: &str, config: Option<&str>) -> Result<(), CookError> {
+pub fn cmd_run(
+    globals: &Globals,
+    recipe_name: &str,
+    argv: &[String],
+    config: Option<&str>,
+) -> Result<(), CookError> {
     let parsed = read_and_parse(globals)?;
     pipeline::validate_selected_config(&parsed.cookfile, config)
         .map_err(pipeline_error_to_cook_error)?;
@@ -502,8 +507,15 @@ pub fn cmd_run(globals: &Globals, recipe_name: &str, config: Option<&str>) -> Re
             .map_err(pipeline_error_to_cook_error)?;
         let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
-        pipeline::register_workspace(&workspace, config, &globals.set, /*cache_ctx*/ None)
-            .map_err(pipeline_error_to_cook_error)?
+        pipeline::register_workspace_with_argv(
+            &workspace,
+            config,
+            &globals.set,
+            recipe_name,
+            argv,
+            /*cache_ctx*/ None,
+        )
+        .map_err(pipeline_error_to_cook_error)?
     } else {
         let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
         let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
@@ -514,12 +526,14 @@ pub fn cmd_run(globals: &Globals, recipe_name: &str, config: Option<&str>) -> Re
         let dotenv_vars = pipeline::load_env(cookfile_dir);
         let env_vars = pipeline::resolve_env(config, dotenv_vars, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
-        pipeline::register_single_cookfile(
+        pipeline::register_single_cookfile_with_argv(
             cookfile_dir,
             env_vars,
             &globals.set,
             parsed.lua_source,
             config,
+            recipe_name,
+            argv,
             /*cache_ctx*/ None,
         )
         .map_err(pipeline_error_to_cook_error)?
@@ -1426,7 +1440,7 @@ pub fn cmd_serve(
     let watcher = CookWatcher::new(globs, cookfile_paths);
 
     eprintln!("cook serve: initial build...");
-    let _ = cmd_run(globals, recipe_name, config);
+    let _ = cmd_run(globals, recipe_name, &[], config);
 
     eprintln!("cook serve: watching for changes...");
     watcher
@@ -1434,7 +1448,7 @@ pub fn cmd_serve(
             if cookfile_changed {
                 eprintln!("cook serve: Cookfile changed, rebuilding...");
             }
-            cmd_run(globals, recipe_name, config).map_err(|e| e.to_string())?;
+            cmd_run(globals, recipe_name, &[], config).map_err(|e| e.to_string())?;
             Ok(())
         })
         .map_err(|e| CookError::Other(e.to_string()))?;

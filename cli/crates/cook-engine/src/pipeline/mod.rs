@@ -47,6 +47,6 @@ pub use parse::{read_and_parse, validate_selected_config, ParsedCookfile};
 pub use recipe_info::{build_recipe_infos_from_registered, find_full_prefix};
 pub use registers::{
     list_single_cookfile_names, list_workspace_names, register_single_cookfile,
-    register_workspace,
+    register_single_cookfile_with_argv, register_workspace, register_workspace_with_argv,
 };
 pub use workspace::{resolve_workspace_root, LoadedCookfile, Workspace};

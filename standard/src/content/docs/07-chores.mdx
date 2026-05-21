@@ -59,6 +59,20 @@ A conforming implementation MUST make these bindings available before any step o
 
 Placeholder substitution (`$<NAME>`) and environment-variable export to shell children are governed by later subsections (§9 and §7.1.2.X respectively).
 
+**When parameters bind (normative).** At chore-invocation time, before the chore body's register phase runs:
+
+1. The implementation collects positional argv after the chore name (excluding config-preset markers per §27.X).
+2. argv is matched against the declared `param_list` in source order.
+3. For each required parameter: argv at this position MUST exist; a missing element is a diagnostic per the table below.
+4. For each defaulted parameter: if argv is exhausted at this position, the default is evaluated.
+5. Excess argv elements MUST raise a diagnostic per the table below (unless a variadic absorbs them, §7.1.3).
+
+| Condition | Diagnostic (recommended form) |
+|---|---|
+| Required arg missing | `chore 'NAME' requires parameter 'PARAM' (declared at line LINE); supply it as a positional argument` |
+| Excess argv with no variadic | `chore 'NAME' takes K parameter(s) but M positional argument(s) were supplied` |
+| Recipe receives argv | `recipe 'NAME': recipes do not take parameters; received N positional argument(s) (use '@PRESET' to select a config preset)` |
+
 ## 7.2. Chore body — allowed and banned step kinds [#chores.body]
 
 A chore body MAY contain any of the following step kinds:

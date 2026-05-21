@@ -541,9 +541,25 @@ pub fn register_unit_api(
             })?;
             body.current_chore_active
         };
+        // COOK-36 Task 4: when capturing a lua_code unit inside a chore body,
+        // prepend the param-binding prelude so the execute-phase worker sees
+        // the param locals resolved to their bound values.
+        let chore_param_prelude: String = {
+            let slot = body_slot_add.borrow();
+            if let Some(body) = slot.as_ref() {
+                body.chore_param_prelude.clone()
+            } else {
+                String::new()
+            }
+        };
         let payload = if let Some(code) = lua_code {
+            let final_code = if !chore_param_prelude.is_empty() && is_chore {
+                format!("{chore_param_prelude}{code}")
+            } else {
+                code
+            };
             WorkPayload::LuaChunk {
-                code,
+                code: final_code,
                 inputs,
                 outputs: output_paths.clone(),
                 ingredient_groups,

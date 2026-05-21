@@ -47,6 +47,15 @@ pub struct RegisterSessionBuilder {
     /// we don't repeat the diagnostic on every recipe-register call within
     /// a single Cookfile load.
     shadow_warnings_emitted: Rc<RefCell<std::collections::BTreeSet<(String, String)>>>,
+    /// The targeted recipe / chore name (unqualified within this Cookfile).
+    /// When set, the body invocation for this recipe will receive `argv` as
+    /// bound chore-parameter values (COOK-36 Task 4).
+    ///
+    /// `None` for non-dispatch paths (e.g. `cook list`, `cook dag`).
+    pub(crate) target_recipe: Option<String>,
+    /// Positional argv to bind as chore parameters for `target_recipe`.
+    /// Empty for normal recipes (which don't accept parameters).
+    pub(crate) target_argv: Vec<String>,
 }
 
 impl RegisterSessionBuilder {
@@ -63,6 +72,8 @@ impl RegisterSessionBuilder {
             alias_qualified_prefixes: BTreeMap::new(),
             env_keyset: EnvKeyset::new(),
             shadow_warnings_emitted: Rc::new(RefCell::new(std::collections::BTreeSet::new())),
+            target_recipe: None,
+            target_argv: Vec::new(),
         }
     }
 
@@ -104,6 +115,18 @@ impl RegisterSessionBuilder {
 
     pub fn working_dir(&self) -> &PathBuf {
         &self.working_dir
+    }
+
+    /// Set the targeted recipe / chore name and its positional argv.
+    ///
+    /// When set, `register_cookfile` will pass the bound `__cook_params`
+    /// table to the body function of `target` instead of calling it with
+    /// no arguments. For normal recipes, `argv` must be empty (the call
+    /// will surface `RegisterError::RecipeWithArgv` otherwise).
+    pub fn with_target_argv(mut self, target: String, argv: Vec<String>) -> Self {
+        self.target_recipe = Some(target);
+        self.target_argv = argv;
+        self
     }
 }
 
@@ -295,12 +318,16 @@ pub fn register_cookfile(
             source,
             kind,
             qualified_name,
+            params_meta,
+            source_line,
         ): (
             LuaRegistryKey,
             Vec<String>,
             crate::capture::RegistrationSource,
             crate::RecipeKind,
             String,
+            Vec<crate::capture::ChoreParamMeta>,
+            usize,
         );
         {
             let registry = recipes.borrow();
@@ -321,6 +348,11 @@ pub fn register_cookfile(
             requires = recipe.metadata.requires.clone();
             source = recipe.source;
             kind = recipe.kind;
+            params_meta = recipe.metadata.params.clone();
+            source_line = match recipe.source {
+                crate::capture::RegistrationSource::Static { line } => line,
+                crate::capture::RegistrationSource::Dynamic { line } => line,
+            };
             qualified_name = if builder.qualified_prefix.is_empty() {
                 recipe.name.clone()
             } else {
@@ -340,8 +372,99 @@ pub fn register_cookfile(
 
         // Call the body. Any error short-circuits — earlier bodies' captures
         // are dropped along with the function return.
+        //
+        // COOK-36 Task 4: argv binding for chores.
+        //
+        // Only the *targeted* chore body gets invoked with a bound
+        // `__cook_params` table. Non-targeted chore bodies are skipped
+        // entirely: chores produce no cacheable units, so there is nothing
+        // useful to capture from a non-targeted chore invocation, and the
+        // body would fail with a Lua error if called with nil `__cook_params`
+        // while referencing its parameters. Non-targeted recipe bodies are
+        // invoked normally (they don't take __cook_params).
         let func: LuaFunction = lua.registry_value(&func_key_clone)?;
-        func.call::<()>(())?;
+        let is_target = builder
+            .target_recipe
+            .as_deref()
+            .map(|t| t == name.as_str())
+            .unwrap_or(false);
+        if kind == crate::RecipeKind::Chore {
+            if is_target {
+                // Targeted chore: bind argv and call with __cook_params.
+                let argv = &builder.target_argv;
+                let (bound, prelude) = build_chore_params_table(
+                    &lua,
+                    &params_meta,
+                    argv,
+                    name,
+                    source_line,
+                )?;
+                // Store the prelude on the body slot so cook.add_unit can
+                // prepend it to lua_code units captured in this chore body.
+                {
+                    let mut slot = body_slot.borrow_mut();
+                    if let Some(body) = slot.as_mut() {
+                        body.chore_param_prelude = prelude;
+                    }
+                }
+                func.call::<()>((bound,))
+                    .map_err(RegisterError::Lua)?;
+            } else if builder.target_recipe.is_some() {
+                // A specific target was requested but this is NOT the target —
+                // skip body invocation for this non-targeted chore. Chores
+                // produce no cacheable units, and their bodies would fail with
+                // a Lua error if called with nil `__cook_params` while
+                // referencing their parameters.
+                //
+                // The empty RecipeUnits are still recorded so the name appears
+                // in `names` and the analyzer can route dispatch correctly when
+                // this chore IS targeted in a future invocation.
+                lua.remove_registry_value(func_key_clone)?;
+                let _ = body_slot.borrow_mut().take();
+                names.push(crate::RegisteredRecipePub {
+                    name: name.clone(),
+                    source,
+                    kind,
+                    requires: requires.clone(),
+                });
+                units_by_recipe.insert(
+                    name.clone(),
+                    RecipeUnits {
+                        recipe_name: name.clone(),
+                        deps: requires,
+                        units: vec![],
+                        step_groups: vec![],
+                        working_dir: builder.working_dir.clone(),
+                        env_vars: builder
+                            .env_vars
+                            .borrow()
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                        terminal_outputs: vec![],
+                        dep_edges: vec![],
+                        probes: vec![],
+                    },
+                );
+                continue;
+            } else {
+                // No specific target requested (e.g. cook list, cook dag,
+                // or a test that doesn't set target_recipe). Call with no
+                // arguments — the body may fail if it dereferences __cook_params,
+                // but that is the expected behavior for list/dag paths (they
+                // don't run chore bodies anyway via the dispatch path).
+                func.call::<()>(()).map_err(RegisterError::Lua)?;
+            }
+        } else {
+            // Normal recipe: validate that no argv was supplied (§7.1.2).
+            if is_target && !builder.target_argv.is_empty() {
+                return Err(RegisterError::RecipeWithArgv {
+                    name: name.clone(),
+                    supplied: builder.target_argv.len(),
+                });
+            }
+            func.call::<()>(()).map_err(RegisterError::Lua)?;
+        }
         // Cleanup the transient registry entry to avoid leaking refs across
         // many recipes in large Cookfiles.
         lua.remove_registry_value(func_key_clone)?;
@@ -464,6 +587,92 @@ pub fn register_cookfile(
         probes,
         final_env,
     })
+}
+
+/// Build the `__cook_params` Lua table from declared parameter metadata and
+/// supplied argv (COOK-36 Task 4).
+///
+/// Matches each element of `params_meta` in order against `argv`:
+/// - `Required`: pops the next argv element; errors if argv is exhausted.
+/// - `DefaultedString`: uses the next argv element if present; falls back
+///   to the declared default string otherwise.
+///
+/// After all parameters are satisfied, any remaining argv elements are an
+/// error (`ChoreTooManyArgv`). Each bound value is set on a fresh Lua table
+/// under the parameter's declared name.
+///
+/// Also returns a Lua source prelude (`local NAME = "VALUE"\n` lines) that
+/// the caller can set on the `BodyCaptureState.chore_param_prelude` field
+/// so `cook.add_unit`'s `lua_code` units automatically include the bindings
+/// in the execute-phase worker VM.
+fn build_chore_params_table(
+    lua: &Lua,
+    params_meta: &[crate::capture::ChoreParamMeta],
+    argv: &[String],
+    chore_name: &str,
+    source_line: usize,
+) -> Result<(LuaTable, String), RegisterError> {
+    use crate::capture::ChoreParamMeta;
+
+    let table = lua.create_table().map_err(RegisterError::Lua)?;
+    let mut argv_iter = argv.iter();
+    let mut prelude = String::new();
+
+    for param in params_meta {
+        match param {
+            ChoreParamMeta::Required { name } => {
+                let value = argv_iter.next().ok_or_else(|| RegisterError::ChoreParamMissing {
+                    chore: chore_name.to_string(),
+                    name: name.clone(),
+                    line: source_line,
+                })?;
+                table.set(name.as_str(), value.as_str()).map_err(RegisterError::Lua)?;
+                // Escape the value for Lua string literal.
+                let escaped = lua_escape_string(value);
+                prelude.push_str(&format!("local {} = \"{}\"\n", name, escaped));
+            }
+            ChoreParamMeta::DefaultedString { name, default } => {
+                let value = argv_iter
+                    .next()
+                    .map(|s| s.as_str())
+                    .unwrap_or(default.as_str());
+                table.set(name.as_str(), value).map_err(RegisterError::Lua)?;
+                let escaped = lua_escape_string(value);
+                prelude.push_str(&format!("local {} = \"{}\"\n", name, escaped));
+            }
+        }
+    }
+
+    let remaining = argv_iter.count();
+    if remaining > 0 {
+        return Err(RegisterError::ChoreTooManyArgv {
+            chore: chore_name.to_string(),
+            declared: params_meta.len(),
+            supplied: argv.len(),
+        });
+    }
+
+    Ok((table, prelude))
+}
+
+/// Escape a string value for inclusion in a Lua double-quoted string literal.
+///
+/// Only escapes characters that would break the literal if unescaped:
+/// `\`, `"`, newline, carriage return, and NUL. This is sufficient for the
+/// chore-param prelude use case (param values are CLI argv strings).
+fn lua_escape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\0' => out.push_str("\\0"),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Local DFS-based topological sort of recipe names by their declared
