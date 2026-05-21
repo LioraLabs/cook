@@ -4,6 +4,7 @@
   "recipe"
   "chore"
   "config"
+  "register"
   "use"
   "import"
   "ingredients"

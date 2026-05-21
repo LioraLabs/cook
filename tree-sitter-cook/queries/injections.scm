@@ -24,6 +24,11 @@
   (lua_code) @injection.content
   (#set! injection.language "lua"))
 
+; Inject Lua into register block bodies (CS-0072)
+(register_block
+  (lua_code) @injection.content
+  (#set! injection.language "lua"))
+
 ; Inject bash into shell commands. `$<IDENT>` placeholders interleave
 ; with shell_content chunks; the `[shell_content placeholder]+` choice
 ; matches the full sequence so every chunk is captured in one match,

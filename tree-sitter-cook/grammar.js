@@ -19,6 +19,7 @@ module.exports = grammar({
     $._shell_content,
     $._config_block_content,
     $._shell_block_content,
+    $._register_block_content,
   ],
 
   word: ($) => $._bare_identifier,
@@ -31,6 +32,7 @@ module.exports = grammar({
         $.recipe,
         $.chore,
         $.config_block,
+        $.register_block,
         $.use_declaration,
         $.import_declaration,
         $.comment,
@@ -58,6 +60,21 @@ module.exports = grammar({
         optional(field("name", $._name)),
         $._newline,
         alias($._config_block_content, $.lua_code),
+      ),
+
+    // App. A.1 + CS-0072. A top-level `register` block carries Lua source
+    // that runs at register-phase before any recipe declarations. The body
+    // ranges from the line after the header to the next column-0 line
+    // classified as `recipe`, `chore`, `config`, `use`, `import`, `register`,
+    // or (per issue COOK-51) a top-level module_call. The body MAY be empty
+    // (`register-block-empty` fixture is literally just the word `register`),
+    // so the lua_code content is optional. The terminating NEWLINE is also
+    // optional because EOF can follow the keyword directly.
+    register_block: ($) =>
+      seq(
+        "register",
+        $._newline,
+        optional(alias($._register_block_content, $.lua_code)),
       ),
 
     // ── Recipes ────────────────────────────────────────────────

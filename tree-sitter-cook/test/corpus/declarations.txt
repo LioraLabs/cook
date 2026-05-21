@@ -111,3 +111,57 @@ config debug
   (config_block
     name: (identifier)
     (lua_code)))
+
+================
+Register block (empty)
+================
+
+register
+
+---
+
+(source_file
+  (register_block))
+
+================
+Register block (single statement)
+================
+
+use cook_cc
+
+register
+    cook_cc.bin("game", { sources = { "src/main.c" } })
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier))
+  (register_block
+    (lua_code)))
+
+================
+Register block (interleaved with recipe)
+================
+
+register
+    a()
+
+recipe build
+    @ ./build
+
+register
+    b()
+
+---
+
+(source_file
+  (register_block
+    (lua_code))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (interactive_command
+      (shell_content)))
+  (register_block
+    (lua_code)))

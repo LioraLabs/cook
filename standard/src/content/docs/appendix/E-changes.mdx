@@ -1509,7 +1509,7 @@ Three positive conformance fixtures pin the new surface: `cc-private-define-does
 
 **Grammar changes since v0.2** (each bullet documents one sub-issue in the cook-side milestone; bullets are populated incrementally as the sub-issues land):
 
-- _bullets are filled in as each sub-issue lands; see milestone `tree-sitter-cook v0.12 conformance` under cliban project COOK (issues COOK-50…COOK-57)_
+- **CS-0072 (COOK-50).** Top-level `register` block production added to `_toplevel_item`; new external `REGISTER_BLOCK_CONTENT` token shares the LUA_SOURCE scanner with `CONFIG_BLOCK_CONTENT`, with `register` joining the toplevel-keyword stop set so register blocks split from config and from each other. Recipe-body scanner extended to terminate on a column-0 `register` keyword so the interleaved-register-between-recipes form parses correctly. `queries/injections.scm` injects Lua into register block bodies; `queries/highlights.scm` highlights `register` as a keyword.
 
 **Conformance harness.** `tree-sitter-cook/scripts/conformance.mjs` is tightened in lockstep: every entry leaves `KNOWN_STALE_POSITIVES` as the corresponding sub-issue lands, and `SEMANTIC_ONLY_NEGATIVES` is audited to remove entries that the grammar can now syntactically reject. Once the audit closes, a STALE or NOTE label on any positive becomes a non-zero exit and a regression.
 

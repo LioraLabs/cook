@@ -10,6 +10,7 @@ enum TokenType {
   SHELL_CONTENT,
   CONFIG_BLOCK_CONTENT,
   SHELL_BLOCK_CONTENT,
+  REGISTER_BLOCK_CONTENT,
 };
 
 // Persistent state for the SHELL_BLOCK_CONTENT scanner. A `$<IDENT>`
@@ -301,14 +302,27 @@ static bool scan_shell_content(TSLexer *lexer) {
         return false;
     }
 
-    // `recipe` / `chore` keyword — explicit recipe/chore shouldn't appear
-    // inside a body; let the internal lexer handle it for error recovery
+    // `recipe` / `chore` / `register` keyword — implicit recipe-body
+    // termination per App. A.3 "Body termination": a column-0 line
+    // classified as one of these keywords ends the recipe body so the
+    // grammar's top-level alternation can dispatch the next item.
+    // (`use`, `import`, `config` are also termination keywords per spec,
+    // but the existing fixtures don't exercise them mid-body; leave them
+    // out for now to minimise scanner churn.)
     if (!word_truncated && len == 6 && strcmp(word, "recipe") == 0) {
       if (next == ' ' || next == '\t' || next == '"')
         return false;
     }
     if (!word_truncated && len == 5 && strcmp(word, "chore") == 0) {
       if (next == ' ' || next == '\t' || next == '"')
+        return false;
+    }
+    // CS-0072: `register` ends a recipe body. The empty-body form
+    // (`register\n`) needs newline / EOF to count as a terminator, in
+    // addition to the usual space/tab/quote.
+    if (!word_truncated && len == 8 && strcmp(word, "register") == 0) {
+      if (next == ' ' || next == '\t' || next == '\n' ||
+          next == 0   || next == '"')
         return false;
     }
 
@@ -361,24 +375,35 @@ static bool scan_shell_content(TSLexer *lexer) {
 
 // ── Top-level keyword check ────────────────────────────────────
 // Returns true if the buffer (length len) matches a top-level Cookfile
-// keyword: recipe, config, use, import.
+// keyword that implicitly terminates a config/register body
+// (§{toplevel.termination}, App. A.2): recipe, chore, config, use,
+// import, register. The `register` keyword joins this set per CS-0072.
 
 static bool is_toplevel_keyword(const char *buf, int len) {
   return (len == 6 && strncmp(buf, "recipe", 6) == 0) ||
          (len == 5 && strncmp(buf, "chore", 5) == 0) ||
          (len == 6 && strncmp(buf, "config", 6) == 0) ||
          (len == 3 && strncmp(buf, "use", 3) == 0) ||
-         (len == 6 && strncmp(buf, "import", 6) == 0);
+         (len == 6 && strncmp(buf, "import", 6) == 0) ||
+         (len == 8 && strncmp(buf, "register", 8) == 0);
 }
 
-// ── Config block scanner ───────────────────────────────────────
-// Scans Lua content between `config NAME\n` and the next column-0
-// top-level keyword (recipe, config, use, import) or EOF. Stops
-// before the top-level keyword line, leaving it for the grammar to
-// consume. Handles strings/comments so keywords inside them don't
-// terminate the body.
+// ── Top-level Lua source scanner ───────────────────────────────
+// Shared scan for `config NAME\n…` and `register\n…` bodies. Scans
+// the Lua content up to the next column-0 top-level keyword (recipe,
+// chore, config, use, import, register) or EOF; stops before the
+// keyword line, leaving it for the grammar to consume. Handles
+// strings/comments so keywords inside them don't terminate the body.
+// CS-0072: `register` joins the toplevel keyword set so register
+// blocks split from config and from each other. The two callers
+// distinguish via the `result_symbol` argument.
+//
+// TODO (issue COOK-51, top-level module_call): once top-level
+// module_calls are added, this scanner should also stop on a
+// column-0 `LUA_IDENT.IDENT_START…` shape.
 
-static bool scan_config_block_content(TSLexer *lexer) {
+static bool scan_lua_source_until_toplevel(TSLexer *lexer,
+                                           enum TokenType result_symbol) {
   bool has_content = false;
   bool at_line_start = true;
 
@@ -396,7 +421,7 @@ static bool scan_config_block_content(TSLexer *lexer) {
         // so this carries no risk of swallowing real config-body content.)
         if (c == '#') {
           lexer->mark_end(lexer);
-          lexer->result_symbol = CONFIG_BLOCK_CONTENT;
+          lexer->result_symbol = result_symbol;
           return has_content;
         }
         // Peek ahead to read an identifier
@@ -414,7 +439,7 @@ static bool scan_config_block_content(TSLexer *lexer) {
         if (is_toplevel_keyword(word, len) &&
             (after == ' ' || after == '\t' || after == '\n' || after == 0 || after == '"')) {
           // Found top-level keyword at column 0 — stop before it
-          lexer->result_symbol = CONFIG_BLOCK_CONTENT;
+          lexer->result_symbol = result_symbol;
           return has_content;
         }
         // Not a top-level keyword — we've already advanced past some chars
@@ -480,7 +505,7 @@ static bool scan_config_block_content(TSLexer *lexer) {
   // EOF without `end` — emit what we have
   if (has_content) {
     lexer->mark_end(lexer);
-    lexer->result_symbol = CONFIG_BLOCK_CONTENT;
+    lexer->result_symbol = result_symbol;
     return true;
   }
   return false;
@@ -522,8 +547,12 @@ bool tree_sitter_cook_external_scanner_scan(void *payload, TSLexer *lexer,
                                             const bool *valid_symbols) {
   ShellBlockState *state = (ShellBlockState *)payload;
 
+  if (valid_symbols[REGISTER_BLOCK_CONTENT]) {
+    return scan_lua_source_until_toplevel(lexer, REGISTER_BLOCK_CONTENT);
+  }
+
   if (valid_symbols[CONFIG_BLOCK_CONTENT]) {
-    return scan_config_block_content(lexer);
+    return scan_lua_source_until_toplevel(lexer, CONFIG_BLOCK_CONTENT);
   }
 
   if (valid_symbols[SHELL_BLOCK_CONTENT]) {
