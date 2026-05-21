@@ -902,6 +902,34 @@ fn expand_shell_command_sigil(command: &str, recipe_names: &BTreeSet<String>) ->
     }
 }
 
+/// Expand a chore shell-step command for use in `compile_chore`.
+///
+/// When the chore declares params (`has_params = true`) and the command
+/// contains `$<...>` placeholders, defers expansion to the runtime helper
+/// `cook.__expand_chore_sigils` so it can resolve placeholder names against
+/// the bound `__cook_params` table. This is necessary because the param
+/// values are only known at register time (when the chore body closure runs),
+/// not at code-generation time.
+///
+/// When the chore declares no params (`has_params = false`), the old
+/// `expand_shell_command_sigil` path is used instead, preserving the
+/// existing `$<env_var>` → `cook.require_env(...)` behavior for
+/// parameterless chores.
+fn expand_chore_shell_command(command: &str, has_params: bool) -> String {
+    let has_sigils = !crate::sigil::scan(command).is_empty();
+    // Use the runtime-helper path only when the chore declares params AND the
+    // command has sigils. Parameterless chores fall through to the existing
+    // require_env-based expansion so that $<ENV_VAR> continues to work.
+    if has_params && has_sigils {
+        return format!(
+            "cook.__expand_chore_sigils({}, __cook_params)",
+            wrap_lua_string(command)
+        );
+    }
+    // No params or no sigils: use the standard sigil-expansion path.
+    expand_shell_command_sigil(command, &BTreeSet::new())
+}
+
 /// Compile a `Chore` to register-phase Lua.
 ///
 /// A chore compiles to the same shape as a recipe body (a `cook.recipe(...)`
@@ -984,8 +1012,9 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
     while i < chore.steps.len() {
         match &chore.steps[i] {
             Step::Shell { command, line, interactive: true } => {
-                // Apply sigil substitution (CS-0033 closes App. E.8).
-                let cmd_expr = expand_shell_command_sigil(command, &BTreeSet::new());
+                // Apply sigil substitution — chore-aware path defers $<NAME>
+                // expansion to the runtime helper so param values are visible.
+                let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty());
                 // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                 // units that are never cached. The cacheable cook-step path in
                 // cook_step.rs is the only emission site that includes it.
@@ -999,7 +1028,7 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
                 // Parser enforces all chore shells are interactive; this arm
                 // is unreachable in a well-formed AST, but emit defensively.
                 if let Step::Shell { command, line, .. } = &chore.steps[i] {
-                    let cmd_expr = expand_shell_command_sigil(command, &BTreeSet::new());
+                    let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty());
                     // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                     // units that are never cached. The cacheable cook-step path in
                     // cook_step.rs is the only emission site that includes it.

@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+    Chore name="deploy" line=1
+      params: [Required name="target", VariadicPlus name="files"]
+      deps: []
+      steps:
+        Shell interactive=true command="rsync -av $<files> user@host:/srv/$<target>/"
+  register_blocks: []
+  top_level_module_calls: []

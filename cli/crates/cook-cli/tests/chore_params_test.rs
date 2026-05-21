@@ -308,3 +308,58 @@ fn chore_lua_default_non_string_surfaces_diagnostic() {
         "stderr: {stderr}"
     );
 }
+
+// ── COOK-36 Task 7: $<param-name> placeholder substitution in chore shell steps ──
+
+/// `cook say hello` where `chore say target` uses `$<target>` in a shell step.
+/// The shell step must substitute the bound param value (single-quoted for
+/// POSIX-shell safety, so `hello` → `'hello'`).
+#[test]
+fn shell_step_substitutes_param_placeholders() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        // Use printf to get clean output unaffected by echo quoting rules.
+        "chore say target\n    @printf 'got: %s\\n' $<target>\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["say", "hello"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("got: hello"), "stdout: {stdout}");
+}
+
+/// `cook lint a.lua "b lua"` where `chore lint +files` uses `$<files>` in a shell step.
+/// The variadic must expand to individually shell-quoted, space-separated values.
+/// A value containing a space must remain a single word when printf expands it.
+#[test]
+fn shell_step_substitutes_variadic_placeholder_shell_quoted() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore lint +files\n    @printf '%s\\n' $<files>\n",
+    )
+    .unwrap();
+    // Last arg has a space — verify quoting preserves it as one word.
+    let out = run_cook_raw(tmp.path(), &["lint", "a.lua", "b lua"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("a.lua\n"), "stdout: {stdout}");
+    assert!(stdout.contains("b lua\n"), "stdout: {stdout}");
+}
+
+/// `cook say hello` where `chore say target` uses `$<unknown>` in a shell step.
+/// The runtime MUST surface a diagnostic about the unknown placeholder.
+#[test]
+fn shell_step_with_unknown_sigil_in_chore_errors() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore say target\n    @echo $<unknown>\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["say", "hello"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(stderr.contains("unknown") || stderr.contains("placeholder"), "stderr: {stderr}");
+}

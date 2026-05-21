@@ -1,0 +1,2 @@
+chore deploy target +files
+    @rsync -av $<files> user@host:/srv/$<target>/

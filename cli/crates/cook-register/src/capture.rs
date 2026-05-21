@@ -396,8 +396,92 @@ pub fn install_cook_api(
     }
     cook.set("env", env_table)?;
 
+    // cook.__expand_chore_sigils(raw_command, params_table) — runtime helper
+    // for chore shell steps. Replaces every `$<NAME>` in `raw_command` with
+    // the corresponding value from `params_table`, applying POSIX-shell
+    // single-quote escaping. Variadic values (Lua sequences) join with
+    // spaces, individually quoted. Unknown names raise a Lua error.
+    let expand_chore_sigils_fn = lua.create_function(
+        move |_lua, (raw, params): (String, mlua::Table)| -> mlua::Result<String> {
+            let mut out = String::new();
+            let mut chars = raw.char_indices().peekable();
+            while let Some((i, ch)) = chars.next() {
+                if ch == '$' {
+                    // Check for `<`
+                    if let Some(&(_, '<')) = chars.peek() {
+                        chars.next(); // consume '<'
+                        // Read name until '>'
+                        let mut name = String::new();
+                        let mut closed = false;
+                        while let Some((_, nc)) = chars.next() {
+                            if nc == '>' {
+                                closed = true;
+                                break;
+                            }
+                            name.push(nc);
+                        }
+                        if !closed {
+                            return Err(mlua::Error::runtime(format!(
+                                "unterminated '$<' placeholder in chore shell command at byte {i}"
+                            )));
+                        }
+                        let value: mlua::Value = params.get(name.as_str())?;
+                        match value {
+                            mlua::Value::String(s) => {
+                                out.push_str(&shell_quote(&s.to_str()?));
+                            }
+                            mlua::Value::Table(t) => {
+                                // Variadic — iterate sequence
+                                let mut parts: Vec<String> = Vec::new();
+                                for v in t.sequence_values::<String>() {
+                                    parts.push(shell_quote(&v?));
+                                }
+                                out.push_str(&parts.join(" "));
+                            }
+                            mlua::Value::Nil => {
+                                return Err(mlua::Error::runtime(format!(
+                                    "unknown placeholder '$<{name}>' in chore shell command (no such parameter)"
+                                )));
+                            }
+                            other => {
+                                return Err(mlua::Error::runtime(format!(
+                                    "placeholder '$<{name}>' has unexpected type {}",
+                                    other.type_name()
+                                )));
+                            }
+                        }
+                        continue;
+                    }
+                }
+                out.push(ch);
+            }
+            Ok(out)
+        }
+    )?;
+    cook.set("__expand_chore_sigils", expand_chore_sigils_fn)?;
+
     lua.globals().set("cook", cook)?;
     Ok(recipes)
+}
+
+/// POSIX-safe single-quote escaping for shell arguments.
+///
+/// Wraps the whole string in single quotes; any literal `'` becomes `'\''`
+/// (close-quote, escaped-quote, re-open-quote). This is the canonical
+/// sh-portable form and handles every character including spaces, backslashes,
+/// and dollar signs.
+fn shell_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// Upper bound on the Lua call-stack walk in `caller_line_in_cookfile`.
