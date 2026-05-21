@@ -165,3 +165,61 @@ register
       (shell_content)))
   (register_block
     (lua_code)))
+
+================
+Top-level module call (single line) (CS-0072)
+================
+
+use cook_cc
+
+cook_cc.bin("game", { sources = { "src/main.c" } })
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier))
+  (top_level_module_call
+    (module_call_text)))
+
+================
+Top-level module call (multi-line table arg) (CS-0072)
+================
+
+use cook_cc
+
+cook_cc.bin("game", {
+    sources = { "src/main.c" },
+})
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier))
+  (top_level_module_call
+    (module_call_text)))
+
+================
+Top-level module call terminates recipe body
+================
+
+use cook_cc
+
+recipe build
+    @ ./build
+
+cook_cc.bin("a", { sources = { "a.c" } })
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (interactive_command
+      (shell_content)))
+  (top_level_module_call
+    (module_call_text)))

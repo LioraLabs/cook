@@ -81,9 +81,9 @@
 (ingredient_exclude
   (string) @string)
 
-; ── Module call ─────────────────────────────────────────────────
+; ── Top-level module call (CS-0072) ─────────────────────────────
 
-(module_call
+(top_level_module_call
   (module_call_text) @function.call)
 
 ; ── Lua ─────────────────────────────────────────────────────────

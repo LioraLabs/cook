@@ -322,7 +322,7 @@ recipe pack
         (string)))))
 
 ================
-Module call
+Recipe-body bare module-call is shell (CS-0072)
 ================
 
 use cpp
@@ -338,8 +338,8 @@ recipe colorize
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (module_call
-      (module_call_text))))
+    (shell_command
+      (shell_content))))
 
 ================
 Inline lua line and block (register-phase >>)

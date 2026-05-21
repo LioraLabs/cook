@@ -20,6 +20,7 @@ module.exports = grammar({
     $._config_block_content,
     $._shell_block_content,
     $._register_block_content,
+    $._top_level_module_call_text,
   ],
 
   word: ($) => $._bare_identifier,
@@ -33,6 +34,7 @@ module.exports = grammar({
         $.chore,
         $.config_block,
         $.register_block,
+        $.top_level_module_call,
         $.use_declaration,
         $.import_declaration,
         $.comment,
@@ -126,7 +128,6 @@ module.exports = grammar({
         $.inline_lua_block,
         $.lua_line,
         $.lua_block,
-        $.module_call,
         $.interactive_command,
         $.shell_command,
         $.comment,
@@ -145,7 +146,6 @@ module.exports = grammar({
         $.inline_lua_block,
         $.lua_line,
         $.lua_block,
-        $.module_call,
         $.interactive_command,
         $.shell_command,
         $.comment,
@@ -264,18 +264,19 @@ module.exports = grammar({
     inline_lua_block: ($) =>
       seq(">>{", alias($._lua_block_content, $.lua_code), "}", $._newline),
 
-    // App. A.4 module_call: BARE_IDENT "." IDENT_START ...
-    // First segment is alphanumeric+underscore only (no hyphens/dots).
-    // Second segment must begin with [A-Za-z_]. The remainder of the
-    // line is not validated here; Lua-expression-hood is the runtime's
-    // concern. Multi-line brace-spanning forms (§ 4.11) are not yet
-    // supported by this grammar.
-    module_call: ($) =>
+    // App. A.1 + A.4 top-level `module_call` (CS-0072). A column-0
+    // `LUA_IDENT . IDENT_START …` statement, brace-balanced across
+    // newlines per §{lexical.brace-blocks.lua-spans}. The full text
+    // is collected by the external scanner so multi-line table-arg
+    // forms (`cook_cc.bin("game", {\n  …\n})`) parse as a single
+    // statement. Resolution of Lua-expression-hood is the runtime's
+    // concern, not the grammar's. Per CS-0072, recipe-body bare
+    // `LUA_IDENT.IDENT_START…` is shell, not module_call — the
+    // recipe-body cascade in `_recipe_item` no longer carries a
+    // module_call arm.
+    top_level_module_call: ($) =>
       seq(
-        alias(
-          token(prec(1, /[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][^\n]*/)),
-          $.module_call_text,
-        ),
+        alias($._top_level_module_call_text, $.module_call_text),
         $._newline,
       ),
 

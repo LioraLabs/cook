@@ -11,6 +11,7 @@ enum TokenType {
   CONFIG_BLOCK_CONTENT,
   SHELL_BLOCK_CONTENT,
   REGISTER_BLOCK_CONTENT,
+  TOP_LEVEL_MODULE_CALL_TEXT,
 };
 
 // Persistent state for the SHELL_BLOCK_CONTENT scanner. A `$<IDENT>`
@@ -326,19 +327,12 @@ static bool scan_shell_content(TSLexer *lexer) {
         return false;
     }
 
-    // Module-call dispatch (App. A.4): the first segment is a bare
-    // alphanumeric+underscore identifier (no dots, no hyphens), then a
-    // literal `.`, then a character matching ident-start. If both
-    // hold, defer to the grammar's `module_call` rule by refusing.
-    if (next == '.') {
-      lexer->advance(lexer, false);
-      int32_t after_dot = lexer->lookahead;
-      if (iswalpha(after_dot) || after_dot == '_') {
-        return false;
-      }
-      // Otherwise (`foo.123`, `foo.-x`, `foo.`) fall through and
-      // consume the rest of the line as a shell command.
-    }
+    // CS-0072: recipe-body bare module-call (`LUA_IDENT.IDENT_START…`)
+    // no longer dispatches as `module_call` (the grammar arm has been
+    // removed from `_recipe_item` / `_chore_item`). Such a line now
+    // resolves as `shell_command`, in line with App. A.4's revised
+    // step-dispatch priority order — so we just fall through and
+    // consume the rest of the line as shell content.
 
     // Reaching here means the alpha branch consumed at least one
     // identifier byte that is part of the shell command.
@@ -398,10 +392,6 @@ static bool is_toplevel_keyword(const char *buf, int len) {
 // blocks split from config and from each other. The two callers
 // distinguish via the `result_symbol` argument.
 //
-// TODO (issue COOK-51, top-level module_call): once top-level
-// module_calls are added, this scanner should also stop on a
-// column-0 `LUA_IDENT.IDENT_START…` shape.
-
 static bool scan_lua_source_until_toplevel(TSLexer *lexer,
                                            enum TokenType result_symbol) {
   bool has_content = false;
@@ -424,17 +414,42 @@ static bool scan_lua_source_until_toplevel(TSLexer *lexer,
           lexer->result_symbol = result_symbol;
           return has_content;
         }
-        // Peek ahead to read an identifier
-        char word[8];
+        // Peek ahead to read an identifier. The buffer holds up to 15
+        // chars; longer LUA_IDENTs will overflow the buffer harmlessly
+        // (the keyword check below won't match any 8+ char keyword).
+        char word[16];
         int len = 0;
         // Mark position before consuming any chars
         lexer->mark_end(lexer);
-        while (len < 7 && (iswalpha(lexer->lookahead) || lexer->lookahead == '_')) {
-          word[len++] = (char)lexer->lookahead;
-          lexer->advance(lexer, false);
+        if (iswalpha(lexer->lookahead) || lexer->lookahead == '_') {
+          while (iswalnum(lexer->lookahead) || lexer->lookahead == '_') {
+            if (len < 15) {
+              word[len++] = (char)lexer->lookahead;
+            }
+            lexer->advance(lexer, false);
+          }
         }
         word[len] = '\0';
         int32_t after = lexer->lookahead;
+        // CS-0072: top-level `module_call` shape — `LUA_IDENT . IDENT_START`
+        // at column 0 — terminates the surrounding register / config body
+        // so the grammar's `top_level_module_call` can be matched next.
+        // Check this BEFORE the keyword check so `register.foo()` parses
+        // as a top-level module_call, not as a (truncated) `register`
+        // keyword followed by Lua body content.
+        if (len > 0 && after == '.') {
+          lexer->advance(lexer, false);
+          int32_t after_dot = lexer->lookahead;
+          if (iswalpha(after_dot) || after_dot == '_') {
+            lexer->result_symbol = result_symbol;
+            return has_content;
+          }
+          // Not a module_call shape (`foo.123`, `foo.-x`, …). We've
+          // consumed past the dot; fall through to ordinary body.
+          has_content = true;
+          at_line_start = false;
+          continue;
+        }
         // Check if it's a top-level keyword followed by whitespace/newline/EOF
         if (is_toplevel_keyword(word, len) &&
             (after == ' ' || after == '\t' || after == '\n' || after == 0 || after == '"')) {
@@ -511,6 +526,121 @@ static bool scan_lua_source_until_toplevel(TSLexer *lexer,
   return false;
 }
 
+// ── Top-level module_call shape predicate ──────────────────────
+// Returns true iff the bytes at the current cursor look like the
+// start of a top-level `module_call`: `LUA_IDENT . IDENT_START`. The
+// LUA_IDENT (`/[A-Za-z_][A-Za-z0-9_]*/`) is strict — hyphens and dots
+// are NOT permitted in the first segment per App. A.4. Consumes the
+// inspected bytes via `advance`; callers MUST `mark_end` before
+// invoking so they can rewind on a miss.
+static bool peek_top_level_module_call_shape(TSLexer *lexer) {
+  int32_t c = lexer->lookahead;
+  if (!iswalpha(c) && c != '_') return false;
+  lexer->advance(lexer, false);
+  while (iswalnum(lexer->lookahead) || lexer->lookahead == '_') {
+    lexer->advance(lexer, false);
+  }
+  if (lexer->lookahead != '.') return false;
+  lexer->advance(lexer, false);
+  c = lexer->lookahead;
+  return iswalpha(c) || c == '_';
+}
+
+// ── Top-level module_call scanner ──────────────────────────────
+// Consumes a column-0 `LUA_IDENT . IDENT_START …` statement, ending
+// at a newline encountered with brace_depth == 0. Multi-line forms
+// (App. A.4 + § 2.9) brace-balance using the same opaque-span rules
+// as `scan_lua_block_content`: strings, single-line comments, and
+// (TODO: issue COOK-53) leveled long-strings / block comments are
+// inert. Parentheses are NOT balanced — only braces matter for
+// statement extent.
+//
+// Activation conditions:
+//   • valid_symbols[TOP_LEVEL_MODULE_CALL_TEXT] is set, AND
+//   • the cursor is at column 0 (the grammar reaches this only at
+//     toplevel position, so this is guaranteed by structure), AND
+//   • the bytes match `LUA_IDENT . IDENT_START` (see peek above).
+static bool scan_top_level_module_call_text(TSLexer *lexer) {
+  // Verify the shape opens here. Note: the lexer's column at entry
+  // is wherever the grammar called us from — `_toplevel_item` is only
+  // reached at column 0 in this grammar, so we don't need an explicit
+  // column check.
+  if (!iswalpha(lexer->lookahead) && lexer->lookahead != '_') return false;
+  // Consume LUA_IDENT.
+  while (iswalnum(lexer->lookahead) || lexer->lookahead == '_') {
+    lexer->advance(lexer, false);
+  }
+  if (lexer->lookahead != '.') return false;
+  lexer->advance(lexer, false);
+  if (!iswalpha(lexer->lookahead) && lexer->lookahead != '_') return false;
+  // Consume the rest of the statement.
+  int brace_depth = 0;
+  bool in_dq = false;     // double-quoted string
+  bool in_sq = false;     // single-quoted string
+  while (!lexer->eof(lexer)) {
+    int32_t c = lexer->lookahead;
+    if (in_dq) {
+      if (c == '\\') {
+        lexer->advance(lexer, false);
+        if (!lexer->eof(lexer)) lexer->advance(lexer, false);
+        continue;
+      }
+      if (c == '"') { in_dq = false; }
+      lexer->advance(lexer, false);
+      continue;
+    }
+    if (in_sq) {
+      if (c == '\\') {
+        lexer->advance(lexer, false);
+        if (!lexer->eof(lexer)) lexer->advance(lexer, false);
+        continue;
+      }
+      if (c == '\'') { in_sq = false; }
+      lexer->advance(lexer, false);
+      continue;
+    }
+    if (c == '"') { in_dq = true; lexer->advance(lexer, false); continue; }
+    if (c == '\'') { in_sq = true; lexer->advance(lexer, false); continue; }
+    if (c == '-') {
+      lexer->advance(lexer, false);
+      if (lexer->lookahead == '-') {
+        // Lua line comment to end of line — but a comment outside braces
+        // means we're past the statement at the next newline anyway, so
+        // just skip to EOL.
+        while (!lexer->eof(lexer) && lexer->lookahead != '\n') {
+          lexer->advance(lexer, false);
+        }
+      }
+      continue;
+    }
+    if (c == '{') { brace_depth++; lexer->advance(lexer, false); continue; }
+    if (c == '}') {
+      if (brace_depth > 0) brace_depth--;
+      lexer->advance(lexer, false);
+      continue;
+    }
+    if (c == '\n') {
+      if (brace_depth == 0) {
+        // End of statement. Newline is NOT consumed — it's the grammar's
+        // `_newline` terminator.
+        lexer->mark_end(lexer);
+        lexer->result_symbol = TOP_LEVEL_MODULE_CALL_TEXT;
+        return true;
+      }
+      lexer->advance(lexer, false);
+      continue;
+    }
+    lexer->advance(lexer, false);
+  }
+  // EOF with closed braces — still a valid statement.
+  if (brace_depth == 0) {
+    lexer->mark_end(lexer);
+    lexer->result_symbol = TOP_LEVEL_MODULE_CALL_TEXT;
+    return true;
+  }
+  return false;
+}
+
 // ── External scanner API ───────────────────────────────────────
 
 void *tree_sitter_cook_external_scanner_create(void) {
@@ -546,6 +676,13 @@ void tree_sitter_cook_external_scanner_deserialize(void *payload,
 bool tree_sitter_cook_external_scanner_scan(void *payload, TSLexer *lexer,
                                             const bool *valid_symbols) {
   ShellBlockState *state = (ShellBlockState *)payload;
+
+  if (valid_symbols[TOP_LEVEL_MODULE_CALL_TEXT]) {
+    if (scan_top_level_module_call_text(lexer)) {
+      return true;
+    }
+    // Fall through — other top-level tokens may also be valid.
+  }
 
   if (valid_symbols[REGISTER_BLOCK_CONTENT]) {
     return scan_lua_source_until_toplevel(lexer, REGISTER_BLOCK_CONTENT);
