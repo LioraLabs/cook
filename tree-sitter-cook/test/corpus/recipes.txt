@@ -342,6 +342,72 @@ recipe colorize
       (shell_content))))
 
 ================
+Cook step (multi-line outputs, CS-0078)
+================
+
+recipe maps
+    ingredients "src/*.map"
+    cook "build/$<in.stem>.aas48"
+         "build/$<in.stem>.aas96"
+         "build/$<in.stem>.aas120" using {
+        runaas $<in>
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      (string))
+    (cook_step
+      outputs: (string
+        (placeholder
+          (placeholder_ident)))
+      outputs: (string
+        (placeholder
+          (placeholder_ident)))
+      outputs: (string
+        (placeholder
+          (placeholder_ident)))
+      (block_using_clause
+        shell: (shell_block
+          (shell_content)
+          (placeholder
+            (placeholder_ident))
+          (shell_content))))))
+
+================
+Ingredients step (multi-line with exclude, CS-0078)
+================
+
+recipe build
+    ingredients "neo/sys/*.cpp"
+                "neo/sys/posix/*.cpp"
+                !"neo/sys/sdl/*.cpp"
+    cook "build/sys.o" using {
+        echo build
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      (string)
+      (string)
+      (ingredient_exclude
+        (string)))
+    (cook_step
+      outputs: (string)
+      (using_clause
+        shell: (shell_block
+          (shell_content))))))
+
+================
 Inline lua line and block (register-phase >>)
 ================
 

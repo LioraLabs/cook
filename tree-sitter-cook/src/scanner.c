@@ -12,6 +12,7 @@ enum TokenType {
   SHELL_BLOCK_CONTENT,
   REGISTER_BLOCK_CONTENT,
   TOP_LEVEL_MODULE_CALL_TEXT,
+  STEP_CONTINUATION_NEWLINE,
 };
 
 // Persistent state for the SHELL_BLOCK_CONTENT scanner. A `$<IDENT>`
@@ -272,9 +273,13 @@ static bool scan_shell_content(TSLexer *lexer) {
     return false;
   if (c == '#' || c == '>' || c == '@')
     return false;
-  // Not shell: quoted string (would be handled by string token)
-  if (c == '"')
-    return false;
+  // Note: a leading `"` is allowed — shell lines may begin with a
+  // quoted string (e.g. an executable path with spaces). The earlier
+  // `c == '"'` early-bail was there to leave the byte for a `string`
+  // token, but `shell_command` is the only rule that requests
+  // `_shell_content`, and its alternation has no `string` arm; bailing
+  // here would cause `echo "x: $<dep>"` to ERROR after the embedded
+  // placeholder because the resumed scan starts at the closing `"`.
 
   bool has_content = false;
 
@@ -641,6 +646,49 @@ static bool scan_top_level_module_call_text(TSLexer *lexer) {
   return false;
 }
 
+// ── Step-pattern continuation newline (CS-0078) ────────────────
+// Emitted between successive `STRING` (or `!STRING`) tokens in
+// `cook_step` and `ingredients_step` when the next pattern lives on
+// a subsequent line. Per App. A.4: continuation lines beginning with
+// `"` (or `!"` for `ingredients`) extend the same declaration. A
+// non-quote first token on the next line terminates the declaration
+// silently — the scanner returns false in that case and the grammar
+// dispatches per App. A.4's step-priority order.
+//
+// The valid_symbols gate ensures this is only attempted when the
+// grammar expects more patterns; outside of that position the bare
+// `_newline` rule consumes the newline as usual.
+static bool scan_step_continuation_newline(TSLexer *lexer) {
+  if (lexer->lookahead != '\n') return false;
+  // Consume the newline + any further blank lines and leading
+  // whitespace on the continuation line.
+  while (lexer->lookahead == '\n' || lexer->lookahead == ' ' ||
+         lexer->lookahead == '\t') {
+    lexer->advance(lexer, false);
+  }
+  int32_t c = lexer->lookahead;
+  if (c == '"') {
+    // Token spans newline + leading-WS. The `"` itself is the start of
+    // the next STRING and is NOT included.
+    lexer->mark_end(lexer);
+    lexer->result_symbol = STEP_CONTINUATION_NEWLINE;
+    return true;
+  }
+  if (c == '!') {
+    // Mark before consuming `!` so the grammar sees the `!` next as
+    // the start of an ingredient_exclude. We need a second char of
+    // lookahead — peek by advancing.
+    lexer->mark_end(lexer);
+    lexer->advance(lexer, false);
+    if (lexer->lookahead == '"') {
+      lexer->result_symbol = STEP_CONTINUATION_NEWLINE;
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
 // ── External scanner API ───────────────────────────────────────
 
 void *tree_sitter_cook_external_scanner_create(void) {
@@ -682,6 +730,13 @@ bool tree_sitter_cook_external_scanner_scan(void *payload, TSLexer *lexer,
       return true;
     }
     // Fall through — other top-level tokens may also be valid.
+  }
+
+  if (valid_symbols[STEP_CONTINUATION_NEWLINE]) {
+    if (scan_step_continuation_newline(lexer)) {
+      return true;
+    }
+    // Fall through — the bare _newline rule will consume the newline.
   }
 
   if (valid_symbols[REGISTER_BLOCK_CONTENT]) {

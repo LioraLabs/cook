@@ -21,6 +21,7 @@ module.exports = grammar({
     $._shell_block_content,
     $._register_block_content,
     $._top_level_module_call_text,
+    $._step_continuation_newline,
   ],
 
   word: ($) => $._bare_identifier,
@@ -152,12 +153,20 @@ module.exports = grammar({
         $._newline,
       ),
 
-    // App. A.4: ingredients_step ::= "ingredients" ingredient+ NEWLINE
-    //          ingredient ::= STRING | "!" STRING
+    // App. A.4 + CS-0078 multi-line patterns:
+    //   ingredients_step ::= "ingredients" ingredient (CONT? ingredient)* NEWLINE
+    //   ingredient       ::= STRING | "!" STRING
+    // CONT is an external token (_step_continuation_newline) emitted only
+    // when the next line begins with `"` or `!"`; otherwise the declaration
+    // terminates and the next line dispatches per App. A.4's priority order.
     ingredients_step: ($) =>
       seq(
         "ingredients",
-        repeat1(choice($.string, $.ingredient_exclude)),
+        choice($.string, $.ingredient_exclude),
+        repeat(seq(
+          optional($._step_continuation_newline),
+          choice($.string, $.ingredient_exclude),
+        )),
         $._newline,
       ),
 
@@ -167,6 +176,9 @@ module.exports = grammar({
     // the using_clause MUST be a block (`>{...}` or `{...}`); a bare
     // string is rejected. The single-output form keeps all four shapes
     // (declaration-only, string, lua block, shell block).
+    // CS-0078: subsequent output STRINGs MAY appear on continuation lines
+    // beginning with `"`; the `_step_continuation_newline` external token
+    // absorbs the intervening newline + whitespace.
     cook_step: ($) =>
       choice(
         seq(
@@ -178,7 +190,10 @@ module.exports = grammar({
         seq(
           "cook",
           field("outputs", $.string),
-          repeat1(field("outputs", $.string)),
+          repeat1(seq(
+            optional($._step_continuation_newline),
+            field("outputs", $.string),
+          )),
           $.block_using_clause,
           $._newline,
         ),
