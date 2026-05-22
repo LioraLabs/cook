@@ -29,6 +29,13 @@
   (lua_code) @injection.content
   (#set! injection.language "lua"))
 
+; Inject Lua into top-level module_call text (CS-0072). The whole
+; statement (`cook_cc.bin("game", { sources = { "src/main.c" } })`)
+; is a Lua expression-statement, possibly spanning multiple lines.
+(top_level_module_call
+  (module_call_text) @injection.content
+  (#set! injection.language "lua"))
+
 ; Inject bash into shell commands. `$<IDENT>` placeholders interleave
 ; with shell_content chunks; the `[shell_content placeholder]+` choice
 ; matches the full sequence so every chunk is captured in one match,
