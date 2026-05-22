@@ -138,7 +138,7 @@ fn partition_argv(
             })?;
             if preset.is_some() {
                 return Err(CookError::Other(format!(
-                    "chore '{recipe}': --config / -c and @PRESET are equivalent; supply only one"
+                    "chore '{recipe}': multiple config presets supplied; use only one of '@PRESET' or '--config PRESET'"
                 )));
             }
             preset = Some(next.clone());
@@ -148,7 +148,7 @@ fn partition_argv(
         if let Some(name) = tok.strip_prefix("--config=") {
             if preset.is_some() {
                 return Err(CookError::Other(format!(
-                    "chore '{recipe}': --config / -c and @PRESET are equivalent; supply only one"
+                    "chore '{recipe}': multiple config presets supplied; use only one of '@PRESET' or '--config PRESET'"
                 )));
             }
             preset = Some(name.to_string());

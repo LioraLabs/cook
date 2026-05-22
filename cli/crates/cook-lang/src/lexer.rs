@@ -57,6 +57,8 @@ pub enum LexError {
     MultipleVariadics { line: usize, chore: String, first: String, second: String },
     #[error("line {line}: chore '{chore}': variadic parameter '{name}' cannot have a default; use '*{name}' for an optional variadic")]
     VariadicWithDefault { line: usize, chore: String, name: String },
+    #[error("line {line}: chore '{chore}': parameter name '{name}' contains '.'; parameter names MUST NOT contain '.' (§7.1.1)")]
+    DottedChoreParam { line: usize, chore: String, name: String },
 }
 
 const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "all", "env"];
@@ -245,7 +247,28 @@ fn parse_chore_params<'a>(
             .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
             .unwrap_or(remaining.len());
         let param_name = remaining[..end].to_string();
-        remaining = remaining[end..].trim_start();
+        remaining = &remaining[end..];
+
+        // Dot-in-name check (§7.1.1: parameter names MUST NOT contain '.').
+        // Catches `chore lint foo.bar` before it becomes a confusing runtime
+        // "unknown placeholder '$<bar>'" error: the bare-ident scan above
+        // stops at the dot, so without this check the trailing `.bar` is
+        // silently dropped at parameter-list level.
+        if remaining.starts_with('.') {
+            let after_dot = &remaining[1..];
+            let tail_end = after_dot
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.')
+                .unwrap_or(after_dot.len());
+            if tail_end > 0 {
+                let full_name = format!("{}.{}", param_name, &after_dot[..tail_end]);
+                return Err(LexError::DottedChoreParam {
+                    line,
+                    chore: chore_name.to_string(),
+                    name: full_name,
+                });
+            }
+        }
+        remaining = remaining.trim_start();
 
         // Reserved-name check.
         if RESERVED_RECIPE_SEGMENTS.contains(&param_name.as_str()) {

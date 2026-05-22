@@ -410,43 +410,30 @@ pub fn register_cookfile(
                 func.call::<()>((bound,))
                     .map_err(RegisterError::Lua)?;
             } else if builder.target_recipe.is_some() {
-                // A specific target was requested but this is NOT the target —
-                // skip body invocation for this non-targeted chore. Chores
-                // produce no cacheable units, and their bodies would fail with
-                // a Lua error if called with nil `__cook_params` while
-                // referencing their parameters.
-                //
-                // The empty RecipeUnits are still recorded so the name appears
-                // in `names` and the analyzer can route dispatch correctly when
-                // this chore IS targeted in a future invocation.
-                lua.remove_registry_value(func_key_clone)?;
-                let _ = body_slot.borrow_mut().take();
-                names.push(crate::RegisteredRecipePub {
-                    name: name.clone(),
-                    source,
-                    kind,
-                    requires: requires.clone(),
-                });
-                units_by_recipe.insert(
-                    name.clone(),
-                    RecipeUnits {
-                        recipe_name: name.clone(),
-                        deps: requires,
-                        units: vec![],
-                        step_groups: vec![],
-                        working_dir: builder.working_dir.clone(),
-                        env_vars: builder
-                            .env_vars
-                            .borrow()
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect(),
-                        terminal_outputs: vec![],
-                        dep_edges: vec![],
-                        probes: vec![],
-                    },
-                );
-                continue;
+                // A target was requested but this is NOT the target. The chore
+                // may still be a dep of the target, so capture its body so the
+                // DAG has units to link. Per §7.5, parametric chores depended
+                // on by recipes/chores run with no argv supplied; a required
+                // parameter with no default is a configuration error surfaced
+                // by build_chore_params_table.
+                if params_meta.is_empty() {
+                    func.call::<()>(()).map_err(RegisterError::Lua)?;
+                } else {
+                    let (bound, prelude) = build_chore_params_table(
+                        &lua,
+                        &params_meta,
+                        &[],
+                        name,
+                        source_line,
+                    )?;
+                    {
+                        let mut slot = body_slot.borrow_mut();
+                        if let Some(body) = slot.as_mut() {
+                            body.chore_param_prelude = prelude;
+                        }
+                    }
+                    func.call::<()>((bound,)).map_err(RegisterError::Lua)?;
+                }
             } else if !params_meta.is_empty() {
                 // No specific target requested (e.g. cook list, cook dag,
                 // or a test that doesn't set target_recipe) AND this chore
@@ -700,21 +687,32 @@ fn build_chore_params_table(
                             });
                         }
                     };
-                    match result {
-                        mlua::Value::String(s) => {
-                            let s_str = s.to_str()
-                                .map_err(RegisterError::Lua)?
-                                .to_string();
+                    // Spec §7.1.2: result is coerced via Lua tostring rules
+                    // for the scalar types (String, Integer, Number, Boolean).
+                    // Non-coercible types (Nil, Table, Function, Thread,
+                    // UserData, LightUserData, Error) raise ChoreParamDefaultLuaNonString.
+                    let coerced: Option<String> = match &result {
+                        mlua::Value::String(s) => s.to_str()
+                            .map_err(RegisterError::Lua)?
+                            .to_string()
+                            .into(),
+                        mlua::Value::Integer(n) => Some(n.to_string()),
+                        mlua::Value::Number(n) => Some(n.to_string()),
+                        mlua::Value::Boolean(b) => Some(b.to_string()),
+                        _ => None,
+                    };
+                    match coerced {
+                        Some(s_str) => {
                             table.set(name.as_str(), s_str.as_str()).map_err(RegisterError::Lua)?;
                             let escaped = lua_escape_string(&s_str);
                             prelude.push_str(&format!("local {} = \"{}\"\n", name, escaped));
                         }
-                        other => {
+                        None => {
                             return Err(RegisterError::ChoreParamDefaultLuaNonString {
                                 chore: chore_name.to_string(),
                                 name: name.clone(),
                                 line: source_line,
-                                ty: other.type_name().to_string(),
+                                ty: result.type_name().to_string(),
                             });
                         }
                     }

@@ -1,0 +1,2 @@
+chore lint foo.bar
+    > do_thing(foo.bar)

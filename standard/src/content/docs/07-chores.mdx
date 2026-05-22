@@ -74,7 +74,9 @@ Placeholder substitution (`$<NAME>`) is governed by a later subsection. Environm
 | Excess argv with no variadic | `chore 'NAME' takes K parameter(s) but M positional argument(s) were supplied` |
 | Recipe receives argv | `recipe 'NAME': recipes do not take parameters; received N positional argument(s) (use '@PRESET' to select a config preset)` |
 | Lua-expression default raises a Lua error | `chore 'NAME': default for parameter 'PARAM' raised a Lua error (defined at line LINE): MESSAGE` |
-| Lua-expression default returns non-string | `chore 'NAME': default for parameter 'PARAM' must evaluate to a string; got TYPE (defined at line LINE)` |
+| Lua-expression default returns non-coercible value | `chore 'NAME': default for parameter 'PARAM' must evaluate to a string; got TYPE (defined at line LINE)` |
+
+**Coercion of Lua-expression default return (normative).** Before the diagnostic above fires, a Lua-expression default's return value MUST be coerced to a string under the following rules: a Lua `string` is used verbatim; a Lua `number` (integer or float) is converted via Lua tostring semantics (e.g. `42` → `"42"`); a Lua `boolean` is converted to `"true"` or `"false"`. All other Lua types — including `nil`, `table`, `function`, `thread`, and `userdata` — MUST raise the non-coercible diagnostic.
 
 ### 7.1.2.1. Environment-variable export to shell children [#chores.param-env-export]
 
@@ -185,3 +187,9 @@ recipe install: play
 ```
 
 `play` depends on the recipe `build`; the recipe `install` depends on the chore `play`. The graph: `build` (recipe, cached) → `play` (chore, never cached) → `install` (recipe, cached). Each edge is a normal name reference; no special wording for cross-form.
+
+### 7.5.1. Dependencies on parametric chores [#chores.parametric-deps]
+
+A recipe or chore MAY depend on a parametric chore (§7.1.1). The dependency edge supplies no argv, so the depended-upon chore runs as if invoked with no positional arguments: defaulted parameters bind their defaults (§7.1.1), zero-or-more variadics (`*NAME`) bind to the empty sequence, and any required parameter — or one-or-more variadic (`+NAME`) — without a satisfying argv is a configuration error rejected at register time with the same diagnostic class as the invocation-time errors of §7.1.2.
+
+Supplying explicit argv from a dependency edge (e.g. `recipe X: (helper foo bar)`) is reserved for a future revision and is not part of this Standard.

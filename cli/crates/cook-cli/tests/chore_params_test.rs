@@ -594,6 +594,120 @@ fn comprehensive_chore_params_smoke_argv_overrides_defaults() {
     assert!(stdout.contains("exec-lua: production myhost v1.2.3 extras=a.lua,b.lua"), "stdout: {stdout}");
 }
 
+/// Regression: a chore that depends on another paramless chore must run
+/// the dep's body. Before COOK-36's `a52063d` fix, the non-target chore was
+/// silently skipped because the register pass cleared its body to avoid a
+/// nil `__cook_params` crash. The post-fix dispatcher only skips the body
+/// when the chore actually has params and no argv to bind (caught by
+/// `build_chore_params_table`).
+#[test]
+fn paramless_chore_dependency_body_runs() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore a: b\n    @echo a-runs\nchore b\n    @echo b-runs\n",
+    )
+    .unwrap();
+
+    let out = run_cook_raw(tmp.path(), &["a"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook a failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(stdout.contains("a-runs"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("b-runs"),
+        "dependency chore body did not run\nstdout: {stdout}"
+    );
+}
+
+/// Parametric chore depended on by a recipe runs with defaults bound when
+/// argv is unsupplied (spec S.5: parametric dependencies with explicit argv
+/// are deferred to COOK-44; today the chore must have defaults for every
+/// declared parameter).
+#[test]
+fn parametric_chore_dependency_runs_with_defaults() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore main: helper\n    @echo main-runs\nchore helper target=\"prod\"\n    @echo helper-target=$<target>\n",
+    )
+    .unwrap();
+
+    let out = run_cook_raw(tmp.path(), &["main"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook main failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(stdout.contains("main-runs"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("helper-target=prod"),
+        "dependency chore body did not bind default\nstdout: {stdout}"
+    );
+}
+
+/// A chore depending on a parametric chore that has a required parameter
+/// with no default is a configuration error: the dep cannot supply argv
+/// (COOK-44 deferred), so the required param cannot be satisfied.
+#[test]
+fn parametric_chore_dependency_with_required_no_default_errors() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore main: helper\n    @echo main-runs\nchore helper target\n    @echo helper-target=$<target>\n",
+    )
+    .unwrap();
+
+    let out = run_cook_raw(tmp.path(), &["main"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "expected failure on dep with required param + no default"
+    );
+    assert!(
+        stderr.contains("helper") && stderr.contains("target"),
+        "diagnostic should name the chore and the unsatisfied parameter\nstderr: {stderr}"
+    );
+}
+
+/// Lua-expression default that returns a number is coerced via Lua tostring
+/// rules to its string form (spec §7.1.2).
+#[test]
+fn chore_lua_default_number_return_coerces_to_string() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore deploy version=( 42 )\n    > print(\"v=\" .. version)\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["deploy"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
+    assert!(stdout.contains("v=42"), "stdout: {stdout}");
+}
+
+/// Lua-expression default that returns a boolean is coerced to its
+/// Lua-tostring form ("true" / "false").
+#[test]
+fn chore_lua_default_boolean_return_coerces_to_string() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore flag enabled=( true )\n    > print(\"enabled=\" .. enabled)\n",
+    )
+    .unwrap();
+    let out = run_cook_raw(tmp.path(), &["flag"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
+    assert!(stdout.contains("enabled=true"), "stdout: {stdout}");
+}
+
 #[test]
 fn chore_variadic_star_with_one_argv_binds_single_element_table() {
     let tmp = TempDir::new().unwrap();

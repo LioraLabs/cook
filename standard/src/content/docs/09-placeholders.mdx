@@ -51,7 +51,7 @@ The sigil syntax `$<IDENT>` is the sole placeholder surface for shell text as of
 | `$<out_N>` (`N` ∈ 1..) | any mode, multi-output | The unit's `N`-th declared output, in declaration order |
 | `$<out_N.ACCESSOR>` | any mode, multi-output | `path.ACCESSOR(out_N)` |
 | `$<all>` | many-to-one only | The unit's input list, joined by single space characters |
-| `$<NAME>` (NAME is a declared chore parameter, §7.1.1) | chore bodies only | The bound parameter value (string), or the space-separated, individually-shell-quoted joined form for variadic parameters. Scope-limited to chore bodies that declare the parameter. Resolved at register phase, before the shell step is dispatched. |
+| `$<NAME>` (NAME is a declared chore parameter, §7.1.1) | chore bodies only | The bound parameter value, POSIX single-quote-escaped to produce a single shell word; for variadic parameters, the space-separated, individually shell-quoted joined form. Scope-limited to chore bodies that declare the parameter. Resolved at register phase, before the shell step is dispatched. |
 
 `ACCESSOR` is one of `stem`, `name`, `ext`, `dir`, with semantics defined by §{xref.path-accessors}.
 
