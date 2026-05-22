@@ -539,6 +539,109 @@ fn is_presatisfied(unit: &CapturedUnit) -> bool {
     }
 }
 
+/// §22.1.2 terminal-output rule: check that no recipe's literal `inputs[]`
+/// path is matched by another recipe's glob `outputs[]` pattern.
+///
+/// Detection is purely syntactic — no filesystem access, no working-directory
+/// resolution. For each recipe that has any glob in its `outputs[]` entries,
+/// we compile each glob pattern and test it against every literal `inputs[]`
+/// string in every other recipe. On a positive match the function returns an
+/// `EngineError::GlobbedOutputCrossRecipeEdge` naming both recipes, the
+/// offending input path, and the matching pattern.
+///
+/// A `requires` edge alone (DAG ordering with no file-content dependency)
+/// is NOT affected: this check only fires when a downstream recipe lists a
+/// matching path as a literal member of its `inputs[]`.
+pub(crate) fn check_globbed_output_cross_recipe_edges(
+    recipes: &[RecipeUnits],
+) -> Result<(), EngineError> {
+    use globset::Glob;
+
+    // Collect globbed output patterns per recipe name. Use BTreeMap for
+    // deterministic iteration order so the first error emitted is stable.
+    let mut globbed_outputs_by_recipe: std::collections::BTreeMap<&str, Vec<&str>> =
+        std::collections::BTreeMap::new();
+    for r in recipes {
+        for unit in &r.units {
+            if let Some(meta) = &unit.cache_meta {
+                for entry in &meta.output_paths {
+                    if cook_fingerprint::has_glob_meta(entry) {
+                        globbed_outputs_by_recipe
+                            .entry(r.recipe_name.as_str())
+                            .or_default()
+                            .push(entry.as_str());
+                    }
+                }
+            }
+        }
+    }
+
+    if globbed_outputs_by_recipe.is_empty() {
+        return Ok(());
+    }
+
+    // Compile each pattern once. Patterns that fail to compile are silently
+    // skipped here; downstream, resolve_glob in cook-fingerprint will also
+    // treat them as matching no files, so the unit re-runs every invocation
+    // without raising a diagnostic. This is a known footgun; a future CS
+    // could add a register-time validity check.
+    //
+    // Asymmetry note: we use `globset` 0.4 here for pure string matching
+    // (no filesystem access, per §22.1.2 "MUST NOT consult the filesystem").
+    // `globset` 0.4's `**` semantics differ from `glob` 0.3's; in particular
+    // `globset` matches `"build/**"` against `"build/foo.o"` correctly
+    // without the trailing-`**` normalisation that `resolve_output_paths`
+    // applies before passing patterns to `glob` 0.3. Do not add
+    // `normalize_glob_pattern` here — it would either be a no-op or weaken
+    // matching against legitimate paths.
+    let matchers: Vec<(&str, Vec<(&str, globset::GlobMatcher)>)> = globbed_outputs_by_recipe
+        .iter()
+        .map(|(name, patterns)| {
+            let built: Vec<(&str, globset::GlobMatcher)> = patterns
+                .iter()
+                .filter_map(|p| Glob::new(p).ok().map(|g| (*p, g.compile_matcher())))
+                .collect();
+            (*name, built)
+        })
+        .collect();
+
+    // Test every other recipe's literal inputs[] strings against each pattern.
+    for r in recipes {
+        for unit in &r.units {
+            if let Some(meta) = &unit.cache_meta {
+                for input_path in &meta.input_paths {
+                    // Skip patterns that are themselves globs — §22.1.2 only
+                    // prohibits literal downstream inputs matching upstream
+                    // glob patterns. A downstream glob input is a different
+                    // semantic (expansion at execute time) and is not checked
+                    // here.
+                    if cook_fingerprint::has_glob_meta(input_path) {
+                        continue;
+                    }
+                    for (upstream_name, patterns) in &matchers {
+                        // A recipe cannot violate its own terminal-output rule.
+                        if *upstream_name == r.recipe_name.as_str() {
+                            continue;
+                        }
+                        for (pat_str, matcher) in patterns {
+                            if matcher.is_match(input_path.as_str()) {
+                                return Err(EngineError::GlobbedOutputCrossRecipeEdge {
+                                    upstream: upstream_name.to_string(),
+                                    downstream: r.recipe_name.clone(),
+                                    input: input_path.clone(),
+                                    pattern: pat_str.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Detect non-dep-related recipes that declare the same canonical output path.
 ///
 /// Returns `Some(EngineError::OutputCollision)` for the first colliding path

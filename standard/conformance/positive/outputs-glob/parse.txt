@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLuaBlock code="        cook.add_unit({\n            inputs  = { \"src.c\" },\n            outputs = { \"build/**\", \"dist/*.js\" },\n            command = \"echo built\",\n        })"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

@@ -1,13 +1,23 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-// tree-sitter-cook claims conformance with Cook Standard v0.4 + CS-0022.
-// The grammar is STALE relative to v0.7 (cs-standard/v0.7); it does not
-// implement CS-0023 onward (plate/test block bodies, `//`-anchored sigil
-// imports). The `$<IDENT>` placeholder shape from §2.11 IS recognized
-// inside string literals and shell text; resolution is the Rust parser's
-// concern. See standard/src/content/docs/appendix/A-grammar.mdx for the
-// normative grammar; the broader catch-up is tracked by CS-0002.
+// tree-sitter-cook claims conformance with Cook Standard v0.12
+// (`cs-standard/v0.12`). The CS-0086 audit (see
+// standard/src/content/docs/appendix/E-changes.mdx) brings the grammar
+// up to:
+//   • CS-0072: top-level `register` block + top-level `module_call`
+//     (single + multi-line, brace-balanced); recipe-body bare
+//     module-calls are now `shell_command`.
+//   • CS-0078: multi-line `cook` outputs + `ingredients` continuation
+//     via an external `STEP_CONTINUATION_NEWLINE` token.
+//   • CS-0035: leveled Lua long-string and block-comment opaque-span
+//     tracking; POSIX heredoc opaque-span tracking in shell blocks;
+//     `use_name` LUA_IDENT constraint; declaration-site no-dots for
+//     `recipe_header` / `chore_header` names.
+//   • CS-0061: STRING admits both double- and single-quoted forms.
+// The `$<IDENT>` placeholder shape from §2.11 is recognised in string
+// literals and shell text (CS-0033). See standard/src/content/docs/
+// appendix/A-grammar.mdx for the normative grammar.
 
 module.exports = grammar({
   name: "cook",
@@ -19,6 +29,9 @@ module.exports = grammar({
     $._shell_content,
     $._config_block_content,
     $._shell_block_content,
+    $._register_block_content,
+    $._top_level_module_call_text,
+    $._step_continuation_newline,
   ],
 
   word: ($) => $._bare_identifier,
@@ -31,6 +44,8 @@ module.exports = grammar({
         $.recipe,
         $.chore,
         $.config_block,
+        $.register_block,
+        $.top_level_module_call,
         $.use_declaration,
         $.import_declaration,
         $.comment,
@@ -42,7 +57,8 @@ module.exports = grammar({
 
     // ── Top-level declarations ─────────────────────────────────
 
-    use_declaration: ($) => seq("use", field("module", $._name), $._newline),
+    use_declaration: ($) =>
+      seq("use", field("module", $._lua_ident_name), $._newline),
 
     import_declaration: ($) =>
       seq(
@@ -58,6 +74,21 @@ module.exports = grammar({
         optional(field("name", $._name)),
         $._newline,
         alias($._config_block_content, $.lua_code),
+      ),
+
+    // App. A.1 + CS-0072. A top-level `register` block carries Lua source
+    // that runs at register-phase before any recipe declarations. The body
+    // ranges from the line after the header to the next column-0 line
+    // classified as `recipe`, `chore`, `config`, `use`, `import`, `register`,
+    // or (per issue COOK-51) a top-level module_call. The body MAY be empty
+    // (`register-block-empty` fixture is literally just the word `register`),
+    // so the lua_code content is optional. The terminating NEWLINE is also
+    // optional because EOF can follow the keyword directly.
+    register_block: ($) =>
+      seq(
+        "register",
+        $._newline,
+        optional(alias($._register_block_content, $.lua_code)),
       ),
 
     // ── Recipes ────────────────────────────────────────────────
@@ -78,7 +109,7 @@ module.exports = grammar({
         1,
         seq(
           "recipe",
-          field("name", $._name),
+          field("name", $._decl_name),
           optional(seq(":", $.dependency_list)),
         ),
       ),
@@ -99,7 +130,7 @@ module.exports = grammar({
     chore_header: ($) =>
       seq(
         "chore",
-        field("name", $._name),
+        field("name", $._decl_name),
         optional(seq(":", $.dependency_list)),
       ),
 
@@ -109,7 +140,6 @@ module.exports = grammar({
         $.inline_lua_block,
         $.lua_line,
         $.lua_block,
-        $.module_call,
         $.interactive_command,
         $.shell_command,
         $.comment,
@@ -128,19 +158,26 @@ module.exports = grammar({
         $.inline_lua_block,
         $.lua_line,
         $.lua_block,
-        $.module_call,
         $.interactive_command,
         $.shell_command,
         $.comment,
         $._newline,
       ),
 
-    // App. A.4: ingredients_step ::= "ingredients" ingredient+ NEWLINE
-    //          ingredient ::= STRING | "!" STRING
+    // App. A.4 + CS-0078 multi-line patterns:
+    //   ingredients_step ::= "ingredients" ingredient (CONT? ingredient)* NEWLINE
+    //   ingredient       ::= STRING | "!" STRING
+    // CONT is an external token (_step_continuation_newline) emitted only
+    // when the next line begins with `"` or `!"`; otherwise the declaration
+    // terminates and the next line dispatches per App. A.4's priority order.
     ingredients_step: ($) =>
       seq(
         "ingredients",
-        repeat1(choice($.string, $.ingredient_exclude)),
+        choice($.string, $.ingredient_exclude),
+        repeat(seq(
+          optional($._step_continuation_newline),
+          choice($.string, $.ingredient_exclude),
+        )),
         $._newline,
       ),
 
@@ -150,6 +187,9 @@ module.exports = grammar({
     // the using_clause MUST be a block (`>{...}` or `{...}`); a bare
     // string is rejected. The single-output form keeps all four shapes
     // (declaration-only, string, lua block, shell block).
+    // CS-0078: subsequent output STRINGs MAY appear on continuation lines
+    // beginning with `"`; the `_step_continuation_newline` external token
+    // absorbs the intervening newline + whitespace.
     cook_step: ($) =>
       choice(
         seq(
@@ -161,7 +201,10 @@ module.exports = grammar({
         seq(
           "cook",
           field("outputs", $.string),
-          repeat1(field("outputs", $.string)),
+          repeat1(seq(
+            optional($._step_continuation_newline),
+            field("outputs", $.string),
+          )),
           $.block_using_clause,
           $._newline,
         ),
@@ -247,18 +290,19 @@ module.exports = grammar({
     inline_lua_block: ($) =>
       seq(">>{", alias($._lua_block_content, $.lua_code), "}", $._newline),
 
-    // App. A.4 module_call: BARE_IDENT "." IDENT_START ...
-    // First segment is alphanumeric+underscore only (no hyphens/dots).
-    // Second segment must begin with [A-Za-z_]. The remainder of the
-    // line is not validated here; Lua-expression-hood is the runtime's
-    // concern. Multi-line brace-spanning forms (§ 4.11) are not yet
-    // supported by this grammar.
-    module_call: ($) =>
+    // App. A.1 + A.4 top-level `module_call` (CS-0072). A column-0
+    // `LUA_IDENT . IDENT_START …` statement, brace-balanced across
+    // newlines per §{lexical.brace-blocks.lua-spans}. The full text
+    // is collected by the external scanner so multi-line table-arg
+    // forms (`cook_cc.bin("game", {\n  …\n})`) parse as a single
+    // statement. Resolution of Lua-expression-hood is the runtime's
+    // concern, not the grammar's. Per CS-0072, recipe-body bare
+    // `LUA_IDENT.IDENT_START…` is shell, not module_call — the
+    // recipe-body cascade in `_recipe_item` no longer carries a
+    // module_call arm.
+    top_level_module_call: ($) =>
       seq(
-        alias(
-          token(prec(1, /[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][^\n]*/)),
-          $.module_call_text,
-        ),
+        alias($._top_level_module_call_text, $.module_call_text),
         $._newline,
       ),
 
@@ -291,6 +335,28 @@ module.exports = grammar({
     _name: ($) => choice(alias($._bare_identifier, $.identifier), $.string),
 
     _bare_identifier: ($) => /[a-zA-Z_][a-zA-Z0-9_.\-]*/,
+
+    // CS-0035 declaration-site no-dots. `recipe_header` and `chore_header`
+    // use this stricter name shape: dots are rejected. Hyphens remain
+    // legal (e.g. `recipe my-task`). The quoted form is also dot-free.
+    _decl_name: ($) =>
+      choice(
+        alias($._decl_bare, $.identifier),
+        alias($._decl_string, $.string),
+      ),
+    _decl_bare: ($) => /[A-Za-z_][A-Za-z0-9_\-]*/,
+    _decl_string: ($) => /"[^"\.\n]*"/,
+
+    // CS-0035 use_name LUA_IDENT constraint. `use_declaration`'s name is
+    // bound at load time as a Lua local under the same spelling, so it
+    // MUST be a strict Lua identifier: no dots, no hyphens, no spaces.
+    _lua_ident_name: ($) =>
+      choice(
+        alias($._lua_ident, $.identifier),
+        alias($._lua_ident_string, $.string),
+      ),
+    _lua_ident: ($) => /[A-Za-z_][A-Za-z0-9_]*/,
+    _lua_ident_string: ($) => /"[A-Za-z_][A-Za-z0-9_]*"/,
 
     // §2.11 placeholder. The seq is structured (rather than `token(...)`)
     // so the `$<`/`>` punctuation and the inner identifier can each be
@@ -327,23 +393,52 @@ module.exports = grammar({
     // pair. NOTE: §2.11 strict-bail says a malformed `$<bad spaces>`
     // is literal text; with this structured rule the seq commits to
     // `$<` and errors at the missing `>`. The Rust parser remains the
-    // source of truth for that edge case (tree-sitter-cook is stale).
+    // source of truth for that edge case.
+    // CS-0061: STRING admits both double- and single-quoted forms.
     string: ($) =>
-      seq(
-        '"',
-        repeat(
-          choice(
-            alias($._string_placeholder, $.placeholder),
-            $._string_chunk,
+      choice(
+        seq(
+          '"',
+          repeat(
+            choice(
+              alias($._string_placeholder, $.placeholder),
+              $._dq_string_chunk,
+            ),
           ),
+          token.immediate('"'),
         ),
-        token.immediate('"'),
+        seq(
+          "'",
+          repeat(
+            choice(
+              alias($._sq_string_placeholder, $.placeholder),
+              $._sq_string_chunk,
+            ),
+          ),
+          token.immediate("'"),
+        ),
       ),
 
-    _string_chunk: ($) =>
+    _dq_string_chunk: ($) =>
       choice(
         token.immediate(/[^"$]+/),
         token.immediate("$"),
+      ),
+
+    _sq_string_chunk: ($) =>
+      choice(
+        token.immediate(/[^'$]+/),
+        token.immediate("$"),
+      ),
+
+    _sq_string_placeholder: ($) =>
+      seq(
+        token.immediate("$<"),
+        alias(
+          token.immediate(/[A-Za-z_][A-Za-z0-9_.]*/),
+          $.placeholder_ident,
+        ),
+        token.immediate(">"),
       ),
 
     path: ($) => /[^\s\n]+/,

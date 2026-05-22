@@ -440,3 +440,13 @@ The roadmap originally proposed "after curated, before pkg-config" for cmake-com
 ## Why `cc.find` v0.2 documented a four-stage chain [#rationale.find-v02-history]
 
 The v0.2 wording (released in `cook_cc 0.2.x`) specified a four-stage chain: project → curated → pkg-config → bare-probe. v0.3 (M2) inserts cmake-compat between pkg-config and bare-probe and adds the `cmake` opt. Every v0.2 call site remains a valid v0.3 call site; pkg-config remains a chain stage. Bisects against `cook_cc 0.2.x` reference this paragraph.
+
+## C.17. On §{exec.cache} Cache semantics [#rationale.cache]
+
+### C.17.1. Glob output terminality [#rationale.output-globs-terminal]
+
+Cook propagates cache invalidation between steps via the content fingerprints of their shared files: a downstream step that declares an upstream's output as one of its `inputs[]` re-fingerprints when that file's bytes change. This linkage requires the path to be statically declared at register time on both sides.
+
+A glob pattern entry in `outputs[]` (§{lua.add-unit-output-globs}) cannot participate in this linkage because the resolved file set is not known until execute time. A downstream that declared a specific path expecting it to be produced by an upstream glob would have no way to express a file-content edge at register time, and Cook's cache check has no `did-my-upstream-rebuilt` signal. The downstream would silently consume stale bytes after the upstream re-ran.
+
+The terminal-output rule (§22.1.2 "Cross-recipe edges") eliminates this footgun by construction. Authors who want file-content invalidation propagation use literal `outputs[]` entries; authors who only need ordering use `requires = { ... }`; the engine catches the misuse at register time via a purely lexical match of downstream input strings against upstream pattern strings. The rule aligns Cook with the Turborepo model (tasks depend on tasks, not files) that the `cook_pnpm` module adapts.

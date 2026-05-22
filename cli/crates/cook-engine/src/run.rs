@@ -147,6 +147,20 @@ fn run_inner<F>(
 where
     F: Fn(EngineEvent) + Send + Sync,
 {
+    // 0. §22.1.2 terminal-output rule: workspace-wide structural check.
+    //    Collect ALL registered recipe units (not just the reachable closure)
+    //    and verify that no recipe's literal inputs[] path is matched by
+    //    another recipe's glob outputs[] pattern. This runs before any DAG
+    //    construction or execution so the error surfaces at register time.
+    {
+        let all_workspace_units: Vec<RecipeUnits> = registered_workspace
+            .units_by_recipe
+            .values()
+            .cloned()
+            .collect();
+        dag_builder::check_globbed_output_cross_recipe_edges(&all_workspace_units)?;
+    }
+
     // 1. Collect RecipeUnits for every reachable recipe and stamp the
     //    cross-recipe deps from the recipe-level edge map. The DAG builder
     //    wires both coarse `deps` and fine-grained `dep_edges` from this

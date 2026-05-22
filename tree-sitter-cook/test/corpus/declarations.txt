@@ -111,3 +111,145 @@ config debug
   (config_block
     name: (identifier)
     (lua_code)))
+
+================
+Register block (empty)
+================
+
+register
+
+---
+
+(source_file
+  (register_block))
+
+================
+Register block (single statement)
+================
+
+use cook_cc
+
+register
+    cook_cc.bin("game", { sources = { "src/main.c" } })
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier))
+  (register_block
+    (lua_code)))
+
+================
+Register block (interleaved with recipe)
+================
+
+register
+    a()
+
+recipe build
+    @ ./build
+
+register
+    b()
+
+---
+
+(source_file
+  (register_block
+    (lua_code))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (interactive_command
+      (shell_content)))
+  (register_block
+    (lua_code)))
+
+================
+Top-level module call (single line) (CS-0072)
+================
+
+use cook_cc
+
+cook_cc.bin("game", { sources = { "src/main.c" } })
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier))
+  (top_level_module_call
+    (module_call_text)))
+
+================
+Top-level module call (multi-line table arg) (CS-0072)
+================
+
+use cook_cc
+
+cook_cc.bin("game", {
+    sources = { "src/main.c" },
+})
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier))
+  (top_level_module_call
+    (module_call_text)))
+
+================
+Top-level module call terminates recipe body
+================
+
+use cook_cc
+
+recipe build
+    @ ./build
+
+cook_cc.bin("a", { sources = { "a.c" } })
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (interactive_command
+      (shell_content)))
+  (top_level_module_call
+    (module_call_text)))
+
+================
+Use declaration (CS-0035 LUA_IDENT — accepts bare ident)
+================
+
+use cook_cc
+
+---
+
+(source_file
+  (use_declaration
+    module: (identifier)))
+
+================
+Test step with single-quoted as_name (CS-0061)
+================
+
+recipe r
+    test { true } as 'name'
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (test_step
+      body: (shell_block
+        (shell_content))
+      as_name: (string))))

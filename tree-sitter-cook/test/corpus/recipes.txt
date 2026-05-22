@@ -322,7 +322,7 @@ recipe pack
         (string)))))
 
 ================
-Module call
+Recipe-body bare module-call is shell (CS-0072)
 ================
 
 use cpp
@@ -338,8 +338,74 @@ recipe colorize
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (module_call
-      (module_call_text))))
+    (shell_command
+      (shell_content))))
+
+================
+Cook step (multi-line outputs, CS-0078)
+================
+
+recipe maps
+    ingredients "src/*.map"
+    cook "build/$<in.stem>.aas48"
+         "build/$<in.stem>.aas96"
+         "build/$<in.stem>.aas120" using {
+        runaas $<in>
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      (string))
+    (cook_step
+      outputs: (string
+        (placeholder
+          (placeholder_ident)))
+      outputs: (string
+        (placeholder
+          (placeholder_ident)))
+      outputs: (string
+        (placeholder
+          (placeholder_ident)))
+      (block_using_clause
+        shell: (shell_block
+          (shell_content)
+          (placeholder
+            (placeholder_ident))
+          (shell_content))))))
+
+================
+Ingredients step (multi-line with exclude, CS-0078)
+================
+
+recipe build
+    ingredients "neo/sys/*.cpp"
+                "neo/sys/posix/*.cpp"
+                !"neo/sys/sdl/*.cpp"
+    cook "build/sys.o" using {
+        echo build
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      (string)
+      (string)
+      (ingredient_exclude
+        (string)))
+    (cook_step
+      outputs: (string)
+      (using_clause
+        shell: (shell_block
+          (shell_content))))))
 
 ================
 Inline lua line and block (register-phase >>)
@@ -370,6 +436,120 @@ recipe x
     cook "out" using {
         echo "hello { world }"
         for f in a b; do echo "{ $f }"; done
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string)
+      (using_clause
+        shell: (shell_block
+          (shell_content))))))
+
+================
+Lua block with multi-line long-string opaque-span (CS-0035)
+================
+
+recipe build
+    >{
+        local s = [[
+            this string contains a } brace
+            and another } here
+        ]]
+        print(s)
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (lua_block
+      (lua_code))))
+
+================
+Lua block with multi-line block-comment opaque-span (CS-0035)
+================
+
+recipe build
+    >{
+        --[[
+            here is a } in a block comment
+            and another } here
+        ]]
+        local x = 1
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (lua_block
+      (lua_code))))
+
+================
+Lua block with leveled long-string opaque-span (CS-0035)
+================
+
+recipe build
+    >{
+        local s = [==[
+            this is opaque text
+            with } and ]] inside
+        ]==]
+        print(s)
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (lua_block
+      (lua_code))))
+
+================
+Shell block with POSIX heredoc opaque-span (CS-0035)
+================
+
+recipe emit
+    cook "out.txt" using {
+        cat <<EOF > out.txt
+        a heredoc with a } brace
+        and a } here too
+        EOF
+        echo done
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (cook_step
+      outputs: (string)
+      (using_clause
+        shell: (shell_block
+          (shell_content))))))
+
+================
+Shell block with quoted-delim heredoc (CS-0035)
+================
+
+recipe emit
+    cook "out.txt" using {
+        cat <<'END' > out.txt
+        } stays literal
+        END
     }
 
 ---

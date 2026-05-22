@@ -105,3 +105,18 @@ Probe units (§{cat.probes}) participate in the same cache machinery: a probe's 
 ### Note 17.5.1 — Chore parameters and caching (informative) [#exec.cache.chore-params]
 
 A reader landing here looking for how chore parameters (§{chores.params}) interact with the cache should consult §{chores.no-caching} (§7.4): a chore body MUST NOT register a cached work unit, so chore parameters never enter the cache fingerprint. Recipes do not take parameters (§{recipes.header}, §{chores.params}), so the parametric-cache-key question does not arise in the current Standard. This note exists so that searches for "parameter" within the cache chapter point readers at the right section.
+
+## 17.6. Output globs [#exec.cache.output-globs]
+
+A unit whose declared `outputs[]` (§{lua.add-unit-output-globs}) contains one or more glob pattern entries participates in **post-execute output resolution**. After the unit's command completes successfully, a conforming implementation:
+
+1. **MUST** walk the unit's declared `outputs[]` once. For each literal path entry, the entry passes through unchanged. For each glob pattern entry, the implementation MUST resolve the pattern against the unit's working directory and substitute the resolved file set for the entry, dropping any directory matches (CS-0064). The combined resolved set is unioned across all entries; if a single literal path matches more than one entry (literal or glob), it MUST appear exactly once in the resulting set.
+2. **MUST** compose the unit's `StepEntry.outputs` from the resulting fully-resolved literal-path set, in the same way it would for a unit whose `outputs[]` were originally all literal (§{exec.cache.abstract}).
+3. **MUST** treat an empty resolved set as the unit having produced no outputs. A `StepEntry` MUST still be written so that the input fingerprint can short-circuit on subsequent runs; restoration on a hit MUST be a no-op for such an entry.
+4. **MUST** upload each resolved output to the backend under the same artifact-key scheme used for literal outputs.
+
+On a subsequent cache check for the same unit, the implementation MUST use the recorded `StepEntry.outputs` directly for the disk-integrity walk and for `try_restore` (§{exec.cache.integrity}). The implementation MUST NOT re-resolve the patterns against the current filesystem during the check. The recorded file set is the source of truth for "what the unit produced last time it ran"; cache invalidation flows through the unit's input fingerprint, not through pattern re-resolution.
+
+### Note 17.6.1
+
+The resolved file set persisted in `StepEntry.outputs` is indistinguishable from the set that would have been persisted by a unit whose `outputs[]` were literal from the start. Future cache reads, cross-machine restores, and artifact lookups operate on the literal paths only; the original glob pattern is not recorded.
