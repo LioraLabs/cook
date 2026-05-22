@@ -174,6 +174,69 @@ fn ensure_output_parent_dirs(work_node: &WorkNode) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// normalize_glob_pattern — CS-0085 trailing-** normalisation
+//
+// The reference glob crate (`glob = "0.3"`) treats a trailing `**` segment
+// as matching DIRECTORIES ONLY, not files. So `build/**` resolves to
+// `{build/sub/}` (a subdirectory), and the CS-0064 directory-filter then
+// drops it — net result is an empty set. The canonical user-facing pattern
+// (`.next/**`, Turborepo/bash-globstar convention) would silently match
+// nothing without this normalisation.
+//
+// Rule (§22.1.2): a pattern whose last path segment is exactly `**` is
+// rewritten to append `/*`, producing `<prefix>/**/*`. The bare pattern
+// `**` becomes `**/*`. Patterns whose `**` is not the final segment
+// (`**/lib/*.so`) are left unchanged.
+//
+// Returns `Cow::Borrowed` when no rewrite is needed (common case) to avoid
+// allocating for patterns like `*.c` or `src/**/*.c`.
+// ---------------------------------------------------------------------------
+
+fn normalize_glob_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {
+    if pattern == "**" {
+        std::borrow::Cow::Borrowed("**/*")
+    } else if let Some(prefix) = pattern.strip_suffix("/**") {
+        std::borrow::Cow::Owned(format!("{prefix}/**/*"))
+    } else {
+        std::borrow::Cow::Borrowed(pattern)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// resolve_output_paths — CS-0085 §17.6 glob expansion
+//
+// Expands glob patterns in `declared` output paths against `working_dir`.
+// Literal entries (no `*`, `?`, `[`) pass through unchanged. The returned
+// Vec preserves first-occurrence order; a path that matches multiple glob
+// entries or appears as both a literal and a glob match is included exactly
+// once (§17.6 item 1 deduplication rule).
+//
+// Glob patterns are normalised via `normalize_glob_pattern` before
+// resolution; see that function's documentation for the trailing-`**` rule.
+// ---------------------------------------------------------------------------
+
+fn resolve_output_paths(
+    declared: &[String],
+    working_dir: &std::path::Path,
+) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::with_capacity(declared.len());
+    for entry in declared {
+        if cook_fingerprint::has_glob_meta(entry) {
+            let normalized = normalize_glob_pattern(entry);
+            for resolved in cook_fingerprint::resolve_glob(working_dir, normalized.as_ref()) {
+                if seen.insert(resolved.clone()) {
+                    out.push(resolved);
+                }
+            }
+        } else if seen.insert(entry.clone()) {
+            out.push(entry.clone());
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // run_interactive_on_main
 // ---------------------------------------------------------------------------
 
@@ -554,8 +617,24 @@ pub fn execute_dag(
         };
         let cache = cm.get_or_load(&meta.recipe_name);
         let entry = cache.steps.get(&meta.cache_key);
+        // CS-0085 §17.6: when any declared output is a glob pattern AND a prior
+        // StepEntry exists, derive current_outputs from the recorded concrete
+        // paths rather than the raw pattern strings.  Pattern strings don't
+        // exist on disk, so passing them directly to needs_rebuild_cook would
+        // trigger OutputMissing and force an unnecessary rebuild on every run.
+        let any_glob = meta.output_paths.iter().any(|s| cook_fingerprint::has_glob_meta(s));
+        let current_outputs_storage: Vec<String> = if any_glob && entry.is_some() {
+            entry
+                .unwrap()
+                .outputs
+                .iter()
+                .map(|f| f.path.clone())
+                .collect()
+        } else {
+            meta.output_paths.clone()
+        };
         let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
-        let current_outputs: Vec<&str> = meta.output_paths.iter().map(|s| s.as_str()).collect();
+        let current_outputs: Vec<&str> = current_outputs_storage.iter().map(|s| s.as_str()).collect();
         let recipe_namespace = format!(
             "{}/{}::{}",
             meta.project_id, meta.cookfile_path, meta.recipe_name
@@ -1666,7 +1745,13 @@ pub fn execute_dag(
                         // Update cache if needed
                         if let Some(meta) = &dag.node(id).payload().cache_meta {
                             if let Some(cm) = cache_managers.get(&dag.node(id).payload().recipe_name) {
-                                match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(id).payload().working_dir) {
+                                // CS-0085 §17.6: expand any glob patterns in output_paths
+                                // against the unit's working directory before recording.
+                                let working_dir = dag.node(id).payload().working_dir.clone();
+                                let resolved_output_paths = resolve_output_paths(&meta.output_paths, &working_dir);
+                                let mut meta_for_record = meta.clone();
+                                meta_for_record.output_paths = resolved_output_paths.clone();
+                                match cm.record_completion(&meta.recipe_name, &meta.cache_key, &meta_for_record, &dag.node(id).payload().working_dir) {
                                     Ok(step_entry) => {
                                         // Post-execution augmentation: parse the just-written
                                         // depfile and append discovered FileRecords to
@@ -1737,7 +1822,8 @@ pub fn execute_dag(
                                         // spec §5.1). Each artifact is keyed by
                                         // artifact_key(cloud_key, idx, path) so a future cache hit can
                                         // restore them all independently.
-                                        for (out_idx, output_path) in meta.output_paths.iter().enumerate() {
+                                        // CS-0085: iterate the resolved (glob-expanded) list.
+                                        for (out_idx, output_path) in resolved_output_paths.iter().enumerate() {
                                             let abs_output = dag.node(id).payload().working_dir.join(output_path);
                                             let bytes = match std::fs::read(&abs_output) {
                                                 Ok(b) => b,
@@ -1775,8 +1861,10 @@ pub fn execute_dag(
 
                                         // Upload the depfile as an implicit artifact at index
                                         // outputs.len() so a future restore can pull it back.
+                                        // CS-0085: depfile_idx uses the resolved count to match
+                                        // the index record_completion appended it at.
                                         if let Some(di) = &meta.discovered_inputs {
-                                            let depfile_idx = meta.output_paths.len() as u32;
+                                            let depfile_idx = resolved_output_paths.len() as u32;
                                             let working_dir = &dag.node(id).payload().working_dir;
                                             let abs_depfile = working_dir.join(&di.from);
                                             match std::fs::read(&abs_depfile) {
@@ -2019,7 +2107,13 @@ pub fn execute_dag(
             // Update cache entry if this node has cache metadata
             if let Some(meta) = &dag.node(result.id).payload().cache_meta {
                 if let Some(cm) = cache_managers.get(&dag.node(result.id).payload().recipe_name) {
-                    match cm.record_completion(&meta.recipe_name, &meta.cache_key, meta, &dag.node(result.id).payload().working_dir) {
+                    // CS-0085 §17.6: expand any glob patterns in output_paths
+                    // against the unit's working directory before recording.
+                    let working_dir_2 = dag.node(result.id).payload().working_dir.clone();
+                    let resolved_output_paths = resolve_output_paths(&meta.output_paths, &working_dir_2);
+                    let mut meta_for_record = meta.clone();
+                    meta_for_record.output_paths = resolved_output_paths.clone();
+                    match cm.record_completion(&meta.recipe_name, &meta.cache_key, &meta_for_record, &dag.node(result.id).payload().working_dir) {
                         Ok(step_entry) => {
                             // Post-execution augmentation: parse the just-written
                             // depfile and append discovered FileRecords to
@@ -2088,7 +2182,8 @@ pub fn execute_dag(
 
                             // Upload one artifact per declared output (2026-05-02 addendum
                             // spec §5.1).
-                            for (out_idx, output_path) in meta.output_paths.iter().enumerate() {
+                            // CS-0085: iterate the resolved (glob-expanded) list.
+                            for (out_idx, output_path) in resolved_output_paths.iter().enumerate() {
                                 let abs_output = dag.node(result.id).payload().working_dir.join(output_path);
                                 let bytes = match std::fs::read(&abs_output) {
                                     Ok(b) => b,
@@ -2126,8 +2221,10 @@ pub fn execute_dag(
 
                             // Upload the depfile as an implicit artifact at index
                             // outputs.len() so a future restore can pull it back.
+                            // CS-0085: depfile_idx uses the resolved count to match
+                            // the index record_completion appended it at.
                             if let Some(di) = &meta.discovered_inputs {
-                                let depfile_idx = meta.output_paths.len() as u32;
+                                let depfile_idx = resolved_output_paths.len() as u32;
                                 let working_dir = &dag.node(result.id).payload().working_dir;
                                 let abs_depfile = working_dir.join(&di.from);
                                 match std::fs::read(&abs_depfile) {
@@ -3714,5 +3811,95 @@ mod tests {
                 .is_some(),
             "fp_v2 must be in backend after run2"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // normalize_glob_pattern tests — CS-0085 trailing-** normalisation
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn normalize_glob_pattern_appends_star_after_trailing_star_star() {
+        assert_eq!(super::normalize_glob_pattern("build/**").as_ref(), "build/**/*");
+        assert_eq!(super::normalize_glob_pattern(".next/**").as_ref(), ".next/**/*");
+        assert_eq!(super::normalize_glob_pattern("apps/web/.next/**").as_ref(), "apps/web/.next/**/*");
+    }
+
+    #[test]
+    fn normalize_glob_pattern_handles_bare_double_star() {
+        assert_eq!(super::normalize_glob_pattern("**").as_ref(), "**/*");
+    }
+
+    #[test]
+    fn normalize_glob_pattern_passes_through_non_trailing_double_star() {
+        assert_eq!(super::normalize_glob_pattern("**/lib/*.so").as_ref(), "**/lib/*.so");
+        assert_eq!(super::normalize_glob_pattern("src/**/*.c").as_ref(), "src/**/*.c");
+    }
+
+    #[test]
+    fn normalize_glob_pattern_passes_through_non_glob_patterns() {
+        assert_eq!(super::normalize_glob_pattern("*.c").as_ref(), "*.c");
+        assert_eq!(super::normalize_glob_pattern("file?.txt").as_ref(), "file?.txt");
+        assert_eq!(super::normalize_glob_pattern("build/main.o").as_ref(), "build/main.o");
+    }
+
+    #[test]
+    fn resolve_output_paths_handles_trailing_double_star() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wd = tmp.path();
+        std::fs::create_dir_all(wd.join("build/sub")).unwrap();
+        std::fs::write(wd.join("build/a.o"), b"a").unwrap();
+        std::fs::write(wd.join("build/sub/b.o"), b"b").unwrap();
+
+        let resolved = super::resolve_output_paths(
+            &["build/**".to_string()],
+            wd,
+        );
+        let mut paths = resolved.clone();
+        paths.sort();
+        assert_eq!(paths, vec!["build/a.o".to_string(), "build/sub/b.o".to_string()],
+            "trailing-** normalization should match files at any depth");
+    }
+
+    #[test]
+    fn resolve_output_paths_deduplicates_overlap() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wd = tmp.path();
+        std::fs::create_dir_all(wd.join("build")).unwrap();
+        std::fs::write(wd.join("build/a.o"), b"a").unwrap();
+        std::fs::write(wd.join("build/b.o"), b"b").unwrap();
+
+        let resolved = super::resolve_output_paths(
+            &["build/**".to_string(), "build/a.o".to_string()],
+            wd,
+        );
+        let mut paths = resolved.clone();
+        paths.sort();
+        assert_eq!(paths.len(), 2, "overlapping literal+glob should dedupe");
+        assert_eq!(paths, vec!["build/a.o".to_string(), "build/b.o".to_string()]);
+    }
+
+    #[test]
+    fn resolve_output_paths_empty_glob_match_is_not_an_error() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wd = tmp.path();
+        let resolved = super::resolve_output_paths(
+            &["build/**".to_string()],
+            wd,
+        );
+        assert!(resolved.is_empty(),
+            "glob matching nothing returns empty Vec; §17.6 item 3 says this MUST NOT be an error");
+    }
+
+    #[test]
+    fn resolve_output_paths_deduplicates_duplicate_literals() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wd = tmp.path();
+        std::fs::write(wd.join("main.o"), b"obj").unwrap();
+        let resolved = super::resolve_output_paths(
+            &["main.o".to_string(), "main.o".to_string()],
+            wd,
+        );
+        assert_eq!(resolved, vec!["main.o".to_string()],
+            "duplicate literal entries must dedupe to a single entry per §17.6 item 1");
     }
 }

@@ -402,6 +402,17 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
             recipes.join(", "),
             path.display(),
         )),
+        cook_engine::EngineError::GlobbedOutputCrossRecipeEdge {
+            upstream,
+            downstream,
+            input,
+            pattern,
+        } => CookError::Other(format!(
+            "recipe '{downstream}' reads input '{input}' which is matched by recipe '{upstream}' \
+             output pattern '{pattern}'. file-level cross-recipe edges to globbed outputs are not \
+             supported. either narrow '{upstream}' outputs[] to the specific file, or depend on \
+             '{upstream}' via a requires edge (recipe {downstream}: {upstream})."
+        )),
     }
 }
 

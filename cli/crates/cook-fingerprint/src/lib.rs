@@ -130,6 +130,17 @@ pub fn compute_test_fingerprint(
     format!("sha256:{:x}", h.finalize())
 }
 
+/// Returns true if the string contains any glob metacharacter recognised by
+/// the reference implementation's `glob = "0.3"` matcher: `*`, `?`, `[`.
+///
+/// CS-0085 specifies these three characters as the glob metacharacter set.
+/// `{` is intentionally excluded — `glob` 0.3 does not support brace
+/// alternation, so a string like "out/{a,b}.txt" is treated as a literal
+/// path.
+pub fn has_glob_meta(s: &str) -> bool {
+    s.bytes().any(|b| matches!(b, b'*' | b'?' | b'['))
+}
+
 /// Helper to resolve a glob pattern into a set of files.
 ///
 /// Sub-directory matches are dropped (CS-0064): every consumer of this
@@ -281,6 +292,48 @@ mod tests {
             &empty_inputs(),
         );
         assert_ne!(fp_a, fp_b, "different commands must produce different fingerprints");
+    }
+
+    #[test]
+    fn glob_meta_literal_paths_return_false() {
+        assert!(!has_glob_meta(""));
+        assert!(!has_glob_meta("main.c"));
+        assert!(!has_glob_meta("build/main.o"));
+        assert!(!has_glob_meta("apps/web/.next/BUILD_ID"));
+        assert!(!has_glob_meta("a/b/c/d.txt"));
+    }
+
+    #[test]
+    fn glob_meta_star_returns_true() {
+        assert!(has_glob_meta("*"));
+        assert!(has_glob_meta("*.c"));
+        assert!(has_glob_meta("src/**"));
+        assert!(has_glob_meta("src/**/*"));
+        assert!(has_glob_meta("apps/web/.next/**"));
+    }
+
+    #[test]
+    fn glob_meta_question_returns_true() {
+        assert!(has_glob_meta("?"));
+        assert!(has_glob_meta("file?.txt"));
+    }
+
+    #[test]
+    fn glob_meta_bracket_returns_true() {
+        assert!(has_glob_meta("[abc].txt"));
+        assert!(has_glob_meta("src/[ab]/main.c"));
+    }
+
+    #[test]
+    fn glob_meta_brace_returns_false() {
+        // The reference engine's `glob = "0.3"` crate does NOT support
+        // brace alternation; `{` is treated as a literal. Per CS-0085
+        // the spec excludes `{` from the metacharacter set so that a
+        // string like "out/{a,b}.txt" is treated as a LITERAL PATH,
+        // not as a glob pattern. Brace expansion may be added in a
+        // future CS once the reference engine supports it.
+        assert!(!has_glob_meta("{a,b}.txt"));
+        assert!(!has_glob_meta("src/{lib,app}/main.c"));
     }
 
     #[test]

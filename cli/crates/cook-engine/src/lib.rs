@@ -393,6 +393,19 @@ pub enum EngineError {
         path: PathBuf,
         recipes: Vec<String>,
     },
+
+    /// §22.1.2 terminal-output rule violation: a downstream recipe declares
+    /// a literal `inputs[]` path that is matched by an upstream recipe's
+    /// glob `outputs[]` pattern. Detected at register time (syntactic check,
+    /// no filesystem access). The author should either narrow the upstream
+    /// outputs[] to specific files or use a `requires` edge.
+    #[error("cross-recipe globbed-output edge: recipe '{downstream}' reads input '{input}' which matches recipe '{upstream}' output pattern '{pattern}'")]
+    GlobbedOutputCrossRecipeEdge {
+        upstream: String,
+        downstream: String,
+        input: String,
+        pattern: String,
+    },
 }
 
 // Map `cook_register::RegisterError` onto `EngineError` so callers that

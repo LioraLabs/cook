@@ -1,0 +1,8 @@
+recipe build
+    >>{
+        cook.add_unit({
+            inputs  = { "src.c" },
+            outputs = { "build/**", "dist/*.js" },
+            command = "echo built",
+        })
+    }

@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.13** (unreleased) — CS-0077. Unified register-phase + work-unit DAG: §13.3 (one DAG across every reachable recipe; "wave" grouping retired), §22.3 (recipe-name uniqueness within a Cookfile), §22.6 (recipe-discovery contract — surface and register-phase Lua names share one dispatch namespace).
+- **v0.13** (unreleased) — CS-0077, CS-0085. Unified register-phase + work-unit DAG: §13.3 (one DAG across every reachable recipe; "wave" grouping retired), §22.3 (recipe-name uniqueness within a Cookfile), §22.6 (recipe-discovery contract — surface and register-phase Lua names share one dispatch namespace).
 - **v0.12** (`cs-standard/v0.12`, 2026-05-17) — CS-0076. cc.checks.* feature-test namespace and cc.config_header CMake-compatible substitution; cc:check:<kind>:<name>:<short-fp> joins the canonical probe-key namespace; surface §28 v0.5 → v0.6.
 - **v0.11** (`cs-standard/v0.11`, 2026-05-15) — CS-0074. Probe units: new §22.5 `cook.probe` register-phase API; `probes` field on `cook.add_unit` for consumer→probe DAG edges; demand-driven scheduling (probes execute only when reached); msgpack probe-value caching with `kind: "probe_value"` artifact-meta tag; `cook.cache.set` deprecated (§24); `cook.cache.get` execute-phase tightened.
 - **v0.10** (`cs-standard/v0.10`, 2026-05-13) — CS-0073. Structural redesign: Standard reorganised into four Parts (Cookfile language, Execution model, Cook Lua API, Standard module catalogue) with per-topic chapters. Retired slug prefixes `grammar.*`, `modules.*`, `stdmods.*`, plus several `lua.*` and `lexical.*` / `recipes.*` leaves; new prefixes `conf.*`, `toplevel.*`, `decl.*`, `steps.*`, `phl.*`, `exec.*`, `comp.*`, `mods.*`, `cat.*`, `pre-v1.*`, `corpus.*`. New normative prose for `cook.step_group` (§22.5), both-phase Cook Lua surfaces (§24.3–§24.7), and module lifecycle (§12.3). Annexes B/C and D/E swapped. Retired URLs resolve via page-level redirects. No normative behaviour changes for any conforming Cookfile.
@@ -1498,6 +1498,22 @@ Three positive conformance fixtures pin the new surface: `cc-private-define-does
 **Backward compatibility.** Purely additive. No existing Cookfile becomes non-conforming. Implementations that already accept arbitrary unknown option keys (rather than erroring) are out of compliance with §28.5 independently of CS-0084; this entry does not change that. Default behaviour (no `output`) is byte-identical to v0.7.
 
 **Conformance impact.** A conforming implementation MUST honour `opts.output` verbatim when present and MUST flow the override through `cook.export`'s `lib_path` so consumers' transitive link steps see the right artifact location. No new positive conformance fixture is required at the parse layer (the field is a Lua table key); the reference implementation's busted suite locks the behaviour with a `targets.shared("plug", { output = "build/bin/plug.so" })` case asserting `units[#units].output == "build/bin/plug.so"`. Windows and macOS authors are responsible for authoring the platform-correct suffix in `output`; the implementation MUST NOT replace it.
+
+## CS-0085 — `outputs[]` accepts glob patterns; terminal-output rule [#changes.cs-0085]
+
+**Version:** v0.13
+
+**Date:** 2026-05-21
+
+**Sections affected:** §22.1 (path-shape paragraph amended), §22.1.2 (new), §17.6 (new, follow-up commit), App. C.17.1 (new rationale, follow-up commit).
+
+§22.1 widens `outputs[]` entries to allow glob patterns alongside literal paths. §22.1.2 specifies the Lua-level field syntax and the cross-recipe terminal-output rule. §17.6 specifies post-execute resolution and the cache-record shape (lands in the §17.6 commit). App. C.17.1 explains the rationale for terminality (lands in the rationale commit).
+
+Glob metacharacters are limited to `*`, `?`, `[` to match the reference implementation's `glob = "0.3"` pattern parser; brace alternation (`{a,b}`) is not part of the surface in v0.13 and MAY be added in a future CS once the reference engine supports it. A pattern with a trailing `**` segment (e.g. `.next/**`) is normalised to `**/*` form so that it matches files at all depths under the prefix; this matches the Turborepo/bash-globstar convention authors expect.
+
+Motivation: enables `cook_pnpm` v0.2 caching parity (issue COOK-47) and any future blessed module whose output set is determined by the wrapped tool rather than declared by the Cookfile author.
+
+**Backward compatibility:** today's Cookfiles with literal `outputs[]` entries behave bit-for-bit identically; `CACHE_VERSION` does not bump. The check `has_glob_meta(s)` returns `false` for every literal entry; the post-execute resolver is a pass-through in that case.
 
 ## CS-0086 — `tree-sitter-cook` v0.12 conformance audit (closes CS-0002 again) [#changes.cs-0086]
 

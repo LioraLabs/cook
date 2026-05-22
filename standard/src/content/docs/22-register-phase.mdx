@@ -21,13 +21,13 @@ sidebar:
 | `cache`             | boolean        | `true`  | If `false`, the unit is never cached and is re-run on every invocation. |
 | `inputs`            | array of string | `{}`   | Files whose content contributes to the unit's cache key. |
 | `output`            | string         | absent  | Single declared output path (§{steps.cook-single}). |
-| `outputs`           | array of string | absent | Multiple declared output paths (§{steps.cook-multi}). |
+| `outputs`           | array of string | absent | Multiple declared output paths or glob patterns (§{steps.cook-multi}, §{lua.add-unit-output-globs}). Glob patterns are resolved against the unit's working directory after the command completes (§{exec.cache.output-globs}). |
 | `ingredient_groups` | array of arrays of string | `{}` | For Lua-code units, the sequence of ingredient groups exposed as `input_N` (§{lua.exe}). |
 | `discovered_inputs` | table         | absent  | If present, declares a file the command writes during the execute phase that records additional input paths the command consumed (§{exec.cache.discovered-inputs}). Subfields: `from` (string, required, working-directory-relative path) and `format` (string, required; the only mandatory format is `"make"`). |
 
 **Output-field exclusivity.** A conforming implementation MUST reject `spec` if both `output` and `outputs` are set, raising a Lua runtime error.
 
-**Path-shape restriction.** Every entry in `inputs`, `output`, and `outputs` is a *file* path. A conforming implementation MUST raise a Lua runtime error at register time when any path in `inputs` resolves (relative to the recipe's working directory) to an existing directory, and when any path in `output`/`outputs` resolves to an existing directory. Non-existent output paths MUST be accepted (declared outputs are typically not yet built at register time); non-existent input paths MAY be accepted at register time and surfaced later by the cache or input-iteration layer. The diagnostic MUST contain the substring `is a directory` and the offending path. Cook's cache hashes file content, so silently accepting a directory would produce an incomplete cache record and the unit would re-run on every invocation.
+**Path-shape restriction.** Every entry in `inputs`, `output`, and `outputs` is a *file* path. A conforming implementation MUST raise a Lua runtime error at register time when any path in `inputs` resolves (relative to the recipe's working directory) to an existing directory, and when any path in `output`/`outputs` resolves to an existing directory. Non-existent output paths MUST be accepted (declared outputs are typically not yet built at register time); non-existent input paths MAY be accepted at register time and surfaced later by the cache or input-iteration layer. The diagnostic MUST contain the substring `is a directory` and the offending path. Cook's cache hashes file content, so silently accepting a directory would produce an incomplete cache record and the unit would re-run on every invocation. The directory-rejection rule applies only to entries that are literal paths (no glob metacharacters: `*`, `?`, `[`). Entries containing glob metacharacters are not subject to this check at register time; the post-execute resolver MUST filter directory matches from the resolved set (§{exec.cache.output-globs}, CS-0064).
 
 **Payload selection.** A conforming implementation MUST classify the recorded unit as follows:
 
@@ -96,6 +96,33 @@ A conforming implementation MUST:
 - support `format = "make"`; MAY support additional formats; MUST raise a register-phase Lua error if `format` names a value the implementation does not recognise. The diagnostic MUST include the offending value and the list of supported values.
 
 The semantic effect of `discovered_inputs` on the cache — including the requirement that `from` MUST NOT also appear in `outputs[]` — is specified in §{exec.cache.discovered-inputs}. This subsection defines only the Lua-level field syntax.
+
+### 22.1.2. Output globs [#lua.add-unit-output-globs]
+
+An entry in `outputs[]` that contains any of the glob metacharacters `*`, `?`, `[` is a **glob pattern entry**; an entry that contains none of these is a **literal path entry**. A conforming implementation MUST treat literal entries as before this section (register-time path-shape check per §22.1; post-execute recording of the literal path's content per §{exec.cache.abstract}). For glob pattern entries a conforming implementation:
+
+- MUST NOT perform the path-shape directory-rejection check on glob entries at register time.
+- MUST expand glob entries against the unit's working directory immediately after the unit's command completes successfully, before composing the unit's `StepEntry` (§{exec.cache.output-globs}).
+- MUST filter out directory matches from the expanded set (CS-0064).
+- An empty resolved set MUST NOT be an error; a conforming implementation MAY persist an empty resolved set as the unit's `StepEntry.outputs`.
+
+**Trailing `**` matches files within all subdirectories.** A glob pattern entry of the form `<prefix>/**` (or the bare pattern `**`) is interpreted as if written `<prefix>/**/*` (or `**/*` respectively), so that the entry matches files at any depth under the prefix. A conforming implementation MAY apply this normalisation either as a textual rewrite before pattern resolution or by treating the trailing-`**` case directly in its matcher. The normalisation MUST NOT affect patterns whose `**` segment is not the final segment (e.g. `**/lib/*.so` is left unchanged).
+
+The expanded set replaces the unit's declared `outputs[]` for the purposes of cache recording, artifact upload, and cache restoration. The unit's persisted `StepEntry.outputs` is always a list of literal file records (`path`, `mtime`, `hash`); patterns appear nowhere in the cache.
+
+**Cross-recipe edges.** A recipe whose `outputs[]` declaration contains any glob pattern entry MUST NOT have any of those patterns syntactically match a literal `inputs[]` entry declared by any other recipe in the same workspace. A conforming implementation MUST perform this detection at register time by lexically testing each downstream recipe's literal `inputs[]` strings against each upstream recipe's glob pattern set; the detection MUST NOT consult the filesystem and MUST NOT depend on the unit's working directory or any post-execute state. On a positive match the implementation MUST raise a register-phase error that names both recipes, the offending input path, and the matching pattern. Downstream recipes MAY depend on a recipe with globbed outputs via `requires = { ... }`; such an edge provides DAG ordering only and MUST NOT propagate cache invalidation through file content. See §{rationale.output-globs-terminal}.
+
+### Example 22.1.3
+
+```lua
+cook.add_unit({
+    inputs  = { "src/app/page.tsx", "src/lib/util.ts", "package.json" },
+    outputs = { "apps/web/.next/**" },
+    command = "pnpm --filter web run build",
+})
+```
+
+Records one shell unit whose declared output set is resolved by globbing `apps/web/.next/**` against the unit's working directory after `pnpm --filter web run build` completes. The cache record holds a literal file list, hashed in the usual way; a subsequent run with unchanged inputs is a cache hit, and a subsequent run after `rm -rf apps/web/.next` restores the recorded files from the backend without rerunning the command.
 
 ## 22.2. `cook.exec` and `cook.interactive` [#lua.cook-exec]
 **Signatures.**
