@@ -33,6 +33,25 @@
 (chore_header
   name: (string) @function.builtin)
 
+; ── Chore parameters (COOK-36 / §7.1.1) ─────────────────────────
+
+(required_param
+  name: (identifier) @variable.parameter)
+
+(defaulted_param
+  name: (identifier) @variable.parameter)
+
+(variadic_param
+  sigil: _ @operator
+  name: (identifier) @variable.parameter)
+
+(defaulted_param
+  "=" @operator)
+
+(lua_expr_default
+  "(" @punctuation.bracket
+  ")" @punctuation.bracket)
+
 ; ── Dependencies ────────────────────────────────────────────────
 
 (dependency_list

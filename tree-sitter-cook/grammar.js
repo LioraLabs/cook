@@ -1,10 +1,9 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-// tree-sitter-cook claims conformance with Cook Standard v0.12
-// (`cs-standard/v0.12`). The CS-0086 audit (see
-// standard/src/content/docs/appendix/E-changes.mdx) brings the grammar
-// up to:
+// tree-sitter-cook claims conformance with Cook Standard v0.13
+// (`cs-standard/v0.13`). The CS-0086 audit (v0.12) and CS-0087 audit
+// (v0.13 — chore parameters) bring the grammar up to:
 //   • CS-0072: top-level `register` block + top-level `module_call`
 //     (single + multi-line, brace-balanced); recipe-body bare
 //     module-calls are now `shell_command`.
@@ -15,6 +14,11 @@
 //     `use_name` LUA_IDENT constraint; declaration-site no-dots for
 //     `recipe_header` / `chore_header` names.
 //   • CS-0061: STRING admits both double- and single-quoted forms.
+//   • COOK-36 / §7.1.1: chore parameters — required, defaulted-string,
+//     defaulted-Lua `=(EXPR)`, and variadic `+NAME`/`*NAME`. Dot-ban on
+//     param names is enforced syntactically by the param-name regex;
+//     ordering, duplicates, reserved names, and at-most-one-variadic
+//     are semantic checks handled by the Rust parser (SEMANTIC_ONLY).
 // The `$<IDENT>` placeholder shape from §2.11 is recognised in string
 // literals and shell text (CS-0033). See standard/src/content/docs/
 // appendix/A-grammar.mdx for the normative grammar.
@@ -131,7 +135,65 @@ module.exports = grammar({
       seq(
         "chore",
         field("name", $._decl_name),
+        field("params", optional($.chore_param_list)),
         optional(seq(":", $.dependency_list)),
+      ),
+
+    // COOK-36 / Standard §7.1.1 chore parameters. The grammar accepts
+    // any order of param variants; spec ordering rules (required →
+    // defaulted → at-most-one variadic), reserved-name ban, dot-ban,
+    // and duplicate-name detection are semantic checks enforced by the
+    // Rust parser, not tree-sitter.
+    chore_param_list: ($) => repeat1($.chore_param),
+
+    chore_param: ($) =>
+      choice(
+        $.required_param,
+        $.defaulted_param,
+        $.variadic_param,
+      ),
+
+    required_param: ($) => field("name", $._chore_param_name),
+
+    defaulted_param: ($) =>
+      seq(
+        field("name", $._chore_param_name),
+        "=",
+        field("default", choice($.string, $.lua_expr_default)),
+      ),
+
+    variadic_param: ($) =>
+      seq(
+        field("sigil", choice("+", "*")),
+        field("name", $._chore_param_name),
+      ),
+
+    // Param-name shape: bare ASCII Lua-identifier. Tighter than
+    // `_decl_bare` (no `-`, no `.`); a stricter superset of the
+    // §7.1.1 grammar would be enforced by the Rust parser anyway.
+    // The rule is hidden (`_`-prefix) so the tree carries
+    // `name: (identifier)` rather than a redundant wrapper node.
+    _chore_param_name: ($) =>
+      alias(token(/[A-Za-z_][A-Za-z0-9_]*/), $.identifier),
+
+    // `=( LUA_EXPR )` default. Tree-sitter doesn't parse Lua syntax;
+    // it just scans a balanced-paren region with string awareness so
+    // that nested parens (`cook.git.head_tag()`) and parens inside
+    // strings (`"(boom)"`) don't break the scan. Multi-line Lua-expr
+    // defaults are out of scope (chore_header is a single line).
+    lua_expr_default: ($) =>
+      seq(
+        "(",
+        repeat($._lua_expr_chunk),
+        ")",
+      ),
+
+    _lua_expr_chunk: ($) =>
+      choice(
+        $.lua_expr_default, // nested parens
+        token(/"(?:[^"\\\n]|\\[^\n])*"/),
+        token(/'(?:[^'\\\n]|\\[^\n])*'/),
+        token(prec(-1, /[^()"'\n]+/)),
       ),
 
     _chore_item: ($) =>

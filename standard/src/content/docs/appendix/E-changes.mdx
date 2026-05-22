@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.13** (unreleased) — CS-0077, CS-0085. Unified register-phase + work-unit DAG: §13.3 (one DAG across every reachable recipe; "wave" grouping retired), §22.3 (recipe-name uniqueness within a Cookfile), §22.6 (recipe-discovery contract — surface and register-phase Lua names share one dispatch namespace).
+- **v0.13** (unreleased) — CS-0077, CS-0085, CS-0087. Unified register-phase + work-unit DAG: §13.3 (one DAG across every reachable recipe; "wave" grouping retired), §22.3 (recipe-name uniqueness within a Cookfile), §22.6 (recipe-discovery contract — surface and register-phase Lua names share one dispatch namespace). Chore parameters (§7.1.1–7.1.3, §9, §13.2, §17.5.1, App. A.3.1): required, defaulted-string, defaulted-Lua `=(EXPR)`, and variadic `+NAME`/`*NAME` on chore headers; bind as Lua locals, `$<name>` placeholders, and env vars in shell children.
 - **v0.12** (`cs-standard/v0.12`, 2026-05-17) — CS-0076. cc.checks.* feature-test namespace and cc.config_header CMake-compatible substitution; cc:check:<kind>:<name>:<short-fp> joins the canonical probe-key namespace; surface §28 v0.5 → v0.6.
 - **v0.11** (`cs-standard/v0.11`, 2026-05-15) — CS-0074. Probe units: new §22.5 `cook.probe` register-phase API; `probes` field on `cook.add_unit` for consumer→probe DAG edges; demand-driven scheduling (probes execute only when reached); msgpack probe-value caching with `kind: "probe_value"` artifact-meta tag; `cook.cache.set` deprecated (§24); `cook.cache.get` execute-phase tightened.
 - **v0.10** (`cs-standard/v0.10`, 2026-05-13) — CS-0073. Structural redesign: Standard reorganised into four Parts (Cookfile language, Execution model, Cook Lua API, Standard module catalogue) with per-topic chapters. Retired slug prefixes `grammar.*`, `modules.*`, `stdmods.*`, plus several `lua.*` and `lexical.*` / `recipes.*` leaves; new prefixes `conf.*`, `toplevel.*`, `decl.*`, `steps.*`, `phl.*`, `exec.*`, `comp.*`, `mods.*`, `cat.*`, `pre-v1.*`, `corpus.*`. New normative prose for `cook.step_group` (§22.5), both-phase Cook Lua surfaces (§24.3–§24.7), and module lifecycle (§12.3). Annexes B/C and D/E swapped. Retired URLs resolve via page-level redirects. No normative behaviour changes for any conforming Cookfile.
@@ -1534,3 +1534,40 @@ Motivation: enables `cook_pnpm` v0.2 caching parity (issue COOK-47) and any futu
 - **Banner + harness (COOK-56).** `tree-sitter-cook/grammar.js`, `package.json#version+description`, and `tree-sitter.json#version+description` claim `cs-standard/v0.12`. `scripts/conformance.mjs` is tightened: `KNOWN_STALE_POSITIVES` is empty; `SEMANTIC_ONLY_NEGATIVES` is audited (cc-* / probe-* / declaration-name-collision entries documented with the precise spec rule); the harness now treats STALE entries or NOTE-flagged stale-list-shrink signals as non-zero exits. `standard/public/tree-sitter-cook.wasm` is rebuilt from the new grammar.
 
 **Conformance result.** `node scripts/conformance.mjs` from `tree-sitter-cook/` exits 0 with **129 OK / 0 FAIL / 0 STALE / 0 NOTE / 37 SKIP**. `tree-sitter test` exits 0 across 69 corpus tests. CS-0002's "tree-sitter-cook is known stale" note is superseded by this entry, mirroring the role CS-0014 played for the v0.2 cycle. A re-divergence will reopen CS-0002 again in a subsequent audit cycle.
+
+## CS-0087 — Chore parameters (closes COOK-36) [#changes.cs-0087]
+
+**Date:** 2026-05-22
+
+**Version:** v0.13
+
+**Sections affected:** §6.1 (recipes forbid params), §7.1.1 (new — chore-header parameter grammar, ordering rule, reserved-name ban, dot-ban), §7.1.2 (new — parameter binding inside the body, Lua-locals + invocation-time rules + diagnostic table + Lua-default coercion rules), §7.1.2.1 (new — env-var export to shell children), §7.1.3 (new — variadic parameters `+NAME`/`*NAME`), §7.5.1 (new — dependencies on parametric chores), §9 (placeholder table grows `$<param-name>` row + chore-body resolution-order paragraph + scalar POSIX shell-quoting clarification), §13.2 phase-classification table (Lua-expression default is load-phase), §17.5.1 (informative cache note), App. A.3.1 (grammar productions `param_list`, `param`, `default_value`).
+
+**Surface change.** Chore headers grow a parameter list between the chore name and the optional `:` dep list:
+
+```
+chore deploy target host="prod.example.com" version=(cook.git.head_tag() or "v0") *extras: build
+    > deploy.run(target, host, version, extras)
+```
+
+Three param kinds:
+
+- **Required** (`BARE_IDENT`) — bound from positional argv at chore invocation; missing argv is a diagnostic per §7.1.2.
+- **Defaulted** (`BARE_IDENT "=" STRING` or `BARE_IDENT "=" "(" LUA_EXPR ")"`) — STRING default binds verbatim; Lua-expression default evaluates against the Cookfile-scope VM (load phase, §13.2) when argv is exhausted, coerced to a string via Lua tostring rules for `string`/`number`/`boolean` returns; other Lua types raise the non-coercible diagnostic.
+- **Variadic** (`"+" BARE_IDENT` or `"*" BARE_IDENT`) — collects remaining argv into a Lua sequence; `+NAME` requires ≥1, `*NAME` allows 0 (binds `{}`).
+
+Ordering (normative): required → defaulted → at-most-one variadic at the tail. Parameter names follow the §A.2 reserved-segment ban (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`), MUST NOT contain `.`, and MUST be unique within a header. Recipes do not take parameters; a `recipe` header with parameter tokens is rejected at parse time.
+
+**Three surfaces in the body.** A bound parameter is available as: (a) a Lua local visible to every body step; (b) a `$<name>` placeholder in shell steps, POSIX single-quote-escaped to a single shell word (scalar) or the space-joined individually-quoted form (variadic); (c) an environment variable exported to every shell child process spawned by the body, name-for-name, with variadics joined by single spaces.
+
+**CLI dispatch (informative, ref-impl).** Argv after the chore name is partitioned in one left-to-right pass: `@PRESET` sigil and `--config NAME`/`-c NAME`/`--config=NAME` flag select a config preset (at most one per invocation); `--` ends partitioning and treats subsequent tokens as literal parameter values regardless of sigil prefix; all other tokens are parameter values. The legacy "second bare positional = config preset" form is removed; the diagnostic for a now-broken legacy invocation includes a migration hint. The Standard does not prescribe a CLI surface for these rules — see §7.1.2 normative text and `cli/CHANGELOG.md` in the reference implementation for the exact wording.
+
+**Conformance fixtures.** 12 positive (`chore-param-required`, `chore-param-defaulted-string`, `chore-param-defaulted-lua`, `chore-param-variadic-plus`, `chore-param-variadic-plus-zero`, `chore-param-variadic-star-empty`, `chore-param-with-deps`, `chore-param-shell-substitution`, `chore-param-too-few-argv`, `chore-param-too-many-argv`, `chore-param-default-lua-error`, `chore-param-default-lua-non-string`) + 7 negative (`recipe-with-params-rejected`, `chore-param-defaulted-before-required`, `chore-param-variadic-not-last`, `chore-param-multiple-variadics`, `chore-param-variadic-with-default`, `chore-param-duplicate-name`, `chore-param-reserved-name`, `chore-param-dotted-name`).
+
+**Tree-sitter implementation (CS-0086 follow-up).** `tree-sitter-cook/grammar.js` grows `chore_param_list`, `chore_param`, `required_param`, `defaulted_param`, `variadic_param`, and `lua_expr_default` productions; `chore_header` threads the `params` field between `name` and the optional `:`/`dependency_list`. The `=(EXPR)` Lua-expression default is parsed via a recursive `lua_expr_default` rule with string-aware paren balancing — nested calls (`cook.git.head_tag()`) and parens-in-strings (`error("(boom)")`) parse correctly without an external scanner. Parameter names use a strict `/[A-Za-z_][A-Za-z0-9_]*/` regex, so the dot-ban is enforced syntactically; ordering, duplicates, reserved names, and the at-most-one-variadic rule are semantic and remain tagged `SEMANTIC_ONLY_NEGATIVES` per the audit policy established in CS-0014/CS-0086. `queries/highlights.scm` highlights param names as `@variable.parameter`, sigils as `@operator`, and `lua_expr_default` brackets as `@punctuation.bracket`. The grammar banner, `package.json#version`, and `tree-sitter.json#version` claim `cs-standard/v0.13`.
+
+**Reference implementation.** `cli/crates/cook-lang` (lexer + AST + diagnostics), `cli/crates/cook-luagen` (`__params` metadata + body-fn local prelude + closure-based Lua-expression defaults), `cli/crates/cook-register` (runtime argv→params binding, env-var export, shell-sigil resolver), `cli/crates/cook-cli` (argv partitioning), 30+ integration tests in `cli/crates/cook-cli/tests/chore_params_test.rs`, 25-scenario `examples/chore_param_benchmarks/`.
+
+**Backward compatibility.** Breaking on the CLI surface only: any `cook NAME PRESET` invocation (where `PRESET` was the legacy second-positional config-preset selector) now needs `cook NAME @PRESET` or `cook NAME --config PRESET`. The diagnostic at the failure point includes a migration hint. No Cookfile becomes non-conforming.
+
+**Tree-sitter conformance result.** `node scripts/conformance.mjs` from `tree-sitter-cook/` exits 0 with **145 OK / 0 FAIL / 0 STALE / 0 NOTE / 42 SKIP**. `tree-sitter test` exits 0 across 75 corpus tests (69 + 6 chore-param cases).

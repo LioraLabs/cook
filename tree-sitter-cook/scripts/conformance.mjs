@@ -128,6 +128,21 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    '§22.5 cook.probe — duplicate-key detection, register-time semantic'],
   ['probe-unresolved-require',
    '§22.5 cook.probe — unresolved require detection, register-time semantic'],
+  // §7.1.1 chore-parameter semantic rules — Rust parser enforces;
+  // tree-sitter accepts any ordering / count / reserved-name shape.
+  // The dot-ban and the no-default-on-variadic rule ARE syntactic and
+  // remain enforced by the grammar (param-name regex / variadic_param
+  // production has no `=default` arm).
+  ['chore-param-defaulted-before-required',
+   '§7.1.1 required-before-defaulted ordering — parse-time semantic'],
+  ['chore-param-duplicate-name',
+   '§7.1.1 duplicate-parameter detection — parse-time semantic'],
+  ['chore-param-multiple-variadics',
+   '§7.1.1 at-most-one-variadic rule — parse-time semantic'],
+  ['chore-param-reserved-name',
+   '§7.1.1 reserved-name ban (§A.2) — parse-time semantic, applied to a tokenisation tree-sitter accepts'],
+  ['chore-param-variadic-not-last',
+   '§7.1.1 variadic-tail rule — parse-time semantic'],
 ]);
 
 // Positive fixtures the Rust parser accepts but tree-sitter-cook cannot

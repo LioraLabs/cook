@@ -55,3 +55,138 @@ chore status
       (lua_code))
     (interactive_command
       (shell_content))))
+
+
+==================
+chore with required param (COOK-36)
+==================
+
+chore deploy target
+    > deploy.run(target)
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier)
+      params: (chore_param_list
+        (chore_param
+          (required_param
+            name: (identifier)))))
+    (lua_line
+      (lua_code))))
+
+
+==================
+chore with defaulted-string param (COOK-36)
+==================
+
+chore deploy target="staging"
+    > deploy.run(target)
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier)
+      params: (chore_param_list
+        (chore_param
+          (defaulted_param
+            name: (identifier)
+            default: (string)))))
+    (lua_line
+      (lua_code))))
+
+
+==================
+chore with Lua-expression default (COOK-36)
+==================
+
+chore release version=(cook.git.head_tag() or "v0")
+    > release.cut(version)
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier)
+      params: (chore_param_list
+        (chore_param
+          (defaulted_param
+            name: (identifier)
+            default: (lua_expr_default
+              (lua_expr_default))))))
+    (lua_line
+      (lua_code))))
+
+
+==================
+chore with variadic +NAME param (COOK-36)
+==================
+
+chore lint +FILES
+    > linter.run(FILES)
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier)
+      params: (chore_param_list
+        (chore_param
+          (variadic_param
+            name: (identifier)))))
+    (lua_line
+      (lua_code))))
+
+
+==================
+chore with variadic *NAME param (COOK-36)
+==================
+
+chore fmt *files
+    > fmt.run(files)
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier)
+      params: (chore_param_list
+        (chore_param
+          (variadic_param
+            name: (identifier)))))
+    (lua_line
+      (lua_code))))
+
+
+==================
+chore with multiple params and deps (COOK-36)
+==================
+
+chore deploy target host="prod.example.com": build
+    > deploy.run(target, host)
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier)
+      params: (chore_param_list
+        (chore_param
+          (required_param
+            name: (identifier)))
+        (chore_param
+          (defaulted_param
+            name: (identifier)
+            default: (string))))
+      (dependency_list
+        (identifier)))
+    (lua_line
+      (lua_code))))
