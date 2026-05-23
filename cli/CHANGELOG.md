@@ -12,6 +12,16 @@
 
 ### Added
 
+- **`cook affected --since=<git-ref>` (COOK-58)** — lists every recipe whose
+  declared file inputs (or any transitive downstream consumer) would be
+  invalidated by the diff between `<ref>` and the working tree. Three-dot
+  merge-base semantics; includes staged + unstaged + untracked-non-ignored
+  files. Supports `--recipe=<name>` (filter by base name) and `--json`.
+- **`cook <recipe> --affected --since=<git-ref>` (COOK-58)** — drives the
+  scheduler with the affected slice only. Same selection logic as
+  `cook affected`, applied as a filter before the executor runs. Both flag
+  orderings work: globals-first (`cook --affected --since=main build`) and
+  Turborepo-style (`cook build --affected --since=main`).
 - **Chore parameters (COOK-36)** — positional, defaulted-string,
   Lua-expression-default (`=(EXPR)`), and variadic (`+NAME`, `*NAME`) forms
   on chore headers. Parameters bind as Lua locals, as `$<name>` placeholders

@@ -64,6 +64,32 @@ pub struct Globals {
     /// Override a variable (KEY=VALUE), repeatable.
     #[arg(long = "set", num_args = 1, global = true)]
     pub set: Vec<String>,
+
+    /// Restrict the recipe runner to recipes whose declared file inputs (or
+    /// transitive downstream consumers) intersect the git diff against
+    /// `--since=<ref>`. See `cook affected --help` for semantics. Requires
+    /// `--since=<ref>`.
+    #[arg(long = "affected", global = true)]
+    pub affected: bool,
+
+    /// Git ref to diff against for `--affected` / `cook affected`. Uses
+    /// three-dot merge-base semantics and includes working-tree changes
+    /// (staged, unstaged, and untracked-non-ignored).
+    #[arg(long = "since", global = true)]
+    pub since: Option<String>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct AffectedArgs {
+    /// Restrict the listed recipes to those whose name equals this argument
+    /// (after the qualified prefix). In a pnpm workspace `--recipe=build`
+    /// filters to all `*:build` recipes.
+    #[arg(long = "recipe")]
+    pub recipe: Option<String>,
+
+    /// Emit machine-readable JSON instead of one-name-per-line plain text.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -100,6 +126,12 @@ pub enum Cmd {
     /// Print transpiled Lua for the current Cookfile (file-level, not recipe-scoped).
     #[command(name = "emit-lua")]
     EmitLua,
+
+    /// List the recipes whose declared file inputs (or transitive downstream
+    /// consumers) would be invalidated by the diff since `--since=<ref>`.
+    /// Uses three-dot merge-base semantics and includes working-tree state.
+    /// Requires `--since=<ref>`.
+    Affected(AffectedArgs),
 
     /// Run a recipe by name. Captured for any first positional that does not
     /// match a reserved subcommand. The first element is the recipe name
@@ -402,5 +434,66 @@ mod tests {
     fn logs_conflicting_selectors_fail_to_parse() {
         let res = Cli::try_parse_from(["cook", "logs", "--last-failed", "-n", "2"]);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn parses_affected_subcommand_with_since() {
+        let cli = parse(&["affected", "--since=main"]);
+        match cli.cmd {
+            Some(Cmd::Affected(args)) => {
+                assert!(args.recipe.is_none());
+                assert!(!args.json);
+            }
+            other => panic!("expected Cmd::Affected, got {other:?}"),
+        }
+        assert_eq!(cli.globals.since.as_deref(), Some("main"));
+        assert!(!cli.globals.affected);
+    }
+
+    #[test]
+    fn parses_affected_subcommand_with_recipe_and_json() {
+        let cli = parse(&["affected", "--since=origin/main", "--recipe=build", "--json"]);
+        match cli.cmd {
+            Some(Cmd::Affected(args)) => {
+                assert_eq!(args.recipe.as_deref(), Some("build"));
+                assert!(args.json);
+            }
+            other => panic!("expected Cmd::Affected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_recipe_with_affected_flag_globals_first() {
+        // Globals-first form: clap intercepts --affected/--since because they
+        // appear before the external_subcommand's first positional.
+        let cli = parse(&["--affected", "--since=main", "build"]);
+        assert!(matches!(cli.cmd, Some(Cmd::Recipe(_))));
+        assert!(cli.globals.affected);
+        assert_eq!(cli.globals.since.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn parses_recipe_with_affected_flag_post_recipe_raw() {
+        // Post-recipe Turborepo-style form (`cook build --affected --since=main`):
+        // clap captures the flags raw into the Recipe vec because they appear
+        // after the external_subcommand catch-all. partition_argv in main.rs
+        // re-extracts them before dispatch (see PartitionedArgv). At the clap
+        // layer therefore globals stay defaulted; this test pins that contract.
+        let cli = parse(&["build", "--affected", "--since=main"]);
+        match &cli.cmd {
+            Some(Cmd::Recipe(parts)) => {
+                assert_eq!(
+                    parts,
+                    &vec![
+                        "build".to_string(),
+                        "--affected".to_string(),
+                        "--since=main".to_string()
+                    ]
+                );
+            }
+            other => panic!("expected Cmd::Recipe, got {other:?}"),
+        }
+        assert!(!cli.globals.affected);
+        assert!(cli.globals.since.is_none());
     }
 }

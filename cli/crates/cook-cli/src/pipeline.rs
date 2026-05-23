@@ -438,7 +438,7 @@ fn run_with_progress(
     // Recipe-level dependency edges across the reachable closure. The engine
     // toposorts internally; we just need a complete edge map keyed by every
     // reachable recipe name.
-    let edges = cook_engine::analyzer::dependency_edges_multi(recipe_infos, targets).map_err(
+    let mut edges = cook_engine::analyzer::dependency_edges_multi(recipe_infos, targets).map_err(
         |e| match e {
             cook_engine::analyzer::GraphError::CycleDetected(name) => {
                 CookError::Other(format!("dependency cycle involving: {name}"))
@@ -449,7 +449,30 @@ fn run_with_progress(
             other => CookError::Other(other.to_string()),
         },
     )?;
-    let reachable: BTreeSet<String> = edges.keys().cloned().collect();
+    let mut reachable: BTreeSet<String> = edges.keys().cloned().collect();
+
+    if globals.affected {
+        let since = globals.since.as_deref().ok_or_else(|| {
+            CookError::Other("--affected requires --since=<git-ref>".to_string())
+        })?;
+        let changed = cook_engine::affected::git::changed_paths(&project_root, since)
+            .map_err(|e| CookError::Other(format!("git diff failed: {e}")))?;
+        reachable = cook_engine::affected::compute_affected(
+            &changed,
+            registered_workspace,
+            &edges,
+            &reachable,
+        );
+        if reachable.is_empty() {
+            let recipe_name = targets.first().map(String::as_str).unwrap_or("?");
+            eprintln!("cook: nothing affected for recipe '{recipe_name}' since {since}");
+            return Ok(cook_engine::run::RunResult { test_results: vec![] });
+        }
+        edges.retain(|k, _| reachable.contains(k));
+        for deps in edges.values_mut() {
+            deps.retain(|d| reachable.contains(d));
+        }
+    }
 
     let (progress_tx, progress_rx) = mpsc::channel::<cook_progress::ProgressEvent>();
     let render_thread = spawn_new_renderer(globals, project_root.clone(), progress_rx);
@@ -490,6 +513,62 @@ fn resolve_num_jobs(globals: &Globals) -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// build_registered_workspace helper
+// ---------------------------------------------------------------------------
+
+/// Register every Cookfile in the workspace (root + imports) and return the
+/// resulting `RegisteredWorkspace`.
+///
+/// Shared between `cmd_run` and `cmd_affected` so the registration logic is
+/// not duplicated. For introspection callers that do not intend to execute a
+/// recipe, pass `""` for `recipe_name` and `&[]` for `argv`; the register
+/// phase runs but no recipe bodies are executed.
+fn build_registered_workspace(
+    globals: &Globals,
+    parsed: &ParsedCookfile,
+    config: Option<&str>,
+    recipe_name: &str,
+    argv: &[String],
+) -> Result<RegisteredWorkspace, CookError> {
+    if !parsed.cookfile.imports.is_empty() {
+        let workspace_root = pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
+            .map_err(pipeline_error_to_cook_error)?;
+        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
+            .map_err(pipeline_error_to_cook_error)?;
+        pipeline::register_workspace_with_argv(
+            &workspace,
+            config,
+            &globals.set,
+            recipe_name,
+            argv,
+            /*cache_ctx*/ None,
+        )
+        .map_err(pipeline_error_to_cook_error)
+    } else {
+        let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
+        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
+            std::path::Path::new(".")
+        } else {
+            cookfile_dir
+        };
+        let dotenv_vars = pipeline::load_env(cookfile_dir);
+        let env_vars = pipeline::resolve_env(config, dotenv_vars, &globals.set)
+            .map_err(pipeline_error_to_cook_error)?;
+        pipeline::register_single_cookfile_with_argv(
+            cookfile_dir,
+            env_vars,
+            &globals.set,
+            parsed.lua_source.clone(),
+            config,
+            recipe_name,
+            argv,
+            /*cache_ctx*/ None,
+        )
+        .map_err(pipeline_error_to_cook_error)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // cmd_run
 // ---------------------------------------------------------------------------
 
@@ -513,42 +592,7 @@ pub fn cmd_run(
     // `dep_edges` already wired. Phase 5 Task 5.3: this replaces the prior
     // per-wave register loop. `cache_ctx` lifting is deferred to a follow-up;
     // for now register sees `None` and the executor builds its own.
-    let registered = if !parsed.cookfile.imports.is_empty() {
-        let workspace_root = pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
-            .map_err(pipeline_error_to_cook_error)?;
-        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
-            .map_err(pipeline_error_to_cook_error)?;
-        pipeline::register_workspace_with_argv(
-            &workspace,
-            config,
-            &globals.set,
-            recipe_name,
-            argv,
-            /*cache_ctx*/ None,
-        )
-        .map_err(pipeline_error_to_cook_error)?
-    } else {
-        let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
-        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
-            std::path::Path::new(".")
-        } else {
-            cookfile_dir
-        };
-        let dotenv_vars = pipeline::load_env(cookfile_dir);
-        let env_vars = pipeline::resolve_env(config, dotenv_vars, &globals.set)
-            .map_err(pipeline_error_to_cook_error)?;
-        pipeline::register_single_cookfile_with_argv(
-            cookfile_dir,
-            env_vars,
-            &globals.set,
-            parsed.lua_source,
-            config,
-            recipe_name,
-            argv,
-            /*cache_ctx*/ None,
-        )
-        .map_err(pipeline_error_to_cook_error)?
-    };
+    let registered = build_registered_workspace(globals, &parsed, config, recipe_name, argv)?;
 
     // `inferred_deps` / `*_dep_conflicts` are obsolete in the unified-DAG
     // model: cross-recipe edges come from `RecipeUnits.dep_edges` (recorded
@@ -1624,4 +1668,85 @@ pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), Cook
 #[cfg(feature = "viewer")]
 fn split_recipe_prefix(name: &str) -> &str {
     name.rfind('.').map(|p| &name[..p]).unwrap_or("")
+}
+
+// ---------------------------------------------------------------------------
+// cmd_affected — list recipes that would be invalidated since --since=<ref>
+// ---------------------------------------------------------------------------
+
+pub fn cmd_affected(
+    globals: &Globals,
+    args: &crate::cli::AffectedArgs,
+) -> Result<(), CookError> {
+    let since = globals.since.as_deref().ok_or_else(|| {
+        CookError::Other("cook affected requires --since=<git-ref>".to_string())
+    })?;
+    let project_root =
+        std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
+
+    let parsed = read_and_parse(globals)?;
+    let registered = build_registered_workspace(globals, &parsed, None, "", &[])?;
+    let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
+
+    // All recipe names in the workspace, or only those matching --recipe.
+    let all_names: Vec<String> = recipe_infos.keys().cloned().collect();
+    let targets: Vec<String> = if let Some(filter) = &args.recipe {
+        all_names
+            .iter()
+            .filter(|n| {
+                n.as_str() == filter || n.rsplit(':').next() == Some(filter.as_str())
+            })
+            .cloned()
+            .collect()
+    } else {
+        all_names
+    };
+
+    if targets.is_empty() {
+        if args.json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "changed_files": Vec::<String>::new(),
+                    "affected_recipes": Vec::<String>::new(),
+                    "since_ref": since,
+                })
+            );
+        }
+        return Ok(());
+    }
+
+    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets)
+        .map_err(|e| CookError::Other(e.to_string()))?;
+    let reachable: BTreeSet<String> = edges.keys().cloned().collect();
+
+    let changed = cook_engine::affected::git::changed_paths(&project_root, since)
+        .map_err(|e| CookError::Other(format!("git diff failed: {e}")))?;
+    let affected = cook_engine::affected::compute_affected(
+        &changed,
+        &registered,
+        &edges,
+        &reachable,
+    );
+
+    if args.json {
+        let changed_files: Vec<String> = changed
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let affected_recipes: Vec<String> = affected.iter().cloned().collect();
+        println!(
+            "{}",
+            serde_json::json!({
+                "changed_files": changed_files,
+                "affected_recipes": affected_recipes,
+                "since_ref": since,
+            })
+        );
+    } else {
+        for name in &affected {
+            println!("{name}");
+        }
+    }
+    Ok(())
 }

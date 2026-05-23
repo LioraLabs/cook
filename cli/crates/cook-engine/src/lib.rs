@@ -3,6 +3,7 @@
 //! Drives the recipe DAG, calls cook-register per wave, evaluates cache,
 //! builds work-unit DAGs, and feeds ready nodes to cook-luaotp.
 
+pub mod affected;
 pub mod analyzer;
 pub mod dag_builder;
 pub mod executor;

@@ -14,7 +14,7 @@ use cook_cli::modules;
 
 use cli::{Cli, Cmd};
 use error::CookError;
-use pipeline::{cmd_dag, cmd_emit_lua, cmd_init, cmd_list, cmd_menu, cmd_run, cmd_serve, cmd_test};
+use pipeline::{cmd_affected, cmd_dag, cmd_emit_lua, cmd_init, cmd_list, cmd_menu, cmd_run, cmd_serve, cmd_test};
 
 fn main() {
     let version_string: &'static str = Box::leak(Box::new(format!(
@@ -69,6 +69,7 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
             args.config.as_deref(),
         ),
         Some(Cmd::EmitLua) => cmd_emit_lua(&globals),
+        Some(Cmd::Affected(args)) => cmd_affected(&globals, &args),
         Some(Cmd::Recipe(parts)) => dispatch_recipe(&globals, &parts),
     }
 }
@@ -91,22 +92,48 @@ fn dispatch_recipe(globals: &cli::Globals, parts: &[String]) -> Result<(), CookE
         .expect("external_subcommand variant always carries ≥1 element");
 
     let recipe = first.strip_prefix('+').unwrap_or(first).to_string();
-    let (argv, preset) = partition_argv(rest, &recipe)?;
+    let partitioned = partition_argv(rest, &recipe)?;
 
-    cmd_run(globals, &recipe, &argv, preset.as_deref())
+    // Merge post-recipe `--affected`/`--since` flags into globals so that
+    // `cook build --affected --since=main` (Turborepo-style, flag after the
+    // recipe name) is honoured the same as `cook --affected --since=main build`.
+    // clap's external_subcommand captures post-recipe flags into the Vec
+    // verbatim; partition_argv pulls --affected/--since back out.
+    let mut merged = globals.clone();
+    if partitioned.affected {
+        merged.affected = true;
+    }
+    if merged.since.is_none() {
+        merged.since = partitioned.since;
+    }
+
+    cmd_run(&merged, &recipe, &partitioned.argv, partitioned.preset.as_deref())
 }
 
-/// COOK-36 Task 9: partition the positionals after the recipe name into
-/// `(argv, preset)`. The preset can come from `@TOKEN` sigil or `--config NAME`
-/// / `-c NAME` / `--config=NAME` flag forms. The `--` end-of-options separator
-/// switches off sigil/flag interpretation for the rest of the line. At most
-/// one preset is permitted across all forms.
-fn partition_argv(
-    rest: &[String],
-    recipe: &str,
-) -> Result<(Vec<String>, Option<String>), CookError> {
+/// Result of partitioning a recipe's positional argv into the runtime-meaningful
+/// pieces. `argv` is the user-facing remainder (chore params etc.); the other
+/// fields are flags clap couldn't intercept because they appeared after the
+/// `external_subcommand` catch-all.
+struct PartitionedArgv {
+    argv: Vec<String>,
+    preset: Option<String>,
+    affected: bool,
+    since: Option<String>,
+}
+
+/// COOK-36 Task 9 + COOK-58: partition the positionals after the recipe name
+/// into argv, preset, and the `--affected`/`--since=<ref>` pair.
+///
+/// Preset can come from `@TOKEN` sigil or `--config NAME` / `-c NAME` /
+/// `--config=NAME` flag forms. `--affected` is a bool. `--since=<ref>` and
+/// `--since <ref>` both accepted. The `--` end-of-options separator switches
+/// off sigil/flag interpretation for the rest of the line. At most one preset
+/// is permitted across all forms.
+fn partition_argv(rest: &[String], recipe: &str) -> Result<PartitionedArgv, CookError> {
     let mut argv: Vec<String> = Vec::new();
     let mut preset: Option<String> = None;
+    let mut affected = false;
+    let mut since: Option<String> = None;
     let mut end_of_options = false;
     let mut iter = rest.iter();
     while let Some(tok) = iter.next() {
@@ -154,9 +181,27 @@ fn partition_argv(
             preset = Some(name.to_string());
             continue;
         }
+        // --affected (bool, no value)
+        if tok == "--affected" {
+            affected = true;
+            continue;
+        }
+        // --since <ref> (two-token form)
+        if tok == "--since" {
+            let next = iter.next().ok_or_else(|| {
+                CookError::Other("'--since' requires a git ref".to_string())
+            })?;
+            since = Some(next.clone());
+            continue;
+        }
+        // --since=<ref> (single-token form)
+        if let Some(value) = tok.strip_prefix("--since=") {
+            since = Some(value.to_string());
+            continue;
+        }
         argv.push(tok.clone());
     }
-    Ok((argv, preset))
+    Ok(PartitionedArgv { argv, preset, affected, since })
 }
 
 fn is_preset_char(c: char) -> bool {

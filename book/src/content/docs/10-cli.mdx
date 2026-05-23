@@ -195,7 +195,58 @@ TARGET=arm64 cook build                     # via shell env (only consulted if d
 
 CLI `--set` always wins (it's reapplied on top of `cook.env` after the config block runs). Process env is used to *initialize* `cook.env` before the config block runs — the config block can read it (`env.TARGET` inside the body sees the process value) but a bare `env.TARGET = "x86_64-linux"` will overwrite it. For env-var-overridable defaults, use the read-modify form: `env.TARGET = env.TARGET or "x86_64-linux"`. Every consulted key is part of the cache key, so swapping `TARGET` cleanly busts only the relevant units.
 
-## 10.13. Cheatsheet
+## 10.13. Selecting by git diff: `cook affected`
+
+`cook affected --since=<ref>` lists every recipe whose declared file inputs (or any transitive downstream consumer) would be invalidated by the diff between `<ref>` and your working tree. The same selection drives `cook <recipe> --affected --since=<ref>`, which runs only that slice through the existing scheduler.
+
+### When to use it
+
+Continuous integration. In a fresh checkout there is no warm cache to short-circuit unchanged work, so running every test or every build wastes minutes. `cook test --affected --since=origin/main` runs only the tests whose inputs differ from `origin/main` — typical 10–100× speedups on a large monorepo where most PRs touch a small subset.
+
+### Diff semantics
+
+Three-dot, merge-base, working-tree-inclusive. Cook computes `git merge-base <ref> HEAD`, diffs from there to `HEAD`, then unions in your staged changes, unstaged changes, and untracked-non-ignored files. This matches Turborepo's `--filter=[ref]` behaviour: branch-local changes only, even if `<ref>` has moved ahead since you forked.
+
+### Introspection
+
+```bash
+cook affected --since=<ref> [--recipe=<name>] [--json]
+```
+
+| Flag              | What it does                                                                                                                |
+|-------------------|------------------------------------------------------------------------------------------------------------------------------|
+| `--since=<ref>`   | The ref to diff against. Required.                                                                                          |
+| `--recipe=<name>` | Restrict to recipes sharing that base name. In a pnpm workspace `--recipe=build` filters to all `*:build` recipes.          |
+| `--json`          | Emit `{"changed_files": [...], "affected_recipes": [...], "since_ref": "..."}` instead of one name per line.                |
+
+Exit code is `0` even when the affected set is empty (empty is a legitimate answer). Non-zero only on git or workspace errors.
+
+### Driving the scheduler
+
+```bash
+cook <recipe> --affected --since=<ref>
+```
+
+Resolves the closure of `<recipe>` (its transitive dependencies) and runs only the intersection with the affected set. If the intersection is empty you'll see `cook: nothing affected for recipe '<name>' since <ref>` and exit code 0. Both flag orderings work: `cook --affected --since=main build` (globals-first) and `cook build --affected --since=main` (Turborepo-style, flag after the recipe).
+
+### CI recipe
+
+```bash
+# After checkout (use fetch-depth: 0 in GitHub Actions to make origin/main reachable):
+cook test --affected --since=origin/main
+```
+
+If your CI does a shallow clone (the default for most providers) and the ref isn't in the fetched history, you'll get an error suggesting `git fetch --deepen`. Either deepen or use `fetch-depth: 0` in setup.
+
+### Limitations (v1)
+
+- **File inputs only.** Probe-value changes (e.g. a Lua finder discovering a new compiler) do not affect the selection. Use a clean build for those.
+- **No global lockfile expansion.** Cook treats `pnpm-lock.yaml`, `Cargo.lock`, etc. as ordinary inputs: if a recipe declares one as an input, it's affected; otherwise no global blast. Declare the lockfile in inputs where appropriate.
+- **No `--filter` mini-language.** Turborepo's `...`, `^`, `[a...b]` selectors are not implemented yet. Use `--recipe=<name>` for base-name filtering.
+- **No `--base=<branch>` alias.** Use `--since=<branch>`.
+- **Requires a real git repository.** Cook errors out otherwise.
+
+## 10.14. Cheatsheet
 
 ```
 # everyday
@@ -211,6 +262,10 @@ cook dag                   open the DAG TUI
 cook logs                  list recent build ids
 cook logs --build ID       dump a specific build
 cook emit-lua              dump compiled Lua
+cook affected --since=REF  list recipes whose inputs changed since REF
+
+# CI
+cook RECIPE --affected --since=REF   run only the affected slice
 
 # modules
 cook modules install       sync from cook.lock
