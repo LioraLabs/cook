@@ -187,6 +187,53 @@ recipe build
 
 The CS-0022 unification removes `$<in>` from the using-clause's contents as a separate iteration trigger. Iteration mode is decided exclusively by the output pattern list. A using-clause that contains `$<in>` while the output pattern list is fully literal is rejected at load time — see §{phl.cook-step} for the diagnostic shape.
 
+### 8.4.2. Lua-expression output [#steps.cook-lua-expr-output]
+
+A `cook_step` MAY substitute a parenthesised Lua expression for the quoted output-path `STRING`:
+
+```ebnf
+cook_step ::= "cook" ( STRING+ | "(" LUA_EXPR ")" ) using_clause? NEWLINE
+```
+
+A conforming implementation MUST accept the Lua-expression form under the following rules.
+
+1. **Evaluation.** The expression is evaluated **once per ingredient**, at register time, against the Cookfile-scope Lua VM (the same VM used for chore-parameter Lua-expression defaults, §{chores.params}).
+2. **Bindings.** The expression sees the name `input` in scope: the current ingredient's path, a Lua `string`. The expression MAY also reference declarative-region locals (top-level Lua bindings, `config` block writes, register-phase `inline_lua_line` / `inline_lua_block` locals visible to the recipe per §{steps.lua-execution-phase}). The standard library is available subject to the §{lua-api} sandbox in effect at register time.
+3. **Return value.** The expression's return value MUST coerce to a non-empty string under the same coercion rules the Standard applies to chore Lua-expression defaults (§{chores.params}): `string` verbatim, `number` via Lua `tostring`, `boolean` to `"true"` or `"false"`; any other type — including `nil`, `table`, `function`, `thread`, `userdata` — is a register-phase diagnostic. The empty string is likewise a register-phase diagnostic.
+4. **One-to-one only.** The Lua-expression form is admitted exclusively when the resulting `cook_step` is in **one-to-one over own inputs** mode (§{steps.iteration-mode}). The expression is evaluated per-ingredient, so dep-driven and many-to-one modes — neither of which iterates over the step's own ingredient list — have no well-defined evaluation contract. A conforming implementation MUST reject a Lua-expression-output `cook_step` whose recipe has no `ingredients_step`, or whose `ingredients_step` resolves to the empty set, with a register-phase diagnostic.
+5. **Mutual exclusion with quoted-string outputs.** Within a single `cook_step`, the output declaration is either (a) one or more `STRING` patterns with the `$<...>` sigil vocabulary of §{phl.cook-step}, or (b) exactly one parenthesised Lua expression. A conforming implementation MUST reject a `cook_step` that mixes the two forms (e.g. `cook "a.out" (input:gsub(...)) using ...`) with a register-phase diagnostic naming the offending tokens.
+6. **`using` clause.** The `using_clause` of a Lua-expression-output `cook_step` follows the same grammar as the quoted-string form (§{steps.cook-single}): the declaration-only form (no `using`), `using_lua_block` (`>{ ... }`), and `shell_block` (`{ ... }`) are all admitted. The placeholder vocabulary inside the `using_clause` (§{phl.cook-step}) is the one-to-one vocabulary: `$<in>`, `$<in.ACCESSOR>`, `$<out>`. Note that `$<out>` resolves to the Lua-expression's evaluated string for the current iteration; placeholders that index the output position list (`$<out_1>`, `$<out_2>`, …) have no use in this form because the form declares exactly one output per iteration.
+
+### Example 8.4.2.1
+
+```cook
+recipe translate-fr
+    ingredients "docs/en/**/*.md"
+    cook (input:gsub("/en/", "/fr/")) using >{
+        fs.write_file(output, transform(fs.read_file(input)))
+    }
+```
+
+The expression `input:gsub("/en/", "/fr/")` runs once per matched ingredient with `input` bound to that ingredient's path; the resulting string becomes the unit's `outputs[1]`. The `using_lua_block` sees the `input` and `output` bindings per §{lua.using-block-globals}; `output` is the same string the Lua-expression produced.
+
+### Example 8.4.2.2
+
+```cook
+recipe thumbnail
+    ingredients "assets/photos/*.jpg"
+    cook (input:gsub("assets/photos", "build/thumb")) using { convert $<in> -resize 256x256 $<out> }
+```
+
+Mixes the Lua-expression output form with a `shell_block` `using_clause`. The shell block's `$<in>` and `$<out>` placeholders resolve to the iteration's ingredient path and the Lua-expression's evaluated string, respectively.
+
+### Note 8.4.2.1 — Cache key impact [#steps.cook-lua-expr-output.cache]
+
+The expression's resolved string is recorded as the unit's `outputs[1]`, and so participates in the cache key via the output-path observable of §{exec.cache.abstract} #3. The expression source text itself is part of the recipe's parsed body and is therefore already folded into the unit's command-text / Lua-chunk fingerprint per §{exec.cache.abstract} #1 — no separate fingerprinting pass for the expression is required.
+
+### Note 8.4.2.2 — Why one-to-one only [#steps.cook-lua-expr-output.rationale]
+
+The Lua-expression form's defining feature is per-ingredient evaluation: each ingredient produces one unit whose output path is the expression evaluated with `input` bound to that ingredient. Dep-driven iteration (§{xref.dep-driven}) iterates over a *dependency's* output list, not over the step's own ingredient list, so `input` would have no canonical meaning. Many-to-one iteration runs the unit exactly once over the full input list, so per-ingredient evaluation has no addressable iteration. The restriction is therefore not a guard against unsafe semantics but a consequence of the bind-`input`-per-ingredient contract.
+
 ## 8.5. `cook` — multi-output form [#steps.cook-multi]
 A `cook_step` MAY declare two or more outputs by listing additional `STRING` patterns before the `using` clause:
 

@@ -130,7 +130,8 @@ ingredients_step      ::= "ingredients" ingredient+ NEWLINE
 ingredient            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
 
-cook_step             ::= "cook" STRING+ using_clause? NEWLINE
+cook_step             ::= "cook" cook_output using_clause? NEWLINE
+cook_output           ::= STRING+ | "(" LUA_EXPR ")"
 using_clause          ::= "using" ( using_lua_block | shell_block )
 using_lua_block       ::= ">{" LUA_BLOCK_CONTENT "}"
 shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"

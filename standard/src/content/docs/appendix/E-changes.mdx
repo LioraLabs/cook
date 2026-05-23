@@ -1587,3 +1587,31 @@ Ordering (normative): required → defaulted → at-most-one variadic at the tai
 **Conformance fixtures.** None added (register-time semantics; no parser-surface change).
 
 **Backward compatibility.** Non-breaking. The fix is purely additive — previously-erroring sibling invocations now succeed; previously-succeeding invocations behave identically. Authors who had worked around the bug by giving every required param a `=""` default may tighten back to required-no-default.
+
+## CS-0089 — `cook (LUA_EXPR) using ...` Lua-expression output form (closes COOK-59) [#changes.cs-0089]
+
+**Date:** 2026-05-23
+
+**Version:** v0.13
+
+**Sections affected:** §8.4.2 (new — Lua-expression output: per-ingredient evaluation, `input` binding, return-value coercion, one-to-one-only restriction, mutual exclusion with quoted outputs, `using_clause` admission, Example 8.4.2.1 / 8.4.2.2, Note 8.4.2.1 cache-key impact, Note 8.4.2.2 one-to-one rationale), App. A.4 (grammar production `cook_step` factored through `cook_output ::= STRING+ | "(" LUA_EXPR ")"`).
+
+**Surface change.** A `cook_step` MAY substitute a parenthesised Lua expression for the quoted output-path string. The expression evaluates once per ingredient at register time against the Cookfile-scope Lua VM (the same VM that hosts chore Lua-expression defaults, §7.1.1), with `input` bound to the current ingredient's path. The expression's return value is coerced to a non-empty string under the §7.1.1 coercion rules; that string becomes the unit's `outputs[1]`.
+
+```
+recipe translate-fr
+    ingredients "docs/en/**/*.md"
+    cook (input:gsub("/en/", "/fr/")) using >{
+        fs.write_file(output, transform(fs.read_file(input)))
+    }
+```
+
+**Restrictions (normative).** The Lua-expression form is admitted only when the resulting `cook_step` is in one-to-one over own inputs mode — dep-driven (§{xref.dep-driven}) and many-to-one (§{steps.cook-multi}) modes have no addressable per-ingredient evaluation. The form is mutually exclusive with quoted-string outputs within a single `cook_step`: an output declaration is either `STRING+` or exactly one `"(" LUA_EXPR ")"`. A recipe whose `ingredients_step` is absent or empty MUST be rejected at register time.
+
+**Cache key impact.** The expression's evaluated string is recorded as `outputs[1]` and participates in the cache key via §17.1 observable #3. The expression source text is part of the parsed recipe body and is already folded into the command-text / Lua-chunk fingerprint per §17.1 observable #1 — no separate fingerprinting pass is required.
+
+**Conformance fixtures.** One positive (`cook-lua-expr-output`) — the canonical §8.4.2 surface: a one-to-one `cook_step` whose output slot is `(input:gsub("/en/", "/fr/"))` and whose `using_clause` is a `shell_block`. The fixture is parse-failing in this commit (the v0.12 parser rejects the form with `expected quoted output pattern`); Task 2 of COOK-59 (parser support, AST `OutputPattern::Quoted | OutputPattern::LuaExpr`) and Task 3 (codegen) green it. The `parse.txt` is the authoritative target — Task 2 SHOULD extend `cli/crates/cook-lang/tests/conformance.rs::format_step` to render the `LuaExpr(...)` discriminator as the fixture spells it.
+
+**Reference implementation.** Tasks 2 and 3 of COOK-59 land the parser, AST (`OutputPattern::Quoted | OutputPattern::LuaExpr`), and codegen for the form in `cli/crates/cook-lang`, `cli/crates/cook-luagen`, and `cli/crates/cook-register`. The conformance claim (`COOK_STANDARD_VERSION` in `cli/crates/cook-lang/src/lib.rs`) bumps with the v0.13 cut after both tasks land.
+
+**Backward compatibility.** Non-breaking. The grammar gains a new alternative `cook_output ::= "(" LUA_EXPR ")"` that was previously a parse error; no existing Cookfile becomes non-conforming. Cookfiles that adopt the new form are not parseable by pre-v0.13 implementations — authors who need pre-v0.13 portability MUST continue to use the quoted-string form.

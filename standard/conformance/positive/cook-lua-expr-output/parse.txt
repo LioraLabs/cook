@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="translate" line=1
+      deps: []
+      ingredients: ["docs/en/**/*.md"]
+      excludes: []
+      steps:
+        Cook outputs=[LuaExpr("input:gsub(\"/en/\", \"/fr/\")")] using=ShellBlock(["cp $<in> $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

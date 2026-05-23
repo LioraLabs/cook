@@ -1,0 +1,3 @@
+recipe translate
+    ingredients "docs/en/**/*.md"
+    cook (input:gsub("/en/", "/fr/")) using { cp $<in> $<out> }
