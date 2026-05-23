@@ -9,21 +9,28 @@
 #   cook package      — assemble the redistributable tarball (lua + luarocks
 #                       + cook + checksums) into cli/target/dist/. Routes
 #                       through cook_modules/dist.lua → dist.package.
-#   cook release      — cut a host-target release: build via cook package,
+#   cook release VERSION
+#                     — cut a host-target release: build via cook package,
 #                       tag the commit, push to origin, upload tarball +
 #                       checksums to the LioraLabs/cook GitHub release.
 #                       Routes through cook_modules/release.lua → release.cut.
 #                       Idempotent: re-running on the same VERSION from
 #                       another host appends that host's tarball + checksum
 #                       line to the existing release.
-#                       Usage: cook --set VERSION=v0.0.1-m1 release
-#   cook bump-claim   — after a Standard cut, mirror the version into
+#                       Usage: cook release v0.4.0
+#   cook bump-claim [VERSION]
+#                     — after a Standard cut, mirror the version into
 #                       every in-repo claim site (cook-lang Rust constant
 #                       + 3 markdown files + tree-sitter-cook grammar.js
 #                       header, package.json + tree-sitter.json description).
 #                       Routes through cook_modules/release.lua → release.bump_claim.
-#                       Defaults to standard/VERSION; override with
-#                       cook bump-claim --set VERSION=X.Y.
+#                       VERSION defaults to the contents of standard/VERSION.
+#
+# Param defaults note: every chore param below uses a default (empty string
+# or Lua-expression) rather than the required-no-default form. This is a
+# v0.4.0 workaround — required params trigger a regression where invoking
+# any chore in this file errors on a sibling's missing required param
+# (COOK-61). Tighten back to required-no-default once that bug is fixed.
 #
 # Sub-Cookfile chores reachable directly via their import alias:
 #   cli.build            cli.test            cli.conformance
@@ -45,11 +52,11 @@ use release
 
 chore check: cli.build cli.test cli.conformance ts.generate ts.test ts.conformance standard.build standard.lint
 
-chore package
-    > dist.package(cook.env.VERSION, cook.env.TARGET)
+chore package version="" target=""
+    > dist.package(version, target)
 
-chore release
-    > release.cut(cook.env.VERSION)
+chore release version=""
+    > release.cut(version)
 
-chore bump-claim
-    > release.bump_claim(cook.env.VERSION)
+chore bump-claim version=(fs.read("standard/VERSION"):gsub("%s+$", ""))
+    > release.bump_claim(version)

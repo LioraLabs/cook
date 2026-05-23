@@ -7,9 +7,9 @@
 # is the in-repo replacement for the bash scripts that used to live in
 # standard/scripts/.
 #
-# `against-tag` reads VERSION from
-#   cook standard.against-tag --set VERSION=X.Y
-# and defaults to the current contents of standard/VERSION.
+# `against-tag` takes VERSION as a positional argument
+#   cook standard.against-tag X.Y
+# and defaults to the current contents of standard/VERSION when omitted.
 #
 # `preview` builds the docs and starts the dev server. Long-running:
 # Ctrl-C to stop the server.
@@ -29,11 +29,5 @@ chore preview
     pnpm build
     @pnpm host
 
-chore against-tag
-    >{
-        local version = cook.env.VERSION
-        if not version or version == "" then
-            version = fs.read("VERSION"):gsub("%s+$", "")
-        end
-        checks.against_tag(version)
-    }
+chore against-tag version=(fs.read("VERSION"):gsub("%s+$", ""))
+    > checks.against_tag(version)

@@ -254,7 +254,7 @@ function M.cut(version)
     print("[release.cut] packaging via cook package...")
     cook.sh("rm -rf " .. DIST)
     cook.sh(string.format(
-        "cook --set VERSION=%s --set TARGET=%s package", version, triple))
+        "cook package %s %s", version, triple))
 
     if not fs.exists(tarball_path) then
         error("[release.cut] expected tarball not found at " .. tarball_path)
