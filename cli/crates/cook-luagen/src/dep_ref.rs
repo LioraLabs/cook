@@ -54,7 +54,7 @@ pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTr
             Step::Cook { step: cook_step, .. } => {
                 let mut t: Vec<String> = Vec::new();
                 for pat in &cook_step.outputs {
-                    t.extend(extract_sigil_tokens(pat));
+                    t.extend(extract_sigil_tokens(pat.as_str()));
                 }
                 // Walk ShellBlock lines for $<NAME> tokens.
                 if let Some(UsingClause::ShellBlock(lines)) = &cook_step.using_clause {
@@ -289,7 +289,7 @@ mod tests {
             "app",
             vec![Step::Cook {
                 step: CookStep {
-                    outputs: vec!["build/app".to_string()],
+                    outputs: vec![OutputPattern::Quoted("build/app".to_string())],
                     using_clause: Some(UsingClause::ShellBlock(
                         vec!["gcc -o $<out> $<in> $<libmath> $<libstr>".to_string()],
                     )),
@@ -313,7 +313,7 @@ mod tests {
             "app",
             vec![Step::Cook {
                 step: CookStep {
-                    outputs: vec!["build/$<protos.stem>.pb.cc".to_string()],
+                    outputs: vec![OutputPattern::Quoted("build/$<protos.stem>.pb.cc".to_string())],
                     using_clause: None,
                 },
                 line: 2,
@@ -389,7 +389,7 @@ mod tests {
             "app",
             vec![Step::Cook {
                 step: CookStep {
-                    outputs: vec!["build/app".to_string()],
+                    outputs: vec![OutputPattern::Quoted("build/app".to_string())],
                     using_clause: Some(UsingClause::ShellBlock(vec![
                         "gcc -o $<out> main.c $<libmath>".to_string(),
                     ])),

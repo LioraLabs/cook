@@ -118,9 +118,53 @@ pub enum UsingClause {
 /// detection helpers without duplicating the enum.
 pub type Body = UsingClause;
 
+/// An output pattern in a `cook OUT [OUT...] using ...` step.
+///
+/// The output slot accepts either a literal quoted pattern (with `$<...>`
+/// sigil substitution) or — under §8.4.2's one-to-one form — a single
+/// parenthesised Lua expression evaluated per-ingredient. CS-0089 / COOK-59.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutputPattern {
+    /// Quoted string with `$<...>` sigils (the historical form).
+    Quoted(String),
+    /// Parenthesised Lua expression (`cook (EXPR) using ...`). Evaluated
+    /// per-ingredient at register time with `input` bound to the current
+    /// ingredient's path. Standard §8.4.2.
+    LuaExpr(String),
+}
+
+impl OutputPattern {
+    /// The underlying pattern source string (either the quoted template
+    /// or the Lua expression text). Use this when callers don't need to
+    /// distinguish kinds — e.g. for diagnostics or for the existing
+    /// pre-Task-3 codegen path that only handles `Quoted` patterns.
+    pub fn as_str(&self) -> &str {
+        match self {
+            OutputPattern::Quoted(s) | OutputPattern::LuaExpr(s) => s.as_str(),
+        }
+    }
+
+    /// `true` if this is the parenthesised Lua-expression form.
+    pub fn is_lua_expr(&self) -> bool {
+        matches!(self, OutputPattern::LuaExpr(_))
+    }
+}
+
+impl From<&str> for OutputPattern {
+    fn from(s: &str) -> Self {
+        OutputPattern::Quoted(s.to_string())
+    }
+}
+
+impl From<String> for OutputPattern {
+    fn from(s: String) -> Self {
+        OutputPattern::Quoted(s)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CookStep {
-    pub outputs: Vec<String>,
+    pub outputs: Vec<OutputPattern>,
     pub using_clause: Option<UsingClause>,
 }
 
@@ -184,7 +228,7 @@ mod tests {
             steps: vec![
                 Step::Cook {
                     step: CookStep {
-                        outputs: vec!["build/obj/{stem}.o".to_string()],
+                        outputs: vec![OutputPattern::Quoted("build/obj/{stem}.o".to_string())],
                         using_clause: Some(UsingClause::ShellBlock(
                             vec!["gcc -c {in} -o {out}".to_string()],
                         )),
@@ -220,7 +264,7 @@ mod tests {
     #[test]
     fn test_cook_step_declaration_only() {
         let step = CookStep {
-            outputs: vec!["bin/app".to_string()],
+            outputs: vec![OutputPattern::Quoted("bin/app".to_string())],
             using_clause: None,
         };
         assert!(step.using_clause.is_none());
@@ -229,7 +273,7 @@ mod tests {
     #[test]
     fn test_cook_step_lua_block() {
         let step = CookStep {
-            outputs: vec!["build/obj/{stem}.o".to_string()],
+            outputs: vec![OutputPattern::Quoted("build/obj/{stem}.o".to_string())],
             using_clause: Some(UsingClause::LuaBlock(
                 "cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)".to_string(),
             )),

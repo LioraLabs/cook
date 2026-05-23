@@ -68,7 +68,7 @@ pub(crate) fn cook_step_mode_with_names(
     if step.outputs.len() > 1 {
         let any_iterating = step.outputs.iter().any(|p| {
             matches!(
-                output_pattern_kind_with_recipes(p, recipe_names),
+                output_pattern_kind_with_recipes(p.as_str(), recipe_names),
                 OutputPatternKind::OwnInputAccessor | OutputPatternKind::DepDriven { .. }
             )
         });
@@ -79,7 +79,7 @@ pub(crate) fn cook_step_mode_with_names(
         };
     }
 
-    match output_pattern_kind_with_recipes(&step.outputs[0], recipe_names) {
+    match output_pattern_kind_with_recipes(step.outputs[0].as_str(), recipe_names) {
         OutputPatternKind::OwnInputAccessor | OutputPatternKind::DepDriven { .. } => {
             CookMode::OneToOne
         }
@@ -146,14 +146,14 @@ pub(crate) fn generate_cook_step(
         "{}".to_string()
     };
 
-    let pattern_kind = analyze_output_pattern(&cook_step.outputs[0], recipe_names);
+    let pattern_kind = analyze_output_pattern(cook_step.outputs[0].as_str(), recipe_names);
 
     match mode {
         CookMode::DeclarationOnly => {
             out.push_str(&format!(
                 "    _cook_outputs_{}[1] = \"{}\"\n",
                 index,
-                crate::lua_string::escape_lua_string(&cook_step.outputs[0])
+                crate::lua_string::escape_lua_string(cook_step.outputs[0].as_str())
             ));
         }
         CookMode::OneToOne => {
@@ -173,10 +173,10 @@ pub(crate) fn generate_cook_step(
             let out_expr = match &pattern_kind {
                 OutputPatternKind::DepDriven { lua_expr, .. } => lua_expr.clone(),
                 OutputPatternKind::OwnInputAccessor => {
-                    expand_output_pattern(&cook_step.outputs[0], &mut consulted)
+                    expand_output_pattern(cook_step.outputs[0].as_str(), &mut consulted)
                 }
                 OutputPatternKind::Literal => {
-                    format!("\"{}\"", crate::lua_string::escape_lua_string(&cook_step.outputs[0]))
+                    format!("\"{}\"", crate::lua_string::escape_lua_string(cook_step.outputs[0].as_str()))
                 }
             };
             out.push_str(&format!("        local _cook_out = {}\n", out_expr));
@@ -229,10 +229,10 @@ pub(crate) fn generate_cook_step(
             let out_expr = match &pattern_kind {
                 OutputPatternKind::DepDriven { lua_expr, .. } => lua_expr.clone(),
                 OutputPatternKind::OwnInputAccessor => {
-                    expand_output_pattern(&cook_step.outputs[0], &mut consulted)
+                    expand_output_pattern(cook_step.outputs[0].as_str(), &mut consulted)
                 }
                 OutputPatternKind::Literal => {
-                    format!("\"{}\"", crate::lua_string::escape_lua_string(&cook_step.outputs[0]))
+                    format!("\"{}\"", crate::lua_string::escape_lua_string(cook_step.outputs[0].as_str()))
                 }
             };
             out.push_str(&format!("    local _cook_out = {}\n", out_expr));
@@ -288,7 +288,7 @@ pub(crate) fn generate_cook_step(
             let mut consulted = ConsultedEnv::new();
             out.push_str("        local _cook_outs = {\n");
             for pat in &cook_step.outputs {
-                let expr = expand_output_pattern(pat, &mut consulted);
+                let expr = expand_output_pattern(pat.as_str(), &mut consulted);
                 out.push_str(&format!("            {},\n", expr));
             }
             out.push_str("        };\n");
@@ -341,7 +341,7 @@ pub(crate) fn generate_cook_step(
                     outs_lua.push_str(", ");
                 }
                 outs_lua.push('"');
-                outs_lua.push_str(&crate::lua_string::escape_lua_string(out_name));
+                outs_lua.push_str(&crate::lua_string::escape_lua_string(out_name.as_str()));
                 outs_lua.push('"');
             }
             outs_lua.push('}');
@@ -403,11 +403,14 @@ pub(crate) fn generate_cook_step(
 #[cfg(test)]
 mod cs_0022_mode_tests {
     use super::*;
-    use cook_lang::ast::{CookStep, UsingClause};
+    use cook_lang::ast::{CookStep, OutputPattern, UsingClause};
 
     fn step(outputs: &[&str], using_clause: Option<UsingClause>) -> CookStep {
         CookStep {
-            outputs: outputs.iter().map(|s| s.to_string()).collect(),
+            outputs: outputs
+                .iter()
+                .map(|s| OutputPattern::Quoted((*s).to_string()))
+                .collect(),
             using_clause,
         }
     }

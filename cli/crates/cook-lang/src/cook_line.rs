@@ -205,6 +205,68 @@ pub(crate) fn parse_ingredients_line(
 }
 
 
+/// Brace-balanced scan for a `cook (LUA_EXPR)` payload. `text` is the
+/// content AFTER the opening `(`. Scans until the matching `)` is found,
+/// honouring nested parens and basic double/single-quoted string literals.
+/// Returns `(trimmed_expr, text_after_close_paren)`.
+///
+/// Mirrors `lexer::scan_balanced_paren` (used for chore default-param
+/// `=(EXPR)` per §7.1.1) but returns `ParseError` instead of `LexError`
+/// since cook-step parsing happens post-lex.
+///
+/// **Limitation (v1).** Lua long-bracket strings (`[[...]]`) inside the
+/// expression are NOT handled; treat them as ordinary characters. This
+/// matches the §7.1.1 chore-param scanner and is documented in §8.4.2.
+fn scan_balanced_paren_expr<'a>(
+    text: &'a str,
+    line: usize,
+) -> Result<(String, &'a str), ParseError> {
+    let bytes = text.as_bytes();
+    let mut depth = 1usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok((text[..i].trim().to_string(), &text[i + 1..]));
+                }
+                i += 1;
+            }
+            b'"' | b'\'' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                if i >= bytes.len() {
+                    return Err(ParseError::Parse {
+                        line,
+                        message: "cook (LUA_EXPR): unclosed string literal in expression"
+                            .to_string(),
+                    });
+                }
+                i += 1; // skip closing quote
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    Err(ParseError::Parse {
+        line,
+        message: "cook (LUA_EXPR): unclosed '(' in output expression".to_string(),
+    })
+}
+
 pub(crate) fn parse_cook_line(
     rest: &str,
     line: usize,
@@ -213,17 +275,77 @@ pub(crate) fn parse_cook_line(
     source_lines: &[&str],
 ) -> Result<(CookStep, usize), ParseError> {
     let rest = rest.trim();
+
+    // §8.4.2 Lua-expression form: `cook (EXPR) using ...`. Detected by a
+    // leading `(`; the expression is balanced-paren-scanned (mirroring the
+    // chore default-param `=(EXPR)` form, §7.1.1). The one-to-one form
+    // admits exactly one output by construction — multi-output mixing with
+    // quoted patterns is rejected with a Standard-§8.4.2 diagnostic.
+    if rest.starts_with('(') {
+        let after_open = &rest[1..];
+        let (expr, after_close) = scan_balanced_paren_expr(after_open, line)?;
+        let leftover = after_close.trim();
+
+        if leftover.starts_with('"') || leftover.starts_with('(') {
+            return Err(ParseError::Parse {
+                line,
+                message:
+                    "cook (LUA_EXPR) form requires exactly one output (Cook Standard §8.4.2)"
+                        .to_string(),
+            });
+        }
+
+        let outputs = vec![OutputPattern::LuaExpr(expr)];
+
+        if leftover.is_empty() {
+            // Declaration-only Lua-expr cook step is meaningless: there's
+            // no body to evaluate, and the unit's ingredients can't drive
+            // anything. Reject early — §8.4.2 implies a `using`-bearing step.
+            return Err(ParseError::Parse {
+                line,
+                message: "cook (LUA_EXPR): expected 'using' after expression"
+                    .to_string(),
+            });
+        }
+
+        if !leftover.starts_with("using") {
+            return Err(ParseError::Parse {
+                line,
+                message: format!(
+                    "cook (LUA_EXPR): expected 'using' after expression, found: {}",
+                    leftover
+                ),
+            });
+        }
+
+        let after_using = leftover["using".len()..].trim_start();
+        let (body, new_pos) = parse_body_payload(
+            after_using,
+            line,
+            tokens,
+            current_pos,
+            source_lines,
+            "cook using",
+        )?;
+        return Ok((
+            CookStep { outputs, using_clause: Some(body) },
+            new_pos,
+        ));
+    }
+
     if !rest.starts_with('"') {
         return Err(ParseError::Parse {
             line,
-            message: "cook: expected quoted output pattern".to_string(),
+            message: "cook: expected quoted output pattern or `(LUA_EXPR)`".to_string(),
         });
     }
 
-    let (outputs, _excludes, leftover, pos_after_patterns) =
+    let (output_strs, _excludes, leftover, pos_after_patterns) =
         collect_quoted_patterns_multiline(
             rest, line, tokens, current_pos, source_lines, /*allow_exclude=*/ false,
         )?;
+    let outputs: Vec<OutputPattern> =
+        output_strs.into_iter().map(OutputPattern::Quoted).collect();
 
     let after_pattern = leftover.trim();
 

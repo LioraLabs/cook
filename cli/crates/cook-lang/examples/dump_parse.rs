@@ -27,6 +27,17 @@ fn repr_list(xs: &[String]) -> String {
     format!("[{}]", inner.join(", "))
 }
 
+fn format_output_patterns(xs: &[OutputPattern]) -> String {
+    let inner: Vec<String> = xs
+        .iter()
+        .map(|p| match p {
+            OutputPattern::Quoted(s) => repr(s),
+            OutputPattern::LuaExpr(s) => format!("LuaExpr({})", repr(s)),
+        })
+        .collect();
+    format!("[{}]", inner.join(", "))
+}
+
 fn format_using(u: &Option<UsingClause>) -> String {
     match u {
         None => "None".to_string(),
@@ -60,7 +71,7 @@ fn format_step(step: &Step) -> String {
         Step::Cook { step, .. } => {
             format!(
                 "Cook outputs={} using={}",
-                repr_list(&step.outputs),
+                format_output_patterns(&step.outputs),
                 format_using(&step.using_clause),
             )
         }

@@ -132,16 +132,16 @@ fn check_multi_output_coherence(
     }
 
     use crate::template::output_pattern_kind_with_recipes;
-    let first = output_pattern_kind_with_recipes(&step.outputs[0], recipe_names);
+    let first = output_pattern_kind_with_recipes(step.outputs[0].as_str(), recipe_names);
     for (idx, out) in step.outputs.iter().enumerate().skip(1) {
-        let kind = output_pattern_kind_with_recipes(out, recipe_names);
+        let kind = output_pattern_kind_with_recipes(out.as_str(), recipe_names);
         if !drivers_match(&first, &kind) {
             return Err(format!(
                 "CS-0022: cook step's output #1 ({:?}) and output #{} ({:?}) declare \
                  different iteration drivers; all output patterns must share a driver",
-                step.outputs[0],
+                step.outputs[0].as_str(),
                 idx + 1,
-                out
+                out.as_str()
             ));
         }
     }
@@ -231,7 +231,7 @@ fn validate_accessor_placement(
                     // and bare recipe references (Standard §5.4).
                     for pattern in &cook_step.outputs {
                         check_output_pattern_no_bare_accessors(
-                            pattern,
+                            pattern.as_str(),
                             &recipe.name,
                             *line,
                             recipe_names,
@@ -548,12 +548,12 @@ fn render_chunk_pieces(pieces: &[ChunkPiece]) -> String {
 }
 
 fn collect_drivers(
-    output_patterns: &[String],
+    output_patterns: &[OutputPattern],
     recipe_names: &BTreeSet<String>,
 ) -> BTreeSet<String> {
     let mut drivers = BTreeSet::new();
     for pat in output_patterns {
-        for token in extract_sigil_tokens(pat) {
+        for token in extract_sigil_tokens(pat.as_str()) {
             if let Some(dot) = token.rfind('.') {
                 let prefix = &token[..dot];
                 let suffix = &token[dot + 1..];

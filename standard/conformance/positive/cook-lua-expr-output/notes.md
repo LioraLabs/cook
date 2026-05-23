@@ -4,12 +4,15 @@ Pins the canonical §8.4.2 surface: a one-to-one `cook_step` whose output
 slot is a parenthesised Lua expression evaluated per-ingredient with
 `input` bound to the current ingredient's path.
 
-**Status (COOK-59 Task 1).** This fixture fails today because Task 2
-(parser support for `cook (EXPR) using ...`) is not yet implemented. The
-v0.12 parser rejects the form with `expected quoted output pattern`. The
-fixture is committed to `positive/` per spec-first convention: the
-Standard's §8.4.2 grammar is the source of truth, and the reference
-implementation catches up via Tasks 2 + 3 of COOK-59.
+**Status (COOK-59 Task 2 landed).** This fixture now parses cleanly. Task
+2 added the `OutputPattern::Quoted | OutputPattern::LuaExpr` AST split in
+`cli/crates/cook-lang/src/ast.rs` and the `(EXPR)`-recognising branch in
+`cli/crates/cook-lang/src/cook_line.rs::parse_cook_line`, mirroring the
+balanced-paren scan used by chore default-param Lua expressions (§7.1.1).
+Codegen still rejects the fixture pending COOK-59 Task 3 — the v0.13
+codegen treats a LuaExpr output as a literal-mode pattern and then bails
+when the recipe body uses `$<in>` placeholders. Task 3 will route the
+LuaExpr form through one-to-one over own inputs codegen.
 
 **`parse.txt` shape (informative).** The expected AST line is
 
@@ -17,9 +20,7 @@ implementation catches up via Tasks 2 + 3 of COOK-59.
 Cook outputs=[LuaExpr("input:gsub(\"/en/\", \"/fr/\")")] using=ShellBlock(["cp $<in> $<out>"])
 ```
 
-The `LuaExpr(...)` discriminator is the natural extension of the existing
-`Cook outputs=[...]` renderer in `cli/crates/cook-lang/tests/conformance.rs`
-once `outputs` becomes a `Vec<OutputPattern>` (`Quoted` | `LuaExpr`) per
-Task 2's AST change. If Task 2 chooses a different rendering (e.g. separate
-`output_kinds=[...]` line), this `parse.txt` is the authoritative target —
-adjust the renderer rather than rewriting the fixture.
+The `LuaExpr(...)` discriminator is rendered by `format_output_patterns`
+in `cli/crates/cook-lang/tests/conformance.rs`; Quoted patterns keep the
+bare-string `"..."` shape so every pre-COOK-59 positive fixture's
+`parse.txt` continues to match unchanged.

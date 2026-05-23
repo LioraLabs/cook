@@ -192,7 +192,7 @@ fn test_cook_step_shell() {
     match &recipe.steps[0] {
         Step::Cook { step, line } => {
             assert_eq!(*line, 3);
-            assert_eq!(step.outputs[0], "build/obj/{stem}.o");
+            assert_eq!(step.outputs[0].as_str(), "build/obj/{stem}.o");
             assert_eq!(
                 step.using_clause,
                 Some(UsingClause::ShellBlock(vec!["gcc -c {in} -o {out}".to_string()]))
@@ -208,7 +208,7 @@ fn test_cook_step_many_to_one() {
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::Cook { step, .. } => {
-            assert_eq!(step.outputs[0], "build/lib.a");
+            assert_eq!(step.outputs[0].as_str(), "build/lib.a");
             assert_eq!(
                 step.using_clause,
                 Some(UsingClause::ShellBlock(vec!["ar rcs {out} {all}".to_string()]))
@@ -226,7 +226,7 @@ fn test_cook_step_declaration_only() {
     assert_eq!(recipe.steps.len(), 2);
     match &recipe.steps[0] {
         Step::Cook { step, .. } => {
-            assert_eq!(step.outputs[0], "bin/app");
+            assert_eq!(step.outputs[0].as_str(), "bin/app");
             assert!(step.using_clause.is_none());
         }
         other => panic!("expected Cook, got {:?}", other),
@@ -240,7 +240,7 @@ fn test_cook_step_lua_block() {
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
         Step::Cook { step, .. } => {
-            assert_eq!(step.outputs[0], "build/obj/{stem}.o");
+            assert_eq!(step.outputs[0].as_str(), "build/obj/{stem}.o");
             match &step.using_clause {
                 Some(UsingClause::LuaBlock(code)) => {
                     assert!(code.contains("cook.sh"), "code was: {}", code);
@@ -750,7 +750,8 @@ fn test_multi_output_lua_block() {
     let result = crate::parse(source).expect("should parse");
     match &result.recipes[0].steps[0] {
         crate::ast::Step::Cook { step, .. } => {
-            assert_eq!(step.outputs, vec!["a.js".to_string(), "b.wasm".to_string()]);
+            let outs: Vec<&str> = step.outputs.iter().map(|p| p.as_str()).collect();
+            assert_eq!(outs, vec!["a.js", "b.wasm"]);
             assert!(matches!(step.using_clause, Some(crate::ast::UsingClause::LuaBlock(_))));
         }
         _ => panic!("expected Cook step"),
@@ -763,7 +764,8 @@ fn test_single_output_shell_block() {
     let result = crate::parse(source).expect("should parse");
     match &result.recipes[0].steps[0] {
         crate::ast::Step::Cook { step, .. } => {
-            assert_eq!(step.outputs, vec!["bin/out".to_string()]);
+            let outs: Vec<&str> = step.outputs.iter().map(|p| p.as_str()).collect();
+            assert_eq!(outs, vec!["bin/out"]);
             match &step.using_clause {
                 Some(crate::ast::UsingClause::ShellBlock(cmds)) => {
                     assert_eq!(cmds, &vec!["cmd1".to_string(), "cmd2".to_string()]);
@@ -781,7 +783,8 @@ fn test_multi_output_shell_block() {
     let result = crate::parse(source).expect("should parse");
     match &result.recipes[0].steps[0] {
         crate::ast::Step::Cook { step, .. } => {
-            assert_eq!(step.outputs, vec!["a.js".to_string(), "b.wasm".to_string()]);
+            let outs: Vec<&str> = step.outputs.iter().map(|p| p.as_str()).collect();
+            assert_eq!(outs, vec!["a.js", "b.wasm"]);
             match &step.using_clause {
                 Some(crate::ast::UsingClause::ShellBlock(cmds)) => {
                     assert_eq!(cmds.len(), 3);
