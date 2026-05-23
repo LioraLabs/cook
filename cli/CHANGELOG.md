@@ -1,6 +1,8 @@
 # Cook CLI changelog
 
-## Unreleased
+## v0.4.0 — 2026-05-23
+
+Claims Cook Standard v0.11.
 
 ### Breaking
 
@@ -30,3 +32,18 @@
   equivalent forms for selecting a config preset on the CLI. The `--`
   end-of-options separator passes subsequent tokens through as literal
   parameter values (escape hatch for values starting with `@` or `-`).
+
+### Cookfile language (Cook Standard v0.11)
+
+- **CS-0085 — `outputs[]` accepts glob patterns** with post-execute
+  resolution. Recipes that produce a dynamic file set (e.g. compiled
+  artifacts whose names aren't known up front) can now declare
+  `outputs = {"build/**/*.o"}` and have the glob expanded after the
+  step runs.
+- **CS-0078 — multi-line `cook` outputs and ingredients.** The shorthand
+  forms now span lines for readable long-list declarations.
+- **CS-0079 — `fs.glob` accepts an array of patterns**, removing the
+  earlier `fs.glob_many` workaround.
+- **tree-sitter-cook v0.12 conformance audit (CS-0086 / COOK-50..57)** —
+  closes out the long-running tree-sitter grammar gap against the
+  Standard. Affects editor tooling, not the runtime.
