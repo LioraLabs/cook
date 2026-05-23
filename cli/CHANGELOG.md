@@ -1,5 +1,29 @@
 # Cook CLI changelog
 
+## v0.4.1 — 2026-05-23
+
+Claims Cook Standard v0.11.
+
+### Fixed
+
+- **Chore-param sibling-validation regression (COOK-61).** Invoking any chore
+  in a Cookfile no longer triggers required-no-default parameter validation
+  on unrelated sibling chores. The Standard §7.5.1 register-time check is
+  now correctly scoped to chores reachable from the dispatch target via the
+  `requires` graph — unrelated parametric siblings are skipped (mirroring
+  the no-target `cook list` path). Authors who worked around v0.4.0 by
+  giving every required param a `=""` default may tighten back to the
+  required form.
+
+### Cookfile language (Cook Standard v0.11)
+
+- **CS-0088 — §7.5.1 Note 7.5.1.1 (informative).** Makes explicit that the
+  register-time parameter check in §7.5.1 ("a parametric chore depended on
+  by the dispatch target runs with no argv supplied; a required parameter
+  without a default is a configuration error") is scoped to chores
+  reachable from the dispatch target. Unreachable parametric siblings are
+  not validated during a given dispatch; their bodies are not invoked.
+
 ## v0.4.0 — 2026-05-23
 
 Claims Cook Standard v0.11.
