@@ -61,13 +61,7 @@ fn chore_package_produces_expected_tarball_shape() {
 
     let cook_bin = repo.join("cli/target/release/cook");
     let chore_status = Command::new(&cook_bin)
-        .args([
-            "--set",
-            &format!("VERSION={}", version),
-            "--set",
-            &format!("TARGET={}", triple),
-            "package",
-        ])
+        .args(["package", version, &triple])
         .current_dir(repo)
         .status()
         .expect("cook package");

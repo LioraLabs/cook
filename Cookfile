@@ -26,12 +26,6 @@
 #                       Routes through cook_modules/release.lua → release.bump_claim.
 #                       VERSION defaults to the contents of standard/VERSION.
 #
-# Param defaults note: every chore param below uses a default (empty string
-# or Lua-expression) rather than the required-no-default form. This is a
-# v0.4.0 workaround — required params trigger a regression where invoking
-# any chore in this file errors on a sibling's missing required param
-# (COOK-61). Tighten back to required-no-default once that bug is fixed.
-#
 # Sub-Cookfile chores reachable directly via their import alias:
 #   cli.build            cli.test            cli.conformance
 #   standard.build       standard.lint       standard.host       standard.preview
@@ -52,10 +46,10 @@ use release
 
 chore check: cli.build cli.test cli.conformance ts.generate ts.test ts.conformance standard.build standard.lint
 
-chore package version="" target=""
+chore package version target
     > dist.package(version, target)
 
-chore release version=""
+chore release version
     > release.cut(version)
 
 chore bump-claim version=(fs.read("standard/VERSION"):gsub("%s+$", ""))

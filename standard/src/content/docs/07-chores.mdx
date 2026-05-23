@@ -193,3 +193,9 @@ recipe install: play
 A recipe or chore MAY depend on a parametric chore (§7.1.1). The dependency edge supplies no argv, so the depended-upon chore runs as if invoked with no positional arguments: defaulted parameters bind their defaults (§7.1.1), zero-or-more variadics (`*NAME`) bind to the empty sequence, and any required parameter — or one-or-more variadic (`+NAME`) — without a satisfying argv is a configuration error rejected at register time with the same diagnostic class as the invocation-time errors of §7.1.2.
 
 Supplying explicit argv from a dependency edge (e.g. `recipe X: (helper foo bar)`) is reserved for a future revision and is not part of this Standard.
+
+#### Note 7.5.1.1 — Scope of register-time parameter checks (informative)
+
+The register-time validation described above applies only to parametric chores **reachable from the dispatch target via the `requires` graph** (§{xref}) — i.e. the target itself plus its transitive dependencies. A parametric chore that declares a required parameter (or `+NAME` variadic) and is **not** in that reachable set is not validated at register time during the current dispatch: its body is not invoked and its parameters are not bound. This keeps unrelated chores in the same Cookfile from poisoning every other invocation; declaring `chore deploy target` does not block `cook greet alice` from running.
+
+Implementations MAY still register, list, and diagnose syntactic problems with unreachable parametric chores (so that `cook list`, `cook menu`, and `cook dag` surface them); only the bind-argv-to-parameters step is scoped to the reachable set.

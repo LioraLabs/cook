@@ -299,6 +299,19 @@ pub fn register_cookfile(
         .collect();
     let topo = local_topological_sort(&names_to_requires)?;
 
+    // 11b. (COOK-61) Set of names reachable from `target_recipe` via the
+    //      local `requires` graph. The body-invocation loop uses this to
+    //      distinguish dep-of-target parametric chores (run with empty argv
+    //      per §7.5.1; required-no-default surfaces a legitimate register-time
+    //      error) from unrelated parametric siblings (skipped, same as the
+    //      no-target case). Empty when `target_recipe` is `None` or the
+    //      target isn't in the local set.
+    let reachable_from_target: std::collections::BTreeSet<String> = builder
+        .target_recipe
+        .as_deref()
+        .map(|t| local_reachable_set(t, &names_to_requires))
+        .unwrap_or_default();
+
     // 12. Invoke each recipe body in topo order. The body slot is opened
     //     immediately before the call and drained back to `None` afterwards
     //     so a stray closure invocation between bodies fails cleanly rather
@@ -410,15 +423,26 @@ pub fn register_cookfile(
                 func.call::<()>((bound,))
                     .map_err(RegisterError::Lua)?;
             } else if builder.target_recipe.is_some() {
-                // A target was requested but this is NOT the target. The chore
-                // may still be a dep of the target, so capture its body so the
-                // DAG has units to link. Per §7.5, parametric chores depended
-                // on by recipes/chores run with no argv supplied; a required
-                // parameter with no default is a configuration error surfaced
-                // by build_chore_params_table.
+                // A target was requested but this is NOT the target. Split
+                // on `reachable_from_target` (COOK-61): only chores that are
+                // actual deps of the target should run with empty argv; an
+                // unrelated parametric sibling must be skipped, same as the
+                // no-target case (a52063d). Without this split, every
+                // parametric sibling poisons every other-target invocation
+                // via `build_chore_params_table`'s required-param check.
+                //
+                // §7.5.1: dep-of-target parametric chores run with no argv
+                // supplied; required-no-default surfaces a configuration
+                // error here. Unreachable siblings get no such validation —
+                // they may declare any param shape.
+                let is_dep_of_target = reachable_from_target.contains(name);
                 if params_meta.is_empty() {
+                    // Paramless chore: cheap to invoke, captures units for
+                    // dep linkage when reachable and for enumeration tools
+                    // when not. Either way, the body is safe to call with
+                    // no argument — no `__cook_params` references.
                     func.call::<()>(()).map_err(RegisterError::Lua)?;
-                } else {
+                } else if is_dep_of_target {
                     let (bound, prelude) = build_chore_params_table(
                         &lua,
                         &params_meta,
@@ -433,6 +457,39 @@ pub fn register_cookfile(
                         }
                     }
                     func.call::<()>((bound,)).map_err(RegisterError::Lua)?;
+                } else {
+                    // Parametric sibling not reachable from target — skip
+                    // body invocation, mirror the no-target / `cook list`
+                    // path: record an empty units entry so downstream stages
+                    // see the recipe in the registered set.
+                    lua.remove_registry_value(func_key_clone)?;
+                    let _ = body_slot.borrow_mut().take();
+                    names.push(crate::RegisteredRecipePub {
+                        name: name.clone(),
+                        source,
+                        kind,
+                        requires: requires.clone(),
+                    });
+                    units_by_recipe.insert(
+                        name.clone(),
+                        RecipeUnits {
+                            recipe_name: name.clone(),
+                            deps: requires,
+                            units: vec![],
+                            step_groups: vec![],
+                            working_dir: builder.working_dir.clone(),
+                            env_vars: builder
+                                .env_vars
+                                .borrow()
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect(),
+                            terminal_outputs: vec![],
+                            dep_edges: vec![],
+                            probes: vec![],
+                        },
+                    );
+                    continue;
                 }
             } else if !params_meta.is_empty() {
                 // No specific target requested (e.g. cook list, cook dag,
@@ -869,6 +926,43 @@ fn local_topological_sort(
         visit(name, deps, &mut state, &mut order, &mut path)?;
     }
     Ok(order)
+}
+
+/// Set of names reachable from `target` via the local `requires` graph,
+/// including `target` itself when it is present in `deps`. Returns an empty
+/// set when `target` is not a key of `deps` (e.g. cross-Cookfile target or
+/// unknown name — handled by the engine's analyzer downstream).
+///
+/// Mirrors `local_topological_sort`'s policy of skipping refs the local set
+/// doesn't know about: cross-Cookfile `requires` edges are resolved later by
+/// the engine's cross-cookfile dep analyzer.
+///
+/// Used by `register_cookfile` (COOK-61) to distinguish parametric chores
+/// that are actual deps of the dispatch target (run with empty argv per
+/// §7.5.1) from unrelated parametric siblings (skipped, same as the
+/// no-target case).
+fn local_reachable_set(
+    target: &str,
+    deps: &BTreeMap<String, Vec<String>>,
+) -> std::collections::BTreeSet<String> {
+    let mut reachable: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    if !deps.contains_key(target) {
+        return reachable;
+    }
+    let mut stack: Vec<String> = vec![target.to_string()];
+    while let Some(node) = stack.pop() {
+        if !reachable.insert(node.clone()) {
+            continue;
+        }
+        if let Some(children) = deps.get(&node) {
+            for child in children {
+                if deps.contains_key(child) && !reachable.contains(child) {
+                    stack.push(child.clone());
+                }
+            }
+        }
+    }
+    reachable
 }
 
 /// Diagnose duplicate recipe-name registrations within a single

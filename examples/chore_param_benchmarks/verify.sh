@@ -99,7 +99,7 @@ assert_stdout "preset via @sigil"                          "mode=release"       
 assert_stdout "preset via --config long flag"              "mode=release"          demo production --config release
 assert_stdout "preset via -c short flag"                   "mode=release"          demo production -c release
 assert_stderr_fail "two presets via sigil"                 "multiple config presets" demo production "@release" "@release"
-assert_stderr_fail "mixed sigil + flag"                    "supply only one"       demo production "@release" --config release
+assert_stderr_fail "mixed sigil + flag"                    "multiple config presets" demo production "@release" --config release
 
 # `--` end-of-options separator
 assert_stdout "-- escapes literal '@' as a positional"     "target=@latest"        demo -- "@latest"

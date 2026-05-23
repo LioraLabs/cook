@@ -708,6 +708,63 @@ fn chore_lua_default_boolean_return_coerces_to_string() {
     assert!(stdout.contains("enabled=true"), "stdout: {stdout}");
 }
 
+/// COOK-61 regression: invoking a chore must not surface a sibling chore's
+/// required-no-default param error. Before the fix, every parametric chore in
+/// the file was treated as a potential dep of the target and run with empty
+/// argv during register-phase, surfacing `ChoreParamMissing` for any required
+/// param on any sibling. Per §7.5.1, that rule only applies to actual
+/// dep-graph-reachable chores, not arbitrary siblings.
+#[test]
+fn sibling_chore_required_param_does_not_block_unrelated_target() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore greet who\n    @echo hello $<who>\nchore demo target host=\"prod\"\n    @echo demo $<target> $<host>\n",
+    )
+    .unwrap();
+
+    let out = run_cook_raw(tmp.path(), &["greet", "alice"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook greet alice must not error on unrelated sibling 'demo'\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(stdout.contains("hello alice"), "stdout: {stdout}");
+    assert!(
+        !stderr.contains("requires parameter 'target'"),
+        "sibling 'demo' must not surface its required-param error\nstderr: {stderr}"
+    );
+}
+
+/// COOK-61 regression: the original repro from the fixture. `cook greet alice`
+/// must succeed in `examples/chore_param_benchmarks/`-shaped Cookfiles where
+/// a sibling chore (`demo`) declares a required param. Stand-in fixture, not
+/// the canonical one.
+#[test]
+fn many_sibling_parametric_chores_do_not_block_target() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        // Mix: targeted chore, required-no-default sibling, defaulted sibling,
+        // variadic-plus sibling. None of them are reachable from `greet`.
+        "chore greet who\n    @echo hello $<who>\n\
+         chore demo target host=\"prod\" version=(\"v0\") *extras\n    @echo demo $<target>\n\
+         chore deploy target host=\"prod.example.com\"\n    @echo deploy $<target>\n\
+         chore lint +files\n    @echo lint $<files>\n",
+    )
+    .unwrap();
+
+    let out = run_cook_raw(tmp.path(), &["greet", "alice"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook greet alice failed with sibling parametric chores present\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(stdout.contains("hello alice"), "stdout: {stdout}");
+}
+
 #[test]
 fn chore_variadic_star_with_one_argv_binds_single_element_table() {
     let tmp = TempDir::new().unwrap();
