@@ -2,11 +2,30 @@ use std::collections::BTreeSet;
 
 use cook_lang::ast::*;
 
+use crate::lua_env;
 use crate::resolver::{IterMode, OutputShape};
 use crate::template::{
     analyze_output_pattern, expand_command_template, expand_output_pattern, ConsultedEnv,
     OutputPatternKind,
 };
+
+/// Render the set of Lua-scanned env keys as a `consulted_env_keys` Lua
+/// literal. Returns `"{}"` for an empty set (no statically detectable
+/// `cook.env.<KEY>` reads).
+///
+/// Per Standard §17.1, a Lua using-block's cache fingerprint MUST include
+/// the values of every env key the body statically reads from `cook.env`.
+/// The scanner is in [`lua_env::scan_env_reads`]; this helper threads the
+/// scanned keys through the shared [`ConsultedEnv`] accumulator so the
+/// rendering path matches the shell-template emission exactly.
+fn lua_body_consulted_env_keys(code: &str) -> String {
+    let scanned = lua_env::scan_env_reads(code);
+    let mut consulted = ConsultedEnv::new();
+    for key in &scanned {
+        consulted.record(key);
+    }
+    consulted.to_lua_table()
+}
 
 /// Modes for cook step code generation.
 pub(crate) enum CookMode {
@@ -231,9 +250,10 @@ pub(crate) fn generate_cook_step(
                 Some(UsingClause::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
+                    let env_keys = lua_body_consulted_env_keys(code);
                     out.push_str(&format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = \"*\"}})\n",
-                        code_literal, ing_groups
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}}})\n",
+                        code_literal, ing_groups, env_keys
                     ));
                 }
                 None => {
@@ -294,9 +314,10 @@ pub(crate) fn generate_cook_step(
                 Some(UsingClause::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
+                    let env_keys = lua_body_consulted_env_keys(code);
                     out.push_str(&format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = \"*\"}})\n",
-                        code_literal, ing_groups
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}}})\n",
+                        code_literal, ing_groups, env_keys
                     ));
                 }
                 None => {
@@ -350,9 +371,10 @@ pub(crate) fn generate_cook_step(
                 Some(UsingClause::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
+                    let env_keys = lua_body_consulted_env_keys(code);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = {}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = \"*\"}})\n",
-                        input_source, code_literal, ing_groups
+                        "    cook.add_unit({{inputs = {}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}}})\n",
+                        input_source, code_literal, ing_groups, env_keys
                     ));
                 }
                 None => unreachable!("ManyToOne mode requires a using-clause"),
@@ -411,9 +433,10 @@ pub(crate) fn generate_cook_step(
                 Some(UsingClause::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
+                    let env_keys = lua_body_consulted_env_keys(code);
                     out.push_str(&format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = \"*\"}})\n",
-                        code_literal, ing_groups
+                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}}})\n",
+                        code_literal, ing_groups, env_keys
                     ));
                 }
                 None => unreachable!("OneToMany mode requires a using-clause"),
@@ -472,9 +495,10 @@ pub(crate) fn generate_cook_step(
                 Some(UsingClause::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
+                    let env_keys = lua_body_consulted_env_keys(code);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = \"*\"}})\n",
-                        code_literal, ing_groups
+                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}}})\n",
+                        code_literal, ing_groups, env_keys
                     ));
                 }
                 _ => unreachable!("BlockStep mode requires ShellBlock or LuaBlock using-clause"),

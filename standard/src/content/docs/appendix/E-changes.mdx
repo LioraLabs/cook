@@ -9,7 +9,7 @@ sidebar:
 
 ## Versions
 
-- **v0.13** (unreleased) — CS-0077, CS-0085, CS-0087, CS-0088. Unified register-phase + work-unit DAG: §13.3 (one DAG across every reachable recipe; "wave" grouping retired), §22.3 (recipe-name uniqueness within a Cookfile), §22.6 (recipe-discovery contract — surface and register-phase Lua names share one dispatch namespace). Chore parameters (§7.1.1–7.1.3, §9, §13.2, §17.5.1, App. A.3.1): required, defaulted-string, defaulted-Lua `=(EXPR)`, and variadic `+NAME`/`*NAME` on chore headers; bind as Lua locals, `$<name>` placeholders, and env vars in shell children. Note 7.5.1.1 (CS-0088) clarifies that the §7.5.1 register-time parameter check applies only to chores reachable from the dispatch target.
+- **v0.13** (unreleased) — CS-0077, CS-0085, CS-0087, CS-0088, CS-0089, CS-0090. Unified register-phase + work-unit DAG: §13.3 (one DAG across every reachable recipe; "wave" grouping retired), §22.3 (recipe-name uniqueness within a Cookfile), §22.6 (recipe-discovery contract — surface and register-phase Lua names share one dispatch namespace). Chore parameters (§7.1.1–7.1.3, §9, §13.2, §17.5.1, App. A.3.1): required, defaulted-string, defaulted-Lua `=(EXPR)`, and variadic `+NAME`/`*NAME` on chore headers; bind as Lua locals, `$<name>` placeholders, and env vars in shell children. Note 7.5.1.1 (CS-0088) clarifies that the §7.5.1 register-time parameter check applies only to chores reachable from the dispatch target. CS-0089 adds §8.4.2's Lua-expression output form (`cook (EXPR) using …`); CS-0090 adds §17.1.2's static tracking of `cook.env.<KEY>` reads inside `using >{ … }` Lua bodies to the unit's `consulted_env_keys` set.
 - **v0.12** (`cs-standard/v0.12`, 2026-05-17) — CS-0076. cc.checks.* feature-test namespace and cc.config_header CMake-compatible substitution; cc:check:<kind>:<name>:<short-fp> joins the canonical probe-key namespace; surface §28 v0.5 → v0.6.
 - **v0.11** (`cs-standard/v0.11`, 2026-05-15) — CS-0074. Probe units: new §22.5 `cook.probe` register-phase API; `probes` field on `cook.add_unit` for consumer→probe DAG edges; demand-driven scheduling (probes execute only when reached); msgpack probe-value caching with `kind: "probe_value"` artifact-meta tag; `cook.cache.set` deprecated (§24); `cook.cache.get` execute-phase tightened.
 - **v0.10** (`cs-standard/v0.10`, 2026-05-13) — CS-0073. Structural redesign: Standard reorganised into four Parts (Cookfile language, Execution model, Cook Lua API, Standard module catalogue) with per-topic chapters. Retired slug prefixes `grammar.*`, `modules.*`, `stdmods.*`, plus several `lua.*` and `lexical.*` / `recipes.*` leaves; new prefixes `conf.*`, `toplevel.*`, `decl.*`, `steps.*`, `phl.*`, `exec.*`, `comp.*`, `mods.*`, `cat.*`, `pre-v1.*`, `corpus.*`. New normative prose for `cook.step_group` (§22.5), both-phase Cook Lua surfaces (§24.3–§24.7), and module lifecycle (§12.3). Annexes B/C and D/E swapped. Retired URLs resolve via page-level redirects. No normative behaviour changes for any conforming Cookfile.
@@ -1615,3 +1615,45 @@ recipe translate-fr
 **Reference implementation.** Tasks 2 and 3 of COOK-59 land the parser, AST (`OutputPattern::Quoted | OutputPattern::LuaExpr`), and codegen for the form in `cli/crates/cook-lang`, `cli/crates/cook-luagen`, and `cli/crates/cook-register`. Task 2 (parser support) landed in `cli/crates/cook-lang/src/cook_line.rs` (balanced-paren expression scan mirroring §{chores.params}'s `=(EXPR)` form) and `cli/crates/cook-lang/src/ast.rs` (`OutputPattern` enum with `Quoted | LuaExpr` arms; `CookStep.outputs` now carries `Vec<OutputPattern>`). Task 3 (codegen) added the dedicated `CookMode::LuaExprOneToOne` arm in `cli/crates/cook-luagen/src/cook_step.rs`: a per-ingredient loop binds `input` and evaluates the parenthesised expression in a scoped `do … end` block, guards the resolved value against non-string / empty-string returns (Note 8.4.2.3), and reuses the existing one-to-one `using_clause` emission path for both `shell_block` and `using_lua_block` bodies; the bare-accessor and driver-collection passes in `cli/crates/cook-luagen/src/recipe.rs` short-circuit on `OutputPattern::LuaExpr` so a Lua expression source is never reinterpreted as a sigil template. After Task 3 the `cook-lua-expr-output` conformance fixture is green. The conformance claim (`COOK_STANDARD_VERSION` in `cli/crates/cook-lang/src/lib.rs`) bumps with the v0.13 cut after both tasks land.
 
 **Backward compatibility.** Non-breaking. The grammar gains a new alternative `cook_output ::= "(" LUA_EXPR ")"` that was previously a parse error; no existing Cookfile becomes non-conforming. Cookfiles that adopt the new form are not parseable by pre-v0.13 implementations — authors who need pre-v0.13 portability MUST continue to use the quoted-string form.
+
+## CS-0090 — Lua reads of `cook.env` track to `consulted_env_keys` (closes COOK-59 Task 4.5) [#changes.cs-0090]
+
+**Date:** 2026-05-23
+
+**Version:** v0.13
+
+**Sections affected:** §17.1.2 (new — tracking Lua reads of `cook.env`: dot-access and string-indexed read recognition, comment/string-literal exclusions, dynamic-key opt-out, assignment-write opt-out, over-recording allowance, recording-mechanism parity with the shell-side `$<KEY>` sigil scanner).
+
+**Observable change.** A `cook` step whose `using >{ … }` body is a Lua block previously registered no `consulted_env_keys` entry on a per-key basis — reference implementations emitted a sentinel ("*" or the empty set, implementation-defined) that did not, in practice, bind `cook.env.<KEY>` reads to the unit's cache fingerprint. CS-0090 closes that gap by requiring static analysis of the Lua source and folding the recognised key names into the unit's `consulted_env_keys` set, on the same footing as a shell-body `$<KEY>` sigil.
+
+```
+recipe touch
+    ingredients "Cookfile"
+    cook (input .. ".out") using >{
+        local f = io.open(output, "w")
+        f:write("FOO=" .. tostring(cook.env.FOO))
+        f:close()
+    }
+```
+
+Per §17.1.2, an implementation MUST record `FOO` in the unit's `consulted_env_keys`; a value change in `FOO` between runs MUST invalidate the cache entry.
+
+**Recognised forms (normative).** Two syntactic shapes:
+
+1. `cook.env.IDENT` where `IDENT` matches `[A-Z_][A-Z0-9_]*` (the conventional environment-key shape).
+2. `cook.env["KEY"]` and `cook.env['KEY']` where `KEY` is a literal string.
+
+Occurrences inside Lua strings (`"…"`, `'…'`, `[[…]]`, `[==[…]==]`) and Lua comments (`-- …`, `--[[…]]`, `--[==[…]==]`) MUST be ignored.
+
+**Excluded forms (normative).**
+
+- **Dynamic-key reads** (`cook.env[var]`, `cook.env[string.upper(x)]`) MUST NOT be recorded — the key is not statically resolvable from the source text. Authors who need cache invalidation on a dynamic-key read SHOULD assign through a local literal first (`local v = cook.env["KEY"]`).
+- **Writes** (`cook.env.X = …`, `cook.env["X"] = …`) MUST NOT be recorded as reads. The pattern is distinguished from a read by an `=` immediately following the access that is not part of `==`, `~=`, `<=`, or `>=`.
+
+**Over-recording allowance.** An implementation MAY over-record (e.g., recognise additional access shapes). Over-recording only widens the cache-invalidation footprint and never silently serves stale output. Under-recording — ignoring a syntactically recognisable read of one of the recognised forms — is non-conforming.
+
+**Conformance fixtures.** One positive (`cook-lua-env-tracking`) — the canonical §17.1.2 surface: a one-to-one `cook_step` whose Lua `using_clause` body reads both `cook.env.FOO` (dot access) and `cook.env["BAR"]` (string-indexed access). The fixture's `parse.txt` pins the AST shape the codegen depends on; the codegen-side recording is asserted by `cli/crates/cook-luagen/src/tests.rs::lua_block_step_records_static_cook_env_reads`.
+
+**Reference implementation.** `cli/crates/cook-luagen/src/lua_env.rs` (new — static scanner with the §17.1.2 matching rules, full string- and comment-skipping, and 28 unit tests covering the recognised and excluded forms). The scanner is invoked from every LuaBlock arm in `cli/crates/cook-luagen/src/cook_step.rs` (`LuaExprOneToOne`, `OneToOne`, `ManyToOne`, `OneToMany`, `BlockStep`), with the matched keys threaded through the shared `ConsultedEnv` accumulator (matching the shell-template emission path one-for-one). `cli/crates/cook-register/src/unit_api.rs` falls back to the §17.1 baseline denylist (`cook_cache::envkey::EnvDenylist::baseline()`) when no `CacheContext` has been threaded into the register VM, so the captured keys' values still contribute to the cache fingerprint along the introspection-only register path (CLI commands that have not yet plumbed the executor's `cache_ctx` into the register pass — see the `cache_ctx` lifting follow-up noted in `cli/crates/cook-cli/src/pipeline.rs::build_registered_workspace`).
+
+**Backward compatibility.** Non-breaking surface. Implementations that previously emitted the `consulted_env_keys = "*"` sentinel for Lua bodies (the reference implementation's pre-CS-0090 behaviour) widened the cache-invalidation footprint to "every key declared in `cook.env`"; CS-0090 narrows it to the statically-recognisable reads. A Cookfile whose Lua body reads no env keys at all now produces a stable cache key across `cook.env` value changes that the body never consulted; this is a strict improvement and matches the shell-body behaviour. A Cookfile whose Lua body relied on a dynamic-key read for cache invalidation is non-conforming under CS-0090 and MUST be rewritten to surface the key statically.

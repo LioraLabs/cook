@@ -2425,7 +2425,13 @@ end
 }
 
 #[test]
-fn lua_block_step_emits_star_sentinel() {
+fn lua_block_step_with_no_env_reads_emits_empty_keyset() {
+    // COOK-59 Task 4.5 / CS-0090: cook-step Lua using-blocks no longer emit
+    // the `consulted_env_keys = "*"` sentinel. Instead, the codegen scans
+    // the Lua body for `cook.env.<KEY>` reads (see `lua_env::scan_env_reads`)
+    // and emits the matched keys as a literal Lua list. A body with no such
+    // reads emits the empty list `{}` so the cache doesn't see any
+    // synthetic environment dependency.
     let cookfile_text = r#"
 recipe build
     ingredients "src/*.c"
@@ -2436,8 +2442,35 @@ end
 "#;
     let lua = generate_lua_for_test(cookfile_text);
     assert!(
-        lua.contains("consulted_env_keys = \"*\""),
-        "lua_block payload should emit star sentinel, got:\n{lua}"
+        lua.contains("consulted_env_keys = {}"),
+        "lua_block payload with no cook.env reads should emit empty keyset, got:\n{lua}"
+    );
+    assert!(
+        !lua.contains("consulted_env_keys = \"*\""),
+        "lua_block payload must not emit the legacy `*` sentinel:\n{lua}"
+    );
+}
+
+#[test]
+fn lua_block_step_records_static_cook_env_reads() {
+    // COOK-59 Task 4.5 / CS-0090: a cook-step Lua using-block that reads
+    // `cook.env.FOO` and `cook.env.BAR` MUST emit a sorted, deduplicated
+    // list of those keys as `consulted_env_keys`.
+    let cookfile_text = r#"
+recipe touch
+    ingredients "Cookfile"
+    cook (input .. ".out") using >{
+        local f = io.open(output, "w")
+        f:write("FOO=" .. tostring(cook.env.FOO))
+        f:write("BAR=" .. tostring(cook.env.BAR))
+        f:close()
+    }
+end
+"#;
+    let lua = generate_lua_for_test(cookfile_text);
+    assert!(
+        lua.contains("consulted_env_keys = {\"BAR\", \"FOO\"}"),
+        "expected `consulted_env_keys = {{\"BAR\", \"FOO\"}}` (sorted), got:\n{lua}"
     );
 }
 

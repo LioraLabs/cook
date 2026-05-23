@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="touch" line=1
+      deps: []
+      ingredients: ["Cookfile"]
+      excludes: []
+      steps:
+        Cook outputs=[LuaExpr("input .. \".out\"")] using=LuaBlock("        local f = io.open(output, \"w\")\n        f:write(\"FOO=\" .. tostring(cook.env.FOO))\n        f:write(\" BAR=\" .. tostring(cook.env[\"BAR\"]))\n        f:close()")
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

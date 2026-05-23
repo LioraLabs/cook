@@ -409,7 +409,14 @@ pub fn register_unit_api(
         };
 
         // Retrieve the CacheContext if it was threaded in from cook-engine.
-        // If absent (tests, legacy call sites), fall back to zero values.
+        // If absent (tests, legacy call sites where the engine has not yet
+        // built its `CacheContext`), fall back to context_hash = 0 / empty
+        // project_id, but still compute env_contribution from the captured
+        // consulted_env so a value change in any tracked env key invalidates
+        // the cache. COOK-59 Task 4.5: without this, the static Lua scanner
+        // for `cook.env.<KEY>` reads can record keys whose values never
+        // reach the cache fingerprint — the very gap the scanner exists
+        // to close.
         let cache_ctx = lua
             .app_data_ref::<std::sync::Arc<cook_cache::cache_ctx::CacheContext>>();
 
@@ -421,7 +428,9 @@ pub fn register_unit_api(
                 let cfp = cookfile_relative_path(lua);
                 (ch, ec, pid, cfp)
             } else {
-                (0, 0, String::new(), cookfile_relative_path(lua))
+                let baseline = cook_cache::envkey::EnvDenylist::baseline();
+                let ec = cook_cache::envkey::env_contribution(&consulted_env, &baseline);
+                (0, ec, String::new(), cookfile_relative_path(lua))
             };
 
         // Read optional discovered_inputs table.
