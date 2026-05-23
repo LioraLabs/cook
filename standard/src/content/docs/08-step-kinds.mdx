@@ -234,6 +234,10 @@ The expression's resolved string is recorded as the unit's `outputs[1]`, and so 
 
 The Lua-expression form's defining feature is per-ingredient evaluation: each ingredient produces one unit whose output path is the expression evaluated with `input` bound to that ingredient. Dep-driven iteration (§{xref.dep-driven}) iterates over a *dependency's* output list, not over the step's own ingredient list, so `input` would have no canonical meaning. Many-to-one iteration runs the unit exactly once over the full input list, so per-ingredient evaluation has no addressable iteration. The restriction is therefore not a guard against unsafe semantics but a consequence of the bind-`input`-per-ingredient contract.
 
+### Note 8.4.2.3 — Register-phase diagnostic shape [#steps.cook-lua-expr-output.diagnostic]
+
+A conforming implementation rejecting the resolved output value MUST surface a register-phase diagnostic whose message identifies (a) the offending ingredient path and (b) the rule violated (non-string return, empty string). The reference implementation emits `cook (LUA_EXPR) returned non-string or empty value for input <PATH>` from the per-ingredient register-phase guard; an alternative implementation MAY phrase the message differently but MUST carry equivalent information.
+
 ## 8.5. `cook` — multi-output form [#steps.cook-multi]
 A `cook_step` MAY declare two or more outputs by listing additional `STRING` patterns before the `using` clause:
 

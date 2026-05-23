@@ -22,6 +22,11 @@ pub(crate) enum CookMode {
     /// Single invocation producing multiple declared outputs from a shell block
     /// or from a Lua block whose cook step declares more than one literal output.
     BlockStep,
+    /// One-to-one over own ingredients with a per-ingredient Lua expression
+    /// resolving the output path. Standard §8.4.2 (CS-0089): the parenthesised
+    /// `cook (EXPR) using ...` form. Parser guarantees exactly one output and
+    /// a using-clause.
+    LuaExprOneToOne,
 }
 
 /// Render a set of probe keys as a Lua array literal: `{"key1", "key2"}`.
@@ -65,6 +70,14 @@ pub(crate) fn cook_step_mode_with_names(
         return CookMode::DeclarationOnly;
     }
 
+    // Standard §8.4.2 / CS-0089: a parenthesised Lua-expression output is
+    // always one-to-one over the recipe's own ingredients. The parser
+    // guarantees exactly one output in this form and rejects mixing
+    // LuaExpr with Quoted outputs in the same step.
+    if step.outputs.iter().any(|p| p.is_lua_expr()) {
+        return CookMode::LuaExprOneToOne;
+    }
+
     if step.outputs.len() > 1 {
         let any_iterating = step.outputs.iter().any(|p| {
             matches!(
@@ -101,7 +114,9 @@ fn build_shell_block_command(lines: &[String], _recipe_names: &BTreeSet<String>)
 /// Convert a `CookMode` to the resolver `IterMode`.
 pub(crate) fn cook_mode_to_iter_mode(mode: &CookMode) -> IterMode {
     match mode {
-        CookMode::OneToOne | CookMode::OneToMany => IterMode::OneToOne,
+        CookMode::OneToOne | CookMode::OneToMany | CookMode::LuaExprOneToOne => {
+            IterMode::OneToOne
+        }
         CookMode::ManyToOne | CookMode::BlockStep => IterMode::ManyToOne,
         CookMode::DeclarationOnly => IterMode::OneShot,
     }
@@ -146,7 +161,15 @@ pub(crate) fn generate_cook_step(
         "{}".to_string()
     };
 
-    let pattern_kind = analyze_output_pattern(cook_step.outputs[0].as_str(), recipe_names);
+    // For LuaExpr outputs the pattern source is Lua code, not a sigil
+    // template; classifying it as Literal/OwnInputAccessor/DepDriven is
+    // meaningless. The dedicated `LuaExprOneToOne` arm below skips this
+    // value, so substitute `Literal` defensively.
+    let pattern_kind = if cook_step.outputs[0].is_lua_expr() {
+        OutputPatternKind::Literal
+    } else {
+        analyze_output_pattern(cook_step.outputs[0].as_str(), recipe_names)
+    };
 
     match mode {
         CookMode::DeclarationOnly => {
@@ -155,6 +178,74 @@ pub(crate) fn generate_cook_step(
                 index,
                 crate::lua_string::escape_lua_string(cook_step.outputs[0].as_str())
             ));
+        }
+        CookMode::LuaExprOneToOne => {
+            // Standard §8.4.2 (CS-0089): `cook (EXPR) using ...` — iterate
+            // own ingredients, evaluate the parenthesised Lua expression per
+            // ingredient with `input` bound to the current ingredient path,
+            // and use the resolved string as the unit's single output.
+            //
+            // The expression text comes straight from the parser; it is a
+            // Lua expression evaluated in the Cookfile-scope VM (per §7.1.1
+            // coercion rules used by chore default-params).
+            let expr_src = cook_step.outputs[0].as_str();
+
+            out.push_str(&format!(
+                "    for _, _cook_in in ipairs({}) do\n",
+                input_source
+            ));
+            out.push_str("        local _cook_out\n");
+            out.push_str("        do\n");
+            out.push_str("            local input = _cook_in\n");
+            out.push_str(&format!(
+                "            _cook_out = ({})\n",
+                expr_src
+            ));
+            out.push_str("        end\n");
+            out.push_str("        if type(_cook_out) ~= \"string\" or _cook_out == \"\" then\n");
+            out.push_str(
+                "            error(\"cook (LUA_EXPR) returned non-string or empty value for input \" .. tostring(_cook_in), 2)\n",
+            );
+            out.push_str("        end\n");
+
+            let mut consulted = ConsultedEnv::new();
+            match &cook_step.using_clause {
+                Some(UsingClause::ShellBlock(lines)) => {
+                    let combined = build_shell_block_command(lines, recipe_names);
+                    let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
+                    let (lua_expr, probe_keys) = match expand_command_template(
+                        &combined, &ctx, &mut consulted,
+                    ) {
+                        Ok(pair) => pair,
+                        Err(e) => (
+                            format!("\"[[SIGIL_ERROR: {}]]\"", crate::lua_string::escape_lua_string(&e.to_string())),
+                            std::collections::BTreeSet::new(),
+                        ),
+                    };
+                    let probes_lua = probe_keys_to_lua_table(&probe_keys);
+                    out.push_str(&format!(
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table()
+                    ));
+                }
+                Some(UsingClause::LuaBlock(code)) => {
+                    let code_literal = crate::lua_string::wrap_lua_string(code);
+                    let ing_groups = format_ingredient_groups(ingredients.len());
+                    out.push_str(&format!(
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = \"*\"}})\n",
+                        code_literal, ing_groups
+                    ));
+                }
+                None => {
+                    unreachable!("LuaExprOneToOne mode requires a using-clause");
+                }
+            }
+
+            out.push_str(&format!(
+                "        table.insert(_cook_outputs_{}, _cook_out)\n",
+                index
+            ));
+            out.push_str("    end\n");
         }
         CookMode::OneToOne => {
             let iter_source = match &pattern_kind {

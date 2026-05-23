@@ -228,8 +228,14 @@ fn validate_accessor_placement(
             match step {
                 Step::Cook { step: cook_step, line } => {
                     // Check output patterns for bare path accessors (CS-0022 §6.7)
-                    // and bare recipe references (Standard §5.4).
+                    // and bare recipe references (Standard §5.4). Skip the
+                    // LuaExpr form: its source text is a Lua expression, not
+                    // a sigil template, so the bare-accessor check does not
+                    // apply (Standard §8.4.2 / CS-0089).
                     for pattern in &cook_step.outputs {
+                        if pattern.is_lua_expr() {
+                            continue;
+                        }
                         check_output_pattern_no_bare_accessors(
                             pattern.as_str(),
                             &recipe.name,
@@ -553,6 +559,12 @@ fn collect_drivers(
 ) -> BTreeSet<String> {
     let mut drivers = BTreeSet::new();
     for pat in output_patterns {
+        // The LuaExpr form's source text is Lua code, not a sigil
+        // template; skip it. Driver semantics for a LuaExpr cook step
+        // are fixed by §8.4.2: one-to-one over own ingredients only.
+        if pat.is_lua_expr() {
+            continue;
+        }
         for token in extract_sigil_tokens(pat.as_str()) {
             if let Some(dot) = token.rfind('.') {
                 let prefix = &token[..dot];
