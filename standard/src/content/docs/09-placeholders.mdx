@@ -51,9 +51,11 @@ The sigil syntax `$<IDENT>` is the sole placeholder surface for shell text as of
 | `$<out_N>` (`N` ∈ 1..) | any mode, multi-output | The unit's `N`-th declared output, in declaration order |
 | `$<out_N.ACCESSOR>` | any mode, multi-output | `path.ACCESSOR(out_N)` |
 | `$<all>` | many-to-one only | The unit's input list, joined by single space characters |
+| `$<item>` | one-to-one over data members | The current data member (§{steps.for-each}): a record rendered as canonical key-sorted JSON, or the scalar's string form |
+| `$<item.FIELD>` | one-to-one over data members | The value of record field `FIELD` of the current data member |
 | `$<NAME>` (NAME is a declared chore parameter, §7.1.1) | chore bodies only | The bound parameter value, POSIX single-quote-escaped to produce a single shell word; for variadic parameters, the space-separated, individually shell-quoted joined form. Scope-limited to chore bodies that declare the parameter. Resolved at register phase, before the shell step is dispatched. |
 
-`ACCESSOR` is one of `stem`, `name`, `ext`, `dir`, with semantics defined by §{xref.path-accessors}.
+`ACCESSOR` is one of `stem`, `name`, `ext`, `dir`, with semantics defined by §{xref.path-accessors}. In the `$<item.FIELD>` form, `FIELD` is by contrast a **record key** of the current data member (§{steps.for-each}), not a path accessor: it selects the member's field, rendered as a string (canonical key-sorted JSON for a nested table value).
 
 **Chore-body resolution order.** Within a chore body, `$<NAME>` resolution proceeds in this order:
 
@@ -71,6 +73,7 @@ A conforming implementation MUST reject the following shapes with a load-time di
 - `$<out_N>` in a single-output step (use plain `$<out>`).
 - `$<out_N>` for `N` greater than the step's declared output count.
 - `$<stem>`, `$<name>`, `$<ext>`, or `$<dir>` as a bare sigil (i.e. with no `NAME.` prefix). These bare accessors have no special meaning at the placeholder layer; the correct spelling is `$<in.stem>` etc. The diagnostic MUST name the new form. (A bare `$<stem>` would otherwise resolve through §{xref.resolution} to `cook.require_env("stem")`, which is a confusing failure mode.)
+- `$<item>` or `$<item.FIELD>` in a recipe that has no `for_each_step` (§{steps.for-each}) — there is no data member to resolve. The diagnostic MUST state that `$<item>` requires a `for_each` driver.
 
 ### Example 9.3.1
 
@@ -109,6 +112,8 @@ A `plate_step` or `test_step` body that is a `shell_block` admits the following 
 | `$<in>` | one-to-one | The current iteration item (path) |
 | `$<in.ACCESSOR>` | one-to-one | `path.ACCESSOR(in)` per §{lua.path-helpers} |
 | `$<all>` | many-to-one | The source list, space-joined |
+| `$<item>` | one-to-one over data members | The current data member (§{steps.for-each}) |
+| `$<item.FIELD>` | one-to-one over data members | The value of record field `FIELD` of the current data member |
 | `$<NAME>` (NAME is a recipe in scope) | any mode | `cook.dep_output(NAME)` per §{xref.string-substitution} |
 | `$<TOKEN>` (none of the above) | any mode | `cook.require_env(TOKEN)` per §{xref.resolution} |
 
@@ -117,5 +122,6 @@ A conforming implementation MUST reject:
 - `$<all>` in a one-to-one or one-shot body (no batched input list);
 - Any `$<out>` / `$<out.ACCESSOR>` / `$<out_N>` / `$<out_N.ACCESSOR>` token in a plate or test body — the step declares no outputs. The diagnostic MUST state that plate/test produce no declared outputs; for a body in one-to-one mode the diagnostic SHOULD additionally direct the author to `$<in>` as the iteration item.
 - `$<NAME.ACCESSOR>` for any recipe `NAME` in scope (preserves the §{xref.dep-driven} firewall).
+- `$<item>` or `$<item.FIELD>` in a recipe with no `for_each_step` (§{steps.for-each}) — no data member exists.
 
 Bare path-accessors (`$<stem>`, `$<name>`, `$<ext>`, `$<dir>`) in a plate or test body resolve through §{xref.resolution} step 4. A conforming implementation MUST emit a specific diagnostic for these four names that points to `$<in.ACCESSOR>` (same diagnostic CS-0022 introduced for cook bodies).

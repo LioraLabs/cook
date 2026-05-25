@@ -15,6 +15,7 @@ The **observable inputs** of a work unit are those of its properties that are de
 2. The list of input paths declared for the unit.
 3. The list of output paths declared for the unit.
 4. The recipe's resolved environment (§{lua}).
+5. For a unit produced by a `for_each_step` (§{steps.for-each}), the **materialised data member**: the current iteration element rendered in a canonical, key-sorted form. Each per-member unit's fingerprint therefore depends on its own member's content — independent of the whole source value — so editing one member re-runs only that unit. (This composes with the probe-value cache of §{cat.probes.exec}, which fingerprints the member *set*: the two layers are independent.)
 
 A conforming implementation MAY additionally consider the content of the declared input files, the modification times of the declared output files, the content of the recipe's ingredient set, the identity of the host machine on which the unit will execute (e.g., target triple, libc version, locale-affecting environment variables), and the resolved content of the binaries invoked by the unit's command text. It MUST NOT consider wall-clock time, process identifiers, or any state not derivable from the sources above. An implementation MAY exclude from the resolved-environment observable a set of environment variables whose values are known not to affect work-unit output (e.g., ambient session state, credentials unrelated to the build product); the specific set is implementation-defined.
 
@@ -31,7 +32,7 @@ A unit for which the register-phase record disables caching — for example, a b
 
 ### 17.1.2. Tracking Lua reads of `cook.env` [#exec.cache.lua-env-reads]
 
-> **Normative.** A `cook` step whose `using >{ … }` body is a Lua block (§{lua.using-block}) MAY read environment values through the `cook.env.<KEY>` accessor (§{lua.cook-env}). When it does, those reads MUST contribute to the unit's `consulted_env_keys` set (§{xref.resolution}) on the same footing as a shell-body `$<KEY>` sigil contributes. The recording is required for the cache-invalidation contract of §17.1: a value change in any consulted key MUST invalidate the unit's cache fingerprint.
+> **Normative.** A `cook` step whose `using >{ … }` body is a Lua block (§{lua.using-block-globals}) MAY read environment values through the `cook.env.<KEY>` accessor (§{lua.cook-env}). When it does, those reads MUST contribute to the unit's `consulted_env_keys` set (§{xref.resolution}) on the same footing as a shell-body `$<KEY>` sigil contributes. The recording is required for the cache-invalidation contract of §17.1: a value change in any consulted key MUST invalidate the unit's cache fingerprint.
 >
 > A conforming implementation MUST recover the consulted key set by static analysis of the Lua source text. It MUST recognise:
 >
@@ -123,7 +124,7 @@ Probe units (§{cat.probes}) participate in the same cache machinery: a probe's 
 
 ### Note 17.5.1 — Chore parameters and caching (informative) [#exec.cache.chore-params]
 
-A reader landing here looking for how chore parameters (§{chores.params}) interact with the cache should consult §{chores.no-caching} (§7.4): a chore body MUST NOT register a cached work unit, so chore parameters never enter the cache fingerprint. Recipes do not take parameters (§{recipes.header}, §{chores.params}), so the parametric-cache-key question does not arise in the current Standard. This note exists so that searches for "parameter" within the cache chapter point readers at the right section.
+A reader landing here looking for how chore parameters (§{chores.params}) interact with the cache should consult §{chores.no-caching} (§7.4): a chore body MUST NOT register a cached work unit, so chore parameters never enter the cache fingerprint. Recipes do not take parameters (§{recipes.header-forms}, §{chores.params}), so the parametric-cache-key question does not arise in the current Standard. This note exists so that searches for "parameter" within the cache chapter point readers at the right section.
 
 ## 17.6. Output globs [#exec.cache.output-globs]
 
