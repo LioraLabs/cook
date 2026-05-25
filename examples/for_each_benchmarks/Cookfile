@@ -1,0 +1,79 @@
+# §8.3 for_each Benchmarks (COOK-63 / CS-0091)
+#
+# Exercises every `for_each` data-member source form and every per-member
+# consumer (`cook`, `plate`, `test`). `for_each` is the data-driven counterpart
+# to `ingredients`: it drives one work unit per data member rather than per
+# filesystem path, with the current member bound as `item` / `$<item>` /
+# `$<item.FIELD>`.
+#
+# SCOPE NOTE — COOK-63 lands the parser + codegen. The register-time runtime
+# these recipes need (the §22.5.9 probe pre-pass that materialises an array
+# probe value before registration, the register-time `$(cmd)` capture, and the
+# whole-member `cook.member_to_string` rendering) is the COOK-64 slice. Until
+# then, verify with the transpiler:
+#
+#   cook emit-lua            # prints the generated register-phase fan-out Lua
+#   ./verify.sh              # asserts the codegen shape of every recipe
+#
+# Once COOK-64 lands, the recipes below run end-to-end as written (commands are
+# POSIX-portable on purpose). Wipe build/ between runs with `cook clean`.
+
+register
+    # Array-shaped probe value: one record per card (§22.5.4, §22.5.9).
+    cook.probe("cards", {
+        inputs  = { files = {"data/cards.json"} },
+        produce = [[ return cook.json_decode(cook.sh("cat data/cards.json")) ]],
+    })
+    # Object whose `items` field is the array — consumed via `cards:items`.
+    cook.probe("catalog", {
+        inputs  = { files = {"data/catalog.json"} },
+        produce = [[ return cook.json_decode(cook.sh("cat data/catalog.json")) ]],
+    })
+    # Test-case records.
+    cook.probe("cases", {
+        inputs  = { files = {"data/cases.json"} },
+        produce = [[ return cook.json_decode(cook.sh("cat data/cases.json")) ]],
+    })
+
+# ── Source form 1: probe key, cook consumer ───────────────────────────
+# One cook unit per card record; `$<item.id>` drives the output path,
+# `$<item.name>` interpolates into the body. (Canonical §8.3 Example 8.3.1.)
+recipe cards_cook
+    for_each cards
+    cook "build/cards/$<item.id>.txt" using {
+        mkdir -p build/cards
+        printf '%s\n' "$<item.name>" > $<out>
+    }
+
+# ── Source form 2: probe key:field, cook consumer ─────────────────────
+# `for_each catalog:items` iterates the array at the probe value's `items`
+# field (§22.5.9). The bare `$<item>` renders the whole member.
+recipe catalog_cook
+    for_each catalog:items
+    cook "build/catalog/$<item.id>.json" using {
+        mkdir -p build/catalog
+        printf '%s\n' '$<item>' > $<out>
+    }
+
+# ── Source form 3: $(cmd) NDJSON capture (default), plate consumer ────
+# Each stdout line is JSON-decoded into a record; one plate (side-effect)
+# unit per host. Plates declare no output (§8.3 Example 8.3.2).
+recipe deploy
+    for_each $(cat data/hosts.ndjson)
+    plate { echo "deploy $<item.user>@$<item.host>" }
+
+# ── Source form 4: $(cmd) `as lines` capture, cook consumer ───────────
+# `as lines` disables JSON decoding: each `ls` output line is a raw-string
+# member. The bare `$<item>` is that filename.
+recipe render
+    for_each $(ls posts) as lines
+    cook "build/html/$<item>.html" using {
+        mkdir -p build/html
+        printf '<article>%s</article>\n' "$<item>" > $<out>
+    }
+
+# ── Source form 5: probe key, test consumer ───────────────────────────
+# One test unit per case record; the member fields drive the assertion.
+recipe eval
+    for_each cases
+    test { [ "$<item.input>" = "$<item.expect>" ] }

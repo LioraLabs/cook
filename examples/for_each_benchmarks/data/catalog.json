@@ -1,0 +1,6 @@
+{
+  "items": [
+    {"id": "widget", "name": "Widget"},
+    {"id": "gadget", "name": "Gadget"}
+  ]
+}
