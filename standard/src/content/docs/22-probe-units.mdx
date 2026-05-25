@@ -213,6 +213,8 @@ Iterating over artifacts produced earlier in the same build (the codegen-then-pr
 
 **Per-member units.** Each array element becomes one data member, bound as `item` in the consuming recipe's per-member steps (§{steps.for-each}). Each per-member unit's fingerprint folds the materialised element (§{exec.cache}); the probe-value fingerprint covers the set, so editing one element re-runs only its unit, while editing the probe's declared inputs re-evaluates the set and re-runs only the members that changed.
 
+> **Note (informative).** An implementation must learn a recipe's `for_each`-feeding probe *before* running the recipe body (which reads the resolved array). The reference implementation surfaces the source on the recipe's registration metadata — a `__for_each` descriptor naming the probe key (and optional field) — so the pre-pass resolves the probe from the recipe header without first executing the body (COOK-64). Recipe-level reachability (above) then bounds the pre-pass to the probes of recipes the build target actually reaches.
+
 ## 22.5.10. Implementation status (CS-0074) [#cat.probes.impl-status]
 
 C4–C6 implemented: requires resolution (§22.5.5), cycle detection (§22.5.8), execute-VM guard (§22.5.2).

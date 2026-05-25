@@ -1306,8 +1306,43 @@ fn emit_chore_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]
 /// `ingredients` / `excludes`.
 fn generate_metadata_with_line(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> String {
     let mut fields = recipe_metadata_fields(recipe, recipe_names);
+    // COOK-64 §8.3/§22.5.9: expose a `for_each` recipe's data source on the
+    // surface meta so the register pre-pass can resolve a feeding probe before
+    // running the body (which itself reads the resolved value via
+    // `cook.cache.get`). Recipe-level, so reachability is known pre-fan-out.
+    if let Some(meta) = for_each_meta_field(recipe) {
+        fields.push(meta);
+    }
     fields.push(format!("__line = {}", recipe.line));
     format!("{{{}}}", fields.join(", "))
+}
+
+/// Render the `__for_each = {…}` surface-meta field for a `for_each` recipe, or
+/// `None` if the recipe has no `for_each` driver. The descriptor names the
+/// source kind so the register pre-pass knows whether (and which probe) to
+/// evaluate ahead of fan-out registration.
+fn for_each_meta_field(recipe: &Recipe) -> Option<String> {
+    let step = recipe.steps.iter().find_map(|s| match s {
+        Step::ForEach { step, .. } => Some(step),
+        _ => None,
+    })?;
+    let body = match &step.source {
+        ForEachSource::ProbeKey(k) => match k.split_once(':') {
+            Some((key, field)) => format!(
+                "kind = \"probe\", key = \"{}\", field = \"{}\"",
+                escape_lua_string(key),
+                escape_lua_string(field),
+            ),
+            None => format!("kind = \"probe\", key = \"{}\"", escape_lua_string(k)),
+        },
+        ForEachSource::ShellCapture(cmd) => format!(
+            "kind = \"shell\", cmd = \"{}\", as_lines = {}",
+            escape_lua_string(cmd),
+            step.as_lines,
+        ),
+        ForEachSource::LuaExpr(_) => "kind = \"lua\"".to_string(),
+    };
+    Some(format!("__for_each = {{{}}}", body))
 }
 
 /// Field-builder for `generate_metadata_with_line`. Emits one

@@ -3321,6 +3321,29 @@ fn for_each_test_fans_out_per_member() {
 }
 
 #[test]
+fn for_each_surface_carries_source_metadata() {
+    // COOK-64: the register pre-pass learns a recipe's for_each-feeding probe
+    // from `__for_each` on the surface meta — without running the body.
+    let probe = generate(&cook_lang::parse(
+        "recipe a\n    for_each cards\n    cook \"o/$<item.id>\" using { x $<out> }\n",
+    ).unwrap());
+    assert!(probe.contains(r#"__for_each = {kind = "probe", key = "cards"}"#),
+        "probe source metadata missing, got:\n{probe}");
+
+    let field = generate(&cook_lang::parse(
+        "recipe a\n    for_each cards:items\n    cook \"o/$<item.id>\" using { x $<out> }\n",
+    ).unwrap());
+    assert!(field.contains(r#"__for_each = {kind = "probe", key = "cards", field = "items"}"#),
+        "key:field metadata missing, got:\n{field}");
+
+    let shell = generate(&cook_lang::parse(
+        "recipe d\n    for_each $(cat h)\n    plate { echo $<item.host> }\n",
+    ).unwrap());
+    assert!(shell.contains(r#"__for_each = {kind = "shell""#),
+        "shell source metadata missing, got:\n{shell}");
+}
+
+#[test]
 fn for_each_unit_folds_member_into_fingerprint() {
     // COOK-64 §17.1 observable #5: each fan-out unit carries its member so the
     // register fold distinguishes per-member fingerprints.
