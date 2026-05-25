@@ -536,6 +536,16 @@ fn register_worker_cook_table(
     // modules that use the scoped sub-table pattern.
     install_execute_phase_cook_cache(lua, &cook, probe_store)?;
 
+    // COOK-64 §8.3: cook.member_to_string(value) renders a for_each data
+    // member to its canonical string form (key-sorted JSON for a table, the
+    // scalar's bare string otherwise). Used by the `$<item>` placeholder.
+    let member_fn = lua.create_function(|_, value: mlua::Value| {
+        let mp = crate::probe_value::lua_to_msgpack(&value)
+            .map_err(|e| mlua::Error::runtime(format!("cook.member_to_string: {e}")))?;
+        Ok(cook_contracts::member::member_to_string(&mp))
+    })?;
+    cook.set("member_to_string", member_fn)?;
+
     // CS-0071: cook.export / cook.import on the execute-phase VM
     // (Standard §6.3.4). Per-worker in-memory store; no cross-invocation
     // persistence. The register-phase implementation
