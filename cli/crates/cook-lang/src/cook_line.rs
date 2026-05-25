@@ -205,6 +205,84 @@ pub(crate) fn parse_ingredients_line(
 }
 
 
+/// Parse a `for_each` step line (§8.3): `for_each <source> ("as" "lines")?`.
+///
+/// `rest` is the line text AFTER the `for_each` keyword. The source forms are
+/// (per the §8.3 grammar `for_each_source ::= probe_ref | "$(" SHELL ")" |
+/// "(" LUA_EXPR ")"`):
+///
+///  * `$(cmd)` — a register-time shell capture; balanced-paren-scanned, stored
+///    without the surrounding `$( )`.
+///  * `(lua)`  — the reserved Lua-expression source; parses now, rejected at
+///    codegen with a "not yet supported" diagnostic.
+///  * `probe_ref` — `IDENT (":" IDENT)?` (e.g. `cards`, `cards:items`); stored
+///    verbatim (the codegen splits the optional `:field`).
+///
+/// The optional `as lines` modifier disables JSON parsing of a `$(cmd)` source;
+/// §8.3 requires it to be rejected for a `probe_ref`. Returns the parsed
+/// [`ForEachStep`] and the token-stream position past this line.
+pub(crate) fn parse_for_each_line(
+    rest: &str,
+    line: usize,
+    tokens: &[Located<Token>],
+    current_pos: usize,
+) -> Result<(ForEachStep, usize), ParseError> {
+    let rest = rest.trim();
+
+    let (source, leftover): (ForEachSource, &str) = if let Some(after) = rest.strip_prefix("$(") {
+        let (cmd, tail) = scan_balanced_paren_expr(after, line)?;
+        (ForEachSource::ShellCapture(cmd.trim().to_string()), tail)
+    } else if let Some(after) = rest.strip_prefix('(') {
+        let (expr, tail) = scan_balanced_paren_expr(after, line)?;
+        (ForEachSource::LuaExpr(expr.trim().to_string()), tail)
+    } else {
+        // probe_ref ::= IDENT (":" IDENT)? — a run of ident chars plus the
+        // single `:` field separator. A `.` here is not a valid probe_ref
+        // character, so it surfaces below as trailing content.
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | ':')))
+            .unwrap_or(rest.len());
+        if end == 0 {
+            return Err(ParseError::Parse {
+                line,
+                message: "for_each: expected a probe key, $(cmd), or (lua-expr) source"
+                    .to_string(),
+            });
+        }
+        (ForEachSource::ProbeKey(rest[..end].to_string()), &rest[end..])
+    };
+
+    let leftover = leftover.trim();
+    let (as_lines, leftover) = match leftover.strip_prefix("as lines") {
+        Some(tail) => (true, tail.trim()),
+        None => (false, leftover),
+    };
+
+    if !leftover.is_empty() {
+        return Err(ParseError::Parse {
+            line,
+            message: format!("for_each: unexpected trailing content '{leftover}'"),
+        });
+    }
+
+    // §8.3: `as lines` is only meaningful for a `$(cmd)` source; a probe_ref's
+    // members are already typed values, so `as lines` on one MUST be rejected.
+    if as_lines && matches!(source, ForEachSource::ProbeKey(_)) {
+        return Err(ParseError::Parse {
+            line,
+            message: "for_each: `as lines` is only valid for a $(cmd) source, not a probe key"
+                .to_string(),
+        });
+    }
+
+    // Advance the token cursor past every token on this line.
+    let mut pos = current_pos + 1;
+    while pos < tokens.len() && tokens[pos].line <= line {
+        pos += 1;
+    }
+    Ok((ForEachStep { source, as_lines }, pos))
+}
+
 /// Brace-balanced scan for a `cook (LUA_EXPR)` payload. `text` is the
 /// content AFTER the opening `(`. Scans until the matching `)` is found,
 /// honouring nested parens and basic double/single-quoted string literals.

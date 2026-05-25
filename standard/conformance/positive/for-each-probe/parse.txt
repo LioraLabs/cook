@@ -1,0 +1,15 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="art" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        ForEach source=ProbeKey("cards") as_lines=false
+        Cook outputs=["build/art/$<item.id>.png"] using=ShellBlock(["gen \"$<item.name>\" $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

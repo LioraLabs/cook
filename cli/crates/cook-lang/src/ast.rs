@@ -181,6 +181,32 @@ pub struct TestStep {
     pub should_fail: bool,
 }
 
+/// The source of a `for_each` step's data members (§8.3). A `for_each`
+/// is the data-driven counterpart to `ingredients`: it drives one-to-one
+/// over data members rather than over filesystem globs. CS-0091 / COOK-62.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForEachSource {
+    /// A probe key, optionally selecting a nested array field (`cards`,
+    /// `cards:items`). The probe's value MUST be an array (§22.5.9).
+    ProbeKey(String),
+    /// A register-time shell capture (`$(cmd)`): stdout split into members.
+    /// Uncached; re-evaluated every registration. Stored without the `$( )`.
+    ShellCapture(String),
+    /// Reserved register-phase Lua-value source (`(LUA_EXPR)`). Parsed, then
+    /// rejected with a "not yet supported" diagnostic until a future amendment.
+    LuaExpr(String),
+}
+
+/// A `for_each` step (§8.3). At most one per recipe; mutually exclusive with
+/// `ingredients`. The current member binds as `item` / `$<item>` / `$<item.field>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForEachStep {
+    pub source: ForEachSource,
+    /// `as lines`: disable JSON parsing of a `$(cmd)` source — each output
+    /// line is a raw-string member. Rejected for a `ProbeKey` source.
+    pub as_lines: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Step {
@@ -200,6 +226,8 @@ pub enum Step {
     Cook { step: CookStep, line: usize },
     Plate { step: PlateStep, line: usize },
     Test { step: TestStep, line: usize },
+    /// Register-phase data-member iteration driver (§8.3). Declarative.
+    ForEach { step: ForEachStep, line: usize },
 }
 
 impl Step {

@@ -351,6 +351,9 @@ pub(crate) fn parse_recipe(
     let mut ingredients = Vec::new();
     let mut excludes: Vec<String> = Vec::new();
     let mut steps: Vec<Step> = Vec::new();
+    // §8.3: `for_each` and `ingredients` are mutually-exclusive iteration
+    // drivers, and at most one `for_each` is allowed per recipe.
+    let mut for_each_seen = false;
 
     // Track the line on which the imperative region began (the first
     // imperative-region step). None until we see one. App. A.3 "Region
@@ -421,6 +424,14 @@ pub(crate) fn parse_recipe(
                     if let Some(started) = imperative_began {
                         return Err(region_violation("ingredients", tok.line, started));
                     }
+                    if for_each_seen {
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message:
+                                "for_each and ingredients are mutually exclusive iteration drivers"
+                                    .to_string(),
+                        });
+                    }
                     if !ingredients.is_empty() || !excludes.is_empty() {
                         return Err(ParseError::Parse {
                             line: tok.line,
@@ -432,6 +443,33 @@ pub(crate) fn parse_recipe(
                     )?;
                     ingredients = inc;
                     excludes = exc;
+                    pos = new_pos;
+                    continue;
+                } else if let Some(rest) = strip_keyword(text, "for_each") {
+                    // §8.3: declarative iteration driver. Region rule applies
+                    // (cannot follow the imperative region); mutually exclusive
+                    // with `ingredients`; at most one per recipe.
+                    if let Some(started) = imperative_began {
+                        return Err(region_violation("for_each", tok.line, started));
+                    }
+                    if !ingredients.is_empty() || !excludes.is_empty() {
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message:
+                                "for_each and ingredients are mutually exclusive iteration drivers"
+                                    .to_string(),
+                        });
+                    }
+                    if for_each_seen {
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: "at most one for_each per recipe".to_string(),
+                        });
+                    }
+                    let (fe, new_pos) =
+                        parse_for_each_line(rest, tok.line, tokens, pos)?;
+                    for_each_seen = true;
+                    steps.push(Step::ForEach { step: fe, line: tok.line });
                     pos = new_pos;
                     continue;
                 } else if let Some(rest) = strip_keyword(text, "cook") {
