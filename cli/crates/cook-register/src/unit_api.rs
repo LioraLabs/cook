@@ -402,10 +402,19 @@ pub fn register_unit_api(
             _ => {}
         }
 
-        let command_hash = if let Some(code) = &lua_code {
-            hash_str(code)
-        } else {
-            hash_str(&command)
+        // COOK-64 §8.3/§17.1: a `for_each` fan-out unit carries its data member
+        // (canonical-rendered by `cook.member_to_string`). Fold it into the
+        // command hash so each member's unit gets a distinct fingerprint —
+        // editing one member re-runs only its unit (observable #5). NUL
+        // delimiters keep the member byte-range disjoint from the command.
+        // Shell bodies already bake the member into the command text; this
+        // additionally covers Lua-block bodies whose `item` reads are opaque to
+        // the command string. `None` (non-`for_each` units) hashes as before.
+        let member: Option<String> = tbl.get::<Option<String>>("member").unwrap_or(None);
+        let hash_base: &str = lua_code.as_deref().unwrap_or(&command);
+        let command_hash = match &member {
+            Some(m) => hash_str(&format!("{hash_base}\u{0}member\u{0}{m}")),
+            None => hash_str(hash_base),
         };
 
         // Retrieve the CacheContext if it was threaded in from cook-engine.

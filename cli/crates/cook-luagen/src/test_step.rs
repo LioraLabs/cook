@@ -181,7 +181,7 @@ pub(crate) fn generate_for_each_test_step(
             };
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(&format!(
-                "        cook.add_test({{command = {}, {}timeout = {}, should_fail = {}, line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = {}}})\n",
+                "        cook.add_test({{command = {}, {}timeout = {}, should_fail = {}, line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
                 cmd_expr, name_field, timeout, should_fail, line, consulted.to_lua_table()
             ));
             out.push_str("    end\n");
@@ -191,7 +191,7 @@ pub(crate) fn generate_for_each_test_step(
             // binding of `item` is wired by the COOK-64 runtime slice.
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(&format!(
-                "        cook.add_test({{lua_code = {}, {}timeout = {}, should_fail = {}, line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = \"*\"}})\n",
+                "        cook.add_test({{lua_code = {}, {}timeout = {}, should_fail = {}, line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = \"*\", member = cook.member_to_string(item)}})\n",
                 lua_chunk_literal(code), name_field, timeout, should_fail, line
             ));
             out.push_str("    end\n");

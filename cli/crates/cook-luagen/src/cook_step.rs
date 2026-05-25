@@ -570,7 +570,7 @@ pub(crate) fn generate_for_each_cook_step(
             };
             let probes_lua = probe_keys_to_lua_table(&probe_keys);
             out.push_str(&format!(
-                "        cook.add_unit({{inputs = {{}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}}})\n",
+                "        cook.add_unit({{inputs = {{}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
                 cmd_expr, probes_lua, consulted.to_lua_table()
             ));
         }
@@ -580,13 +580,13 @@ pub(crate) fn generate_for_each_cook_step(
             let code_literal = crate::lua_string::wrap_lua_string(code);
             let env_keys = lua_body_consulted_env_keys(code);
             out.push_str(&format!(
-                "        cook.add_unit({{inputs = {{}}, output = _cook_out, lua_code = {}, consulted_env_keys = {}}})\n",
+                "        cook.add_unit({{inputs = {{}}, output = _cook_out, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
                 code_literal, env_keys
             ));
         }
         None => {
             // Declaration-only: one declared output per member, no command.
-            out.push_str("        cook.add_unit({inputs = {}, output = _cook_out})\n");
+            out.push_str("        cook.add_unit({inputs = {}, output = _cook_out, member = cook.member_to_string(item)})\n");
         }
     }
 

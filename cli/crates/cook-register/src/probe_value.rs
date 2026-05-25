@@ -180,6 +180,19 @@ mod tests {
         assert_eq!(convert("return nil").unwrap(), MsgPackValue::Nil);
     }
 
+    // COOK-64 §8.3: the exact composition `cook.member_to_string` binds —
+    // a real Lua value through `lua_to_msgpack` then `member::member_to_string`.
+    #[test]
+    fn member_to_string_renders_record_and_scalar() {
+        let rec = convert("return { name = 'ace', id = 1 }").unwrap();
+        assert_eq!(
+            cook_contracts::member::member_to_string(&rec),
+            r#"{"id":1,"name":"ace"}"#
+        );
+        let scalar = convert("return 'hi'").unwrap();
+        assert_eq!(cook_contracts::member::member_to_string(&scalar), "hi");
+    }
+
     #[test]
     fn converts_bool() {
         assert_eq!(convert("return true").unwrap(), MsgPackValue::Boolean(true));

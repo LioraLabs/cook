@@ -3321,6 +3321,22 @@ fn for_each_test_fans_out_per_member() {
 }
 
 #[test]
+fn for_each_unit_folds_member_into_fingerprint() {
+    // COOK-64 §17.1 observable #5: each fan-out unit carries its member so the
+    // register fold distinguishes per-member fingerprints.
+    let src = "recipe art\n    for_each cards\n    cook \"o/$<item.id>\" using { build $<out> }\n";
+    let lua = generate(&cook_lang::parse(src).unwrap());
+    assert!(lua.contains("member = cook.member_to_string(item)"),
+        "for_each cook unit should carry member, got:\n{lua}");
+
+    let plate = generate(&cook_lang::parse(
+        "recipe d\n    for_each $(cat h)\n    plate { echo $<item.host> }\n",
+    ).unwrap());
+    assert!(plate.contains("member = cook.member_to_string(item)"),
+        "for_each plate unit should carry member, got:\n{plate}");
+}
+
+#[test]
 fn for_each_lua_expr_source_rejected_at_codegen() {
     // §8.3: the reserved `(LUA_EXPR)` source parses, then codegen rejects it.
     let src = "recipe x\n    for_each (cook.cards())\n    cook \"o/$<item>\" using { y $<out> }\n";
