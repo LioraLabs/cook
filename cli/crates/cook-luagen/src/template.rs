@@ -82,6 +82,63 @@ pub(crate) fn expand_command_template(
     Ok((lua_expr, probe_keys))
 }
 
+/// Expand a `for_each` body template (§8.3): a cook output pattern, a cook
+/// shell command, or a plate/test body. The member sigils `$<item>` and
+/// `$<item.FIELD>` bind the current data member (`item`); every other sigil
+/// resolves through the normal closed-set [`resolve`] against `ctx` — so
+/// `$<out>`, recipe refs, env vars, and probe refs behave exactly as in an
+/// ingredient-driven body. `$<in>` / `$<all>` are rejected when `ctx.mode` is
+/// `OneShot` (a `for_each` body has no path-input or batched-input source).
+///
+/// Returns the concatenation expression (unwrapped — the caller decides whether
+/// to wrap a command in a deferred `function() return … end` when probe refs
+/// are present) together with the set of probe keys it referenced.
+pub(crate) fn expand_for_each_template(
+    template: &str,
+    ctx: &ResolveCtx<'_>,
+    consulted_env: &mut ConsultedEnv,
+) -> Result<(String, BTreeSet<String>), ResolveError> {
+    let spans = sigil::scan(template);
+    let mut parts: Vec<String> = Vec::new();
+    let mut probe_keys: BTreeSet<String> = BTreeSet::new();
+    let mut last_end = 0usize;
+
+    for span in &spans {
+        if span.range.start > last_end {
+            parts.push(format!(
+                "\"{}\"",
+                escape_lua_string(&template[last_end..span.range.start])
+            ));
+        }
+        // §8.3 member binding takes precedence; everything else is the normal
+        // closed-set resolution.
+        let lua = if let Some(b) = crate::resolver::match_item_sigil(&span.ident) {
+            builtin_to_lua(b)
+        } else {
+            let resolved = crate::resolver::resolve(&span.ident, ctx);
+            if let Resolved::ProbeRef { key, .. } = &resolved {
+                probe_keys.insert(key.clone());
+            }
+            resolved_to_lua(resolved, &span.ident, consulted_env)?
+        };
+        parts.push(lua);
+        last_end = span.range.end;
+    }
+
+    if last_end < template.len() {
+        parts.push(format!("\"{}\"", escape_lua_string(&template[last_end..])));
+    }
+
+    let concat = if parts.is_empty() {
+        "\"\"".to_string()
+    } else if parts.len() == 1 {
+        parts.into_iter().next().unwrap()
+    } else {
+        parts.join(" .. ")
+    };
+    Ok((concat, probe_keys))
+}
+
 /// Accumulator for env keys that fall through to `cook.require_env(KEY)` during
 /// template expansion. Populated by every expansion path that reaches the
 /// "env-runtime" branch. The set is sorted (BTreeSet) so the resulting
@@ -211,6 +268,15 @@ fn builtin_to_lua(b: BuiltinKind) -> String {
         BuiltinKind::OutIndexed(n) => format!("_cook_outs[{}]", n),
         BuiltinKind::OutIndexedAccessor(n, acc) => format!("path.{}(_cook_outs[{}])", acc, n),
         BuiltinKind::All => "_cook_all".to_string(),
+        // COOK-63 §8.3: data-member bindings. `$<item>` renders the whole
+        // member — canonical key-sorted JSON for a record, the scalar's string
+        // form otherwise — via the `cook.member_to_string` runtime helper
+        // (provided by the COOK-64 runtime slice). `$<item.FIELD>` reads a
+        // record field by key (bracket-indexed so non-identifier keys are safe).
+        BuiltinKind::Item => "cook.member_to_string(item)".to_string(),
+        BuiltinKind::ItemField(field) => {
+            format!("tostring(item[\"{}\"])", escape_lua_string(&field))
+        }
     }
 }
 
@@ -956,6 +1022,20 @@ mod tests {
         let mut env = ConsultedEnv::new();
         let result = expand_sigil_template("build/$<in.stem>.o", &ctx, &mut env).unwrap();
         assert_eq!(result, "\"build/\" .. path.stem(_cook_in) .. \".o\"");
+    }
+
+    // COOK-63 §8.3: data-member builtins lower to `item` accesses.
+    #[test]
+    fn item_builtins_lower_to_member_access() {
+        assert_eq!(builtin_to_lua(BuiltinKind::Item), "cook.member_to_string(item)");
+        assert_eq!(
+            builtin_to_lua(BuiltinKind::ItemField("host".into())),
+            "tostring(item[\"host\"])"
+        );
+        assert_eq!(
+            builtin_to_lua(BuiltinKind::ItemField("user-id".into())),
+            "tostring(item[\"user-id\"])"
+        );
     }
 }
 

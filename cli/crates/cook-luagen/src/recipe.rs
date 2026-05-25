@@ -3,10 +3,10 @@ use std::collections::BTreeSet;
 use cook_contracts::{ACCESSORS, REGISTER_SURFACE_CHORE_NAME, REGISTER_SURFACE_NAME};
 use cook_lang::ast::*;
 
-use crate::cook_step::generate_cook_step;
+use crate::cook_step::{generate_cook_step, generate_for_each_cook_step};
 use crate::dep_ref::{extract_dep_refs, extract_sigil_tokens};
 use crate::lua_string::{escape_lua_string, wrap_lua_string};
-use crate::plate_step::generate_plate_step;
+use crate::plate_step::{generate_for_each_plate_step, generate_plate_step};
 use crate::resolver::{IterMode, OutputShape, ResolveCtx};
 use crate::sigil;
 use crate::template::ConsultedEnv;
@@ -48,6 +48,10 @@ pub enum CodegenError {
     /// CS-0024 plate/test mode or placeholder validation failure.
     #[error("{0}")]
     PlateTest(#[from] crate::plate_step::CodegenError),
+    /// COOK-63 §8.3: the reserved `for_each (LUA_EXPR)` source parses but is
+    /// not yet executable. A future amendment will specify it.
+    #[error("line {line}: for_each Lua-expression source is not yet supported")]
+    ForEachLuaReserved { line: usize },
 }
 
 pub fn generate(cookfile: &Cookfile) -> String {
@@ -770,6 +774,20 @@ pub fn generate_with_names(
                     ));
                 }
 
+                // COOK-63 §8.3: a `for_each` recipe drives its per-member
+                // steps from a data source. Emit the member set once, then
+                // route this recipe's cook/plate/test steps through the
+                // data-member fan-out path (each producing one unit per member,
+                // member bound as `item`) instead of the ingredient-driven one.
+                let for_each = recipe.steps.iter().find_map(|s| match s {
+                    Step::ForEach { step, line } => Some((step, *line)),
+                    _ => None,
+                });
+                if let Some((fe, fe_line)) = for_each {
+                    emit_for_each_items(&mut out, fe, fe_line)?;
+                }
+                let is_for_each = for_each.is_some();
+
                 let mut prev_cook_index: Option<usize> = None;
                 let mut cook_index: usize = 0;
 
@@ -796,15 +814,24 @@ pub fn generate_with_names(
                             cook_index += 1;
                             out.push_str(&format!("    local _cook_outputs_{} = {{}}\n", cook_index));
                             out.push_str("    cook.step_group(function()\n");
-                            generate_cook_step(
-                                &mut out,
-                                cook_step,
-                                *line,
-                                cook_index,
-                                prev_cook_index,
-                                &recipe.ingredients,
-                                recipe_names,
-                            );
+                            if is_for_each {
+                                generate_for_each_cook_step(
+                                    &mut out,
+                                    cook_step,
+                                    cook_index,
+                                    recipe_names,
+                                );
+                            } else {
+                                generate_cook_step(
+                                    &mut out,
+                                    cook_step,
+                                    *line,
+                                    cook_index,
+                                    prev_cook_index,
+                                    &recipe.ingredients,
+                                    recipe_names,
+                                );
+                            }
                             out.push_str("    end)\n");
                             prev_cook_index = Some(cook_index);
                             i += 1;
@@ -814,14 +841,18 @@ pub fn generate_with_names(
                             line,
                         } => {
                             out.push_str("    cook.step_group(function()\n");
-                            generate_plate_step(
-                                &mut out,
-                                plate_step,
-                                *line,
-                                prev_cook_index,
-                                !recipe.ingredients.is_empty(),
-                                recipe_names,
-                            )?;
+                            if is_for_each {
+                                generate_for_each_plate_step(&mut out, plate_step, recipe_names);
+                            } else {
+                                generate_plate_step(
+                                    &mut out,
+                                    plate_step,
+                                    *line,
+                                    prev_cook_index,
+                                    !recipe.ingredients.is_empty(),
+                                    recipe_names,
+                                )?;
+                            }
                             out.push_str("    end)\n");
                             i += 1;
                         }
@@ -830,14 +861,23 @@ pub fn generate_with_names(
                             line,
                         } => {
                             out.push_str("    cook.step_group(function()\n");
-                            test_step::generate_test_step(
-                                &mut out,
-                                test_step_val,
-                                *line,
-                                prev_cook_index,
-                                !recipe.ingredients.is_empty(),
-                                recipe_names,
-                            )?;
+                            if is_for_each {
+                                test_step::generate_for_each_test_step(
+                                    &mut out,
+                                    test_step_val,
+                                    *line,
+                                    recipe_names,
+                                );
+                            } else {
+                                test_step::generate_test_step(
+                                    &mut out,
+                                    test_step_val,
+                                    *line,
+                                    prev_cook_index,
+                                    !recipe.ingredients.is_empty(),
+                                    recipe_names,
+                                )?;
+                            }
                             out.push_str("    end)\n");
                             i += 1;
                         }
@@ -872,6 +912,12 @@ pub fn generate_with_names(
                                 recipe_names,
                             );
                         }
+                        // COOK-63 §8.3: the `for_each` driver was already
+                        // consumed above into `local _items`; it emits no step
+                        // of its own here.
+                        Step::ForEach { .. } => {
+                            i += 1;
+                        }
                         // `Step` is `#[non_exhaustive]`. Future step kinds added by the
                         // reference implementation that this codegen has not yet learned
                         // about are skipped — the validator pass above already accepts
@@ -892,6 +938,56 @@ pub fn generate_with_names(
     }
 
     Ok(out)
+}
+
+/// COOK-63 §8.3: emit the `local _items = <source>` member-set setup for a
+/// `for_each` recipe. The data members are then iterated by the recipe's
+/// per-member cook/plate/test steps.
+///
+/// Member-materialisation is structurally correct here; the demand-driven
+/// probe pre-pass (§22.5.9) and the per-member fingerprint fold (§17) are the
+/// COOK-64 runtime slice. A `ProbeKey` reads the probe value via
+/// `cook.cache.get`; a `ProbeKey` carrying a `:field` selector indexes the
+/// named array field. A `$(cmd)` capture splits stdout into members —
+/// JSON-decoded per line by default, kept raw under `as lines`. The reserved
+/// `(LUA_EXPR)` source is rejected here (it parses, but is not yet executable).
+fn emit_for_each_items(
+    out: &mut String,
+    fe: &ForEachStep,
+    line: usize,
+) -> Result<(), CodegenError> {
+    match &fe.source {
+        ForEachSource::ProbeKey(k) => {
+            // §8.3 grammar `probe_ref ::= IDENT (":" IDENT)?`; §22.5.9:
+            // `key:field` iterates the array at the named field.
+            let (key, field) = match k.split_once(':') {
+                Some((key, field)) => (key, Some(field)),
+                None => (k.as_str(), None),
+            };
+            let mut expr = format!("cook.cache.get(\"{}\")", escape_lua_string(key));
+            if let Some(field) = field {
+                expr.push_str(&format!("[\"{}\"]", escape_lua_string(field)));
+            }
+            out.push_str(&format!("    local _items = {}\n", expr));
+        }
+        ForEachSource::ShellCapture(cmd) => {
+            out.push_str("    local _items = {}\n");
+            out.push_str(&format!(
+                "    for _line in (cook.sh(\"{}\")):gmatch(\"[^\\r\\n]+\") do\n",
+                escape_lua_string(cmd)
+            ));
+            if fe.as_lines {
+                out.push_str("        table.insert(_items, _line)\n");
+            } else {
+                out.push_str("        table.insert(_items, cook.json_decode(_line))\n");
+            }
+            out.push_str("    end\n");
+        }
+        ForEachSource::LuaExpr(_) => {
+            return Err(CodegenError::ForEachLuaReserved { line });
+        }
+    }
+    Ok(())
 }
 
 /// Expand a single shell command through sigil substitution (CS-0033).

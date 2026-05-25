@@ -515,6 +515,88 @@ pub(crate) fn generate_cook_step(
     }
 }
 
+/// COOK-63 §8.3: lower a `cook` step inside a `for_each` recipe to one
+/// `cook.add_unit` per data member, with the member bound as `item`.
+///
+/// The recipe body has already emitted `local _items = <source>` (see
+/// `recipe::generate_with_names`); this emits the per-member loop, wrapped by
+/// the caller's `cook.step_group` and preceded by `local _cook_outputs_N = {}`.
+/// `$<item>` / `$<item.FIELD>` resolve against the loop's `item`; `$<out>`
+/// resolves to the member's declared output; `$<in>` / `$<all>` are rejected
+/// (a `for_each` body has no path-input source). The probe-deferral and Lua
+/// long-string conventions mirror the ingredient-driven `LuaExprOneToOne` arm.
+pub(crate) fn generate_for_each_cook_step(
+    out: &mut String,
+    cook_step: &CookStep,
+    index: usize,
+    recipe_names: &BTreeSet<String>,
+) {
+    // OneShot rejects `$<in>`/`$<all>`; Single permits the lone `$<out>`.
+    let ctx = crate::template::cook_step_ctx(IterMode::OneShot, OutputShape::Single, recipe_names);
+    let sigil_err = |e: crate::resolver::ResolveError| {
+        (
+            format!(
+                "\"[[SIGIL_ERROR: {}]]\"",
+                crate::lua_string::escape_lua_string(&e.to_string())
+            ),
+            BTreeSet::new(),
+        )
+    };
+
+    out.push_str("    for _, item in ipairs(_items) do\n");
+
+    // Output path: member sigils + literals, no probe-deferral (the output
+    // path is a register-time value).
+    let mut consulted = ConsultedEnv::new();
+    let (out_expr, _) = crate::template::expand_for_each_template(
+        cook_step.outputs[0].as_str(),
+        &ctx,
+        &mut consulted,
+    )
+    .unwrap_or_else(sigil_err);
+    out.push_str(&format!("        local _cook_out = {}\n", out_expr));
+
+    match &cook_step.using_clause {
+        Some(UsingClause::ShellBlock(lines)) => {
+            let combined = build_shell_block_command(lines, recipe_names);
+            let (cmd_concat, probe_keys) =
+                crate::template::expand_for_each_template(&combined, &ctx, &mut consulted)
+                    .unwrap_or_else(sigil_err);
+            // Probe refs resolve at execute time, so defer them in a function.
+            let cmd_expr = if probe_keys.is_empty() {
+                cmd_concat
+            } else {
+                format!("function() return {} end", cmd_concat)
+            };
+            let probes_lua = probe_keys_to_lua_table(&probe_keys);
+            out.push_str(&format!(
+                "        cook.add_unit({{inputs = {{}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}}})\n",
+                cmd_expr, probes_lua, consulted.to_lua_table()
+            ));
+        }
+        Some(UsingClause::LuaBlock(code)) => {
+            // §8.3: a Lua block body sees the member as `item`. Execute-phase
+            // binding of `item` is wired by the COOK-64 runtime slice.
+            let code_literal = crate::lua_string::wrap_lua_string(code);
+            let env_keys = lua_body_consulted_env_keys(code);
+            out.push_str(&format!(
+                "        cook.add_unit({{inputs = {{}}, output = _cook_out, lua_code = {}, consulted_env_keys = {}}})\n",
+                code_literal, env_keys
+            ));
+        }
+        None => {
+            // Declaration-only: one declared output per member, no command.
+            out.push_str("        cook.add_unit({inputs = {}, output = _cook_out})\n");
+        }
+    }
+
+    out.push_str(&format!(
+        "        table.insert(_cook_outputs_{}, _cook_out)\n",
+        index
+    ));
+    out.push_str("    end\n");
+}
+
 #[cfg(test)]
 mod cs_0022_mode_tests {
     use super::*;

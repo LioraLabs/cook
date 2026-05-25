@@ -48,6 +48,10 @@ pub enum BuiltinKind {
     OutIndexed(usize),     // {out_1}
     OutIndexedAccessor(usize, String), // {out_1.stem}
     All,                   // {all}
+    /// COOK-63 §8.3: `$<item>` — the whole current `for_each` data member.
+    Item,
+    /// COOK-63 §8.3: `$<item.FIELD>` — record field `FIELD` of the member.
+    ItemField(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +149,26 @@ fn parse_probe_ref(ident: &str, escape: impl Fn(&str) -> String) -> (String, Str
     }
 
     (key.to_string(), access)
+}
+
+/// COOK-63 §8.3: recognise the data-member binding sigils `$<item>` and
+/// `$<item.FIELD>`. Returns the matching [`BuiltinKind`], or `None` for any
+/// other ident.
+///
+/// This is deliberately *not* wired into [`resolve`]: `item` is only a member
+/// binding inside a `for_each` recipe body, so only the for_each codegen path
+/// (`template::expand_for_each_template`) consults it. Everywhere else `$<item>`
+/// keeps its ordinary env-fallthrough meaning. (The §9 "`$<item>` requires a
+/// `for_each` driver" diagnostic for misuse outside a `for_each` is a
+/// register/validate-phase concern, tracked under COOK-64.)
+pub fn match_item_sigil(ident: &str) -> Option<BuiltinKind> {
+    if ident == "item" {
+        return Some(BuiltinKind::Item);
+    }
+    match ident.strip_prefix("item.") {
+        Some(field) if !field.is_empty() => Some(BuiltinKind::ItemField(field.to_string())),
+        _ => None,
+    }
 }
 
 pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
@@ -294,6 +318,10 @@ fn validate_builtin(ident: &str, b: BuiltinKind, ctx: &ResolveCtx<'_>) -> Resolv
                 });
             }
         }
+        // `$<item>` / `$<item.FIELD>` never arrive here: they are matched by
+        // [`match_item_sigil`] in the for_each codegen path, not by `resolve` /
+        // `match_builtin`. The arm exists only for exhaustiveness.
+        Item | ItemField(_) => {}
     }
     Resolved::Builtin(b)
 }
@@ -309,6 +337,28 @@ mod tests {
         ResolveCtx { mode: IterMode::OneShot, outputs: OutputShape::None, recipes_in_scope: recipes }
     }
     fn empty() -> BTreeSet<String> { BTreeSet::new() }
+
+    // COOK-63 §8.3: data-member binding sigils.
+    #[test]
+    fn match_item_sigil_recognises_item_and_field() {
+        assert_eq!(match_item_sigil("item"), Some(BuiltinKind::Item));
+        assert_eq!(
+            match_item_sigil("item.host"),
+            Some(BuiltinKind::ItemField("host".into()))
+        );
+        assert_eq!(
+            match_item_sigil("item.user_id"),
+            Some(BuiltinKind::ItemField("user_id".into()))
+        );
+    }
+
+    #[test]
+    fn match_item_sigil_rejects_non_members() {
+        assert_eq!(match_item_sigil("items"), None); // not the bare `item` token
+        assert_eq!(match_item_sigil("item."), None); // empty field
+        assert_eq!(match_item_sigil("in"), None);
+        assert_eq!(match_item_sigil("cc:zlib"), None);
+    }
 
     // CS-0074: probe-ref dispatch tests
     #[test]

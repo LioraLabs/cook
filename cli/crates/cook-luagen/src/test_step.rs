@@ -132,6 +132,73 @@ pub(crate) fn generate_test_step(
     Ok(())
 }
 
+/// COOK-63 §8.3: lower a `test` step inside a `for_each` recipe to one test
+/// unit per data member, with the member bound as `item`. The recipe body has
+/// already emitted `local _items = <source>`.
+pub(crate) fn generate_for_each_test_step(
+    out: &mut String,
+    test_step: &TestStep,
+    line: usize,
+    recipe_names: &BTreeSet<String>,
+) {
+    use crate::resolver::{IterMode, OutputShape};
+    use crate::template::{cook_step_ctx, expand_for_each_template};
+
+    let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::None, recipe_names);
+    let timeout = test_step.timeout.unwrap_or(300);
+    let should_fail = if test_step.should_fail { "true" } else { "false" };
+    let sigil_err = |e: crate::resolver::ResolveError| {
+        (
+            format!(
+                "\"[[SIGIL_ERROR: {}]]\"",
+                crate::lua_string::escape_lua_string(&e.to_string())
+            ),
+            BTreeSet::new(),
+        )
+    };
+
+    // `as` name is member-aware too; it is evaluated per-iteration (it may
+    // reference `item`).
+    let name_field = match test_step.as_name.as_deref() {
+        Some(n) => {
+            let mut _ignored = ConsultedEnv::new();
+            let (expr, _) = expand_for_each_template(n, &ctx, &mut _ignored).unwrap_or_else(sigil_err);
+            format!("name = {}, ", expr)
+        }
+        None => String::new(),
+    };
+
+    match &test_step.body {
+        Body::ShellBlock(lines) => {
+            let combined = build_shell_block_command(lines);
+            let mut consulted = ConsultedEnv::new();
+            let (cmd_concat, probe_keys) =
+                expand_for_each_template(&combined, &ctx, &mut consulted).unwrap_or_else(sigil_err);
+            let cmd_expr = if probe_keys.is_empty() {
+                cmd_concat
+            } else {
+                format!("function() return {} end", cmd_concat)
+            };
+            out.push_str("    for _, item in ipairs(_items) do\n");
+            out.push_str(&format!(
+                "        cook.add_test({{command = {}, {}timeout = {}, should_fail = {}, line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = {}}})\n",
+                cmd_expr, name_field, timeout, should_fail, line, consulted.to_lua_table()
+            ));
+            out.push_str("    end\n");
+        }
+        Body::LuaBlock(code) => {
+            // §8.3: the Lua body sees the member as `item`; execute-phase
+            // binding of `item` is wired by the COOK-64 runtime slice.
+            out.push_str("    for _, item in ipairs(_items) do\n");
+            out.push_str(&format!(
+                "        cook.add_test({{lua_code = {}, {}timeout = {}, should_fail = {}, line = {}, iteration_item = cook.member_to_string(item), consulted_env_keys = \"*\"}})\n",
+                lua_chunk_literal(code), name_field, timeout, should_fail, line
+            ));
+            out.push_str("    end\n");
+        }
+    }
+}
+
 /// Format the `name = <expr>, ` fragment for cook.add_test tables.
 /// Returns an empty string when no as_name was present.
 fn fmt_name_field(as_name_expr: Option<&str>) -> String {

@@ -131,6 +131,62 @@ pub(crate) fn generate_plate_step(
     Ok(())
 }
 
+/// COOK-63 §8.3: lower a `plate` step inside a `for_each` recipe to one
+/// side-effect unit per data member, with the member bound as `item`. A plate
+/// declares no output, so there is no passthrough. The recipe body has already
+/// emitted `local _items = <source>`.
+pub(crate) fn generate_for_each_plate_step(
+    out: &mut String,
+    plate_step: &PlateStep,
+    recipe_names: &BTreeSet<String>,
+) {
+    use crate::resolver::{IterMode, OutputShape};
+    use crate::template::{cook_step_ctx, expand_for_each_template};
+
+    // OneShot + None: a plate body admits member sigils, recipes, env, and
+    // probe refs — but neither `$<in>`/`$<all>` nor `$<out>`.
+    let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::None, recipe_names);
+
+    match &plate_step.body {
+        Body::ShellBlock(lines) => {
+            let combined = build_shell_block_command(lines);
+            let mut consulted = ConsultedEnv::new();
+            let (cmd_concat, probe_keys) =
+                expand_for_each_template(&combined, &ctx, &mut consulted).unwrap_or_else(|e| {
+                    (
+                        format!(
+                            "\"[[SIGIL_ERROR: {}]]\"",
+                            crate::lua_string::escape_lua_string(&e.to_string())
+                        ),
+                        BTreeSet::new(),
+                    )
+                });
+            let cmd_expr = if probe_keys.is_empty() {
+                cmd_concat
+            } else {
+                format!("function() return {} end", cmd_concat)
+            };
+            out.push_str("    for _, item in ipairs(_items) do\n");
+            out.push_str(&format!(
+                "        cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}}})\n",
+                cmd_expr,
+                consulted.to_lua_table()
+            ));
+            out.push_str("    end\n");
+        }
+        Body::LuaBlock(code) => {
+            // §8.3: the Lua body sees the member as `item`; execute-phase
+            // binding of `item` is wired by the COOK-64 runtime slice.
+            out.push_str("    for _, item in ipairs(_items) do\n");
+            out.push_str(&format!(
+                "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\"}})\n",
+                lua_chunk_literal(code)
+            ));
+            out.push_str("    end\n");
+        }
+    }
+}
+
 fn build_shell_block_command(lines: &[String]) -> String {
     let mut s = String::from("set -e");
     for line in lines {
