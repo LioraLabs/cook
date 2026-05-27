@@ -16,6 +16,48 @@ pub fn lua_to_msgpack(v: &LuaValue) -> Result<MsgPackValue, String> {
     lua_to_msgpack_inner(v, &mut vec![], &mut vec![])
 }
 
+/// Convert a decoded msgpack value back into a Lua value on the register VM.
+///
+/// The inverse of [`lua_to_msgpack`], used by the COOK-64 register pre-pass:
+/// a `for_each`-feeding probe's value is decoded once and handed back to the
+/// recipe body through `cook.cache.get`. Mirrors the worker-VM converter in
+/// `cook-luaotp` (§22.5.7) — arrays become 1-based sequences, maps become
+/// string-keyed tables, integers stay integers (falling back to float when
+/// they overflow `i64`).
+pub fn msgpack_to_lua(lua: &Lua, mp: &MsgPackValue) -> LuaResult<LuaValue> {
+    use rmpv::Value as V;
+    Ok(match mp {
+        V::Nil => LuaValue::Nil,
+        V::Boolean(b) => LuaValue::Boolean(*b),
+        V::Integer(i) => match i.as_i64() {
+            Some(n) => LuaValue::Integer(n),
+            None => LuaValue::Number(i.as_f64().unwrap_or(0.0)),
+        },
+        V::F32(f) => LuaValue::Number(*f as f64),
+        V::F64(f) => LuaValue::Number(*f),
+        V::String(s) => LuaValue::String(lua.create_string(s.as_bytes())?),
+        V::Binary(bytes) => LuaValue::String(lua.create_string(bytes)?),
+        V::Array(items) => {
+            let t = lua.create_table()?;
+            for (i, v) in items.iter().enumerate() {
+                t.set(i + 1, msgpack_to_lua(lua, v)?)?;
+            }
+            LuaValue::Table(t)
+        }
+        V::Map(pairs) => {
+            let t = lua.create_table()?;
+            for (k, v) in pairs {
+                let key_str = k.as_str().ok_or_else(|| {
+                    LuaError::runtime("non-string map key in msgpack probe value")
+                })?;
+                t.set(key_str, msgpack_to_lua(lua, v)?)?;
+            }
+            LuaValue::Table(t)
+        }
+        V::Ext(_, _) => return Err(LuaError::runtime("msgpack ext type not supported")),
+    })
+}
+
 fn lua_to_msgpack_inner(
     v: &LuaValue,
     path: &mut Vec<String>,

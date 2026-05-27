@@ -1,0 +1,1 @@
+depends on build artifact 'gen.json'

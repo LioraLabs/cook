@@ -42,6 +42,57 @@ pub struct RegisteredRecipe {
     /// (surface `chore NAME` blocks). All other registration paths
     /// (`cook.recipe`, `cook.__register_surface`) set `Recipe`.
     pub kind: RecipeKind,
+    /// COOK-64 §22.5.9: the `for_each` data source of a surface `for_each`
+    /// recipe, captured from the `__for_each` field codegen emits on the
+    /// register surface meta. `None` for recipes with no `for_each` driver
+    /// and for every non-surface registration path (`cook.recipe`, chores).
+    /// The register pre-pass reads this to evaluate a feeding probe ahead of
+    /// the body invocation that materialises the member set.
+    pub for_each: Option<ForEachDescriptor>,
+}
+
+/// The data source of a `for_each` recipe, as carried on the register
+/// surface meta (`__for_each = {kind=…}`) by `cook-luagen`. Mirrors the
+/// surface-AST `ForEachSource` but lives in the register crate so the
+/// pre-pass can dispatch without a parser dependency.
+///
+/// - `Probe { key, field }` — `for_each key` / `for_each key:field`; the
+///   pre-pass evaluates probe `key` and the body reads it via
+///   `cook.cache.get(key)` (indexing `[field]` when present).
+/// - `Shell { cmd, as_lines }` — `for_each $(cmd)`; materialised at body
+///   time by `cook.sh`, so the pre-pass does nothing for it.
+/// - `Lua` — the reserved `(LUA_EXPR)` source; codegen already rejects it,
+///   so this variant is unreachable in practice but kept for totality.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForEachDescriptor {
+    Probe { key: String, field: Option<String> },
+    Shell { cmd: String, as_lines: bool },
+    Lua,
+}
+
+/// Parse the `__for_each` descriptor off a register surface meta table.
+/// Returns `None` when the field is absent (a non-`for_each` recipe).
+fn parse_for_each_meta(meta: &LuaTable) -> LuaResult<Option<ForEachDescriptor>> {
+    let Some(t) = meta.get::<Option<LuaTable>>("__for_each")? else {
+        return Ok(None);
+    };
+    let kind: String = t.get("kind")?;
+    Ok(Some(match kind.as_str() {
+        "probe" => ForEachDescriptor::Probe {
+            key: t.get("key")?,
+            field: t.get::<Option<String>>("field")?,
+        },
+        "shell" => ForEachDescriptor::Shell {
+            cmd: t.get("cmd")?,
+            as_lines: t.get::<Option<bool>>("as_lines")?.unwrap_or(false),
+        },
+        "lua" => ForEachDescriptor::Lua,
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "cook.__register_surface: unknown __for_each kind '{other}'"
+            )))
+        }
+    }))
 }
 
 /// One parameter declared in a `chore NAME param …` header.
@@ -246,6 +297,9 @@ pub fn install_cook_api(
                 },
                 source: RegistrationSource::Dynamic { line },
                 kind: RecipeKind::Recipe,
+                // Dynamic `cook.recipe` registrations carry no surface
+                // `for_each` driver — that lowering is surface-only.
+                for_each: None,
             });
             Ok(())
         })?;
@@ -273,6 +327,7 @@ pub fn install_cook_api(
             // matching the legacy `cook.recipe` "no line info" sentinel.
             let line: usize = meta.get("__line").unwrap_or(0);
             let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
+            let for_each = parse_for_each_meta(&meta)?;
             recipes_surface.borrow_mut().push(RegisteredRecipe {
                 name,
                 function: key,
@@ -284,6 +339,7 @@ pub fn install_cook_api(
                 },
                 source: RegistrationSource::Static { line },
                 kind: RecipeKind::Recipe,
+                for_each,
             });
             Ok(())
         },
@@ -314,6 +370,8 @@ pub fn install_cook_api(
                 },
                 source: RegistrationSource::Static { line },
                 kind: RecipeKind::Chore,
+                // Chores cannot declare a `for_each` driver (§8.3 is recipe-only).
+                for_each: None,
             });
             Ok(())
         },

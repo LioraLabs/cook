@@ -139,6 +139,35 @@ pub enum RegisterError {
         line: usize,
         ty: String,
     },
+
+    /// COOK-64 §22.5.9: a `for_each KEY` driver names a probe `KEY` that was
+    /// never declared via `cook.probe(...)`. Surfaced by the register pre-pass.
+    #[error("recipe '{recipe}': for_each source names probe '{key}' but no such probe was declared")]
+    ForEachProbeUndeclared { recipe: String, key: String },
+
+    /// COOK-64 §22.5.9: a `for_each`-feeding probe's `produce` raised an error
+    /// when evaluated by the pre-pass (before any recipe body ran).
+    #[error("probe '{key}' feeds a for_each but its produce raised: {message}")]
+    ForEachProbeProduceFailed { key: String, message: String },
+
+    /// COOK-64 §22.5.9: a `for_each` source resolved to a non-array value.
+    /// `selector` names the resolved location (`KEY` or `KEY:FIELD`); `shape`
+    /// is the msgpack value-kind that was found instead of a sequence.
+    #[error(
+        "for_each source '{selector}' must resolve to an array; got {shape} \
+         (a for_each driver iterates a sequence of members; §22.5.9)"
+    )]
+    ForEachNotArray { selector: String, shape: String },
+
+    /// COOK-64 §22.5.9: a `for_each`-feeding probe declares a file input that
+    /// is produced by a recipe in this Cookfile — i.e. a build artifact. A
+    /// `for_each` source MUST be statically evaluable (it is resolved before
+    /// any recipe runs), so an artifact dependency is rejected.
+    #[error(
+        "probe '{key}' feeds a for_each but depends on build artifact '{path}'; \
+         for_each sources must be statically evaluable"
+    )]
+    ForEachProbeArtifactDep { key: String, path: String },
 }
 
 /// One site at which a recipe name was registered during a

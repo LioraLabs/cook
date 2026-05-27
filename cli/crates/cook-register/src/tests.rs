@@ -1442,3 +1442,206 @@ fn register_cookfile_rejects_surface_vs_dynamic_collision() {
         other => panic!("expected RecipeCollision, got {other:?}"),
     }
 }
+
+// -----------------------------------------------------------------------
+// COOK-64 §22.5.9 — for_each register pre-pass
+// -----------------------------------------------------------------------
+
+/// Drive the full surface pipeline (parse → codegen → register) so the
+/// codegen-emitted `__for_each` surface metadata and the fan-out body are
+/// exercised exactly as a real Cookfile would produce them.
+fn register_surface(
+    dir: &std::path::Path,
+    cookfile: &str,
+) -> Result<RegisteredCookfile, RegisterError> {
+    let parsed = cook_lang::parse(cookfile).expect("fixture must parse");
+    let lua_src = cook_luagen::generate(&parsed);
+    register_cookfile(make_registry(dir), &lua_src, None)
+}
+
+#[test]
+fn for_each_probe_prepass_fans_out_units() {
+    let dir = TempDir::new().unwrap();
+    // A self-contained probe (no file inputs) returns a 3-element array; the
+    // pre-pass must resolve it so the `for_each` body fans out one unit per
+    // card. Before COOK-64 the body errored on `cook.cache.get` returning nil.
+    let cookfile = r#"
+register
+    cook.probe("cards", {
+        inputs = {},
+        produce = [[ return { {id="1", name="ace"}, {id="2", name="king"}, {id="3", name="queen"} } ]],
+    })
+
+recipe deal
+    for_each cards
+    cook "build/$<item.id>.txt" using {
+        mkdir -p build
+        printf '%s\n' "$<item.name>" > $<out>
+    }
+"#;
+    let registered = register_surface(dir.path(), cookfile).expect("register");
+    let units = registered
+        .units_by_recipe
+        .get("deal")
+        .expect("deal recipe registered");
+    assert_eq!(
+        units.units.len(),
+        3,
+        "expected one fanned-out unit per card, got {}",
+        units.units.len()
+    );
+
+    // §17.1 observable #5: per-member fingerprint — each unit's command_hash
+    // must differ (the member is folded in by unit_api), so editing one card
+    // re-runs only its unit.
+    let hashes: std::collections::BTreeSet<u64> = units
+        .units
+        .iter()
+        .filter_map(|u| u.cache_meta.as_ref().map(|m| m.command_hash))
+        .collect();
+    assert_eq!(
+        hashes.len(),
+        3,
+        "each member's unit must have a distinct command_hash"
+    );
+}
+
+#[test]
+fn for_each_probe_field_selector_indexes_named_array() {
+    let dir = TempDir::new().unwrap();
+    // `for_each catalog:items` iterates the array at the probe value's `items`
+    // field — the pre-pass stores the whole record; the body indexes `[items]`.
+    let cookfile = r#"
+register
+    cook.probe("catalog", {
+        inputs = {},
+        produce = [[ return { items = { {id="a"}, {id="b"} } } ]],
+    })
+
+recipe build_catalog
+    for_each catalog:items
+    cook "build/$<item.id>.json" using {
+        mkdir -p build
+        printf '%s\n' '$<item>' > $<out>
+    }
+"#;
+    let registered = register_surface(dir.path(), cookfile).expect("register");
+    let units = registered.units_by_recipe.get("build_catalog").unwrap();
+    assert_eq!(units.units.len(), 2, "two items in the field array");
+}
+
+#[test]
+fn for_each_undeclared_probe_rejected() {
+    let dir = TempDir::new().unwrap();
+    // `for_each nope` names a probe that was never declared.
+    let cookfile = r#"
+recipe deal
+    for_each nope
+    cook "build/$<item.id>.txt" using {
+        printf '%s\n' "$<item.id>" > $<out>
+    }
+"#;
+    let err = register_surface(dir.path(), cookfile).expect_err("must reject");
+    assert!(
+        matches!(err, RegisterError::ForEachProbeUndeclared { ref key, .. } if key == "nope"),
+        "expected ForEachProbeUndeclared, got {err:?}"
+    );
+}
+
+#[test]
+fn for_each_non_array_probe_rejected() {
+    let dir = TempDir::new().unwrap();
+    // The probe resolves to a record, not an array — §22.5.9 requires a
+    // sequence to iterate.
+    let cookfile = r#"
+register
+    cook.probe("cards", {
+        inputs = {},
+        produce = [[ return { name = "not-an-array" } ]],
+    })
+
+recipe deal
+    for_each cards
+    cook "build/$<item.id>.txt" using {
+        printf '%s\n' "$<item.id>" > $<out>
+    }
+"#;
+    let err = register_surface(dir.path(), cookfile).expect_err("must reject");
+    assert!(
+        matches!(err, RegisterError::ForEachNotArray { ref selector, .. } if selector == "cards"),
+        "expected ForEachNotArray for 'cards', got {err:?}"
+    );
+}
+
+#[test]
+fn for_each_probe_depending_on_build_artifact_rejected() {
+    let dir = TempDir::new().unwrap();
+    // `gen.json` exists (so the pre-pass produce succeeds) but is also the
+    // declared output of recipe `gen` — i.e. a build artifact. A for_each
+    // source must be statically evaluable, so the dependency is rejected.
+    fs::write(dir.path().join("gen.json"), r#"[{"id":"x"}]"#).unwrap();
+    let cookfile = r#"
+register
+    cook.probe("data", {
+        inputs  = { files = {"gen.json"} },
+        produce = [[ return cook.json_decode(cook.sh("cat gen.json")) ]],
+    })
+
+recipe gen
+    cook "gen.json" using {
+        echo '[{"id":"x"}]' > $<out>
+    }
+
+recipe consume
+    for_each data
+    cook "build/$<item.id>.txt" using {
+        mkdir -p build
+        printf '%s' "$<item.id>" > $<out>
+    }
+"#;
+    let err = register_surface(dir.path(), cookfile).expect_err("must reject");
+    assert!(
+        matches!(err, RegisterError::ForEachProbeArtifactDep { ref key, ref path } if key == "data" && path == "gen.json"),
+        "expected ForEachProbeArtifactDep for probe 'data' on 'gen.json', got {err:?}"
+    );
+}
+
+#[test]
+fn for_each_unreachable_broken_probe_does_not_block_target() {
+    let dir = TempDir::new().unwrap();
+    // §22.5.9 demand-driven: building target `a` must NOT evaluate the probe of
+    // the unrelated `for_each` recipe `b` — even though `b`'s probe resolves to
+    // a non-array (which would otherwise be a register error). `b` registers
+    // with no units; `a` builds normally.
+    let cookfile = r#"
+register
+    cook.probe("bad", { inputs = {}, produce = [[ return { not_an = "array" } ]] })
+
+recipe a
+    cook "build/a.txt" using {
+        mkdir -p build
+        echo a > $<out>
+    }
+
+recipe b
+    for_each bad
+    cook "build/$<item.id>.txt" using {
+        printf '%s' "$<item.id>" > $<out>
+    }
+"#;
+    let parsed = cook_lang::parse(cookfile).expect("parse");
+    let lua_src = cook_luagen::generate(&parsed);
+    let rt = RegisterSessionBuilder::new(dir.path().to_path_buf(), HashMap::new())
+        .with_target_argv("a".to_string(), vec![]);
+    let registered =
+        register_cookfile(rt, &lua_src, None).expect("building 'a' must not touch b's probe");
+    assert_eq!(
+        registered.units_by_recipe.get("a").unwrap().units.len(),
+        1,
+        "target 'a' fans out its single unit"
+    );
+    assert!(
+        registered.units_by_recipe.get("b").unwrap().units.is_empty(),
+        "unreachable for_each recipe 'b' registers with no units"
+    );
+}

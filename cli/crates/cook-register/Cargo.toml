@@ -7,6 +7,7 @@ description = "Capture-mode Lua VM for discovering work units from Cookfiles"
 [dependencies]
 cook-contracts = { path = "../cook-contracts" }
 cook-cache = { path = "../cook-cache" }
+cook-fingerprint = { path = "../cook-fingerprint" }
 cook-lua-stdlib = { path = "../cook-lua-stdlib" }
 cook-luagen = { path = "../cook-luagen" }
 mlua = { version = "0.10", features = ["lua54", "vendored"] }

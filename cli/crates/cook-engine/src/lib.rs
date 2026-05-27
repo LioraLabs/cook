@@ -528,6 +528,21 @@ impl From<cook_register::RegisterError> for EngineError {
                     message: e.to_string(),
                 }
             }
+            // COOK-64 §22.5.9 — `for_each` pre-pass diagnostics.
+            ref e @ cook_register::RegisterError::ForEachProbeUndeclared {
+                ref recipe, ..
+            } => EngineError::RegistrationFailed {
+                recipe: recipe.clone(),
+                message: e.to_string(),
+            },
+            ref e @ (cook_register::RegisterError::ForEachProbeProduceFailed { .. }
+            | cook_register::RegisterError::ForEachNotArray { .. }
+            | cook_register::RegisterError::ForEachProbeArtifactDep { .. }) => {
+                EngineError::RegistrationFailed {
+                    recipe: String::new(),
+                    message: e.to_string(),
+                }
+            }
         }
     }
 }

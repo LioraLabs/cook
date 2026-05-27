@@ -1,0 +1,17 @@
+register
+    cook.probe("data", {
+        inputs  = { files = {"gen.json"} },
+        produce = [[ return cook.json_decode(cook.sh("cat gen.json")) ]],
+    })
+
+recipe gen
+    cook "gen.json" using {
+        echo '[{"id":"x"}]' > $<out>
+    }
+
+recipe consume
+    for_each data
+    cook "build/$<item.id>.txt" using {
+        mkdir -p build
+        printf '%s' "$<item.id>" > $<out>
+    }

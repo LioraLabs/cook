@@ -1,0 +1,11 @@
+register
+    cook.probe("cards", {
+        inputs  = {},
+        produce = [[ return { name = "not-an-array" } ]],
+    })
+
+recipe deal
+    for_each cards
+    cook "build/$<item.id>.txt" using {
+        printf '%s\n' "$<item.id>" > $<out>
+    }

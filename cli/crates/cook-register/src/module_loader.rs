@@ -348,13 +348,34 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
 // cook.cache.* API
 // ---------------------------------------------------------------------------
 
-pub fn register_cache_api(lua: &Lua, state: SharedModuleLoaderState) -> LuaResult<()> {
+/// COOK-64 §22.5.9: register-phase store of resolved `for_each`-feeding probe
+/// values, keyed by probe key. The pre-pass (`engine.rs`) populates it after
+/// top-level load but before any recipe body runs; `cook.cache.get` consults
+/// it *before* the module-cache path so a `for_each` recipe body's
+/// `local _items = cook.cache.get("cards")` sees the resolved array instead of
+/// erroring "outside of a module context". Empty for non-`for_each` sessions,
+/// so the module-cache behaviour is unchanged.
+pub type SharedPrepassStore = Rc<RefCell<BTreeMap<String, rmpv::Value>>>;
+
+pub fn register_cache_api(
+    lua: &Lua,
+    state: SharedModuleLoaderState,
+    prepass: SharedPrepassStore,
+) -> LuaResult<()> {
     let cook: LuaTable = lua.globals().get("cook")?;
     let cache_tbl = lua.create_table()?;
 
     // cook.cache.get(key)
     let s = state.clone();
+    let prepass_get = prepass.clone();
     let get_fn = lua.create_function(move |lua, key: String| {
+        // COOK-64: a `for_each`-feeding probe value resolved by the pre-pass
+        // takes precedence. These keys are probe keys, which do not collide
+        // with module-cache keys, so the module-context path below is reached
+        // unchanged for every non-`for_each` lookup.
+        if let Some(val) = prepass_get.borrow().get(&key) {
+            return crate::probe_value::msgpack_to_lua(lua, val);
+        }
         let state = s.borrow();
         let module_name = state.active_module().ok_or_else(|| {
             LuaError::runtime("cook.cache.get called outside of a module context")
@@ -437,7 +458,7 @@ mod tests {
 
         let state = Rc::new(RefCell::new(ModuleLoaderState::new(dir.path().to_path_buf())));
         register_module_loader(&lua, state.clone()).unwrap();
-        register_cache_api(&lua, state.clone()).unwrap();
+        register_cache_api(&lua, state.clone(), Rc::new(RefCell::new(BTreeMap::new()))).unwrap();
         (lua, dir, state)
     }
 

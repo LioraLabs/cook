@@ -246,11 +246,17 @@ pub fn register_cookfile(
     //     with `list_names` via the extracted helper. The helper returns
     //     the module-loader handle so we can `flush_all()` it after all
     //     body invocations complete.
+    // COOK-64: the register pre-pass populates this with resolved
+    // `for_each`-feeding probe values before any recipe body runs; the
+    // `cook.cache.get` binding (installed below) reads it first.
+    let prepass_store: crate::module_loader::SharedPrepassStore =
+        Rc::new(RefCell::new(BTreeMap::new()));
     let module_state = install_remaining_apis(
         &lua,
         &builder,
         body_slot.clone(),
         cache_ctx.as_ref(),
+        prepass_store.clone(),
     )?;
 
     // 6. Execute the top-level Lua. Name the chunk with an `@` prefix so
@@ -312,6 +318,28 @@ pub fn register_cookfile(
         .map(|t| local_reachable_set(t, &names_to_requires))
         .unwrap_or_default();
 
+    // 11c. (COOK-64 §22.5.9) The `for_each` register pre-pass. Every recipe
+    //      body runs during register to discover its units, and a
+    //      probe-sourced `for_each` body opens with
+    //      `local _items = cook.cache.get("<key>")`. That call resolves nil
+    //      (or errors "outside a module context") unless the feeding probe
+    //      has already been evaluated — so we evaluate every probe that feeds
+    //      a `for_each` driver (and its transitive probe `requires`) here,
+    //      before the body loop, stashing each value in `prepass_store` keyed
+    //      by probe key. `$(cmd)` and the reserved `(lua)` sources need no
+    //      pre-pass (the former materialises through `cook.sh` at body time).
+    run_for_each_prepass(
+        &lua,
+        &recipes.borrow(),
+        &probe_registry.borrow(),
+        &builder.env_vars,
+        &builder.working_dir,
+        cache_ctx.as_ref(),
+        &prepass_store,
+        &reachable_from_target,
+        builder.target_recipe.is_some(),
+    )?;
+
     // 12. Invoke each recipe body in topo order. The body slot is opened
     //     immediately before the call and drained back to `None` afterwards
     //     so a stray closure invocation between bodies fails cleanly rather
@@ -333,6 +361,7 @@ pub fn register_cookfile(
             qualified_name,
             params_meta,
             source_line,
+            skip_for_each_body,
         ): (
             LuaRegistryKey,
             Vec<String>,
@@ -341,6 +370,7 @@ pub fn register_cookfile(
             String,
             Vec<crate::capture::ChoreParamMeta>,
             usize,
+            bool,
         );
         {
             let registry = recipes.borrow();
@@ -348,6 +378,18 @@ pub fn register_cookfile(
                 .iter()
                 .find(|r| &r.name == name)
                 .ok_or_else(|| RegisterError::RecipeNotFound(name.clone()))?;
+
+            // COOK-64 §22.5.9 demand-driven rule: a probe-sourced `for_each`
+            // recipe that is NOT reachable from the build target had its probe
+            // skipped by the pre-pass, so its body's `cook.cache.get` would
+            // error. Skip the body — the recipe is not being built — registering
+            // it with no units, mirroring the parametric-sibling skip below.
+            skip_for_each_body = builder.target_recipe.is_some()
+                && !reachable_from_target.contains(name)
+                && matches!(
+                    recipe.for_each,
+                    Some(crate::capture::ForEachDescriptor::Probe { .. })
+                );
 
             // Run recipe context setup (ingredient resolution).
             setup_recipe_context(&lua, recipe, &builder.working_dir)?;
@@ -371,6 +413,39 @@ pub fn register_cookfile(
             } else {
                 format!("{}.{}", builder.qualified_prefix, recipe.name)
             };
+        }
+
+        // §22.5.9 demand-driven skip: a non-reachable probe-sourced `for_each`
+        // recipe registers with no units (its probe was not pre-evaluated).
+        if skip_for_each_body {
+            lua.remove_registry_value(func_key_clone)?;
+            let _ = body_slot.borrow_mut().take();
+            names.push(crate::RegisteredRecipePub {
+                name: name.clone(),
+                source,
+                kind,
+                requires: requires.clone(),
+            });
+            units_by_recipe.insert(
+                name.clone(),
+                RecipeUnits {
+                    recipe_name: name.clone(),
+                    deps: requires,
+                    units: vec![],
+                    step_groups: vec![],
+                    working_dir: builder.working_dir.clone(),
+                    env_vars: builder
+                        .env_vars
+                        .borrow()
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                    terminal_outputs: vec![],
+                    dep_edges: vec![],
+                    probes: vec![],
+                },
+            );
+            continue;
         }
 
         // Stamp current_recipe on the body so cook.add_test defaults the
@@ -640,6 +715,19 @@ pub fn register_cookfile(
             requires,
         });
     }
+
+    // 12b. (COOK-64 §22.5.9) Static-input rule for `for_each` sources. Now
+    //      that every body has run and `units_by_recipe` holds the full set of
+    //      recipe outputs, reject any `for_each`-feeding probe that declares a
+    //      file input which is produced by a recipe in this Cookfile — a
+    //      build artifact is not statically evaluable (the pre-pass resolved
+    //      the probe before any recipe ran, so it could only have seen a
+    //      stale or absent file).
+    check_for_each_static_inputs(
+        &recipes.borrow(),
+        &probe_registry.borrow(),
+        &units_by_recipe,
+    )?;
 
     // Flush module caches once at the end of the pass.
     module_state.borrow().flush_all();
@@ -965,6 +1053,324 @@ fn local_reachable_set(
     reachable
 }
 
+/// COOK-64 §22.5.9: the `for_each` register pre-pass.
+///
+/// Every probe-sourced `for_each` driver opens its body with
+/// `local _items = cook.cache.get("<key>")`. That value does not exist until
+/// the feeding probe runs, and probes normally run as DAG nodes in the
+/// execute phase — far too late for register-time fan-out. So we evaluate
+/// every `for_each`-feeding probe (and its transitive probe `requires`) here,
+/// synchronously on the register VM, before any recipe body runs.
+///
+/// The evaluation mirrors the execute-phase probe path (`executor.rs` G4/G5):
+/// resolve declared inputs → fingerprint → cache GET → on a miss run
+/// `produce` on the VM → cache PUT. The resolved value is stashed in
+/// `prepass_store` keyed by probe key, where the `cook.cache.get` binding
+/// reads it. When no `CacheContext` is wired (tests / `list_names`), `produce`
+/// runs uncached.
+///
+/// `$(cmd)` and the reserved `(lua)` sources need no pre-pass: a `$(cmd)`
+/// driver materialises through `cook.sh` at body time, and `(lua)` is rejected
+/// at codegen.
+#[allow(clippy::too_many_arguments)]
+fn run_for_each_prepass(
+    lua: &Lua,
+    recipes: &[crate::capture::RegisteredRecipe],
+    probe_registry: &ProbeRegistry,
+    env_vars: &Rc<RefCell<HashMap<String, String>>>,
+    working_dir: &Path,
+    cache_ctx: Option<&Arc<cook_cache::cache_ctx::CacheContext>>,
+    prepass_store: &crate::module_loader::SharedPrepassStore,
+    reachable_from_target: &std::collections::BTreeSet<String>,
+    has_target: bool,
+) -> Result<(), RegisterError> {
+    use crate::capture::ForEachDescriptor;
+
+    // (recipe, probe key, optional `:field` selector) per probe-sourced driver.
+    //
+    // §22.5.9 demand-driven rule: when a build target is set, only evaluate
+    // probes for recipes reachable from it. When no target is set every recipe
+    // is being built, so every probe-sourced driver is in scope. The body loop
+    // applies the mirror rule (`should_skip_for_each_body`) so a non-reachable
+    // driver's body — which would call `cook.cache.get` on an unevaluated probe
+    // — is skipped rather than erroring.
+    let driver_reachable = |name: &str| !has_target || reachable_from_target.contains(name);
+    let drivers: Vec<(&str, &str, Option<&str>)> = recipes
+        .iter()
+        .filter(|r| driver_reachable(&r.name))
+        .filter_map(|r| match &r.for_each {
+            Some(ForEachDescriptor::Probe { key, field }) => {
+                Some((r.name.as_str(), key.as_str(), field.as_deref()))
+            }
+            _ => None,
+        })
+        .collect();
+    if drivers.is_empty() {
+        return Ok(());
+    }
+
+    // Each driver's probe must be declared (§22.5.9).
+    for (recipe, key, _) in &drivers {
+        if !probe_registry.probes.contains_key(*key) {
+            return Err(RegisterError::ForEachProbeUndeclared {
+                recipe: (*recipe).to_string(),
+                key: (*key).to_string(),
+            });
+        }
+    }
+
+    let env_lookup = |name: &str| env_vars.borrow().get(name).cloned();
+    let mut upstream_fps: BTreeMap<String, [u8; 32]> = BTreeMap::new();
+    let mut done: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    // Evaluate each driver probe (and its transitive `requires`) in
+    // dependency order. Probe cycles are already rejected (step 9 above), so
+    // the recursion terminates; `in_progress` is a defensive belt-and-braces.
+    for (_, key, _) in &drivers {
+        evaluate_prepass_probe(
+            key,
+            lua,
+            probe_registry,
+            &env_lookup,
+            working_dir,
+            cache_ctx,
+            prepass_store,
+            &mut upstream_fps,
+            &mut done,
+            &mut Vec::new(),
+        )?;
+    }
+
+    // §22.5.9 non-array diagnostic: a driver's resolved source must be a
+    // sequence. With a `:field` selector, the named field must be the array.
+    for (_, key, field) in &drivers {
+        let store = prepass_store.borrow();
+        let value = store.get(*key).expect("driver probe evaluated above");
+        let (resolved, selector): (&rmpv::Value, String) = match field {
+            Some(f) => match msgpack_map_get(value, f) {
+                Some(v) => (v, format!("{key}:{f}")),
+                None => {
+                    return Err(RegisterError::ForEachNotArray {
+                        selector: format!("{key}:{f}"),
+                        shape: "nil (no such field)".to_string(),
+                    })
+                }
+            },
+            None => (value, (*key).to_string()),
+        };
+        if !matches!(resolved, rmpv::Value::Array(_)) {
+            return Err(RegisterError::ForEachNotArray {
+                selector,
+                shape: msgpack_shape(resolved).to_string(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Evaluate a single probe for the pre-pass, recursing through its declared
+/// probe `requires` first so their fingerprints feed this one's (§22.5.3).
+/// Idempotent via `done`; `in_progress` guards against (already-rejected)
+/// cycles. Stores the decoded value in `prepass_store` and records the
+/// fingerprint in `upstream_fps`.
+#[allow(clippy::too_many_arguments)]
+fn evaluate_prepass_probe(
+    key: &str,
+    lua: &Lua,
+    probe_registry: &ProbeRegistry,
+    env_lookup: &dyn Fn(&str) -> Option<String>,
+    working_dir: &Path,
+    cache_ctx: Option<&Arc<cook_cache::cache_ctx::CacheContext>>,
+    prepass_store: &crate::module_loader::SharedPrepassStore,
+    upstream_fps: &mut BTreeMap<String, [u8; 32]>,
+    done: &mut std::collections::BTreeSet<String>,
+    in_progress: &mut Vec<String>,
+) -> Result<(), RegisterError> {
+    if done.contains(key) {
+        return Ok(());
+    }
+    let Some(reg) = probe_registry.probes.get(key) else {
+        return Err(RegisterError::ForEachProbeProduceFailed {
+            key: key.to_string(),
+            message: format!("requires upstream probe '{key}' which was not declared"),
+        });
+    };
+    let probe = &reg.probe;
+
+    if in_progress.iter().any(|k| k == key) {
+        return Ok(()); // defensive — step 9 already rejects probe cycles
+    }
+    in_progress.push(key.to_string());
+    for req in &probe.inputs.requires {
+        evaluate_prepass_probe(
+            req,
+            lua,
+            probe_registry,
+            env_lookup,
+            working_dir,
+            cache_ctx,
+            prepass_store,
+            upstream_fps,
+            done,
+            in_progress,
+        )?;
+    }
+    in_progress.pop();
+
+    // Resolve fingerprint inputs + compute fingerprint (mirrors executor G4).
+    let inputs =
+        cook_fingerprint::probe::resolve_probe_inputs(probe, working_dir, env_lookup, upstream_fps)
+            .map_err(|e| RegisterError::ForEachProbeProduceFailed {
+                key: key.to_string(),
+                message: e,
+            })?;
+    let fp = cook_fingerprint::compute_probe_fingerprint(&inputs);
+
+    // Cache GET when a backend is wired; on a miss (or no backend) run
+    // `produce` on the register VM, then PUT.
+    let bytes: Vec<u8> = match cache_ctx {
+        Some(ctx) => match cook_cache::backend::get_bytes(ctx.backend.as_ref(), &fp) {
+            Ok(Some(b)) => b,
+            _ => {
+                let b = run_prepass_produce(lua, key, &probe.produce_source)?;
+                let mut meta = cook_fingerprint::ArtifactMeta {
+                    recipe_namespace: format!("probe:{key}"),
+                    command_hash: 0,
+                    context_hash: 0,
+                    env_contribution: 0,
+                    schema_version: cook_fingerprint::CACHE_VERSION,
+                    size_bytes: b.len() as u64,
+                    tags: std::collections::BTreeSet::new(),
+                    consulted_env_keys: std::collections::BTreeSet::new(),
+                    output_index: 0,
+                    output_path: format!("probe:{key}"),
+                    content_hash: cook_fingerprint::ArtifactMeta::zero_content_hash(),
+                    kind: None,
+                }
+                .as_probe_value();
+                // A cache PUT failure is non-fatal — the value is already in
+                // hand for this pass; we simply forgo persisting it.
+                let _ = cook_cache::backend::put_bytes(ctx.backend.as_ref(), &fp, &b, &mut meta);
+                b
+            }
+        },
+        None => run_prepass_produce(lua, key, &probe.produce_source)?,
+    };
+
+    let mp = cook_contracts::probe_value::decode_msgpack(&bytes).map_err(|e| {
+        RegisterError::ForEachProbeProduceFailed {
+            key: key.to_string(),
+            message: format!("decode cached value: {e}"),
+        }
+    })?;
+    prepass_store.borrow_mut().insert(key.to_string(), mp);
+    upstream_fps.insert(key.to_string(), fp);
+    done.insert(key.to_string());
+    Ok(())
+}
+
+/// Run a probe's `produce` source on the register VM and return the
+/// msgpack-encoded value (mirrors `cook-luaotp`'s execute-VM `execute_probe`).
+fn run_prepass_produce(lua: &Lua, key: &str, produce: &str) -> Result<Vec<u8>, RegisterError> {
+    let wrapped = format!("return (function()\n{}\nend)()", produce);
+    let chunk = format!("@probe:{key}");
+    let value: LuaValue = lua
+        .load(&wrapped)
+        .set_name(&chunk)
+        .eval()
+        .map_err(|e| RegisterError::ForEachProbeProduceFailed {
+            key: key.to_string(),
+            message: e.to_string(),
+        })?;
+    let mp = crate::probe_value::lua_to_msgpack(&value).map_err(|e| {
+        RegisterError::ForEachProbeProduceFailed {
+            key: key.to_string(),
+            message: e,
+        }
+    })?;
+    Ok(crate::probe_value::encode_msgpack(&mp))
+}
+
+/// Look up a string-keyed field in an rmpv `Map`. `None` for non-maps or a
+/// missing key.
+fn msgpack_map_get<'a>(v: &'a rmpv::Value, field: &str) -> Option<&'a rmpv::Value> {
+    if let rmpv::Value::Map(pairs) = v {
+        for (k, val) in pairs {
+            if k.as_str() == Some(field) {
+                return Some(val);
+            }
+        }
+    }
+    None
+}
+
+/// COOK-64 §22.5.9 static-input rule: reject a `for_each`-feeding probe whose
+/// declared file inputs include a build artifact (an output produced by a
+/// recipe in this Cookfile). `for_each` sources are resolved by the pre-pass
+/// before any recipe runs, so depending on a not-yet-built file is incoherent.
+///
+/// Runs after the body loop, when `units_by_recipe` carries every recipe's
+/// output paths. Paths are compared in normalised relative form.
+fn check_for_each_static_inputs(
+    recipes: &[crate::capture::RegisteredRecipe],
+    probe_registry: &ProbeRegistry,
+    units_by_recipe: &BTreeMap<String, RecipeUnits>,
+) -> Result<(), RegisterError> {
+    use crate::capture::ForEachDescriptor;
+
+    // Union of every recipe output path (normalised).
+    let outputs: std::collections::BTreeSet<String> = units_by_recipe
+        .values()
+        .flat_map(|ru| ru.units.iter())
+        .filter_map(|u| u.cache_meta.as_ref())
+        .flat_map(|m| m.output_paths.iter())
+        .map(|p| normalise_rel(p))
+        .collect();
+    if outputs.is_empty() {
+        return Ok(());
+    }
+
+    for recipe in recipes {
+        let Some(ForEachDescriptor::Probe { key, .. }) = &recipe.for_each else {
+            continue;
+        };
+        let Some(reg) = probe_registry.probes.get(key) else {
+            continue; // undeclared probe already rejected by the pre-pass
+        };
+        for file in &reg.probe.inputs.files {
+            if outputs.contains(&normalise_rel(file)) {
+                return Err(RegisterError::ForEachProbeArtifactDep {
+                    key: key.clone(),
+                    path: file.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Normalise a relative path for comparison: drop a leading `./`. Both
+/// `for_each` probe file inputs and recipe output paths are relative to the
+/// project working directory, so a textual normalise suffices.
+fn normalise_rel(p: &str) -> String {
+    p.strip_prefix("./").unwrap_or(p).to_string()
+}
+
+/// Human-readable msgpack value-kind, for the §22.5.9 non-array diagnostic.
+fn msgpack_shape(v: &rmpv::Value) -> &'static str {
+    match v {
+        rmpv::Value::Nil => "nil",
+        rmpv::Value::Boolean(_) => "boolean",
+        rmpv::Value::Integer(_) | rmpv::Value::F32(_) | rmpv::Value::F64(_) => "number",
+        rmpv::Value::String(_) => "string",
+        rmpv::Value::Binary(_) => "binary",
+        rmpv::Value::Array(_) => "array",
+        rmpv::Value::Map(_) => "map/record",
+        rmpv::Value::Ext(_, _) => "ext",
+    }
+}
+
 /// Diagnose duplicate recipe-name registrations within a single
 /// `register_cookfile` pass (spec §8). A name appearing more than once —
 /// surface-vs-dynamic or dynamic-vs-dynamic — is a hard error.
@@ -1092,7 +1498,15 @@ pub fn list_names(
     }
     // list_names doesn't invoke any body, so the returned module-loader
     // handle is dropped here — no flush needed (no module bodies ran).
-    let _module_state = install_remaining_apis(&lua, &builder, body_slot.clone(), None)?;
+    // `list_names` never invokes recipe bodies, so the pre-pass store stays
+    // empty — `cook.cache.get` falls through to its module-context behaviour.
+    let _module_state = install_remaining_apis(
+        &lua,
+        &builder,
+        body_slot.clone(),
+        None,
+        Rc::new(RefCell::new(BTreeMap::new())),
+    )?;
 
     // Load top-level Lua. Recipe registration happens via `cook.recipe(...)`
     // calls captured into `recipes`. Bodies are stashed as `LuaRegistryKey`
@@ -1146,6 +1560,7 @@ fn install_remaining_apis(
     builder: &RegisterSessionBuilder,
     body_slot: SharedBodySlot,
     cache_ctx: Option<&Arc<cook_cache::cache_ctx::CacheContext>>,
+    prepass: crate::module_loader::SharedPrepassStore,
 ) -> Result<SharedModuleLoaderState, RegisterError> {
     // Sandbox + fs/path/platform API. Project root falls back to
     // working_dir when no CacheContext is present.
@@ -1172,7 +1587,7 @@ fn install_remaining_apis(
         ModuleLoaderState::new(builder.working_dir.clone()),
     ));
     crate::module_loader::register_module_loader(lua, module_state.clone())?;
-    crate::module_loader::register_cache_api(lua, module_state.clone())?;
+    crate::module_loader::register_cache_api(lua, module_state.clone(), prepass)?;
     crate::unit_api::register_unit_api(
         lua,
         body_slot.clone(),
