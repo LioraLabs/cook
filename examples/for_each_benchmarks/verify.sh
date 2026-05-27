@@ -1,10 +1,9 @@
 #!/bin/bash
-# verify.sh — assert the §8.3 for_each codegen shape of every recipe.
-#
-# COOK-63 lands the parser + codegen; the register-time runtime (probe pre-pass,
-# $(cmd) capture, member rendering) is COOK-64. So this verifies through the
-# transpiler (`cook emit-lua`), which runs parse + codegen without executing.
-# When COOK-64 lands, add an execution tier (run the recipes, assert outputs).
+# verify.sh — assert §8.3 for_each, two tiers:
+#   1. codegen shape via `cook emit-lua` (parse + codegen, no execution).
+#   2. execution (COOK-64): run every recipe, assert outputs, and prove the
+#      §22.5.9 / §17.1 per-member cache — editing one member re-runs only its
+#      unit while the rest stay cache hits.
 #
 # Set COOK= to override the cook binary (default: workspace target).
 
@@ -68,6 +67,69 @@ assert_contains "render: as lines keeps raw member"     'table.insert(_items, _l
 assert_contains "eval: cases probe source"              'local _items = cook.cache.get("cases")'
 assert_contains "eval: \$<item.input> in test body"     'tostring(item["input"])'
 assert_contains "eval: test emits add_test"             'cook.add_test({command ='
+
+# --- Tier 2: execution (COOK-64 runtime) ------------------------------------
+
+# assert_true <name> <command...>  — runs the command, PASS on exit 0.
+assert_true() {
+    local name="$1"; shift
+    n=$((n + 1))
+    printf "  [%2d] %-62s " "$n" "$name"
+    if "$@" >/dev/null 2>&1; then
+        echo "PASS"; pass=$((pass + 1))
+    else
+        echo "FAIL"; fail=$((fail + 1))
+    fi
+}
+
+# assert_file_eq <name> <path> <expected-content>
+assert_file_eq() {
+    local name="$1"; local path="$2"; local expected="$3"
+    n=$((n + 1))
+    printf "  [%2d] %-62s " "$n" "$name"
+    local got; got="$(cat "$path" 2>/dev/null)"
+    if [ "$got" = "$expected" ]; then
+        echo "PASS"; pass=$((pass + 1))
+    else
+        echo "FAIL"; echo "        $path: expected [$expected], got [$got]"; fail=$((fail + 1))
+    fi
+}
+
+echo
+echo "for_each execution assertions (cook <recipe>):"
+
+# Clean slate: wipe local build + cache so the first run is a real miss.
+rm -rf build .cook
+
+# Each source form runs end-to-end and lands its declared outputs.
+assert_true   "cards_cook runs (probe → cook)"          "$COOK" cards_cook
+assert_file_eq "cards_cook: ace.txt content"           build/cards/ace.txt  "Ace of Spades"
+assert_file_eq "cards_cook: king.txt content"          build/cards/king.txt "King of Hearts"
+assert_true   "catalog_cook runs (probe:field → cook)"  "$COOK" catalog_cook
+assert_file_eq "catalog_cook: bare \$<item> is JSON"    build/catalog/widget.json '{"id":"widget","name":"Widget"}'
+assert_true   "deploy runs (\$(cmd) NDJSON → plate)"     "$COOK" deploy
+assert_true   "render runs (\$(cmd) as lines → cook)"    "$COOK" render
+assert_file_eq "render: raw-member output"              build/html/intro.md.html '<article>intro.md</article>'
+assert_true   "eval runs (probe → test)"                "$COOK" eval
+
+# Per-member cache (§22.5.9 / §17.1 observable #5): a no-op re-run is fully
+# cached; editing ONE member re-runs only that member's unit.
+RERUN="$("$COOK" cards_cook 2>&1)"
+n=$((n + 1)); printf "  [%2d] %-62s " "$n" "cards_cook: clean re-run is fully cached"
+if printf '%s' "$RERUN" | grep -q "2/2 cached"; then echo "PASS"; pass=$((pass + 1)); else echo "FAIL"; fail=$((fail + 1)); fi
+
+# Edit only the king card; ace must stay cached, king must re-run.
+cp data/cards.json data/cards.json.bak
+sed -i 's/King of Hearts/King of Diamonds/' data/cards.json
+EDIT="$("$COOK" cards_cook 2>&1)"
+mv data/cards.json.bak data/cards.json
+n=$((n + 1)); printf "  [%2d] %-62s " "$n" "cards_cook: edit one member → 1/2 cached"
+if printf '%s' "$EDIT" | grep -q "1/2 cached"; then echo "PASS"; pass=$((pass + 1)); else echo "FAIL"; echo "        re-run output: $EDIT"; fail=$((fail + 1)); fi
+assert_file_eq "cards_cook: king.txt reflects the edit"  build/cards/king.txt "King of Diamonds"
+assert_file_eq "cards_cook: ace.txt unchanged (cache hit)" build/cards/ace.txt "Ace of Spades"
+
+# Leave the tree clean.
+rm -rf build .cook
 
 echo
 echo "  $pass passed, $fail failed (of $n)"
