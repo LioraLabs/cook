@@ -206,6 +206,111 @@ recipe build
     );
 }
 
+/// A native shell-block `probe` (`as lines`) feeding a `for_each`: the lowering
+/// executes via the §22.5.9 register pre-pass and fans out one unit per line.
+#[test]
+fn native_probe_for_each_as_lines_end_to_end() {
+    let tmp = TempDir::new().unwrap();
+    let cookfile = r#"
+probe names
+    produce as lines { printf 'alpha\nbeta\n' }
+
+recipe render
+    for_each names
+    cook "out/$<item>.txt" using { mkdir -p out && echo $<item> > $<out> }
+"#;
+    fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
+    run_cook(tmp.path(), &["render"]).unwrap();
+    assert!(tmp.path().join("out/alpha.txt").exists(), "alpha.txt missing");
+    assert!(tmp.path().join("out/beta.txt").exists(), "beta.txt missing");
+}
+
+/// A native lua-block `probe` returning records, feeding a `for_each` with
+/// `$<item.field>` access.
+#[test]
+fn native_probe_for_each_lua_records_end_to_end() {
+    let tmp = TempDir::new().unwrap();
+    let cookfile = r#"
+probe cards
+    produce >{ return { {id='a'}, {id='b'} } }
+
+recipe render
+    for_each cards
+    cook "out/$<item.id>.txt" using { mkdir -p out && echo $<item.id> > $<out> }
+"#;
+    fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
+    run_cook(tmp.path(), &["render"]).unwrap();
+    assert!(tmp.path().join("out/a.txt").exists(), "a.txt missing");
+    assert!(tmp.path().join("out/b.txt").exists(), "b.txt missing");
+}
+
+/// A native shell-block `probe` (`as json`) whose JSON array feeds a `for_each`
+/// (evaluated in the pre-pass VM, where cook.json_decode is available). Also
+/// exercises `ingredients` lowering to inputs.files.
+#[test]
+fn native_probe_for_each_as_json_end_to_end() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(tmp.path().join("cards.json"), r#"[{"id":"x"},{"id":"y"}]"#).unwrap();
+    let cookfile = r#"
+probe cards
+    ingredients "cards.json"
+    produce as json { cat cards.json }
+
+recipe render
+    for_each cards
+    cook "out/$<item.id>.txt" using { mkdir -p out && echo $<item.id> > $<out> }
+"#;
+    fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
+    run_cook(tmp.path(), &["render"]).unwrap();
+    assert!(tmp.path().join("out/x.txt").exists(), "x.txt missing");
+    assert!(tmp.path().join("out/y.txt").exists(), "y.txt missing");
+}
+
+/// Editing a probe's `ingredients` input re-fingerprints the probe; the
+/// for_each fan-out reflects the new data on the next run.
+#[test]
+fn native_probe_ingredient_edit_reinvalidates() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(tmp.path().join("cards.json"), r#"[{"id":"first"}]"#).unwrap();
+    let cookfile = r#"
+probe cards
+    ingredients "cards.json"
+    produce as json { cat cards.json }
+
+recipe render
+    for_each cards
+    cook "out/$<item.id>.txt" using { mkdir -p out && echo $<item.id> > $<out> }
+"#;
+    fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
+    run_cook(tmp.path(), &["render"]).unwrap();
+    assert!(tmp.path().join("out/first.txt").exists(), "first.txt missing");
+    // edit the ingredient -> re-fingerprint -> new member
+    fs::write(tmp.path().join("cards.json"), r#"[{"id":"second"}]"#).unwrap();
+    run_cook(tmp.path(), &["render"]).unwrap();
+    assert!(tmp.path().join("out/second.txt").exists(), "second.txt missing after edit");
+}
+
+/// A native `probe` and a `cook.probe()` API call with the same key MUST be
+/// rejected by the §22.5.2 duplicate-key diagnostic (coexistence: both register
+/// into one probe table).
+#[test]
+fn native_probe_and_api_duplicate_key_rejected() {
+    let tmp = TempDir::new().unwrap();
+    let cookfile = r#"
+probe dup
+    produce >{ return 1 }
+register
+    cook.probe("dup", { inputs = {}, produce = "return 2" })
+
+recipe build
+    > echo hi
+"#;
+    fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
+    let err = run_cook(tmp.path(), &["build"]).expect_err("expected duplicate-key rejection");
+    assert!(err.contains("dup") && (err.contains("declared") || err.to_lowercase().contains("duplicate")),
+        "expected duplicate-key diagnostic mentioning 'dup', got: {err}");
+}
+
 /// Demand-driven scheduling: a probe that no recipe-reachable unit references
 /// MUST NOT be executed and MUST NOT write a probe-value artifact to
 /// `.cook/cache/`.

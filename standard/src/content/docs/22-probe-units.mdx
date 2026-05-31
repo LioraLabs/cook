@@ -80,6 +80,31 @@ The `as` modifier is valid ONLY on the shell-block form. A conforming
 implementation MUST reject `as` applied to a `>{ … }` Lua-block produce with a
 register-phase diagnostic, since a Lua block already returns a structured value.
 
+**Coexistence.** The native `probe` declaration and the register-phase
+`cook.probe()` API register into one probe table within a register pass; a key
+declared by both MUST fire the duplicate-key diagnostic of §{cat.probes.api}.
+
+> **Note (informative).** A `probe` whose `produce` decodes JSON/YAML
+> (`as json`, or `cook.json_decode`/`cook.yaml_decode` in a `>{ … }` body) is
+> evaluated with those codecs available when it feeds a `for_each` (the register
+> pre-pass, §{cat.probes.for-each}). Consumption of such a probe through a
+> demand-driven consumer unit currently requires the codecs on the worker VM
+> (reference-implementation gap, tracked separately); the `for_each` path is
+> unaffected.
+
+**Lowering (informative).** The reference implementation lowers a `probe`
+declaration to the equivalent `cook.probe(key, opts)` call (§{cat.probes.api}):
+the header dependency list becomes `inputs.requires`; `ingredients` (globs and
+`!` excludes) is resolved at register time to the concrete file set populating
+`inputs.files` (§{cat.probes.inputs}); and the `produce` body becomes the
+`opts.produce` Lua source string — a `>{ … }` block verbatim, a `{ … }` shell
+block wrapped as `cook.sh(...)` typed by the `as` modifier (bare → stdout string
+with one trailing newline trimmed; `as lines` → newline-split array; `as json`
+→ `cook.json_decode`). Because the fingerprint folds the `opts.produce` source
+string (§{cat.probes.inputs}), editing a shell command or changing the `as`
+typing changes the lowered string and therefore re-fingerprints; the fingerprint
+algorithm itself is unchanged.
+
 ## 22.5.3. The `cook.probe` API [#cat.probes.api]
 
 **Signature.** `cook.probe(key: string, opts: ProbeOpts) -> nil`

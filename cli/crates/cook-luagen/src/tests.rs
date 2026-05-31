@@ -3386,3 +3386,83 @@ fn for_each_lua_expr_source_rejected_at_codegen() {
     assert!(msg.contains("Lua-expression source is not yet supported"),
         "expected §8.3 reserved diagnostic, got: {}", msg);
 }
+
+// ── §22.5.2 — native probe lowering (COOK-68) ──────────────────────────────
+
+fn make_probe_cf(produce: ProbeProduce) -> Cookfile {
+    Cookfile {
+        config_blocks: vec![], recipes: vec![], chores: vec![], uses: vec![],
+        imports: vec![], register_blocks: vec![], top_level_module_calls: vec![],
+        probes: vec![Probe {
+            name: "p".into(), deps: vec![], ingredients: vec![], excludes: vec![],
+            produce, line: 1,
+        }],
+    }
+}
+
+#[test]
+fn probe_lua_block_lowers_to_cook_probe() {
+    let cf = Cookfile {
+        config_blocks: vec![], recipes: vec![], chores: vec![], uses: vec![],
+        imports: vec![], register_blocks: vec![], top_level_module_calls: vec![],
+        probes: vec![Probe {
+            name: "services".into(), deps: vec!["cards".into()],
+            ingredients: vec!["data/s.json".into()], excludes: vec![],
+            produce: ProbeProduce::Lua("return {}".into()), line: 1,
+        }],
+    };
+    let lua = generate(&cf);
+    assert!(lua.contains("cook.probe(\"services\""), "lua:\n{lua}");
+    assert!(lua.contains("requires = {\"cards\"}"), "lua:\n{lua}");
+    assert!(lua.contains("files = cook.resolve_ingredients({\"data/s.json\"}, {})"), "lua:\n{lua}");
+    assert!(lua.contains("return {}"), "lua:\n{lua}");
+}
+
+#[test]
+fn probe_shell_json_lowers_with_json_decode() {
+    let cf = make_probe_cf(ProbeProduce::Shell {
+        commands: vec!["cat data.json".into()], typing: ShellProduceType::Json });
+    let lua = generate(&cf);
+    assert!(lua.contains("cook.json_decode(cook.sh("), "lua:\n{lua}");
+    assert!(lua.contains("cat data.json"), "lua:\n{lua}");
+}
+
+#[test]
+fn probe_shell_string_default_trims_newline() {
+    let cf = make_probe_cf(ProbeProduce::Shell {
+        commands: vec!["git rev-parse HEAD".into()], typing: ShellProduceType::String });
+    let lua = generate(&cf);
+    assert!(lua.contains("cook.sh("), "lua:\n{lua}");
+    assert!(lua.contains(r#":gsub("\n$", "")"#), "lua:\n{lua}");
+}
+
+#[test]
+fn probe_shell_lines_builds_array() {
+    let cf = make_probe_cf(ProbeProduce::Shell {
+        commands: vec!["git tag".into()], typing: ShellProduceType::Lines });
+    let lua = generate(&cf);
+    assert!(lua.contains(r#"gmatch("[^\n]+")"#), "lua:\n{lua}");
+    assert!(lua.contains("return _r"), "lua:\n{lua}");
+}
+
+#[test]
+fn probe_shell_produce_with_brackets_escalates_levels() {
+    // A shell command containing `]]` must not collide with the long-bracket
+    // wraps: the inner `cook.sh([=[ … ]=])` escalates past the `]]`, and the
+    // outer `produce = [==[ … ]==]` escalates past the inner `]=]`. Guards the
+    // silent-truncation class for nested long strings.
+    let cf = make_probe_cf(ProbeProduce::Shell {
+        commands: vec!["echo ]]".into()], typing: ShellProduceType::String });
+    let lua = generate(&cf);
+    assert!(lua.contains("[=["), "expected escalated inner bracket, lua:\n{lua}");
+    assert!(lua.contains("[==["), "expected escalated outer bracket, lua:\n{lua}");
+}
+
+#[test]
+fn probe_no_ingredients_no_deps_omits_those_fields() {
+    let cf = make_probe_cf(ProbeProduce::Lua("return 1".into()));
+    let lua = generate(&cf);
+    assert!(lua.contains("cook.probe("), "lua:\n{lua}");
+    assert!(!lua.contains("resolve_ingredients"), "lua:\n{lua}");
+    assert!(!lua.contains("requires ="), "lua:\n{lua}");
+}

@@ -619,6 +619,7 @@ enum TopLevelItem<'a> {
     Chore(&'a Chore),
     RegisterBlock(&'a RegisterBlock),
     TopLevelModuleCall(&'a TopLevelModuleCall),
+    Probe(&'a Probe),
 }
 
 impl<'a> TopLevelItem<'a> {
@@ -628,6 +629,7 @@ impl<'a> TopLevelItem<'a> {
             TopLevelItem::Chore(c)              => c.line,
             TopLevelItem::RegisterBlock(rb)     => rb.line,
             TopLevelItem::TopLevelModuleCall(c) => c.line,
+            TopLevelItem::Probe(p)              => p.line,
         }
     }
 }
@@ -711,6 +713,7 @@ pub fn generate_with_names(
         .chain(cookfile.chores.iter().map(TopLevelItem::Chore))
         .chain(cookfile.register_blocks.iter().map(TopLevelItem::RegisterBlock))
         .chain(cookfile.top_level_module_calls.iter().map(TopLevelItem::TopLevelModuleCall))
+        .chain(cookfile.probes.iter().map(TopLevelItem::Probe))
         .collect();
     items.sort_by_key(|i| i.line());
 
@@ -933,6 +936,9 @@ pub fn generate_with_names(
             }
             TopLevelItem::Chore(chore) => {
                 out.push_str(&compile_chore(chore, &cookfile.uses));
+            }
+            TopLevelItem::Probe(p) => {
+                crate::probe::emit_probe(&mut out, p);
             }
         }
     }
