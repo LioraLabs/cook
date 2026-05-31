@@ -187,6 +187,7 @@ mod tests {
             imports: vec![],
             register_blocks: vec![],
             top_level_module_calls: vec![],
+            probes: vec![],
         }
     }
 

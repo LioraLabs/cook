@@ -13,6 +13,7 @@ fn make_cookfile(recipes: Vec<Recipe>) -> Cookfile {
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
+        probes: vec![],
     }
 }
 
@@ -153,6 +154,7 @@ fn codegen_emits_register_surface_for_surface_recipes() {
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let lua = generate(&cookfile);
     assert!(
@@ -696,6 +698,7 @@ fn test_use_generates_load_module() {
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let output = generate(&cookfile);
     assert!(output.contains(r#"local cpp = cook.load_module("cpp")"#));
@@ -795,6 +798,7 @@ fn test_multiple_uses_generate_in_order() {
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let output = generate(&cookfile);
     let cpp_pos = output.find(r#"local cpp = cook.load_module("cpp")"#).unwrap();
@@ -1309,6 +1313,7 @@ fn test_codegen_emits_unnamed_config_block() {
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let out = generate(&cookfile);
     assert!(out.contains("function __cook_run_config_blocks"));
@@ -1329,6 +1334,7 @@ fn test_codegen_emits_named_config_block() {
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let out = generate(&cookfile);
     assert!(out.contains("function __cook_run_config_blocks"));
@@ -1346,6 +1352,7 @@ fn test_codegen_skips_dispatcher_when_no_config_blocks() {
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let out = generate(&cookfile);
     assert!(!out.contains("__cook_run_config_blocks"));
@@ -1365,6 +1372,7 @@ fn test_codegen_emits_unnamed_and_named_in_order() {
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let out = generate(&cookfile);
     let base_idx = out.find("base()").unwrap();
@@ -1967,6 +1975,7 @@ fn test_generate_includes_chores() {
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let lua = generate(&cookfile);
     // Surface recipes/chores lower to `cook.__register_surface[_chore]`
@@ -2949,6 +2958,7 @@ fn test_codegen_emits_register_block() {
             line: 1,
         }],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let out = generate(&cookfile);
     assert!(out.contains("cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })"),
@@ -2968,6 +2978,7 @@ fn test_codegen_emits_register_blocks_in_source_order() {
             RegisterBlock { body: "    second()".to_string(), line: 5 },
         ],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let out = generate(&cookfile);
     let first_pos = out.find("first()").expect("first() in output");
@@ -2995,6 +3006,7 @@ fn test_codegen_interleaves_register_blocks_with_recipes() {
             RegisterBlock { body: "    after()".to_string(),  line: 8 },
         ],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let out = generate(&cookfile);
     let before_pos = out.find("before()").expect("before() in output");
@@ -3020,6 +3032,7 @@ fn test_codegen_emits_top_level_module_call() {
             code: "cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })".to_string(),
             line: 1,
         }],
+        probes: vec![],
     };
     let out = generate(&cookfile);
     assert!(out.contains("cook_cc.bin(\"game\", { sources = { \"src/main.c\" } })"),
@@ -3046,6 +3059,7 @@ fn test_codegen_interleaves_top_level_module_calls_with_recipes() {
             TopLevelModuleCall { code: "cpp.bin(\"a\", {})".to_string(), line: 1 },
             TopLevelModuleCall { code: "cpp.bin(\"b\", {})".to_string(), line: 8 },
         ],
+        probes: vec![],
     };
     let out = generate(&cookfile);
     let a_pos      = out.find("cpp.bin(\"a\"").expect("`a` in output");
@@ -3181,6 +3195,7 @@ fn codegen_chore_uses_register_surface_chore() {
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let lua = generate(&cookfile);
     assert!(
@@ -3210,6 +3225,7 @@ fn codegen_register_surface_includes_requires() {
         imports: vec![],
         register_blocks: vec![],
         top_level_module_calls: vec![],
+        probes: vec![],
     };
     let lua = generate(&cookfile);
     assert!(

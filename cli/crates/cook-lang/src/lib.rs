@@ -3,6 +3,7 @@ pub mod lexer;
 pub(crate) mod brace_scan;
 pub(crate) mod cook_line;
 pub(crate) mod lua_block;
+pub(crate) mod probe;
 pub(crate) mod recipe;
 pub(crate) mod shell_block;
 
@@ -137,6 +138,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
     let mut seen_recipe = false;
     let mut register_blocks: Vec<ast::RegisterBlock> = Vec::new();
     let mut top_level_module_calls: Vec<ast::TopLevelModuleCall> = Vec::new();
+    let mut probes: Vec<ast::Probe> = Vec::new();
     // App. A.2 "Duplicate recipe / chore declaration name rule": recipes and
     // chores share a single callable namespace. Track every declaration so
     // we can reject any subsequent collision (recipe-vs-recipe,
@@ -295,6 +297,16 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
                 });
                 pos += 1;
             }
+            Token::ProbeHeader { name, deps } => {
+                let probe_line = tok.line;
+                let name = name.clone();
+                let deps = deps.clone();
+                pos += 1;
+                let (probe, new_pos) =
+                    probe::parse_probe(name, deps, probe_line, &tokens, pos, &source_lines)?;
+                probes.push(probe);
+                pos = new_pos;
+            }
             Token::RegisterHeader => {
                 let header_line = tok.line;
                 // Reject `register foo`: detect non-empty content after the keyword.
@@ -318,7 +330,7 @@ pub fn parse(source: &str) -> Result<Cookfile, ParseError> {
         }
     }
 
-    Ok(Cookfile { config_blocks, recipes, chores, uses, imports, register_blocks, top_level_module_calls })
+    Ok(Cookfile { config_blocks, recipes, chores, uses, imports, register_blocks, top_level_module_calls, probes })
 }
 
 #[cfg(test)]

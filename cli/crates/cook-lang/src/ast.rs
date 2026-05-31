@@ -85,6 +85,44 @@ pub struct Chore {
     pub line: usize,
 }
 
+/// A `probe` declaration (§22.5). Native surface sugar over the register-phase
+/// `cook.probe()` API: lowering (COOK-68) emits the equivalent `cook.probe`
+/// call. `deps` is the make-style header dependency list (`probe N: a b`) and
+/// lowers to `inputs.requires`. `ingredients`/`excludes` are the file-input
+/// fingerprint set (NOT an iteration driver — a probe yields one value).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Probe {
+    pub name: String,
+    pub deps: Vec<String>,
+    pub ingredients: Vec<String>,
+    pub excludes: Vec<String>,
+    pub produce: ProbeProduce,
+    pub line: usize,
+}
+
+/// The value-producing body of a probe (§22.5). Reuses the `body ::= shell_block
+/// | using_lua_block` grammar of §8: `>{ … }` is a Lua block whose return is the
+/// probe value; `{ … }` is a shell block whose stdout is the value, typed by the
+/// `as` modifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbeProduce {
+    /// `produce >{ … }` — value is the block's `return`.
+    Lua(String),
+    /// `produce [as json|lines] { … }` — value is stdout, typed.
+    Shell { commands: Vec<String>, typing: ShellProduceType },
+}
+
+/// How a shell-block `produce`'s stdout becomes the probe value (§22.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellProduceType {
+    /// Bare `produce { … }` — stdout as a string (one trailing newline trimmed).
+    String,
+    /// `produce as lines { … }` — stdout split on `\n` into an array.
+    Lines,
+    /// `produce as json { … }` — stdout parsed as one JSON value.
+    Json,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cookfile {
     pub config_blocks: Vec<ConfigBlock>,
@@ -94,6 +132,7 @@ pub struct Cookfile {
     pub imports: Vec<ImportDecl>,
     pub register_blocks: Vec<RegisterBlock>,
     pub top_level_module_calls: Vec<TopLevelModuleCall>,
+    pub probes: Vec<Probe>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -339,6 +378,7 @@ mod tests {
             imports: vec![],
             register_blocks: vec![],
             top_level_module_calls: vec![],
+            probes: vec![],
         };
         assert_eq!(cookfile.uses.len(), 1);
         assert_eq!(cookfile.uses[0].module_name, "cpp");
@@ -379,6 +419,7 @@ mod tests {
             imports: vec![],
             register_blocks: vec![],
             top_level_module_calls: vec![],
+            probes: vec![],
         };
         assert_eq!(cookfile.config_blocks.len(), 2);
         assert!(cookfile.config_blocks[0].name.is_none());
@@ -451,9 +492,58 @@ mod tests {
             top_level_module_calls: vec![
                 TopLevelModuleCall { code: "cpp.bin(\"x\")".into(), line: 3 },
             ],
+            probes: vec![],
         };
         assert_eq!(cookfile.register_blocks.len(), 2);
         assert_eq!(cookfile.top_level_module_calls.len(), 1);
         assert_eq!(cookfile.top_level_module_calls[0].line, 3);
+    }
+
+    #[test]
+    fn probe_ast_constructs() {
+        let p = Probe {
+            name: "services".to_string(),
+            deps: vec!["cards".to_string()],
+            ingredients: vec!["data/services.json".to_string()],
+            excludes: vec![],
+            produce: ProbeProduce::Lua("return {}".to_string()),
+            line: 1,
+        };
+        assert_eq!(p.name, "services");
+        assert_eq!(p.deps, vec!["cards"]);
+        assert!(matches!(p.produce, ProbeProduce::Lua(_)));
+
+        let shell = ProbeProduce::Shell {
+            commands: vec!["cat data/cards.json".to_string()],
+            typing: ShellProduceType::Json,
+        };
+        assert!(matches!(shell, ProbeProduce::Shell { typing: ShellProduceType::Json, .. }));
+
+        let shell_str = ProbeProduce::Shell {
+            commands: vec!["hostname".to_string()],
+            typing: ShellProduceType::String,
+        };
+        assert!(matches!(shell_str, ProbeProduce::Shell { typing: ShellProduceType::String, .. }));
+
+        let shell_lines = ProbeProduce::Shell {
+            commands: vec!["ls data/".to_string()],
+            typing: ShellProduceType::Lines,
+        };
+        assert!(matches!(shell_lines, ProbeProduce::Shell { typing: ShellProduceType::Lines, .. }));
+    }
+
+    #[test]
+    fn cookfile_carries_probes() {
+        let cf = Cookfile {
+            config_blocks: vec![],
+            recipes: vec![],
+            chores: vec![],
+            uses: vec![],
+            imports: vec![],
+            register_blocks: vec![],
+            top_level_module_calls: vec![],
+            probes: vec![],
+        };
+        assert!(cf.probes.is_empty());
     }
 }

@@ -4,10 +4,10 @@ sidebar:
   order: 4
 ---
 # 4. Top-level structure [#toplevel]
-> **Normative.** This chapter defines the top-level production of a Cookfile, the ordering rule for declarations and recipes, and the implicit-termination rule that bounds every body construct (recipe, chore, config, register).
+> **Normative.** This chapter defines the top-level production of a Cookfile, the ordering rule for declarations and recipes, and the implicit-termination rule that bounds every body construct (recipe, chore, config, register, probe).
 
 ## 4.1. Top-level production [#toplevel.overview]
-A Cookfile is parsed as a single top-level production, `cookfile`, consisting of zero or more `toplevel_item`s (App. A.1). Each `toplevel_item` is a `recipe`, a `chore`, a `config_block`, a `use_declaration`, an `import_declaration`, a `register_block`, a top-level `module_call`, a `comment`, or a `NEWLINE` (blank line).
+A Cookfile is parsed as a single top-level production, `cookfile`, consisting of zero or more `toplevel_item`s (App. A.1). Each `toplevel_item` is a `recipe`, a `chore`, a `config_block`, a `use_declaration`, an `import_declaration`, a `register_block`, a `probe_declaration`, a top-level `module_call`, a `comment`, or a `NEWLINE` (blank line).
 
 A conforming implementation MUST drive parsing off the token stream produced by §{lexical}: each syntactic form listed above is selected by the classification of its leading token. Comments and blank lines MUST be accepted at any top-level position and MUST NOT affect the grammatical shape of the surrounding items. A `Content` token at the top level (§{lexical.line-prefixes}) is not a valid `toplevel_item` and MUST be rejected unless it matches the top-level `module_call` shape per §{toplevel.module-call}.
 
@@ -15,7 +15,7 @@ A top-level `module_call` (§{toplevel.module-call}) is a column-0 `Content` lin
 
 ### Note 4.1.1
 
-The grammar is top-down and keyword-led at the outer layer: the leading token of a non-blank `toplevel_item` is sufficient to commit to one of `recipe`, `chore`, `config_block`, `use_declaration`, `import_declaration`, or `comment`, with no backtracking. The rejection of a top-level `Content` token (§{lexical.line-prefixes}) is normative in the body of §{toplevel.overview}.
+The grammar is top-down and keyword-led at the outer layer: the leading token of a non-blank `toplevel_item` is sufficient to commit to one of `recipe`, `chore`, `config_block`, `use_declaration`, `import_declaration`, `probe_declaration`, or `comment`, with no backtracking. The rejection of a top-level `Content` token (§{lexical.line-prefixes}) is normative in the body of §{toplevel.overview}.
 
 ### Note 4.1.2
 
@@ -28,7 +28,7 @@ Comments and blank lines are not ordered: they MAY appear at any top-level posit
 
 Within each ordered prefix, `use_declaration`s, `import_declaration`s, and `config_block`s MAY appear in any order and MAY be interleaved freely.
 
-A `register_block` (§{decl.register}) and a top-level `module_call` (§{toplevel.module-call}) MAY appear at any top-level position, including before any `recipe`/`chore` and interleaved between them. Neither is subject to the use/import/config prefix rule of §4.2.
+A `register_block` (§{decl.register}), a top-level `module_call` (§{toplevel.module-call}), and a `probe_declaration` MAY appear at any top-level position, including before any `recipe`/`chore` and interleaved between them. None of these is subject to the use/import/config prefix rule of §4.2.
 
 ### Example 4.2.1
 
@@ -53,9 +53,9 @@ Each of the three ordered forms (`use_declaration`, `import_declaration`, `confi
 The `cook-lang` parser test `test_parse_use_after_recipe_fails` (and companion tests for `import` and `config`) pin this ordering rule.
 
 ## 4.3. Body termination [#toplevel.termination]
-A body construct (`recipe_body`, `chore_body`, `config_body`, `register_body`) extends from the line following the introducing header up to, but not including, the next **terminating line** of the surrounding Cookfile. A line is a terminating line when it begins at column 0 (no leading whitespace) AND EITHER:
+A body construct (`recipe_body`, `chore_body`, `config_body`, `register_body`, `probe_body`) extends from the line following the introducing header up to, but not including, the next **terminating line** of the surrounding Cookfile. A line is a terminating line when it begins at column 0 (no leading whitespace) AND EITHER:
 
-  (a) its first whitespace-separated token is one of the top-level keywords `recipe`, `chore`, `config`, `use`, `import`, `register` (§{lexical.keywords}); OR
+  (a) its first whitespace-separated token is one of the top-level keywords `recipe`, `chore`, `config`, `use`, `import`, `register`, `probe` (§{lexical.keywords}); OR
   (b) the trimmed line matches the top-level module_call shape `BARE_IDENTIFIER "." BARE_IDENTIFIER (` (§{toplevel.module-call}).
 
 End-of-file is also a terminating boundary.

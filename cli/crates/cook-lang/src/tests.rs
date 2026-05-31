@@ -1724,3 +1724,164 @@ fn test_for_each_empty_source_rejected() {
     let msg = format!("{}", parse(source).unwrap_err());
     assert!(msg.contains("for_each"), "expected missing-source diagnostic, got: {}", msg);
 }
+
+// ── COOK-67 Task 4: produce as json|lines typing ───────────────────
+
+fn probe_of(src: &str) -> crate::ast::Probe {
+    crate::parse(src).unwrap().probes.into_iter().next().unwrap()
+}
+
+#[test]
+fn produce_shell_default_is_string() {
+    let p = probe_of("probe x\n    produce { cat data.json }\n");
+    assert!(matches!(p.produce, crate::ast::ProbeProduce::Shell {
+        typing: crate::ast::ShellProduceType::String, .. }));
+}
+
+#[test]
+fn produce_shell_as_json() {
+    let p = probe_of("probe x\n    produce as json { cat data.json }\n");
+    assert!(matches!(p.produce, crate::ast::ProbeProduce::Shell {
+        typing: crate::ast::ShellProduceType::Json, .. }));
+}
+
+#[test]
+fn produce_shell_as_lines() {
+    let p = probe_of("probe x\n    produce as lines { git tag --list }\n");
+    assert!(matches!(p.produce, crate::ast::ProbeProduce::Shell {
+        typing: crate::ast::ShellProduceType::Lines, .. }));
+}
+
+#[test]
+fn produce_as_on_lua_block_is_error() {
+    let err = crate::parse("probe x\n    produce as json >{ return {} }\n").unwrap_err();
+    assert!(format!("{err}").contains("`as` is only valid on a shell-block"),
+        "got: {err}");
+}
+
+// ── COOK-67 Task 3: probe declaration parser ────────────────────────
+
+#[test]
+fn parse_probe_lua_block_with_deps_and_ingredients() {
+    let src = "probe services: cards services_raw\n    ingredients \"data/services.json\"\n    produce >{\n        return {}\n    }\n";
+    let cf = crate::parse(src).unwrap();
+    assert_eq!(cf.probes.len(), 1);
+    let p = &cf.probes[0];
+    assert_eq!(p.name, "services");
+    assert_eq!(p.deps, vec!["cards", "services_raw"]);
+    assert_eq!(p.ingredients, vec!["data/services.json"]);
+    assert!(matches!(&p.produce, crate::ast::ProbeProduce::Lua(code) if code.contains("return {}")));
+}
+
+#[test]
+fn parse_probe_terminates_at_next_recipe() {
+    let src = "probe a\n    produce >{ return 1 }\nrecipe build\n    echo hi\n";
+    let cf = crate::parse(src).unwrap();
+    assert_eq!(cf.probes.len(), 1);
+    assert_eq!(cf.recipes.len(), 1);
+    assert_eq!(cf.recipes[0].name, "build");
+}
+
+#[test]
+fn parse_probe_shell_block_default() {
+    let src = "probe cards\n    ingredients \"data/cards.json\"\n    produce { cat data/cards.json }\n";
+    let cf = crate::parse(src).unwrap();
+    let p = &cf.probes[0];
+    assert!(matches!(&p.produce, crate::ast::ProbeProduce::Shell { typing: crate::ast::ShellProduceType::String, .. }));
+}
+
+#[test]
+fn parse_probe_lua_inline_long_string_with_brace() {
+    // a `}` inside a [[..]] long string must NOT prematurely close the block
+    let src = "probe x\n    produce >{ return [[a}b]] }\n";
+    let cf = crate::parse(src).unwrap();
+    assert!(matches!(&cf.probes[0].produce,
+        crate::ast::ProbeProduce::Lua(code) if code.contains("[[a}b]]")));
+}
+
+#[test]
+fn parse_probe_lua_inline_long_string_no_brace_still_works() {
+    let src = "probe x\n    produce >{ return cook.sh([[cat data]]) }\n";
+    let cf = crate::parse(src).unwrap();
+    assert!(matches!(&cf.probes[0].produce,
+        crate::ast::ProbeProduce::Lua(code) if code.contains("cook.sh([[cat data]])")));
+}
+
+// ── COOK-67 Task 5: probe negative-case coverage ──────────────────────
+
+fn parse_err(src: &str) -> String {
+    format!("{}", crate::parse(src).unwrap_err())
+}
+
+#[test]
+fn probe_missing_produce_rejected() {
+    // Real message: "probe '{name}' has no `produce` block"
+    let msg = parse_err("probe x\n    ingredients \"a\"\n");
+    assert!(msg.contains("no `produce`"), "got: {msg}");
+}
+
+#[test]
+fn probe_two_produce_rejected() {
+    // Real message: "probe: at most one `produce` per probe"
+    let msg = parse_err("probe x\n    produce >{ return 1 }\n    produce >{ return 2 }\n");
+    assert!(msg.contains("at most one `produce`"), "got: {msg}");
+}
+
+#[test]
+fn probe_two_ingredients_rejected() {
+    // Real message: "probe: at most one `ingredients` per probe"
+    let msg = parse_err(
+        "probe x\n    ingredients \"a\"\n    ingredients \"b\"\n    produce >{ return 1 }\n",
+    );
+    assert!(msg.contains("at most one `ingredients`"), "got: {msg}");
+}
+
+#[test]
+fn probe_ingredients_after_produce_rejected() {
+    // Real message: "probe: `ingredients` must appear before `produce`"
+    let msg = parse_err("probe x\n    produce >{ return 1 }\n    ingredients \"a\"\n");
+    assert!(msg.contains("must appear before `produce`"), "got: {msg}");
+}
+
+#[test]
+fn probe_triple_colon_name_rejected_at_parse() {
+    // MalformedProbeName from the lexer propagates through crate::parse.
+    assert!(crate::parse("probe a:b:c\n    produce >{ return 1 }\n").is_err());
+}
+
+#[test]
+fn probe_unexpected_step_rejected() {
+    // A `cook "out" using { true }` content line inside a probe body hits the
+    // "expected `ingredients` or `produce`, found: …" branch.
+    let msg = parse_err("probe x\n    cook \"out\" using { true }\n    produce >{ return 1 }\n");
+    assert!(
+        msg.contains("expected `ingredients` or `produce`, found"),
+        "got: {msg}"
+    );
+}
+
+#[test]
+fn probe_bare_lua_line_in_body_rejected() {
+    // A `>{` without the `produce` keyword tokenizes as LuaBlockOpen (the
+    // `_other` arm), triggering the "only `ingredients` and `produce`" message.
+    let msg = parse_err("probe x\n    >{ return 1 }\n");
+    assert!(
+        msg.contains("only `ingredients` and `produce` are allowed here"),
+        "got: {msg}"
+    );
+}
+
+#[test]
+fn probe_dep_colon_vs_name_colon() {
+    // `probe cards: cc:compiler` — name is "cards", dep is "cc:compiler".
+    let cf = crate::parse("probe cards: cc:compiler\n    produce >{ return 1 }\n").unwrap();
+    assert_eq!(cf.probes[0].name, "cards");
+    assert_eq!(cf.probes[0].deps, vec!["cc:compiler"]);
+}
+
+#[test]
+fn probe_as_on_lua_block_rejected() {
+    // Real message: "produce: `as` is only valid on a shell-block produce; …"
+    let msg = parse_err("probe x\n    produce as json >{ return {} }\n");
+    assert!(msg.contains("shell-block"), "got: {msg}");
+}

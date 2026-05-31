@@ -12,6 +12,7 @@ sidebar:
 cookfile              ::= toplevel_item*
 toplevel_item         ::= recipe
                        | chore
+                       | probe_decl
                        | config_block
                        | use_declaration
                        | import_declaration
@@ -123,6 +124,39 @@ chore_imperative_item    ::= lua_line
 **Chore default-interactive (normative).** Every `shell_command` inside a `chore_body` MUST be treated as if it had been an `interactive_command` (§{grammar-appendix.steps}, `interactive_command`). The `@` prefix MAY be present (no-op) but is unnecessary.
 
 **Chore no-caching (normative).** A unit registered from inside a chore body via `cook.add_unit` or the Cook Lua API's unit-recording helpers MUST be registered with `cache = false`. A conforming implementation MUST reject a register-phase call that would set `cache = true` (or equivalent) from within a chore body.
+
+## A.3.2. Probe [#grammar-appendix.probe]
+
+```ebnf
+probe_decl     ::= "probe" probe_name (":" probe_dep_list)? NEWLINE INDENT probe_body DEDENT
+probe_name     ::= BARE_PROBE_KEY | STRING
+BARE_PROBE_KEY ::= IDENT (":" IDENT)?
+probe_dep_list ::= probe_ref (WS probe_ref)*
+probe_ref      ::= BARE_PROBE_KEY | STRING
+IDENT          ::= /[A-Za-z_][A-Za-z0-9_]*/
+probe_body     ::= ingredients_step? produce_step
+produce_step   ::= "produce" ("as" produce_type)? body NEWLINE
+produce_type   ::= "json" | "lines"
+```
+
+`ingredients_step` is defined in §{grammar-appendix.steps}; `body ::= shell_block | using_lua_block` is also defined there (the `using`-dispatch tests `>{` before `{`).
+
+**Probe body (normative).** A `probe_body` comprises an optional `ingredients_step` followed by exactly one `produce_step`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The `as` `produce_type` modifier is valid ONLY when `body` is a `shell_block`; applied to a `using_lua_block` (`>{ … }`) it MUST be rejected, since a Lua block already returns a structured value (§{cat.probes.decl}).
+
+**Module-prefix colon disambiguation (normative).** The EBNF above admits an apparent ambiguity: the `:` in `BARE_PROBE_KEY` and the `:` that introduces `probe_dep_list` are spelled identically. The rule is purely positional:
+
+- A `:` that is immediately preceded by an `IDENT` segment **and** immediately followed (with no intervening whitespace) by an `IDENT`-start character is part of `BARE_PROBE_KEY` — the *module-prefix colon*. Example: `cc:zlib` is a single probe name.
+- A `:` that is preceded by a complete `probe_name` **and** followed by whitespace or end-of-line introduces `probe_dep_list`. Example: `probe cards: dep1 dep2` has name `cards` and deps `[dep1, dep2]`.
+- A contiguous third `:IDENT` segment (e.g. `a:b:c`) MUST be rejected. A conforming implementation MUST produce a diagnostic identifying the malformed name and source line. The diagnostic form is: `probe name 'NAME': a probe key is at most \`IDENT:IDENT\`; 'NAME' has too many ':' segments`.
+- The quoted `STRING` form (e.g. `probe "cc:zlib"`) is always unambiguous and bypasses the positional rule entirely.
+
+**Missing probe name (normative).** If the `probe` keyword is followed by content that does not parse as a valid `probe_name` (e.g. `probe :deps`), the implementation MUST reject the input with a diagnostic of the form: `line N: expected a probe name after \`probe\``.
+
+**Unexpected token after probe name (normative).** If the `probe` keyword is followed by a valid `probe_name` and then by content that is neither `:` (introducing `probe_dep_list`) nor end-of-line (e.g. `probe foo bar`), the implementation MUST reject the input with a diagnostic of the form: `line N: probe 'NAME': unexpected token after the probe name; a dependency list is introduced with ':' (e.g. \`probe NAME: dep1 dep2\`)`. The diagnostic MUST NOT identify the error as a recipe error.
+
+**`probe_dep_list` element shape (normative).** Each element of `probe_dep_list` is a `probe_ref`, which follows the same `BARE_PROBE_KEY | STRING` shape as `probe_name`. Module-prefixed dep references (e.g. `cc:compiler`) are therefore syntactically valid in the dependency list.
+
+**Column-zero constraint (normative).** The `probe` keyword is recognised as a header only when it appears at column zero (the line does not begin with whitespace). An indented `probe` line is classified as `Content` per §{lexical.line-classification}.
 
 ## A.4. Steps [#grammar-appendix.steps]
 ```ebnf

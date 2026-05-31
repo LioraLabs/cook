@@ -14,7 +14,73 @@ A *probe unit* is a DAG unit whose output is a Lua value rather than a file. A c
 
 A unit MAY declare a dependency on one or more probe outputs via `probes = { key, ... }` on `cook.add_unit` (§{cat.probes.consumer}). The implementation MUST add a DAG edge from each named probe to the consuming unit and MUST fold each probe's fingerprint into the consumer's fingerprint, ensuring transitive invalidation.
 
-## 22.5.2. The `cook.probe` API [#cat.probes.api]
+## 22.5.2. Native probe declaration [#cat.probes.decl]
+
+In addition to the register-phase `cook.probe()` API (§{cat.probes.api}), a
+conforming implementation MUST accept a **native `probe` declaration**: a
+column-0 construct (a sibling of `recipe`, `register`, and `chore`), implicitly
+register-phase, that declares one probe. The declaration is surface sugar: it
+MUST be equivalent to the `cook.probe(key, opts)` call its header and body
+denote (§{cat.probes.api}). The `cook.probe()` API is retained for
+dynamic registration; the two register into the same probe table and share the
+duplicate-key diagnostic of §{cat.probes.api}.
+
+The `probe_body` (App. A) comprises an optional declarative `ingredients_step`
+(§{steps.ingredients}) followed by exactly one `produce` body. A conforming
+implementation MUST reject a probe body that: contains no `produce`; contains
+two or more `produce`; contains two or more `ingredients`; or contains an
+`ingredients` line after the `produce`. The header dependency list
+(`probe NAME: a b`) names upstream probe keys and is equivalent to
+`inputs.requires` (§{cat.probes.inputs}).
+
+A probe's `ingredients` declares its **file-input fingerprint set** — NOT an
+iteration driver. A probe yields one value and never fans out; the
+`ingredients` globs (with `!` excludes, §{steps.ingredients}) populate
+`inputs.files` (§{cat.probes.inputs}), each file's content hash folding.
+
+**Diagnostics.** A conforming implementation MUST reject the following probe
+bodies at parse time with a diagnostic that identifies the probe by name and
+the offending line:
+
+- No `produce` block — a conforming implementation MUST reject the probe with a
+  diagnostic indicating that the `produce` block is absent.
+- Two or more `produce` blocks — a conforming implementation MUST reject the
+  second `produce` with a diagnostic indicating that at most one `produce` is
+  permitted per probe.
+- Two or more `ingredients` blocks — a conforming implementation MUST reject the
+  second `ingredients` with a diagnostic indicating that at most one `ingredients`
+  is permitted per probe.
+- An `ingredients` block appearing after the `produce` block — a conforming
+  implementation MUST reject with a diagnostic indicating that `ingredients`
+  must precede `produce`.
+- A body step that is neither `ingredients` nor `produce` (e.g. a `cook`, `plate`,
+  `test`, or bare shell step) — a conforming implementation MUST reject with a
+  diagnostic indicating that only `ingredients` and `produce` are permitted in
+  a probe body.
+- A probe name containing three or more colon-separated segments (e.g.
+  `probe a:b:c`) — a conforming implementation MUST reject at the lexical level
+  with a diagnostic indicating that a probe key is at most `IDENT:IDENT`.
+- An `as` modifier applied to a Lua-block `produce` (e.g. `produce as json >{ … }`)
+  — a conforming implementation MUST reject with a diagnostic indicating that `as`
+  is valid only on shell-block produce forms, since a Lua block already returns a
+  typed value.
+
+The `produce` body reuses the `body ::= shell_block | using_lua_block` grammar of
+§{steps.cook-single} (the `using`-dispatch: `>{` is tested before `{`). The probe
+value is determined by the body form:
+
+- `produce >{ … }` (Lua block): the probe value is what the block `return`s
+  (§{cat.probes.values}).
+- `produce { … }` (shell block): the probe value is the block's standard output,
+  typed by the optional `as` modifier — bare → the stdout string (one trailing
+  newline trimmed); `as lines` → the stdout split on `LF` into an array of
+  strings; `as json` → the stdout parsed as one JSON value.
+
+The `as` modifier is valid ONLY on the shell-block form. A conforming
+implementation MUST reject `as` applied to a `>{ … }` Lua-block produce with a
+register-phase diagnostic, since a Lua block already returns a structured value.
+
+## 22.5.3. The `cook.probe` API [#cat.probes.api]
 
 **Signature.** `cook.probe(key: string, opts: ProbeOpts) -> nil`
 
@@ -39,7 +105,7 @@ probe key 'cc:zlib' declared at <file>:<line>; previously declared at <file>:<li
 
 A conforming implementation MUST raise a register-phase error if `opts.inputs` is absent or not a table, or if `opts.produce` is absent or not a string.
 
-### Example 22.5.2.1
+### Example 22.5.3.1
 
 ```lua
 cook.probe("cc:zlib", {
@@ -54,7 +120,7 @@ cook.probe("cc:zlib", {
 })
 ```
 
-## 22.5.3. Probe inputs [#cat.probes.inputs]
+## 22.5.4. Probe inputs [#cat.probes.inputs]
 
 `opts.inputs` is a table with optional sub-keys. Omitted sub-keys default to the empty list.
 
@@ -77,7 +143,7 @@ A probe's fingerprint MUST be a 32-byte SHA-256 digest over the canonicalised by
 
 The implementation MAY include a non-cryptographic hash (e.g. xxh3_64) as an internal optimisation provided the final 32-byte fingerprint matches what a direct SHA-256 over the canonical bytes would produce.
 
-## 22.5.4. Value types [#cat.probes.values]
+## 22.5.5. Value types [#cat.probes.values]
 
 The function produced by wrapping the `produce` source string (§{cat.probes.api}) MUST return one of:
 
@@ -95,7 +161,7 @@ probe 'cc:zlib' returned a non-serialisable value at .cflags[3] (function)
 
 Probe values are serialised to msgpack for storage and cloud transport. The msgpack envelope MUST carry a `schema_version` field (value `1` for this Standard revision) and a `value` field holding the user-returned value. The `produced_at` timestamp MAY appear as an informative field but MUST NOT participate in fingerprinting.
 
-## 22.5.5. Consumer `probes` [#cat.probes.consumer]
+## 22.5.6. Consumer `probes` [#cat.probes.consumer]
 
 `cook.add_unit({ ..., probes = { "key1", "key2" } })` declares that the unit consumes the named probe values. The `probes` field is an optional list of probe-key strings; omitting it is equivalent to `probes = {}`. (Distinct from `opts.inputs.requires` per §{cat.probes.inputs}, which declares probe-to-probe dependencies inside a probe.)
 
@@ -110,7 +176,7 @@ A conforming implementation MUST, after the register pass completes:
 
 The relative order of `cook.probe` and `cook.add_unit` calls within one register pass is unconstrained; resolution is deferred to end-of-pass.
 
-## 22.5.6. Command-template desugaring [#cat.probes.templates]
+## 22.5.7. Command-template desugaring [#cat.probes.templates]
 
 Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` placeholders that reference probe outputs declared in `probes`. The implementation MUST detect these placeholders during codegen (or register-time capture for direct `cook.add_unit` calls) and rewrite the command into a Lua step that calls `cook.cache.get(key)` (§{lua.both}) and interpolates the resolved value before invoking the shell.
 
@@ -124,7 +190,7 @@ Substitution rules:
 
 Malformed placeholders (referencing a key not in `probes`, or accessing a field on a non-table value) MUST raise a register-phase or execute-phase diagnostic naming the placeholder.
 
-### Example 22.5.6.1
+### Example 22.5.7.1
 
 ```lua
 cook.add_unit({
@@ -138,7 +204,7 @@ cook.add_unit({
 
 The implementation rewrites this command at codegen time into a Lua step that reads `cook.cache.get("cc:compiler")` and `cook.cache.get("cc:zlib")` and interpolates the results before executing the shell command.
 
-## 22.5.7. Execution semantics [#cat.probes.exec]
+## 22.5.8. Execution semantics [#cat.probes.exec]
 
 A probe unit MUST run at most once per build invocation.
 
@@ -154,7 +220,7 @@ The wrapped `produce` function MAY raise a Lua error. A conforming implementatio
 
 **Demand-driven scheduling.** A probe unit MUST NOT execute on an invocation unless at least one scheduled non-probe unit lists the probe's key in its `probes` field, directly or transitively through probe-on-probe `inputs.requires` chains. A conforming implementation MUST silently omit unreached probe nodes from the execution DAG. The implementation MUST NOT compute, look up, or persist the fingerprint of an unreached probe; MUST NOT emit a user-facing diagnostic; and MUST NOT log a warning at the user-facing diagnostic layer. Debug logging at lower verbosity tiers is permitted.
 
-### Example 22.5.7.1
+### Example 22.5.8.1
 
 ```
 register
@@ -183,7 +249,7 @@ fingerprint MUST NOT be computed.
 
 **On-disk layout.** Probe artifacts reuse the existing recipe-cache layout. No new directories are introduced. The meta sidecar MUST carry a `kind: "probe_value"` field to disambiguate probe-artifact sidecars from file-artifact sidecars. All other fields of the meta sidecar (integrity hash, schema version) follow §{exec.cache.integrity}.
 
-## 22.5.8. Cycle detection [#cat.probes.cycles]
+## 22.5.9. Cycle detection [#cat.probes.cycles]
 
 The probe `requires` graph MUST be acyclic. A conforming implementation MUST detect cycles at the end of the register pass and MUST raise a diagnostic before any unit executes:
 
@@ -193,7 +259,7 @@ probe cycle detected: cc:a -> cc:b -> cc:a
 
 The diagnostic MUST render the full cycle path. The order in which nodes are listed MUST be deterministic (implementation-defined ordering of cycle start); the path MUST close back to the first node.
 
-## 22.5.9. Probe values as `for_each` sources [#cat.probes.for-each]
+## 22.5.10. Probe values as `for_each` sources [#cat.probes.for-each]
 
 An **array-shaped** probe value (§{cat.probes.values}) MAY be consumed as the source of a `for_each_step` (§{steps.for-each}): `for_each <key>` registers one work unit per array element, and `for_each <key>:<field>` iterates the array at the named field. This is a second probe consumption mode alongside the `$<key:field>` injection of §{cat.probes.templates}; the same `cook.probe` definition serves both.
 
@@ -215,9 +281,9 @@ Iterating over artifacts produced earlier in the same build (the codegen-then-pr
 
 > **Note (informative).** An implementation must learn a recipe's `for_each`-feeding probe *before* running the recipe body (which reads the resolved array). The reference implementation surfaces the source on the recipe's registration metadata — a `__for_each` descriptor naming the probe key (and optional field) — so the pre-pass resolves the probe from the recipe header without first executing the body (COOK-64). Recipe-level reachability (above) then bounds the pre-pass to the probes of recipes the build target actually reaches.
 
-## 22.5.10. Implementation status (CS-0074) [#cat.probes.impl-status]
+## 22.5.11. Implementation status (CS-0074) [#cat.probes.impl-status]
 
-C4–C6 implemented: requires resolution (§22.5.5), cycle detection (§22.5.8), execute-VM guard (§22.5.2).
+C4–C6 implemented: requires resolution (§22.5.6), cycle detection (§22.5.9), execute-VM guard (§22.5.3).
 
 F1–F3 implemented: rmpv dependency, Lua→msgpack walker (`probe_value.rs`), msgpack round-trip tests.
 

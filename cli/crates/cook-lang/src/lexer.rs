@@ -9,6 +9,7 @@ pub enum Token {
     UseDecl { name: String },
     ImportDecl { name: String, path: String },
     RegisterHeader,
+    ProbeHeader { name: String, deps: Vec<String> },
     LuaLine(String),
     LuaBlockOpen,
     InlineLuaLine(String),
@@ -51,6 +52,12 @@ pub enum LexError {
     UnclosedChoreParamDefault { line: usize, chore: String, name: String },
     #[error("line {line}: recipe '{name}': recipes don't take parameters; use a 'chore' (§7) or a config preset (§5)")]
     RecipeWithParams { line: usize, name: String },
+    #[error("line {line}: expected a probe name after `probe`")]
+    MissingProbeName { line: usize },
+    #[error("line {line}: probe '{name}': unexpected token after the probe name; a dependency list is introduced with ':' (e.g. `probe {name}: dep1 dep2`)")]
+    ProbeExtraTokens { name: String, line: usize },
+    #[error("line {line}: probe name '{name}': a probe key is at most `IDENT:IDENT`; '{name}' has too many ':' segments")]
+    MalformedProbeName { name: String, line: usize },
     #[error("line {line}: chore '{chore}': variadic parameter '{name}' must be the final parameter")]
     VariadicNotLast { line: usize, chore: String, name: String },
     #[error("line {line}: chore '{chore}': at most one variadic parameter permitted; found '{first}' and '{second}'")]
@@ -443,6 +450,51 @@ fn parse_names(text: &str, line: usize) -> Result<Vec<String>, LexError> {
     Ok(result)
 }
 
+/// Scan one `probe_ref ::= IDENT (":" IDENT)?` from the front of `s`.
+/// IDENT chars are `[A-Za-z0-9_]`. A `:` is consumed into the name ONLY when
+/// immediately followed by an ident-start char (no whitespace) — this is the
+/// module-prefix colon. A second contiguous `:` is the malformed triple-colon
+/// case. Returns `(name, rest_after_name)`.
+fn scan_probe_ref(s: &str, line: usize) -> Result<(String, &str), LexError> {
+    fn seg_len(s: &str) -> usize {
+        s.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(s.len())
+    }
+    let s = s.trim_start();
+    let n1 = seg_len(s);
+    if n1 == 0 || !is_ident_start(s.chars().next().unwrap_or('\0')) {
+        return Err(LexError::MissingProbeName { line });
+    }
+    let after1 = &s[n1..];
+    // module-prefix colon: ':' immediately followed by an ident-start char
+    if let Some(rest) = after1.strip_prefix(':') {
+        if !rest.is_empty() && is_ident_start(rest.chars().next().unwrap_or('\0')) {
+            let n2 = seg_len(rest);
+            let name = format!("{}:{}", &s[..n1], &rest[..n2]);
+            let after2 = &rest[n2..];
+            // a third contiguous ':IDENT' is malformed
+            if let Some(more) = after2.strip_prefix(':') {
+                if !more.is_empty() && is_ident_start(more.chars().next().unwrap_or('\0')) {
+                    return Err(LexError::MalformedProbeName { name: format!("{name}:…"), line });
+                }
+            }
+            return Ok((name, after2));
+        }
+    }
+    Ok((s[..n1].to_string(), after1))
+}
+
+/// Parse a probe header's dependency list: whitespace-separated `probe_ref`s.
+fn parse_probe_dep_list(text: &str, line: usize) -> Result<Vec<String>, LexError> {
+    let mut deps = Vec::new();
+    let mut rest = text.trim();
+    while !rest.is_empty() {
+        let (name, after) = scan_probe_ref(rest, line)?;
+        deps.push(name);
+        rest = after.trim_start();
+    }
+    Ok(deps)
+}
+
 pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
     let mut tokens = Vec::new();
 
@@ -544,6 +596,29 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
                     && (trimmed.as_bytes()[8] == b' ' || trimmed.as_bytes()[8] == b'\t')))
         {
             Token::RegisterHeader
+        } else if !line.starts_with(|c: char| c.is_whitespace())
+            && trimmed.starts_with("probe")
+            && trimmed.len() > 5
+            && (trimmed.as_bytes()[5] == b' '
+                || trimmed.as_bytes()[5] == b'\t'
+                || trimmed.as_bytes()[5] == b'"')
+        {
+            let rest = trimmed["probe".len()..].trim();
+            let (name, after_name) = if rest.starts_with('"') {
+                parse_name(rest, line_num)?
+            } else {
+                scan_probe_ref(rest, line_num)?
+            };
+            // scan_probe_ref returns an untrimmed remainder; parse_name already trims. Trim covers both.
+            let after_name = after_name.trim_start();
+            let deps = if let Some(after_colon) = after_name.strip_prefix(':') {
+                parse_probe_dep_list(after_colon.trim(), line_num)?
+            } else if after_name.is_empty() {
+                vec![]
+            } else {
+                return Err(LexError::ProbeExtraTokens { name, line: line_num });
+            };
+            Token::ProbeHeader { name, deps }
         } else if !line.starts_with(|c: char| c.is_whitespace())
             && trimmed.starts_with("use")
             && trimmed.len() > 3
@@ -1233,4 +1308,84 @@ recipe "build"
         let tokens = tokenize("register_foo").unwrap();
         assert_eq!(tokens[0].value, Token::Content("register_foo".to_string()));
     }
+
+    // ── COOK-67: probe header lexing ──────────────────────────────────────────
+
+    #[test]
+    fn probe_header_bare_name() {
+        let t = tokenize("probe cards").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader { name: "cards".into(), deps: vec![] });
+    }
+
+    #[test]
+    fn probe_header_module_prefixed_name() {
+        let t = tokenize("probe cc:zlib").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader { name: "cc:zlib".into(), deps: vec![] });
+    }
+
+    #[test]
+    fn probe_header_dep_list() {
+        let t = tokenize("probe cards: services_raw other").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "cards".into(),
+            deps: vec!["services_raw".into(), "other".into()],
+        });
+    }
+
+    #[test]
+    fn probe_header_prefixed_name_and_dep() {
+        let t = tokenize("probe cc:zlib: cc:compiler").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "cc:zlib".into(), deps: vec!["cc:compiler".into()],
+        });
+    }
+
+    #[test]
+    fn probe_header_quoted_name() {
+        let t = tokenize("probe \"cc:zlib\": cc:compiler").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "cc:zlib".into(), deps: vec!["cc:compiler".into()],
+        });
+    }
+
+    #[test]
+    fn probe_keyword_only_at_column_zero() {
+        let t = tokenize("    probe cards").unwrap();
+        assert!(matches!(t[0].value, Token::Content(_)));
+    }
+
+    #[test]
+    fn probe_triple_colon_name_rejected() {
+        assert!(tokenize("probe a:b:c").is_err());
+    }
+
+    #[test]
+    fn probe_keyword_needs_separator() {
+        let t = tokenize("probexyz cards").unwrap();
+        assert!(matches!(t[0].value, Token::Content(_)));
+    }
+
+    #[test]
+    fn probe_quoted_name_extra_token_rejected() {
+        // quoted name with trailing non-colon garbage -> ProbeExtraTokens
+        let err = tokenize("probe \"foo\" extra").unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("probe"), "message should mention probe, got: {msg}");
+        assert!(!msg.contains("recipe"), "probe error must not say 'recipe', got: {msg}");
+    }
+
+    #[test]
+    fn probe_missing_colon_before_deps_rejected() {
+        // `probe foo bar` (no colon) -> ProbeExtraTokens, not a recipe error
+        let err = tokenize("probe foo bar").unwrap_err();
+        let msg = format!("{err}");
+        assert!(!msg.contains("recipe"), "probe error must not say 'recipe', got: {msg}");
+    }
+
+    #[test]
+    fn probe_triple_colon_in_dep_list_rejected() {
+        // triple-colon in a DEP position is rejected too (same guard via parse_probe_dep_list)
+        assert!(tokenize("probe good: a:b:c").is_err());
+    }
+
 }

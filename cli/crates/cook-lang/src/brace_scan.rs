@@ -146,7 +146,10 @@ impl LuaScanner {
 /// If `chars[i..]` begins with `[` then a run of `=` of length `level` then
 /// another `[`, returns `Some((level, position-after-second-[))`.
 /// Otherwise returns `None`.
-fn match_open_long_bracket(chars: &[char], i: usize) -> Option<(u32, usize)> {
+///
+/// `pub(crate)` so that `cook_line::try_inline_lua_block` can reuse this
+/// logic when scanning single-line `>{ … }` blocks.
+pub(crate) fn match_open_long_bracket(chars: &[char], i: usize) -> Option<(u32, usize)> {
     if i >= chars.len() || chars[i] != '[' {
         return None;
     }
@@ -165,7 +168,10 @@ fn match_open_long_bracket(chars: &[char], i: usize) -> Option<(u32, usize)> {
 
 /// If `chars[i..]` begins with `]` then a run of `=` of length `level` then
 /// another `]`, returns `Some(position-after-second-])`. Otherwise `None`.
-fn match_close_long_bracket(chars: &[char], i: usize, level: u32) -> Option<usize> {
+///
+/// `pub(crate)` so that `cook_line::try_inline_lua_block` can reuse this
+/// logic when scanning single-line `>{ … }` blocks.
+pub(crate) fn match_close_long_bracket(chars: &[char], i: usize, level: u32) -> Option<usize> {
     if i >= chars.len() || chars[i] != ']' {
         return None;
     }

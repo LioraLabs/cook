@@ -3,6 +3,97 @@ use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
 use crate::ParseError;
 
+/// Try to extract a complete Lua block from the text immediately following
+/// the opening `>{`. `after_open` is the slice of the source line that comes
+/// after the `>{` that started the block.
+///
+/// Scans forward tracking brace depth (starting at 1 because the opening `{`
+/// has already been consumed). If depth reaches 0 on the same span, returns
+/// the content between the opening `{` and the matching `}` (trimmed).
+/// Returns `None` if the line does not contain a complete balanced block
+/// (i.e., the block spans multiple lines).
+///
+/// Handles the following Lua constructs that may contain literal `{`/`}`
+/// characters which must not affect the brace counter:
+/// * `"`/`'`-quoted strings (with `\`-escape handling).
+/// * `--` line comments — a `--` on the `>{` line means the closing `}` (if
+///   any) is commented out; the block must therefore continue on subsequent
+///   lines, so `None` is returned and the multiline collector takes over.
+/// * Lua long-bracket strings (`[[…]]`, `[=[…]=]`, `[==[…]==]` etc.):
+///   the function skips to the matching close bracket; if no matching close
+///   exists on this line, it returns `None` (the long string is unterminated
+///   on this line → multiline collector).
+///
+/// This is the Lua counterpart to `shell_block::try_inline_shell_block`.
+pub(crate) fn try_inline_lua_block(after_open: &str) -> Option<String> {
+    use crate::brace_scan::{match_close_long_bracket, match_open_long_bracket};
+
+    let chars: Vec<char> = after_open.chars().collect();
+    let len = chars.len();
+    let mut depth: i32 = 1;
+    let mut i = 0;
+
+    while i < len {
+        let c = chars[i];
+
+        match c {
+            '{' => { depth += 1; i += 1; }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    // Reconstruct the content up to (not including) this `}`.
+                    let content: String = chars[..i].iter().collect();
+                    return Some(content.trim().to_string());
+                }
+                i += 1;
+            }
+            '"' | '\'' => {
+                let quote = c;
+                i += 1;
+                while i < len && chars[i] != quote {
+                    if chars[i] == '\\' && i + 1 < len { i += 2; } else { i += 1; }
+                }
+                if i < len { i += 1; } // skip closing quote
+            }
+            '-' if i + 1 < len && chars[i + 1] == '-' => {
+                // Lua line comment: rest of line is comment, no closing brace
+                // can be found on this span. A `--` on the `>{` line means
+                // the closing `}` (if any) is commented out; the multiline
+                // collector must handle the block.
+                return None;
+            }
+            '[' => {
+                // Lua long-bracket string: `[[…]]`, `[=[…]=]`, etc.
+                if let Some((level, after_open_lb)) = match_open_long_bracket(&chars, i) {
+                    // Scan forward character by character looking for the matching
+                    // close bracket on this line.
+                    let mut j = after_open_lb;
+                    let mut found_close = false;
+                    while j < len {
+                        if chars[j] == ']' {
+                            if let Some(after_close) = match_close_long_bracket(&chars, j, level) {
+                                // Close found on same line — skip past it and continue.
+                                i = after_close;
+                                found_close = true;
+                                break;
+                            }
+                        }
+                        j += 1;
+                    }
+                    if !found_close {
+                        // Long string continues past this line — multiline.
+                        return None;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            _ => { i += 1; }
+        }
+    }
+    None // no matching `}` on this span
+}
+
 /// Parse a body payload — the `body` production from App. A.4 (CS-0024).
 ///
 /// `after_kw` is the line text after the body's introducer keyword
@@ -31,6 +122,15 @@ pub(crate) fn parse_body_payload(
     }
 
     if trimmed.starts_with(">{") {
+        let after_open = &trimmed[2..]; // text after `>{`
+        if let Some(code) = try_inline_lua_block(after_open) {
+            // Single-line Lua block: `>{ … }` all on one line.
+            let mut new_pos = current_pos + 1;
+            while new_pos < tokens.len() && tokens[new_pos].line <= line {
+                new_pos += 1;
+            }
+            return Ok((Body::LuaBlock(code), new_pos));
+        }
         let (code, new_pos) = collect_lua_block(line, tokens, current_pos + 1, source_lines)?;
         return Ok((Body::LuaBlock(code), new_pos));
     }
