@@ -15,7 +15,7 @@ pub(crate) mod shell_block;
 ///
 /// Move this constant in lockstep with `standard/VERSION` when the parser
 /// catches up to a new cut. See `cli/crates/cook-lang/CONFORMANCE.md`.
-pub const COOK_STANDARD_VERSION: &str = "0.13";
+pub const COOK_STANDARD_VERSION: &str = "0.14";
 
 use ast::*;
 use lexer::*;

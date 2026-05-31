@@ -1,0 +1,3 @@
+probe cards
+    ingredients "data/cards.json"
+    produce as json { cat data/cards.json }

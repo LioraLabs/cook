@@ -1,3 +1,12 @@
+# NOTE (COOK-66 / COOK-69): both probes stay on the register-phase cook.probe()
+# API for two reasons:
+#   1. demo:cc-path declares env/tools fingerprint inputs, which the native
+#      `probe` declaration does not yet express (deferred to COOK-66).
+#   2. demo:cc-version has a hyphen in its key second-segment ("cc-version"),
+#      which is not admitted by the native probe header's bare-identifier scanner
+#      (only [a-zA-Z0-9_] is valid in a probe key segment). Until the scanner is
+#      extended (or the probe is renamed), the native form cannot express this key.
+# See examples/probe-cache-share for the native `probe` surface.
 register
     cook.probe("demo:cc-path", {
         inputs = { env = {"PATH"}, tools = {"cc"} },

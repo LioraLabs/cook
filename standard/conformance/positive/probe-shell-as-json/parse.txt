@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="cards" line=1
+      deps: []
+      ingredients: ["data/cards.json"]
+      excludes: []
+      produce: Shell typing=Json commands=["cat data/cards.json"]

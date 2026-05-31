@@ -1,0 +1,2 @@
+probe a:b:c
+    produce >{ return 1 }

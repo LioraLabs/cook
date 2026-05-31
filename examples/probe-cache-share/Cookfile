@@ -1,11 +1,9 @@
-register
-    cook.probe("demo:slow", {
-        inputs = {},
-        produce = [[
-            local timestamp = cook.sh("sleep 1 && date +%s"):gsub("%s+$", "")
-            return { timestamp = timestamp }
-        ]],
-    })
+# Uses the native `probe` DSL (COOK-69). No env/tools inputs; pure Lua produce.
+probe demo:slow
+    produce >{
+        local timestamp = cook.sh("sleep 1 && date +%s"):gsub("%s+$", "")
+        return { timestamp = timestamp }
+    }
 
 recipe build
     >>{

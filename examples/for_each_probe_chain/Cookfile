@@ -1,4 +1,5 @@
 # §22.5.9 for_each over a DAG-dependent probe chain (COOK-64 / CS-0091)
+# Uses the native `probe` DSL (COOK-69).
 #
 # A realistic data-driven build: render one config file per microservice
 # straight from a JSON manifest. The twist this example exercises is the
@@ -25,32 +26,28 @@
 #   cook render            # fans out one config per service
 #   ./verify.sh            # asserts codegen shape + execution + per-member cache
 
-register
-    # Layer 1 — read the raw manifest. A file input, so editing the manifest
-    # re-fingerprints this probe (and everything downstream of it).
-    cook.probe("services_raw", {
-        inputs  = { files = {"data/services.json"} },
-        produce = [[ return cook.json_decode(cook.sh("cat data/services.json")) ]],
-    })
+# Layer 1 — read the raw manifest. The `ingredients` line declares a file input,
+# so editing the manifest re-fingerprints this probe (and everything downstream).
+probe services_raw
+    ingredients "data/services.json"
+    produce as json { cat data/services.json }
 
-    # Layer 2 — the for_each source. Depends on `services_raw` purely through
-    # `inputs.requires`; reads the upstream value with cook.cache.get and
-    # derives a `url` per record. The register pre-pass resolves `services_raw`
-    # first, then this, then sizes the fan-out from the returned array.
-    cook.probe("services", {
-        inputs  = { requires = {"services_raw"} },
-        produce = [[
-            local out = {}
-            for _, svc in ipairs(cook.cache.get("services_raw")) do
-                table.insert(out, {
-                    name     = svc.name,
-                    url      = "http://localhost:" .. svc.port,
-                    replicas = svc.replicas,
-                })
-            end
-            return out
-        ]],
-    })
+# Layer 2 — the for_each source. Depends on `services_raw` via the header dep
+# list; reads the upstream value with cook.cache.get and derives a `url` per
+# record. The register pre-pass resolves `services_raw` first, then this, then
+# sizes the fan-out from the returned array.
+probe services: services_raw
+    produce >{
+        local out = {}
+        for _, svc in ipairs(cook.cache.get("services_raw")) do
+            table.insert(out, {
+                name     = svc.name,
+                url      = "http://localhost:" .. svc.port,
+                replicas = svc.replicas,
+            })
+        end
+        return out
+    }
 
 # One rendered config per service. `$<item.FIELD>` interpolates the enriched
 # record's fields; `$<out>` is the per-member output path.

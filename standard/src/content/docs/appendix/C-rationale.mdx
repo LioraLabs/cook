@@ -450,3 +450,28 @@ Cook propagates cache invalidation between steps via the content fingerprints of
 A glob pattern entry in `outputs[]` (§{lua.add-unit-output-globs}) cannot participate in this linkage because the resolved file set is not known until execute time. A downstream that declared a specific path expecting it to be produced by an upstream glob would have no way to express a file-content edge at register time, and Cook's cache check has no `did-my-upstream-rebuilt` signal. The downstream would silently consume stale bytes after the upstream re-ran.
 
 The terminal-output rule (§22.1.2 "Cross-recipe edges") eliminates this footgun by construction. Authors who want file-content invalidation propagation use literal `outputs[]` entries; authors who only need ordering use `requires = { ... }`; the engine catches the misuse at register time via a purely lexical match of downstream input strings against upstream pattern strings. The rule aligns Cook with the Turborepo model (tasks depend on tasks, not files) that the `cook_pnpm` module adapts.
+
+## C.22. On the native `probe` declaration [#rationale.probe-native-dsl]
+
+### C.22.1. Why probes graduated from the Lua-string `cook.probe()` API to native surface syntax [#rationale.probe-native-syntax]
+
+The `cook.probe()` Lua API predates the native `probe` declaration by several Standard revisions. Until CS-0091 (`for_each`), probes were primarily a module-author tool: `cook_cc` hoists compiler-detection probes out of recipe bodies so that all recipes share a single cached probe value rather than each shelling out independently. In that context, the string-`produce` form was acceptable — module authors write Lua fluently, the `[[ ]]` long-string quoting is idiomatic, and the call site is small relative to the surrounding module machinery.
+
+CS-0091 changed the economics. `for_each` makes probes the primary mechanism for data-driven fan-out builds: any Cookfile author who wants one output per JSON record, one deploy per host, or one test per case writes a probe. The population is no longer "module authors" — it is every author writing a data-driven build. At that scale, the ergonomic friction of the string API became a first-class concern:
+
+- **No lexer or editor support.** A `produce = [[ … ]]` long-string is opaque to syntax highlighters, language servers, and linters. Indentation, keyword completion, and error underlining stop at the string boundary.
+- **`[[ ]]` escaping hazards.** A `produce` body that embeds a Lua string containing `]]` must use a level-qualified long string (`[=[ … ]=]`), which is non-obvious and easy to get wrong silently.
+- **Table-of-tables ceremony.** Expressing the `produce`, `inputs.files`, and `inputs.requires` fields in a nested table literal has more syntactic noise than the information content warrants. The resulting call is longer than the logic it encodes.
+- **Discoverability.** A new Cook user reading a Cookfile that uses `for_each` finds the probe declaration buried inside a `register` block, co-located with arbitrary Lua, rather than at top level where the Cookfile's data sources belong.
+
+The native `probe` declaration (§{cat.probes.decl}) is pure sugar over the retained `cook.probe()` API. Every native probe lowers to an equivalent `cook.probe()` call at codegen time; the API is not deprecated and remains the correct surface for probes that declare `env` or `tools` fingerprint inputs (not yet expressible natively — deferred to the COOK-66 slice). The mapping is direct:
+
+| Native form | API equivalent |
+|---|---|
+| `ingredients "glob" !"glob"` | `inputs.files = {"glob", "!glob"}` |
+| Header dep list `probe X: dep1 dep2` | `inputs.requires = {"dep1", "dep2"}` |
+| `produce as json { sh }` | `produce = [[ return cook.json_decode(cook.sh("sh")) ]]` |
+| `produce as lines { sh }` | `produce = [[ … cook.sh lines split … ]]` |
+| `produce >{ lua }` | `produce = [[ lua ]]` |
+
+The decision to ship native syntax as sugar rather than as a replacement reflects the Standard's general posture: the Lua API is the extension point; surface syntax is a readability layer over it. Authors who need capabilities the native form does not yet cover fall back to `cook.probe()` without ceremony.

@@ -1,0 +1,4 @@
+probe p
+    ingredients "a"
+    ingredients "b"
+    produce >{ return 1 }

@@ -271,6 +271,29 @@ fn format_top_level_module_call(mc: &TopLevelModuleCall) -> String {
     format!("TopLevelModuleCall code={} line={}", repr(&mc.code), mc.line)
 }
 
+fn format_probe(p: &Probe) -> String {
+    let produce = match &p.produce {
+        ProbeProduce::Lua(code) => format!("Lua({})", repr(code)),
+        ProbeProduce::Shell { commands, typing } => {
+            let typing_str = match typing {
+                ShellProduceType::String => "String",
+                ShellProduceType::Lines  => "Lines",
+                ShellProduceType::Json   => "Json",
+            };
+            format!("Shell typing={} commands={}", typing_str, repr_list(commands))
+        }
+    };
+    format!(
+        "    Probe name={} line={}\n      deps: {}\n      ingredients: {}\n      excludes: {}\n      produce: {}",
+        repr(&p.name),
+        p.line,
+        repr_list(&p.deps),
+        repr_list(&p.ingredients),
+        repr_list(&p.excludes),
+        produce,
+    )
+}
+
 fn format_chore_params(params: &[ChoreParam]) -> String {
     if params.is_empty() {
         return "[]".to_string();
@@ -338,6 +361,13 @@ fn format_cookfile(c: &Cookfile) -> String {
 
     let top_level_calls: Vec<String> = c.top_level_module_calls.iter().map(format_top_level_module_call).collect();
     out.push_str(&format!("  top_level_module_calls: [{}]\n", top_level_calls.join(", ")));
+
+    if !c.probes.is_empty() {
+        out.push_str("  probes:\n");
+        for p in &c.probes {
+            out.push_str(&format!("{}\n", format_probe(p)));
+        }
+    }
 
     out
 }

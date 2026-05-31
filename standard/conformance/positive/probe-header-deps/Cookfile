@@ -1,0 +1,2 @@
+probe p: a b
+    produce >{ return 1 }

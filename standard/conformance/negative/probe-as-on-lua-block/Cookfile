@@ -1,0 +1,2 @@
+probe p
+    produce as json >{ return {} }
