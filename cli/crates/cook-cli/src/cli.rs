@@ -77,6 +77,11 @@ pub struct Globals {
     /// (staged, unstaged, and untracked-non-ignored).
     #[arg(long = "since", global = true)]
     pub since: Option<String>,
+
+    /// Disable stale-output reconciliation (§17.7): keep orphaned outputs
+    /// instead of sweeping them. Also settable via `COOK_NO_PRUNE=1`.
+    #[arg(long = "no-prune", global = true)]
+    pub no_prune: bool,
 }
 
 #[derive(clap::Args, Debug, Clone)]

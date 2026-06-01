@@ -463,11 +463,51 @@ static bool is_step_keyword(const char *word, int len) {
          (len == 11 && strncmp(word, "ingredients", 11) == 0);
 }
 
-static bool scan_shell_content(TSLexer *lexer) {
+// A recipe/chore-body line whose first word is one of these keywords
+// (followed by an appropriate delimiter) ends the body per App. A.3
+// "Body termination" — the grammar's top-level alternation then
+// dispatches the next declaration. `recipe`/`chore`/`probe` require a
+// space/tab/quote delimiter; `register` additionally accepts newline/EOF
+// for its empty-body form. (`use`/`import`/`config` are also termination
+// keywords per spec but must precede the first recipe, so a post-recipe
+// occurrence is already a semantic error; they're left out to match the
+// pre-existing terminator set.)
+static bool is_body_terminator_keyword(const char *word, int len,
+                                       int32_t next) {
+  bool sep = (next == ' ' || next == '\t' || next == '"');
+  if (len == 6 && strcmp(word, "recipe") == 0) return sep;
+  if (len == 5 && strcmp(word, "chore") == 0) return sep;
+  if (len == 5 && strcmp(word, "probe") == 0) return sep;
+  if (len == 8 && strcmp(word, "register") == 0)
+    return sep || next == '\n' || next == 0;
+  return false;
+}
+
+// Forward declaration: scans a `. IDENT_START …` module-call statement
+// tail, assuming the leading `LUA_IDENT` has already been consumed and the
+// cursor sits at the `.`. Defined alongside scan_top_level_module_call_text.
+static bool scan_module_call_tail(TSLexer *lexer);
+
+// Matches a recipe/chore-body line. When `module_call_valid` is set the
+// parser also accepts a top-level `module_call` here (a reduce-lookahead
+// at the body's end); a column-0 `LUA_IDENT . IDENT_START …` line is then
+// recognised as a module_call that terminates the body. CRUCIAL: that
+// detection happens INSIDE this single forward pass — reading the leading
+// identifier exactly once — rather than via a separate pre-pass. A
+// separate `scan_top_level_module_call_text` pre-pass would advance the
+// shared lexer cursor past the identifier and, on a non-match (e.g. the
+// keyword `recipe`), leave the cursor mid-line for the shell-content scan,
+// silently swallowing the keyword and merging two declarations into one.
+// That double-scan was the root cause of the body-termination bug.
+static bool scan_shell_content(TSLexer *lexer, bool module_call_valid) {
   // Skip leading whitespace — tree-sitter does NOT consume extras
-  // before calling external scanners.
+  // before calling external scanners. Track whether any was skipped: a
+  // top-level module_call only terminates a body at column 0 (no leading
+  // whitespace); an indented `foo.bar()` is recipe-body shell (CS-0072).
+  bool at_col0 = true;
   while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
     lexer->advance(lexer, true);
+    at_col0 = false;
   }
 
   int32_t c = lexer->lookahead;
@@ -487,8 +527,8 @@ static bool scan_shell_content(TSLexer *lexer) {
 
   bool has_content = false;
 
-  // If starts with an identifier, check for step keywords, `end`, and
-  // the module-call dispatch pattern (App. A.4).
+  // If starts with an identifier, check for step keywords, body-
+  // termination keywords, and the column-0 module-call dispatch pattern.
   if (iswalpha(c) || c == '_') {
     char word[16];
     int len = 0;
@@ -506,42 +546,33 @@ static bool scan_shell_content(TSLexer *lexer) {
 
     int32_t next = lexer->lookahead;
 
-    // Step keywords — when followed by whitespace or quote
+    // Step keywords — when followed by whitespace or quote, yield to the
+    // grammar's dedicated step rules.
     if (!word_truncated && is_step_keyword(word, len)) {
       if (next == ' ' || next == '\t' || next == '"')
         return false;
     }
 
-    // `recipe` / `chore` / `register` keyword — implicit recipe-body
-    // termination per App. A.3 "Body termination": a column-0 line
-    // classified as one of these keywords ends the recipe body so the
-    // grammar's top-level alternation can dispatch the next item.
-    // (`use`, `import`, `config` are also termination keywords per spec,
-    // but the existing fixtures don't exercise them mid-body; leave them
-    // out for now to minimise scanner churn.)
-    if (!word_truncated && len == 6 && strcmp(word, "recipe") == 0) {
-      if (next == ' ' || next == '\t' || next == '"')
-        return false;
-    }
-    if (!word_truncated && len == 5 && strcmp(word, "chore") == 0) {
-      if (next == ' ' || next == '\t' || next == '"')
-        return false;
-    }
-    // CS-0072: `register` ends a recipe body. The empty-body form
-    // (`register\n`) needs newline / EOF to count as a terminator, in
-    // addition to the usual space/tab/quote.
-    if (!word_truncated && len == 8 && strcmp(word, "register") == 0) {
-      if (next == ' ' || next == '\t' || next == '\n' ||
-          next == 0   || next == '"')
-        return false;
+    // Body-termination keywords (recipe/chore/probe/register, App. A.3 /
+    // A.3.2). Returning false yields the WHOLE scan, so tree-sitter resets
+    // the lexer to the line start and re-lexes the keyword internally; the
+    // recipe/chore body then reduces and the top-level alternation
+    // dispatches the next declaration.
+    if (!word_truncated && is_body_terminator_keyword(word, len, next)) {
+      return false;
     }
 
-    // CS-0072: recipe-body bare module-call (`LUA_IDENT.IDENT_START…`)
-    // no longer dispatches as `module_call` (the grammar arm has been
-    // removed from `_recipe_item` / `_chore_item`). Such a line now
-    // resolves as `shell_command`, in line with App. A.4's revised
-    // step-dispatch priority order — so we just fall through and
-    // consume the rest of the line as shell content.
+    // Column-0 top-level module_call (`LUA_IDENT . IDENT_START …`,
+    // App. A.4). Detected here, reading the leading IDENT once. A match
+    // terminates the body and emits TOP_LEVEL_MODULE_CALL_TEXT; a near-
+    // miss (`foo.123`) falls through and the bytes already consumed remain
+    // part of the shell-content token. Indented `foo.bar()` is shell
+    // (CS-0072), hence the `at_col0` gate.
+    if (module_call_valid && at_col0 && !word_truncated && next == '.') {
+      if (scan_module_call_tail(lexer)) {
+        return true;
+      }
+    }
 
     // Reaching here means the alpha branch consumed at least one
     // identifier byte that is part of the shell command.
@@ -579,12 +610,14 @@ static bool scan_shell_content(TSLexer *lexer) {
 // ── Top-level keyword check ────────────────────────────────────
 // Returns true if the buffer (length len) matches a top-level Cookfile
 // keyword that implicitly terminates a config/register body
-// (§{toplevel.termination}, App. A.2): recipe, chore, config, use,
-// import, register. The `register` keyword joins this set per CS-0072.
+// (§{toplevel.termination}, App. A.2): recipe, chore, probe, config,
+// use, import, register. The `register` keyword joins this set per
+// CS-0072; `probe` joins per COOK-67 (App. A.3.2).
 
 static bool is_toplevel_keyword(const char *buf, int len) {
   return (len == 6 && strncmp(buf, "recipe", 6) == 0) ||
          (len == 5 && strncmp(buf, "chore", 5) == 0) ||
+         (len == 5 && strncmp(buf, "probe", 5) == 0) ||
          (len == 6 && strncmp(buf, "config", 6) == 0) ||
          (len == 3 && strncmp(buf, "use", 3) == 0) ||
          (len == 6 && strncmp(buf, "import", 6) == 0) ||
@@ -779,6 +812,18 @@ static bool scan_top_level_module_call_text(TSLexer *lexer) {
   while (iswalnum(lexer->lookahead) || lexer->lookahead == '_') {
     lexer->advance(lexer, false);
   }
+  return scan_module_call_tail(lexer);
+}
+
+// Scans the `. IDENT_START …` tail of a `module_call`. Precondition: the
+// leading `LUA_IDENT` has already been consumed and `lexer->lookahead` is
+// the byte immediately after it. Returns true (result_symbol =
+// TOP_LEVEL_MODULE_CALL_TEXT) when a well-formed statement tail follows;
+// otherwise false. On a false return the cursor MAY have advanced past the
+// `.` — callers that fall back to another token kind tolerate this because
+// the consumed bytes stay within the eventual token's [start, mark_end]
+// span (see scan_shell_content).
+static bool scan_module_call_tail(TSLexer *lexer) {
   if (lexer->lookahead != '.') return false;
   lexer->advance(lexer, false);
   if (!iswalpha(lexer->lookahead) && lexer->lookahead != '_') return false;
@@ -959,7 +1004,13 @@ bool tree_sitter_cook_external_scanner_scan(void *payload, TSLexer *lexer,
                                             const bool *valid_symbols) {
   ShellBlockState *state = (ShellBlockState *)payload;
 
-  if (valid_symbols[TOP_LEVEL_MODULE_CALL_TEXT]) {
+  // Pure top-level module_call (between declarations, where SHELL_CONTENT
+  // is NOT valid). Inside a recipe/chore body BOTH this and SHELL_CONTENT
+  // are valid reduce-lookaheads; there, module-call detection is folded
+  // into scan_shell_content so the leading identifier is read only once
+  // (a separate pre-pass here would advance the cursor and corrupt the
+  // shell-content scan — the body-termination bug).
+  if (valid_symbols[TOP_LEVEL_MODULE_CALL_TEXT] && !valid_symbols[SHELL_CONTENT]) {
     if (scan_top_level_module_call_text(lexer)) {
       return true;
     }
@@ -990,7 +1041,7 @@ bool tree_sitter_cook_external_scanner_scan(void *payload, TSLexer *lexer,
   }
 
   if (valid_symbols[SHELL_CONTENT]) {
-    return scan_shell_content(lexer);
+    return scan_shell_content(lexer, valid_symbols[TOP_LEVEL_MODULE_CALL_TEXT]);
   }
 
   return false;

@@ -288,6 +288,8 @@ The diagnostic MUST render the full cycle path. The order in which nodes are lis
 
 An **array-shaped** probe value (§{cat.probes.values}) MAY be consumed as the source of a `for_each_step` (§{steps.for-each}): `for_each <key>` registers one work unit per array element, and `for_each <key>:<field>` iterates the array at the named field. This is a second probe consumption mode alongside the `$<key:field>` injection of §{cat.probes.templates}; the same `cook.probe` definition serves both.
 
+A `for_each` source is the canonical case where a recipe's declared output set *shrinks* between runs: removing a data member drops the unit (and the output) it drove, so the dropped member's artifact is swept by stale-output reconciliation (§{exec.cache.reconcile}) on the next run.
+
 **Pre-pass evaluation.** A probe that feeds a `for_each` MUST be evaluated **before unit registration completes**, because the fan-out cardinality — the number of units the consuming recipe produces — is the length of the probe's array value. A conforming implementation MUST resolve every `for_each`-feeding probe of a reachable recipe (cache hit or `produce` execution, per §{cat.probes.exec}) before it registers that recipe's per-member units, then register the units statically. The build DAG does not grow after registration; data-member iteration introduces no dynamic registration.
 
 **Demand-driven.** The pre-pass preserves the demand-driven rule of §{cat.probes.exec}: a `for_each`-feeding probe MUST NOT be evaluated unless its consuming recipe is reachable from the build target. Recipe-level reachability is determined from recipe headers and dependency edges before per-member fan-out, so the pre-pass evaluates only the probes of recipes that will register units.

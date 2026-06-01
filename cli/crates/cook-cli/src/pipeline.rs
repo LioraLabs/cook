@@ -422,6 +422,16 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
 
 /// Run the engine with progress rendering wired up.
 ///
+/// Whether stale-output reconciliation (§17.7) is disabled for this run, via
+/// `--no-prune` or the `COOK_NO_PRUNE` environment variable (any non-empty
+/// value other than `0`).
+fn no_prune_enabled(globals: &Globals) -> bool {
+    globals.no_prune
+        || std::env::var("COOK_NO_PRUNE")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+}
+
 /// Walks the unified work-unit DAG built from `registered_workspace`. The
 /// recipe-level edge map (and therefore the reachable closure) is computed
 /// here from `recipe_infos` via `analyzer::dependency_edges_multi`; the
@@ -481,6 +491,7 @@ fn run_with_progress(
     let (engine_tx, engine_rx) = mpsc::channel::<cook_engine::EngineEvent>();
     let bridge_thread = bridge_engine_to_progress_events(engine_rx, bridge_tx);
 
+    let no_prune = no_prune_enabled(globals);
     let result = cook_engine::run::run(
         &project_root,
         registered_workspace,
@@ -488,6 +499,7 @@ fn run_with_progress(
         &reachable,
         num_jobs,
         &[],
+        no_prune,
         move |event| {
             let _ = engine_tx.send(event);
         },
@@ -828,6 +840,7 @@ pub fn cmd_test(
             &reachable,
             num_jobs,
             &rerun_patterns,
+            no_prune_enabled(globals),
             on_event,
         ) {
             Ok(r) => r.test_results,

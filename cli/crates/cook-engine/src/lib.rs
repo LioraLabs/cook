@@ -10,6 +10,7 @@ pub mod executor;
 pub mod id;
 pub mod pipeline;
 pub mod recipe_dag;
+pub mod reconcile;
 pub mod registered_workspace;
 pub mod run;
 

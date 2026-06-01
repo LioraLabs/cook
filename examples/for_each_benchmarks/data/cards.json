@@ -1,4 +1,5 @@
 [
   {"id": "ace",  "name": "Ace of Spades"},
-  {"id": "king", "name": "King of Hearts"}
+  {"id": "queen",  "name": "Queen of Hearts"},
+  {"id": "jack",  "name": "Jack of Diamonds"}
 ]

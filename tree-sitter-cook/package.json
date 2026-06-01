@@ -1,7 +1,7 @@
 {
   "name": "tree-sitter-cook",
-  "version": "0.13.0",
-  "description": "Tree-sitter grammar for the Cook build system DSL (claims Cook Standard v0.13)",
+  "version": "0.14.0",
+  "description": "Tree-sitter grammar for the Cook build system DSL (claims Cook Standard v0.14)",
   "license": "MIT",
   "main": "bindings/node",
   "tree-sitter": [

@@ -1,0 +1,130 @@
+================
+Recipe body terminated by next recipe (bare shell tail)
+================
+
+recipe a
+    echo hi
+recipe b
+    echo bye
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (shell_command
+      (shell_content)))
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (shell_command
+      (shell_content))))
+
+================
+Recipe body terminated by chore (bare shell tail)
+================
+
+recipe a
+    echo hi
+chore b
+    rm -rf out
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (shell_command
+      (shell_content)))
+  (chore
+    (chore_header
+      name: (identifier))
+    (shell_command
+      (shell_content))))
+
+================
+Recipe body terminated by probe (bare shell tail)
+================
+
+recipe a
+    echo hi
+probe p
+    produce { echo x }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (shell_command
+      (shell_content)))
+  (probe
+    (probe_header
+      name: (identifier))
+    (produce_step
+      body: (shell_block
+        (shell_content)))))
+
+================
+Two recipes, second has quoted name (bare shell tail)
+================
+
+recipe "libmath"
+    ar rcs out.a
+recipe "app"
+    gcc -o app main.c
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (string))
+    (shell_command
+      (shell_content)))
+  (recipe
+    (explicit_recipe_header
+      name: (string))
+    (shell_command
+      (shell_content))))
+
+================
+Column-0 module call terminates recipe body (bare shell tail)
+================
+
+recipe a
+    echo hi
+cook_cc.bin("x", { sources = { "x.c" } })
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (shell_command
+      (shell_content)))
+  (top_level_module_call
+    (module_call_text)))
+
+================
+Column-0 bare shell line stays in recipe body
+================
+
+recipe a
+    echo hi
+make all
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (shell_command
+      (shell_content))
+    (shell_command
+      (shell_content))))

@@ -105,6 +105,29 @@ impl ThreadSafeCacheManager {
         dirty.insert(recipe_name.to_string());
     }
 
+    /// Drop in-memory steps for which `keep(cache_key, step)` returns false,
+    /// marking the recipe dirty if anything was removed so the next
+    /// [`Self::flush_all`] persists the pruned set.
+    ///
+    /// Used by stale-output reconciliation (§17.7) to advance a recipe's
+    /// recorded output set: steps whose every output is no longer declared
+    /// are removed so the cache stops claiming swept artifacts.
+    pub fn retain_steps<F>(&self, recipe_name: &str, keep: F)
+    where
+        F: Fn(&str, &StepEntry) -> bool,
+    {
+        let mut caches = self.caches.lock().unwrap();
+        if let Some(cache) = caches.get_mut(recipe_name) {
+            let before = cache.steps.len();
+            cache.steps.retain(|k, v| keep(k, v));
+            let changed = cache.steps.len() != before;
+            drop(caches);
+            if changed {
+                self.dirty.lock().unwrap().insert(recipe_name.to_string());
+            }
+        }
+    }
+
     pub fn flush_all(&self) -> std::io::Result<()> {
         let dirty_names: Vec<String> = {
             let dirty = self.dirty.lock().unwrap();
@@ -379,5 +402,36 @@ mod tests {
         let loaded = store::RecipeCache::load(&cache_dir, "rec").expect("load");
         let entry = loaded.steps.get("step_one").expect("prior entry survives");
         assert_eq!(entry.command_hash, 0xdeadbeef);
+    }
+
+    #[test]
+    fn retain_steps_drops_and_persists() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+        cm.update_step("rec", "keep", make_step_entry(0x1));
+        cm.update_step("rec", "drop", make_step_entry(0x2));
+        cm.flush_all().expect("flush 1");
+
+        // Reload into a fresh manager, then retain only "keep".
+        let cm2 = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+        cm2.get_or_load("rec");
+        cm2.retain_steps("rec", |k, _| k == "keep");
+        cm2.flush_all().expect("flush 2");
+
+        let loaded = store::RecipeCache::load(dir.path(), "rec").expect("load");
+        assert!(loaded.steps.contains_key("keep"));
+        assert!(!loaded.steps.contains_key("drop"), "stale step pruned");
+    }
+
+    #[test]
+    fn retain_steps_keeps_all_is_not_dirty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cm = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+        cm.update_step("rec", "a", make_step_entry(0x1));
+        cm.retain_steps("rec", |_, _| true);
+        // Nothing removed; flush still succeeds and the step survives.
+        cm.flush_all().expect("flush");
+        let loaded = store::RecipeCache::load(dir.path(), "rec").expect("load");
+        assert!(loaded.steps.contains_key("a"));
     }
 }

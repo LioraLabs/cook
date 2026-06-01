@@ -142,3 +142,44 @@ On a subsequent cache check for the same unit, the implementation MUST use the r
 ### Note 17.6.1
 
 The resolved file set persisted in `StepEntry.outputs` is indistinguishable from the set that would have been persisted by a unit whose `outputs[]` were literal from the start. Future cache reads, cross-machine restores, and artifact lookups operate on the literal paths only; the original glob pattern is not recorded.
+
+## 17.7. Stale-output reconciliation [#exec.cache.reconcile]
+
+§17.1 establishes that the cache changes only *how much* work happens, never *what it produces*. That guarantee extends from cache *values* to the **output tree itself**: when a recipe's declared output set *shrinks* between runs, the outputs it no longer declares MUST NOT be left behind on disk. A build whose output directory accumulates artifacts that nothing declares misrepresents its own graph — a downstream glob (§17.6), `tar`, or deploy step would pick up the stale file.
+
+The canonical case is `for_each` (§{cat.probes.for-each}, §{steps.for-each}), whose output set is *computed from data*: removing a data member means the next run correctly produces the remaining members but would otherwise orphan the dropped member's artifact.
+
+### The rule
+
+For each recipe **R reached and re-registered** in an invocation, after R's work units complete, a conforming implementation MUST compute
+
+> `orphans(R) = prior_declared_outputs(R) − current_declared_outputs(R)`
+
+where the *prior declared outputs* are the output paths R recorded on its last successful run (the cache snapshot, §17.5, read before it is overwritten) and the *current declared outputs* are the union of the output paths of every work unit R registered this run (after `for_each` fan-out). For each path `p` in `orphans(R)`:
+
+- if `p` is **not present** on disk, the implementation MUST take no action;
+- if `p` is present **and** its current content hash equals the hash Cook recorded when it wrote `p`, the implementation MUST remove `p` and report it (e.g. `swept orphaned output: <p>`);
+- if `p` is present but its content hash **differs** from the recorded hash, the implementation MUST keep `p` and SHOULD warn (e.g. `<p> changed since Cook wrote it — not removing`).
+
+R's recorded declared-output set then advances to the current set.
+
+### Scope firewall
+
+Reconciliation MUST run **only** for recipes actually reached in the current invocation. A targeted `cook <recipe>` MUST NOT sweep any other recipe's outputs; recipes that did not run keep their recorded outputs untouched. An orphan of R that is a **current** declared output of some other recipe reached this run MUST NOT be removed — it is still live.
+
+### Safety properties
+
+A conforming implementation:
+
+- MUST only ever delete files it itself wrote and recorded (a tracked-set diff; it MUST NOT sweep a file it did not create);
+- MUST NOT delete a file whose content changed since Cook wrote it (the hash guard above);
+- on a first run, or against a cache with no recorded outputs, MUST compute an empty prior set and therefore delete nothing;
+- reconciles **files only** in this edition — directories are left in place.
+
+`plate` and `test` steps declare no outputs and are no-ops for reconciliation.
+
+### Opt-out
+
+Reconciliation is default-on. An implementation MUST provide an opt-out (the reference implementation: `--no-prune`, or the `COOK_NO_PRUNE` environment variable) that disables the sweep for an invocation; with it set, orphaned outputs are retained.
+
+> **Note (informative).** Reconciliation reuses the output paths and content hashes the cache already records (§17.1, §17.6) — there is no new on-disk ledger — and is guarded so a user-modified artifact is always kept. It is the output-file analogue of the integrity rule of §17.2: Cook never silently leaves stale bytes behind, whether in a restored artifact or an orphaned output.

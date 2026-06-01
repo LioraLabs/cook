@@ -3,6 +3,7 @@
 [
   "recipe"
   "chore"
+  "probe"
   "config"
   "register"
   "use"
@@ -11,11 +12,14 @@
   "cook"
   "plate"
   "test"
+  "produce"
   "using"
   "timeout"
   "should_fail"
   "as"
 ] @keyword
+
+(produce_type) @keyword
 
 ; ── Recipe headers ──────────────────────────────────────────────
 
@@ -32,6 +36,20 @@
 
 (chore_header
   name: (string) @function.builtin)
+
+; ── Probe headers (COOK-67 / §22) ───────────────────────────────
+
+(probe_header
+  name: (identifier) @function.builtin)
+
+(probe_header
+  name: (string) @function.builtin)
+
+(probe_dep_list
+  (identifier) @function)
+
+(probe_dep_list
+  (string) @function)
 
 ; ── Chore parameters (COOK-36 / §7.1.1) ─────────────────────────
 

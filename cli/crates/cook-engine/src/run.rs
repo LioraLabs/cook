@@ -13,7 +13,7 @@
 //! results.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -89,6 +89,9 @@ fn split_recipe_name(name: &str) -> (String, String) {
 /// * `rerun_patterns` - Glob patterns gating per-test cache lookup so
 ///   matching tests force-rerun even if a cache entry exists. Pass `&[]`
 ///   for non-test invocations.
+/// * `no_prune` - When true, disables stale-output reconciliation (§17.7) for
+///   this invocation (`--no-prune` / `COOK_NO_PRUNE`). Orphaned outputs are
+///   retained instead of swept.
 /// * `on_event` - Callback invoked for each engine event (progress, errors,
 ///   etc.). The terminating [`EngineEvent::Finished`] event is emitted here
 ///   automatically; callers do not need to send one themselves.
@@ -99,6 +102,7 @@ pub fn run<F>(
     reachable: &BTreeSet<String>,
     num_jobs: usize,
     rerun_patterns: &[String],
+    no_prune: bool,
     on_event: F,
 ) -> Result<RunResult, EngineError>
 where
@@ -123,6 +127,7 @@ where
         cache_ctx,
         &on_event,
         rerun_patterns,
+        no_prune,
     );
     on_event(EngineEvent::Finished {
         elapsed: started.elapsed(),
@@ -143,6 +148,7 @@ fn run_inner<F>(
     cache_ctx: Arc<CacheContext>,
     on_event: &F,
     rerun_patterns: &[String],
+    no_prune: bool,
 ) -> Result<RunResult, EngineError>
 where
     F: Fn(EngineEvent) + Send + Sync,
@@ -282,6 +288,40 @@ where
         })
         .collect();
 
+    // §17.7 stale-output reconciliation: snapshot each reached recipe's prior
+    // recorded outputs (absolute path → recorded content hash) BEFORE the run
+    // overwrites the on-disk cache. Skipped entirely under --no-prune.
+    let prior_outputs_by_recipe: BTreeMap<String, BTreeMap<PathBuf, u64>> = if no_prune {
+        BTreeMap::new()
+    } else {
+        let mut map = BTreeMap::new();
+        for name in reachable {
+            let (Some(ru), Some(cm)) = (
+                registered_workspace.units_by_recipe.get(name),
+                cache_managers.get(name),
+            ) else {
+                continue;
+            };
+            let bin_name = recipe_cache_bin_name(ru, name);
+            let prior = cm.get_or_load(&bin_name);
+            let mut outs: BTreeMap<PathBuf, u64> = BTreeMap::new();
+            for step in prior.steps.values() {
+                for o in &step.outputs {
+                    outs.insert(ru.working_dir.join(&o.path), o.hash);
+                }
+            }
+            if !outs.is_empty() {
+                map.insert(name.clone(), outs);
+            }
+        }
+        map
+    };
+
+    // Share the per-recipe cache managers with the post-run reconciliation
+    // pass: execute_dag takes ownership below, but the Arcs alias the same
+    // managers, so the in-memory caches it updates are visible here afterwards.
+    let recon_managers = cache_managers.clone();
+
     // 6. Build per-node test fingerprints (Phase 5 fingerprint v1) and the
     //    probe_units_by_node lookup. Both are derived from the unified DAG.
     let test_cache = TestCache::new(cache_ctx.project_root.join(".cook"));
@@ -379,7 +419,96 @@ where
     });
 
     let test_results = exec_result?;
+
+    // §17.7 stale-output reconciliation: outputs are now materialised, so
+    // compute the cross-recipe live output set and sweep orphaned files.
+    if !no_prune {
+        reconcile_outputs(
+            registered_workspace,
+            reachable,
+            &recon_managers,
+            &prior_outputs_by_recipe,
+        );
+    }
+
     Ok(RunResult { test_results })
+}
+
+/// The on-disk `.bin` name a recipe's cache is stored under: the `recipe_name`
+/// its captured units carry in their [`cook_contracts::CacheMeta`] (which the
+/// executor uses as the manager's per-recipe key), falling back to the
+/// recipe's own name for unit-less meta-targets.
+fn recipe_cache_bin_name(ru: &RecipeUnits, fallback: &str) -> String {
+    ru.units
+        .iter()
+        .find_map(|u| u.cache_meta.as_ref().map(|m| m.recipe_name.clone()))
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// Sweep stale outputs for every reached recipe (§17.7).
+///
+/// Builds the cross-recipe *live* output set (every output declared by any
+/// reached recipe this run, glob-resolved post-execution), then for each
+/// recipe diffs its prior recorded outputs against that set and sweeps the
+/// orphans via [`crate::reconcile::sweep`] (hash-guarded). Finally advances
+/// each recipe's recorded set by pruning steps whose every output is gone.
+fn reconcile_outputs(
+    registered_workspace: &RegisteredWorkspace,
+    reachable: &BTreeSet<String>,
+    cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+    prior_outputs_by_recipe: &BTreeMap<String, BTreeMap<PathBuf, u64>>,
+) {
+    // Current cross-recipe live set.
+    let mut live: BTreeSet<PathBuf> = BTreeSet::new();
+    for name in reachable {
+        if let Some(ru) = registered_workspace.units_by_recipe.get(name) {
+            for u in &ru.units {
+                if let Some(m) = &u.cache_meta {
+                    for rel in
+                        crate::executor::resolve_output_paths(&m.output_paths, &ru.working_dir)
+                    {
+                        live.insert(ru.working_dir.join(rel));
+                    }
+                }
+            }
+        }
+    }
+
+    for name in reachable {
+        let Some(prior) = prior_outputs_by_recipe.get(name) else {
+            continue;
+        };
+        let recon = crate::reconcile::sweep(prior, &live);
+        for p in recon.swept() {
+            tracing::info!("swept orphaned output: {}", p.display());
+        }
+        for p in recon.kept_modified() {
+            tracing::warn!("{} changed since Cook wrote it — not removing", p.display());
+        }
+
+        // Advance the recorded set: drop steps whose every output is no longer
+        // declared so the cache stops claiming swept artifacts.
+        if let (Some(cm), Some(ru)) = (
+            cache_managers.get(name),
+            registered_workspace.units_by_recipe.get(name),
+        ) {
+            let bin_name = recipe_cache_bin_name(ru, name);
+            let wd = ru.working_dir.clone();
+            let live_ref = &live;
+            cm.retain_steps(&bin_name, move |_k, step| {
+                step.outputs.is_empty()
+                    || step
+                        .outputs
+                        .iter()
+                        .any(|o| live_ref.contains(&wd.join(&o.path)))
+            });
+        }
+    }
+
+    // Persist any pruned caches (flush_all is a no-op for unchanged recipes).
+    for cm in cache_managers.values() {
+        let _ = cm.flush_all();
+    }
 }
 
 /// Topologically sort `reachable` against the recipe-level `edges` map.
@@ -583,6 +712,7 @@ mod tests {
             &reachable,
             1,
             &[],
+            false,
             |_| {},
         );
         assert!(result.is_ok());
@@ -605,6 +735,7 @@ mod tests {
             &reachable,
             1,
             &[],
+            false,
             |_| {},
         );
         assert!(result.is_err());
@@ -628,6 +759,7 @@ mod tests {
             &reachable,
             1,
             &[],
+            false,
             |event| events.lock().unwrap().push(event),
         );
         assert!(result.is_ok());
@@ -659,6 +791,7 @@ mod tests {
             &reachable,
             1,
             &[],
+            false,
             |event| events.lock().unwrap().push(event),
         );
         assert!(result.is_err());

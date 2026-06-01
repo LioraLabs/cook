@@ -104,7 +104,7 @@ rm -rf build .cook
 # Each source form runs end-to-end and lands its declared outputs.
 assert_true   "cards_cook runs (probe → cook)"          "$COOK" cards_cook
 assert_file_eq "cards_cook: ace.txt content"           build/cards/ace.txt  "Ace of Spades"
-assert_file_eq "cards_cook: king.txt content"          build/cards/king.txt "King of Hearts"
+assert_file_eq "cards_cook: queen.txt content"          build/cards/queen.txt "Queen of Hearts"
 assert_true   "catalog_cook runs (probe:field → cook)"  "$COOK" catalog_cook
 assert_file_eq "catalog_cook: bare \$<item> is JSON"    build/catalog/widget.json '{"id":"widget","name":"Widget"}'
 assert_true   "deploy runs (\$(cmd) NDJSON → plate)"     "$COOK" deploy
@@ -116,17 +116,30 @@ assert_true   "eval runs (probe → test)"                "$COOK" eval
 # cached; editing ONE member re-runs only that member's unit.
 RERUN="$("$COOK" cards_cook 2>&1)"
 n=$((n + 1)); printf "  [%2d] %-62s " "$n" "cards_cook: clean re-run is fully cached"
-if printf '%s' "$RERUN" | grep -q "2/2 cached"; then echo "PASS"; pass=$((pass + 1)); else echo "FAIL"; fail=$((fail + 1)); fi
+if printf '%s' "$RERUN" | grep -q "3/3 cached"; then echo "PASS"; pass=$((pass + 1)); else echo "FAIL"; fail=$((fail + 1)); fi
 
 # Edit only the king card; ace must stay cached, king must re-run.
 cp data/cards.json data/cards.json.bak
-sed -i 's/King of Hearts/King of Diamonds/' data/cards.json
+sed -i 's/Queen of Hearts/Queen of Spades/' data/cards.json
 EDIT="$("$COOK" cards_cook 2>&1)"
 mv data/cards.json.bak data/cards.json
-n=$((n + 1)); printf "  [%2d] %-62s " "$n" "cards_cook: edit one member → 1/2 cached"
-if printf '%s' "$EDIT" | grep -q "1/2 cached"; then echo "PASS"; pass=$((pass + 1)); else echo "FAIL"; echo "        re-run output: $EDIT"; fail=$((fail + 1)); fi
-assert_file_eq "cards_cook: king.txt reflects the edit"  build/cards/king.txt "King of Diamonds"
+n=$((n + 1)); printf "  [%2d] %-62s " "$n" "cards_cook: edit one member → 2/3 cached"
+if printf '%s' "$EDIT" | grep -q "2/3 cached"; then echo "PASS"; pass=$((pass + 1)); else echo "FAIL"; echo "        re-run output: $EDIT"; fail=$((fail + 1)); fi
+assert_file_eq "cards_cook: queen.txt reflects the edit"  build/cards/queen.txt "Queen of Spades"
 assert_file_eq "cards_cook: ace.txt unchanged (cache hit)" build/cards/ace.txt "Ace of Spades"
+
+# Stale-output reconciliation (§17.7 / CS-0093): dropping a data member sweeps
+# its orphaned output on the next run, while live members are retained.
+"$COOK" cards_cook >/dev/null 2>&1
+n=$((n + 1)); printf "  [%2d] %-62s " "$n" "cards_cook: jack.txt present before drop"
+if [ -f build/cards/jack.txt ]; then echo "PASS"; pass=$((pass + 1)); else echo "FAIL"; fail=$((fail + 1)); fi
+cp data/cards.json data/cards.json.bak
+printf '[\n  {"id": "ace",  "name": "Ace of Spades"},\n  {"id": "queen",  "name": "Queen of Hearts"}\n]\n' > data/cards.json
+SWEEP="$("$COOK" cards_cook 2>&1)"
+mv data/cards.json.bak data/cards.json
+n=$((n + 1)); printf "  [%2d] %-62s " "$n" "cards_cook: dropped member's output swept"
+if [ ! -f build/cards/jack.txt ]; then echo "PASS"; pass=$((pass + 1)); else echo "FAIL"; echo "        build/cards/jack.txt should have been swept; run output: $SWEEP"; fail=$((fail + 1)); fi
+assert_file_eq "cards_cook: surviving member ace.txt retained" build/cards/ace.txt "Ace of Spades"
 
 # Leave the tree clean.
 rm -rf build .cook

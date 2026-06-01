@@ -215,7 +215,7 @@ fn normalize_glob_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {
 // resolution; see that function's documentation for the trailing-`**` rule.
 // ---------------------------------------------------------------------------
 
-fn resolve_output_paths(
+pub(crate) fn resolve_output_paths(
     declared: &[String],
     working_dir: &std::path::Path,
 ) -> Vec<String> {

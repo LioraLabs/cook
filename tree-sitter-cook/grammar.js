@@ -1,8 +1,22 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-// tree-sitter-cook claims conformance with Cook Standard v0.13
-// (`cs-standard/v0.13`). The CS-0086 audit (v0.12) and CS-0087 audit
+// tree-sitter-cook claims conformance with Cook Standard v0.14
+// (`cs-standard/v0.14`). The CS-0092 audit (v0.14 — native `probe`
+// declarations, COOK-67/68/69) brings the grammar up to:
+//   • CS-0092 / §22 / App. A.3.2: the native `probe NAME (: deps)?`
+//     top-level declaration with its `ingredients_step? produce_step`
+//     body. `produce` takes an optional `as json|lines` typing modifier,
+//     valid ONLY on the shell-block form (`>{ … }` Lua blocks already
+//     return a structured value — enforced syntactically). The
+//     `BARE_PROBE_KEY ::= IDENT (":" IDENT)?` module-prefix colon is
+//     disambiguated from the dep-list colon positionally; the
+//     triple-colon `a:b:c` case is rejected syntactically (see the
+//     `_probe_dep_colon` note). A column-0 `probe` joins the body-
+//     termination keyword set in the scanner. Cycle / duplicate-key /
+//     unresolved-require detection is register-time semantic (the Rust
+//     parser's territory; SEMANTIC_ONLY).
+// The CS-0086 audit (v0.12) and CS-0087 audit
 // (v0.13 — chore parameters) bring the grammar up to:
 //   • CS-0072: top-level `register` block + top-level `module_call`
 //     (single + multi-line, brace-balanced); recipe-body bare
@@ -47,6 +61,7 @@ module.exports = grammar({
       choice(
         $.recipe,
         $.chore,
+        $.probe,
         $.config_block,
         $.register_block,
         $.top_level_module_call,
@@ -207,6 +222,88 @@ module.exports = grammar({
         $.comment,
         $._newline,
       ),
+
+    // ── Probes (COOK-67/68/69, §22, App. A.3.2; CS-0092 / v0.14) ──
+    //
+    //   probe_decl   ::= "probe" probe_name (":" probe_dep_list)? NEWLINE
+    //                    INDENT probe_body DEDENT
+    //   probe_body   ::= ingredients_step? produce_step
+    //   produce_step ::= "produce" ("as" produce_type)? body NEWLINE
+    //   produce_type ::= "json" | "lines"
+    //
+    // The body region (App. A.3.2 "Column-zero constraint" + the
+    // implicit-termination rule) is handled the same way as recipes:
+    // the scanner stops a preceding recipe/chore/config/register body at
+    // a column-0 `probe NAME` line (`is_step_keyword`-sibling check in
+    // scan_shell_content, plus `is_toplevel_keyword`), and the probe body
+    // itself contains no `shell_command`, so it terminates naturally at
+    // the next column-0 top-level item once `produce_step` closes.
+    probe: ($) =>
+      seq(
+        $.probe_header,
+        $._newline,
+        repeat(choice($._newline, $.comment)),
+        optional(seq(
+          $.ingredients_step,
+          repeat(choice($._newline, $.comment)),
+        )),
+        $.produce_step,
+      ),
+
+    probe_header: ($) =>
+      seq(
+        "probe",
+        field("name", $._probe_name),
+        optional(seq($._probe_dep_colon, $.probe_dep_list)),
+      ),
+
+    // probe_name / probe_ref ::= BARE_PROBE_KEY | STRING, where
+    // BARE_PROBE_KEY ::= IDENT (":" IDENT)? — at most one module-prefix
+    // colon. The single-token regex enforces the at-most-one-colon shape
+    // by maximal munch: `cc:zlib` lexes as one name, while the third
+    // contiguous `:IDENT` of `a:b:c` is left dangling and — since the
+    // dep-list colon below requires trailing whitespace — produces an
+    // ERROR (App. A.3.2 triple-colon rejection, made syntactic here
+    // rather than SEMANTIC_ONLY). See the dep-colon note below.
+    _probe_name: ($) =>
+      choice(alias($._bare_probe_key, $.identifier), $.string),
+
+    _probe_ref: ($) =>
+      choice(alias($._bare_probe_key, $.identifier), $.string),
+
+    _bare_probe_key: ($) =>
+      token(/[A-Za-z_][A-Za-z0-9_]*(:[A-Za-z_][A-Za-z0-9_]*)?/),
+
+    // Module-prefix-colon disambiguation (App. A.3.2, normative). The
+    // dep-list-introducing `:` is distinguished from the module-prefix
+    // `:` purely positionally: the dep-list colon is followed by
+    // whitespace or end-of-line, the module-prefix colon by an ident
+    // char. tree-sitter's token regexes can't express lookahead, so the
+    // dep-colon token consumes one trailing whitespace char; maximal
+    // munch then prefers it over `_bare_probe_key`'s internal colon only
+    // when a space follows (`p: a` → deps), while `cc:zlib` (no space)
+    // stays a single name token. A third `:IDENT` with no space (`a:b:c`)
+    // matches neither this token nor `_newline`, so it ERRORs.
+    _probe_dep_colon: ($) => token(seq(":", /[ \t]/)),
+
+    probe_dep_list: ($) => repeat1($._probe_ref),
+
+    // produce_step. The `as produce_type` modifier is valid ONLY on the
+    // shell-block form (App. A.3.2 / §22.5): a `>{ … }` Lua block already
+    // returns a structured value, so `produce as json >{ … }` MUST be
+    // rejected. This is enforced syntactically — the `as` arm requires a
+    // `shell_block`, so a using_lua_block after `as` ERRORs.
+    produce_step: ($) =>
+      seq(
+        "produce",
+        choice(
+          seq("as", $.produce_type, field("body", $.shell_block)),
+          field("body", choice($.shell_block, $.using_lua_block)),
+        ),
+        $._newline,
+      ),
+
+    produce_type: ($) => choice("json", "lines"),
 
     // ── Recipe body ────────────────────────────────────────────
 
