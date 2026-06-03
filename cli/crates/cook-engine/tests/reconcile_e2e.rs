@@ -115,6 +115,52 @@ fn modified_orphan_is_kept() {
 }
 
 #[test]
+fn discovered_input_depfile_is_not_swept() {
+    // COOK-75 regression: a discovered-inputs depfile (cook_cc's `-MMD` output)
+    // is recorded as an *implicit* cache output so a restore can pull it back,
+    // but it is NOT a declared `output_path`. §17.7's live set is built only
+    // from declared `output_paths`, so the sweep wrongly classified the depfile
+    // as an orphan and deleted it on every run — including fully-cached no-ops.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cache_tmp = tempfile::tempdir().expect("cache tempdir");
+    let wd = tmp.path();
+    write_isolated_cache_config(wd, cache_tmp.path());
+    fs::write(wd.join("src.txt"), b"payload").unwrap();
+
+    // A unit that emits a real output AND a make-format depfile it declares via
+    // `discovered_inputs`, exactly as a cook_cc compile unit does.
+    fs::write(
+        wd.join("Cookfile"),
+        r#"recipe build
+    >>{
+        cook.add_unit({
+            inputs  = { "src.txt" },
+            outputs = { "build/out.o" },
+            command = "mkdir -p build .cook/deps && cp src.txt build/out.o && echo 'build/out.o: src.txt' > .cook/deps/build.d",
+            discovered_inputs = { from = ".cook/deps/build.d", format = "make" },
+        })
+    }
+"#,
+    )
+    .unwrap();
+
+    // Run 1: produces the depfile and caches it.
+    run_build(wd, &[]);
+    let depfile = wd.join(".cook/deps/build.d");
+    assert!(depfile.exists(), "run 1 must produce the depfile");
+
+    // Run 2: fully cached, declared-output set unchanged. The depfile must NOT
+    // be swept just because it is absent from the declared-output live set.
+    run_build(wd, &[]);
+    assert!(
+        depfile.exists(),
+        "discovered-input depfile must survive a cached rerun (COOK-75); it was \
+         swept by §17.7 because it is recorded as an output but absent from the \
+         live declared-output set"
+    );
+}
+
+#[test]
 fn no_prune_retains_orphan() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cache_tmp = tempfile::tempdir().expect("cache tempdir");

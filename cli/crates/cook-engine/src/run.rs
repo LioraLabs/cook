@@ -469,6 +469,13 @@ fn reconcile_outputs(
                     {
                         live.insert(ru.working_dir.join(rel));
                     }
+                    // A discovered-inputs depfile is recorded as an implicit
+                    // cache output (so a restore can pull it back) but is NOT a
+                    // declared `output_path`. It is still a live file Cook means
+                    // to keep — count it so §17.7 never sweeps it (COOK-75).
+                    if let Some(di) = &m.discovered_inputs {
+                        live.insert(ru.working_dir.join(&di.from));
+                    }
                 }
             }
         }
