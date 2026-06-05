@@ -1632,7 +1632,7 @@ fn first_for_each(c: &Cookfile) -> &ForEachStep {
 #[test]
 fn test_for_each_probe_key() {
     let source =
-        "recipe art\n    for_each cards\n    cook \"out/$<item.id>.png\" using { gen $<item.id> }\n";
+        "recipe art\n    for_each cards\n    cook \"out/$<in.id>.png\" using { gen $<in.id> }\n";
     let c = parse(source).unwrap();
     let fe = first_for_each(&c);
     assert_eq!(fe.source, ForEachSource::ProbeKey("cards".into()));
@@ -1643,7 +1643,7 @@ fn test_for_each_probe_key() {
 fn test_for_each_probe_key_field() {
     // §8.3 grammar: probe_ref ::= IDENT (":" IDENT)? — `cards:items` is one
     // source token (key + field), stored verbatim; the codegen splits it.
-    let source = "recipe art\n    for_each cards:items\n    cook \"o/$<item.id>\" using { x }\n";
+    let source = "recipe art\n    for_each cards:items\n    cook \"o/$<in.id>\" using { x }\n";
     let c = parse(source).unwrap();
     assert_eq!(first_for_each(&c).source, ForEachSource::ProbeKey("cards:items".into()));
 }
@@ -1651,7 +1651,7 @@ fn test_for_each_probe_key_field() {
 #[test]
 fn test_for_each_shell_capture_as_lines() {
     let source =
-        "recipe e\n    for_each $(ls *.md) as lines\n    cook \"o/$<item>\" using { x }\n";
+        "recipe e\n    for_each $(ls *.md) as lines\n    cook \"o/$<in>\" using { x }\n";
     let c = parse(source).unwrap();
     let fe = first_for_each(&c);
     assert_eq!(fe.source, ForEachSource::ShellCapture("ls *.md".into()));
@@ -1660,7 +1660,7 @@ fn test_for_each_shell_capture_as_lines() {
 
 #[test]
 fn test_for_each_shell_capture_default_json() {
-    let source = "recipe d\n    for_each $(jq -c '.[]' hosts.json)\n    plate { rsync $<item.host> }\n";
+    let source = "recipe d\n    for_each $(jq -c '.[]' hosts.json)\n    plate { rsync $<in.host> }\n";
     let c = parse(source).unwrap();
     let fe = first_for_each(&c);
     assert_eq!(fe.source, ForEachSource::ShellCapture("jq -c '.[]' hosts.json".into()));
@@ -1670,7 +1670,7 @@ fn test_for_each_shell_capture_default_json() {
 #[test]
 fn test_for_each_lua_expr_reserved_parses() {
     // §8.3: the `(LUA_EXPR)` source is reserved — it PARSES (codegen rejects it).
-    let source = "recipe x\n    for_each (cook.cards())\n    cook \"o/$<item>\" using { y }\n";
+    let source = "recipe x\n    for_each (cook.cards())\n    cook \"o/$<in>\" using { y }\n";
     let c = parse(source).unwrap();
     assert_eq!(first_for_each(&c).source, ForEachSource::LuaExpr("cook.cards()".into()));
 }
@@ -1678,7 +1678,7 @@ fn test_for_each_lua_expr_reserved_parses() {
 #[test]
 fn test_for_each_with_ingredients_rejected() {
     let source =
-        "recipe x\n    ingredients \"*.c\"\n    for_each cards\n    cook \"o/$<item>\" using { y }\n";
+        "recipe x\n    ingredients \"*.c\"\n    for_each cards\n    cook \"o/$<in>\" using { y }\n";
     let msg = format!("{}", parse(source).unwrap_err());
     assert!(msg.contains("for_each") && msg.contains("ingredients"),
         "expected mutual-exclusion diagnostic, got: {}", msg);
@@ -1687,7 +1687,7 @@ fn test_for_each_with_ingredients_rejected() {
 #[test]
 fn test_ingredients_after_for_each_rejected() {
     let source =
-        "recipe x\n    for_each cards\n    ingredients \"*.c\"\n    cook \"o/$<item>\" using { y }\n";
+        "recipe x\n    for_each cards\n    ingredients \"*.c\"\n    cook \"o/$<in>\" using { y }\n";
     let msg = format!("{}", parse(source).unwrap_err());
     assert!(msg.contains("for_each") && msg.contains("ingredients"),
         "expected mutual-exclusion diagnostic, got: {}", msg);
@@ -1696,7 +1696,7 @@ fn test_ingredients_after_for_each_rejected() {
 #[test]
 fn test_for_each_duplicate_rejected() {
     let source =
-        "recipe x\n    for_each cards\n    for_each hosts\n    cook \"o/$<item>\" using { y }\n";
+        "recipe x\n    for_each cards\n    for_each hosts\n    cook \"o/$<in>\" using { y }\n";
     let msg = format!("{}", parse(source).unwrap_err());
     assert!(msg.contains("for_each"), "expected at-most-one diagnostic, got: {}", msg);
 }
@@ -1704,7 +1704,7 @@ fn test_for_each_duplicate_rejected() {
 #[test]
 fn test_for_each_as_lines_on_probe_rejected() {
     // §8.3: `as lines` on a probe_ref source MUST be rejected.
-    let source = "recipe x\n    for_each cards as lines\n    cook \"o/$<item>\" using { y }\n";
+    let source = "recipe x\n    for_each cards as lines\n    cook \"o/$<in>\" using { y }\n";
     let msg = format!("{}", parse(source).unwrap_err());
     assert!(msg.contains("as lines"), "expected as-lines-on-probe diagnostic, got: {}", msg);
 }
@@ -1884,4 +1884,64 @@ fn probe_as_on_lua_block_rejected() {
     // Real message: "produce: `as` is only valid on a shell-block produce; …"
     let msg = parse_err("probe x\n    produce as json >{ return {} }\n");
     assert!(msg.contains("shell-block"), "got: {msg}");
+}
+
+// ── COOK-88: ingredients <probe> member source ──────────────────────
+
+#[test]
+fn ingredients_probe_desugars_to_for_each() {
+    let source = "recipe render\n    ingredients cardprobe\n    cook \"build/$<in.name>.png\" using { gen \"$<in.name>\" $<out> }\n";
+    let c = parse(source).unwrap();
+    let fe = first_for_each(&c);
+    assert_eq!(fe.source, ForEachSource::ProbeKey("cardprobe".to_string()));
+    assert!(!fe.as_lines);
+    assert!(c.recipes[0].ingredients.is_empty());
+}
+
+#[test]
+fn ingredients_probe_field_selector_parses() {
+    let source = "recipe r\n    ingredients catalog:items\n    cook \"$<in.id>\" using { x }\n";
+    let c = parse(source).unwrap();
+    assert_eq!(
+        first_for_each(&c).source,
+        ForEachSource::ProbeKey("catalog:items".to_string())
+    );
+}
+
+#[test]
+fn ingredients_mixing_glob_then_probe_is_rejected() {
+    let source = "recipe r\n    ingredients \"a.json\"\n    ingredients cardprobe\n    cook \"x\" using { y }\n";
+    let err = parse(source).unwrap_err();
+    assert!(format!("{err:?}").contains("mix"));
+}
+
+#[test]
+fn ingredients_probe_with_trailing_content_is_rejected() {
+    let source = "recipe r\n    ingredients cardprobe extra\n    cook \"x\" using { y }\n";
+    let err = parse(source).unwrap_err();
+    assert!(format!("{err:?}").contains("trailing"));
+}
+
+#[test]
+fn ingredients_probe_then_glob_is_rejected() {
+    let source = "recipe r\n    ingredients cardprobe\n    ingredients \"*.c\"\n    cook \"x\" using { y }\n";
+    assert!(parse(source).is_err());
+}
+
+#[test]
+fn ingredients_probe_declared_twice_is_rejected() {
+    let source = "recipe r\n    ingredients cardprobe\n    ingredients other\n    cook \"x\" using { y }\n";
+    assert!(parse(source).is_err());
+}
+
+#[test]
+fn for_each_then_ingredients_probe_is_rejected() {
+    let source = "recipe r\n    for_each cards\n    ingredients cardprobe\n    cook \"x\" using { y }\n";
+    assert!(parse(source).is_err());
+}
+
+#[test]
+fn ingredients_probe_then_for_each_is_rejected() {
+    let source = "recipe r\n    ingredients cardprobe\n    for_each hosts\n    cook \"x\" using { y }\n";
+    assert!(parse(source).is_err());
 }

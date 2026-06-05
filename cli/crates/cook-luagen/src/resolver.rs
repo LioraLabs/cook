@@ -48,9 +48,9 @@ pub enum BuiltinKind {
     OutIndexed(usize),     // {out_1}
     OutIndexedAccessor(usize, String), // {out_1.stem}
     All,                   // {all}
-    /// COOK-63 §8.3: `$<item>` — the whole current `for_each` data member.
+    /// COOK-63 §8.3: `$<in>` — the whole current `for_each` data member.
     Item,
-    /// COOK-63 §8.3: `$<item.FIELD>` — record field `FIELD` of the member.
+    /// COOK-63 §8.3: `$<in.FIELD>` — record field `FIELD` of the member.
     ItemField(String),
 }
 
@@ -151,21 +151,19 @@ fn parse_probe_ref(ident: &str, escape: impl Fn(&str) -> String) -> (String, Str
     (key.to_string(), access)
 }
 
-/// COOK-63 §8.3: recognise the data-member binding sigils `$<item>` and
-/// `$<item.FIELD>`. Returns the matching [`BuiltinKind`], or `None` for any
+/// COOK-89 §8.3: recognise the data-member binding sigils `$<in>` and
+/// `$<in.FIELD>`. Returns the matching [`BuiltinKind`], or `None` for any
 /// other ident.
 ///
-/// This is deliberately *not* wired into [`resolve`]: `item` is only a member
-/// binding inside a `for_each` recipe body, so only the for_each codegen path
-/// (`template::expand_for_each_template`) consults it. Everywhere else `$<item>`
-/// keeps its ordinary env-fallthrough meaning. (The §9 "`$<item>` requires a
-/// `for_each` driver" diagnostic for misuse outside a `for_each` is a
-/// register/validate-phase concern, tracked under COOK-64.)
-pub fn match_item_sigil(ident: &str) -> Option<BuiltinKind> {
-    if ident == "item" {
+/// Deliberately *not* wired into [`resolve`]: `in` is the member binding only
+/// inside a data-driven (for_each / `ingredients <probe>`) recipe body, so only
+/// the for_each codegen path (`template::expand_for_each_template`) consults it.
+/// In a glob recipe, `$<in>` keeps its file-path meaning via `match_builtin`.
+pub fn match_member_sigil(ident: &str) -> Option<BuiltinKind> {
+    if ident == "in" {
         return Some(BuiltinKind::Item);
     }
-    match ident.strip_prefix("item.") {
+    match ident.strip_prefix("in.") {
         Some(field) if !field.is_empty() => Some(BuiltinKind::ItemField(field.to_string())),
         _ => None,
     }
@@ -318,8 +316,8 @@ fn validate_builtin(ident: &str, b: BuiltinKind, ctx: &ResolveCtx<'_>) -> Resolv
                 });
             }
         }
-        // `$<item>` / `$<item.FIELD>` never arrive here: they are matched by
-        // [`match_item_sigil`] in the for_each codegen path, not by `resolve` /
+        // `$<in>` / `$<in.FIELD>` never arrive here: they are matched by
+        // [`match_member_sigil`] in the for_each codegen path, not by `resolve` /
         // `match_builtin`. The arm exists only for exhaustiveness.
         Item | ItemField(_) => {}
     }
@@ -338,26 +336,27 @@ mod tests {
     }
     fn empty() -> BTreeSet<String> { BTreeSet::new() }
 
-    // COOK-63 §8.3: data-member binding sigils.
     #[test]
-    fn match_item_sigil_recognises_item_and_field() {
-        assert_eq!(match_item_sigil("item"), Some(BuiltinKind::Item));
+    fn member_sigil_matches_in_head() {
+        assert_eq!(match_member_sigil("in"), Some(BuiltinKind::Item));
         assert_eq!(
-            match_item_sigil("item.host"),
-            Some(BuiltinKind::ItemField("host".into()))
+            match_member_sigil("in.host"),
+            Some(BuiltinKind::ItemField("host".to_string()))
         );
         assert_eq!(
-            match_item_sigil("item.user_id"),
-            Some(BuiltinKind::ItemField("user_id".into()))
+            match_member_sigil("in.user_id"),
+            Some(BuiltinKind::ItemField("user_id".to_string()))
         );
-    }
-
-    #[test]
-    fn match_item_sigil_rejects_non_members() {
-        assert_eq!(match_item_sigil("items"), None); // not the bare `item` token
-        assert_eq!(match_item_sigil("item."), None); // empty field
-        assert_eq!(match_item_sigil("in"), None);
-        assert_eq!(match_item_sigil("cc:zlib"), None);
+        // No longer special: the old `item` head is now an ordinary ident.
+        assert_eq!(match_member_sigil("item"), None);
+        assert_eq!(match_member_sigil("item.host"), None);
+        // Path-accessor look-alikes are fields in member context (intentional).
+        assert_eq!(
+            match_member_sigil("in.stem"),
+            Some(BuiltinKind::ItemField("stem".to_string()))
+        );
+        assert_eq!(match_member_sigil("in."), None); // empty field
+        assert_eq!(match_member_sigil("ins"), None); // not the bare `in` token
     }
 
     // CS-0074: probe-ref dispatch tests

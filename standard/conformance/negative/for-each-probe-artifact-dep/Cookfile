@@ -11,7 +11,7 @@ recipe gen
 
 recipe consume
     for_each data
-    cook "build/$<item.id>.txt" using {
+    cook "build/$<in.id>.txt" using {
         mkdir -p build
-        printf '%s' "$<item.id>" > $<out>
+        printf '%s' "$<in.id>" > $<out>
     }

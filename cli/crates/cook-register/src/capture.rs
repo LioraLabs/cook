@@ -469,7 +469,7 @@ pub fn install_cook_api(
     // COOK-64 §8.3: cook.member_to_string(value) renders a for_each data
     // member to its canonical string form (key-sorted JSON for a table, the
     // scalar's bare string otherwise). Bound on the register VM so the fan-out
-    // codegen's `member = cook.member_to_string(item)` and `$<item>` resolve.
+    // codegen's `member = cook.member_to_string(item)` and `$<in>` resolve.
     let member_fn = lua.create_function(|_, value: mlua::Value| {
         let mp = crate::probe_value::lua_to_msgpack(&value)
             .map_err(|e| mlua::Error::runtime(format!("cook.member_to_string: {e}")))?;

@@ -521,9 +521,10 @@ pub(crate) fn generate_cook_step(
 /// The recipe body has already emitted `local _items = <source>` (see
 /// `recipe::generate_with_names`); this emits the per-member loop, wrapped by
 /// the caller's `cook.step_group` and preceded by `local _cook_outputs_N = {}`.
-/// `$<item>` / `$<item.FIELD>` resolve against the loop's `item`; `$<out>`
-/// resolves to the member's declared output; `$<in>` / `$<all>` are rejected
-/// (a `for_each` body has no path-input source). The probe-deferral and Lua
+/// `$<in>` / `$<in.FIELD>` resolve against the loop's `item` member; `$<out>`
+/// resolves to the member's declared output. The filesystem path-input
+/// builtins (`$<all>`, and `$<in>`'s glob-path sense) are not applicable in a
+/// `for_each` body — it has no path-input source. The probe-deferral and Lua
 /// long-string conventions mirror the ingredient-driven `LuaExprOneToOne` arm.
 pub(crate) fn generate_for_each_cook_step(
     out: &mut String,

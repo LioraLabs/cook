@@ -21,9 +21,9 @@ modifier (Cook Standard §8.3):
 The current member is available as:
 
 - the Lua name `item` in block bodies and Lua-expression outputs;
-- `$<item>` — the whole member (canonical key-sorted JSON for a record, the
+- `$<in>` — the whole member (canonical key-sorted JSON for a record, the
   scalar's string form otherwise);
-- `$<item.FIELD>` — the value of record field `FIELD`.
+- `$<in.FIELD>` — the value of record field `FIELD`.
 
 `cook`, `plate`, and `test` steps each produce **one unit per member**.
 
@@ -55,8 +55,8 @@ cook emit-lua     # print the generated register-phase fan-out Lua
 
 `verify.sh` confirms each recipe lowers to the expected `for _, item in
 ipairs(_items)` fan-out: the right member source (`cook.cache.get` / `:field`
-index / `cook.sh` split with-or-without `json_decode`), `$<item.FIELD>` →
-`tostring(item["FIELD"])`, bare `$<item>` → `cook.member_to_string(item)`, and
+index / `cook.sh` split with-or-without `json_decode`), `$<in.FIELD>` →
+`tostring(item["FIELD"])`, bare `$<in>` → `cook.member_to_string(item)`, and
 one `cook.add_unit` / `cook.add_test` per member.
 
 ## Once COOK-64 lands

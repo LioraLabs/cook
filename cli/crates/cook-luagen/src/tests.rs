@@ -3299,7 +3299,7 @@ fn compile_chore_shell_step_emits_env_table_for_param() {
 
 #[test]
 fn for_each_probe_cook_fans_out_per_member() {
-    let src = "recipe art\n    for_each cards\n    cook \"build/art/$<item.id>.png\" using { gen \"$<item.name>\" $<out> }\n";
+    let src = "recipe art\n    for_each cards\n    cook \"build/art/$<in.id>.png\" using { gen \"$<in.name>\" $<out> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = generate(&cookfile);
     // Member set sourced from the probe value (the COOK-64 pre-pass populates it).
@@ -3310,17 +3310,17 @@ fn for_each_probe_cook_fans_out_per_member() {
         "missing per-member loop, got:\n{lua}");
     // Output path interpolates the member field.
     assert!(lua.contains("tostring(item[\"id\"])"),
-        "output should interpolate $<item.id>, got:\n{lua}");
+        "output should interpolate $<in.id>, got:\n{lua}");
     // Command interpolates the member field and $<out>.
     assert!(lua.contains("tostring(item[\"name\"])"),
-        "command should interpolate $<item.name>, got:\n{lua}");
+        "command should interpolate $<in.name>, got:\n{lua}");
     assert!(lua.contains("cook.add_unit({inputs = {}, output = _cook_out, command = "),
         "missing for_each add_unit, got:\n{lua}");
 }
 
 #[test]
 fn for_each_probe_field_indexes_array() {
-    let src = "recipe a\n    for_each cards:items\n    cook \"o/$<item.id>\" using { build $<out> }\n";
+    let src = "recipe a\n    for_each cards:items\n    cook \"o/$<in.id>\" using { build $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("local _items = cook.cache.get(\"cards\")[\"items\"]"),
         "key:field should index the named field, got:\n{lua}");
@@ -3328,19 +3328,19 @@ fn for_each_probe_field_indexes_array() {
 
 #[test]
 fn for_each_shell_as_lines_keeps_raw_members() {
-    let src = "recipe e\n    for_each $(ls *.md) as lines\n    cook \"o/$<item>\" using { build $<out> }\n";
+    let src = "recipe e\n    for_each $(ls *.md) as lines\n    cook \"o/$<in>\" using { build $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("cook.sh(\"ls *.md\")"), "missing shell capture, got:\n{lua}");
     assert!(lua.contains("for _, item in ipairs(_items) do"), "missing per-member loop, got:\n{lua}");
-    // Bare $<item> renders the whole member.
-    assert!(lua.contains("cook.member_to_string(item)"), "bare $<item> should render member, got:\n{lua}");
+    // Bare $<in> renders the whole member.
+    assert!(lua.contains("cook.member_to_string(item)"), "bare $<in> should render member, got:\n{lua}");
     // `as lines` disables JSON decoding.
     assert!(!lua.contains("json_decode"), "`as lines` must not JSON-decode, got:\n{lua}");
 }
 
 #[test]
 fn for_each_shell_default_json_decodes_members() {
-    let src = "recipe e\n    for_each $(jq -c '.[]' h.json)\n    cook \"o/$<item.id>\" using { build $<out> }\n";
+    let src = "recipe e\n    for_each $(jq -c '.[]' h.json)\n    cook \"o/$<in.id>\" using { build $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("cook.json_decode(_line)"),
         "default $(cmd) source should JSON-decode each line, got:\n{lua}");
@@ -3348,19 +3348,19 @@ fn for_each_shell_default_json_decodes_members() {
 
 #[test]
 fn for_each_plate_fans_out_per_member() {
-    let src = "recipe deploy\n    for_each $(jq -c '.[]' hosts.json)\n    plate { rsync -a dist/ \"$<item.user>@$<item.host>:/srv\" }\n";
+    let src = "recipe deploy\n    for_each $(jq -c '.[]' hosts.json)\n    plate { rsync -a dist/ \"$<in.user>@$<in.host>:/srv\" }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("for _, item in ipairs(_items) do"), "missing per-member loop, got:\n{lua}");
-    assert!(lua.contains("tostring(item[\"host\"])"), "plate body should interpolate $<item.host>, got:\n{lua}");
+    assert!(lua.contains("tostring(item[\"host\"])"), "plate body should interpolate $<in.host>, got:\n{lua}");
     assert!(lua.contains("cook.add_unit({command = "), "missing plate add_unit, got:\n{lua}");
 }
 
 #[test]
 fn for_each_test_fans_out_per_member() {
-    let src = "recipe eval\n    for_each cases\n    test { assert-eval \"$<item.input>\" \"$<item.expect>\" }\n";
+    let src = "recipe eval\n    for_each cases\n    test { assert-eval \"$<in.input>\" \"$<in.expect>\" }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("for _, item in ipairs(_items) do"), "missing per-member loop, got:\n{lua}");
-    assert!(lua.contains("tostring(item[\"input\"])"), "test body should interpolate $<item.input>, got:\n{lua}");
+    assert!(lua.contains("tostring(item[\"input\"])"), "test body should interpolate $<in.input>, got:\n{lua}");
     assert!(lua.contains("cook.add_test({command = "), "missing test add_test, got:\n{lua}");
 }
 
@@ -3369,19 +3369,19 @@ fn for_each_surface_carries_source_metadata() {
     // COOK-64: the register pre-pass learns a recipe's for_each-feeding probe
     // from `__for_each` on the surface meta — without running the body.
     let probe = generate(&cook_lang::parse(
-        "recipe a\n    for_each cards\n    cook \"o/$<item.id>\" using { x $<out> }\n",
+        "recipe a\n    for_each cards\n    cook \"o/$<in.id>\" using { x $<out> }\n",
     ).unwrap());
     assert!(probe.contains(r#"__for_each = {kind = "probe", key = "cards"}"#),
         "probe source metadata missing, got:\n{probe}");
 
     let field = generate(&cook_lang::parse(
-        "recipe a\n    for_each cards:items\n    cook \"o/$<item.id>\" using { x $<out> }\n",
+        "recipe a\n    for_each cards:items\n    cook \"o/$<in.id>\" using { x $<out> }\n",
     ).unwrap());
     assert!(field.contains(r#"__for_each = {kind = "probe", key = "cards", field = "items"}"#),
         "key:field metadata missing, got:\n{field}");
 
     let shell = generate(&cook_lang::parse(
-        "recipe d\n    for_each $(cat h)\n    plate { echo $<item.host> }\n",
+        "recipe d\n    for_each $(cat h)\n    plate { echo $<in.host> }\n",
     ).unwrap());
     assert!(shell.contains(r#"__for_each = {kind = "shell""#),
         "shell source metadata missing, got:\n{shell}");
@@ -3391,13 +3391,13 @@ fn for_each_surface_carries_source_metadata() {
 fn for_each_unit_folds_member_into_fingerprint() {
     // COOK-64 §17.1 observable #5: each fan-out unit carries its member so the
     // register fold distinguishes per-member fingerprints.
-    let src = "recipe art\n    for_each cards\n    cook \"o/$<item.id>\" using { build $<out> }\n";
+    let src = "recipe art\n    for_each cards\n    cook \"o/$<in.id>\" using { build $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("member = cook.member_to_string(item)"),
         "for_each cook unit should carry member, got:\n{lua}");
 
     let plate = generate(&cook_lang::parse(
-        "recipe d\n    for_each $(cat h)\n    plate { echo $<item.host> }\n",
+        "recipe d\n    for_each $(cat h)\n    plate { echo $<in.host> }\n",
     ).unwrap());
     assert!(plate.contains("member = cook.member_to_string(item)"),
         "for_each plate unit should carry member, got:\n{plate}");
@@ -3406,7 +3406,7 @@ fn for_each_unit_folds_member_into_fingerprint() {
 #[test]
 fn for_each_lua_expr_source_rejected_at_codegen() {
     // §8.3: the reserved `(LUA_EXPR)` source parses, then codegen rejects it.
-    let src = "recipe x\n    for_each (cook.cards())\n    cook \"o/$<item>\" using { y $<out> }\n";
+    let src = "recipe x\n    for_each (cook.cards())\n    cook \"o/$<in>\" using { y $<out> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let err = crate::generate_with_names(&cookfile, &std::collections::BTreeSet::new())
         .expect_err("reserved (lua) source must be rejected at codegen");

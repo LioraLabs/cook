@@ -69,8 +69,8 @@ if [ -z "$LUA" ]; then echo "FAIL: cook emit-lua produced no output"; exit 1; fi
 echo "codegen assertions (cook emit-lua):"
 assert_contains "render: for_each source is the dependent probe" 'local _items = cook.cache.get("services")'
 assert_contains "render: per-member loop binds item"             'for _, item in ipairs(_items) do'
-assert_contains "render: \$<item.name> output path"              'tostring(item["name"])'
-assert_contains "render: \$<item.url> in command"                'tostring(item["url"])'
+assert_contains "render: \$<in.name> output path"              'tostring(item["name"])'
+assert_contains "render: \$<in.url> in command"                'tostring(item["url"])'
 
 # --- Tier 2: execution -------------------------------------------------------
 

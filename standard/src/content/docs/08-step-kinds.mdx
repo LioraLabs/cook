@@ -81,9 +81,11 @@ recipe lib
 
 The ingredient set is every `.c` file in `src/` and every `.h` file in `include/`, minus `src/lua.c` and `src/luac.c`.
 
-### Note 8.2.1
+### Note 8.2.1 — overload rule
 
-An `ingredient` item is always a `STRING` (quoted). A bare word after `ingredients` is a syntax error. The `!` exclusion marker MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_ingredients_with_excludes` and `test_ingredients_excludes_only`.
+An `ingredients` argument is any iterable source. A quoted token (`"glob"` / `!"exclude"`) is a filesystem glob yielding **path** members; a bare identifier is a **probe key** yielding the probe's array members (§{cat.probes}, §22.5.9), exactly as `for_each <probe>` does. The two forms are mutually exclusive within a recipe, and `ingredients <probe>` is mutually exclusive with a `for_each` step. Members of both forms bind as `$<in>` — path accessors (`$<in.stem>`, …) for path members, record-field access (`$<in.FIELD>`) for record members.
+
+The `!` exclusion marker (glob form only) MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_ingredients_with_excludes` and `test_ingredients_excludes_only`.
 
 ## 8.3. `for_each` — data-member iteration source [#steps.for-each]
 The `for_each_step` is the **data-driven counterpart to the `ingredients_step`** (§{steps.ingredients}). Where `ingredients` populates a recipe's iteration set from filesystem globs — each member a path — `for_each` populates it from a **data source**, each member a structured record or a scalar. A recipe body MAY contain at most one `for_each_step`. A conforming implementation MUST reject a recipe body that contains both a `for_each_step` and an `ingredients_step` (the two are mutually exclusive iteration drivers), and one that contains two or more `for_each_step` items. The diagnostic MUST identify the offending line.
@@ -106,11 +108,11 @@ The source forms are:
 
 **Member typing.** By default each member is a **JSON value**: for a `$(...)` source each output line MUST parse as one JSON value; for a `probe_ref` source each array element is already a Lua value carried from the probe. A JSON object (or string-keyed Lua table) is a **record**; a JSON scalar (or Lua string, number, or boolean) is a **scalar member**. The `as lines` modifier disables JSON parsing for a `$(...)` source — each output line becomes a raw-string member verbatim. `as lines` applied to a `probe_ref` source MUST be rejected.
 
-**Binding.** A `for_each_step` establishes **data-member iteration** for the recipe: every per-member step in the body — `cook` (§{steps.cook-single}), `plate` (§{steps.plate}), and `test` (§{steps.test}) — produces one work unit per member, with the current member bound as `item`:
+**Binding.** A `for_each_step` establishes **data-member iteration** for the recipe: every per-member step in the body — `cook` (§{steps.cook-single}), `plate` (§{steps.plate}), and `test` (§{steps.test}) — produces one work unit per member, with the current member bound as `item` (Lua) / `$<in>` (sigil):
 
 - the Lua name `item` in a Lua-expression output (§{steps.cook-lua-expr-output}) and in block bodies — a table for record members, a string, number, or boolean for scalar members;
-- the placeholder `$<item>` — the whole member, rendered as canonical (key-sorted) JSON for records, the scalar's string form otherwise (§{phl.cook-step}, §{phl.plate-test});
-- the placeholder `$<item.ACCESSOR>` — the value of record field `ACCESSOR`.
+- the placeholder `$<in>` — the whole member, rendered as canonical (key-sorted) JSON for records, the scalar's string form otherwise (§{phl.cook-step}, §{phl.plate-test});
+- the placeholder `$<in.ACCESSOR>` — the value of record field `ACCESSOR` for record members, or a path accessor for path members.
 
 This is the **one-to-one over data members** mode (§{steps.iteration-mode}, §{steps.iteration-mode-plate-test}). It is the only data-member mode defined by this Standard version: a step that aggregates the full member set into a single unit (the many-to-one analogue) is reserved for a future amendment.
 
@@ -129,34 +131,34 @@ register
 
 recipe art
     for_each cards
-    cook "build/art/$<item.id>.png" using {
-        comfy-gen --prompt "$<item.name>, $<item.description>" --out $<out>
+    cook "build/art/$<in.id>.png" using {
+        comfy-gen --prompt "$<in.name>, $<in.description>" --out $<out>
     }
 ```
 
-The `cards` probe yields an array of card records; `for_each cards` produces one `cook` unit per card. The output path interpolates `$<item.id>` and the shell body interpolates `$<item.name>` and `$<item.description>`. Editing one card's record re-runs only that card's unit (§{exec.cache}); editing `cards/divine.yaml` re-evaluates the probe but, by the per-member fingerprint, re-runs only the affected units.
+The `cards` probe yields an array of card records; `for_each cards` produces one `cook` unit per card. The output path interpolates `$<in.id>` and the shell body interpolates `$<in.name>` and `$<in.description>`. Editing one card's record re-runs only that card's unit (§{exec.cache}); editing `cards/divine.yaml` re-evaluates the probe but, by the per-member fingerprint, re-runs only the affected units.
 
 ### Example 8.3.2
 
 ```cook
 recipe deploy
     for_each $(jq -c '.[]' hosts.json)
-    plate { rsync -a dist/ "$<item.user>@$<item.host>:/srv/app" }
+    plate { rsync -a dist/ "$<in.user>@$<in.host>:/srv/app" }
 
 recipe eval
     for_each cases
-    test { assert-eval "$<item.input>" "$<item.expect>" }
+    test { assert-eval "$<in.input>" "$<in.expect>" }
 ```
 
 `for_each` feeds non-`cook` steps too: the `deploy` recipe runs one `plate` unit per host (a side effect, no declared output); the `eval` recipe runs one `test` unit per case. Each unit's fingerprint folds its member, so an unchanged host is not re-deployed and an unchanged case is not re-tested.
 
 ### Note 8.3.1 — relationship to `ingredients`
 
-`for_each` and `ingredients` are alternative iteration drivers, mutually exclusive within one recipe. They differ only in the member type they introduce: `ingredients` members are path strings (bound as `$<in>`, with the path accessors of §{phl.cook-step}); `for_each` members are records or scalars (bound as `$<item>` / `$<item.ACCESSOR>`). The downstream per-member step iteration, output declaration, and caching are otherwise identical.
+`for_each` and `ingredients` are alternative iteration drivers, mutually exclusive within one recipe. Both bind the current member as `$<in>`: for `ingredients` members (path strings) `$<in>` is the path and `$<in.ACCESSOR>` uses the path accessors of §{phl.cook-step}; for `for_each` members (records or scalars) `$<in>` is the whole member rendered as canonical key-sorted JSON (or the scalar's string form) and `$<in.ACCESSOR>` selects a record field. The downstream per-member step iteration, output declaration, and caching are otherwise identical.
 
 ### Note 8.3.2 — colon versus dot
 
-The probe-injection sigil `$<key:field>` (colon, §{cat.probes.consumer}) reaches into a *named probe's* value; the member sigil `$<item.field>` (dot) reaches into the *current iteration member*. The two never collide inside a `for_each` recipe body.
+The probe-injection sigil `$<key:field>` (colon, §{cat.probes.consumer}) reaches into a *named probe's* value; the member sigil `$<in.field>` (dot) reaches into the *current iteration member*. The two never collide inside a `for_each` recipe body.
 
 ## 8.4. Step kinds — overview [#steps.overview]
 A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the `ingredients_step` covered in §{steps.ingredients}, the `for_each_step` covered in §{steps.for-each}, and the structural `comment` / `NEWLINE` items, a conforming implementation MUST recognise exactly the following nine step kinds:
@@ -250,7 +252,7 @@ A conforming implementation MUST reject, with a load-time diagnostic, a `cook_st
 
 The iteration mode determines the number of work units produced; it is orthogonal to the `cook_step`'s declared output count. Each mode admits any number of declared outputs (one or more), as detailed in §{steps.cook-multi}.
 
-When the recipe carries a `for_each_step` (§{steps.for-each}), the `cook_step` is in **one-to-one over data members** mode regardless of its output-pattern accessors: the per-member binding is `item` / `$<item.ACCESSOR>`, and the `$<in.ACCESSOR>` own-input accessors do not apply (a data member has no ingredient path). A conforming implementation MUST reject a `cook_step` that mixes `$<in.ACCESSOR>` and `$<item.ACCESSOR>` accessors.
+When the recipe carries a `for_each_step` (§{steps.for-each}), the `cook_step` is in **one-to-one over data members** mode regardless of its output-pattern accessors: the per-member binding is `item` (Lua) / `$<in>` / `$<in.ACCESSOR>` (where `ACCESSOR` selects a record field rather than a path component), and the path-accessor interpretation of `$<in.ACCESSOR>` does not apply (a data member has no ingredient path). A conforming implementation MUST NOT allow `$<in.ACCESSOR>` accessors to be interpreted as path accessors when the recipe is driven by a `for_each_step`.
 
 ### Example 8.5.1.1
 
@@ -425,10 +427,10 @@ A `plate_step` (and a `test_step`, §{steps.test}) is in one of three iteration 
 | neither | neither | **one-shot** |
 | both | both | **error** (mixed iteration signal) |
 
-The **iteration source** for a `plate_step` (and `test_step`) is the preceding `cook_step`'s output list (flattened across all units it produces), falling back to the recipe's resolved ingredients (§{steps.ingredients}) if no `cook_step` precedes it. When the recipe is driven by a `for_each_step` (§{steps.for-each}), the iteration source is instead the resolved data-member list, and the per-member placeholders are `$<item>` / `$<item.ACCESSOR>` (Lua: `item`) in place of `$<in>` / `input`; such a step is in **one-to-one over data members** mode. A step in **one-to-one** or **many-to-one** mode MUST have a non-empty source; a step in **one-shot** mode does not consult the source.
+The **iteration source** for a `plate_step` (and `test_step`) is the preceding `cook_step`'s output list (flattened across all units it produces), falling back to the recipe's resolved ingredients (§{steps.ingredients}) if no `cook_step` precedes it. When the recipe is driven by a `for_each_step` (§{steps.for-each}), the iteration source is instead the resolved data-member list, and the per-member placeholders remain `$<in>` / `$<in.ACCESSOR>` (Lua: `item`), where `ACCESSOR` selects a record field rather than a path component; such a step is in **one-to-one over data members** mode. A step in **one-to-one** or **many-to-one** mode MUST have a non-empty source; a step in **one-shot** mode does not consult the source.
 
 A conforming implementation MUST reject:
-- A body that contains both an iteration-item placeholder/binding (`$<in>` / `$<in.ACCESSOR>` / `input`) and a batched-source placeholder/binding (`$<all>` / `inputs`); or a body that mixes the data-member placeholders (`$<item>` / `$<item.ACCESSOR>` / `item`, §{steps.for-each}) with any own-input or batched placeholder (`$<in>` / `$<in.ACCESSOR>` / `$<all>` / `input` / `inputs`).
+- A body that contains both an iteration-item placeholder/binding (`$<in>` / `$<in.ACCESSOR>` / `input`) and a batched-source placeholder/binding (`$<all>` / `inputs`).
 - A `plate_step` or `test_step` in one-to-one or many-to-one mode whose source is empty.
 
 The Lua identifier scan operates on the same lexical text the brace-balance lexer (§{lexical.brace-blocks}) operates on — strings, comments, and long strings are excluded; only free-identifier-position references count.

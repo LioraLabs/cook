@@ -2,7 +2,7 @@ CS-0091 — `for_each` shell-capture source with `as lines` (§8.3).
 
 Pins the `$(cmd)` register-time shell-capture source plus the `as lines`
 modifier: stdout is split on newlines into raw-string members (JSON parsing
-disabled). The bare `$<item>` placeholder binds the whole member (COOK-63).
+disabled). The bare `$<in>` placeholder binds the whole member (COOK-63).
 
 **`parse.txt` shape (informative).** The `for_each` step renders as
 

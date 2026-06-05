@@ -1,1 +1,1 @@
-for_each and ingredients are mutually exclusive
+a recipe may declare at most one iteration driver

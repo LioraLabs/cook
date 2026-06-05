@@ -538,7 +538,7 @@ fn register_worker_cook_table(
 
     // COOK-64 §8.3: cook.member_to_string(value) renders a for_each data
     // member to its canonical string form (key-sorted JSON for a table, the
-    // scalar's bare string otherwise). Used by the `$<item>` placeholder.
+    // scalar's bare string otherwise). Used by the `$<in>` placeholder.
     let member_fn = lua.create_function(|_, value: mlua::Value| {
         let mp = crate::probe_value::lua_to_msgpack(&value)
             .map_err(|e| mlua::Error::runtime(format!("cook.member_to_string: {e}")))?;

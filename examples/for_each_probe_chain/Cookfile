@@ -49,12 +49,12 @@ probe services: services_raw
         return out
     }
 
-# One rendered config per service. `$<item.FIELD>` interpolates the enriched
+# One rendered config per service. `$<in.FIELD>` interpolates the enriched
 # record's fields; `$<out>` is the per-member output path.
 recipe render
     for_each services
-    cook "build/$<item.name>.conf" using {
+    cook "build/$<in.name>.conf" using {
         mkdir -p build
         printf 'service  = %s\nurl      = %s\nreplicas = %s\n' \
-            "$<item.name>" "$<item.url>" "$<item.replicas>" > $<out>
+            "$<in.name>" "$<in.url>" "$<in.replicas>" > $<out>
     }

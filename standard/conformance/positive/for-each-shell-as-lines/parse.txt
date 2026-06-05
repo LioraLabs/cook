@@ -9,7 +9,7 @@ Cookfile
       excludes: []
       steps:
         ForEach source=ShellCapture("ls posts/*.md") as_lines=true
-        Cook outputs=["out/$<item>.html"] using=ShellBlock(["pandoc $<item> -o $<out>"])
+        Cook outputs=["out/$<in>.html"] using=ShellBlock(["pandoc $<in> -o $<out>"])
   chores:
   register_blocks: []
   top_level_module_calls: []

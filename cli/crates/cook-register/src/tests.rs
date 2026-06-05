@@ -1474,9 +1474,9 @@ register
 
 recipe deal
     for_each cards
-    cook "build/$<item.id>.txt" using {
+    cook "build/$<in.id>.txt" using {
         mkdir -p build
-        printf '%s\n' "$<item.name>" > $<out>
+        printf '%s\n' "$<in.name>" > $<out>
     }
 "#;
     let registered = register_surface(dir.path(), cookfile).expect("register");
@@ -1520,9 +1520,9 @@ register
 
 recipe build_catalog
     for_each catalog:items
-    cook "build/$<item.id>.json" using {
+    cook "build/$<in.id>.json" using {
         mkdir -p build
-        printf '%s\n' '$<item>' > $<out>
+        printf '%s\n' '$<in>' > $<out>
     }
 "#;
     let registered = register_surface(dir.path(), cookfile).expect("register");
@@ -1537,8 +1537,8 @@ fn for_each_undeclared_probe_rejected() {
     let cookfile = r#"
 recipe deal
     for_each nope
-    cook "build/$<item.id>.txt" using {
-        printf '%s\n' "$<item.id>" > $<out>
+    cook "build/$<in.id>.txt" using {
+        printf '%s\n' "$<in.id>" > $<out>
     }
 "#;
     let err = register_surface(dir.path(), cookfile).expect_err("must reject");
@@ -1562,8 +1562,8 @@ register
 
 recipe deal
     for_each cards
-    cook "build/$<item.id>.txt" using {
-        printf '%s\n' "$<item.id>" > $<out>
+    cook "build/$<in.id>.txt" using {
+        printf '%s\n' "$<in.id>" > $<out>
     }
 "#;
     let err = register_surface(dir.path(), cookfile).expect_err("must reject");
@@ -1594,9 +1594,9 @@ recipe gen
 
 recipe consume
     for_each data
-    cook "build/$<item.id>.txt" using {
+    cook "build/$<in.id>.txt" using {
         mkdir -p build
-        printf '%s' "$<item.id>" > $<out>
+        printf '%s' "$<in.id>" > $<out>
     }
 "#;
     let err = register_surface(dir.path(), cookfile).expect_err("must reject");
@@ -1625,8 +1625,8 @@ recipe a
 
 recipe b
     for_each bad
-    cook "build/$<item.id>.txt" using {
-        printf '%s' "$<item.id>" > $<out>
+    cook "build/$<in.id>.txt" using {
+        printf '%s' "$<in.id>" > $<out>
     }
 "#;
     let parsed = cook_lang::parse(cookfile).expect("parse");

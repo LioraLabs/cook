@@ -83,8 +83,8 @@ pub(crate) fn expand_command_template(
 }
 
 /// Expand a `for_each` body template (§8.3): a cook output pattern, a cook
-/// shell command, or a plate/test body. The member sigils `$<item>` and
-/// `$<item.FIELD>` bind the current data member (`item`); every other sigil
+/// shell command, or a plate/test body. The member sigils `$<in>` and
+/// `$<in.FIELD>` bind the current data member (`item`); every other sigil
 /// resolves through the normal closed-set [`resolve`] against `ctx` — so
 /// `$<out>`, recipe refs, env vars, and probe refs behave exactly as in an
 /// ingredient-driven body. `$<in>` / `$<all>` are rejected when `ctx.mode` is
@@ -112,7 +112,7 @@ pub(crate) fn expand_for_each_template(
         }
         // §8.3 member binding takes precedence; everything else is the normal
         // closed-set resolution.
-        let lua = if let Some(b) = crate::resolver::match_item_sigil(&span.ident) {
+        let lua = if let Some(b) = crate::resolver::match_member_sigil(&span.ident) {
             builtin_to_lua(b)
         } else {
             let resolved = crate::resolver::resolve(&span.ident, ctx);
@@ -268,10 +268,10 @@ fn builtin_to_lua(b: BuiltinKind) -> String {
         BuiltinKind::OutIndexed(n) => format!("_cook_outs[{}]", n),
         BuiltinKind::OutIndexedAccessor(n, acc) => format!("path.{}(_cook_outs[{}])", acc, n),
         BuiltinKind::All => "_cook_all".to_string(),
-        // COOK-63 §8.3: data-member bindings. `$<item>` renders the whole
+        // COOK-63 §8.3: data-member bindings. `$<in>` renders the whole
         // member — canonical key-sorted JSON for a record, the scalar's string
         // form otherwise — via the `cook.member_to_string` runtime helper
-        // (provided by the COOK-64 runtime slice). `$<item.FIELD>` reads a
+        // (provided by the COOK-64 runtime slice). `$<in.FIELD>` reads a
         // record field by key (bracket-indexed so non-identifier keys are safe).
         BuiltinKind::Item => "cook.member_to_string(item)".to_string(),
         BuiltinKind::ItemField(field) => {

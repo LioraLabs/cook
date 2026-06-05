@@ -431,23 +431,41 @@ pub(crate) fn parse_recipe(
                         return Err(ParseError::Parse {
                             line: tok.line,
                             message:
-                                "for_each and ingredients are mutually exclusive iteration drivers"
+                                "a recipe may declare at most one iteration driver (`ingredients <probe>` or `for_each`)"
                                     .to_string(),
                         });
                     }
-                    if !ingredients.is_empty() || !excludes.is_empty() {
-                        return Err(ParseError::Parse {
-                            line: tok.line,
-                            message: "duplicate 'ingredients' line".to_string(),
-                        });
+                    let head = rest.trim_start();
+                    if head.starts_with('"') || head.starts_with('!') {
+                        // Glob ingredients (existing path).
+                        if !ingredients.is_empty() || !excludes.is_empty() {
+                            return Err(ParseError::Parse {
+                                line: tok.line,
+                                message: "duplicate 'ingredients' line".to_string(),
+                            });
+                        }
+                        let (inc, exc, new_pos) =
+                            parse_ingredients_line(rest, tok.line, tokens, pos, source_lines)?;
+                        ingredients = inc;
+                        excludes = exc;
+                        pos = new_pos;
+                        continue;
+                    } else {
+                        // COOK-88: bare identifier => probe member source. Desugar to ForEach.
+                        if !ingredients.is_empty() || !excludes.is_empty() {
+                            return Err(ParseError::Parse {
+                                line: tok.line,
+                                message: "ingredients: cannot mix glob patterns with a probe source"
+                                    .to_string(),
+                            });
+                        }
+                        let (fe, new_pos) =
+                            crate::cook_line::parse_ingredients_probe_source(rest, tok.line, tokens, pos)?;
+                        for_each_seen = true;
+                        steps.push(Step::ForEach { step: fe, line: tok.line });
+                        pos = new_pos;
+                        continue;
                     }
-                    let (inc, exc, new_pos) = parse_ingredients_line(
-                        rest, tok.line, tokens, pos, source_lines,
-                    )?;
-                    ingredients = inc;
-                    excludes = exc;
-                    pos = new_pos;
-                    continue;
                 } else if let Some(rest) = strip_keyword(text, "for_each") {
                     // §8.3: declarative iteration driver. Region rule applies
                     // (cannot follow the imperative region); mutually exclusive
@@ -459,14 +477,14 @@ pub(crate) fn parse_recipe(
                         return Err(ParseError::Parse {
                             line: tok.line,
                             message:
-                                "for_each and ingredients are mutually exclusive iteration drivers"
+                                "a recipe may declare at most one iteration driver (`ingredients <probe>` or `for_each`)"
                                     .to_string(),
                         });
                     }
                     if for_each_seen {
                         return Err(ParseError::Parse {
                             line: tok.line,
-                            message: "at most one for_each per recipe".to_string(),
+                            message: "a recipe may declare at most one iteration driver (`ingredients <probe>` or `for_each`)".to_string(),
                         });
                     }
                     let (fe, new_pos) =

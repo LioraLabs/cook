@@ -160,7 +160,9 @@ produce_type   ::= "json" | "lines"
 
 ## A.4. Steps [#grammar-appendix.steps]
 ```ebnf
-ingredients_step      ::= "ingredients" ingredient+ NEWLINE
+ingredients_step      ::= "ingredients" ( ingredient+ | probe_ref ) NEWLINE
+                          /* probe_ref form is a probe member source (mutually exclusive
+                             with glob items); see §8 Note 8.2.1 */
 ingredient            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
 

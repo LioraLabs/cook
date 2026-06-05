@@ -383,6 +383,40 @@ pub(crate) fn parse_for_each_line(
     Ok((ForEachStep { source, as_lines }, pos))
 }
 
+/// Parse an `ingredients <probe>` member source (COOK-88). A bare probe key
+/// (`IDENT (":" IDENT)?`) used as an iteration driver, semantically identical
+/// to `for_each <probe>`; returns the desugared `ForEachStep`. The lexical
+/// discriminator (quote vs bare ident) is decided by the caller in `recipe.rs`.
+pub(crate) fn parse_ingredients_probe_source(
+    rest: &str,
+    line: usize,
+    tokens: &[Located<Token>],
+    current_pos: usize,
+) -> Result<(ForEachStep, usize), ParseError> {
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | ':')))
+        .unwrap_or(rest.len());
+    if end == 0 {
+        return Err(ParseError::Parse {
+            line,
+            message: "ingredients: expected a \"glob\" pattern or a probe key".to_string(),
+        });
+    }
+    let key = rest[..end].to_string();
+    let leftover = rest[end..].trim();
+    if !leftover.is_empty() {
+        return Err(ParseError::Parse {
+            line,
+            message: format!("ingredients: unexpected trailing content '{leftover}' after probe key"),
+        });
+    }
+    let mut pos = current_pos + 1;
+    while pos < tokens.len() && tokens[pos].line <= line {
+        pos += 1;
+    }
+    Ok((ForEachStep { source: ForEachSource::ProbeKey(key), as_lines: false }, pos))
+}
+
 /// Brace-balanced scan for a `cook (LUA_EXPR)` payload. `text` is the
 /// content AFTER the opening `(`. Scans until the matching `)` is found,
 /// honouring nested parens and basic double/single-quoted string literals.

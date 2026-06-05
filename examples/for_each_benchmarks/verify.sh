@@ -43,20 +43,20 @@ assert_contains() {
 
 echo "for_each codegen assertions (cook emit-lua):"
 
-# cards_cook — probe source, cook fan-out, $<item.FIELD>.
+# cards_cook — probe source, cook fan-out, $<in.FIELD>.
 assert_contains "cards_cook: probe member source"      'local _items = cook.cache.get("cards")'
 assert_contains "cards_cook: per-member loop binds item" 'for _, item in ipairs(_items) do'
-assert_contains "cards_cook: \$<item.id> output"        'tostring(item["id"])'
-assert_contains "cards_cook: \$<item.name> in command"  'tostring(item["name"])'
+assert_contains "cards_cook: \$<in.id> output"        'tostring(item["id"])'
+assert_contains "cards_cook: \$<in.name> in command"  'tostring(item["name"])'
 
-# catalog_cook — probe key:field, bare $<item>.
+# catalog_cook — probe key:field, bare $<in>.
 assert_contains "catalog_cook: key:field indexes array" 'cook.cache.get("catalog")["items"]'
-assert_contains "catalog_cook: bare \$<item> renders member" 'cook.member_to_string(item)'
+assert_contains "catalog_cook: bare \$<in> renders member" 'cook.member_to_string(item)'
 
 # deploy — $(cmd) default JSON capture, plate fan-out.
 assert_contains "deploy: \$(cmd) shell capture"         'cook.sh("cat data/hosts.ndjson")'
 assert_contains "deploy: default source JSON-decodes"   'table.insert(_items, cook.json_decode(_line))'
-assert_contains "deploy: \$<item.host> in plate body"   'tostring(item["host"])'
+assert_contains "deploy: \$<in.host> in plate body"   'tostring(item["host"])'
 assert_contains "deploy: plate emits add_unit"          'cook.add_unit({command ='
 
 # render — $(cmd) as lines, raw members.
@@ -65,7 +65,7 @@ assert_contains "render: as lines keeps raw member"     'table.insert(_items, _l
 
 # eval — probe source, test fan-out.
 assert_contains "eval: cases probe source"              'local _items = cook.cache.get("cases")'
-assert_contains "eval: \$<item.input> in test body"     'tostring(item["input"])'
+assert_contains "eval: \$<in.input> in test body"     'tostring(item["input"])'
 assert_contains "eval: test emits add_test"             'cook.add_test({command ='
 
 # --- Tier 2: execution (COOK-64 runtime) ------------------------------------
@@ -106,7 +106,7 @@ assert_true   "cards_cook runs (probe → cook)"          "$COOK" cards_cook
 assert_file_eq "cards_cook: ace.txt content"           build/cards/ace.txt  "Ace of Spades"
 assert_file_eq "cards_cook: queen.txt content"          build/cards/queen.txt "Queen of Hearts"
 assert_true   "catalog_cook runs (probe:field → cook)"  "$COOK" catalog_cook
-assert_file_eq "catalog_cook: bare \$<item> is JSON"    build/catalog/widget.json '{"id":"widget","name":"Widget"}'
+assert_file_eq "catalog_cook: bare \$<in> is JSON"    build/catalog/widget.json '{"id":"widget","name":"Widget"}'
 assert_true   "deploy runs (\$(cmd) NDJSON → plate)"     "$COOK" deploy
 assert_true   "render runs (\$(cmd) as lines → cook)"    "$COOK" render
 assert_file_eq "render: raw-member output"              build/html/intro.md.html '<article>intro.md</article>'

@@ -3,7 +3,7 @@
 //! A `for_each` member is a probe/JSON value. Two consumers need a stable
 //! string form of the whole member:
 //!
-//!  - the `$<item>` placeholder (the member's textual rendering in a command);
+//!  - the `$<in>` placeholder (the member's textual rendering in a command);
 //!  - the per-member cache fingerprint (§17.1 observable #5).
 //!
 //! Per §8.3 the rendering is **canonical key-sorted JSON for a record** (or any

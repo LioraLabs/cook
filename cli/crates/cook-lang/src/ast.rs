@@ -237,7 +237,7 @@ pub enum ForEachSource {
 }
 
 /// A `for_each` step (§8.3). At most one per recipe; mutually exclusive with
-/// `ingredients`. The current member binds as `item` / `$<item>` / `$<item.field>`.
+/// `ingredients`. The current member binds as `item` / `$<in>` / `$<in.field>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForEachStep {
     pub source: ForEachSource,

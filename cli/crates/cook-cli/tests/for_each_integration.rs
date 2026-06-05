@@ -95,10 +95,10 @@ register
 
 recipe gen
     for_each recs
-    cook "out/$<item.id>.txt" using {
+    cook "out/$<in.id>.txt" using {
         mkdir -p out
-        printf '%s' "$<item.tag>" > $<out>
-        printf '%s\n' "$<item.id>" >> ran.log
+        printf '%s' "$<in.tag>" > $<out>
+        printf '%s\n' "$<in.id>" >> ran.log
     }
 "#;
     fs::write(dir.join("Cookfile"), cookfile).unwrap();

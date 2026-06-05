@@ -217,7 +217,7 @@ probe names
 
 recipe render
     for_each names
-    cook "out/$<item>.txt" using { mkdir -p out && echo $<item> > $<out> }
+    cook "out/$<in>.txt" using { mkdir -p out && echo $<in> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
@@ -226,7 +226,7 @@ recipe render
 }
 
 /// A native lua-block `probe` returning records, feeding a `for_each` with
-/// `$<item.field>` access.
+/// `$<in.field>` access.
 #[test]
 fn native_probe_for_each_lua_records_end_to_end() {
     let tmp = TempDir::new().unwrap();
@@ -236,7 +236,7 @@ probe cards
 
 recipe render
     for_each cards
-    cook "out/$<item.id>.txt" using { mkdir -p out && echo $<item.id> > $<out> }
+    cook "out/$<in.id>.txt" using { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
@@ -258,7 +258,7 @@ probe cards
 
 recipe render
     for_each cards
-    cook "out/$<item.id>.txt" using { mkdir -p out && echo $<item.id> > $<out> }
+    cook "out/$<in.id>.txt" using { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
@@ -279,7 +279,7 @@ probe cards
 
 recipe render
     for_each cards
-    cook "out/$<item.id>.txt" using { mkdir -p out && echo $<item.id> > $<out> }
+    cook "out/$<in.id>.txt" using { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();

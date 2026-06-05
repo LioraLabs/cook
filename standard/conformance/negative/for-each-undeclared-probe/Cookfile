@@ -1,5 +1,5 @@
 recipe deal
     for_each nope
-    cook "build/$<item.id>.txt" using {
-        printf '%s\n' "$<item.id>" > $<out>
+    cook "build/$<in.id>.txt" using {
+        printf '%s\n' "$<in.id>" > $<out>
     }
