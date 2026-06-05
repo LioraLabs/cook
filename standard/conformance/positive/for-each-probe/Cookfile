@@ -1,3 +1,0 @@
-recipe art
-    for_each cards
-    cook "build/art/$<in.id>.png" using { gen "$<in.name>" $<out> }

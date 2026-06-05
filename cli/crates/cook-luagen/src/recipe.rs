@@ -48,10 +48,6 @@ pub enum CodegenError {
     /// CS-0024 plate/test mode or placeholder validation failure.
     #[error("{0}")]
     PlateTest(#[from] crate::plate_step::CodegenError),
-    /// COOK-63 §8.3: the reserved `for_each (LUA_EXPR)` source parses but is
-    /// not yet executable. A future amendment will specify it.
-    #[error("line {line}: for_each Lua-expression source is not yet supported")]
-    ForEachLuaReserved { line: usize },
 }
 
 pub fn generate(cookfile: &Cookfile) -> String {
@@ -786,8 +782,8 @@ pub fn generate_with_names(
                     Step::ForEach { step, line } => Some((step, *line)),
                     _ => None,
                 });
-                if let Some((fe, fe_line)) = for_each {
-                    emit_for_each_items(&mut out, fe, fe_line)?;
+                if let Some((fe, _fe_line)) = for_each {
+                    emit_for_each_items(&mut out, fe);
                 }
                 let is_for_each = for_each.is_some();
 
@@ -951,20 +947,15 @@ pub fn generate_with_names(
 /// per-member cook/plate/test steps.
 ///
 /// Member-materialisation is structurally correct here; the demand-driven
-/// probe pre-pass (§22.5.9) and the per-member fingerprint fold (§17) are the
+/// probe pre-pass (§22.5.10) and the per-member fingerprint fold (§17) are the
 /// COOK-64 runtime slice. A `ProbeKey` reads the probe value via
 /// `cook.cache.get`; a `ProbeKey` carrying a `:field` selector indexes the
-/// named array field. A `$(cmd)` capture splits stdout into members —
-/// JSON-decoded per line by default, kept raw under `as lines`. The reserved
-/// `(LUA_EXPR)` source is rejected here (it parses, but is not yet executable).
-fn emit_for_each_items(
-    out: &mut String,
-    fe: &ForEachStep,
-    line: usize,
-) -> Result<(), CodegenError> {
+/// named array field. The `$(cmd)` and `(LUA_EXPR)` sources were removed in
+/// COOK-97 — only `ProbeKey` remains.
+fn emit_for_each_items(out: &mut String, fe: &ForEachStep) {
     match &fe.source {
         ForEachSource::ProbeKey(k) => {
-            // §8.3 grammar `probe_ref ::= IDENT (":" IDENT)?`; §22.5.9:
+            // §8.x grammar `probe_ref ::= IDENT (":" IDENT)?`; §22.5.10:
             // `key:field` iterates the array at the named field.
             let (key, field) = match k.split_once(':') {
                 Some((key, field)) => (key, Some(field)),
@@ -976,24 +967,7 @@ fn emit_for_each_items(
             }
             out.push_str(&format!("    local _items = {}\n", expr));
         }
-        ForEachSource::ShellCapture(cmd) => {
-            out.push_str("    local _items = {}\n");
-            out.push_str(&format!(
-                "    for _line in (cook.sh(\"{}\")):gmatch(\"[^\\r\\n]+\") do\n",
-                escape_lua_string(cmd)
-            ));
-            if fe.as_lines {
-                out.push_str("        table.insert(_items, _line)\n");
-            } else {
-                out.push_str("        table.insert(_items, cook.json_decode(_line))\n");
-            }
-            out.push_str("    end\n");
-        }
-        ForEachSource::LuaExpr(_) => {
-            return Err(CodegenError::ForEachLuaReserved { line });
-        }
     }
-    Ok(())
 }
 
 /// Expand a single shell command through sigil substitution (CS-0033).
@@ -1358,12 +1332,6 @@ fn for_each_meta_field(recipe: &Recipe) -> Option<String> {
             ),
             None => format!("kind = \"probe\", key = \"{}\"", escape_lua_string(k)),
         },
-        ForEachSource::ShellCapture(cmd) => format!(
-            "kind = \"shell\", cmd = \"{}\", as_lines = {}",
-            escape_lua_string(cmd),
-            step.as_lines,
-        ),
-        ForEachSource::LuaExpr(_) => "kind = \"lua\"".to_string(),
     };
     Some(format!("__for_each = {{{}}}", body))
 }

@@ -1,13 +1,11 @@
-# `for_each` over a DAG-dependent probe chain (COOK-64 / CS-0091)
+# `ingredients <probe>` over a DAG-dependent probe chain (COOK-64 / CS-0091)
 
 A realistic, runnable example of Cook's **data-driven fan-out** where the
-`for_each` source is itself the tip of a **probe dependency chain**. Render one
-config file per microservice from a JSON manifest, with a derived `url` field
-computed by an intermediate probe.
+`ingredients <probe>` source is itself the tip of a **probe dependency chain**.
+Render one config file per microservice from a JSON manifest, with a derived
+`url` field computed by an intermediate probe.
 
-Where [`for_each_benchmarks/`](../for_each_benchmarks/) covers the full matrix
-of `for_each` *source forms* (probe, `probe:field`, `$(cmd)`, `as lines`) across
-`cook` / `plate` / `test`, this example is narrower and deeper: it exercises the
+This example is narrower and deeper than a full matrix example: it exercises the
 §22.5.9 **register pre-pass resolving a probe that `requires` another probe**
 before the recipe fans out.
 
@@ -21,7 +19,7 @@ data/services.json
         │  (inputs.requires)
         ▼
   probe "services"              enriches each record with a derived `url`
-        │  (for_each source)
+        │  (ingredients <probe> source)
         ▼
   recipe "render"               one cook unit per service → build/<name>.conf
 ```
@@ -61,7 +59,7 @@ cook render            # fans out one config per service
 
 | Path | Role |
 |---|---|
-| `Cookfile` | the two-layer probe chain + the `for_each` recipe |
+| `Cookfile` | the two-layer probe chain + the `ingredients <probe>` recipe |
 | `data/services.json` | the manifest that drives the fan-out |
 | `verify.sh` | codegen-shape + execution + per-member-cache assertions |
 | `build/` | generated configs (git-ignored; produced by `cook render`) |

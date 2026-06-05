@@ -212,15 +212,12 @@ fn format_step(step: &Step) -> String {
                 format_using(&step.using_clause),
             )
         }
-        // COOK-63 §8.3: data-member iteration driver.
+        // §8.x: ingredients <probe> desugar node — probe-key source only (COOK-97).
         Step::ForEach { step, .. } => format!(
-            "ForEach source={} as_lines={}",
+            "ForEach source={}",
             match &step.source {
                 ForEachSource::ProbeKey(k) => format!("ProbeKey({})", repr(k)),
-                ForEachSource::ShellCapture(c) => format!("ShellCapture({})", repr(c)),
-                ForEachSource::LuaExpr(e) => format!("LuaExpr({})", repr(e)),
             },
-            step.as_lines,
         ),
         Step::Plate { step, .. } => format!("Plate body={}", repr_body(&step.body)),
         Step::Test { step, .. } => {

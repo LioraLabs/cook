@@ -1,16 +1,16 @@
-# §22.5.9 for_each over a DAG-dependent probe chain (COOK-64 / CS-0091)
+# §22.5.9 ingredients <probe> over a DAG-dependent probe chain (COOK-64 / CS-0091)
 # Uses the native `probe` DSL (COOK-69).
 #
 # A realistic data-driven build: render one config file per microservice
 # straight from a JSON manifest. The twist this example exercises is the
-# *probe chain* — the `for_each` source is a probe that REQUIRES an upstream
-# probe (`inputs.requires`), so the register pre-pass (§22.5.9) must resolve
-# the whole chain, in dependency order, before the recipe fans out.
+# *probe chain* — the `ingredients <probe>` source is a probe that REQUIRES an
+# upstream probe (`inputs.requires`), so the register pre-pass (§22.5.9) must
+# resolve the whole chain, in dependency order, before the recipe fans out.
 #
 #   services_raw  — reads the manifest file.
 #   services      — requires services_raw; enriches each record with a derived
 #                   `url` field (read from the upstream probe via cook.cache.get).
-#   render        — for_each over `services` (the DEPENDENT probe).
+#   render        — ingredients <services> (the DEPENDENT probe).
 #
 # What this demonstrates:
 #   * Data-driven fan-out: one unit per manifest record (add a service → a new
@@ -32,10 +32,10 @@ probe services_raw
     ingredients "data/services.json"
     produce as json { cat data/services.json }
 
-# Layer 2 — the for_each source. Depends on `services_raw` via the header dep
-# list; reads the upstream value with cook.cache.get and derives a `url` per
-# record. The register pre-pass resolves `services_raw` first, then this, then
-# sizes the fan-out from the returned array.
+# Layer 2 — the ingredients <probe> source. Depends on `services_raw` via the
+# header dep list; reads the upstream value with cook.cache.get and derives a
+# `url` per record. The register pre-pass resolves `services_raw` first, then
+# this, then sizes the fan-out from the returned array.
 probe services: services_raw
     produce >{
         local out = {}
@@ -52,7 +52,7 @@ probe services: services_raw
 # One rendered config per service. `$<in.FIELD>` interpolates the enriched
 # record's fields; `$<out>` is the per-member output path.
 recipe render
-    for_each services
+    ingredients services
     cook "build/$<in.name>.conf" using {
         mkdir -p build
         printf 'service  = %s\nurl      = %s\nreplicas = %s\n' \

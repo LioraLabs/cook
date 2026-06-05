@@ -10,7 +10,7 @@ recipe gen
     }
 
 recipe consume
-    for_each data
+    ingredients data
     cook "build/$<in.id>.txt" using {
         mkdir -p build
         printf '%s' "$<in.id>" > $<out>

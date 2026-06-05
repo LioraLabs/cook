@@ -1,5 +1,5 @@
 #!/bin/bash
-# verify.sh — assert the §22.5.9 for_each-over-dependent-probe-chain example,
+# verify.sh — assert the §22.5.9 ingredients-<probe>-over-dependent-probe-chain example,
 # two tiers:
 #   1. codegen shape via `cook emit-lua` (parse + codegen, no execution).
 #   2. execution (COOK-64): build, assert the chained outputs, and prove the
@@ -67,7 +67,7 @@ LUA="$("$COOK" emit-lua 2>/dev/null)"
 if [ -z "$LUA" ]; then echo "FAIL: cook emit-lua produced no output"; exit 1; fi
 
 echo "codegen assertions (cook emit-lua):"
-assert_contains "render: for_each source is the dependent probe" 'local _items = cook.cache.get("services")'
+assert_contains "render: ingredients <probe> source is the dependent probe" 'local _items = cook.cache.get("services")'
 assert_contains "render: per-member loop binds item"             'for _, item in ipairs(_items) do'
 assert_contains "render: \$<in.name> output path"              'tostring(item["name"])'
 assert_contains "render: \$<in.url> in command"                'tostring(item["url"])'

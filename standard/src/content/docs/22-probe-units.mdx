@@ -86,11 +86,11 @@ declared by both MUST fire the duplicate-key diagnostic of §{cat.probes.api}.
 
 > **Note (informative).** A `probe` whose `produce` decodes JSON/YAML
 > (`as json`, or `cook.json_decode`/`cook.yaml_decode` in a `>{ … }` body) is
-> evaluated with those codecs available when it feeds a `for_each` (the register
-> pre-pass, §{cat.probes.for-each}). Consumption of such a probe through a
-> demand-driven consumer unit currently requires the codecs on the worker VM
-> (reference-implementation gap, tracked separately); the `for_each` path is
-> unaffected.
+> evaluated with those codecs available when it feeds an `ingredients <probe>`
+> source (the register pre-pass, §{cat.probes.for-each}). Consumption of such a
+> probe through a demand-driven consumer unit currently requires the codecs on
+> the worker VM (reference-implementation gap, tracked separately); the
+> `ingredients <probe>` path is unaffected.
 
 **Lowering (informative).** The reference implementation lowers a `probe`
 declaration to the equivalent `cook.probe(key, opts)` call (§{cat.probes.api}):
@@ -284,29 +284,29 @@ probe cycle detected: cc:a -> cc:b -> cc:a
 
 The diagnostic MUST render the full cycle path. The order in which nodes are listed MUST be deterministic (implementation-defined ordering of cycle start); the path MUST close back to the first node.
 
-## 22.5.10. Probe values as `for_each` sources [#cat.probes.for-each]
+## 22.5.10. Probe values as `ingredients <probe>` sources [#cat.probes.for-each]
 
-An **array-shaped** probe value (§{cat.probes.values}) MAY be consumed as the source of a `for_each_step` (§{steps.for-each}): `for_each <key>` registers one work unit per array element, and `for_each <key>:<field>` iterates the array at the named field. This is a second probe consumption mode alongside the `$<key:field>` injection of §{cat.probes.templates}; the same `cook.probe` definition serves both.
+An **array-shaped** probe value (§{cat.probes.values}) MAY be consumed as the source of an `ingredients <probe>` declaration (§{steps.ingredients}): `ingredients <key>` registers one work unit per array element, and `ingredients <key>:<field>` iterates the array at the named field. This is a second probe consumption mode alongside the `$<key:field>` injection of §{cat.probes.templates}; the same `cook.probe` definition serves both.
 
-A `for_each` source is the canonical case where a recipe's declared output set *shrinks* between runs: removing a data member drops the unit (and the output) it drove, so the dropped member's artifact is swept by stale-output reconciliation (§{exec.cache.reconcile}) on the next run.
+An `ingredients <probe>` source is the canonical case where a recipe's declared output set *shrinks* between runs: removing a data member drops the unit (and the output) it drove, so the dropped member's artifact is swept by stale-output reconciliation (§{exec.cache.reconcile}) on the next run.
 
-**Pre-pass evaluation.** A probe that feeds a `for_each` MUST be evaluated **before unit registration completes**, because the fan-out cardinality — the number of units the consuming recipe produces — is the length of the probe's array value. A conforming implementation MUST resolve every `for_each`-feeding probe of a reachable recipe (cache hit or `produce` execution, per §{cat.probes.exec}) before it registers that recipe's per-member units, then register the units statically. The build DAG does not grow after registration; data-member iteration introduces no dynamic registration.
+**Pre-pass evaluation.** A probe that feeds an `ingredients <probe>` source MUST be evaluated **before unit registration completes**, because the fan-out cardinality — the number of units the consuming recipe produces — is the length of the probe's array value. A conforming implementation MUST resolve every such probe of a reachable recipe (cache hit or `produce` execution, per §{cat.probes.exec}) before it registers that recipe's per-member units, then register the units statically. The build DAG does not grow after registration; data-member iteration introduces no dynamic registration.
 
-**Demand-driven.** The pre-pass preserves the demand-driven rule of §{cat.probes.exec}: a `for_each`-feeding probe MUST NOT be evaluated unless its consuming recipe is reachable from the build target. Recipe-level reachability is determined from recipe headers and dependency edges before per-member fan-out, so the pre-pass evaluates only the probes of recipes that will register units.
+**Demand-driven.** The pre-pass preserves the demand-driven rule of §{cat.probes.exec}: a probe feeding an `ingredients <probe>` source MUST NOT be evaluated unless its consuming recipe is reachable from the build target. Recipe-level reachability is determined from recipe headers and dependency edges before per-member fan-out, so the pre-pass evaluates only the probes of recipes that will register units.
 
-**Static-input rule.** A probe used as a `for_each` source MUST be statically evaluable at the pre-pass: its declared `inputs` (§{cat.probes.inputs}) MAY reference `files`, `env`, and `tools`, but MUST NOT depend — directly or transitively through `inputs.requires` — on a build artifact produced by another recipe. A conforming implementation MUST reject such a dependence with a register-phase diagnostic:
+**Static-input rule.** A probe used as an `ingredients <probe>` source MUST be statically evaluable at the pre-pass: its declared `inputs` (§{cat.probes.inputs}) MAY reference `files`, `env`, and `tools`, but MUST NOT depend — directly or transitively through `inputs.requires` — on a build artifact produced by another recipe. A conforming implementation MUST reject such a dependence with a register-phase diagnostic:
 
 ```
-probe '<key>' feeds a for_each but depends on build artifact '<path>'; for_each sources must be statically evaluable
+probe '<key>' feeds an ingredients <probe> source but depends on build artifact '<path>'; sources must be statically evaluable
 ```
 
 Iterating over artifacts produced earlier in the same build (the codegen-then-process pattern) would require interleaving execution and registration; it is reserved for a future amendment.
 
-**Non-array value.** A `for_each` whose resolved probe value (or selected field) is not an array-shaped table (§{cat.probes.values}) MUST surface a register-phase diagnostic naming the probe key and the resolved value's shape.
+**Non-array value.** An `ingredients <probe>` source whose resolved probe value (or selected field) is not an array-shaped table (§{cat.probes.values}) MUST surface a register-phase diagnostic naming the probe key and the resolved value's shape.
 
-**Per-member units.** Each array element becomes one data member, bound as `item` in the consuming recipe's per-member steps (§{steps.for-each}). Each per-member unit's fingerprint folds the materialised element (§{exec.cache}); the probe-value fingerprint covers the set, so editing one element re-runs only its unit, while editing the probe's declared inputs re-evaluates the set and re-runs only the members that changed.
+**Per-member units.** Each array element becomes one data member, bound as `item` in the consuming recipe's per-member steps (§{steps.ingredients}). Each per-member unit's fingerprint folds the materialised element (§{exec.cache}); the probe-value fingerprint covers the set, so editing one element re-runs only its unit, while editing the probe's declared inputs re-evaluates the set and re-runs only the members that changed.
 
-> **Note (informative).** An implementation must learn a recipe's `for_each`-feeding probe *before* running the recipe body (which reads the resolved array). The reference implementation surfaces the source on the recipe's registration metadata — a `__for_each` descriptor naming the probe key (and optional field) — so the pre-pass resolves the probe from the recipe header without first executing the body (COOK-64). Recipe-level reachability (above) then bounds the pre-pass to the probes of recipes the build target actually reaches.
+> **Note (informative).** An implementation must learn a recipe's `ingredients <probe>`-feeding probe *before* running the recipe body (which reads the resolved array). The reference implementation surfaces the source on the recipe's registration metadata — a `__for_each` descriptor naming the probe key (and optional field) — so the pre-pass resolves the probe from the recipe header without first executing the body (COOK-64). Recipe-level reachability (above) then bounds the pre-pass to the probes of recipes the build target actually reaches.
 
 ## 22.5.11. Implementation status (CS-0074) [#cat.probes.impl-status]
 

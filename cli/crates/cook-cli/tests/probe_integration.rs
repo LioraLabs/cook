@@ -216,7 +216,7 @@ probe names
     produce as lines { printf 'alpha\nbeta\n' }
 
 recipe render
-    for_each names
+    ingredients names
     cook "out/$<in>.txt" using { mkdir -p out && echo $<in> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
@@ -235,7 +235,7 @@ probe cards
     produce >{ return { {id='a'}, {id='b'} } }
 
 recipe render
-    for_each cards
+    ingredients cards
     cook "out/$<in.id>.txt" using { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
@@ -257,7 +257,7 @@ probe cards
     produce as json { cat cards.json }
 
 recipe render
-    for_each cards
+    ingredients cards
     cook "out/$<in.id>.txt" using { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
@@ -278,7 +278,7 @@ probe cards
     produce as json { cat cards.json }
 
 recipe render
-    for_each cards
+    ingredients cards
     cook "out/$<in.id>.txt" using { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();

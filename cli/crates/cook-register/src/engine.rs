@@ -1069,9 +1069,8 @@ fn local_reachable_set(
 /// reads it. When no `CacheContext` is wired (tests / `list_names`), `produce`
 /// runs uncached.
 ///
-/// `$(cmd)` and the reserved `(lua)` sources need no pre-pass: a `$(cmd)`
-/// driver materialises through `cook.sh` at body time, and `(lua)` is rejected
-/// at codegen.
+/// Only `ProbeKey` sources require a pre-pass; the `$(cmd)` and `(lua)` sources
+/// were removed in COOK-97.
 #[allow(clippy::too_many_arguments)]
 fn run_for_each_prepass(
     lua: &Lua,

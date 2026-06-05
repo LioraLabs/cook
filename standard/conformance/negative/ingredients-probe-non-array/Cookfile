@@ -5,7 +5,7 @@ register
     })
 
 recipe deal
-    for_each cards
+    ingredients cards
     cook "build/$<in.id>.txt" using {
         printf '%s\n' "$<in.id>" > $<out>
     }

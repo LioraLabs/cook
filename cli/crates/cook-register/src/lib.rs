@@ -140,32 +140,32 @@ pub enum RegisterError {
         ty: String,
     },
 
-    /// COOK-64 §22.5.9: a `for_each KEY` driver names a probe `KEY` that was
+    /// COOK-64 §22.5.9: an `ingredients <probe>` source names a probe `KEY` that was
     /// never declared via `cook.probe(...)`. Surfaced by the register pre-pass.
-    #[error("recipe '{recipe}': for_each source names probe '{key}' but no such probe was declared")]
+    #[error("recipe '{recipe}': ingredients <probe> source names probe '{key}' but no such probe was declared")]
     ForEachProbeUndeclared { recipe: String, key: String },
 
-    /// COOK-64 §22.5.9: a `for_each`-feeding probe's `produce` raised an error
+    /// COOK-64 §22.5.9: an `ingredients <probe>`-feeding probe's `produce` raised an error
     /// when evaluated by the pre-pass (before any recipe body ran).
-    #[error("probe '{key}' feeds a for_each but its produce raised: {message}")]
+    #[error("probe '{key}' feeds an ingredients <probe> source but its produce raised: {message}")]
     ForEachProbeProduceFailed { key: String, message: String },
 
-    /// COOK-64 §22.5.9: a `for_each` source resolved to a non-array value.
+    /// COOK-64 §22.5.9: an `ingredients <probe>` source resolved to a non-array value.
     /// `selector` names the resolved location (`KEY` or `KEY:FIELD`); `shape`
     /// is the msgpack value-kind that was found instead of a sequence.
     #[error(
-        "for_each source '{selector}' must resolve to an array; got {shape} \
-         (a for_each driver iterates a sequence of members; §22.5.9)"
+        "ingredients <probe> source '{selector}' must resolve to an array; got {shape} \
+         (an ingredients <probe> driver iterates the array's members; §22.5.9)"
     )]
     ForEachNotArray { selector: String, shape: String },
 
-    /// COOK-64 §22.5.9: a `for_each`-feeding probe declares a file input that
-    /// is produced by a recipe in this Cookfile — i.e. a build artifact. A
-    /// `for_each` source MUST be statically evaluable (it is resolved before
+    /// COOK-64 §22.5.9: an `ingredients <probe>`-feeding probe declares a file input that
+    /// is produced by a recipe in this Cookfile — i.e. a build artifact. An
+    /// `ingredients <probe>` source MUST be statically evaluable (it is resolved before
     /// any recipe runs), so an artifact dependency is rejected.
     #[error(
-        "probe '{key}' feeds a for_each but depends on build artifact '{path}'; \
-         for_each sources must be statically evaluable"
+        "probe '{key}' feeds an ingredients <probe> source but depends on build artifact '{path}'; \
+         sources must be statically evaluable"
     )]
     ForEachProbeArtifactDep { key: String, path: String },
 }

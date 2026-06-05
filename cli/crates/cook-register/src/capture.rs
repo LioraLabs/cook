@@ -56,18 +56,15 @@ pub struct RegisteredRecipe {
 /// surface-AST `ForEachSource` but lives in the register crate so the
 /// pre-pass can dispatch without a parser dependency.
 ///
-/// - `Probe { key, field }` — `for_each key` / `for_each key:field`; the
-///   pre-pass evaluates probe `key` and the body reads it via
+/// - `Probe { key, field }` — `ingredients <probe_key>` / `<probe_key:field>`;
+///   the pre-pass evaluates probe `key` and the body reads it via
 ///   `cook.cache.get(key)` (indexing `[field]` when present).
-/// - `Shell { cmd, as_lines }` — `for_each $(cmd)`; materialised at body
-///   time by `cook.sh`, so the pre-pass does nothing for it.
-/// - `Lua` — the reserved `(LUA_EXPR)` source; codegen already rejects it,
-///   so this variant is unreachable in practice but kept for totality.
+///
+/// The `Shell { cmd, as_lines }` and `Lua` variants have been removed in
+/// COOK-97 — only `Probe` remains.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForEachDescriptor {
     Probe { key: String, field: Option<String> },
-    Shell { cmd: String, as_lines: bool },
-    Lua,
 }
 
 /// Parse the `__for_each` descriptor off a register surface meta table.
@@ -82,11 +79,6 @@ fn parse_for_each_meta(meta: &LuaTable) -> LuaResult<Option<ForEachDescriptor>> 
             key: t.get("key")?,
             field: t.get::<Option<String>>("field")?,
         },
-        "shell" => ForEachDescriptor::Shell {
-            cmd: t.get("cmd")?,
-            as_lines: t.get::<Option<bool>>("as_lines")?.unwrap_or(false),
-        },
-        "lua" => ForEachDescriptor::Lua,
         other => {
             return Err(mlua::Error::runtime(format!(
                 "cook.__register_surface: unknown __for_each kind '{other}'"

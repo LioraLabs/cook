@@ -15,7 +15,7 @@ The **observable inputs** of a work unit are those of its properties that are de
 2. The list of input paths declared for the unit.
 3. The list of output paths declared for the unit.
 4. The recipe's resolved environment (§{lua}).
-5. For a unit produced by a `for_each_step` (§{steps.for-each}), the **materialised data member**: the current iteration element rendered in a canonical, key-sorted form. Each per-member unit's fingerprint therefore depends on its own member's content — independent of the whole source value — so editing one member re-runs only that unit. (This composes with the probe-value cache of §{cat.probes.exec}, which fingerprints the member *set*: the two layers are independent.)
+5. For a unit produced by an `ingredients <probe>` source (§{steps.ingredients}), the **materialised data member**: the current iteration element rendered in a canonical, key-sorted form. Each per-member unit's fingerprint therefore depends on its own member's content — independent of the whole source value — so editing one member re-runs only that unit. (This composes with the probe-value cache of §{cat.probes.exec}, which fingerprints the member *set*: the two layers are independent.)
 
 > **Note (informative).** An implementation MAY realise the materialised-member observable (5) by folding the canonical member rendering into the unit's command-text contribution (observable 1) rather than as a distinct fingerprint field; the two are observably equivalent because both make the member part of the inputs the fingerprint depends on. The reference implementation takes this approach (COOK-64): the codegen attaches the canonical member to each fan-out unit, which is mixed into the command hash at registration.
 
@@ -147,7 +147,7 @@ The resolved file set persisted in `StepEntry.outputs` is indistinguishable from
 
 §17.1 establishes that the cache changes only *how much* work happens, never *what it produces*. That guarantee extends from cache *values* to the **output tree itself**: when a recipe's declared output set *shrinks* between runs, the outputs it no longer declares MUST NOT be left behind on disk. A build whose output directory accumulates artifacts that nothing declares misrepresents its own graph — a downstream glob (§17.6), `tar`, or deploy step would pick up the stale file.
 
-The canonical case is `for_each` (§{cat.probes.for-each}, §{steps.for-each}), whose output set is *computed from data*: removing a data member means the next run correctly produces the remaining members but would otherwise orphan the dropped member's artifact.
+The canonical case is `ingredients <probe>` (§{cat.probes.for-each}, §{steps.ingredients}), whose output set is *computed from data*: removing a data member means the next run correctly produces the remaining members but would otherwise orphan the dropped member's artifact.
 
 ### The rule
 
@@ -155,7 +155,7 @@ For each recipe **R reached and re-registered** in an invocation, after R's work
 
 > `orphans(R) = prior_declared_outputs(R) − current_declared_outputs(R)`
 
-where the *prior declared outputs* are the output paths R recorded on its last successful run (the cache snapshot, §17.5, read before it is overwritten) and the *current declared outputs* are the union of the output paths of every work unit R registered this run (after `for_each` fan-out). For each path `p` in `orphans(R)`:
+where the *prior declared outputs* are the output paths R recorded on its last successful run (the cache snapshot, §17.5, read before it is overwritten) and the *current declared outputs* are the union of the output paths of every work unit R registered this run (after `ingredients <probe>` fan-out). For each path `p` in `orphans(R)`:
 
 - if `p` is **not present** on disk, the implementation MUST take no action;
 - if `p` is present **and** its current content hash equals the hash Cook recorded when it wrote `p`, the implementation MUST remove `p` and report it (e.g. `swept orphaned output: <p>`);

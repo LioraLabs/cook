@@ -353,8 +353,9 @@ pub(crate) fn parse_recipe(
     let mut ingredients = Vec::new();
     let mut excludes: Vec<String> = Vec::new();
     let mut steps: Vec<Step> = Vec::new();
-    // §8.3: `for_each` and `ingredients` are mutually-exclusive iteration
-    // drivers, and at most one `for_each` is allowed per recipe.
+    // §{steps.ingredients}: glob-pattern `ingredients` and `ingredients <probe>`
+    // (probe member source) are mutually exclusive within a recipe, and at most
+    // one probe source is allowed per recipe.
     let mut for_each_seen = false;
 
     // Track the line on which the imperative region began (the first
@@ -431,7 +432,7 @@ pub(crate) fn parse_recipe(
                         return Err(ParseError::Parse {
                             line: tok.line,
                             message:
-                                "a recipe may declare at most one iteration driver (`ingredients <probe>` or `for_each`)"
+                                "a recipe may declare at most one `ingredients <probe>` source"
                                     .to_string(),
                         });
                     }
@@ -466,33 +467,6 @@ pub(crate) fn parse_recipe(
                         pos = new_pos;
                         continue;
                     }
-                } else if let Some(rest) = strip_keyword(text, "for_each") {
-                    // §8.3: declarative iteration driver. Region rule applies
-                    // (cannot follow the imperative region); mutually exclusive
-                    // with `ingredients`; at most one per recipe.
-                    if let Some(started) = imperative_began {
-                        return Err(region_violation("for_each", tok.line, started));
-                    }
-                    if !ingredients.is_empty() || !excludes.is_empty() {
-                        return Err(ParseError::Parse {
-                            line: tok.line,
-                            message:
-                                "a recipe may declare at most one iteration driver (`ingredients <probe>` or `for_each`)"
-                                    .to_string(),
-                        });
-                    }
-                    if for_each_seen {
-                        return Err(ParseError::Parse {
-                            line: tok.line,
-                            message: "a recipe may declare at most one iteration driver (`ingredients <probe>` or `for_each`)".to_string(),
-                        });
-                    }
-                    let (fe, new_pos) =
-                        parse_for_each_line(rest, tok.line, tokens, pos)?;
-                    for_each_seen = true;
-                    steps.push(Step::ForEach { step: fe, line: tok.line });
-                    pos = new_pos;
-                    continue;
                 } else if let Some(rest) = strip_keyword(text, "cook") {
                     if let Some(started) = imperative_began {
                         return Err(region_violation("cook", tok.line, started));

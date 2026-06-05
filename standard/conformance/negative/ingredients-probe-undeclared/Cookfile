@@ -1,5 +1,5 @@
 recipe deal
-    for_each nope
+    ingredients nope
     cook "build/$<in.id>.txt" using {
         printf '%s\n' "$<in.id>" > $<out>
     }

@@ -1,3 +1,0 @@
-recipe render
-    for_each $(ls posts/*.md) as lines
-    cook "out/$<in>.html" using { pandoc $<in> -o $<out> }

@@ -1,4 +1,0 @@
-recipe bad
-    ingredients "*.c"
-    for_each cards
-    cook "o/$<in>" using { y $<out> }

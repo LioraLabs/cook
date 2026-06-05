@@ -94,7 +94,7 @@ register
     })
 
 recipe gen
-    for_each recs
+    ingredients recs
     cook "out/$<in.id>.txt" using {
         mkdir -p out
         printf '%s' "$<in.tag>" > $<out>

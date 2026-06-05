@@ -1444,7 +1444,7 @@ fn register_cookfile_rejects_surface_vs_dynamic_collision() {
 }
 
 // -----------------------------------------------------------------------
-// COOK-64 §22.5.9 — for_each register pre-pass
+// COOK-64 §22.5.9 — ingredients <probe> register pre-pass
 // -----------------------------------------------------------------------
 
 /// Drive the full surface pipeline (parse → codegen → register) so the
@@ -1463,8 +1463,8 @@ fn register_surface(
 fn for_each_probe_prepass_fans_out_units() {
     let dir = TempDir::new().unwrap();
     // A self-contained probe (no file inputs) returns a 3-element array; the
-    // pre-pass must resolve it so the `for_each` body fans out one unit per
-    // card. Before COOK-64 the body errored on `cook.cache.get` returning nil.
+    // pre-pass must resolve it so the `ingredients <probe>` body fans out one
+    // unit per card. Before COOK-64 the body errored on `cook.cache.get` returning nil.
     let cookfile = r#"
 register
     cook.probe("cards", {
@@ -1473,7 +1473,7 @@ register
     })
 
 recipe deal
-    for_each cards
+    ingredients cards
     cook "build/$<in.id>.txt" using {
         mkdir -p build
         printf '%s\n' "$<in.name>" > $<out>
@@ -1509,7 +1509,7 @@ recipe deal
 #[test]
 fn for_each_probe_field_selector_indexes_named_array() {
     let dir = TempDir::new().unwrap();
-    // `for_each catalog:items` iterates the array at the probe value's `items`
+    // `ingredients catalog:items` iterates the array at the probe value's `items`
     // field — the pre-pass stores the whole record; the body indexes `[items]`.
     let cookfile = r#"
 register
@@ -1519,7 +1519,7 @@ register
     })
 
 recipe build_catalog
-    for_each catalog:items
+    ingredients catalog:items
     cook "build/$<in.id>.json" using {
         mkdir -p build
         printf '%s\n' '$<in>' > $<out>
@@ -1533,10 +1533,10 @@ recipe build_catalog
 #[test]
 fn for_each_undeclared_probe_rejected() {
     let dir = TempDir::new().unwrap();
-    // `for_each nope` names a probe that was never declared.
+    // `ingredients nope` names a probe that was never declared.
     let cookfile = r#"
 recipe deal
-    for_each nope
+    ingredients nope
     cook "build/$<in.id>.txt" using {
         printf '%s\n' "$<in.id>" > $<out>
     }
@@ -1561,7 +1561,7 @@ register
     })
 
 recipe deal
-    for_each cards
+    ingredients cards
     cook "build/$<in.id>.txt" using {
         printf '%s\n' "$<in.id>" > $<out>
     }
@@ -1577,8 +1577,9 @@ recipe deal
 fn for_each_probe_depending_on_build_artifact_rejected() {
     let dir = TempDir::new().unwrap();
     // `gen.json` exists (so the pre-pass produce succeeds) but is also the
-    // declared output of recipe `gen` — i.e. a build artifact. A for_each
-    // source must be statically evaluable, so the dependency is rejected.
+    // declared output of recipe `gen` — i.e. a build artifact. An
+    // ingredients <probe> source must be statically evaluable, so the
+    // dependency is rejected.
     fs::write(dir.path().join("gen.json"), r#"[{"id":"x"}]"#).unwrap();
     let cookfile = r#"
 register
@@ -1593,7 +1594,7 @@ recipe gen
     }
 
 recipe consume
-    for_each data
+    ingredients data
     cook "build/$<in.id>.txt" using {
         mkdir -p build
         printf '%s' "$<in.id>" > $<out>
@@ -1610,9 +1611,9 @@ recipe consume
 fn for_each_unreachable_broken_probe_does_not_block_target() {
     let dir = TempDir::new().unwrap();
     // §22.5.9 demand-driven: building target `a` must NOT evaluate the probe of
-    // the unrelated `for_each` recipe `b` — even though `b`'s probe resolves to
-    // a non-array (which would otherwise be a register error). `b` registers
-    // with no units; `a` builds normally.
+    // the unrelated `ingredients <probe>` recipe `b` — even though `b`'s probe
+    // resolves to a non-array (which would otherwise be a register error). `b`
+    // registers with no units; `a` builds normally.
     let cookfile = r#"
 register
     cook.probe("bad", { inputs = {}, produce = [[ return { not_an = "array" } ]] })
@@ -1624,7 +1625,7 @@ recipe a
     }
 
 recipe b
-    for_each bad
+    ingredients bad
     cook "build/$<in.id>.txt" using {
         printf '%s' "$<in.id>" > $<out>
     }

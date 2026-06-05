@@ -1630,99 +1630,10 @@ fn first_for_each(c: &Cookfile) -> &ForEachStep {
 }
 
 #[test]
-fn test_for_each_probe_key() {
-    let source =
-        "recipe art\n    for_each cards\n    cook \"out/$<in.id>.png\" using { gen $<in.id> }\n";
-    let c = parse(source).unwrap();
-    let fe = first_for_each(&c);
-    assert_eq!(fe.source, ForEachSource::ProbeKey("cards".into()));
-    assert!(!fe.as_lines);
-}
-
-#[test]
-fn test_for_each_probe_key_field() {
-    // §8.3 grammar: probe_ref ::= IDENT (":" IDENT)? — `cards:items` is one
-    // source token (key + field), stored verbatim; the codegen splits it.
-    let source = "recipe art\n    for_each cards:items\n    cook \"o/$<in.id>\" using { x }\n";
-    let c = parse(source).unwrap();
-    assert_eq!(first_for_each(&c).source, ForEachSource::ProbeKey("cards:items".into()));
-}
-
-#[test]
-fn test_for_each_shell_capture_as_lines() {
-    let source =
-        "recipe e\n    for_each $(ls *.md) as lines\n    cook \"o/$<in>\" using { x }\n";
-    let c = parse(source).unwrap();
-    let fe = first_for_each(&c);
-    assert_eq!(fe.source, ForEachSource::ShellCapture("ls *.md".into()));
-    assert!(fe.as_lines);
-}
-
-#[test]
-fn test_for_each_shell_capture_default_json() {
-    let source = "recipe d\n    for_each $(jq -c '.[]' hosts.json)\n    plate { rsync $<in.host> }\n";
-    let c = parse(source).unwrap();
-    let fe = first_for_each(&c);
-    assert_eq!(fe.source, ForEachSource::ShellCapture("jq -c '.[]' hosts.json".into()));
-    assert!(!fe.as_lines);
-}
-
-#[test]
-fn test_for_each_lua_expr_reserved_parses() {
-    // §8.3: the `(LUA_EXPR)` source is reserved — it PARSES (codegen rejects it).
-    let source = "recipe x\n    for_each (cook.cards())\n    cook \"o/$<in>\" using { y }\n";
-    let c = parse(source).unwrap();
-    assert_eq!(first_for_each(&c).source, ForEachSource::LuaExpr("cook.cards()".into()));
-}
-
-#[test]
-fn test_for_each_with_ingredients_rejected() {
-    let source =
-        "recipe x\n    ingredients \"*.c\"\n    for_each cards\n    cook \"o/$<in>\" using { y }\n";
-    let msg = format!("{}", parse(source).unwrap_err());
-    assert!(msg.contains("for_each") && msg.contains("ingredients"),
-        "expected mutual-exclusion diagnostic, got: {}", msg);
-}
-
-#[test]
-fn test_ingredients_after_for_each_rejected() {
-    let source =
-        "recipe x\n    for_each cards\n    ingredients \"*.c\"\n    cook \"o/$<in>\" using { y }\n";
-    let msg = format!("{}", parse(source).unwrap_err());
-    assert!(msg.contains("for_each") && msg.contains("ingredients"),
-        "expected mutual-exclusion diagnostic, got: {}", msg);
-}
-
-#[test]
-fn test_for_each_duplicate_rejected() {
-    let source =
-        "recipe x\n    for_each cards\n    for_each hosts\n    cook \"o/$<in>\" using { y }\n";
-    let msg = format!("{}", parse(source).unwrap_err());
-    assert!(msg.contains("for_each"), "expected at-most-one diagnostic, got: {}", msg);
-}
-
-#[test]
-fn test_for_each_as_lines_on_probe_rejected() {
-    // §8.3: `as lines` on a probe_ref source MUST be rejected.
-    let source = "recipe x\n    for_each cards as lines\n    cook \"o/$<in>\" using { y }\n";
-    let msg = format!("{}", parse(source).unwrap_err());
-    assert!(msg.contains("as lines"), "expected as-lines-on-probe diagnostic, got: {}", msg);
-}
-
-#[test]
-fn test_for_each_after_imperative_rejected() {
-    // for_each is a declarative step; it cannot follow the imperative region.
-    let source = "recipe x\n    echo hi\n    for_each cards\n";
-    let msg = format!("{}", parse(source).unwrap_err());
-    assert!(msg.contains("for_each") && msg.contains("imperative"),
-        "expected region-ordering diagnostic, got: {}", msg);
-}
-
-#[test]
-fn test_for_each_empty_source_rejected() {
-    let source = "recipe x\n    for_each\n    cook \"o\" using { y }\n";
-    let msg = format!("{}", parse(source).unwrap_err());
-    assert!(msg.contains("for_each"), "expected missing-source diagnostic, got: {}", msg);
+fn for_each_keyword_no_longer_recognized() {
+    // `for_each` is gone; the line is no longer a valid declarative driver.
+    let source = "recipe r\n    for_each cards\n    cook \"o\" using { y }\n";
+    assert!(parse(source).is_err());
 }
 
 // ── COOK-67 Task 4: produce as json|lines typing ───────────────────
@@ -1894,7 +1805,6 @@ fn ingredients_probe_desugars_to_for_each() {
     let c = parse(source).unwrap();
     let fe = first_for_each(&c);
     assert_eq!(fe.source, ForEachSource::ProbeKey("cardprobe".to_string()));
-    assert!(!fe.as_lines);
     assert!(c.recipes[0].ingredients.is_empty());
 }
 
@@ -1934,14 +1844,3 @@ fn ingredients_probe_declared_twice_is_rejected() {
     assert!(parse(source).is_err());
 }
 
-#[test]
-fn for_each_then_ingredients_probe_is_rejected() {
-    let source = "recipe r\n    for_each cards\n    ingredients cardprobe\n    cook \"x\" using { y }\n";
-    assert!(parse(source).is_err());
-}
-
-#[test]
-fn ingredients_probe_then_for_each_is_rejected() {
-    let source = "recipe r\n    ingredients cardprobe\n    for_each hosts\n    cook \"x\" using { y }\n";
-    assert!(parse(source).is_err());
-}

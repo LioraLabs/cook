@@ -220,30 +220,25 @@ pub struct TestStep {
     pub should_fail: bool,
 }
 
-/// The source of a `for_each` step's data members (§8.3). A `for_each`
-/// is the data-driven counterpart to `ingredients`: it drives one-to-one
-/// over data members rather than over filesystem globs. CS-0091 / COOK-62.
+/// The source of a `for_each` step's data members. Only a probe-key source
+/// remains after COOK-97: the `$(cmd)` shell-capture and `(LUA_EXPR)` reserved
+/// forms have been removed. CS-0091 / COOK-62 introduced the node; COOK-97
+/// drops the non-probe variants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForEachSource {
     /// A probe key, optionally selecting a nested array field (`cards`,
-    /// `cards:items`). The probe's value MUST be an array (§22.5.9).
+    /// `cards:items`). The probe's value MUST be an array (§22.5.10).
     ProbeKey(String),
-    /// A register-time shell capture (`$(cmd)`): stdout split into members.
-    /// Uncached; re-evaluated every registration. Stored without the `$( )`.
-    ShellCapture(String),
-    /// Reserved register-phase Lua-value source (`(LUA_EXPR)`). Parsed, then
-    /// rejected with a "not yet supported" diagnostic until a future amendment.
-    LuaExpr(String),
 }
 
-/// A `for_each` step (§8.3). At most one per recipe; mutually exclusive with
-/// `ingredients`. The current member binds as `item` / `$<in>` / `$<in.field>`.
+/// A `for_each` step — the internal `ingredients <probe>` desugar node (§8.x).
+/// At most one per recipe; mutually exclusive with `ingredients`. The current
+/// member binds as `$<in>` / `$<in.field>`. Source is always a `ProbeKey`
+/// (the `$(cmd)` shell-capture and `(LUA_EXPR)` anonymous-source forms were
+/// removed in COOK-97; see §8.x and CS-NNNN).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForEachStep {
     pub source: ForEachSource,
-    /// `as lines`: disable JSON parsing of a `$(cmd)` source — each output
-    /// line is a raw-string member. Rejected for a `ProbeKey` source.
-    pub as_lines: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,5 +1,5 @@
 #!/bin/bash
-# verify.sh — assert §8.3 for_each, two tiers:
+# verify.sh — assert §8.3 ingredients <probe>, two tiers:
 #   1. codegen shape via `cook emit-lua` (parse + codegen, no execution).
 #   2. execution (COOK-64): run every recipe, assert outputs, and prove the
 #      §22.5.9 / §17.1 per-member cache — editing one member re-runs only its
@@ -41,7 +41,7 @@ assert_contains() {
     fi
 }
 
-echo "for_each codegen assertions (cook emit-lua):"
+echo "ingredients <probe> codegen assertions (cook emit-lua):"
 
 # cards_cook — probe source, cook fan-out, $<in.FIELD>.
 assert_contains "cards_cook: probe member source"      'local _items = cook.cache.get("cards")'
@@ -52,16 +52,6 @@ assert_contains "cards_cook: \$<in.name> in command"  'tostring(item["name"])'
 # catalog_cook — probe key:field, bare $<in>.
 assert_contains "catalog_cook: key:field indexes array" 'cook.cache.get("catalog")["items"]'
 assert_contains "catalog_cook: bare \$<in> renders member" 'cook.member_to_string(item)'
-
-# deploy — $(cmd) default JSON capture, plate fan-out.
-assert_contains "deploy: \$(cmd) shell capture"         'cook.sh("cat data/hosts.ndjson")'
-assert_contains "deploy: default source JSON-decodes"   'table.insert(_items, cook.json_decode(_line))'
-assert_contains "deploy: \$<in.host> in plate body"   'tostring(item["host"])'
-assert_contains "deploy: plate emits add_unit"          'cook.add_unit({command ='
-
-# render — $(cmd) as lines, raw members.
-assert_contains "render: ls capture"                    'cook.sh("ls posts")'
-assert_contains "render: as lines keeps raw member"     'table.insert(_items, _line)'
 
 # eval — probe source, test fan-out.
 assert_contains "eval: cases probe source"              'local _items = cook.cache.get("cases")'
@@ -96,7 +86,7 @@ assert_file_eq() {
 }
 
 echo
-echo "for_each execution assertions (cook <recipe>):"
+echo "ingredients <probe> execution assertions (cook <recipe>):"
 
 # Clean slate: wipe local build + cache so the first run is a real miss.
 rm -rf build .cook
@@ -107,9 +97,6 @@ assert_file_eq "cards_cook: ace.txt content"           build/cards/ace.txt  "Ace
 assert_file_eq "cards_cook: queen.txt content"          build/cards/queen.txt "Queen of Hearts"
 assert_true   "catalog_cook runs (probe:field → cook)"  "$COOK" catalog_cook
 assert_file_eq "catalog_cook: bare \$<in> is JSON"    build/catalog/widget.json '{"id":"widget","name":"Widget"}'
-assert_true   "deploy runs (\$(cmd) NDJSON → plate)"     "$COOK" deploy
-assert_true   "render runs (\$(cmd) as lines → cook)"    "$COOK" render
-assert_file_eq "render: raw-member output"              build/html/intro.md.html '<article>intro.md</article>'
 assert_true   "eval runs (probe → test)"                "$COOK" eval
 
 # Per-member cache (§22.5.9 / §17.1 observable #5): a no-op re-run is fully
