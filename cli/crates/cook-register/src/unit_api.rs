@@ -650,6 +650,19 @@ pub fn register_unit_api(
         for out in outputs_for_tracking {
             body.current_step_outputs.push(out);
         }
+        // §10.4.1 terminal-output capture for module-registered recipes.
+        // A module target-maker (e.g. `cook_cc.bin`) declares its units via
+        // bare `cook.add_unit` calls — `DepKind::Sequential`, NOT wrapped in a
+        // `cook.step_group` the way native `cook` steps are. The step_group
+        // terminal-output capture (which feeds cross-recipe `$<recipe>` /
+        // `cook.dep_output`, §10.2 step 2) therefore never fires for them, so
+        // `dep_output` would resolve to the empty string. Mirror that capture
+        // here: a Sequential unit's outputs become the recipe's running
+        // terminal output (last-wins), so the recipe's output is its last
+        // `add_unit`'s output. StepGroup units are left to the step_group drain.
+        if matches!(dep_kind, DepKind::Sequential) && !output_paths.is_empty() {
+            body.last_cook_step_outputs = output_paths.clone();
+        }
         // Record dep edges: every dep ref accumulated in this step_group
         // applies to this unit.
         let dep_refs: Vec<String> = body.step_group_dep_refs.clone();

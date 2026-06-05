@@ -422,6 +422,28 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
 
 /// Run the engine with progress rendering wired up.
 ///
+/// Print a one-line-per-path summary of stale-output reconciliation (§17.7):
+/// orphaned outputs Cook swept, and orphans kept because the user changed them
+/// since Cook wrote them. Suppressed under `--quiet`; no-op when both are empty.
+fn report_reconciliation(
+    globals: &Globals,
+    swept: &[std::path::PathBuf],
+    kept_modified: &[std::path::PathBuf],
+) {
+    if globals.quiet || (swept.is_empty() && kept_modified.is_empty()) {
+        return;
+    }
+    for p in swept {
+        eprintln!("cook: swept orphaned output: {}", p.display());
+    }
+    for p in kept_modified {
+        eprintln!(
+            "cook: {} changed since Cook wrote it — not removing",
+            p.display()
+        );
+    }
+}
+
 /// Whether stale-output reconciliation (§17.7) is disabled for this run, via
 /// `--no-prune` or the `COOK_NO_PRUNE` environment variable (any non-empty
 /// value other than `0`).
@@ -476,7 +498,11 @@ fn run_with_progress(
         if reachable.is_empty() {
             let recipe_name = targets.first().map(String::as_str).unwrap_or("?");
             eprintln!("cook: nothing affected for recipe '{recipe_name}' since {since}");
-            return Ok(cook_engine::run::RunResult { test_results: vec![] });
+            return Ok(cook_engine::run::RunResult {
+                test_results: vec![],
+                swept: vec![],
+                kept_modified: vec![],
+            });
         }
         edges.retain(|k, _| reachable.contains(k));
         for deps in edges.values_mut() {
@@ -511,6 +537,12 @@ fn run_with_progress(
     // closed even if the engine exited abnormally without emitting Finished.
     drop(progress_tx);
     let _success = render_thread.join().unwrap_or(false);
+
+    // Report stale-output reconciliation (§17.7) after the renderer has
+    // released the terminal, so the lines don't fight the progress display.
+    if let Ok(r) = &result {
+        report_reconciliation(globals, &r.swept, &r.kept_modified);
+    }
 
     result.map_err(engine_error_to_cook_error)
 }
@@ -566,11 +598,25 @@ fn build_registered_workspace(
         let dotenv_vars = pipeline::load_env(cookfile_dir);
         let env_vars = pipeline::resolve_env(config, dotenv_vars, &globals.set)
             .map_err(pipeline_error_to_cook_error)?;
+        // §10.2 step 2: re-classify `$<NAME>` placeholders against the full
+        // register-phase recipe set so references to recipes registered by
+        // top-level module calls (e.g. `cook_cc.bin`) resolve to dep_output
+        // instead of mis-lowering to require_env. `read_and_parse`'s codegen
+        // only saw the statically parsed `recipe` blocks.
+        let lua_source = pipeline::codegen_with_module_recipes_single(
+            cookfile_dir,
+            &parsed.cookfile,
+            parsed.lua_source.clone(),
+            env_vars.clone(),
+            &globals.set,
+            config,
+        )
+        .map_err(pipeline_error_to_cook_error)?;
         pipeline::register_single_cookfile_with_argv(
             cookfile_dir,
             env_vars,
             &globals.set,
-            parsed.lua_source.clone(),
+            lua_source,
             config,
             recipe_name,
             argv,

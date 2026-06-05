@@ -37,12 +37,12 @@ config release
 # ─── Required parameter ─────────────────────────────────────────────────────
 # `name` is reserved (§A.2), so we use `who`.
 chore greet who
-    @echo hello $<who>
+    echo hello $<who>
 
 # ─── Required + defaulted-string ────────────────────────────────────────────
 chore deploy target host="prod.example.com"
     >> log_msg = "deploy target=" .. target .. " host=" .. host
-    @echo deploy target=$<target> host=$<host>
+    echo deploy target=$<target> host=$<host>
     > print("post-deploy: " .. target .. "@" .. host)
 
 # ─── Lua-expression default (evaluates at invocation time) ──────────────────
@@ -50,11 +50,11 @@ chore deploy target host="prod.example.com"
 # falls back to a literal. The expression runs only when argv is exhausted
 # at this position; supplying `cook release v1.2.3` skips the eval entirely.
 chore release version=(os.getenv("RELEASE_TAG") or "auto-vNULL")
-    @echo release version=$<version>
+    echo release version=$<version>
 
 # ─── One-or-more variadic ───────────────────────────────────────────────────
 chore lint +files
-    @echo linting $<files>
+    echo linting $<files>
     > print("count=" .. #files)
 
 # ─── Zero-or-more variadic ──────────────────────────────────────────────────
@@ -67,10 +67,10 @@ chore fmt *files
 # ─── Comprehensive: required + defaulted-string + Lua-default + variadic ───
 chore demo target host="prod" version=("v0") *extras
     >> print("register: target=" .. target .. " host=" .. host .. " version=" .. version)
-    @echo shell-sub: $<target> $<host> $<version> $<extras>
-    @sh -c 'echo "env-vars: target=$target host=$host version=$version extras=\"$extras\" mode=${MODE-default}"'
+    echo shell-sub: $<target> $<host> $<version> $<extras>
+    sh -c 'echo "env-vars: target=$target host=$host version=$version extras=\"$extras\" mode=${MODE-default}"'
     > print("exec-lua: " .. target .. " " .. host .. " " .. version .. " #extras=" .. #extras)
 
 # ─── Paramless chore — for the migration-hint test ──────────────────────────
 chore noop
-    @echo noop
+    echo noop

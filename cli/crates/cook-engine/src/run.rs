@@ -48,6 +48,13 @@ pub enum TestScope {
 #[derive(Debug)]
 pub struct RunResult {
     pub test_results: Vec<crate::TestResult>,
+    /// Stale-output reconciliation summary (§17.7). Empty under `--no-prune`
+    /// or when nothing was orphaned. `swept` are the orphaned outputs Cook
+    /// removed; `kept_modified` are orphans kept because they changed since
+    /// Cook wrote them. Surfaced here (rather than printed by the engine) so
+    /// the CLI can report them after the progress renderer has finished.
+    pub swept: Vec<std::path::PathBuf>,
+    pub kept_modified: Vec<std::path::PathBuf>,
 }
 
 /// Split a namespaced recipe name into (prefix, local_name).
@@ -269,7 +276,11 @@ where
     // Empty DAG: every reachable recipe was zero-unit (synthetic events
     // already emitted above). Nothing else to do.
     if dag.is_empty() {
-        return Ok(RunResult { test_results: vec![] });
+        return Ok(RunResult {
+            test_results: vec![],
+            swept: vec![],
+            kept_modified: vec![],
+        });
     }
 
     // 5. Per-recipe cache managers. One per reachable recipe, anchored at
@@ -422,16 +433,22 @@ where
 
     // §17.7 stale-output reconciliation: outputs are now materialised, so
     // compute the cross-recipe live output set and sweep orphaned files.
-    if !no_prune {
+    let (swept, kept_modified) = if no_prune {
+        (vec![], vec![])
+    } else {
         reconcile_outputs(
             registered_workspace,
             reachable,
             &recon_managers,
             &prior_outputs_by_recipe,
-        );
-    }
+        )
+    };
 
-    Ok(RunResult { test_results })
+    Ok(RunResult {
+        test_results,
+        swept,
+        kept_modified,
+    })
 }
 
 /// The on-disk `.bin` name a recipe's cache is stored under: the `recipe_name`
@@ -452,12 +469,17 @@ fn recipe_cache_bin_name(ru: &RecipeUnits, fallback: &str) -> String {
 /// recipe diffs its prior recorded outputs against that set and sweeps the
 /// orphans via [`crate::reconcile::sweep`] (hash-guarded). Finally advances
 /// each recipe's recorded set by pruning steps whose every output is gone.
+///
+/// Returns `(swept, kept_modified)` aggregated across all reached recipes so
+/// the caller can report them after the progress renderer has finished.
 fn reconcile_outputs(
     registered_workspace: &RegisteredWorkspace,
     reachable: &BTreeSet<String>,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     prior_outputs_by_recipe: &BTreeMap<String, BTreeMap<PathBuf, u64>>,
-) {
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut all_swept: Vec<PathBuf> = Vec::new();
+    let mut all_kept_modified: Vec<PathBuf> = Vec::new();
     // Current cross-recipe live set.
     let mut live: BTreeSet<PathBuf> = BTreeSet::new();
     for name in reachable {
@@ -487,10 +509,12 @@ fn reconcile_outputs(
         };
         let recon = crate::reconcile::sweep(prior, &live);
         for p in recon.swept() {
-            tracing::info!("swept orphaned output: {}", p.display());
+            tracing::debug!("swept orphaned output: {}", p.display());
+            all_swept.push(p.clone());
         }
         for p in recon.kept_modified() {
-            tracing::warn!("{} changed since Cook wrote it — not removing", p.display());
+            tracing::debug!("{} changed since Cook wrote it — not removing", p.display());
+            all_kept_modified.push(p.clone());
         }
 
         // Advance the recorded set: drop steps whose every output is no longer
@@ -516,6 +540,10 @@ fn reconcile_outputs(
     for cm in cache_managers.values() {
         let _ = cm.flush_all();
     }
+
+    all_swept.sort();
+    all_kept_modified.sort();
+    (all_swept, all_kept_modified)
 }
 
 /// Topologically sort `reachable` against the recipe-level `edges` map.

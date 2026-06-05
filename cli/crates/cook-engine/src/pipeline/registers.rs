@@ -30,11 +30,13 @@
 //! out of `run_inner` in Task 5.3 so the register pass observes the same
 //! context the executor will later use.
 
-use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use cook_register::{register_cookfile, RegisterSessionBuilder, SharedTerminalOutputs};
+
+use cook_lang::ast::Cookfile;
 
 use super::env::{load_env, parse_cli_overrides, resolve_env};
 use super::error::PipelineError;
@@ -83,6 +85,66 @@ pub fn register_single_cookfile(
     Ok(ws)
 }
 
+/// Order the workspace's Cookfiles for the register pass so that every
+/// cross-Cookfile `cook.dep_output("alias.recipe")` sees its producer already
+/// registered: **importees before importers, with the root last**.
+///
+/// A recipe's terminal outputs are written into the shared map only *after* its
+/// body runs (cook-register populates them from `last_cook_step_outputs`), and
+/// a consumer body reads that same map at register time. So a consumer Cookfile
+/// must be registered after every Cookfile it references. This is a post-order
+/// DFS over the import DAG (acyclic — §11.5 rejects import cycles): post-order
+/// emits a node only after all its importees, and the root (which imports but is
+/// imported by no one) emits last. Returns canonical directory paths.
+fn cookfile_registration_order(workspace: &Workspace) -> Vec<PathBuf> {
+    fn canon(p: &Path) -> PathBuf {
+        std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+    }
+
+    // Import-DAG adjacency: importer dir -> [importee dir, ...] (deduped,
+    // declaration order preserved).
+    let mut adj: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+    for (parent, _alias, target) in &workspace.namespace_map {
+        let entry = adj.entry(canon(parent)).or_default();
+        let t = canon(target);
+        if !entry.contains(&t) {
+            entry.push(t);
+        }
+    }
+
+    fn visit(
+        node: PathBuf,
+        adj: &BTreeMap<PathBuf, Vec<PathBuf>>,
+        visited: &mut BTreeSet<PathBuf>,
+        order: &mut Vec<PathBuf>,
+    ) {
+        if !visited.insert(node.clone()) {
+            return;
+        }
+        if let Some(children) = adj.get(&node) {
+            for child in children {
+                visit(child.clone(), adj, visited, order);
+            }
+        }
+        order.push(node);
+    }
+
+    let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut order: Vec<PathBuf> = Vec::new();
+    visit(canon(&workspace.root.dir), &adj, &mut visited, &mut order);
+
+    // Safety net: register any import not reachable from root (should not occur,
+    // since the workspace is built by walking imports outward from root).
+    for path in workspace.imports.keys() {
+        let c = canon(path);
+        if visited.insert(c.clone()) {
+            order.push(c);
+        }
+    }
+
+    order
+}
+
 /// Run the register pass once per Cookfile in `workspace` (root + every
 /// import in `Workspace::imports`) and merge the per-import results.
 ///
@@ -122,59 +184,64 @@ pub fn register_workspace(
         alias_dirs_by_prefix: BTreeMap::new(),
     };
 
-    // Root Cookfile: empty qualified prefix, populated alias maps for the
-    // root's direct imports.
-    let root_alias_dirs = workspace.alias_dirs_for(&workspace.root.dir);
-    let root_alias_qp = workspace.alias_qualified_prefixes_for(&workspace.root.dir);
-    let root_builder = RegisterSessionBuilder::new(workspace.root.dir.clone(), root_env)
-        .with_cli_overrides(cli_overrides.clone())
-        .with_selected_config(config.map(|s| s.to_string()))
-        .with_shared_terminal_outputs(shared_outputs.clone())
-        .with_qualified_prefix(String::new())
-        .with_alias_dirs(root_alias_dirs.clone())
-        .with_alias_qualified_prefixes(root_alias_qp);
-    let root_registered = register_cookfile(
-        root_builder,
-        &workspace.root.lua_source,
-        cache_ctx.clone(),
-    )
-    .map_err(map_register_error)?;
-    merge_into(&mut ws, "", root_registered);
-    ws.working_dir_by_prefix
-        .insert(String::new(), workspace.root.dir.clone());
-    ws.alias_dirs_by_prefix
-        .insert(String::new(), root_alias_dirs);
-
-    // Imports: each one gets its canonical workspace qualified prefix
-    // (computed from the namespace map) and its own alias map for any
-    // nested imports it declares.
-    for (canonical_path, loaded) in &workspace.imports {
-        let prefix = find_full_prefix(workspace, canonical_path);
-        // Imports do not inherit the root's .env layering — each
-        // sub-Cookfile gets its own env baseline. `resolve_env` here
-        // still applies the system env + CLI overrides; .env files in
-        // the import dir are intentionally not loaded by this helper
-        // (parity with the pre-Task-5.1 path).
-        let import_env = resolve_env(config, HashMap::new(), env_overrides)?;
-        let alias_dirs = workspace.alias_dirs_for(&loaded.dir);
-        let alias_qp = workspace.alias_qualified_prefixes_for(&loaded.dir);
-        let builder = RegisterSessionBuilder::new(loaded.dir.clone(), import_env)
-            .with_cli_overrides(cli_overrides.clone())
-            .with_selected_config(config.map(|s| s.to_string()))
-            .with_shared_terminal_outputs(shared_outputs.clone())
-            .with_qualified_prefix(prefix.clone())
-            .with_alias_dirs(alias_dirs.clone())
-            .with_alias_qualified_prefixes(alias_qp);
-        let import_registered = register_cookfile(
-            builder,
-            &loaded.lua_source,
-            cache_ctx.clone(),
-        )
-        .map_err(map_register_error)?;
-        merge_into(&mut ws, &prefix, import_registered);
-        ws.working_dir_by_prefix
-            .insert(prefix.clone(), loaded.dir.clone());
-        ws.alias_dirs_by_prefix.insert(prefix.clone(), alias_dirs);
+    // Register Cookfiles importees-first / root-last so every cross-Cookfile
+    // `cook.dep_output` call sees its producer's terminal outputs already
+    // populated in the shared map (see `cookfile_registration_order`).
+    let root_canon = std::fs::canonicalize(&workspace.root.dir)
+        .unwrap_or_else(|_| workspace.root.dir.clone());
+    for dir in cookfile_registration_order(workspace) {
+        if dir == root_canon {
+            // Root Cookfile: empty qualified prefix, populated alias maps for
+            // the root's direct imports.
+            let root_alias_dirs = workspace.alias_dirs_for(&workspace.root.dir);
+            let root_alias_qp =
+                workspace.alias_qualified_prefixes_for(&workspace.root.dir);
+            let root_builder =
+                RegisterSessionBuilder::new(workspace.root.dir.clone(), root_env.clone())
+                    .with_cli_overrides(cli_overrides.clone())
+                    .with_selected_config(config.map(|s| s.to_string()))
+                    .with_shared_terminal_outputs(shared_outputs.clone())
+                    .with_qualified_prefix(String::new())
+                    .with_alias_dirs(root_alias_dirs.clone())
+                    .with_alias_qualified_prefixes(root_alias_qp.clone());
+            let root_registered = register_cookfile(
+                root_builder,
+                &workspace.root.lua_source,
+                cache_ctx.clone(),
+            )
+            .map_err(map_register_error)?;
+            merge_into(&mut ws, "", &root_alias_qp, root_registered);
+            ws.working_dir_by_prefix
+                .insert(String::new(), workspace.root.dir.clone());
+            ws.alias_dirs_by_prefix
+                .insert(String::new(), root_alias_dirs);
+        } else if let Some(loaded) = workspace.imports.get(&dir) {
+            // Imports: each one gets its canonical workspace qualified prefix
+            // (computed from the namespace map) and its own alias map for any
+            // nested imports it declares. Imports do not inherit the root's
+            // .env layering — each sub-Cookfile gets its own env baseline.
+            let prefix = find_full_prefix(workspace, &dir);
+            let import_env = resolve_env(config, HashMap::new(), env_overrides)?;
+            let alias_dirs = workspace.alias_dirs_for(&loaded.dir);
+            let alias_qp = workspace.alias_qualified_prefixes_for(&loaded.dir);
+            let builder = RegisterSessionBuilder::new(loaded.dir.clone(), import_env)
+                .with_cli_overrides(cli_overrides.clone())
+                .with_selected_config(config.map(|s| s.to_string()))
+                .with_shared_terminal_outputs(shared_outputs.clone())
+                .with_qualified_prefix(prefix.clone())
+                .with_alias_dirs(alias_dirs.clone())
+                .with_alias_qualified_prefixes(alias_qp.clone());
+            let import_registered = register_cookfile(
+                builder,
+                &loaded.lua_source,
+                cache_ctx.clone(),
+            )
+            .map_err(map_register_error)?;
+            merge_into(&mut ws, &prefix, &alias_qp, import_registered);
+            ws.working_dir_by_prefix
+                .insert(prefix.clone(), loaded.dir.clone());
+            ws.alias_dirs_by_prefix.insert(prefix.clone(), alias_dirs);
+        }
     }
 
     Ok(ws)
@@ -253,53 +320,61 @@ pub fn register_workspace_with_argv(
         alias_dirs_by_prefix: BTreeMap::new(),
     };
 
-    // Root Cookfile: empty qualified prefix, with argv binding.
-    let root_alias_dirs = workspace.alias_dirs_for(&workspace.root.dir);
-    let root_alias_qp = workspace.alias_qualified_prefixes_for(&workspace.root.dir);
-    let root_builder = RegisterSessionBuilder::new(workspace.root.dir.clone(), root_env)
-        .with_cli_overrides(cli_overrides.clone())
-        .with_selected_config(config.map(|s| s.to_string()))
-        .with_shared_terminal_outputs(shared_outputs.clone())
-        .with_qualified_prefix(String::new())
-        .with_alias_dirs(root_alias_dirs.clone())
-        .with_alias_qualified_prefixes(root_alias_qp)
-        .with_target_argv(target.to_string(), argv.to_vec());
-    let root_registered = register_cookfile(
-        root_builder,
-        &workspace.root.lua_source,
-        cache_ctx.clone(),
-    )
-    .map_err(map_register_error)?;
-    merge_into(&mut ws, "", root_registered);
-    ws.working_dir_by_prefix
-        .insert(String::new(), workspace.root.dir.clone());
-    ws.alias_dirs_by_prefix
-        .insert(String::new(), root_alias_dirs);
-
-    // Imports: each one gets its canonical workspace qualified prefix.
-    // No argv for imports — dispatch is always rooted at the root Cookfile.
-    for (canonical_path, loaded) in &workspace.imports {
-        let prefix = find_full_prefix(workspace, canonical_path);
-        let import_env = resolve_env(config, HashMap::new(), env_overrides)?;
-        let alias_dirs = workspace.alias_dirs_for(&loaded.dir);
-        let alias_qp = workspace.alias_qualified_prefixes_for(&loaded.dir);
-        let builder = RegisterSessionBuilder::new(loaded.dir.clone(), import_env)
-            .with_cli_overrides(cli_overrides.clone())
-            .with_selected_config(config.map(|s| s.to_string()))
-            .with_shared_terminal_outputs(shared_outputs.clone())
-            .with_qualified_prefix(prefix.clone())
-            .with_alias_dirs(alias_dirs.clone())
-            .with_alias_qualified_prefixes(alias_qp);
-        let import_registered = register_cookfile(
-            builder,
-            &loaded.lua_source,
-            cache_ctx.clone(),
-        )
-        .map_err(map_register_error)?;
-        merge_into(&mut ws, &prefix, import_registered);
-        ws.working_dir_by_prefix
-            .insert(prefix.clone(), loaded.dir.clone());
-        ws.alias_dirs_by_prefix.insert(prefix.clone(), alias_dirs);
+    // Register Cookfiles importees-first / root-last (see
+    // `cookfile_registration_order`). The dispatch target's argv binds only to
+    // the root Cookfile — chores are always defined in and dispatched from root.
+    let root_canon = std::fs::canonicalize(&workspace.root.dir)
+        .unwrap_or_else(|_| workspace.root.dir.clone());
+    for dir in cookfile_registration_order(workspace) {
+        if dir == root_canon {
+            // Root Cookfile: empty qualified prefix, with argv binding.
+            let root_alias_dirs = workspace.alias_dirs_for(&workspace.root.dir);
+            let root_alias_qp =
+                workspace.alias_qualified_prefixes_for(&workspace.root.dir);
+            let root_builder =
+                RegisterSessionBuilder::new(workspace.root.dir.clone(), root_env.clone())
+                    .with_cli_overrides(cli_overrides.clone())
+                    .with_selected_config(config.map(|s| s.to_string()))
+                    .with_shared_terminal_outputs(shared_outputs.clone())
+                    .with_qualified_prefix(String::new())
+                    .with_alias_dirs(root_alias_dirs.clone())
+                    .with_alias_qualified_prefixes(root_alias_qp.clone())
+                    .with_target_argv(target.to_string(), argv.to_vec());
+            let root_registered = register_cookfile(
+                root_builder,
+                &workspace.root.lua_source,
+                cache_ctx.clone(),
+            )
+            .map_err(map_register_error)?;
+            merge_into(&mut ws, "", &root_alias_qp, root_registered);
+            ws.working_dir_by_prefix
+                .insert(String::new(), workspace.root.dir.clone());
+            ws.alias_dirs_by_prefix
+                .insert(String::new(), root_alias_dirs);
+        } else if let Some(loaded) = workspace.imports.get(&dir) {
+            // Imports: canonical workspace qualified prefix; no argv.
+            let prefix = find_full_prefix(workspace, &dir);
+            let import_env = resolve_env(config, HashMap::new(), env_overrides)?;
+            let alias_dirs = workspace.alias_dirs_for(&loaded.dir);
+            let alias_qp = workspace.alias_qualified_prefixes_for(&loaded.dir);
+            let builder = RegisterSessionBuilder::new(loaded.dir.clone(), import_env)
+                .with_cli_overrides(cli_overrides.clone())
+                .with_selected_config(config.map(|s| s.to_string()))
+                .with_shared_terminal_outputs(shared_outputs.clone())
+                .with_qualified_prefix(prefix.clone())
+                .with_alias_dirs(alias_dirs.clone())
+                .with_alias_qualified_prefixes(alias_qp.clone());
+            let import_registered = register_cookfile(
+                builder,
+                &loaded.lua_source,
+                cache_ctx.clone(),
+            )
+            .map_err(map_register_error)?;
+            merge_into(&mut ws, &prefix, &alias_qp, import_registered);
+            ws.working_dir_by_prefix
+                .insert(prefix.clone(), loaded.dir.clone());
+            ws.alias_dirs_by_prefix.insert(prefix.clone(), alias_dirs);
+        }
     }
 
     Ok(ws)
@@ -375,6 +450,46 @@ pub fn list_workspace_names(
     Ok(out)
 }
 
+/// Re-run codegen against the *full* register-phase recipe set (§10.2 step 2).
+///
+/// The first codegen pass — run by [`super::parse::read_and_parse`] — classifies
+/// `$<NAME>` placeholders using only the statically parsed `recipe` blocks
+/// ([`cook_luagen::dep_ref::extract_recipe_names`]). A `$<NAME>` that names a
+/// recipe registered at register-phase by a top-level module call (e.g.
+/// `cook_cc.bin("x")`) is invisible to that pass, so it mis-lowers to
+/// `cook.require_env("NAME")` and hard-errors when the recipe body runs.
+///
+/// This discovers the actual registered recipe names via
+/// [`list_single_cookfile_names`] — the cheap, body-free register pass that
+/// `cook list` / `cook menu` use (see [`cook_register::list_names`]) — unions
+/// them with the static set, and regenerates the Lua so module-registered
+/// recipes resolve to `cook.dep_output` per §10.2 step 2. Feeding the
+/// *discovery* (static-name) Lua to `list_names` is safe: `list_names` never
+/// invokes a recipe body, so the latent `require_env` mis-lowering is never
+/// reached during discovery.
+pub fn codegen_with_module_recipes_single(
+    cookfile_dir: &Path,
+    cookfile: &Cookfile,
+    discovery_lua: String,
+    env_vars: HashMap<String, String>,
+    env_overrides: &[String],
+    selected_config: Option<&str>,
+) -> Result<String, PipelineError> {
+    let discovered = list_single_cookfile_names(
+        cookfile_dir,
+        env_vars,
+        env_overrides,
+        discovery_lua,
+        selected_config,
+    )?;
+    let mut names = cook_luagen::dep_ref::extract_recipe_names(cookfile);
+    for (name, _kind) in discovered {
+        names.insert(name);
+    }
+    cook_luagen::generate_with_names_checked(cookfile, &names)
+        .map_err(|e| PipelineError::Codegen(e.to_string()))
+}
+
 /// Merge a per-Cookfile [`cook_register::RegisteredCookfile`] into the
 /// workspace-level [`RegisteredWorkspace`], qualifying every recipe name,
 /// unit key, probe key, and intra-Cookfile `requires` entry with `prefix`
@@ -390,6 +505,7 @@ pub fn list_workspace_names(
 fn merge_into(
     ws: &mut RegisteredWorkspace,
     prefix: &str,
+    alias_qualified_prefixes: &BTreeMap<String, String>,
     rc: cook_register::RegisteredCookfile,
 ) {
     let qualify = |name: &str| {
@@ -414,6 +530,25 @@ fn merge_into(
             .requires
             .iter()
             .map(|req| {
+                // Cross-Cookfile `alias.recipe` requires → the importee's
+                // canonical global key (mirrors `resolve_global_key` and the
+                // inferred-deps analyzer). Without this the analyzer sees the
+                // local alias name (e.g. `proto.proto_lib`) and errors
+                // `UnknownRecipe` when the canonical key is, say,
+                // `server.queue.proto.proto_lib` (a diamond / transitive
+                // importee whose prefix differs from the local alias).
+                if let Some((alias, sub)) = req.split_once('.') {
+                    if let Some(importee_prefix) = alias_qualified_prefixes.get(alias) {
+                        return if importee_prefix.is_empty() {
+                            sub.to_string()
+                        } else {
+                            format!("{importee_prefix}.{sub}")
+                        };
+                    }
+                }
+                // Intra-Cookfile local name → prefix it with this Cookfile's
+                // qualified prefix. Anything else (already-global, or unknown —
+                // rejected downstream) passes through untouched.
                 if local_names.contains(req) {
                     qualify(req)
                 } else {

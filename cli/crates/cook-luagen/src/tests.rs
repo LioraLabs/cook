@@ -1785,6 +1785,34 @@ fn make_chore(name: &str, deps: Vec<&str>, steps: Vec<Step>) -> Chore {
 }
 
 #[test]
+fn test_compile_chore_resolves_recipe_ref_to_dep_output() {
+    // §10.2 step 2: a `$<recipe>` reference in a chore body (e.g. a `play`
+    // chore launching a just-built binary via `$<engine>`) MUST resolve to
+    // that recipe's output via `cook.dep_output`, creating the cross-recipe
+    // edge — not fall through to `cook.require_env` (the bug).
+    let chore = make_chore(
+        "play",
+        vec!["engine"],
+        vec![Step::Shell {
+            command: "$<engine> --run".to_string(),
+            line: 2,
+            interactive: true,
+        }],
+    );
+    let mut names = std::collections::BTreeSet::new();
+    names.insert("engine".to_string());
+    let lua = compile_chore(&chore, &[], &names);
+    assert!(
+        lua.contains("cook.dep_output(\"engine\")"),
+        "chore $<engine> must lower to cook.dep_output, got:\n{lua}"
+    );
+    assert!(
+        !lua.contains("cook.require_env(\"engine\")"),
+        "chore $<engine> must NOT lower to require_env, got:\n{lua}"
+    );
+}
+
+#[test]
 fn test_compile_chore_basic_shell_interactive_cache_false() {
     // §{chores.no-caching}: every unit has cache = false.
     // §{exec.interactive-drain}: every shell step is interactive.
@@ -1797,7 +1825,7 @@ fn test_compile_chore_basic_shell_interactive_cache_false() {
             interactive: true,
         }],
     );
-    let lua = compile_chore(&chore, &[]);
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     // Surface chores lower to `cook.__register_surface_chore` (CS-0077 codegen).
     // The metadata table always carries `__line = N` even when the chore has
     // no deps, so the table is non-empty.
@@ -1833,7 +1861,7 @@ fn test_compile_chore_multiple_shell_steps_not_bundled() {
             Step::Shell { command: "cp -r src dist/".to_string(), line: 3, interactive: true },
         ],
     );
-    let lua = compile_chore(&chore, &[]);
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     assert_eq!(
         lua.matches("cook.add_unit").count(),
         2,
@@ -1864,7 +1892,7 @@ fn test_compile_chore_with_lua_step_cache_false() {
             line: 2,
         }],
     );
-    let lua = compile_chore(&chore, &[]);
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     assert!(lua.contains(r#"print("hello")"#), "Lua code missing, got:\n{lua}");
     assert!(
         lua.contains("cache = false"),
@@ -1925,7 +1953,7 @@ fn test_compile_chore_with_deps() {
             interactive: true,
         }],
     );
-    let lua = compile_chore(&chore, &[]);
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     assert!(
         lua.contains(r#"requires = {"build"}"#),
         "chore deps should become requires, got:\n{lua}"
@@ -1945,7 +1973,7 @@ fn test_compile_chore_wraps_with_enter_exit() {
             interactive: true,
         }],
     );
-    let lua = compile_chore(&chore, &[]);
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     assert!(lua.contains("cook._enter_chore()"), "missing _enter_chore, got:\n{lua}");
     assert!(lua.contains("cook._exit_chore()"), "missing _exit_chore, got:\n{lua}");
     // _enter_chore must appear before the add_unit call.
@@ -3089,7 +3117,7 @@ fn compile_chore_emits_param_metadata_and_locals() {
         steps: vec![Step::Lua { code: "deploy.run(target, host)".into(), line: 2 }],
         line: 1,
     };
-    let lua = compile_chore(&chore, &[]);
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     assert!(lua.contains("__params"), "lua: {lua}");
     assert!(lua.contains(r#"{name = "target", kind = "required""#), "lua: {lua}");
     assert!(lua.contains(r#"{name = "host", kind = "defaulted_string", default = "prod""#), "lua: {lua}");
@@ -3114,7 +3142,7 @@ fn compile_chore_emits_defaulted_lua_param_metadata() {
         steps: vec![Step::Lua { code: "release.cut(version)".into(), line: 2 }],
         line: 1,
     };
-    let lua = compile_chore(&chore, &[]);
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     assert!(
         lua.contains(r#"{name = "version", kind = "defaulted_lua", default = function() return (cook.git.head_tag() or "v0") end}"#),
         "lua: {lua}"
@@ -3135,7 +3163,7 @@ fn compile_chore_emits_variadic_param_metadata() {
         steps: vec![Step::Lua { code: "linter.run(files)".into(), line: 2 }],
         line: 1,
     };
-    let lua = compile_chore(&chore, &[]);
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     assert!(
         lua.contains(r#"{name = "files", kind = "variadic_plus"}"#),
         "lua: {lua}"
@@ -3153,7 +3181,7 @@ fn compile_chore_with_no_params_does_not_emit_param_metadata_or_prelude() {
         steps: vec![Step::Lua { code: "fs.remove('build')".into(), line: 2 }],
         line: 1,
     };
-    let lua = compile_chore(&chore, &[]);
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     assert!(!lua.contains("__params"), "lua: {lua}");
     assert!(!lua.contains("local "), "no local-binding prelude expected for paramless chore. lua: {lua}");
     // Paramless chores still take `function(__cook_params)` so the runtime
@@ -3261,7 +3289,7 @@ fn compile_chore_shell_step_emits_env_table_for_param() {
         }],
         line: 1,
     };
-    let lua = compile_chore(&chore, &[]);
+    let lua = compile_chore(&chore, &[], &std::collections::BTreeSet::new());
     // Must emit env = {["target"] = __cook_params.target}
     assert!(lua.contains("env ="), "env field missing from add_unit. lua:\n{lua}");
     assert!(lua.contains(r#"["target"] = __cook_params.target"#), "env key should be string literal, not variable reference. lua:\n{lua}");

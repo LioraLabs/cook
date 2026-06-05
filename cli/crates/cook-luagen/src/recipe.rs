@@ -935,7 +935,7 @@ pub fn generate_with_names(
                 out.push_str("end)\n\n");
             }
             TopLevelItem::Chore(chore) => {
-                out.push_str(&compile_chore(chore, &cookfile.uses));
+                out.push_str(&compile_chore(chore, &cookfile.uses, recipe_names));
             }
             TopLevelItem::Probe(p) => {
                 crate::probe::emit_probe(&mut out, p);
@@ -1029,19 +1029,32 @@ fn expand_shell_command_sigil(command: &str, recipe_names: &BTreeSet<String>) ->
 /// `expand_shell_command_sigil` path is used instead, preserving the
 /// existing `$<env_var>` → `cook.require_env(...)` behavior for
 /// parameterless chores.
-fn expand_chore_shell_command(command: &str, has_params: bool) -> String {
+fn expand_chore_shell_command(
+    command: &str,
+    has_params: bool,
+    recipe_names: &BTreeSet<String>,
+) -> String {
     let has_sigils = !crate::sigil::scan(command).is_empty();
     // Use the runtime-helper path only when the chore declares params AND the
     // command has sigils. Parameterless chores fall through to the existing
     // require_env-based expansion so that $<ENV_VAR> continues to work.
+    //
+    // NOTE: the parametric path resolves sigils against the bound params at
+    // runtime and does not consult `recipe_names`, so a `$<recipe>` cross-recipe
+    // reference in a *parametric* chore is not yet supported (rare; tracked
+    // alongside COOK-73). The common parameterless path below resolves
+    // `$<recipe>` to `cook.dep_output` per §10.2 step 2.
     if has_params && has_sigils {
         return format!(
             "cook.__expand_chore_sigils({}, __cook_params)",
             wrap_lua_string(command)
         );
     }
-    // No params or no sigils: use the standard sigil-expansion path.
-    expand_shell_command_sigil(command, &BTreeSet::new())
+    // No params or no sigils: standard sigil expansion. Pass the in-scope
+    // recipe names so a `$<recipe>` reference (e.g. launching a just-built
+    // binary via `$<dhewm3>`) resolves to that recipe's output and creates the
+    // cross-recipe edge — not just `$<ENV_VAR>` → require_env.
+    expand_shell_command_sigil(command, recipe_names)
 }
 
 /// Compile a `Chore` to register-phase Lua.
@@ -1095,7 +1108,11 @@ fn chore_param_env_table(params: &[cook_lang::ast::ChoreParam]) -> Option<String
 ///
 /// The generated Lua wraps the body with `cook._enter_chore()` / `cook._exit_chore()`
 /// so the runtime can enforce §{chores.no-caching} (see `unit_api.rs`).
-pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
+pub fn compile_chore(
+    chore: &Chore,
+    uses: &[UseStatement],
+    recipe_names: &BTreeSet<String>,
+) -> String {
     let mut out = String::new();
 
     // SHI-222 Phase 3 Task 3.1: surface `chore NAME` blocks lower to the
@@ -1165,7 +1182,7 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
             Step::Shell { command, line, interactive: true } => {
                 // Apply sigil substitution — chore-aware path defers $<NAME>
                 // expansion to the runtime helper so param values are visible.
-                let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty());
+                let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty(), recipe_names);
                 // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                 // units that are never cached. The cacheable cook-step path in
                 // cook_step.rs is the only emission site that includes it.
@@ -1187,7 +1204,7 @@ pub fn compile_chore(chore: &Chore, uses: &[UseStatement]) -> String {
                 // Parser enforces all chore shells are interactive; this arm
                 // is unreachable in a well-formed AST, but emit defensively.
                 if let Step::Shell { command, line, .. } = &chore.steps[i] {
-                    let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty());
+                    let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty(), recipe_names);
                     // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                     // units that are never cached. The cacheable cook-step path in
                     // cook_step.rs is the only emission site that includes it.

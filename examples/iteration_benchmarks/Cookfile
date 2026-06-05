@@ -1,21 +1,3 @@
-# CS-0022 Iteration Benchmarks
-#
-# Exercises every iteration mode defined by CS-0022 (§4.5.1).
-# Each recipe demonstrates one mode. Run them individually or via the
-# `benchmarks` orchestrator.
-#
-# Set SLEEP to control per-unit sleep duration (default: 0.5s).
-# Use -j to set parallelism.
-#
-#   cook benchmarks             # all modes, default parallelism
-#   cook -j 1 benchmarks        # serial — observe timing gap
-#   cook -j 8 benchmarks        # 8-way parallel
-#   cook one_to_one_shell       # single mode
-#   cook --set SLEEP=0.1 -j 4 benchmarks
-#
-# Wipe build/ between runs:
-#   cook clean
-
 config
     env.SLEEP = "0.5"
 
