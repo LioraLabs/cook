@@ -539,3 +539,44 @@ The first two steps are interactive commands: the runtime inherits the user's te
 ### Note 8.9.2
 
 An empty interactive command — a line consisting only of `@` — is rejected with a diagnostic stating that `@` requires a command. See parser test `test_empty_interactive_step_errors`.
+
+## 8.10. Cross-recipe per-member output accessor [#steps.cross-recipe-member]
+
+Inside an `ingredients <probe>` fan-out body (§{steps.ingredients}), a placeholder of the form `$<NAME[]>` — where `NAME` is a recipe declared in the same Cookfile — resolves to that recipe's terminal output **for the current fan-out member**. It is the per-member counterpart of bare `$<NAME>` (which substitutes all terminal outputs of `NAME`, space-joined, and is unchanged by this feature).
+
+`$<NAME[]>` performs three jobs simultaneously:
+
+1. **Path substitution.** At register time the placeholder is replaced by the member-specific output path: `cook.dep_output_member("NAME", cook.member_to_string(item))`, where `item` is the fan-out loop variable.
+2. **Recipe-level DAG ordering edge.** The compiler extracts `$<NAME[]>` as an ordering constraint identical to the edge produced by a bare `$<NAME>` reference: `NAME` must build before the referencing recipe.
+3. **Per-member fingerprint fold.** The referenced output is folded into the current member's cache fingerprint, not the recipe's aggregate fingerprint. Editing a single upstream member (e.g. one `.blend` file changing `render`'s output for `"outro"`) rebuilds only the `mux` member that depends on it.
+
+**Same-probe precondition (v1).** Consumer and producer must iterate the same probe. The `[]` accessor indexes into the producer's member map using the consumer's current `item` key; if the two recipes are driven by different probes, the key may not exist. Cross-probe joins via declared alignment keys are deferred to COOK-99 and MUST NOT be attempted in this version. A conforming implementation that detects a same-probe violation at register time SHOULD emit a diagnostic; otherwise the missing-key lookup produces a register-phase error at `cook.dep_output_member`.
+
+**Fan-out body only.** `$<NAME[]>` MUST NOT appear outside an `ingredients <probe>` fan-out body. A conforming implementation MUST reject it with a load-time error if no `ingredients <probe>` driver is present in the recipe.
+
+**Relation to `$<NAME>`.** Both forms record a recipe-level dependency on `NAME`. `$<NAME>` substitutes the full output list (useful in a many-to-one step that needs all of `NAME`'s artifacts); `$<NAME[]>` substitutes only the current-member output (useful in a fan-out step that must stay per-member). The two forms MAY coexist in the same Cookfile but MUST NOT coexist in the same step unless `NAME` differs between the two placeholders.
+
+### Example 8.10.1
+
+```cook
+probe scenes
+    produce as json { echo '[{"id":"intro"},{"id":"outro"}]' }
+
+recipe render
+    ingredients scenes
+    cook "build/$<in.id>.silent.mp4" using { ffmpeg -i $<in.id>.blend $<out> }
+
+recipe tts
+    ingredients scenes
+    cook "build/$<in.id>.wav" using { tts $<in.id> $<out> }
+
+recipe mux
+    ingredients scenes
+    cook "build/$<in.id>.mp4" using { ffmpeg -i $<render[]> -i $<tts[]> $<out> }
+```
+
+For member `{"id":"intro"}`, `mux` builds `build/intro.mp4` by combining `build/intro.silent.mp4` (from `render`) and `build/intro.wav` (from `tts`). For member `{"id":"outro"}` the same pattern repeats independently. Only the `outro` member's units are dirty when `outro.blend` changes — `intro.mp4` is unaffected.
+
+### Note 8.10.1 — Conformance fixture
+
+`standard/conformance/positive/recipe-member-accessor` pins this surface. The `parse.txt` golden confirms that `$<render[]>` and `$<tts[]>` are preserved verbatim in the `ShellBlock` strings at the parser layer; the codegen layer (CS-0098) lowers them to `cook.dep_output_member` calls.

@@ -27,6 +27,8 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         dep_kind: DepKind::Sequential,
         probes: vec![],
         unit_env_vars: BTreeMap::new(),
+        member: None,
+        output_paths: Vec::new(),
     };
     let mut units_by_recipe = BTreeMap::new();
     units_by_recipe.insert(
@@ -71,6 +73,8 @@ fn workspace_with(recipes: &[(&str, &[&str])]) -> RegisteredWorkspace {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: BTreeMap::new(),
+            member: None,
+            output_paths: Vec::new(),
         };
         units_by_recipe.insert(
             name.to_string(),

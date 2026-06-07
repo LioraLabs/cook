@@ -149,6 +149,14 @@ fn parse_dep_token(token: &str, recipe_names: &BTreeSet<String>) -> Option<DepRe
         }
     }
 
+    // COOK-96: `$<recipe[]>` — per-member ref. Strip the empty bracket and
+    // treat as a recipe-level edge (the producer must build first).
+    if let Some(base) = token.strip_suffix("[]") {
+        if recipe_names.contains(base) {
+            return Some(DepRef { recipe_name: base.to_string(), accessor: None });
+        }
+    }
+
     // Rule 3: whole token is a recipe name
     if recipe_names.contains(token) {
         return Some(DepRef {
@@ -378,6 +386,23 @@ mod tests {
         let names = extract_recipe_names_with_imports(&cookfile, &imports_by_alias);
         let local = extract_recipe_names(&cookfile);
         assert_eq!(names, local);
+    }
+
+    #[test]
+    fn parse_dep_token_strips_bracket_for_recipe_member() {
+        let mut names = BTreeSet::new();
+        names.insert("render".to_string());
+        assert_eq!(
+            parse_dep_token("render[]", &names),
+            Some(DepRef { recipe_name: "render".to_string(), accessor: None })
+        );
+        // bare recipe still works
+        assert_eq!(
+            parse_dep_token("render", &names),
+            Some(DepRef { recipe_name: "render".to_string(), accessor: None })
+        );
+        // a [] on a non-recipe is not a dep
+        assert_eq!(parse_dep_token("notarecipe[]", &names), None);
     }
 
     #[test]

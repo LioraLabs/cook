@@ -1,0 +1,35 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="render" line=4
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        ForEach source=ProbeKey("scenes")
+        Cook outputs=["build/$<in.id>.silent.mp4"] using=ShellBlock(["ffmpeg -i $<in.id>.blend $<out>"])
+    Recipe name="tts" line=8
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        ForEach source=ProbeKey("scenes")
+        Cook outputs=["build/$<in.id>.wav"] using=ShellBlock(["tts $<in.id> $<out>"])
+    Recipe name="mux" line=12
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        ForEach source=ProbeKey("scenes")
+        Cook outputs=["build/$<in.id>.mp4"] using=ShellBlock(["ffmpeg -i $<render[]> -i $<tts[]> $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="scenes" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Shell typing=Json commands=["echo '[{\"id\":\"intro\"},{\"id\":\"outro\"}]'"]

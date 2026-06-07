@@ -75,6 +75,8 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             dep_kind: dep_kind.clone(),
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         });
         if let DepKind::TestSibling(gi) = &dep_kind {
             body.step_groups[*gi].push(unit_idx);

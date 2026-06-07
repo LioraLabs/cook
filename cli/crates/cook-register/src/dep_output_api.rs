@@ -12,6 +12,12 @@ use crate::SharedBodySlot;
 /// Registries write to and read from the same map.
 pub type SharedTerminalOutputs = Arc<Mutex<BTreeMap<String, Vec<String>>>>;
 
+/// COOK-96: per-member terminal outputs. recipe qualified-name → member-string
+/// → terminal output paths. Keyed identically to `SharedTerminalOutputs` so
+/// `cook.dep_output_member` and `cook.dep_output` resolve the same name space.
+pub type SharedMemberOutputs =
+    Arc<Mutex<BTreeMap<String, BTreeMap<String, Vec<String>>>>>;
+
 /// Register `cook.dep_output(name)` and `cook.dep_output_list(name)` on the cook table.
 ///
 /// - `cook.dep_output(name)` returns the terminal outputs of recipe `name` as a space-joined string.
@@ -128,6 +134,69 @@ pub fn register_dep_output_api(
     })?;
     cook.set("dep_output_list", dep_output_list_fn)?;
 
+    Ok(())
+}
+
+/// Register `cook.dep_output_member(name, member)` on the cook table.
+///
+/// Returns the space-joined terminal output paths for the given `member` string
+/// within recipe `name`'s member-output map. Records the recipe-level dep ref
+/// and per-member paths into the body slot, exactly like `cook.dep_output`.
+///
+/// Cross-import path rewriting (`rewrite_paths_for_importer`) is deferred for
+/// the member-output case — same-Cookfile joins only for v1.
+pub fn register_member_output_api(
+    lua: &Lua,
+    member_outputs: SharedMemberOutputs,
+    body_slot: SharedBodySlot,
+    qualified_prefix: String,
+    alias_qualified_prefixes: BTreeMap<String, String>,
+) -> LuaResult<()> {
+    let cook: LuaTable = lua.globals().get("cook")?;
+    let mo = member_outputs.clone();
+    let qp = Arc::new(qualified_prefix);
+    let aqp = Arc::new(alias_qualified_prefixes);
+    let bs = body_slot.clone();
+    let f = lua.create_function(move |_, (name, member): (String, String)| {
+        let global_key = resolve_global_key(&name, &qp, &aqp);
+        let store = mo.lock().expect("member_outputs mutex poisoned");
+        let paths = store
+            .get(&global_key)
+            .and_then(|by_member| by_member.get(&member))
+            .ok_or_else(|| {
+                mlua::Error::RuntimeError(format!(
+                    "recipe '{}' has no output for member {} (COOK-96: producer and consumer must iterate the same probe)",
+                    name, member
+                ))
+            })?;
+        // Record the recipe-level dep ref + the member's path so the edge and
+        // fingerprint fold fire exactly like cook.dep_output.
+        //
+        // COOK-96: the recipe-level dep REF stays step-group-wide (the producer
+        // must build before any consumer member — a per-recipe ordering edge).
+        // But the member's PATHS attribute to ONLY this member's own unit: a
+        // fan-out recipe puts every member unit in ONE step group, so folding
+        // these into the step-group-wide path accumulator would leak member s1's
+        // upstream paths into member s2's fingerprint (over-invalidation). Route
+        // them through pending_member_dep_input_paths, which add_unit drains into
+        // the NEXT unit only.
+        {
+            let mut slot = bs.borrow_mut();
+            let body = slot.as_mut().ok_or_else(|| {
+                mlua::Error::runtime("cook.dep_output_member called outside a recipe body")
+            })?;
+            if !body.step_group_dep_refs.contains(&global_key) {
+                body.step_group_dep_refs.push(global_key.clone());
+            }
+            for p in paths {
+                if !body.pending_member_dep_input_paths.contains(p) {
+                    body.pending_member_dep_input_paths.push(p.clone());
+                }
+            }
+        }
+        Ok(paths.join(" "))
+    })?;
+    cook.set("dep_output_member", f)?;
     Ok(())
 }
 
@@ -459,6 +528,77 @@ mod tests {
         assert_eq!(result, "build/local.bin");
         let state = body_ref(&cs);
         assert_eq!(state.step_group_dep_refs, vec!["queue.local_recipe".to_string()]);
+    }
+
+    #[test]
+    fn test_dep_output_member_returns_member_output() {
+        let lua = Lua::new();
+        lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+        let member_outputs: SharedMemberOutputs = Arc::new(Mutex::new(BTreeMap::new()));
+        {
+            let mut m = member_outputs.lock().unwrap();
+            let mut render = BTreeMap::new();
+            render.insert("{\"id\":\"s1\"}".to_string(), vec!["build/s1.silent.mp4".to_string()]);
+            m.insert("render".to_string(), render);
+        }
+        let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+        register_member_output_api(&lua, member_outputs, body_slot, String::new(), BTreeMap::new()).unwrap();
+        let got: String = lua
+            .load(r#"return cook.dep_output_member("render", "{\"id\":\"s1\"}")"#)
+            .eval()
+            .unwrap();
+        assert_eq!(got, "build/s1.silent.mp4");
+    }
+
+    #[test]
+    fn test_dep_output_member_missing_member_errors() {
+        let lua = Lua::new();
+        lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+        let member_outputs: SharedMemberOutputs = Arc::new(Mutex::new(BTreeMap::new()));
+        {
+            let mut m = member_outputs.lock().unwrap();
+            m.insert("render".to_string(), BTreeMap::new()); // recipe known, no members
+        }
+        let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+        register_member_output_api(&lua, member_outputs, body_slot, String::new(), BTreeMap::new()).unwrap();
+        let res = lua.load(r#"return cook.dep_output_member("render", "{\"id\":\"nope\"}")"#).eval::<String>();
+        assert!(res.is_err());
+    }
+
+    /// The recording is the load-bearing part of COOK-96: it is what makes the
+    /// per-member DAG edge and the fingerprint fold fire (mirrors `dep_output`).
+    /// Pin it so a regression in the body-slot writes is caught here, not only
+    /// end-to-end in the integration test.
+    #[test]
+    fn test_dep_output_member_records_dep_ref_and_input_path() {
+        let lua = Lua::new();
+        lua.globals().set("cook", lua.create_table().unwrap()).unwrap();
+        let member_outputs: SharedMemberOutputs = Arc::new(Mutex::new(BTreeMap::new()));
+        {
+            let mut m = member_outputs.lock().unwrap();
+            let mut render = BTreeMap::new();
+            render.insert("{\"id\":\"s1\"}".to_string(), vec!["build/s1.silent.mp4".to_string()]);
+            m.insert("render".to_string(), render);
+        }
+        let body_slot: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+        register_member_output_api(&lua, member_outputs, body_slot.clone(), String::new(), BTreeMap::new()).unwrap();
+        lua.load(r#"return cook.dep_output_member("render", "{\"id\":\"s1\"}")"#)
+            .eval::<String>()
+            .unwrap();
+        let state = body_ref(&body_slot);
+        assert_eq!(state.step_group_dep_refs, vec!["render".to_string()]);
+        // COOK-96: the member's path lands in the per-unit buffer (drained by the
+        // next add_unit), NOT the step-group-wide accumulator — this is what keeps
+        // each fan-out member's fingerprint isolated. The recipe-level ref above
+        // stays step-group-wide (the ordering edge IS shared across members).
+        assert_eq!(
+            state.pending_member_dep_input_paths,
+            vec!["build/s1.silent.mp4".to_string()]
+        );
+        assert!(
+            state.step_group_dep_input_paths.is_empty(),
+            "member paths must not leak into the step-group-wide accumulator"
+        );
     }
 
     /// Empty self-prefix and empty alias map (entry-point Cookfile, no imports):

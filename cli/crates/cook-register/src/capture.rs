@@ -389,6 +389,8 @@ pub fn install_cook_api(
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             };
             body.units.push(unit);
         }
@@ -413,6 +415,8 @@ pub fn install_cook_api(
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         body.units.push(unit);
         Ok("".to_string())

@@ -9,7 +9,7 @@ use cook_contracts::RecipeUnits;
 
 use crate::capture::install_cook_api;
 use crate::context::setup_recipe_context;
-use crate::dep_output_api::SharedTerminalOutputs;
+use crate::dep_output_api::{SharedMemberOutputs, SharedTerminalOutputs};
 use crate::env_api::{install_require_env, EnvKeyset};
 use crate::export_api::SharedExportStore;
 use crate::module_loader::{ModuleLoaderState, SharedModuleLoaderState};
@@ -28,6 +28,7 @@ pub struct RegisterSessionBuilder {
     cli_overrides: HashMap<String, String>,
     export_store: SharedExportStore,
     terminal_outputs: SharedTerminalOutputs,
+    member_outputs: SharedMemberOutputs,
     selected_config: Option<String>,
     qualified_prefix: String,
     alias_dirs: BTreeMap<String, PathBuf>,
@@ -66,6 +67,7 @@ impl RegisterSessionBuilder {
             cli_overrides: HashMap::new(),
             export_store: Rc::new(RefCell::new(BTreeMap::new())),
             terminal_outputs: Arc::new(Mutex::new(BTreeMap::new())),
+            member_outputs: Arc::new(Mutex::new(BTreeMap::new())),
             selected_config: None,
             qualified_prefix: String::new(),
             alias_dirs: BTreeMap::new(),
@@ -92,6 +94,11 @@ impl RegisterSessionBuilder {
 
     pub fn with_shared_terminal_outputs(mut self, shared: SharedTerminalOutputs) -> Self {
         self.terminal_outputs = shared;
+        self
+    }
+
+    pub fn with_shared_member_outputs(mut self, shared: SharedMemberOutputs) -> Self {
+        self.member_outputs = shared;
         self
     }
 
@@ -682,6 +689,24 @@ pub fn register_cookfile(
             .lock()
             .expect("terminal_outputs mutex poisoned")
             .insert(qualified_name.clone(), terminal_outputs_list.clone());
+
+        // COOK-96: build the per-member output map for $<recipe[]> joins. Mirror
+        // terminal-output keying (qualified_name); last-wins per member across step
+        // groups matches last_cook_step_outputs' last-wins.
+        {
+            let mut mo = builder
+                .member_outputs
+                .lock()
+                .expect("member_outputs mutex poisoned");
+            let entry = mo.entry(qualified_name.clone()).or_default();
+            for unit in &body.units {
+                if let Some(m) = &unit.member {
+                    if !unit.output_paths.is_empty() {
+                        entry.insert(m.clone(), unit.output_paths.clone());
+                    }
+                }
+            }
+        }
 
         let env_btree: BTreeMap<String, String> = builder
             .env_vars
@@ -1601,6 +1626,13 @@ fn install_remaining_apis(
         builder.terminal_outputs.clone(),
         body_slot.clone(),
         builder.alias_dirs.clone(),
+        builder.qualified_prefix.clone(),
+        builder.alias_qualified_prefixes.clone(),
+    )?;
+    crate::dep_output_api::register_member_output_api(
+        lua,
+        builder.member_outputs.clone(),
+        body_slot.clone(),
         builder.qualified_prefix.clone(),
         builder.alias_qualified_prefixes.clone(),
     )?;

@@ -162,6 +162,8 @@ pub fn install_cook_probe(
                 dep_kind: DepKind::Sequential,
                 probes: inputs.requires,
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             });
         }
 

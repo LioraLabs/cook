@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use cook_register::{register_cookfile, RegisterSessionBuilder, SharedTerminalOutputs};
+use cook_register::{register_cookfile, RegisterSessionBuilder, SharedMemberOutputs, SharedTerminalOutputs};
 
 use cook_lang::ast::Cookfile;
 
@@ -174,6 +174,8 @@ pub fn register_workspace(
     let cli_overrides = parse_cli_overrides(env_overrides)?;
     let shared_outputs: SharedTerminalOutputs =
         Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+    let shared_member_outputs: SharedMemberOutputs =
+        Arc::new(std::sync::Mutex::new(BTreeMap::new()));
 
     let mut ws = RegisteredWorkspace {
         names: Vec::new(),
@@ -201,6 +203,7 @@ pub fn register_workspace(
                     .with_cli_overrides(cli_overrides.clone())
                     .with_selected_config(config.map(|s| s.to_string()))
                     .with_shared_terminal_outputs(shared_outputs.clone())
+                    .with_shared_member_outputs(shared_member_outputs.clone())
                     .with_qualified_prefix(String::new())
                     .with_alias_dirs(root_alias_dirs.clone())
                     .with_alias_qualified_prefixes(root_alias_qp.clone());
@@ -228,6 +231,7 @@ pub fn register_workspace(
                 .with_cli_overrides(cli_overrides.clone())
                 .with_selected_config(config.map(|s| s.to_string()))
                 .with_shared_terminal_outputs(shared_outputs.clone())
+                .with_shared_member_outputs(shared_member_outputs.clone())
                 .with_qualified_prefix(prefix.clone())
                 .with_alias_dirs(alias_dirs.clone())
                 .with_alias_qualified_prefixes(alias_qp.clone());
@@ -310,6 +314,8 @@ pub fn register_workspace_with_argv(
     let cli_overrides = parse_cli_overrides(env_overrides)?;
     let shared_outputs: SharedTerminalOutputs =
         Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+    let shared_member_outputs: SharedMemberOutputs =
+        Arc::new(std::sync::Mutex::new(BTreeMap::new()));
 
     let mut ws = RegisteredWorkspace {
         names: Vec::new(),
@@ -336,6 +342,7 @@ pub fn register_workspace_with_argv(
                     .with_cli_overrides(cli_overrides.clone())
                     .with_selected_config(config.map(|s| s.to_string()))
                     .with_shared_terminal_outputs(shared_outputs.clone())
+                    .with_shared_member_outputs(shared_member_outputs.clone())
                     .with_qualified_prefix(String::new())
                     .with_alias_dirs(root_alias_dirs.clone())
                     .with_alias_qualified_prefixes(root_alias_qp.clone())
@@ -361,6 +368,7 @@ pub fn register_workspace_with_argv(
                 .with_cli_overrides(cli_overrides.clone())
                 .with_selected_config(config.map(|s| s.to_string()))
                 .with_shared_terminal_outputs(shared_outputs.clone())
+                .with_shared_member_outputs(shared_member_outputs.clone())
                 .with_qualified_prefix(prefix.clone())
                 .with_alias_dirs(alias_dirs.clone())
                 .with_alias_qualified_prefixes(alias_qp.clone());

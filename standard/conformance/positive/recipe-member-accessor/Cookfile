@@ -1,0 +1,14 @@
+probe scenes
+    produce as json { echo '[{"id":"intro"},{"id":"outro"}]' }
+
+recipe render
+    ingredients scenes
+    cook "build/$<in.id>.silent.mp4" using { ffmpeg -i $<in.id>.blend $<out> }
+
+recipe tts
+    ingredients scenes
+    cook "build/$<in.id>.wav" using { tts $<in.id> $<out> }
+
+recipe mux
+    ingredients scenes
+    cook "build/$<in.id>.mp4" using { ffmpeg -i $<render[]> -i $<tts[]> $<out> }

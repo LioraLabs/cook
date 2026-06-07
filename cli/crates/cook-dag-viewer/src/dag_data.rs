@@ -638,6 +638,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let ru = RecipeUnits {
             recipe_name: recipe_name.into(),
@@ -690,6 +692,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let probe_b = CapturedUnit {
             payload: WorkPayload::Probe {
@@ -701,6 +705,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let consumer = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "link".into(), line: 3 },
@@ -708,6 +714,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec!["cc:a".into(), "cc:b".into()],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let ru = RecipeUnits {
             recipe_name: "game".into(),
@@ -834,6 +842,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let ru_a = RecipeUnits {
             recipe_name: "a".into(),
@@ -866,6 +876,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let ru_b = RecipeUnits {
             recipe_name: "b".into(),
@@ -987,6 +999,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let ru_compile = RecipeUnits {
             recipe_name: "compile".into(),
@@ -1022,6 +1036,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let ru_archive = RecipeUnits {
             recipe_name: "archive".into(),

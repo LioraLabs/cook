@@ -263,6 +263,11 @@ pub struct BodyCaptureState {
     /// that add_unit can land the correct importer-relative paths in
     /// cache_meta.input_paths without re-reading the raw terminal_outputs map.
     pub step_group_dep_input_paths: Vec<String>,
+    /// COOK-96: per-member dep-output paths recorded by cook.dep_output_member,
+    /// drained by the NEXT cook.add_unit so each fan-out member's unit folds ONLY
+    /// its own member's upstream paths (unlike step_group_dep_input_paths, which is
+    /// step-group-wide). Cleared on drain, not at step-group close.
+    pub pending_member_dep_input_paths: Vec<String>,
     /// True while the register-phase body of a chore is executing.
     /// `cook.add_unit` raises a Lua error if `cache = true` is passed
     /// while this flag is set (§{chores.no-caching}).
@@ -299,6 +304,7 @@ impl BodyCaptureState {
             dep_edges: Vec::new(),
             step_group_dep_refs: Vec::new(),
             step_group_dep_input_paths: Vec::new(),
+            pending_member_dep_input_paths: Vec::new(),
             current_chore_active: false,
             current_recipe: None,
             chore_param_prelude: String::new(),
@@ -336,7 +342,7 @@ pub fn hash_str(s: &str) -> u64 {
 // the crate root above and so are already accessible as
 // `cook_register::RegistrationSite{,Kind}`. No explicit re-export needed.
 pub use capture::RegistrationSource;
-pub use dep_output_api::SharedTerminalOutputs;
+pub use dep_output_api::{SharedMemberOutputs, SharedTerminalOutputs};
 pub use engine::{list_names, register_cookfile, RegisterSessionBuilder};
 
 /// The artifact of a full `register_cookfile` pass.

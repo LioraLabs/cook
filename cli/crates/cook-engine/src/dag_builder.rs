@@ -844,6 +844,8 @@ mod tests {
                     dep_kind: DepKind::Sequential,
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
                 // Consumer unit with probes = ["cc:zlib"]
                 CapturedUnit {
@@ -852,6 +854,8 @@ mod tests {
                     dep_kind: DepKind::Sequential,
                     probes: vec!["cc:zlib".to_string()],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
             ],
             step_groups: vec![],
@@ -886,6 +890,8 @@ mod tests {
                     dep_kind: DepKind::Sequential,
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
                 CapturedUnit {
                     payload: shell("echo b"),
@@ -893,6 +899,8 @@ mod tests {
                     dep_kind: DepKind::Sequential,
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
             ],
             step_groups: vec![],
@@ -922,6 +930,8 @@ mod tests {
                     dep_kind: DepKind::StepGroup(0),
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
                 CapturedUnit {
                     payload: shell("gcc -c b.c"),
@@ -929,6 +939,8 @@ mod tests {
                     dep_kind: DepKind::StepGroup(0),
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
                 CapturedUnit {
                     payload: shell("ar rcs lib.a"),
@@ -936,6 +948,8 @@ mod tests {
                     dep_kind: DepKind::Sequential,
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
             ],
             step_groups: vec![vec![0, 1]],
@@ -965,6 +979,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -982,6 +998,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1015,6 +1033,8 @@ mod tests {
                     dep_kind: DepKind::StepGroup(0),
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
                 CapturedUnit {
                     payload: shell("gcc -c mul.c"),
@@ -1022,6 +1042,8 @@ mod tests {
                     dep_kind: DepKind::StepGroup(0),
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
                 CapturedUnit {
                     payload: shell("ar rcs libmath.a"),
@@ -1029,6 +1051,8 @@ mod tests {
                     dep_kind: DepKind::Sequential,
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
             ],
             step_groups: vec![vec![0, 1]],
@@ -1050,6 +1074,8 @@ mod tests {
                     dep_kind: DepKind::StepGroup(0),
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
                 CapturedUnit {
                     payload: shell("gcc -o app main.o libmath.a"),
@@ -1057,6 +1083,8 @@ mod tests {
                     dep_kind: DepKind::Sequential,
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
             ],
             step_groups: vec![vec![0]],
@@ -1102,6 +1130,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1119,6 +1149,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1148,6 +1180,8 @@ mod tests {
                     dep_kind: DepKind::Sequential,
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
                 CapturedUnit {
                     payload: shell("echo real work"),
@@ -1155,6 +1189,8 @@ mod tests {
                     dep_kind: DepKind::Sequential,
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
             ],
             step_groups: vec![],
@@ -1201,6 +1237,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1218,6 +1256,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1250,6 +1290,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1267,6 +1309,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1305,6 +1349,8 @@ mod tests {
                     dep_kind: DepKind::Sequential,
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
                 CapturedUnit {
                     payload: WorkPayload::Shell {
@@ -1315,6 +1361,8 @@ mod tests {
                     dep_kind: DepKind::Sequential,
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
             ],
             step_groups: vec![],
@@ -1368,6 +1416,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let probe_b = CapturedUnit {
             payload: probe_b_payload,
@@ -1375,6 +1425,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let consumer = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "echo".to_string(), line: 3 },
@@ -1382,6 +1434,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec!["k:b".to_string()],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
 
         let make_ru = |units: Vec<CapturedUnit>| RecipeUnits {
@@ -1439,6 +1493,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec!["cc:has_stdint_h".into()],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1489,6 +1545,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![], // no references
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1535,6 +1593,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec!["cc:b".into()],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1591,6 +1651,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![], // no upstream of its own
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         // Body-scope consumer probe (e.g. `cc:find:SDL3`) requiring the
         // upstream body-scope probe.
@@ -1604,6 +1666,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec!["cc:linker-search-dirs".into()],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         // Non-probe consumer (the link unit) listing only the downstream
         // probe in its `probes`. The upstream must still survive the
@@ -1615,6 +1679,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec!["cc:find:SDL3".into()],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
 
         let ru = RecipeUnits {
@@ -1664,6 +1730,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let probe_b = CapturedUnit {
             payload: probe("cc:b"),
@@ -1671,6 +1739,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let probe_c = CapturedUnit {
             payload: probe("cc:c"),
@@ -1678,6 +1748,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let consumer = CapturedUnit {
             payload: shell("link"),
@@ -1685,6 +1757,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec!["cc:a".into(), "cc:b".into(), "cc:c".into()],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let ru = RecipeUnits {
             recipe_name: "game".into(),
@@ -1727,6 +1801,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let probe_b = CapturedUnit {
             payload: probe("cc:b"),
@@ -1734,6 +1810,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec!["cc:a".into()],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let probe_c = CapturedUnit {
             payload: probe("cc:c"),
@@ -1741,6 +1819,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let consumer = CapturedUnit {
             payload: shell("link"),
@@ -1748,6 +1828,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec!["cc:b".into(), "cc:c".into()],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let ru = RecipeUnits {
             recipe_name: "game".into(),
@@ -1792,6 +1874,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let p = CapturedUnit {
             payload: probe("cc:x"),
@@ -1799,6 +1883,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let post_shell = CapturedUnit {
             payload: shell("post"),
@@ -1806,6 +1892,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec!["cc:x".into()],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         let ru = RecipeUnits {
             recipe_name: "r".into(),
@@ -1856,6 +1944,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }];
             units.push(CapturedUnit {
                 payload: WorkPayload::Shell { cmd: "echo".to_string(), line: 2 },
@@ -1863,6 +1953,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: if has_consumer { vec!["k:p".to_string()] } else { vec![] },
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             });
             RecipeUnits {
                 recipe_name: name.to_string(),
@@ -1900,6 +1992,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1917,6 +2011,8 @@ mod tests {
                 dep_kind: DepKind::Sequential,
                 probes: vec![],
                 unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
             }],
             step_groups: vec![],
             working_dir: default_wd(),
@@ -1953,6 +2049,8 @@ mod test_slice_tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         }
     }
 
@@ -1971,6 +2069,8 @@ mod test_slice_tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         }
     }
 

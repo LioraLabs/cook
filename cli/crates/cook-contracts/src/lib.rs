@@ -223,6 +223,13 @@ pub struct CapturedUnit {
     /// Used by chore shell units to export bound param values (COOK-36 §7.1.2).
     /// Empty for non-chore units and chores without parameters.
     pub unit_env_vars: BTreeMap<String, String>,
+    /// COOK-96: the canonical member string (`cook.member_to_string`) for a
+    /// fan-out unit, or `None` for a non-fan-out unit. Lets the engine build
+    /// the per-member output map that `$<recipe[]>` joins on.
+    pub member: Option<String>,
+    /// COOK-96: this unit's declared output paths, retained so the engine can
+    /// key them by `member` for the per-member map.
+    pub output_paths: Vec<String>,
 }
 
 /// How a captured unit relates to others in the recipe.
@@ -433,6 +440,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         assert!(unit.cache_meta.is_none());
         assert!(matches!(unit.dep_kind, DepKind::Sequential));
@@ -466,6 +475,8 @@ mod tests {
                     dep_kind: DepKind::StepGroup(0),
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
                 CapturedUnit {
                     payload: WorkPayload::Shell { cmd: "gcc -c b.c".into(), line: 2 },
@@ -473,6 +484,8 @@ mod tests {
                     dep_kind: DepKind::StepGroup(0),
                     probes: vec![],
                     unit_env_vars: Default::default(),
+                    member: None,
+                    output_paths: Vec::new(),
                 },
             ],
             step_groups: vec![vec![0, 1]],
@@ -571,6 +584,8 @@ mod tests {
             dep_kind: DepKind::Sequential,
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         assert!(cu.probes.is_empty());
     }
@@ -617,6 +632,8 @@ mod tests {
             dep_kind: DepKind::StepGroup(0),
             probes: vec![],
             unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
         };
         assert!(unit.cache_meta.is_some());
         assert_eq!(unit.cache_meta.unwrap().command_hash, 9999);

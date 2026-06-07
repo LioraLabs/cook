@@ -355,17 +355,29 @@ pub fn register_unit_api(
         // terminal_outputs. The raw paths are importee-relative and cannot be
         // stat'd from the importer's working directory — using them would cause
         // MissingFile errors in record_completion, silently dropping demo.bin.
-        let dep_input_paths: Vec<String> = {
-            let slot = body_slot_add.borrow();
-            let body = slot.as_ref().ok_or_else(|| {
+        //
+        // COOK-96: cook.dep_output_member records its member's upstream paths
+        // into a SEPARATE per-unit buffer (pending_member_dep_input_paths)
+        // rather than the step-group-wide accumulator, because a fan-out recipe
+        // packs every member's unit into ONE step group. Drain that buffer here
+        // and fold it into ONLY this unit's fingerprint so editing render's s1
+        // output re-runs mux-s1 alone, not mux-s2. A single borrow_mut both
+        // clones the step-group-wide paths and takes the pending per-member ones.
+        let (dep_input_paths, member_dep_input_paths): (Vec<String>, Vec<String>) = {
+            let mut slot = body_slot_add.borrow_mut();
+            let body = slot.as_mut().ok_or_else(|| {
                 LuaError::runtime("cook.add_unit called outside a recipe body")
             })?;
-            body.step_group_dep_input_paths.clone()
+            (
+                body.step_group_dep_input_paths.clone(),
+                std::mem::take(&mut body.pending_member_dep_input_paths),
+            )
         };
         let cache_input_paths: Vec<String> = inputs
             .iter()
             .cloned()
             .chain(dep_input_paths.into_iter())
+            .chain(member_dep_input_paths.into_iter())
             .collect();
 
         // Read consulted_env_keys from the table and look up values in cook.env
@@ -643,6 +655,8 @@ pub fn register_unit_api(
             dep_kind: dep_kind.clone(),
             probes,
             unit_env_vars,
+            member: member.clone(),
+            output_paths: output_paths.clone(),
         });
         if let DepKind::StepGroup(gi) = &dep_kind {
             body.step_groups[*gi].push(unit_idx);
@@ -728,6 +742,12 @@ pub fn register_unit_api(
             }
             body.step_group_dep_refs.clear();
             body.step_group_dep_input_paths.clear();
+            // NOTE: pending_member_dep_input_paths is deliberately NOT cleared
+            // here — it is a per-add_unit buffer (drained via mem::take inside
+            // add_unit), not a step-group-wide accumulator. Any dep_output_member
+            // call is emitted inline in an add_unit's command expression, so it is
+            // always consumed by that same add_unit before this close-out runs;
+            // none should survive to the next step group.
         }
         result
     })?;
@@ -1765,5 +1785,28 @@ mod tests {
             "detected probe key must be auto-added to probes; got: {:?}",
             unit.probes
         );
+    }
+
+    /// COOK-96 Task 5: add_unit must record `member` and `output_paths` on the
+    /// resulting `CapturedUnit` so the engine can build the per-member output map
+    /// needed by `$<recipe[]>`.
+    #[test]
+    fn add_unit_retains_member_and_outputs() {
+        let (lua, capture_state) = make_lua_with_unit_api("encode");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                output = "build/s1.mp4",
+                command = "echo hi",
+                member = "{\"id\":\"s1\"}",
+            })
+        "#).exec().unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.last().expect("a unit was captured");
+        assert_eq!(u.member.as_deref(), Some("{\"id\":\"s1\"}"));
+        assert_eq!(u.output_paths, vec!["build/s1.mp4".to_string()]);
     }
 }

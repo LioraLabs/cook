@@ -59,6 +59,9 @@ pub enum BuiltinKind {
 pub enum Resolved {
     Builtin(BuiltinKind),
     Recipe { name: String, accessor: Option<String> },
+    /// COOK-96: `$<recipe[]>` — the recipe's terminal output for the CURRENT
+    /// iteration member. Resolved per consumer member inside a fan-out body.
+    RecipeMember { name: String },
     EnvRuntime(String),
     /// CS-0074: a probe-value reference — `$<key>`, `$<key.field>`, or `$<key.field[i]>`.
     /// `key` is the probe key (everything before the first `.` or `[`).
@@ -76,6 +79,8 @@ pub enum ResolveError {
     BuiltinWrongOutputCount { ident: String, builtin: String, required: String, actual: usize },
     #[error("placeholder $<{ident}>: malformed out_N (N must be ≥ 1)")]
     MalformedOutIndex { ident: String },
+    #[error("placeholder $<{ident}>: a recipe-member ref `$<recipe[]>` is only valid inside an `ingredients <probe>` fan-out body")]
+    RecipeMemberOutsideFanout { ident: String },
 }
 
 /// Three-way outcome of `match_builtin`:
@@ -179,6 +184,15 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
             s.replace('\\', "\\\\").replace('"', "\\\"")
         });
         return Resolved::ProbeRef { key, access };
+    }
+
+    // COOK-96: `$<recipe[]>` — per-member cross-recipe output. The bracket is
+    // empty (the current member is implicit). Only a recipe name in scope
+    // qualifies; anything else with a trailing `[]` falls through.
+    if let Some(base) = ident.strip_suffix("[]") {
+        if ctx.recipes_in_scope.contains(base) {
+            return Resolved::RecipeMember { name: base.to_string() };
+        }
     }
 
     // Try builtin first.
@@ -539,5 +553,25 @@ mod tests {
             resolve("out_0.stem", &ctx),
             Resolved::Error(ResolveError::MalformedOutIndex { .. })
         ));
+    }
+
+    #[test]
+    fn recipe_bracket_resolves_to_recipe_member() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        let ctx = ResolveCtx {
+            mode: IterMode::OneShot,
+            outputs: OutputShape::Single,
+            recipes_in_scope: &recipes,
+        };
+        assert_eq!(
+            resolve("render[]", &ctx),
+            Resolved::RecipeMember { name: "render".to_string() }
+        );
+        // A non-recipe name with [] is NOT a recipe-member ref (falls through to env).
+        assert_eq!(
+            resolve("notarecipe[]", &ctx),
+            Resolved::EnvRuntime("notarecipe[]".to_string())
+        );
     }
 }

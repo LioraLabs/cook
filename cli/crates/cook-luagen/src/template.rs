@@ -119,7 +119,17 @@ pub(crate) fn expand_for_each_template(
             if let Resolved::ProbeRef { key, .. } = &resolved {
                 probe_keys.insert(key.clone());
             }
-            resolved_to_lua(resolved, &span.ident, consulted_env)?
+            // COOK-96: $<recipe[]> inside a fan-out body lowers to a per-member
+            // output lookup. `item` is the loop-local Lua variable bound by the
+            // fan-out harness (BuiltinKind::Item → cook.member_to_string(item)).
+            if let Resolved::RecipeMember { ref name } = resolved {
+                format!(
+                    "cook.dep_output_member(\"{}\", cook.member_to_string(item))",
+                    escape_lua_string(name)
+                )
+            } else {
+                resolved_to_lua(resolved, &span.ident, consulted_env)?
+            }
         };
         parts.push(lua);
         last_end = span.range.end;
@@ -255,6 +265,11 @@ fn resolved_to_lua(
         // The access expression is pre-built by the resolver.
         Resolved::ProbeRef { access, .. } => Ok(format!("tostring({})", access)),
         Resolved::Error(e) => Err(e),
+        // COOK-96: $<recipe[]> is only valid inside a fan-out body (expand_for_each_template).
+        // Reaching this arm means it appeared in a plain command body where `item` is not in scope.
+        Resolved::RecipeMember { name } => Err(ResolveError::RecipeMemberOutsideFanout {
+            ident: format!("{}[]", name),
+        }),
     }
 }
 
@@ -475,6 +490,18 @@ fn output_pattern_ident_to_lua(
             // with patterns that use $<TOKEN> where TOKEN is an env var name.
             out.record(ident);
             format!("cook.require_env(\"{}\")", escape_lua_string(ident))
+        }
+        // COOK-96: $<recipe[]> is invalid in an output pattern — output patterns have no
+        // fan-out body context and `item` is not in scope. Emit a sentinel string that
+        // surfaces as a Lua load-time string so the error is visible without a runtime panic.
+        Resolved::RecipeMember { name } => {
+            // Single-escape via the typed error's Display, matching every other
+            // SIGIL_ERROR site (recipe.rs, cook_step.rs, …) and keeping the prose
+            // identical to the typed error `resolved_to_lua` returns for the same case.
+            let e = ResolveError::RecipeMemberOutsideFanout {
+                ident: format!("{}[]", name),
+            };
+            format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
         }
     }
 }
@@ -1035,6 +1062,35 @@ mod tests {
         assert_eq!(
             builtin_to_lua(BuiltinKind::ItemField("user-id".into())),
             "tostring(item[\"user-id\"])"
+        );
+    }
+
+    // COOK-96: $<recipe[]> inside a fan-out body lowers to cook.dep_output_member.
+    #[test]
+    fn recipe_member_lowers_to_dep_output_member() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
+        let mut env = ConsultedEnv::new();
+        let (lua, _) =
+            expand_for_each_template("bin/mux --video $<render[]>", &ctx, &mut env).unwrap();
+        assert_eq!(
+            lua,
+            "\"bin/mux --video \" .. cook.dep_output_member(\"render\", cook.member_to_string(item))"
+        );
+    }
+
+    // COOK-96: $<recipe[]> in a plain (non-fan-out) command body must error.
+    #[test]
+    fn recipe_member_in_plain_command_is_error() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        let ctx = cook_step_ctx(IterMode::OneToOne, OutputShape::Single, &recipes);
+        let mut env = ConsultedEnv::new();
+        let res = expand_command_template("bin/x $<render[]>", &ctx, &mut env);
+        assert!(
+            matches!(res, Err(ResolveError::RecipeMemberOutsideFanout { .. })),
+            "expected RecipeMemberOutsideFanout, got: {res:?}"
         );
     }
 }

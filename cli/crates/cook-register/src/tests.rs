@@ -771,6 +771,92 @@ end)
 }
 
 // -----------------------------------------------------------------------
+// member_outputs recording tests (COOK-96 Task 7)
+// -----------------------------------------------------------------------
+
+/// COOK-96: `register_cookfile` must populate the shared `member_outputs` map
+/// for any recipe that calls `cook.add_unit` with a `member` field. Mirrors
+/// the terminal_outputs recording test above; uses a fan-out-style unit
+/// (`member = "s1"`) so the engine can serve `$<recipe[s1]>` cross-recipe joins.
+#[test]
+fn test_register_cookfile_populates_member_outputs() {
+    use crate::dep_output_api::SharedMemberOutputs;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    let tmp = tempfile::TempDir::new().unwrap();
+
+    let shared: SharedMemberOutputs = Arc::new(Mutex::new(BTreeMap::new()));
+    let lua_src = r#"
+cook.recipe("render", {}, function()
+    cook.step_group(function()
+        cook.add_unit({ command = "ffmpeg -i a.mp4 out/s1.mp4", output = "out/s1.mp4", member = "s1" })
+        cook.add_unit({ command = "ffmpeg -i b.mp4 out/s2.mp4", output = "out/s2.mp4", member = "s2" })
+    end)
+end)
+"#;
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new())
+        .with_shared_member_outputs(shared.clone());
+
+    register_cookfile(registry, lua_src, None).unwrap();
+
+    let map = shared.lock().unwrap();
+    assert!(
+        map.contains_key("render"),
+        "expected 'render' entry in member_outputs, got: {:?}",
+        map.keys().collect::<Vec<_>>()
+    );
+    let render = map.get("render").unwrap();
+    assert_eq!(
+        render.get("s1").map(|v| v.as_slice()),
+        Some(&["out/s1.mp4".to_string()][..]),
+        "member 's1' must map to out/s1.mp4"
+    );
+    assert_eq!(
+        render.get("s2").map(|v| v.as_slice()),
+        Some(&["out/s2.mp4".to_string()][..]),
+        "member 's2' must map to out/s2.mp4"
+    );
+}
+
+/// COOK-96: qualified prefix is applied to the member_outputs key, mirroring
+/// the terminal_outputs qualified-prefix test.
+#[test]
+fn test_register_cookfile_member_outputs_with_qualified_prefix() {
+    use crate::dep_output_api::SharedMemberOutputs;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    let tmp = tempfile::TempDir::new().unwrap();
+
+    let shared: SharedMemberOutputs = Arc::new(Mutex::new(BTreeMap::new()));
+    let lua_src = r#"
+cook.recipe("encode", {}, function()
+    cook.step_group(function()
+        cook.add_unit({ command = "enc a.wav out/a.opus", output = "out/a.opus", member = "a" })
+    end)
+end)
+"#;
+    let registry = RegisterSessionBuilder::new(tmp.path().to_path_buf(), HashMap::new())
+        .with_shared_member_outputs(shared.clone())
+        .with_qualified_prefix("audio".to_string());
+
+    register_cookfile(registry, lua_src, None).unwrap();
+
+    let map = shared.lock().unwrap();
+    assert!(
+        map.contains_key("audio.encode"),
+        "expected 'audio.encode' (qualified), got: {:?}",
+        map.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !map.contains_key("encode"),
+        "bare 'encode' must not appear when prefix is set, got: {:?}",
+        map.keys().collect::<Vec<_>>()
+    );
+}
+
+// -----------------------------------------------------------------------
 // Probe-unit registration tests (CS-0074 §22.5)
 // -----------------------------------------------------------------------
 
@@ -1455,7 +1541,12 @@ fn register_surface(
     cookfile: &str,
 ) -> Result<RegisteredCookfile, RegisterError> {
     let parsed = cook_lang::parse(cookfile).expect("fixture must parse");
-    let lua_src = cook_luagen::generate(&parsed);
+    // Mirror the real engine parse stage (cook-engine pipeline/parse.rs): build
+    // the recipe-name set so cross-recipe refs like `$<render[]>` (COOK-96) and
+    // `{NAME.ACCESSOR}` resolve as recipe refs rather than env vars.
+    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&parsed);
+    let lua_src = cook_luagen::generate_with_names_checked(&parsed, &recipe_names)
+        .expect("fixture must lower");
     register_cookfile(make_registry(dir), &lua_src, None)
 }
 
@@ -1644,5 +1735,193 @@ recipe b
     assert!(
         registered.units_by_recipe.get("b").unwrap().units.is_empty(),
         "unreachable for_each recipe 'b' registers with no units"
+    );
+}
+
+// -----------------------------------------------------------------------
+// COOK-96 Task 8 — `$<recipe[]>` per-member recipe-output accessor:
+// end-to-end join + per-member fingerprint isolation.
+// -----------------------------------------------------------------------
+
+/// Build the `mux` fixture: three fan-out recipes over the same `sceneprobe`
+/// (two records, ids `s1`/`s2`). `render` and `tts` each produce one artifact
+/// per member; `mux` joins both producers FOR THE CURRENT MEMBER via
+/// `$<render[]>` / `$<tts[]>`. Driving the full surface pipeline (parse →
+/// codegen → register) exercises the real `cook.dep_output_member` lowering
+/// and the topo-ordered producer→consumer member-output handoff.
+const MUX_FIXTURE: &str = r#"
+register
+    cook.probe("sceneprobe", {
+        inputs = {},
+        produce = [[ return { {id="s1"}, {id="s2"} } ]],
+    })
+
+recipe render
+    ingredients sceneprobe
+    cook "build/$<in.id>.silent.mp4" using {
+        mkdir -p build
+        echo "$<in.id>" > $<out>
+    }
+
+recipe tts
+    ingredients sceneprobe
+    cook "build/$<in.id>.wav" using {
+        mkdir -p build
+        echo "$<in.id>" > $<out>
+    }
+
+recipe mux
+    ingredients sceneprobe
+    cook "build/$<in.id>.mp4" using {
+        bin/mux --video $<render[]> --audio $<tts[]> --out $<out>
+    }
+"#;
+
+/// Return the mux unit whose Shell command mentions the given member token
+/// (e.g. `s1`). Fan-out shell bodies bake the member into the command, so the
+/// member's own `$<out>` path (`build/<id>.mp4`) is the reliable selector.
+/// Single source of the member-selection logic shared by all mux tests.
+fn mux_unit_for_member<'a>(units: &'a RecipeUnits, id: &str) -> &'a CapturedUnit {
+    let needle = format!("build/{id}.mp4");
+    units
+        .units
+        .iter()
+        .find(|u| match &u.payload {
+            WorkPayload::Shell { cmd, .. } => cmd.contains(&needle),
+            _ => false,
+        })
+        .unwrap_or_else(|| panic!("no mux shell unit produces build/{id}.mp4"))
+}
+
+/// Convenience over [`mux_unit_for_member`] returning the unit's Shell command.
+fn mux_cmd_for_member<'a>(units: &'a RecipeUnits, id: &str) -> &'a str {
+    match &mux_unit_for_member(units, id).payload {
+        WorkPayload::Shell { cmd, .. } => cmd.as_str(),
+        _ => unreachable!("mux_unit_for_member only matches Shell units"),
+    }
+}
+
+/// (join) Each mux member unit's command joins THIS member's render + tts
+/// outputs: s1 ⇒ s1.silent.mp4 + s1.wav; s2 ⇒ s2.silent.mp4 + s2.wav.
+#[test]
+fn mux_two_upstream_per_member_join() {
+    let dir = TempDir::new().unwrap();
+    let registered = register_surface(dir.path(), MUX_FIXTURE).expect("register mux fixture");
+    let mux = registered
+        .units_by_recipe
+        .get("mux")
+        .expect("mux registered");
+
+    let shell_units: Vec<_> = mux
+        .units
+        .iter()
+        .filter(|u| matches!(u.payload, WorkPayload::Shell { .. }))
+        .collect();
+    assert_eq!(
+        shell_units.len(),
+        2,
+        "mux fans out one unit per member (s1, s2); got {}",
+        shell_units.len()
+    );
+
+    let s1 = mux_cmd_for_member(mux, "s1");
+    assert!(
+        s1.contains("build/s1.silent.mp4") && s1.contains("build/s1.wav"),
+        "s1 mux unit must join s1's render+tts outputs; got: {s1}"
+    );
+    assert!(
+        !s1.contains("s2"),
+        "s1 mux unit must not reference any s2 path; got: {s1}"
+    );
+
+    let s2 = mux_cmd_for_member(mux, "s2");
+    assert!(
+        s2.contains("build/s2.silent.mp4") && s2.contains("build/s2.wav"),
+        "s2 mux unit must join s2's render+tts outputs; got: {s2}"
+    );
+    assert!(
+        !s2.contains("s1"),
+        "s2 mux unit must not reference any s1 path; got: {s2}"
+    );
+}
+
+/// (edge) Every mux unit carries recipe-level dep edges to BOTH producers.
+#[test]
+fn mux_per_member_records_dep_edges_to_both_producers() {
+    let dir = TempDir::new().unwrap();
+    let registered = register_surface(dir.path(), MUX_FIXTURE).expect("register mux fixture");
+    let mux = registered
+        .units_by_recipe
+        .get("mux")
+        .expect("mux registered");
+
+    // dep_edges entries are (unit_idx, dep_recipe_name). Each mux shell unit
+    // must have edges to both `render` and `tts`.
+    for (idx, unit) in mux.units.iter().enumerate() {
+        if !matches!(unit.payload, WorkPayload::Shell { .. }) {
+            continue;
+        }
+        let deps_for_unit: std::collections::BTreeSet<&str> = mux
+            .dep_edges
+            .iter()
+            .filter(|(u, _)| *u == idx)
+            .map(|(_, name)| name.as_str())
+            .collect();
+        assert!(
+            deps_for_unit.contains("render"),
+            "mux unit {idx} must carry a dep edge to render; this unit's edges: {:?}",
+            deps_for_unit
+        );
+        assert!(
+            deps_for_unit.contains("tts"),
+            "mux unit {idx} must carry a dep edge to tts; this unit's edges: {:?}",
+            deps_for_unit
+        );
+    }
+}
+
+/// (isolation) The crux: each mux member unit's `cache_meta.input_paths`
+/// contains ONLY its own member's upstream paths. The s1 unit must NOT carry
+/// s2's paths and vice-versa. Before the per-member attribution fix the
+/// step-group-wide accumulator leaked s1's paths into s2's fingerprint
+/// (over-invalidation).
+#[test]
+fn mux_per_member_fingerprint_isolation() {
+    let dir = TempDir::new().unwrap();
+    let registered = register_surface(dir.path(), MUX_FIXTURE).expect("register mux fixture");
+    let mux = registered
+        .units_by_recipe
+        .get("mux")
+        .expect("mux registered");
+
+    // Locate the two shell units by the member's own output path (shared helper).
+    let s1 = mux_unit_for_member(mux, "s1");
+    let s2 = mux_unit_for_member(mux, "s2");
+
+    let s1_meta = s1.cache_meta.as_ref().expect("s1 mux unit has cache_meta");
+    let s2_meta = s2.cache_meta.as_ref().expect("s2 mux unit has cache_meta");
+
+    assert!(
+        s1_meta.input_paths.contains(&"build/s1.silent.mp4".to_string())
+            && s1_meta.input_paths.contains(&"build/s1.wav".to_string()),
+        "s1 mux unit input_paths must contain s1's render+tts outputs; got: {:?}",
+        s1_meta.input_paths
+    );
+    assert!(
+        !s1_meta.input_paths.iter().any(|p| p.contains("s2")),
+        "ISOLATION VIOLATION: s1 mux unit input_paths leaked an s2 path; got: {:?}",
+        s1_meta.input_paths
+    );
+
+    assert!(
+        s2_meta.input_paths.contains(&"build/s2.silent.mp4".to_string())
+            && s2_meta.input_paths.contains(&"build/s2.wav".to_string()),
+        "s2 mux unit input_paths must contain s2's render+tts outputs; got: {:?}",
+        s2_meta.input_paths
+    );
+    assert!(
+        !s2_meta.input_paths.iter().any(|p| p.contains("s1")),
+        "ISOLATION VIOLATION: s2 mux unit input_paths leaked an s1 path; got: {:?}",
+        s2_meta.input_paths
     );
 }
