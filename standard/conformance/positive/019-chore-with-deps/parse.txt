@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["out/app"] using=None
+        Cook outputs=["out/app"] body=None
   chores:
     Chore name="play" line=4
       params: []

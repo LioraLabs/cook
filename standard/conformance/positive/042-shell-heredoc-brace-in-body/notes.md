@@ -1,6 +1,6 @@
 # 042 — Shell heredoc body with `}` brace (CS-0035)
 
-Pins the stateful brace-balance algorithm for `using { … }` shell blocks:
+Pins the stateful brace-balance algorithm for `{ … }` shell blocks:
 when the body opens a POSIX heredoc (`cat <<EOF`), `}` bytes appearing on
 heredoc-body lines are data, not the closing delimiter of the surrounding
 shell block. The block closes only on a brace at depth 1 outside any open

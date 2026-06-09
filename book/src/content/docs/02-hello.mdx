@@ -63,7 +63,7 @@ This **two-phase model** — register, then execute — is the single biggest di
 
 <div class="book-tip">
 
-**Tip — caching is opt-in.** Run `cook build` a second time. The `echo` runs again, every time. Bare shell steps don't cache — Cook re-runs them on every invocation, by design (Standard §8.6). Caching kicks in once a step declares inputs and outputs (`ingredients` plus `cook ... using { ... }`), which we'll get to in chapter 4.
+**Tip — caching is opt-in.** Run `cook build` a second time. The `echo` runs again, every time. Bare shell steps don't cache — Cook re-runs them on every invocation, by design (Standard §8.6). Caching kicks in once a step declares inputs and outputs (`ingredients` plus `cook ... { ... }`), which we'll get to in chapter 4.
 
 </div>
 

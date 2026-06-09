@@ -38,7 +38,7 @@ probe cases
 # `$<in.name>` interpolates into the body. (Canonical §8.3 Example 8.3.1.)
 recipe cards_cook
     ingredients cards
-    cook "build/cards/$<in.id>.txt" using {
+    cook "build/cards/$<in.id>.txt" {
         mkdir -p build/cards
         printf '%s\n' "$<in.name>" > $<out>
     }
@@ -48,7 +48,7 @@ recipe cards_cook
 # field (§22.5.9). The bare `$<in>` renders the whole member.
 recipe catalog_cook
     ingredients catalog:items
-    cook "build/catalog/$<in.id>.json" using {
+    cook "build/catalog/$<in.id>.json" {
         mkdir -p build/catalog
         printf '%s\n' '$<in>' > $<out>
     }

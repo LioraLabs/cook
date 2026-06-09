@@ -6,7 +6,7 @@ config
 # $<in.stem> in the output pattern drives own-input iteration.
 recipe one_to_one_shell
     ingredients "src/inputs/*.txt"
-    cook "build/one_to_one_shell/$<in.stem>.out" using {
+    cook "build/one_to_one_shell/$<in.stem>.out" {
         mkdir -p build/one_to_one_shell
         sleep $<SLEEP>
         echo "one_to_one_shell: $<in> -> $<out>" > $<out>
@@ -17,7 +17,7 @@ recipe one_to_one_shell
 # `input` / `output` are the singleton per-iteration bindings (§6.4).
 recipe one_to_one_lua
     ingredients "src/inputs/*.txt"
-    cook "build/one_to_one_lua/$<in.stem>.out" using >{
+    cook "build/one_to_one_lua/$<in.stem>.out" >{
         os.execute("mkdir -p build/one_to_one_lua")
         os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
         local f = io.open(output, "w")
@@ -30,7 +30,7 @@ recipe one_to_one_lua
 # Both output patterns share $<in.stem> — same driver, two outputs per unit.
 recipe one_to_many_shell
     ingredients "src/inputs/*.txt"
-    cook "build/one_to_many_shell/$<in.stem>.a.out" "build/one_to_many_shell/$<in.stem>.b.out" using {
+    cook "build/one_to_many_shell/$<in.stem>.a.out" "build/one_to_many_shell/$<in.stem>.b.out" {
         mkdir -p build/one_to_many_shell
         sleep $<SLEEP>
         echo "one_to_many_shell: $<in> -> $<out_1>" > $<out_1>
@@ -42,7 +42,7 @@ recipe one_to_many_shell
 # $<all> expands to the space-joined full input list.
 recipe many_to_one_shell
     ingredients "src/inputs/*.txt"
-    cook "build/many_to_one_shell/all.out" using {
+    cook "build/many_to_one_shell/all.out" {
         mkdir -p build/many_to_one_shell
         sleep $<SLEEP>
         echo "many_to_one_shell: $<all>" > $<out>
@@ -55,7 +55,7 @@ recipe many_to_one_shell
 # Lua body sees the FULL list. Read build/many_to_one_lua/all.out to verify.
 recipe many_to_one_lua
     ingredients "src/inputs/*.txt"
-    cook "build/many_to_one_lua/all.out" using >{
+    cook "build/many_to_one_lua/all.out" >{
         os.execute("mkdir -p build/many_to_one_lua")
         os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
         local f = io.open(output, "w")
@@ -70,7 +70,7 @@ recipe many_to_one_lua
 # 1 unit, 2 literal outputs. $<out_1>/$<out_2> name them in order.
 recipe many_to_one_multi_shell
     ingredients "src/inputs/*.txt"
-    cook "build/many_to_one_multi_shell/all.a.out" "build/many_to_one_multi_shell/all.b.out" using {
+    cook "build/many_to_one_multi_shell/all.a.out" "build/many_to_one_multi_shell/all.b.out" {
         mkdir -p build/many_to_one_multi_shell
         sleep $<SLEEP>
         echo "many_to_one_multi_shell: side-a from $<all>" > $<out_1>
@@ -81,7 +81,7 @@ recipe many_to_one_multi_shell
 # 1 unit, 2 literal outputs. outputs[1]/outputs[2] in Lua.
 recipe many_to_one_multi_lua
     ingredients "src/inputs/*.txt"
-    cook "build/many_to_one_multi_lua/all.a.out" "build/many_to_one_multi_lua/all.b.out" using >{
+    cook "build/many_to_one_multi_lua/all.a.out" "build/many_to_one_multi_lua/all.b.out" >{
         os.execute("mkdir -p build/many_to_one_multi_lua")
         os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
         local fa = io.open(outputs[1], "w")
@@ -96,7 +96,7 @@ recipe many_to_one_multi_lua
 # One-to-one over own inputs. stage2 (dep_driven) will iterate over stage1's outputs.
 recipe stage1
     ingredients "src/inputs/*.txt"
-    cook "build/stage1/$<in.stem>.staged" using {
+    cook "build/stage1/$<in.stem>.staged" {
         mkdir -p build/stage1
         sleep $<SLEEP>
         echo "stage1: $<in>" > $<out>
@@ -106,7 +106,7 @@ recipe stage1
 # $<stage1.stem> in the output pattern drives iteration over stage1's output list.
 # Inside the body, $<in> names each stage1 output (the current iteration item).
 recipe dep_driven
-    cook "build/dep_driven/$<stage1.stem>.final" using {
+    cook "build/dep_driven/$<stage1.stem>.final" {
         mkdir -p build/dep_driven
         sleep $<SLEEP>
         echo "dep_driven: $<in> -> $<out>" > $<out>
@@ -116,17 +116,17 @@ recipe dep_driven
 # Simulates archiving all inputs into one library.
 recipe libfoo
     ingredients "src/inputs/*.txt"
-    cook "build/lib/libfoo.a" using {
+    cook "build/lib/libfoo.a" {
         mkdir -p build/lib
         sleep $<SLEEP>
         echo "libfoo: $<all>" > $<out>
     }
 
 # app_with_lib — cross-recipe reference inside a shell block (§5.5 / CS-0022 §3.6).
-# CS-0022 extends $<NAME> substitution into using { } shell blocks.
+# CS-0022 extends $<NAME> substitution into { } shell blocks.
 # $<libfoo> expands to libfoo's full output list (space-joined).
 recipe app_with_lib
-    cook "build/bin/app_with_lib" using {
+    cook "build/bin/app_with_lib" {
         mkdir -p build/bin
         sleep $<SLEEP>
         echo "app_with_lib: linked against $<libfoo>" > $<out>
@@ -136,7 +136,7 @@ recipe app_with_lib
 # Body uses $<in> => iterates over the preceding cook's outputs.
 recipe plate_one_to_one_shell
     ingredients "src/inputs/*.txt"
-    cook "build/plate_one_to_one_shell/$<in.stem>.out" using {
+    cook "build/plate_one_to_one_shell/$<in.stem>.out" {
         mkdir -p build/plate_one_to_one_shell
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
@@ -150,7 +150,7 @@ recipe plate_one_to_one_shell
 # Body uses $<all> => one unit, full source visible.
 recipe plate_many_to_one_shell
     ingredients "src/inputs/*.txt"
-    cook "build/plate_many_to_one_shell/$<in.stem>.out" using {
+    cook "build/plate_many_to_one_shell/$<in.stem>.out" {
         mkdir -p build/plate_many_to_one_shell
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
@@ -164,7 +164,7 @@ recipe plate_many_to_one_shell
 # Body references neither $<in> nor $<all> => runs once.
 recipe plate_one_shot_shell
     ingredients "src/inputs/*.txt"
-    cook "build/plate_one_shot_shell/$<in.stem>.out" using {
+    cook "build/plate_one_shot_shell/$<in.stem>.out" {
         mkdir -p build/plate_one_shot_shell
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
@@ -178,7 +178,7 @@ recipe plate_one_shot_shell
 # Body references `input` => iterates.
 recipe plate_one_to_one_lua
     ingredients "src/inputs/*.txt"
-    cook "build/plate_one_to_one_lua/$<in.stem>.out" using {
+    cook "build/plate_one_to_one_lua/$<in.stem>.out" {
         mkdir -p build/plate_one_to_one_lua
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
@@ -194,7 +194,7 @@ recipe plate_one_to_one_lua
 # Body references `inputs` => one unit.
 recipe plate_many_to_one_lua
     ingredients "src/inputs/*.txt"
-    cook "build/plate_many_to_one_lua/$<in.stem>.out" using {
+    cook "build/plate_many_to_one_lua/$<in.stem>.out" {
         mkdir -p build/plate_many_to_one_lua
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
@@ -209,7 +209,7 @@ recipe plate_many_to_one_lua
 # Plate mode 6: One-shot, Lua.
 recipe plate_one_shot_lua
     ingredients "src/inputs/*.txt"
-    cook "build/plate_one_shot_lua/$<in.stem>.out" using {
+    cook "build/plate_one_shot_lua/$<in.stem>.out" {
         mkdir -p build/plate_one_shot_lua
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
@@ -223,7 +223,7 @@ recipe plate_one_shot_lua
 # $<in> iterates over cook outputs; checks each output file exists.
 recipe test_one_to_one_shell
     ingredients "src/inputs/*.txt"
-    cook "build/test_one_to_one_shell/$<in.stem>.out" using {
+    cook "build/test_one_to_one_shell/$<in.stem>.out" {
         mkdir -p build/test_one_to_one_shell
         sleep $<SLEEP>
         echo "test input: $<in>" > $<out>
@@ -234,7 +234,7 @@ recipe test_one_to_one_shell
 # $<all> gives the full source list; counts to verify it's non-empty.
 recipe test_many_to_one_shell
     ingredients "src/inputs/*.txt"
-    cook "build/test_many_to_one_shell/all.out" using {
+    cook "build/test_many_to_one_shell/all.out" {
         mkdir -p build/test_many_to_one_shell
         sleep $<SLEEP>
         echo "many-to-one: $<all>" > $<out>
@@ -245,7 +245,7 @@ recipe test_many_to_one_shell
 # Body references neither $<in> nor $<all>; runs once unconditionally.
 recipe test_one_shot_shell
     ingredients "src/inputs/*.txt"
-    cook "build/test_one_shot_shell/all.out" using {
+    cook "build/test_one_shot_shell/all.out" {
         mkdir -p build/test_one_shot_shell
         sleep $<SLEEP>
         echo "one-shot done" > $<out>
@@ -256,7 +256,7 @@ recipe test_one_shot_shell
 # `input` iterates over cook outputs; asserts each file is readable.
 recipe test_one_to_one_lua
     ingredients "src/inputs/*.txt"
-    cook "build/test_one_to_one_lua/$<in.stem>.out" using {
+    cook "build/test_one_to_one_lua/$<in.stem>.out" {
         mkdir -p build/test_one_to_one_lua
         sleep $<SLEEP>
         echo "test lua input: $<in>" > $<out>
@@ -271,7 +271,7 @@ recipe test_one_to_one_lua
 # `inputs` gives the full list; asserts count is greater than zero.
 recipe test_many_to_one_lua
     ingredients "src/inputs/*.txt"
-    cook "build/test_many_to_one_lua/all.out" using {
+    cook "build/test_many_to_one_lua/all.out" {
         mkdir -p build/test_many_to_one_lua
         sleep $<SLEEP>
         echo "many-to-one lua" > $<out>
@@ -284,7 +284,7 @@ recipe test_many_to_one_lua
 # No source binding; runs once unconditionally.
 recipe test_one_shot_lua
     ingredients "src/inputs/*.txt"
-    cook "build/test_one_shot_lua/all.out" using {
+    cook "build/test_one_shot_lua/all.out" {
         mkdir -p build/test_one_shot_lua
         sleep $<SLEEP>
         echo "one-shot lua done" > $<out>
@@ -296,7 +296,7 @@ recipe test_one_shot_lua
 # benchmarks — orchestrator.
 # Lists every mode recipe as a dependency.
 recipe benchmarks: one_to_one_shell one_to_one_lua one_to_many_shell many_to_one_shell many_to_one_lua many_to_one_multi_shell many_to_one_multi_lua dep_driven app_with_lib plate_one_to_one_shell plate_many_to_one_shell plate_one_shot_shell plate_one_to_one_lua plate_many_to_one_lua plate_one_shot_lua test_one_to_one_shell test_many_to_one_shell test_one_shot_shell test_one_to_one_lua test_many_to_one_lua test_one_shot_lua
-    cook "build/benchmarks.txt" using {
+    cook "build/benchmarks.txt" {
         mkdir -p build
         date > $<out>
         echo "All iteration modes completed at $(date)" >> $<out>

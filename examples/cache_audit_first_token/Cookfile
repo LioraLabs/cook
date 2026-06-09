@@ -12,7 +12,7 @@ config
 
 recipe build
     ingredients "src/in.txt"
-    cook "build/out.txt" using {
+    cook "build/out.txt" {
         mkdir -p build
         ./build_tool.sh $<all> $<out>
     }

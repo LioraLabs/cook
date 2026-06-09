@@ -554,13 +554,13 @@ mod workspace_tests {
         std::fs::write(root.join("Cookfile"), "\
 import sub ./sub\n\
 recipe build\n\
-    cook \"build/r.txt\" using { echo > $<out> }\n\
+    cook \"build/r.txt\" { echo > $<out> }\n\
 ").unwrap();
 
         std::fs::create_dir(root.join("sub")).unwrap();
         std::fs::write(root.join("sub/Cookfile"), "\
 recipe inner\n\
-    cook \"build/i.txt\" using { echo > $<out> }\n\
+    cook \"build/i.txt\" { echo > $<out> }\n\
 recipe test_only\n\
     test { true } timeout 5\n\
 ").unwrap();

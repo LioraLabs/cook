@@ -175,11 +175,11 @@ fn format_output_patterns(xs: &[OutputPattern]) -> String {
     format!("[{}]", inner.join(", "))
 }
 
-fn format_using(u: &Option<UsingClause>) -> String {
+fn format_body(u: &Option<Body>) -> String {
     match u {
         None => "None".to_string(),
-        Some(UsingClause::LuaBlock(s))    => format!("LuaBlock({})", repr(s)),
-        Some(UsingClause::ShellBlock(xs)) => format!("ShellBlock({})", repr_list(xs)),
+        Some(Body::LuaBlock(s))    => format!("LuaBlock({})", repr(s)),
+        Some(Body::ShellBlock(xs)) => format!("ShellBlock({})", repr_list(xs)),
     }
 }
 
@@ -207,9 +207,9 @@ fn format_step(step: &Step) -> String {
         Step::InlineLuaBlock { code, .. } => format!("InlineLuaBlock code={}", repr(code)),
         Step::Cook { step, .. } => {
             format!(
-                "Cook outputs={} using={}",
+                "Cook outputs={} body={}",
                 format_output_patterns(&step.outputs),
-                format_using(&step.using_clause),
+                format_body(&step.body),
             )
         }
         // §8.x: ingredients <probe> desugar node — probe-key source only (COOK-97).

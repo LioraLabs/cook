@@ -3,7 +3,7 @@
 
 recipe web_obj
     ingredients "src/app.c"
-    cook "build/web.o" using {
+    cook "build/web.o" {
         mkdir -p build
         gcc -c src/app.c -o $<out>
     }

@@ -1,7 +1,7 @@
 # Shared utility package. One passing test.
 
 recipe build
-    cook "build/utils.lib" using {
+    cook "build/utils.lib" {
         mkdir -p build
         echo "utils library" > $<out>
     }

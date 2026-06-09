@@ -1,5 +1,5 @@
 recipe "gen"
-    cook "out/a.js" "out/a.wasm" using {
+    cook "out/a.js" "out/a.wasm" {
         echo one
         echo two
     }

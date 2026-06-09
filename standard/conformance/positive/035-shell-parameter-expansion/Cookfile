@@ -1,6 +1,6 @@
 recipe greet
     ingredients "src.txt"
-    cook "out.txt" using {
+    cook "out.txt" {
         echo ${HOME:-fallback} >> $<out>
         echo ${USER%suffix} >> $<out>
     }

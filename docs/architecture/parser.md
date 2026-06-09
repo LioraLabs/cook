@@ -227,7 +227,7 @@ pub struct CookStep {
 - `outputs` — one or more quoted output patterns (e.g., `["build/obj/{stem}.o"]`, or `["out/parser.rs", "out/parser.h"]` for a multi-output step). A `cook` line must declare at least one output.
 - `using_clause` — `None` means the `cook` line is a declaration only (the output is announced without an inline build command).
 
-**Multi-output cook steps.** When two or more quoted patterns appear before `using`, the step represents a single invocation that produces all of those outputs together. They share one cache entry and one work unit — materialized together or not at all.
+**Multi-output cook steps.** When two or more quoted patterns appear before the body, the step represents a single invocation that produces all of those outputs together. They share one cache entry and one work unit — materialized together or not at all.
 
 ### `PlateStep`, `TestStep`, and `Body` (`cli/crates/cook-lang/src/ast.rs:79`, `:88`, `:93`)
 
@@ -260,8 +260,8 @@ Body grammar summary:
 
 ```
 cook "out"                          # declaration only
-cook "out" using { shell … }        # shell block (single- or multi-line)
-cook "out" using >{ lua … }         # Lua block
+cook "out" { shell … }        # shell block (single- or multi-line)
+cook "out" >{ lua … }         # Lua block
 
 plate { shell … }                   # shell block
 plate >{ lua … }                    # Lua block
@@ -362,7 +362,7 @@ It starts reading from the source line immediately after `>{` (or `>>{`) and wal
 
 #### 6. Shell-Block Scope (`collect_shell_block()` + `try_inline_shell_block()`, `cli/crates/cook-lang/src/shell_block.rs:63`, `:15`)
 
-Used by `parse_body_payload` (`cli/crates/cook-lang/src/cook_line.rs:13`) when a `{` (plain shell block) follows `using` / `plate` / `test`.
+Used by `parse_body_payload` (`cli/crates/cook-lang/src/cook_line.rs:13`) when a `{` (plain shell block) opens a `cook` / `plate` / `test` body.
 
 - `try_inline_shell_block(after_open)` is tried first: it walks the rest of the opening line character-by-character. If it finds a matching `}` on the same line, it returns the trimmed inner text as a single-element command list. Otherwise it returns `None`.
 - If inline detection fails, `collect_shell_block()` walks subsequent source lines using `ShellScanner` (heredoc-aware). Each non-blank line becomes one element of `Vec<String>`; blank lines are dropped.
@@ -388,7 +388,7 @@ Handles the text after the `cook` keyword:
 
 1. Read one or more quoted output patterns (at least one required).
 2. If nothing remains, return `CookStep { outputs, using_clause: None }` — a declaration-only cook.
-3. Otherwise the next word must be `using`. Dispatch the body via `parse_body_payload()`.
+3. Otherwise the body opener (`{` / `>{`) must follow; a legacy `using` token gets the CS-0099 migration diagnostic. Dispatch the body via `parse_body_payload()`.
 
 ### `parse_body_payload()` (`cli/crates/cook-lang/src/cook_line.rs:13`)
 

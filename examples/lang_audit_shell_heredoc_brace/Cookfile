@@ -8,7 +8,7 @@
 # delimiter.
 
 recipe emit
-    cook "out.txt" using {
+    cook "out.txt" {
         cat <<EOF > out.txt
         bare heredoc with a } brace
         and another } here too

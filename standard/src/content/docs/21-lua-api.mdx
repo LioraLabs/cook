@@ -13,7 +13,7 @@ The Cook runtime executes Lua code in two disjoint phases:
 
 Every function defined in this Part is classified as **register-phase only**, **execute-phase only**, or **both phases**. A conforming implementation MUST install a function in each of the phases indicated here, and MUST NOT silently install a register-phase-only function in the execute phase (or vice versa) — a Cookfile that calls a function in the wrong phase MUST observe either the documented behaviour for that phase or a Lua runtime error.
 
-Code encountered via `> expr` (§{steps.lua}), `>{ ... }` (§{lexical.brace-blocks}, §{steps.lua}), `using >{ ... }` (§{steps.cook-single}, §{steps.cook-multi}), module bodies (§{mods.use}), and `config` blocks (§{decl.config}) runs with this API in scope.
+Code encountered via `> expr` (§{steps.lua}), `>{ ... }` (§{lexical.brace-blocks}, §{steps.lua}), `>{ ... }` (§{steps.cook-single}, §{steps.cook-multi}), module bodies (§{mods.use}), and `config` blocks (§{decl.config}) runs with this API in scope.
 
 ## 21.1. API surface overview [#lua.api-overview]
 A conforming implementation MUST install the following top-level Lua globals before any Cookfile-derived Lua code runs:
@@ -50,4 +50,4 @@ A conforming implementation MUST NOT expose the `recipe` global during the execu
 
 ## 21.3. The `env` alias inside `config_block` bodies [#lua.env-alias]
 
-Within the body of a `config_block` (§{decl.config}), the bare global `env` MUST be bound such that `env` and `cook.env` refer to the same table. Writes through either name MUST be observable through both. The `env` alias is in scope only within `config_block` bodies; it MUST NOT be bound in recipe-body Lua, in `using` blocks, in module bodies, or at any other Lua entry point.
+Within the body of a `config_block` (§{decl.config}), the bare global `env` MUST be bound such that `env` and `cook.env` refer to the same table. Writes through either name MUST be observable through both. The `env` alias is in scope only within `config_block` bodies; it MUST NOT be bound in recipe-body Lua, in cook-step `>{ … }` bodies, in module bodies, or at any other Lua entry point.

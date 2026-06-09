@@ -30,10 +30,10 @@ The Appendices collect *common patterns* (small recipes for things you'll want t
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 
 recipe link
-    cook "build/app" using { gcc $<build> -o $<out> }
+    cook "build/app" { gcc $<build> -o $<out> }
 
 recipe smoketest: link
     plate { ./build/app --selftest }

@@ -3,6 +3,6 @@ recipe "libmath"
 
 recipe "build"
     ingredients "src/*.c"
-    cook "$<in.stem>.o" "$<libmath.stem>.bin" using {
+    cook "$<in.stem>.o" "$<libmath.stem>.bin" {
         do-stuff
     }

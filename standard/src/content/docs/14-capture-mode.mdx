@@ -19,7 +19,7 @@ An implementation MAY permit narrowly-scoped capture-mode side effects that part
 recipe build
     >> local flag = cook.env.OPTIMISE or "-O0"
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 ```
 
 The `>>` line runs during the register phase (`>>` is the inline-Lua prefix; see §{steps.lua}). It reads `cook.env` — a value established before the register phase began — and assigns a local visible to subsequent declarative-region steps. The `cook` step then records its work units. No subprocess is spawned during registration.

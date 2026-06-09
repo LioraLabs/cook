@@ -1,5 +1,5 @@
 recipe "gen_lua"
-    cook "out/a.js" "out/a.wasm" using >{
+    cook "out/a.js" "out/a.wasm" >{
         local f = io.open(outputs[1], "w"); f:write("js"); f:close()
         local g = io.open(outputs[2], "w"); g:write("wasm"); g:close()
     }

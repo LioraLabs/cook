@@ -51,7 +51,7 @@ const COOKFILE: &str = r#"use toolmod
 toolmod.tool("greeter", { output = "build/greeting.txt", command = "mkdir -p build && printf hi > build/greeting.txt" })
 
 recipe consume
-    cook "build/out.txt" using {
+    cook "build/out.txt" {
         mkdir -p build && cat $<greeter> > $<out>
     }
 "#;

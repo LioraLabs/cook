@@ -22,14 +22,14 @@ config
 
 recipe lib_obj
     ingredients "src/lib.c"
-    cook "build/lib.o" using {
+    cook "build/lib.o" {
         mkdir -p build
         $<CC> $<CFLAGS> -c $<all> -o $<out>
     }
 
 recipe app
     ingredients "src/main.c"
-    cook "build/app" using {
+    cook "build/app" {
         mkdir -p build
         $<CC> $<CFLAGS> $<all> $<lib_obj> -o $<out>
     }

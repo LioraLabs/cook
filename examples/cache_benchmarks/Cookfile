@@ -33,7 +33,7 @@ import lib ./lib
 # greet.c — consumes $<CFLAGS> via Layer 2 inference
 recipe greet
     ingredients "src/greet.c"
-    cook "build/greet.o" using {
+    cook "build/greet.o" {
         mkdir -p build
         $<CC> $<CFLAGS> -c $<all> -o $<out>
     }
@@ -41,7 +41,7 @@ recipe greet
 # util.c — also consumes $<CFLAGS>; provides main()
 recipe util
     ingredients "src/util.c"
-    cook "build/util.o" using {
+    cook "build/util.o" {
         mkdir -p build
         $<CC> $<CFLAGS> -c $<all> -o $<out>
     }
@@ -52,7 +52,7 @@ recipe util
 # `$<lib.lib_build>` is a cross-Cookfile body reference (§7.3): codegen
 # lowers it to cook.dep_output("lib.lib_build") after Phase 7.
 recipe demo:
-    cook "build/demo" using {
+    cook "build/demo" {
         $<CC> $<greet> $<util> $<lib.lib_build> -o $<out>
     }
 
@@ -67,7 +67,7 @@ recipe mono: demo
 # because $<CFLAGS> is not in its consulted_env_keys set.
 recipe sister
     ingredients "src/sister.txt"
-    cook "build/sister.out" using {
+    cook "build/sister.out" {
         mkdir -p build
         cat $<all> > $<out>
     }
@@ -78,7 +78,7 @@ recipe sister
 # can be restored on cache hit (verify.sh scenarios 13-14, 19).
 recipe pair
     ingredients "tools/genpair.sh"
-    cook "build/pair/foo.txt" "build/pair/bar.txt" using {
+    cook "build/pair/foo.txt" "build/pair/bar.txt" {
         mkdir -p build/pair
         /bin/sh tools/genpair.sh build/pair/foo.txt build/pair/bar.txt
     }

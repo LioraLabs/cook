@@ -6,7 +6,7 @@ import server ./apps/server
 
 # Explicit `:` cross-Cookfile deps — different code path than body-ref deps.
 recipe assemble: cli.build server.build
-    cook "build/release.bin" using {
+    cook "build/release.bin" {
         mkdir -p build
         cat $<cli.build> $<server.build> > $<out>
     }

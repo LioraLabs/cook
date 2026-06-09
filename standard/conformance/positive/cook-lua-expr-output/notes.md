@@ -17,7 +17,7 @@ LuaExpr form through one-to-one over own inputs codegen.
 **`parse.txt` shape (informative).** The expected AST line is
 
 ```
-Cook outputs=[LuaExpr("input:gsub(\"/en/\", \"/fr/\")")] using=ShellBlock(["cp $<in> $<out>"])
+Cook outputs=[LuaExpr("input:gsub(\"/en/\", \"/fr/\")")] body=ShellBlock(["cp $<in> $<out>"])
 ```
 
 The `LuaExpr(...)` discriminator is rendered by `format_output_patterns`

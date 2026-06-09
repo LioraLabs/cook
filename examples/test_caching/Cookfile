@@ -9,7 +9,7 @@ config
 
 # Deterministic test — should cache cleanly across runs.
 recipe deterministic
-    cook "build/deterministic.out" using {
+    cook "build/deterministic.out" {
         mkdir -p build
         sleep $<SLEEP>
         echo "stable" > $<out>
@@ -19,7 +19,7 @@ recipe deterministic
 # Iterated test — should cache N entries (one per iteration).
 recipe iterated
     ingredients "src/*.txt"
-    cook "build/iterated/$<in.stem>.out" using {
+    cook "build/iterated/$<in.stem>.out" {
         mkdir -p build/iterated
         sleep $<SLEEP>
         cat $<in> > $<out>

@@ -19,7 +19,7 @@ The `ingredients` step declares the input file set for a recipe. Patterns are qu
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 ```
 
 A recipe MAY have at most one `ingredients` line. The set is the union of all include patterns, minus any exclude patterns:
@@ -27,7 +27,7 @@ A recipe MAY have at most one `ingredients` line. The set is the union of all in
 ```cook
 recipe lib
     ingredients "src/*.c" !"src/lua.c" !"src/luac.c"
-    cook "build/libmath.a" using { ar rcs $<out> $<all> }
+    cook "build/libmath.a" { ar rcs $<out> $<all> }
 ```
 
 Excludes are `!` followed *immediately* by a quoted pattern — `!"foo"`, not `! "foo"`. The order of items on the line doesn't matter; the result is `(union of includes) \ (union of excludes)`. *(Standard §4.3.)*
@@ -37,7 +37,7 @@ Excludes are `!` followed *immediately* by a quoted pattern — `!"foo"`, not `!
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 ```
 
 That `cook` line is the workhorse. Read it as: *for each ingredient, produce an output named `build/<stem>.o` by running this command.*
@@ -45,7 +45,7 @@ That `cook` line is the workhorse. Read it as: *for each ingredient, produce an 
 Three things to notice:
 
 - The output pattern (`"build/$<in.stem>.o"`) has placeholders. `$<in>` is the current ingredient's full path; `$<in.stem>` is its filename without the extension. So `src/foo.c` becomes `build/foo.o`.
-- The `using { ... }` block is the **shell template** that builds each output. It also uses placeholders — `$<in>` (input), `$<out>` (the output), `$<all>` (every input on one line, space-separated).
+- The `{ ... }` block is the **shell template** that builds each output. It also uses placeholders — `$<in>` (input), `$<out>` (the output), `$<all>` (every input on one line, space-separated).
 - Cook iterates this step over the ingredient set. Five `.c` files → five units, one per file, runnable in parallel.
 
 This shape is called a **one-to-one** `cook` step. *(Standard §4.5.)*
@@ -57,7 +57,7 @@ When you want one output from many inputs — a static library, a tarball, a bun
 ```cook
 recipe lib
     ingredients "build/*.o"
-    cook "build/libmath.a" using { ar rcs $<out> $<all> }
+    cook "build/libmath.a" { ar rcs $<out> $<all> }
 ```
 
 There's no per-input iteration here: one output pattern, no input accessor → one unit, with `$<all>` expanding to every ingredient. *(Standard §4.6.)*
@@ -78,7 +78,7 @@ So:
 ```cook
 recipe assets
     ingredients "src/img/*.png"
-    cook "build/img/$<in.stem>.webp" using { cwebp $<in> -o $<out> }
+    cook "build/img/$<in.stem>.webp" { cwebp $<in> -o $<out> }
 ```
 
 `src/img/cat.png` → `build/img/cat.webp`. *(Standard §5.3.)*
@@ -90,14 +90,14 @@ A single command sometimes produces several files at once — a wasm-pack invoca
 ```cook
 recipe wasm
     ingredients "src/wasm.rs"
-    cook "out.js" "out.wasm" using {
+    cook "out.js" "out.wasm" {
         wasm-pack build
         cp pkg/out.js $<out_1>
         cp pkg/out.wasm $<out_2>
     }
 ```
 
-Inside the `using` body, `$<out_1>` and `$<out_2>` refer to each declared output by index. *(Standard §4.6.)*
+Inside the body, `$<out_1>` and `$<out_2>` refer to each declared output by index. *(Standard §4.6.)*
 
 ## 4.6. Driver iteration: `$<lib.stem>`
 
@@ -106,10 +106,10 @@ Sometimes the *driver* of iteration isn't the current recipe's ingredients — i
 ```cook
 recipe buildtests
     ingredients "tests/*.c"
-    cook "build/$<in.stem>" using { gcc $<in> -o $<out> }
+    cook "build/$<in.stem>" { gcc $<in> -o $<out> }
 
 recipe runtests
-    cook "results/$<buildtests.stem>.txt" using {
+    cook "results/$<buildtests.stem>.txt" {
         ./$<in> > $<out>
     }
 ```
@@ -144,10 +144,10 @@ Drop a few `.c` files into `src/` and try this Cookfile:
 ```cook
 recipe compile
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 
 recipe link
-    cook "build/app" using { gcc $<compile> -o $<out> }
+    cook "build/app" { gcc $<compile> -o $<out> }
 ```
 
 `$<compile>` in the link step is a **string substitution**: it expands to the list of `compile`'s outputs, space-separated. So `link` becomes a one-unit recipe that links every object file. Notice the `link` recipe has no `: compile` dependency — `$<compile>` already creates the dependency edge for you, and writing both gets you a "conflicting scheduling intent" warning. We cover string substitution in detail in chapter 7.

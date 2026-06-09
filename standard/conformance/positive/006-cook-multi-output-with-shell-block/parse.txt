@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["out/a.js", "out/a.wasm"] using=ShellBlock(["echo one", "echo two"])
+        Cook outputs=["out/a.js", "out/a.wasm"] body=ShellBlock(["echo one", "echo two"])
   chores:
   register_blocks: []
   top_level_module_calls: []

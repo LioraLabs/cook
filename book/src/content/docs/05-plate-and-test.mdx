@@ -29,7 +29,7 @@ The interesting case: `plate` inherits the *preceding `cook` step's outputs* as 
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>" using { gcc $<in> -o $<out> }
+    cook "build/$<in.stem>" { gcc $<in> -o $<out> }
     plate { ./$<in> --selftest }
 ```
 
@@ -78,7 +78,7 @@ Mechanically they're very similar; the difference is intent and aggregation.
 ```cook
 recipe compile
     ingredients "src/*.c"
-    cook "build/$<in.stem>" using { gcc $<in> -o $<out> }
+    cook "build/$<in.stem>" { gcc $<in> -o $<out> }
 
 recipe smoke: compile
     ingredients "build/*"

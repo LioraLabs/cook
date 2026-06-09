@@ -9,21 +9,21 @@ Cookfile
       excludes: []
       steps:
         ForEach source=ProbeKey("scenes")
-        Cook outputs=["build/$<in.id>.silent.mp4"] using=ShellBlock(["ffmpeg -i $<in.id>.blend $<out>"])
+        Cook outputs=["build/$<in.id>.silent.mp4"] body=ShellBlock(["ffmpeg -i $<in.id>.blend $<out>"])
     Recipe name="tts" line=8
       deps: []
       ingredients: []
       excludes: []
       steps:
         ForEach source=ProbeKey("scenes")
-        Cook outputs=["build/$<in.id>.wav"] using=ShellBlock(["tts $<in.id> $<out>"])
+        Cook outputs=["build/$<in.id>.wav"] body=ShellBlock(["tts $<in.id> $<out>"])
     Recipe name="mux" line=12
       deps: []
       ingredients: []
       excludes: []
       steps:
         ForEach source=ProbeKey("scenes")
-        Cook outputs=["build/$<in.id>.mp4"] using=ShellBlock(["ffmpeg -i $<render[]> -i $<tts[]> $<out>"])
+        Cook outputs=["build/$<in.id>.mp4"] body=ShellBlock(["ffmpeg -i $<render[]> -i $<tts[]> $<out>"])
   chores:
   register_blocks: []
   top_level_module_calls: []

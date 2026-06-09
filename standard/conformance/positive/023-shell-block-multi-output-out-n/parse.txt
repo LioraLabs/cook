@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["src/module.idl"]
       excludes: []
       steps:
-        Cook outputs=["build/module.js", "build/module.wasm"] using=ShellBlock(["emcc $<all> -o $<out_1> --wasm $<out_2>"])
+        Cook outputs=["build/module.js", "build/module.wasm"] body=ShellBlock(["emcc $<all> -o $<out_1> --wasm $<out_2>"])
   chores:
   register_blocks: []
   top_level_module_calls: []

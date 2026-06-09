@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["out.txt"] using=ShellBlock(["cat <<'END' > out.txt", "} stays literal", "END"])
+        Cook outputs=["out.txt"] body=ShellBlock(["cat <<'END' > out.txt", "} stays literal", "END"])
   chores:
   register_blocks: []
   top_level_module_calls: []

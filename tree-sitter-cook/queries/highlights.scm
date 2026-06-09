@@ -13,7 +13,6 @@
   "plate"
   "test"
   "produce"
-  "using"
   "timeout"
   "should_fail"
   "as"
@@ -131,7 +130,7 @@
 (lua_block
   (lua_code) @none)
 
-(using_lua_block
+(exec_lua_block
   (lua_code) @none)
 
 (inline_lua_block

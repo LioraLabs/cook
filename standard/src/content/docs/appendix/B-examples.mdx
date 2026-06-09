@@ -11,7 +11,7 @@ sidebar:
 ```cook
 recipe generate
     ingredients "src/*.rs"
-    cook "staging/out.js" "staging/out.wasm" using {
+    cook "staging/out.js" "staging/out.wasm" {
         ./fake-generator.sh
         mkdir -p staging
         cp pkg/out.js staging/out.js
@@ -19,7 +19,7 @@ recipe generate
     }
 ```
 
-Exercises: §{recipes.header-forms} (explicit header), §{steps.ingredients} (ingredients), §{steps.cook-multi} (multi-output cook with `using { ... }` shell block), App. A.3, App. A.4.
+Exercises: §{recipes.header-forms} (explicit header), §{steps.ingredients} (ingredients), §{steps.cook-multi} (multi-output cook with `{ ... }` shell block), App. A.3, App. A.4.
 
 ## B.2. Recipe with cross-recipe dependency (from `examples/cross-recipe-deps/Cookfile`) [#examples.cross-recipe-dep]
 ```cook
@@ -53,7 +53,7 @@ Exercises: §{decl.use} (`use` declaration), §{decl.config} (config block with 
 ```cook
 recipe build_lua
     ingredients "src/*.rs"
-    cook "staging-lua/out.js" "staging-lua/out.wasm" using >{
+    cook "staging-lua/out.js" "staging-lua/out.wasm" >{
         os.execute("mkdir -p staging-lua")
         local sources = table.concat(inputs, " ")
         local js = io.open(outputs[1], "w")
@@ -65,7 +65,7 @@ recipe build_lua
     }
 ```
 
-Exercises: §{steps.cook-multi} (multi-output cook with `using >{ ... }` Lua block), §{lua.using-block-globals} (using-block globals `inputs` / `outputs`), App. A.4.
+Exercises: §{steps.cook-multi} (multi-output cook with `>{ ... }` Lua block), §{lua.using-block-globals} (cook-body globals `inputs` / `outputs`), App. A.4.
 ## B.5. Cross-recipe references [#examples.cross-recipe-refs]
 This example exercises the four surfaces of cross-recipe references defined in §{xref}.
 
@@ -74,11 +74,11 @@ This example exercises the four surfaces of cross-recipe references defined in �
 ```cook
 recipe libmath
     ingredients "src/math/*.c"
-    cook "build/obj/math/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
-    cook "build/lib/libmath.a" using { ar rcs $<out> $<all> }
+    cook "build/obj/math/$<in.stem>.o" { gcc -c $<in> -o $<out> }
+    cook "build/lib/libmath.a" { ar rcs $<out> $<all> }
 
 recipe app
-    cook "build/bin/app" using { gcc -o $<out> main.c $<libmath> }
+    cook "build/bin/app" { gcc -o $<out> main.c $<libmath> }
 ```
 
 In `app`, the `$<libmath>` placeholder is a bare name reference (§{xref.string-substitution}). It expands at register time to the single-element output list of `libmath`, i.e., `"build/lib/libmath.a"`. The resulting `app` step's command is `gcc -o build/bin/app main.c build/lib/libmath.a`.
@@ -90,7 +90,7 @@ recipe protos
     ingredients "proto/*.proto"
 
 recipe compile_protos
-    cook "build/obj/$<protos.stem>.pb.cc" using { protoc --cpp_out=build/obj $<in> }
+    cook "build/obj/$<protos.stem>.pb.cc" { protoc --cpp_out=build/obj $<in> }
 ```
 
 In `compile_protos`, the `$<protos.stem>` placeholder in the output pattern (§{xref.dep-driven}) is an accessor placeholder. It names `protos` as the iteration driver. The step registers one work unit per item in `protos`'s output list — which, because `protos` has no cook step, is the resolved glob `proto/*.proto` passed through (§{xref.dep-recipe-output}). For each resolved path `x`, `$<in>` = `x`, `$<in.stem>` = `path.stem(x)`, and `$<protos.stem>` = `path.stem(x)`.
@@ -111,13 +111,13 @@ recipe check: headers
 
 ```cook
 recipe core
-    cook "build/lib/libcore.a" using { … }
+    cook "build/lib/libcore.a" { … }
 
 recipe protos
     ingredients "proto/*.proto"
 
 recipe server
-    cook "build/obj/$<protos.stem>.o" using { gcc -c $<in> -I$<core>/include -o $<out> }
+    cook "build/obj/$<protos.stem>.o" { gcc -c $<in> -I$<core>/include -o $<out> }
 ```
 
 The `server` step is dep-driven by `protos` (output pattern contains `$<protos.stem>`). The `$<core>` in the shell block is a bare string-substitution reference (§{xref.string-substitution}) to `core`'s single output. The step thus depends on both `protos` (per-unit, driving iteration) and `core` (whole-recipe or refined per-unit, per §{xref.dep-implications}) — two distinct cross-recipe edges from a single step.

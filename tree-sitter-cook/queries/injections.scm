@@ -7,7 +7,7 @@
   (lua_code) @injection.content
   (#set! injection.language "lua"))
 
-(using_lua_block
+(exec_lua_block
   (lua_code) @injection.content
   (#set! injection.language "lua"))
 

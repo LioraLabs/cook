@@ -57,7 +57,7 @@ pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTr
                     t.extend(extract_sigil_tokens(pat.as_str()));
                 }
                 // Walk ShellBlock lines for $<NAME> tokens.
-                if let Some(UsingClause::ShellBlock(lines)) = &cook_step.using_clause {
+                if let Some(Body::ShellBlock(lines)) = &cook_step.body {
                     for line in lines {
                         t.extend(extract_sigil_tokens(line));
                     }
@@ -299,7 +299,7 @@ mod tests {
             vec![Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/app".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(
+                    body: Some(Body::ShellBlock(
                         vec!["gcc -o $<out> $<in> $<libmath> $<libstr>".to_string()],
                     )),
                 },
@@ -323,7 +323,7 @@ mod tests {
             vec![Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/$<protos.stem>.pb.cc".to_string())],
-                    using_clause: None,
+                    body: None,
                 },
                 line: 2,
             }],
@@ -416,7 +416,7 @@ mod tests {
             vec![Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/app".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(vec![
+                    body: Some(Body::ShellBlock(vec![
                         "gcc -o $<out> main.c $<libmath>".to_string(),
                     ])),
                 },

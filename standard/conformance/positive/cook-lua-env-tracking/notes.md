@@ -1,6 +1,6 @@
 CS-0090 — Lua reads of `cook.env` track to `consulted_env_keys` (§17.1).
 
-Pins the canonical §17.1 surface: a `cook` step whose `using >{ ... }` Lua
+Pins the canonical §17.1 surface: a `cook` step whose `>{ ... }` Lua
 body statically reads `cook.env.<KEY>` (or `cook.env["<KEY>"]`). Per
 CS-0090, an implementation MUST scan the Lua source for these reads at
 register time and fold the matched keys into the unit's

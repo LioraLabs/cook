@@ -3,6 +3,6 @@ recipe "libmath"
 
 recipe "build"
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using {
+    cook "build/$<in.stem>.o" {
         gcc -c $<in> -o $<out> -L $<libmath.dir>
     }

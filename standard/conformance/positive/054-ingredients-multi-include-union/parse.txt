@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["src/*.c", "include/*.h"]
       excludes: ["src/skip.c", "include/skip.h"]
       steps:
-        Cook outputs=["build/$<in.stem>.o"] using=ShellBlock(["touch $<out>"])
+        Cook outputs=["build/$<in.stem>.o"] body=ShellBlock(["touch $<out>"])
     Recipe name="show" line=12
       deps: []
       ingredients: ["src/*.c", "include/*.h"]

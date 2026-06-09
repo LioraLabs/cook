@@ -3,7 +3,7 @@ shell block one-line
 ====================
 
 recipe build
-    cook "build/{in.stem}.o" using { gcc -c {in} -o {out} }
+    cook "build/{in.stem}.o" { gcc -c {in} -o {out} }
 
 ---
 
@@ -13,16 +13,15 @@ recipe build
       name: (identifier))
     (cook_step
       outputs: (string)
-      (using_clause
-        shell: (shell_block
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)))))
 
 ====================
 shell block multi-output indexed
 ====================
 
 recipe gen
-    cook "out.js" "out.wasm" using {
+    cook "out.js" "out.wasm" {
         wasm-pack build
         cp pkg/main.js {out_1}
         cp pkg/main.wasm {out_2}
@@ -37,9 +36,8 @@ recipe gen
     (cook_step
       outputs: (string)
       outputs: (string)
-      (block_using_clause
-        shell: (shell_block
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)))))
 
 ====================
 in.accessor in output
@@ -47,7 +45,7 @@ in.accessor in output
 
 recipe build
     ingredients "src/*.c"
-    cook "build/{in.stem}.o" using {
+    cook "build/{in.stem}.o" {
         gcc -c {in} -o {out}
     }
 
@@ -61,6 +59,5 @@ recipe build
       (string))
     (cook_step
       outputs: (string)
-      (using_clause
-        shell: (shell_block
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)))))

@@ -4,12 +4,12 @@ sidebar:
   order: 23
 ---
 # 23. Execute-phase API [#lua.exe]
-> **Normative.** This chapter defines the Cook Lua API surfaces that are only bound during the execute phase: the using-block globals on Lua-code work units, and the plate/test Lua-block bindings.
+> **Normative.** This chapter defines the Cook Lua API surfaces that are only bound during the execute phase: the cook-body globals on Lua-code work units, and the plate/test Lua-block bindings.
 
-## 23.1. Using-block globals [#lua.using-block-globals]
+## 23.1. Cook-body Lua globals [#lua.using-block-globals]
 **Phase.** Execute-phase only.
 
-When the execute phase runs a Lua-code unit recorded by `cook.add_unit` (§{lua.add-unit}) with a `lua_code` payload — for example, one recorded from `using >{ ... }` on a `cook` step (§{steps.cook-single}, §{steps.cook-multi}) — a conforming implementation MUST, immediately before evaluating `lua_code`, bind the following globals on the worker's Lua VM:
+When the execute phase runs a Lua-code unit recorded by `cook.add_unit` (§{lua.add-unit}) with a `lua_code` payload — for example, one recorded from `>{ ... }` on a `cook` step (§{steps.cook-single}, §{steps.cook-multi}) — a conforming implementation MUST, immediately before evaluating `lua_code`, bind the following globals on the worker's Lua VM:
 
 | Global    | Type   | Value |
 |-----------|--------|-------|
@@ -28,7 +28,7 @@ For the multi-output Lua-block `cook` step
 ```cook
 recipe build_lua
     ingredients "src/*.rs"
-    cook "staging-lua/out.js" "staging-lua/out.wasm" using >{
+    cook "staging-lua/out.js" "staging-lua/out.wasm" >{
         os.execute("mkdir -p staging-lua")
         local sources = table.concat(inputs, " ")
         local js = io.open(outputs[1], "w")
@@ -44,7 +44,7 @@ the execute-phase worker binds `inputs` to the resolved ingredient paths, `outpu
 
 ### Note 23.1.1
 
-These globals are bindings on the worker VM, not on the register-phase VM. A register-phase Lua step (`> expr` or `>{ ... }` outside a `using` clause) MUST NOT observe them.
+These globals are bindings on the worker VM, not on the register-phase VM. A register-phase Lua step (`> expr` or `>{ ... }` outside a cook-step body) MUST NOT observe them.
 
 ## 23.2. Plate and test Lua-block bindings [#lua.using-block-globals-plate-test]
 
@@ -59,4 +59,4 @@ A conforming implementation MUST bind exactly one of `input` / `inputs` per unit
 
 A conforming implementation MUST NOT bind `output` / `outputs` for plate or test units; these have no meaning in a step that declares no outputs. A conforming implementation MUST NOT bind `input_N` (indexed input access) for plate or test units; the source list is exposed wholesale via `inputs` in many-to-one mode.
 
-Cross-recipe references inside a plate or test Lua body use `cook.dep_output()` / `cook.dep_output_list()`, identical to a `using >{ … }` Lua body (§{lua.using-block-globals}).
+Cross-recipe references inside a plate or test Lua body use `cook.dep_output()` / `cook.dep_output_list()`, identical to a `>{ … }` Lua body (§{lua.using-block-globals}).

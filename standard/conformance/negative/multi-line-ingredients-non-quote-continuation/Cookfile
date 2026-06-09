@@ -1,6 +1,6 @@
 recipe "bad"
     ingredients "src/a.c"
                 "src/b.c" this_is_not_a_pattern
-    cook "build/out.o" using {
+    cook "build/out.o" {
         echo bad
     }

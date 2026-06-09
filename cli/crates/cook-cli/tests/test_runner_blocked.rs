@@ -34,7 +34,7 @@ fn write_broken_cookfile(dir: &std::path::Path) {
     fs::write(
         dir.join("Cookfile"),
         r#"recipe broken
-    cook "build/never.out" using {
+    cook "build/never.out" {
         mkdir -p build
         false
     }
@@ -86,7 +86,7 @@ fn build_mode_cook_failure_still_exits_with_engine_error() {
     fs::write(
         tmp.path().join("Cookfile"),
         r#"recipe broken
-    cook "out.txt" using {
+    cook "out.txt" {
         false
     }
 "#,

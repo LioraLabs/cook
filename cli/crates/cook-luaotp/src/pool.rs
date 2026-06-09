@@ -587,7 +587,7 @@ fn register_worker_cook_table(
         &cook,
         "exec",
         "cook.exec: register-only API called from execute-phase Lua (Standard §6.3.2). \
-         Use cook.sh(cmd) to shell out from a lua_line / lua_block / using >{ … } payload. \
+         Use cook.sh(cmd) to shell out from a lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
          top-level `register` block.",
     )?;
@@ -597,7 +597,7 @@ fn register_worker_cook_table(
         "interactive",
         "cook.interactive: register-only API called from execute-phase Lua (Standard §6.3.2). \
          Interactive steps must be recorded during the register phase; they cannot be \
-         scheduled from a lua_line / lua_block / using >{ … } payload. \
+         scheduled from a lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
          top-level `register` block.",
     )?;
@@ -617,7 +617,7 @@ fn register_worker_cook_table(
         "step_group",
         "cook.step_group: register-only API called from execute-phase Lua (Standard §6.3.2). \
          Step groups are recorded during the register phase; they cannot be opened from a \
-         lua_line / lua_block / using >{ … } payload. \
+         lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
          top-level `register` block.",
     )?;
@@ -627,7 +627,7 @@ fn register_worker_cook_table(
         "recipe",
         "cook.recipe: register-only API called from execute-phase Lua (Standard §6.3.2). \
          Recipes are registered during the register phase; they cannot be declared from a \
-         lua_line / lua_block / using >{ … } payload. \
+         lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
          top-level `register` block.",
     )?;
@@ -637,7 +637,7 @@ fn register_worker_cook_table(
         "probe",
         "cook.probe: register-only API called from execute-phase Lua (Standard §22.5.2). \
          Probe units are declared during the register phase; they cannot be created from a \
-         lua_line / lua_block / using >{ … } payload. \
+         lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
          top-level `register` block.",
     )?;
@@ -1829,7 +1829,7 @@ mod tests {
     // -----------------------------------------------------------------
     // Standard §6.3.2 regression tests: register-only Cook Lua API
     // helpers must raise a §6.3.2-shaped diagnostic when called from
-    // execute-phase Lua (lua_line / lua_block / using >{ … } payload).
+    // execute-phase Lua (lua_line / lua_block / cook-body >{ … } payload).
     // -----------------------------------------------------------------
 
     /// Submit a single LuaChunk work item that runs `code` on a worker VM,

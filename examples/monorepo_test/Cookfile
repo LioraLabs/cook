@@ -12,7 +12,7 @@ import shared //packages/utils
 # that the test subcommand does NOT depend on this aggregator existing — workspace
 # discovery is independent of any aggregator recipe.
 recipe build: apps.web.build apps.api.build shared.build
-    cook "build/all.txt" using {
+    cook "build/all.txt" {
         mkdir -p build
         echo "all" > $<out>
     }

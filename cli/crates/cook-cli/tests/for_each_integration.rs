@@ -95,7 +95,7 @@ register
 
 recipe gen
     ingredients recs
-    cook "out/$<in.id>.txt" using {
+    cook "out/$<in.id>.txt" {
         mkdir -p out
         printf '%s' "$<in.tag>" > $<out>
         printf '%s\n' "$<in.id>" >> ran.log

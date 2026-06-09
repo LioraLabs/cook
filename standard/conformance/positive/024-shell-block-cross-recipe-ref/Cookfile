@@ -1,10 +1,10 @@
 recipe "libmath"
     ingredients "src/math/add.c" "src/math/mul.c"
-    cook "build/libmath.a" using {
+    cook "build/libmath.a" {
         ar rcs $<out> $<all>
     }
 
 recipe "app"
-    cook "build/bin/app" using {
+    cook "build/bin/app" {
         gcc -o $<out> main.c $<libmath>
     }

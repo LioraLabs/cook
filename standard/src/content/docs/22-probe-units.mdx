@@ -65,8 +65,8 @@ the offending line:
   is valid only on shell-block produce forms, since a Lua block already returns a
   typed value.
 
-The `produce` body reuses the `body ::= shell_block | using_lua_block` grammar of
-§{steps.cook-single} (the `using`-dispatch: `>{` is tested before `{`). The probe
+The `produce` body reuses the `body ::= exec_lua_block | shell_block` grammar of
+§{steps.cook-single} (the body-dispatch: `>{` is tested before `{`). The probe
 value is determined by the body form:
 
 - `produce >{ … }` (Lua block): the probe value is what the block `return`s

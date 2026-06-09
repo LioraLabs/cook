@@ -29,7 +29,7 @@ The strict-bail rule eliminates ambiguity between Cook placeholders and shell id
 
 Resolution of a successfully-lexed placeholder is governed by §{xref.resolution}. The closed set of valid `IDENT` resolutions and per-iteration-mode validity rules are stated normatively in §{phl.cook-step}.
 
-> **Implementation note (informative).** Implementations of the sigil placeholder substitution typically share a single helper for the four shell-text contexts (cook output patterns, `using { ... }` bodies, plate/test bodies, bare shell commands), with per-context configuration of iteration mode and declared output count. The accessor set (`stem`, `name`, `ext`, `dir`) is constant across every position that admits a placeholder; sharing a single definition across the resolver and the migration tooling is a sound implementation practice.
+> **Implementation note (informative).** Implementations of the sigil placeholder substitution typically share a single helper for the four shell-text contexts (cook output patterns, `{ ... }` bodies, plate/test bodies, bare shell commands), with per-context configuration of iteration mode and declared output count. The accessor set (`stem`, `name`, `ext`, `dir`) is constant across every position that admits a placeholder; sharing a single definition across the resolver and the migration tooling is a sound implementation practice.
 
 ## 9.2. Resolution [#phl.resolution]
 
@@ -38,7 +38,7 @@ Placeholder resolution is the closed function defined in §{xref.resolution}. Ev
 ## 9.3. Cook-step placeholders [#phl.cook-step]
 **Phase.** Substitution is performed by the code generator at register time; the resulting Lua expression is evaluated at register time when the unit is recorded.
 
-A `cook` step's `using { ... }` shell-block body, a `plate` shell-block body (§{steps.plate}), a `test` shell-block body (§{steps.test}), and every bare `shell_command` is a **shell text** for the purposes of this section. Shell text MAY contain **sigil placeholders** of the form `$<IDENT>` where `IDENT` is a dot-free or single-dotted identifier (e.g. `$<in>`, `$<in.stem>`, `$<out_2.dir>`). Before a conforming implementation records the resulting unit, it MUST substitute every `$<IDENT>` according to the closed resolution table in this section. A `$<IDENT>` whose shape does not match any row of the placeholder table resolves as an environment variable through §{xref.resolution}.
+A `cook` step's `{ ... }` shell-block body, a `plate` shell-block body (§{steps.plate}), a `test` shell-block body (§{steps.test}), and every bare `shell_command` is a **shell text** for the purposes of this section. Shell text MAY contain **sigil placeholders** of the form `$<IDENT>` where `IDENT` is a dot-free or single-dotted identifier (e.g. `$<in>`, `$<in.stem>`, `$<out_2.dir>`). Before a conforming implementation records the resulting unit, it MUST substitute every `$<IDENT>` according to the closed resolution table in this section. A `$<IDENT>` whose shape does not match any row of the placeholder table resolves as an environment variable through §{xref.resolution}.
 
 The sigil syntax `$<IDENT>` is the sole placeholder surface for shell text as of v0.7. Shell brace constructs (`${HOME:-x}`, `${}`, `{a,b,c}`) are not sigil placeholders and MUST be passed through verbatim.
 
@@ -77,7 +77,7 @@ A conforming implementation MUST reject the following shapes with a load-time di
 ### Example 9.3.1
 
 ```cook
-cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 ```
 
 with ingredient `main.c` records one shell unit per ingredient. For ingredient `main.c`, the unit's `command` field is `set -e\ngcc -c main.c -o build/main.o`. The output pattern's `$<in.stem>` resolves to `main` before the body's `$<out>` is substituted; the resulting `$<out>` is `build/main.o`.
@@ -85,7 +85,7 @@ with ingredient `main.c` records one shell unit per ingredient. For ingredient `
 ### Example 9.3.2
 
 ```cook
-cook "out.js" "out.wasm" using {
+cook "out.js" "out.wasm" {
     wasm-pack build
     cp pkg/main.js $<out_1>
     cp pkg/main.wasm $<out_2>
@@ -96,11 +96,11 @@ with any input list records one shell unit (many-to-one mode — outputs are lit
 
 ### Note 9.3.1
 
-The block forms (`using { ... }` and `using >{ ... }`) and the placeholder layer compose differently. A `shell_block` is shell text and gets the substitution defined in this section. A `using_lua_block` is Lua text and does not get textual substitution; the same iteration data is exposed as Lua bindings per §{lua.using-block-globals}. The asymmetry is principled — see App. C — and reflects that shell has no binding mechanism for "the current file" while Lua does.
+The block forms (`{ ... }` and `>{ ... }`) and the placeholder layer compose differently. A `shell_block` is shell text and gets the substitution defined in this section. An `exec_lua_block` is Lua text and does not get textual substitution; the same iteration data is exposed as Lua bindings per §{lua.using-block-globals}. The asymmetry is principled — see App. C — and reflects that shell has no binding mechanism for "the current file" while Lua does.
 
 ### Note 9.3.2
 
-Cross-recipe references inside a shell block follow §{xref.string-substitution}: a bare `$<NAME>` substitutes to the named recipe's full output list, joined by space. The `$<lib.ACCESSOR>` form is rejected inside any using-clause body, including a shell block, because it would smuggle a second iteration source past the output pattern's declaration. Authors who want a recipe's per-element accessors inside a step driven by something else use Lua (`path.stem(cook.dep_output_list("lib")[1])`).
+Cross-recipe references inside a shell block follow §{xref.string-substitution}: a bare `$<NAME>` substitutes to the named recipe's full output list, joined by space. The `$<lib.ACCESSOR>` form is rejected inside any cook-step body, including a shell block, because it would smuggle a second iteration source past the output pattern's declaration. Authors who want a recipe's per-element accessors inside a step driven by something else use Lua (`path.stem(cook.dep_output_list("lib")[1])`).
 
 ## 9.4. Plate and test placeholders [#phl.plate-test]
 

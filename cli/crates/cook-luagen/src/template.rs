@@ -868,13 +868,13 @@ pub(crate) fn validate_placeholders(
         if let Resolved::Error(e) = resolved {
             return Err(format!("CS-0022: {}", e));
         }
-        // Additionally check lib.accessor in using body (rejected by CS-0022 §6.7).
+        // Additionally check lib.accessor in a cook-step body (rejected by CS-0022 §6.7).
         if let Some(dot) = span.ident.rfind('.') {
             let prefix = &span.ident[..dot];
             let suffix = &span.ident[dot + 1..];
             if ACCESSORS.contains(&suffix) && ctx.recipe_names.contains(prefix) {
                 return Err(format!(
-                    "CS-0022: $<{}.{}> is rejected inside using-clause body; \
+                    "CS-0022: $<{}.{}> is rejected inside a cook-step body; \
                      use $<in.{}> if `{}` is the driver, or reach for Lua otherwise",
                     prefix, suffix, suffix, prefix
                 ));

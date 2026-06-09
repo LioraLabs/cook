@@ -6,28 +6,28 @@
 
 recipe libmath
     ingredients "src/math/*.c"
-    cook "build/obj/math/$<in.stem>.o" using {
+    cook "build/obj/math/$<in.stem>.o" {
         mkdir -p build/obj/math && gcc -c $<in> -Isrc -o $<out>
     }
-    cook "build/lib/libmath.a" using {
+    cook "build/lib/libmath.a" {
         mkdir -p build/lib && ar rcs $<out> $<all>
     }
 
 recipe libstr
     ingredients "src/str/*.c"
-    cook "build/obj/str/$<in.stem>.o" using {
+    cook "build/obj/str/$<in.stem>.o" {
         mkdir -p build/obj/str && gcc -c $<in> -Isrc -o $<out>
     }
-    cook "build/lib/libstr.a" using {
+    cook "build/lib/libstr.a" {
         mkdir -p build/lib && ar rcs $<out> $<all>
     }
 
 recipe app
     ingredients "src/main.c"
-    cook "build/obj/main.o" using {
+    cook "build/obj/main.o" {
         mkdir -p build/obj && gcc -c $<all> -Isrc -o $<out>
     }
-    cook "build/bin/app" using {
+    cook "build/bin/app" {
         mkdir -p build/bin && gcc -o $<out> $<all> $<libmath> $<libstr>
     }
 

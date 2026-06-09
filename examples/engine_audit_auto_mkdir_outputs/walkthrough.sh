@@ -3,7 +3,7 @@
 # directory of every declared cook-step output before invoking the
 # step's shell text.
 #
-# Pre-fix behavior: the recipe `cook "build/out/foo.txt" using { echo hi > $<out> }`
+# Pre-fix behavior: the recipe `cook "build/out/foo.txt" { echo hi > $<out> }`
 # (no `mkdir -p` in the body) failed with "build/out/foo.txt: No such
 # file or directory" because `build/out/` did not exist when the
 # subprocess ran.

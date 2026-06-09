@@ -34,7 +34,7 @@ A unit for which the register-phase record disables caching — for example, a b
 
 ### 17.1.2. Tracking Lua reads of `cook.env` [#exec.cache.lua-env-reads]
 
-> **Normative.** A `cook` step whose `using >{ … }` body is a Lua block (§{lua.using-block-globals}) MAY read environment values through the `cook.env.<KEY>` accessor (§{lua.cook-env}). When it does, those reads MUST contribute to the unit's `consulted_env_keys` set (§{xref.resolution}) on the same footing as a shell-body `$<KEY>` sigil contributes. The recording is required for the cache-invalidation contract of §17.1: a value change in any consulted key MUST invalidate the unit's cache fingerprint.
+> **Normative.** A `cook` step whose `>{ … }` body is a Lua block (§{lua.using-block-globals}) MAY read environment values through the `cook.env.<KEY>` accessor (§{lua.cook-env}). When it does, those reads MUST contribute to the unit's `consulted_env_keys` set (§{xref.resolution}) on the same footing as a shell-body `$<KEY>` sigil contributes. The recording is required for the cache-invalidation contract of §17.1: a value change in any consulted key MUST invalidate the unit's cache fingerprint.
 >
 > A conforming implementation MUST recover the consulted key set by static analysis of the Lua source text. It MUST recognise:
 >
@@ -65,7 +65,7 @@ An implementation's artifact-store write path MUST treat a `put` of bytes that c
 ```cook
 recipe build
     ingredients "src/main.c"
-    cook "build/main.o" using { gcc -c $<all> -o $<out> }
+    cook "build/main.o" { gcc -c $<all> -o $<out> }
 ```
 
 On the first run, `build/main.o`'s unit executes and its completion MAY be recorded. On a subsequent run with an unchanged `src/main.c` and unchanged command text, an implementation MAY skip the unit. If the command text changes or `src/main.c` changes, the unit MUST re-run.

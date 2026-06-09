@@ -1,7 +1,7 @@
 # Frontend project. Two test recipes — one passing, one mixed.
 
 recipe build
-    cook "build/web.bundle" using {
+    cook "build/web.bundle" {
         mkdir -p build
         echo "web bundle" > $<out>
     }

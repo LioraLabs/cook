@@ -1,7 +1,7 @@
-# 035 — shell parameter expansion in `using` body
+# 035 — shell parameter expansion in cook-step shell body
 
 Pins that POSIX shell parameter expansion forms (`${HOME:-fallback}`,
-`${VAR%suffix}`) inside a `cook ... using { ... }` body pass verbatim
+`${VAR%suffix}`) inside a `cook ... { ... }` body pass verbatim
 to the shell as literal text. Pre-CS-0033, the `{TOKEN}` placeholder
 scanner would attempt to resolve `HOME:-fallback` as an env-var key,
 silently producing wrong output. The strict `$<IDENT>` lexer

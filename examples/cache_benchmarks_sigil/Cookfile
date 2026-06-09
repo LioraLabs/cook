@@ -12,7 +12,7 @@ import web ./apps/web
 # $<core.core_lib> is a cross-Cookfile body ref — lowers to
 # cook.dep_output("core.core_lib") after Phase 7 workspace codegen.
 recipe top
-    cook "build/top" using {
+    cook "build/top" {
         mkdir -p build
         gcc -o $<out> $<core.core_lib> $<web.web_obj>
     }

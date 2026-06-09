@@ -32,8 +32,8 @@ The Cookfile surface syntax in §{recipes} produces step groups and sequential u
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
-    cook "build/app" using { gcc -o $<out> $<all> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
+    cook "build/app" { gcc -o $<out> $<all> }
 ```
 
 The first `cook` step expands to one step group containing one compile unit per source file; the compiles MAY run in parallel. The second `cook` step is a distinct step group. The barrier rule forces every compile to complete before the link unit begins.

@@ -1,5 +1,5 @@
 recipe emit
-    cook "out.txt" using {
+    cook "out.txt" {
         cat <<'END' > out.txt
         } stays literal
         END

@@ -3,12 +3,12 @@ probe scenes
 
 recipe render
     ingredients scenes
-    cook "build/$<in.id>.silent.mp4" using { ffmpeg -i $<in.id>.blend $<out> }
+    cook "build/$<in.id>.silent.mp4" { ffmpeg -i $<in.id>.blend $<out> }
 
 recipe tts
     ingredients scenes
-    cook "build/$<in.id>.wav" using { tts $<in.id> $<out> }
+    cook "build/$<in.id>.wav" { tts $<in.id> $<out> }
 
 recipe mux
     ingredients scenes
-    cook "build/$<in.id>.mp4" using { ffmpeg -i $<render[]> -i $<tts[]> $<out> }
+    cook "build/$<in.id>.mp4" { ffmpeg -i $<render[]> -i $<tts[]> $<out> }

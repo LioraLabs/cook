@@ -292,13 +292,13 @@ module.exports = grammar({
     // shell-block form (App. A.3.2 / §22.5): a `>{ … }` Lua block already
     // returns a structured value, so `produce as json >{ … }` MUST be
     // rejected. This is enforced syntactically — the `as` arm requires a
-    // `shell_block`, so a using_lua_block after `as` ERRORs.
+    // `shell_block`, so an exec_lua_block after `as` ERRORs.
     produce_step: ($) =>
       seq(
         "produce",
         choice(
           seq("as", $.produce_type, field("body", $.shell_block)),
-          field("body", choice($.shell_block, $.using_lua_block)),
+          field("body", choice($.shell_block, $.exec_lua_block)),
         ),
         $._newline,
       ),
@@ -343,9 +343,9 @@ module.exports = grammar({
     ingredient_exclude: ($) => seq("!", $.string),
 
     // App. A.4 multi-output rule: when two or more outputs are given,
-    // the using_clause MUST be a block (`>{...}` or `{...}`); a bare
-    // string is rejected. The single-output form keeps all four shapes
-    // (declaration-only, string, lua block, shell block).
+    // the body MUST be a block (`>{...}` or `{...}`); a bare string
+    // simply joins the output-pattern list. CS-0099: the body opener
+    // follows the output pattern(s) directly (no `using` introducer).
     // CS-0078: subsequent output STRINGs MAY appear on continuation lines
     // beginning with `"`; the `_step_continuation_newline` external token
     // absorbs the intervening newline + whitespace.
@@ -354,7 +354,7 @@ module.exports = grammar({
         seq(
           "cook",
           field("outputs", $.string),
-          optional($.using_clause),
+          optional(field("body", choice($.shell_block, $.exec_lua_block))),
           $._newline,
         ),
         seq(
@@ -364,33 +364,15 @@ module.exports = grammar({
             optional($._step_continuation_newline),
             field("outputs", $.string),
           )),
-          $.block_using_clause,
+          field("body", choice($.shell_block, $.exec_lua_block)),
           $._newline,
         ),
       ),
 
-    using_clause: ($) =>
-      seq(
-        "using",
-        choice(
-          field("lua", $.using_lua_block),
-          field("shell", $.shell_block),
-        ),
-      ),
-
-    block_using_clause: ($) =>
-      seq(
-        "using",
-        choice(
-          field("lua", $.using_lua_block),
-          field("shell", $.shell_block),
-        ),
-      ),
-
-    // App. A.4 `using_lua_block`: the `>{ … }` execute-phase Lua block in a
-    // using clause, with §6.4 input/output bindings. Distinct in name from
-    // the recipe-body step kind `inline_lua_block` (`>>{ … }`, register-phase).
-    using_lua_block: ($) =>
+    // App. A.4 `exec_lua_block`: the `>{ … }` execute-phase Lua block in a
+    // cook/plate/test body, with §6.4 input/output bindings. Distinct in name
+    // from the recipe-body step kind `inline_lua_block` (`>>{ … }`, register-phase).
+    exec_lua_block: ($) =>
       seq(">{", alias($._lua_block_content, $.lua_code), "}"),
 
     // Body chunks: scanner-emitted SHELL_BLOCK_CONTENT segments interleaved
@@ -411,14 +393,14 @@ module.exports = grammar({
     plate_step: ($) =>
       seq(
         "plate",
-        field("body", choice($.shell_block, $.using_lua_block)),
+        field("body", choice($.shell_block, $.exec_lua_block)),
         $._newline,
       ),
 
     test_step: ($) =>
       seq(
         "test",
-        field("body", choice($.shell_block, $.using_lua_block)),
+        field("body", choice($.shell_block, $.exec_lua_block)),
         field("as_name", optional(seq("as", $.string))),
         optional(seq("timeout", field("timeout", $.number))),
         optional(field("should_fail", "should_fail")),

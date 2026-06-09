@@ -39,7 +39,10 @@ describe('remarkCookHighlight', () => {
 
   it('preserves text when the cook source is malformed', async () => {
     // Tree-sitter error recovery: we still emit the original text, no crash.
-    const out = await process('```cook\n@#$%\n```\n');
-    expect(out).toContain('@#$%');
+    // (`recipe "x" }{` produces an ERROR node under the current grammar; the
+    // former `@#$%` fixture started parsing cleanly once `@` interactive
+    // commands and `#` comments landed.)
+    const out = await process('```cook\nrecipe "x" }{\n```\n');
+    expect(out).toContain('}{');
   });
 });

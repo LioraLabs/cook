@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["out.json"] using=ShellBlock(["echo '{\"key\": \"value\"}' > $<out>"])
+        Cook outputs=["out.json"] body=ShellBlock(["echo '{\"key\": \"value\"}' > $<out>"])
   chores:
   register_blocks: []
   top_level_module_calls: []

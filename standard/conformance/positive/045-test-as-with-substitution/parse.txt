@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["src/*.txt"]
       excludes: []
       steps:
-        Cook outputs=["build/$<in.stem>.out"] using=ShellBlock(["echo > $<out>"])
+        Cook outputs=["build/$<in.stem>.out"] body=ShellBlock(["echo > $<out>"])
         Test body=ShellBlock(["test -s $<in>"]) timeout=None should_fail=false
   chores:
   register_blocks: []

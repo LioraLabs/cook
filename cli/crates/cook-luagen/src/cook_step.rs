@@ -71,7 +71,7 @@ fn format_ingredient_groups(n: usize) -> String {
 /// Determine the iteration mode for a cook step by inspecting its output pattern(s).
 ///
 /// CS-0033: output patterns use `$<in.ACCESSOR>` for own-input iteration.
-/// - No using_clause                             → DeclarationOnly
+/// - No body                             → DeclarationOnly
 /// - Multiple outputs, any iterating              → OneToMany
 /// - Multiple outputs, all literal                → BlockStep
 /// - Single output with `$<in.X>`                 → OneToOne (own-input accessor)
@@ -85,7 +85,7 @@ pub(crate) fn cook_step_mode_with_names(
 ) -> CookMode {
     use crate::template::output_pattern_kind_with_recipes;
 
-    if step.using_clause.is_none() {
+    if step.body.is_none() {
         return CookMode::DeclarationOnly;
     }
 
@@ -228,8 +228,8 @@ pub(crate) fn generate_cook_step(
             out.push_str("        end\n");
 
             let mut consulted = ConsultedEnv::new();
-            match &cook_step.using_clause {
-                Some(UsingClause::ShellBlock(lines)) => {
+            match &cook_step.body {
+                Some(Body::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
                     let (lua_expr, probe_keys) = match expand_command_template(
@@ -247,7 +247,7 @@ pub(crate) fn generate_cook_step(
                         lua_expr, probes_lua, consulted.to_lua_table()
                     ));
                 }
-                Some(UsingClause::LuaBlock(code)) => {
+                Some(Body::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
@@ -292,8 +292,8 @@ pub(crate) fn generate_cook_step(
             };
             out.push_str(&format!("        local _cook_out = {}\n", out_expr));
 
-            match &cook_step.using_clause {
-                Some(UsingClause::ShellBlock(lines)) => {
+            match &cook_step.body {
+                Some(Body::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
                     let (lua_expr, probe_keys) = match expand_command_template(
@@ -311,7 +311,7 @@ pub(crate) fn generate_cook_step(
                         lua_expr, probes_lua, consulted.to_lua_table()
                     ));
                 }
-                Some(UsingClause::LuaBlock(code)) => {
+                Some(Body::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
@@ -349,8 +349,8 @@ pub(crate) fn generate_cook_step(
             };
             out.push_str(&format!("    local _cook_out = {}\n", out_expr));
 
-            match &cook_step.using_clause {
-                Some(UsingClause::ShellBlock(lines)) => {
+            match &cook_step.body {
+                Some(Body::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
                     let ctx = crate::template::cook_step_ctx(iter_mode, output_shape, recipe_names);
                     let (lua_expr, probe_keys) = match expand_command_template(
@@ -368,7 +368,7 @@ pub(crate) fn generate_cook_step(
                         input_source, lua_expr, probes_lua, consulted.to_lua_table()
                     ));
                 }
-                Some(UsingClause::LuaBlock(code)) => {
+                Some(Body::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
@@ -406,8 +406,8 @@ pub(crate) fn generate_cook_step(
             }
             out.push_str("        };\n");
 
-            match &cook_step.using_clause {
-                Some(UsingClause::ShellBlock(lines)) => {
+            match &cook_step.body {
+                Some(Body::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
                     // OneToMany: multi-output, one-to-one iteration
                     let oto_many_ctx = crate::template::cook_step_ctx(
@@ -430,7 +430,7 @@ pub(crate) fn generate_cook_step(
                         lua_expr, probes_lua, consulted.to_lua_table()
                     ));
                 }
-                Some(UsingClause::LuaBlock(code)) => {
+                Some(Body::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
@@ -467,8 +467,8 @@ pub(crate) fn generate_cook_step(
                 input_source
             ));
 
-            match &cook_step.using_clause {
-                Some(UsingClause::ShellBlock(lines)) => {
+            match &cook_step.body {
+                Some(Body::ShellBlock(lines)) => {
                     let combined = build_shell_block_command(lines, recipe_names);
                     let mut consulted = ConsultedEnv::new();
                     // BlockStep: many-to-one with multi outputs
@@ -492,7 +492,7 @@ pub(crate) fn generate_cook_step(
                         lua_expr, probes_lua, consulted.to_lua_table()
                     ));
                 }
-                Some(UsingClause::LuaBlock(code)) => {
+                Some(Body::LuaBlock(code)) => {
                     let code_literal = crate::lua_string::wrap_lua_string(code);
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
@@ -557,8 +557,8 @@ pub(crate) fn generate_for_each_cook_step(
     .unwrap_or_else(sigil_err);
     out.push_str(&format!("        local _cook_out = {}\n", out_expr));
 
-    match &cook_step.using_clause {
-        Some(UsingClause::ShellBlock(lines)) => {
+    match &cook_step.body {
+        Some(Body::ShellBlock(lines)) => {
             let combined = build_shell_block_command(lines, recipe_names);
             let (cmd_concat, probe_keys) =
                 crate::template::expand_for_each_template(&combined, &ctx, &mut consulted)
@@ -575,7 +575,7 @@ pub(crate) fn generate_for_each_cook_step(
                 cmd_expr, probes_lua, consulted.to_lua_table()
             ));
         }
-        Some(UsingClause::LuaBlock(code)) => {
+        Some(Body::LuaBlock(code)) => {
             // §8.3: a Lua block body sees the member as `item`. Execute-phase
             // binding of `item` is wired by the COOK-64 runtime slice.
             let code_literal = crate::lua_string::wrap_lua_string(code);
@@ -601,15 +601,15 @@ pub(crate) fn generate_for_each_cook_step(
 #[cfg(test)]
 mod cs_0022_mode_tests {
     use super::*;
-    use cook_lang::ast::{CookStep, OutputPattern, UsingClause};
+    use cook_lang::ast::{CookStep, OutputPattern, Body};
 
-    fn step(outputs: &[&str], using_clause: Option<UsingClause>) -> CookStep {
+    fn step(outputs: &[&str], body: Option<Body>) -> CookStep {
         CookStep {
             outputs: outputs
                 .iter()
                 .map(|s| OutputPattern::Quoted((*s).to_string()))
                 .collect(),
-            using_clause,
+            body,
         }
     }
 
@@ -622,7 +622,7 @@ mod cs_0022_mode_tests {
         // A literal output pattern → ManyToOne, even if the body contains $<in>.
         let s = step(
             &["build/app"],
-            Some(UsingClause::ShellBlock(vec!["gcc $<in>".into()])),
+            Some(Body::ShellBlock(vec!["gcc $<in>".into()])),
         );
         assert!(matches!(
             cook_step_mode_with_names(&s, &empty_recipes()),
@@ -634,7 +634,7 @@ mod cs_0022_mode_tests {
     fn in_accessor_output_is_one_to_one() {
         let s = step(
             &["build/$<in.stem>.o"],
-            Some(UsingClause::ShellBlock(vec!["gcc $<in> -o $<out>".into()])),
+            Some(Body::ShellBlock(vec!["gcc $<in> -o $<out>".into()])),
         );
         assert!(matches!(
             cook_step_mode_with_names(&s, &empty_recipes()),
@@ -650,7 +650,7 @@ mod cs_0022_mode_tests {
         // check is in resolves_recipe_accessor / sigil tests.
         let s = step(
             &["build/$<libmath.stem>.x"],
-            Some(UsingClause::ShellBlock(vec!["echo $<in>".into()])),
+            Some(Body::ShellBlock(vec!["echo $<in>".into()])),
         );
         let mut names = BTreeSet::new();
         names.insert("libmath".to_string());
@@ -668,7 +668,7 @@ mod cs_0022_mode_tests {
     fn multi_output_literal_is_block_step() {
         let s = step(
             &["a.js", "a.wasm"],
-            Some(UsingClause::ShellBlock(vec!["gen".into()])),
+            Some(Body::ShellBlock(vec!["gen".into()])),
         );
         assert!(matches!(
             cook_step_mode_with_names(&s, &empty_recipes()),
@@ -677,7 +677,7 @@ mod cs_0022_mode_tests {
     }
 
     #[test]
-    fn declaration_only_no_using_clause() {
+    fn declaration_only_no_body() {
         let s = step(&["x"], None);
         assert!(matches!(
             cook_step_mode_with_names(&s, &empty_recipes()),

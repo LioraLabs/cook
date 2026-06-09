@@ -1565,7 +1565,7 @@ register
 
 recipe deal
     ingredients cards
-    cook "build/$<in.id>.txt" using {
+    cook "build/$<in.id>.txt" {
         mkdir -p build
         printf '%s\n' "$<in.name>" > $<out>
     }
@@ -1611,7 +1611,7 @@ register
 
 recipe build_catalog
     ingredients catalog:items
-    cook "build/$<in.id>.json" using {
+    cook "build/$<in.id>.json" {
         mkdir -p build
         printf '%s\n' '$<in>' > $<out>
     }
@@ -1628,7 +1628,7 @@ fn for_each_undeclared_probe_rejected() {
     let cookfile = r#"
 recipe deal
     ingredients nope
-    cook "build/$<in.id>.txt" using {
+    cook "build/$<in.id>.txt" {
         printf '%s\n' "$<in.id>" > $<out>
     }
 "#;
@@ -1653,7 +1653,7 @@ register
 
 recipe deal
     ingredients cards
-    cook "build/$<in.id>.txt" using {
+    cook "build/$<in.id>.txt" {
         printf '%s\n' "$<in.id>" > $<out>
     }
 "#;
@@ -1680,13 +1680,13 @@ register
     })
 
 recipe gen
-    cook "gen.json" using {
+    cook "gen.json" {
         echo '[{"id":"x"}]' > $<out>
     }
 
 recipe consume
     ingredients data
-    cook "build/$<in.id>.txt" using {
+    cook "build/$<in.id>.txt" {
         mkdir -p build
         printf '%s' "$<in.id>" > $<out>
     }
@@ -1710,14 +1710,14 @@ register
     cook.probe("bad", { inputs = {}, produce = [[ return { not_an = "array" } ]] })
 
 recipe a
-    cook "build/a.txt" using {
+    cook "build/a.txt" {
         mkdir -p build
         echo a > $<out>
     }
 
 recipe b
     ingredients bad
-    cook "build/$<in.id>.txt" using {
+    cook "build/$<in.id>.txt" {
         printf '%s' "$<in.id>" > $<out>
     }
 "#;
@@ -1758,21 +1758,21 @@ register
 
 recipe render
     ingredients sceneprobe
-    cook "build/$<in.id>.silent.mp4" using {
+    cook "build/$<in.id>.silent.mp4" {
         mkdir -p build
         echo "$<in.id>" > $<out>
     }
 
 recipe tts
     ingredients sceneprobe
-    cook "build/$<in.id>.wav" using {
+    cook "build/$<in.id>.wav" {
         mkdir -p build
         echo "$<in.id>" > $<out>
     }
 
 recipe mux
     ingredients sceneprobe
-    cook "build/$<in.id>.mp4" using {
+    cook "build/$<in.id>.mp4" {
         bin/mux --video $<render[]> --audio $<tts[]> --out $<out>
     }
 "#;

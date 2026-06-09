@@ -24,7 +24,7 @@ use crate::test_step;
 /// - bare `$<stem>` / `$<name>` / `$<ext>` / `$<dir>` in output patterns (rejected)
 /// - `$<out_N>` in single-output steps (rejected)
 /// - `$<out>` in multi-output steps (rejected)
-/// - `$<lib.ACCESSOR>` inside using-clause body (rejected)
+/// - `$<lib.ACCESSOR>` inside a cook-step body (rejected)
 #[derive(Debug, thiserror::Error)]
 pub enum CodegenError {
     #[error(
@@ -256,7 +256,7 @@ fn validate_accessor_placement(
                     let drivers = collect_drivers(&cook_step.outputs, recipe_names);
                     // Check ShellBlock lines for accessor-without-driver and
                     // CS-0022 placeholder rules.
-                    if let Some(UsingClause::ShellBlock(lines)) = &cook_step.using_clause {
+                    if let Some(Body::ShellBlock(lines)) = &cook_step.body {
                         // Determine the mode so validate_placeholders can check
                         // {in}, {out}, {out_N}, {all}, bare accessors, and lib refs.
                         let mode = crate::cook_step::cook_step_mode_with_names(
@@ -293,7 +293,7 @@ fn validate_accessor_placement(
                     // check; the templater does not run on Lua source.
                 }
                 Step::Plate { step: plate_step, line } => {
-                    if let UsingClause::ShellBlock(lines) = &plate_step.body {
+                    if let Body::ShellBlock(lines) = &plate_step.body {
                         for shell_line in lines {
                             check_command(
                                 shell_line,
@@ -307,7 +307,7 @@ fn validate_accessor_placement(
                     }
                 }
                 Step::Test { step: test_step, line } => {
-                    if let UsingClause::ShellBlock(lines) = &test_step.body {
+                    if let Body::ShellBlock(lines) = &test_step.body {
                         for shell_line in lines {
                             check_command(
                                 shell_line,

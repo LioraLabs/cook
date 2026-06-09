@@ -217,7 +217,7 @@ probe names
 
 recipe render
     ingredients names
-    cook "out/$<in>.txt" using { mkdir -p out && echo $<in> > $<out> }
+    cook "out/$<in>.txt" { mkdir -p out && echo $<in> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
@@ -236,7 +236,7 @@ probe cards
 
 recipe render
     ingredients cards
-    cook "out/$<in.id>.txt" using { mkdir -p out && echo $<in.id> > $<out> }
+    cook "out/$<in.id>.txt" { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
@@ -258,7 +258,7 @@ probe cards
 
 recipe render
     ingredients cards
-    cook "out/$<in.id>.txt" using { mkdir -p out && echo $<in.id> > $<out> }
+    cook "out/$<in.id>.txt" { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();
@@ -279,7 +279,7 @@ probe cards
 
 recipe render
     ingredients cards
-    cook "out/$<in.id>.txt" using { mkdir -p out && echo $<in.id> > $<out> }
+    cook "out/$<in.id>.txt" { mkdir -p out && echo $<in.id> > $<out> }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     run_cook(tmp.path(), &["render"]).unwrap();

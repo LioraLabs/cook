@@ -6,6 +6,6 @@ register
 
 recipe deal
     ingredients cards
-    cook "build/$<in.id>.txt" using {
+    cook "build/$<in.id>.txt" {
         printf '%s\n' "$<in.id>" > $<out>
     }

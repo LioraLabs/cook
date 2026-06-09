@@ -9,7 +9,7 @@ Cookfile
       excludes: []
       steps:
         ForEach source=ProbeKey("cards")
-        Cook outputs=["build/art/$<in.id>.png"] using=ShellBlock(["gen \"$<in.name>\" $<out>"])
+        Cook outputs=["build/art/$<in.id>.png"] body=ShellBlock(["gen \"$<in.name>\" $<out>"])
   chores:
   register_blocks: []
   top_level_module_calls: []

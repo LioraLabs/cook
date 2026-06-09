@@ -1,5 +1,5 @@
 recipe emit
-    cook "out.txt" using {
+    cook "out.txt" {
         cat <<EOF > out.txt
         a heredoc with a } brace
         and a } here too

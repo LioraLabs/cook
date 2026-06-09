@@ -85,7 +85,7 @@ Recipe with cook step
 ================
 
 recipe lib: setup
-    cook "build/obj/{in.stem}.o" using {
+    cook "build/obj/{in.stem}.o" {
         {CC} -c {in} -o {out}
     }
 
@@ -99,9 +99,8 @@ recipe lib: setup
         (identifier)))
     (cook_step
       outputs: (string)
-      (using_clause
-        shell: (shell_block
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)))))
 
 ================
 Recipe with plate step
@@ -109,7 +108,7 @@ Recipe with plate step
 
 recipe test: lib
     ingredients "tests/*.c"
-    cook "build/{in.stem}" using {
+    cook "build/{in.stem}" {
         cc {in} -o {out}
     }
     plate { ./{in} }
@@ -126,9 +125,8 @@ recipe test: lib
       (string))
     (cook_step
       outputs: (string)
-      (using_clause
-        shell: (shell_block
-          (shell_content))))
+      body: (shell_block
+        (shell_content)))
     (plate_step
       body: (shell_block
         (shell_content)))))
@@ -234,7 +232,7 @@ Cook with inline lua block
 
 recipe lib: setup
     ingredients "lib/*.c"
-    cook "build/{in.stem}.o" using >{
+    cook "build/{in.stem}.o" >{
         cook.sh(cook.env.CC .. " -c " .. input .. " -o " .. output)
     }
 
@@ -250,9 +248,8 @@ recipe lib: setup
       (string))
     (cook_step
       outputs: (string)
-      (using_clause
-        lua: (using_lua_block
-          (lua_code))))))
+      body: (exec_lua_block
+        (lua_code)))))
 
 ================
 Cook multi-output with shell block
@@ -260,7 +257,7 @@ Cook multi-output with shell block
 
 recipe wasm
     ingredients "src/*.rs"
-    cook "a.js" "b.wasm" using {
+    cook "a.js" "b.wasm" {
         wasm-pack build
         cp pkg/a.js a.js
         cp pkg/b.wasm b.wasm
@@ -277,16 +274,15 @@ recipe wasm
     (cook_step
       outputs: (string)
       outputs: (string)
-      (block_using_clause
-        shell: (shell_block
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)))))
 
 ================
 Cook multi-output with lua block
 ================
 
 recipe gen
-    cook "out/parser.rs" "out/parser.h" using >{
+    cook "out/parser.rs" "out/parser.h" >{
         cook.sh("lalrpop src/grammar.lalrpop --out-dir out")
     }
 
@@ -299,9 +295,8 @@ recipe gen
     (cook_step
       outputs: (string)
       outputs: (string)
-      (block_using_clause
-        lua: (using_lua_block
-          (lua_code))))))
+      body: (exec_lua_block
+        (lua_code)))))
 
 ================
 Ingredients with exclude
@@ -349,7 +344,7 @@ recipe maps
     ingredients "src/*.map"
     cook "build/$<in.stem>.aas48"
          "build/$<in.stem>.aas96"
-         "build/$<in.stem>.aas120" using {
+         "build/$<in.stem>.aas120" {
         runaas $<in>
     }
 
@@ -371,12 +366,11 @@ recipe maps
       outputs: (string
         (placeholder
           (placeholder_ident)))
-      (block_using_clause
-        shell: (shell_block
-          (shell_content)
-          (placeholder
-            (placeholder_ident))
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
 
 ================
 Ingredients step (multi-line with exclude, CS-0078)
@@ -386,7 +380,7 @@ recipe build
     ingredients "neo/sys/*.cpp"
                 "neo/sys/posix/*.cpp"
                 !"neo/sys/sdl/*.cpp"
-    cook "build/sys.o" using {
+    cook "build/sys.o" {
         echo build
     }
 
@@ -403,9 +397,8 @@ recipe build
         (string)))
     (cook_step
       outputs: (string)
-      (using_clause
-        shell: (shell_block
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)))))
 
 ================
 Inline lua line and block (register-phase >>)
@@ -433,7 +426,7 @@ Cook plain-shell block with nested braces in content
 ================
 
 recipe x
-    cook "out" using {
+    cook "out" {
         echo "hello { world }"
         for f in a b; do echo "{ $f }"; done
     }
@@ -446,9 +439,8 @@ recipe x
       name: (identifier))
     (cook_step
       outputs: (string)
-      (using_clause
-        shell: (shell_block
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)))))
 
 ================
 Lua block with multi-line long-string opaque-span (CS-0035)
@@ -521,7 +513,7 @@ Shell block with POSIX heredoc opaque-span (CS-0035)
 ================
 
 recipe emit
-    cook "out.txt" using {
+    cook "out.txt" {
         cat <<EOF > out.txt
         a heredoc with a } brace
         and a } here too
@@ -537,16 +529,15 @@ recipe emit
       name: (identifier))
     (cook_step
       outputs: (string)
-      (using_clause
-        shell: (shell_block
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)))))
 
 ================
 Shell block with quoted-delim heredoc (CS-0035)
 ================
 
 recipe emit
-    cook "out.txt" using {
+    cook "out.txt" {
         cat <<'END' > out.txt
         } stays literal
         END
@@ -560,6 +551,5 @@ recipe emit
       name: (identifier))
     (cook_step
       outputs: (string)
-      (using_clause
-        shell: (shell_block
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)))))

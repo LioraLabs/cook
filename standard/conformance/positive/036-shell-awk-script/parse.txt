@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["data.txt"]
       excludes: []
       steps:
-        Cook outputs=["$<in.stem>.col1"] using=ShellBlock(["awk '{print $1}' $<in> > $<out>"])
+        Cook outputs=["$<in.stem>.col1"] body=ShellBlock(["awk '{print $1}' $<in> > $<out>"])
   chores:
   register_blocks: []
   top_level_module_calls: []

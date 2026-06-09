@@ -2,6 +2,6 @@ import proto //libs/proto
 
 recipe cli_bin
     ingredients "config.txt"
-    cook "build/cli.bin" using {
+    cook "build/cli.bin" {
         cat $<proto.proto_lib> config.txt > $<out>
     }

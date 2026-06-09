@@ -1,4 +1,4 @@
 recipe "bad"
-    cook "out" using >>{
+    cook "out" >>{
         cook.add_unit({command = "echo no"})
     }

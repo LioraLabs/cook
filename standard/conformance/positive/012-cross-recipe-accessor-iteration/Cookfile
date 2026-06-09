@@ -2,6 +2,6 @@ recipe "protos"
     ingredients "proto/a.proto" "proto/b.proto"
 
 recipe "compile_protos"
-    cook "build/obj/$<protos.stem>.pb.cc" using {
+    cook "build/obj/$<protos.stem>.pb.cc" {
         protoc --cpp_out=build/obj $<in>
     }

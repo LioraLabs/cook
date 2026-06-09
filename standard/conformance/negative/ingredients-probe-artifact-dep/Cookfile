@@ -5,13 +5,13 @@ register
     })
 
 recipe gen
-    cook "gen.json" using {
+    cook "gen.json" {
         echo '[{"id":"x"}]' > $<out>
     }
 
 recipe consume
     ingredients data
-    cook "build/$<in.id>.txt" using {
+    cook "build/$<in.id>.txt" {
         mkdir -p build
         printf '%s' "$<in.id>" > $<out>
     }

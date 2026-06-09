@@ -1,8 +1,8 @@
 recipe "bad"
-    cook "a" using {
+    cook "a" {
         echo a
     }
     > print("midway")
-    cook "b" using {
+    cook "b" {
         echo b
     }

@@ -3,7 +3,7 @@
 
 recipe core_lib
     ingredients "src/core.c"
-    cook "build/core.o" using {
+    cook "build/core.o" {
         mkdir -p build
         gcc -c src/core.c -o $<out>
     }

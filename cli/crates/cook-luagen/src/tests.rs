@@ -189,7 +189,7 @@ fn test_cook_step_one_to_one() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/$<in.stem>.o".to_string())],
-                using_clause: Some(UsingClause::ShellBlock(
+                body: Some(Body::ShellBlock(
                     vec!["gcc -c $<in> -o $<out>".to_string()],
                 )),
             },
@@ -229,7 +229,7 @@ fn test_cook_step_many_to_one() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/$<in.stem>.o".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(
+                    body: Some(Body::ShellBlock(
                         vec!["gcc -c $<in> -o $<out>".to_string()],
                     )),
                 },
@@ -238,7 +238,7 @@ fn test_cook_step_many_to_one() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib.a".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(
+                    body: Some(Body::ShellBlock(
                         vec!["ar rcs $<out> $<all>".to_string()],
                     )),
                 },
@@ -269,7 +269,7 @@ fn test_cook_step_declaration() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("bin/app".to_string())],
-                using_clause: None,
+                body: None,
             },
             line: 3,
         }],
@@ -291,7 +291,7 @@ fn test_cook_step_lua_block() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/{in.stem}.o".to_string())],
-                using_clause: Some(UsingClause::LuaBlock(
+                body: Some(Body::LuaBlock(
                     "cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)".to_string(),
                 )),
             },
@@ -324,13 +324,13 @@ fn test_plate_step() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("bin/$<in.stem>".to_string())],
-                    using_clause: None,
+                    body: None,
                 },
                 line: 2,
             },
             Step::Plate {
                 step: PlateStep {
-                    body: UsingClause::ShellBlock(vec!["./$<in>".to_string()]),
+                    body: Body::ShellBlock(vec!["./$<in>".to_string()]),
                 },
                 line: 3,
             },
@@ -491,7 +491,7 @@ fn test_cook_step_emits_step_group() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/$<in.stem>.o".to_string())],
-                using_clause: Some(UsingClause::ShellBlock(
+                body: Some(Body::ShellBlock(
                     vec!["gcc -c $<in> -o $<out>".to_string()],
                 )),
             },
@@ -528,13 +528,13 @@ fn test_plate_step_emits_step_group() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("bin/app".to_string())],
-                    using_clause: None,
+                    body: None,
                 },
                 line: 2,
             },
             Step::Plate {
                 step: PlateStep {
-                    body: UsingClause::ShellBlock(vec!["echo done".to_string()]),
+                    body: Body::ShellBlock(vec!["echo done".to_string()]),
                 },
                 line: 3,
             },
@@ -559,7 +559,7 @@ fn test_config_var_in_cook_step() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/$<in.stem>.o".to_string())],
-                using_clause: Some(UsingClause::ShellBlock(
+                body: Some(Body::ShellBlock(
                     vec!["$<CC> $<CFLAGS> -c $<in> -o $<out>".to_string()],
                 )),
             },
@@ -590,7 +590,7 @@ fn test_config_var_only_template() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/$<in.stem>.o".to_string())],
-                using_clause: Some(UsingClause::ShellBlock(
+                body: Some(Body::ShellBlock(
                     vec!["$<CC> -c $<in> -o $<out>".to_string()],
                 )),
             },
@@ -612,7 +612,7 @@ fn test_no_config_vars_unchanged() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/$<in.stem>.o".to_string())],
-                using_clause: Some(UsingClause::ShellBlock(
+                body: Some(Body::ShellBlock(
                     vec!["gcc -c $<in> -o $<out>".to_string()],
                 )),
             },
@@ -662,7 +662,7 @@ fn test_cook_step_lua_block_no_raw_string() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/{in.stem}.o".to_string())],
-                using_clause: Some(UsingClause::LuaBlock(
+                body: Some(Body::LuaBlock(
                     "cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)".to_string(),
                 )),
             },
@@ -719,7 +719,7 @@ fn test_test_step_codegen() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/$<in.stem>".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(
+                    body: Some(Body::ShellBlock(
                         vec!["cc $<in> -o $<out>".to_string()],
                     )),
                 },
@@ -727,7 +727,7 @@ fn test_test_step_codegen() {
             },
             Step::Test {
                 step: TestStep {
-                    body: UsingClause::ShellBlock(vec!["./$<in>".to_string()]),
+                    body: Body::ShellBlock(vec!["./$<in>".to_string()]),
                     as_name: None,
                     timeout: None,
                     should_fail: false,
@@ -766,7 +766,7 @@ fn test_test_step_codegen_with_options() {
         vec![],
         vec![Step::Test {
             step: TestStep {
-                body: UsingClause::ShellBlock(vec!["echo run-tests".to_string()]),
+                body: Body::ShellBlock(vec!["echo run-tests".to_string()]),
                 as_name: None,
                 timeout: Some(30),
                 should_fail: true,
@@ -817,7 +817,7 @@ fn test_no_hash_in_output() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/$<in.stem>.o".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(
+                    body: Some(Body::ShellBlock(
                         vec!["gcc -c $<in> -o $<out>".to_string()],
                     )),
                 },
@@ -825,7 +825,7 @@ fn test_no_hash_in_output() {
             },
             Step::Plate {
                 step: PlateStep {
-                    body: UsingClause::ShellBlock(vec!["./$<in>".to_string()]),
+                    body: Body::ShellBlock(vec!["./$<in>".to_string()]),
                 },
                 line: 4,
             },
@@ -870,7 +870,7 @@ fn test_test_step_wrapped_in_step_group() {
         vec![],
         vec![Step::Test {
             step: TestStep {
-                body: UsingClause::ShellBlock(vec!["echo run".to_string()]),
+                body: Body::ShellBlock(vec!["echo run".to_string()]),
                 as_name: None,
                 timeout: None,
                 should_fail: false,
@@ -989,7 +989,7 @@ fn test_dep_ref_in_command_emits_dep_output() {
                 step: CookStep {
                     // CS-0022: one-to-one output pattern so body can use $<in>
                     outputs: vec![OutputPattern::Quoted("build/obj/$<in.stem>.o".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
+                    body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
                 },
                 line: 3,
             },
@@ -997,7 +997,7 @@ fn test_dep_ref_in_command_emits_dep_output() {
                 step: CookStep {
                     // CS-0022: literal output → many-to-one; body uses $<all> not $<in>
                     outputs: vec![OutputPattern::Quoted("build/bin/app".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(vec![
+                    body: Some(Body::ShellBlock(vec![
                         "gcc -o $<out> $<all> $<libmath> $<libstr>".into(),
                     ])),
                 },
@@ -1029,7 +1029,7 @@ fn test_env_var_still_works_when_not_recipe() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/$<in.stem>.o".to_string())],
-                using_clause: Some(UsingClause::ShellBlock(vec!["$<CC> -c $<in> -o $<out>".into()])),
+                body: Some(Body::ShellBlock(vec!["$<CC> -c $<in> -o $<out>".into()])),
             },
             line: 3,
         }],
@@ -1187,13 +1187,13 @@ fn test_dep_ref_in_plate_command() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("bin/runner".to_string())],
-                    using_clause: None,
+                    body: None,
                 },
                 line: 2,
             },
             Step::Plate {
                 step: PlateStep {
-                    body: UsingClause::ShellBlock(vec!["./$<app>".to_string()]),
+                    body: Body::ShellBlock(vec!["./$<app>".to_string()]),
                 },
                 line: 3,
             },
@@ -1219,7 +1219,7 @@ fn test_dep_driven_iteration_codegen() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/obj/$<protos.stem>.o".to_string())],
-                using_clause: Some(UsingClause::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
+                body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
             },
             line: 2,
         }],
@@ -1251,14 +1251,14 @@ fn test_dep_driven_followed_by_many_to_one() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/obj/$<protos.stem>.o".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
+                    body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
                 },
                 line: 2,
             },
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libprotos.a".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
                 },
                 line: 3,
             },
@@ -1283,7 +1283,7 @@ fn test_mixed_dep_iteration_and_substitution() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/obj/$<protos.stem>.o".to_string())],
-                using_clause: Some(UsingClause::ShellBlock(vec![
+                body: Some(Body::ShellBlock(vec![
                     "gcc -c $<in> -I$<core>/include -o $<out>".into(),
                 ])),
             },
@@ -1399,14 +1399,14 @@ fn test_cross_recipe_deps_codegen_integration() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/obj/math/$<in.stem>.o".into())],
-                    using_clause: Some(UsingClause::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
+                    body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
                 },
                 line: 3,
             },
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libmath.a".into())],
-                    using_clause: Some(UsingClause::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
                 },
                 line: 4,
             },
@@ -1415,14 +1415,14 @@ fn test_cross_recipe_deps_codegen_integration() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/obj/str/$<in.stem>.o".into())],
-                    using_clause: Some(UsingClause::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
+                    body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
                 },
                 line: 8,
             },
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libstr.a".into())],
-                    using_clause: Some(UsingClause::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
                 },
                 line: 9,
             },
@@ -1432,14 +1432,14 @@ fn test_cross_recipe_deps_codegen_integration() {
                 step: CookStep {
                     // CS-0022: literal output → many-to-one; body uses $<all>
                     outputs: vec![OutputPattern::Quoted("build/obj/main.o".into())],
-                    using_clause: Some(UsingClause::ShellBlock(vec!["gcc -c $<all> -o $<out>".into()])),
+                    body: Some(Body::ShellBlock(vec!["gcc -c $<all> -o $<out>".into()])),
                 },
                 line: 13,
             },
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/bin/app".into())],
-                    using_clause: Some(UsingClause::ShellBlock(vec![
+                    body: Some(Body::ShellBlock(vec![
                         "gcc -o $<out> $<all> $<libmath> $<libstr>".into(),
                     ])),
                 },
@@ -1482,7 +1482,7 @@ fn test_cross_recipe_deps_codegen_integration() {
 fn blockstep_shell_multi_output() {
     let source = r#"recipe "wasm"
     ingredients "src/*.rs"
-    cook "a.js" "b.wasm" using {
+    cook "a.js" "b.wasm" {
         wasm-pack build
         cp x a.js
         cp y b.wasm
@@ -1508,7 +1508,7 @@ end
 fn blockstep_lua_multi_output() {
     let source = r#"recipe "wasm"
     ingredients "src/*.rs"
-    cook "a.js" "b.wasm" using >{
+    cook "a.js" "b.wasm" >{
         sh("wasm-pack build")
     }
 end
@@ -1544,7 +1544,7 @@ fn onetoone_lua_emits_lua_code_not_function() {
     // CS-0022: use $<in.stem> in output pattern to trigger one-to-one mode.
     let source = r#"recipe "lib"
     ingredients "lib/*.c"
-    cook "build/obj/$<in.stem>.o" using >{
+    cook "build/obj/$<in.stem>.o" >{
         sh("gcc -c " .. input .. " -o " .. output)
     }
 end
@@ -1593,7 +1593,7 @@ fn test_empty_output_reference_warns_not_errors() {
             vec![Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/out".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(vec![
+                    body: Some(Body::ShellBlock(vec![
                         "echo $<empty_recipe> > $<out>".into(),
                     ])),
                 },
@@ -1630,7 +1630,7 @@ fn test_accessor_placeholder_in_using_string_without_driver_is_rejected() {
             vec![Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/fixed.o".to_string())], // no accessor in output
-                    using_clause: Some(UsingClause::ShellBlock(vec![
+                    body: Some(Body::ShellBlock(vec![
                         "echo $<protos.stem>".into(), // accessor in shell-block only
                     ])),
                 },
@@ -1665,13 +1665,13 @@ fn test_accessor_placeholder_in_plate_command_rejected() {
                 Step::Cook {
                     step: CookStep {
                         outputs: vec![OutputPattern::Quoted("bin/app".to_string())],
-                        using_clause: None,
+                        body: None,
                     },
                     line: 2,
                 },
                 Step::Plate {
                     step: PlateStep {
-                        body: UsingClause::ShellBlock(vec!["./$<out> $<protos.stem>".to_string()]),
+                        body: Body::ShellBlock(vec!["./$<out> $<protos.stem>".to_string()]),
                     },
                     line: 3,
                 },
@@ -1697,7 +1697,7 @@ fn test_accessor_placeholder_in_test_command_rejected() {
             vec![],
             vec![Step::Test {
                 step: TestStep {
-                    body: UsingClause::ShellBlock(vec!["echo $<protos.stem>".to_string()]),
+                    body: Body::ShellBlock(vec!["echo $<protos.stem>".to_string()]),
                     as_name: None,
                     timeout: None,
                     should_fail: false,
@@ -1741,7 +1741,7 @@ fn test_accessor_placeholder_in_bare_shell_rejected() {
 fn test_accessor_placeholder_with_driver_in_output_pattern_ok() {
     // CS-0022: $<protos.stem> in the output pattern is valid (driver declaration).
     // $<protos.stem> in the shell-block body is REJECTED per CS-0022 §6.7 Note 6.7.2
-    // ("The $<lib.ACCESSOR> form is rejected inside any using-clause body").
+    // ("The $<lib.ACCESSOR> form is rejected inside any cook-step body").
     // The correct form is $<in.stem> in the body.
     let names: std::collections::BTreeSet<String> =
         ["protos"].iter().map(|s| s.to_string()).collect();
@@ -1756,7 +1756,7 @@ fn test_accessor_placeholder_with_driver_in_output_pattern_ok() {
             vec![Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/$<protos.stem>.o".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(vec![
+                    body: Some(Body::ShellBlock(vec![
                         "gcc -c $<in> -o $<out>".into(),
                     ])),
                 },
@@ -2028,7 +2028,7 @@ fn cs_0022_validate_placeholders_returns_error_not_panic() {
     // but $<out_1> is the only violation.
     let src = r#"recipe "build"
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using {
+    cook "build/$<in.stem>.o" {
         gcc -c $<in> -o $<out_1>
     }
 end
@@ -2056,7 +2056,7 @@ fn cs_0022_validate_bare_in_in_many_to_one_returns_error() {
     // $<in> in a many-to-one (literal output) step must error.
     let src = r#"recipe "build"
     ingredients "src/*.c"
-    cook "build/app" using {
+    cook "build/app" {
         gcc $<in> -o $<out>
     }
 end
@@ -2077,7 +2077,7 @@ fn cs_0022_bare_stem_in_output_pattern_returns_error() {
     // $<stem> in output pattern must be rejected per CS-0022 §6.7.
     let src = r#"recipe "build"
     ingredients "src/*.c"
-    cook "build/$<stem>.o" using {
+    cook "build/$<stem>.o" {
         gcc -c $<in> -o $<out>
     }
 end
@@ -2102,13 +2102,13 @@ end
 
 #[test]
 fn cs_0022_lib_accessor_in_body_returns_error() {
-    // $<libmath.dir> in using-clause body must error per CS-0022 §6.7.
+    // $<libmath.dir> in a cook-step body must error per CS-0022 §6.7.
     let src = r#"recipe "libmath"
     ingredients "src/math/*.c"
 
 recipe "build"
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using {
+    cook "build/$<in.stem>.o" {
         gcc -c $<in> -o $<out> -L $<libmath.dir>
     }
 end
@@ -2118,7 +2118,7 @@ end
     let result = crate::generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_err(),
-        "$<libmath.dir> in using-clause body must error"
+        "$<libmath.dir> in a cook-step body must error"
     );
     let err_str = result.unwrap_err().to_string();
     assert!(
@@ -2131,7 +2131,7 @@ end
 fn cs_0022_out_bare_in_multi_output_returns_error() {
     // $<out> in multi-output step must error.
     let src = r#"recipe "build"
-    cook "a.js" "a.wasm" using {
+    cook "a.js" "a.wasm" {
         gen --js $<out>
     }
 end
@@ -2152,7 +2152,7 @@ fn cs_0022_multi_output_mixed_drivers_returns_error() {
 
 recipe "build"
     ingredients "src/*.c"
-    cook "$<in.stem>.o" "$<libmath.stem>.bin" using {
+    cook "$<in.stem>.o" "$<libmath.stem>.bin" {
         do-stuff
     }
 end
@@ -2173,7 +2173,7 @@ end
 
 #[test]
 fn test_plate_step_shell_one_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    plate {\n        ./$<in>\n    }\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate {\n        ./$<in>\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2186,7 +2186,7 @@ fn test_plate_step_shell_one_to_one() {
 
 #[test]
 fn test_plate_step_shell_many_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    plate { tar -czf bundle.tgz $<all> }\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate { tar -czf bundle.tgz $<all> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2216,7 +2216,7 @@ fn test_plate_step_shell_one_shot() {
 
 #[test]
 fn test_plate_step_lua_one_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    plate >{\n        cook.sh(\"strip \" .. input)\n    }\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate >{\n        cook.sh(\"strip \" .. input)\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2234,7 +2234,7 @@ fn test_plate_step_lua_one_to_one() {
 
 #[test]
 fn test_plate_step_lua_many_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    plate >{\n        for _, b in ipairs(inputs) do cook.sh(\"strip \" .. b) end\n    }\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate >{\n        for _, b in ipairs(inputs) do cook.sh(\"strip \" .. b) end\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2271,7 +2271,7 @@ fn test_plate_step_lua_one_shot() {
 
 #[test]
 fn test_test_step_shell_one_to_one_with_modifiers() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    test { ./$<in> } timeout 60 should_fail\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { ./$<in> } timeout 60 should_fail\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2285,7 +2285,7 @@ fn test_test_step_shell_one_to_one_with_modifiers() {
 
 #[test]
 fn test_test_step_shell_many_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    test { run-suite $<all> }\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { run-suite $<all> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2316,7 +2316,7 @@ fn test_test_step_shell_one_shot() {
 
 #[test]
 fn test_test_step_lua_one_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    test >{\n        cook.sh(\"./ \" .. input)\n    }\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test >{\n        cook.sh(\"./ \" .. input)\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2333,7 +2333,7 @@ fn test_test_step_lua_one_to_one() {
 
 #[test]
 fn test_test_step_lua_many_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    test >{\n        for _, b in ipairs(inputs) do cook.sh(\"./ \" .. b) end\n    } timeout 120\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test >{\n        for _, b in ipairs(inputs) do cook.sh(\"./ \" .. b) end\n    } timeout 120\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2370,7 +2370,7 @@ fn test_test_step_lua_one_shot() {
 #[test]
 fn test_plate_out_rejected() {
     // $<out> is explicitly forbidden in plate bodies (CS-0024 firewall).
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    plate { ./$<out> }\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate { ./$<out> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
@@ -2384,7 +2384,7 @@ fn test_plate_out_rejected() {
 #[test]
 fn test_plate_mixed_in_and_all_rejected() {
     // Using both $<in> and $<all> in the same plate body is a mixed-mode error.
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    plate { echo $<in> $<all> }\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate { echo $<in> $<all> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
@@ -2398,7 +2398,7 @@ fn test_plate_mixed_in_and_all_rejected() {
 #[test]
 fn test_plate_lua_mixed_input_and_inputs_rejected() {
     // Using both `input` and `inputs` in the same Lua plate body is rejected.
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    plate >{\n        print(input)\n        print(inputs[1])\n    }\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate >{\n        print(input)\n        print(inputs[1])\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
@@ -2412,7 +2412,7 @@ fn test_plate_lua_mixed_input_and_inputs_rejected() {
 #[test]
 fn test_plate_bare_stem_rejected() {
     // Bare $<stem> in a plate body is rejected; use $<in.stem> instead.
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" using { cc $<in> -o $<out> }\n    plate { ./$<stem>.out }\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate { ./$<stem>.out }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
@@ -2426,7 +2426,7 @@ fn test_plate_bare_stem_rejected() {
 #[test]
 fn test_plate_lib_accessor_rejected() {
     // $<lib.stem> in a plate body hits the §5.4 firewall — plate has no output pattern.
-    let src = "recipe lib\n    ingredients \"x/*.c\"\n    cook \"build/$<in.stem>.o\" using { cc -c $<in> -o $<out> }\nrecipe r: lib\n    cook \"build/app\" using { cc $<lib> -o $<out> }\n    plate { echo $<lib.stem> }\n";
+    let src = "recipe lib\n    ingredients \"x/*.c\"\n    cook \"build/$<in.stem>.o\" { cc -c $<in> -o $<out> }\nrecipe r: lib\n    cook \"build/app\" { cc $<lib> -o $<out> }\n    plate { echo $<lib.stem> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
@@ -2451,7 +2451,7 @@ fn cook_step_with_env_tokens_emits_consulted_env_keys() {
     let cookfile_text = r#"
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc $<CFLAGS> -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc $<CFLAGS> -c $<in> -o $<out> }
 end
 "#;
     let lua = generate_lua_for_test(cookfile_text);
@@ -2472,7 +2472,7 @@ fn lua_block_step_with_no_env_reads_emits_empty_keyset() {
     let cookfile_text = r#"
 recipe build
     ingredients "src/*.c"
-    cook "build/{in.stem}.o" using >{
+    cook "build/{in.stem}.o" >{
         os.execute("gcc -c " .. input .. " -o " .. output)
     }
 end
@@ -2496,7 +2496,7 @@ fn lua_block_step_records_static_cook_env_reads() {
     let cookfile_text = r#"
 recipe touch
     ingredients "Cookfile"
-    cook (input .. ".out") using >{
+    cook (input .. ".out") >{
         local f = io.open(output, "w")
         f:write("FOO=" .. tostring(cook.env.FOO))
         f:write("BAR=" .. tostring(cook.env.BAR))
@@ -2593,7 +2593,7 @@ fn test_step_codegen_substitutes_as_name() {
     let cook_src = r#"
 recipe r
     ingredients "src/*.txt"
-    cook "build/$<in.stem>.out" using { echo > $<out> }
+    cook "build/$<in.stem>.out" { echo > $<out> }
     test { test -s $<in> } as '$<in.stem>-rt'
 "#;
     let lua = generate_lua_for_test(cook_src);
@@ -2623,7 +2623,7 @@ fn cook_step_iterates_union_of_all_include_globs() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/$<in.stem>.o".to_string())],
-                using_clause: Some(UsingClause::ShellBlock(
+                body: Some(Body::ShellBlock(
                     vec!["touch $<out>".to_string()],
                 )),
             },
@@ -2659,7 +2659,7 @@ fn cook_step_many_to_one_iterates_union_too() {
         vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/app".to_string())],
-                using_clause: Some(UsingClause::ShellBlock(
+                body: Some(Body::ShellBlock(
                     vec!["echo $<all>".to_string()],
                 )),
             },
@@ -2791,7 +2791,7 @@ fn plate_step_after_cook_passthroughs_cook_outputs() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("out/$<in.stem>.o".to_string())],
-                    using_clause: Some(UsingClause::ShellBlock(vec!["touch $<out>".to_string()])),
+                    body: Some(Body::ShellBlock(vec!["touch $<out>".to_string()])),
                 },
                 line: 3,
             },
@@ -2875,7 +2875,7 @@ fn cook_step_excludes_threaded_through_resolve_ingredients() {
         steps: vec![Step::Cook {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/$<in.stem>.o".to_string())],
-                using_clause: Some(UsingClause::ShellBlock(
+                body: Some(Body::ShellBlock(
                     vec!["touch $<out>".to_string()],
                 )),
             },
@@ -2905,10 +2905,10 @@ fn bare_recipe_ref_in_output_pattern_is_rejected() {
     // is banned.
     let src = r#"recipe lib
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 
 recipe broken
-    cook "out/$<lib>.txt" using { echo hi > $<out> }
+    cook "out/$<lib>.txt" { echo hi > $<out> }
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2936,10 +2936,10 @@ fn dep_driven_accessor_in_output_pattern_still_accepted() {
     // bare-form rejection above is teaching the user to write instead.
     let src = r#"recipe lib
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 
 recipe driven
-    cook "out/$<lib.stem>.txt" using { echo hi > $<out> }
+    cook "out/$<lib.stem>.txt" { echo hi > $<out> }
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2958,17 +2958,17 @@ fn bare_recipe_ref_in_using_body_still_accepted() {
     // (Standard §5.5). Only the output-pattern position is rejected.
     let src = r#"recipe lib
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 
 recipe link
-    cook "build/app" using { gcc $<lib> -o $<out> }
+    cook "build/app" { gcc $<lib> -o $<out> }
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let result = crate::generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_ok(),
-        "bare $<lib> in using body must remain accepted, got: {:?}",
+        "bare $<lib> in a cook-step body must remain accepted, got: {:?}",
         result.err()
     );
 }
@@ -3299,7 +3299,7 @@ fn compile_chore_shell_step_emits_env_table_for_param() {
 
 #[test]
 fn for_each_probe_cook_fans_out_per_member() {
-    let src = "recipe art\n    ingredients cards\n    cook \"build/art/$<in.id>.png\" using { gen \"$<in.name>\" $<out> }\n";
+    let src = "recipe art\n    ingredients cards\n    cook \"build/art/$<in.id>.png\" { gen \"$<in.name>\" $<out> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = generate(&cookfile);
     // Member set sourced from the probe value (the COOK-64 pre-pass populates it).
@@ -3320,7 +3320,7 @@ fn for_each_probe_cook_fans_out_per_member() {
 
 #[test]
 fn for_each_probe_field_indexes_array() {
-    let src = "recipe a\n    ingredients cards:items\n    cook \"o/$<in.id>\" using { build $<out> }\n";
+    let src = "recipe a\n    ingredients cards:items\n    cook \"o/$<in.id>\" { build $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("local _items = cook.cache.get(\"cards\")[\"items\"]"),
         "key:field should index the named field, got:\n{lua}");
@@ -3340,13 +3340,13 @@ fn for_each_surface_carries_source_metadata() {
     // COOK-64: the register pre-pass learns a recipe's ingredients-probe-feeding
     // probe from `__for_each` on the surface meta — without running the body.
     let probe = generate(&cook_lang::parse(
-        "recipe a\n    ingredients cards\n    cook \"o/$<in.id>\" using { x $<out> }\n",
+        "recipe a\n    ingredients cards\n    cook \"o/$<in.id>\" { x $<out> }\n",
     ).unwrap());
     assert!(probe.contains(r#"__for_each = {kind = "probe", key = "cards"}"#),
         "probe source metadata missing, got:\n{probe}");
 
     let field = generate(&cook_lang::parse(
-        "recipe a\n    ingredients cards:items\n    cook \"o/$<in.id>\" using { x $<out> }\n",
+        "recipe a\n    ingredients cards:items\n    cook \"o/$<in.id>\" { x $<out> }\n",
     ).unwrap());
     assert!(field.contains(r#"__for_each = {kind = "probe", key = "cards", field = "items"}"#),
         "key:field metadata missing, got:\n{field}");
@@ -3356,7 +3356,7 @@ fn for_each_surface_carries_source_metadata() {
 fn for_each_unit_folds_member_into_fingerprint() {
     // COOK-64 §17.1 observable #5: each fan-out unit carries its member so the
     // register fold distinguishes per-member fingerprints.
-    let src = "recipe art\n    ingredients cards\n    cook \"o/$<in.id>\" using { build $<out> }\n";
+    let src = "recipe art\n    ingredients cards\n    cook \"o/$<in.id>\" { build $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("member = cook.member_to_string(item)"),
         "ingredients-probe cook unit should carry member, got:\n{lua}");

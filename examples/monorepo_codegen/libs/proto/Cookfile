@@ -1,6 +1,6 @@
 recipe proto_lib
     ingredients "schema.proto"
-    cook "build/proto.bin" using {
+    cook "build/proto.bin" {
         mkdir -p build
         sed 's/^/[proto] /' schema.proto > $<out>
     }

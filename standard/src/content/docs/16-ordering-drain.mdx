@@ -28,10 +28,10 @@ The rule applies to the declared output paths of `cook` steps; it does not apply
 
 ```cook
 recipe writer_a
-    cook "build/shared.bin" using { printf 'a' > $<out> }
+    cook "build/shared.bin" { printf 'a' > $<out> }
 
 recipe writer_b
-    cook "build/shared.bin" using { printf 'b' > $<out> }
+    cook "build/shared.bin" { printf 'b' > $<out> }
 
 recipe build: writer_a writer_b
 ```
@@ -53,7 +53,7 @@ After an interactive unit completes, execution resumes under the normal rules: n
 
 ```cook
 recipe dev
-    cook "build/app" using { gcc main.c -o $<out> }
+    cook "build/app" { gcc main.c -o $<out> }
     @./build/app
     echo "exited"
 ```

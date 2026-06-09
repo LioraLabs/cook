@@ -38,7 +38,7 @@ A conforming implementation MAY represent these classes with any internal data s
 
 ### Note 3.2.1
 
-`Content` is deliberately broad: the lexer does not distinguish `ingredients "…"`, `cook "…" using …`, `@vim notes.txt`, or `gcc -o main main.c` — all four produce `Content` tokens whose string form is the line after trimming. The step-dispatch cascade in App. A.4 resolves which step kind applies.
+`Content` is deliberately broad: the lexer does not distinguish `ingredients "…"`, `cook "…" …`, `@vim notes.txt`, or `gcc -o main main.c` — all four produce `Content` tokens whose string form is the line after trimming. The step-dispatch cascade in App. A.4 resolves which step kind applies.
 
 ## 3.3. Identifiers [#lexical.identifiers]
 A `BARE_IDENTIFIER` is a sequence of ASCII characters matching the regular expression in App. A.5:
@@ -87,7 +87,7 @@ The Cookfile language reserves eight identifiers contextually, each in a single 
 
 A conforming implementation MUST reject a *placeholder identifier* (§{phl.token}) or a *dependency name* whose final dot-separated segment is a reserved recipe segment (App. A.2). The reserved-segment rule is contextual to the resolution surface — it constrains what dotted reference forms are well-formed, not the lexical class of `BARE_IDENTIFIER` itself. (At a top-level recipe declaration site, the name is undotted by §{lexical.identifiers}, so the reserved-segment rule reduces to "the recipe name MUST NOT equal one of the reserved identifiers": `recipe stem`, `recipe env`, `recipe in`, etc., are rejected.) The identifier `env` is further restricted: it also MUST NOT appear as the first segment of a dotted reference, so `$<env.foo>` is the explicit env-var-lookup form and a *dependency* `env.foo` is rejected at parse time. This restriction reserves the `env.` prefix for the explicit env-var-lookup form and eliminates the resolution ambiguity that would otherwise arise between `$<env.X>` (env-var lookup) and an accessor on a recipe named `env`.
 
-The keywords that introduce other top-level or recipe-body productions — `recipe`, `chore`, `config`, `ingredients`, `cook`, `plate`, `using`, `use`, `import`, `test` — are recognised as keywords only when followed by a keyword separator (space, tab, or `"`). Among these, the **top-level keywords** `recipe`, `chore`, `config`, `use`, `import`, and `register` are recognised as keywords only when their line begins at column 0 (no leading whitespace); an indented line whose first word is a top-level keyword is a `Content` token, dispatched per §{steps.dispatch}. The recipe-body keywords (`ingredients`, `cook`, `plate`, `test`, `using`) are not subject to the column-0 rule. The `register` keyword is recognised when followed by space, tab, or NEWLINE — `register` alone on a line is admitted as the canonical header form because the block takes no name.
+The keywords that introduce other top-level or recipe-body productions — `recipe`, `chore`, `config`, `ingredients`, `cook`, `plate`, `use`, `import`, `test` — are recognised as keywords only when followed by a keyword separator (space, tab, or `"`). (The former body introducer `using` was removed in CS-0099 and is no longer a keyword; at its old position it is rejected with a migration diagnostic, §{grammar-appendix.steps}.) Among these, the **top-level keywords** `recipe`, `chore`, `config`, `use`, `import`, and `register` are recognised as keywords only when their line begins at column 0 (no leading whitespace); an indented line whose first word is a top-level keyword is a `Content` token, dispatched per §{steps.dispatch}. The recipe-body keywords (`ingredients`, `cook`, `plate`, `test`) are not subject to the column-0 rule. The `register` keyword is recognised when followed by space, tab, or NEWLINE — `register` alone on a line is admitted as the canonical header form because the block takes no name.
 
 ### Note 3.4.1
 
@@ -104,17 +104,17 @@ A `STRING` opens with `U+0022` (`"`), contains zero or more characters none of w
 
 The empty string `""` is a valid `STRING`. A double quote inside a `STRING` is not expressible in the current grammar; authors needing such content can use the inline-block forms of §{lexical.brace-blocks}, whose interior language (Lua or shell) has its own quoting rules.
 
-`STRING` appears in recipe and dependency names, in `ingredients`, `cook`, `plate`, and `test` steps, and in the optional name of a `config_block` header. In each of those roles, a conforming implementation parses the `STRING` inside the single line that produced the governing token. The `using_clause` (§{steps.cook-single}) takes a brace-block form, not a `STRING`; the former single-string form of `using` was removed in CS-0022.
+`STRING` appears in recipe and dependency names, in `ingredients`, `cook`, `plate`, and `test` steps, and in the optional name of a `config_block` header. In each of those roles, a conforming implementation parses the `STRING` inside the single line that produced the governing token. The `cook_step` body (§{steps.cook-single}) takes a brace-block form, not a `STRING`; the former single-string body was removed in CS-0022, and the `using` introducer itself in CS-0099.
 
 ### Example 3.5.1
 
 ```cook
 recipe "build"
     ingredients "src/*.c" !"src/legacy.c"
-    cook "bin/app" using { gcc $<all> -o $<out> }
+    cook "bin/app" { gcc $<all> -o $<out> }
 ```
 
-Each `"…"` is a `STRING`. The `!"src/legacy.c"` form is an `ingredient` exclusion, not a distinct string class (App. A.4): it is the literal `!` followed by an ordinary `STRING`. The `using { … }` clause is a shell block (§{lexical.brace-blocks}), not a `STRING`.
+Each `"…"` is a `STRING`. The `!"src/legacy.c"` form is an `ingredient` exclusion, not a distinct string class (App. A.4): it is the literal `!` followed by an ordinary `STRING`. The `{ … }` body is a shell block (§{lexical.brace-blocks}), not a `STRING`.
 
 ### Note 3.5.1
 
@@ -204,9 +204,9 @@ recipe "run-tests"
 The reference implementation is `parse_test_modifier_tail` in `cli/crates/cook-lang/src/recipe.rs`. The test `test_test_step_with_timeout_and_should_fail` demonstrates the admitted operand ordering: a `NUMBER` directly after `timeout`, followed by the optional `should_fail` marker.
 
 ## 3.9. Brace-balanced blocks [#lexical.brace-blocks]
-A **brace-balanced block** is a span of source text delimited by `{` and a matching `}`, where matching is defined by a stateful brace-counting algorithm that ignores braces appearing inside certain syntactic contexts. Both the `LUA_BLOCK_CONTENT` (inside `>{ … }`) and the `SHELL_BLOCK_CONTENT` (inside `{ … }` after `using`) are brace-balanced blocks; they differ in their interior language (Lua vs. shell) and in how their collected body is normalised after the block closes.
+A **brace-balanced block** is a span of source text delimited by `{` and a matching `}`, where matching is defined by a stateful brace-counting algorithm that ignores braces appearing inside certain syntactic contexts. Both the `LUA_BLOCK_CONTENT` (inside `>{ … }`) and the `SHELL_BLOCK_CONTENT` (inside `{ … }`) are brace-balanced blocks; they differ in their interior language (Lua vs. shell) and in how their collected body is normalised after the block closes.
 
-The opening brace is consumed on the line that introduced the block (a `LuaBlockOpen` token for `>{`, or the `{` immediately after `using` for `shell_block`), establishing initial depth `1`. The block's body lines are then scanned in source order. Each line is examined character by character; `{` increments depth and `}` decrements depth, except that braces are ignored when they appear inside one of the **opaque spans** enumerated in §{lexical.brace-blocks.lua-spans} (for Lua blocks) or §{lexical.brace-blocks.shell-spans} (for shell blocks). The brace counter MUST carry **opaque-span state across lines** so that a span opened on one line and closed on a later line keeps every brace byte between the open and the close opaque.
+The opening brace is consumed on the line that introduced the block (a `LuaBlockOpen` token for `>{`, or the `{` that opens a `shell_block` body), establishing initial depth `1`. The block's body lines are then scanned in source order. Each line is examined character by character; `{` increments depth and `}` decrements depth, except that braces are ignored when they appear inside one of the **opaque spans** enumerated in §{lexical.brace-blocks.lua-spans} (for Lua blocks) or §{lexical.brace-blocks.shell-spans} (for shell blocks). The brace counter MUST carry **opaque-span state across lines** so that a span opened on one line and closed on a later line keeps every brace byte between the open and the close opaque.
 
 A conforming implementation MUST apply this exclusion consistently for both Lua blocks and shell blocks, so that a block's closing `}` is never mistaken for a literal `}` inside string, comment, or heredoc content. The block closes on the first line where the running depth returns to zero or below after the line's brace deltas have been applied; that closing line is consumed by the lexer but is NOT included in the block body.
 
@@ -252,13 +252,13 @@ recipe "build"
             print(s)
         end
     }
-    cook "out.js" using {
+    cook "out.js" {
         wasm-pack build
         cp out/main.js out.js
     }
 ```
 
-The `>{ … }` block's body includes the `if`/`end` structure and the nested table `{1, 2, 3}`; the braces inside the string `"a { brace in a string }"` and after the `--` comment are ignored by the brace counter. The `using { … }` block's body, after line normalisation, is the two-element command list `["wasm-pack build", "cp out/main.js out.js"]`.
+The `>{ … }` block's body includes the `if`/`end` structure and the nested table `{1, 2, 3}`; the braces inside the string `"a { brace in a string }"` and after the `--` comment are ignored by the brace counter. The `{ … }` block's body, after line normalisation, is the two-element command list `["wasm-pack build", "cp out/main.js out.js"]`.
 
 ### Example 3.9.2
 
@@ -279,7 +279,7 @@ The `[==[ … ]==]` long string spans four source lines. The `}` byte on the sec
 
 ```cook
 recipe emit
-    cook "out.txt" using {
+    cook "out.txt" {
         cat <<EOF > out.txt
         a heredoc with a } brace
         and a } here too
@@ -288,7 +288,7 @@ recipe emit
     }
 ```
 
-The `cat <<EOF` opens a shell heredoc; its body extends through the next two lines, in which `}` bytes are heredoc data and MUST be opaque to the brace counter. The heredoc closes on the trimmed `EOF` line; brace counting resumes for `echo done` and the trailing `}` closes the `using { … }` block. The corresponding pin is fixture `042-shell-heredoc-brace-in-body`.
+The `cat <<EOF` opens a shell heredoc; its body extends through the next two lines, in which `}` bytes are heredoc data and MUST be opaque to the brace counter. The heredoc closes on the trimmed `EOF` line; brace counting resumes for `echo done` and the trailing `}` closes the `{ … }` block. The corresponding pin is fixture `042-shell-heredoc-brace-in-body`.
 
 ### Note 3.9.1
 

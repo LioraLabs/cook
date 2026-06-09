@@ -22,7 +22,7 @@ sidebar:
 
 **Original symptom.** Cook's templater inside `using "..."` strings interpreted `${VAR}` as its own env-lookup form, breaking Bash parameter-expansion forms like `${VAR:-default}`.
 
-**Resolution.** CS-0022 removed the single-string `using "..."` form in favour of `using { … }` shell blocks. Inside a shell block, `{` and `}` are brace-balanced by the Cookfile lexer (§{lexical.brace-blocks}) and the block content is passed verbatim to the shell — Cook's templater never sees the interior. `${VAR:-default}`, `${VAR%suffix}`, and all other Bash parameter-expansion forms work inside a `using { … }` block without any workaround.
+**Resolution.** CS-0022 removed the single-string `using "..."` form in favour of `{ … }` shell blocks. Inside a shell block, `{` and `}` are brace-balanced by the Cookfile lexer (§{lexical.brace-blocks}) and the block content is passed verbatim to the shell — Cook's templater never sees the interior. `${VAR:-default}`, `${VAR%suffix}`, and all other Bash parameter-expansion forms work inside a `{ … }` block without any workaround.
 
 **Residual scope.** ~~The `plate "..."` string form is still a Cook-templated string and retains the original symptom.~~ Fully resolved in CS-0024: both `plate` and `test` now exclusively use the brace-block body form (`plate { … }`, `test { … }`); the Cook-templated string form has been removed from the language surface.
 
@@ -32,11 +32,11 @@ sidebar:
 
 **Original symptom.** The string literal in `cook "..."`, `using "..."`, `plate "..."`, `recipe "..."`, etc. is parsed by a routine that finds the first `"` and stops — `\"` is not recognized as an escape. Embedding a literal `"` inside any cook string truncates the string at the first inner `"`, producing surprising and silent behaviour (the truncated command runs, the rest of the line is leftover content).
 
-**Resolution (partial).** CS-0022 removed `using "..."`. Shell content that previously had to live in a Cook-string is now written inside a `using { … }` block, where the shell's own quoting rules apply and `"` is legal in any shell-valid position.
+**Resolution (partial).** CS-0022 removed `using "..."`. Shell content that previously had to live in a Cook-string is now written inside a `{ … }` block, where the shell's own quoting rules apply and `"` is legal in any shell-valid position.
 
 **Residual scope.** Recipe names, ingredient paths, and `cook` output patterns still use unescaped `STRING` (§{lexical.strings}); a `"` in any of those positions remains inexpressible. The resolution path is unchanged. ~~`plate "..."` and `test "..."` strings still use unescaped `STRING`.~~ Fully resolved in CS-0024: `plate` and `test` now use the brace-block body form exclusively, removing them from the set of STRING surfaces with this limitation.
 
-**Workaround (unchanged).** Avoid embedding double quotes in cook strings. When shell-quoting is genuinely needed in a command, use the `using >{ … }` Lua-block form: Lua handles its own quoting and `cook.sh` accepts arbitrary strings.
+**Workaround (unchanged).** Avoid embedding double quotes in cook strings. When shell-quoting is genuinely needed in a command, use the `>{ … }` Lua-block form: Lua handles its own quoting and `cook.sh` accepts arbitrary strings.
 
 ## D.4. tree-sitter-cook is stale [#pre-v1.tree-sitter-stale]
 
@@ -98,7 +98,7 @@ The keyword choice is a deliberate departure from Cook's culinary metaphor (reci
 
 **Status.** Fully resolved in v0.7 by [CS-0033](E-changes#changes-cs-0033) alongside the migration to `$<TOKEN>` sigil syntax.
 
-**Original symptom.** §{phl.cook-step} normatively asserts that "every bare `shell_command` is a **shell text**" subject to the chapter's placeholder substitution. Inside a `recipe` body, a `plate` shell-block body, or a `cook using { … }` body the substitution fired correctly. Inside a `chore` body it did not — a `{TOKEN}` placeholder was emitted into the recorded unit's `command` payload verbatim, and the unit failed at execute time when the shell tried to resolve a literal `{TOKEN}` as a command word.
+**Original symptom.** §{phl.cook-step} normatively asserts that "every bare `shell_command` is a **shell text**" subject to the chapter's placeholder substitution. Inside a `recipe` body, a `plate` shell-block body, or a `cook { … }` body the substitution fired correctly. Inside a `chore` body it did not — a `{TOKEN}` placeholder was emitted into the recorded unit's `command` payload verbatim, and the unit failed at execute time when the shell tried to resolve a literal `{TOKEN}` as a command word.
 
 **Repro (historical).** With cook-lang 0.1.0 (claiming Cook Standard v0.5):
 
@@ -120,7 +120,7 @@ cook.recipe("devices", {}, function()
 end)
 ```
 
-**Resolution.** The v0.7 sigil-placeholder change ([CS-0033](E-changes#changes-cs-0033)) replaced the `{TOKEN}` template layer with a strict `$<IDENT>` sigil scanner (§{phl.cook-step}) applied uniformly across all four shell-text contexts: `cook using { … }` bodies, `plate` bodies, `test` bodies, and bare `shell_command` steps in both recipe and chore bodies. The chore-body codegen now applies the same sigil-expansion pass on every shell line, emitting `cook.require_env("ADB")` for `$<ADB>` rather than passing the literal through. Spec and implementation now agree.
+**Resolution.** The v0.7 sigil-placeholder change ([CS-0033](E-changes#changes-cs-0033)) replaced the `{TOKEN}` template layer with a strict `$<IDENT>` sigil scanner (§{phl.cook-step}) applied uniformly across all four shell-text contexts: `cook { … }` bodies, `plate` bodies, `test` bodies, and bare `shell_command` steps in both recipe and chore bodies. The chore-body codegen now applies the same sigil-expansion pass on every shell line, emitting `cook.require_env("ADB")` for `$<ADB>` rather than passing the literal through. Spec and implementation now agree.
 
 **Found in.** Real-world Cookfile for the `glovemap` Android key-mapper project (`~/dotfiles/android/glovemap/Cookfile`), which exercises plate's three iteration modes for adb-deploy and tripped on this when it tried to use `$<ADB>` and `$<PACKAGE>` env placeholders in chore bodies for `devices` / `logs` / `uninstall`.
 
@@ -229,14 +229,14 @@ A companion conformance harness — JSON-lines validators against fixture builds
 
 **Status.** Open as of v0.8. Cross-references E.14 (the Lua-body analogue).
 
-**Symptom.** §{xref.string-substitution} normatively asserts that a `$<NAME>` reference in a `cook` `using` shell block, a `plate` shell block, a `test` shell block, or a bare `shell_command` MUST be substituted by the space-joined concatenation of the named recipe's output list. The substitution fires correctly inside `cook using { … }` bodies but does NOT fire inside `plate { … }` shell bodies in cook 0.8 — the literal `$<NAME>` flows through to the recorded unit's `command` payload and the shell errors on it at execute time.
+**Symptom.** §{xref.string-substitution} normatively asserts that a `$<NAME>` reference in a `cook` `using` shell block, a `plate` shell block, a `test` shell block, or a bare `shell_command` MUST be substituted by the space-joined concatenation of the named recipe's output list. The substitution fires correctly inside `cook { … }` bodies but does NOT fire inside `plate { … }` shell bodies in cook 0.8 — the literal `$<NAME>` flows through to the recorded unit's `command` payload and the shell errors on it at execute time.
 
 **Repro.** With cook-lang 0.1.0 (claiming Cook Standard v0.8):
 
 ```cook
 recipe debug-apk
     ingredients "src/main.kt"
-    cook "build/app.apk" using { touch $<out> }
+    cook "build/app.apk" { touch $<out> }
 
 recipe install: debug-apk
     plate {
@@ -256,7 +256,7 @@ end)
 
 The `requires` edge is correctly inferred (good), but the command string carries `$<debug-apk>` verbatim. At execute time the shell parses `$<debug-apk>` as `$` followed by `<debug-apk>`, which is a redirection error: `/bin/sh: -c: line N: syntax error near unexpected token 'newline'`.
 
-The same `$<NAME>` reference inside a `cook ... using { … }` body of the same recipe lowers correctly: emitted Lua becomes `... " install -r " .. cook.dep_output("NAME")`. The asymmetry sits between the two shell-body surfaces, not in the lexer or the §{xref} resolution surface.
+The same `$<NAME>` reference inside a `cook ... { … }` body of the same recipe lowers correctly: emitted Lua becomes `... " install -r " .. cook.dep_output("NAME")`. The asymmetry sits between the two shell-body surfaces, not in the lexer or the §{xref} resolution surface.
 
 **Status quo.** Plate shell bodies are codegen'd by `cli/crates/cook-luagen/src/recipe.rs`. The cook-step shell-body path scans for `$<NAME>` tokens and emits `cook.dep_output(NAME)` interpolations; the plate-step shell-body path does not. The §{xref.dep-implications} edge-inference path *does* fire for plate bodies (the `requires = {"debug-apk"}` in the repro above confirms this), so the recipe sees the dep and orders correctly — the gap is in §{xref.string-substitution} lowering only.
 
@@ -271,7 +271,7 @@ recipe install: debug-apk
 
 This couples the consumer to the producer's output filename, which the `$<NAME>` form was meant to abstract.
 
-**Resolution path.** Extend `cook-luagen`'s plate-shell-body codegen to apply the same `$<NAME>` lowering pass that fires for `cook using { … }` shell bodies. The lowering rule is identical (§{xref.string-substitution}, "Lua lowering" note): `$<NAME>` → `cook.dep_output("NAME")`, `$<NAME.ACCESSOR>` → `cook.dep_output_list("NAME")`-driven form. Add a positive conformance fixture under `standard/conformance/positive/` exercising `plate { $<NAME> }` with a non-empty output list, and a runtime fixture under `examples/` that asserts the substitution at execute time. The §{xref.dep-implications} edge inference already works for the same surface, so the spec/impl gap is one-directional.
+**Resolution path.** Extend `cook-luagen`'s plate-shell-body codegen to apply the same `$<NAME>` lowering pass that fires for `cook { … }` shell bodies. The lowering rule is identical (§{xref.string-substitution}, "Lua lowering" note): `$<NAME>` → `cook.dep_output("NAME")`, `$<NAME.ACCESSOR>` → `cook.dep_output_list("NAME")`-driven form. Add a positive conformance fixture under `standard/conformance/positive/` exercising `plate { $<NAME> }` with a non-empty output list, and a runtime fixture under `examples/` that asserts the substitution at execute time. The §{xref.dep-implications} edge inference already works for the same surface, so the spec/impl gap is one-directional.
 
 **Found in.** Real-world Cookfile for the `glovemap` Android key-mapper project (`~/dev/glovemap/Cookfile`). The project's `install` recipe consumes the APK produced by the `debug-apk` recipe and ships it to a tablet via adb; the natural shape is `adb install -r $<debug-apk>` inside a `plate { … }` block. Hardcoded path workaround in production.
 
@@ -279,7 +279,7 @@ This couples the consumer to the producer's output filename, which the `$<NAME>`
 
 **Status.** Open as of v0.8. Cross-references E.13 (the shell-body analogue).
 
-**Symptom.** §{xref.string-substitution} states: "A `$<NAME>` reference inside a `using_lua_block` is parsed as Lua syntax (a single-element table containing the local variable `NAME`); cross-recipe references in Lua bodies use `cook.dep_output(NAME)` and `cook.dep_output_list(NAME)`." §{lua.using-block-globals-plate-test} confirms the same for plate and test Lua bodies: "Cross-recipe references inside a plate or test Lua body use `cook.dep_output()` / `cook.dep_output_list()`, identical to a `using >{ … }` Lua body."
+**Symptom.** §{xref.string-substitution} states: "A `$<NAME>` reference inside a `using_lua_block` is parsed as Lua syntax (a single-element table containing the local variable `NAME`); cross-recipe references in Lua bodies use `cook.dep_output(NAME)` and `cook.dep_output_list(NAME)`." §{lua.using-block-globals-plate-test} confirms the same for plate and test Lua bodies: "Cross-recipe references inside a plate or test Lua body use `cook.dep_output()` / `cook.dep_output_list()`, identical to a `>{ … }` Lua body."
 
 Plate and test Lua bodies run at **execute phase** (§{exec.two-phase}). The implementation registers `cook.dep_output` and `cook.dep_output_list` only on the **register-phase** Lua VM (`cli/crates/cook-register/src/dep_output_api.rs`, `register_dep_output_api`); the execute-phase worker pool (`cli/crates/cook-luaotp/src/pool.rs`) installs `cook.env`, `inputs`, `outputs`, `input`, `output`, `input_N`, but not `dep_output` / `dep_output_list`. A `plate >{ ... }` body that calls `cook.dep_output("foo")` therefore errors at execute time with `attempt to call a nil value (field 'dep_output')`.
 
@@ -287,7 +287,7 @@ Plate and test Lua bodies run at **execute phase** (§{exec.two-phase}). The imp
 
 ```cook
 recipe upstream
-    cook "build/u.txt" using { echo hi > $<out> }
+    cook "build/u.txt" { echo hi > $<out> }
 
 recipe downstream: upstream
     plate >{
@@ -305,7 +305,7 @@ attempt to call a nil value (field 'dep_output')
     [string "..."]:1: in main chunk
 ```
 
-The same call from a `using >{ … }` body (which runs at execute phase on a worker VM, per the spec) would presumably also fail; the surface-level wording in §{lua.using-block-globals} implies the API is available there too. The two surfaces share the worker-VM context, so the gap is identical.
+The same call from a `>{ … }` body (which runs at execute phase on a worker VM, per the spec) would presumably also fail; the surface-level wording in §{lua.using-block-globals} implies the API is available there too. The two surfaces share the worker-VM context, so the gap is identical.
 
 **Status quo.** Cross-recipe dep refs from Lua bodies have no working surface at execute time. Authors of plate Lua bodies cannot reach a dependency's output path through the spec'd API. The only path that works today is the shell-body form (§5.5 surface form), which itself has the partial gap documented in E.13 — together, the two entries cover every surface a Cookfile author would reach for to express "this plate operates on a dep's output."
 
@@ -321,7 +321,7 @@ Or, if the dep's output path is parametric (e.g., a globbed multi-output `cook` 
 **Resolution path.** Two options:
 
 1. **Install `cook.dep_output` / `cook.dep_output_list` on the worker VM.** The register-phase implementation in `cook-register/src/dep_output_api.rs` reads from `SharedTerminalOutputs`, which is a runtime structure populated by `cook.add_unit` calls. The same structure is plumbable to worker VMs through `pool.rs::set_globals_on_vm` (where `cook.env`, `inputs`, etc. are installed). Each worker VM gets a read-only reference to the terminal-outputs table at unit-execution time. This option resolves E.14 directly and is the surface-faithful fix.
-2. **Lower `cook.dep_output(N)` calls in plate/test Lua bodies at register phase.** Treat plate/test Lua bodies the same way cook-step `using >{ … }` bodies are lowered today (per the §{xref.string-substitution} "Lua lowering" note): scan the body for `cook.dep_output(N)` / `cook.dep_output_list(N)` calls and emit register-phase substitutions whose results are baked into the `lua_code` payload. This option avoids changes to the worker VM at the cost of a more invasive codegen pass and a register-time eager-evaluation semantics shift (the dep's output must be known at the register-phase moment of the consuming `add_unit` call).
+2. **Lower `cook.dep_output(N)` calls in plate/test Lua bodies at register phase.** Treat plate/test Lua bodies the same way cook-step `>{ … }` bodies are lowered today (per the §{xref.string-substitution} "Lua lowering" note): scan the body for `cook.dep_output(N)` / `cook.dep_output_list(N)` calls and emit register-phase substitutions whose results are baked into the `lua_code` payload. This option avoids changes to the worker VM at the cost of a more invasive codegen pass and a register-time eager-evaluation semantics shift (the dep's output must be known at the register-phase moment of the consuming `add_unit` call).
 
 Option 1 is preferred — it matches the spec's surface semantics (the API call happens at execute time) and is a local change to the worker pool. Option 2 is the "treat plate Lua bodies like cook-step Lua bodies" path and is the surface-most-compatible approach if option 1 turns out to have unforeseen interactions with the execute-phase scheduler.
 

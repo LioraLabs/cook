@@ -8,13 +8,13 @@ Cookfile
       ingredients: ["src/a.c"]
       excludes: []
       steps:
-        Cook outputs=["build/lib.a"] using=ShellBlock(["ar rcs $<out> $<all>"])
+        Cook outputs=["build/lib.a"] body=ShellBlock(["ar rcs $<out> $<all>"])
     Recipe name="link" line=7
       deps: []
       ingredients: ["build/lib.a"]
       excludes: []
       steps:
-        Cook outputs=["build/app"] using=ShellBlock(["cc -o $<out> $<all>"])
+        Cook outputs=["build/app"] body=ShellBlock(["cc -o $<out> $<all>"])
   chores:
   register_blocks: []
   top_level_module_calls: []

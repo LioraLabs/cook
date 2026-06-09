@@ -4,7 +4,7 @@ Plate one-to-one shell single-line
 
 recipe run: build
     ingredients "tests/*.c"
-    cook "build/{in.stem}" using {
+    cook "build/{in.stem}" {
         cc {in} -o {out}
     }
     plate { ./{in} }
@@ -21,9 +21,8 @@ recipe run: build
       (string))
     (cook_step
       outputs: (string)
-      (using_clause
-        shell: (shell_block
-          (shell_content))))
+      body: (shell_block
+        (shell_content)))
     (plate_step
       body: (shell_block
         (shell_content)))))
@@ -115,7 +114,7 @@ recipe run: build
     (ingredients_step
       (string))
     (plate_step
-      body: (using_lua_block
+      body: (exec_lua_block
         (lua_code)))))
 
 ================
@@ -141,7 +140,7 @@ recipe run-all: build
     (ingredients_step
       (string))
     (plate_step
-      body: (using_lua_block
+      body: (exec_lua_block
         (lua_code)))))
 
 ================
@@ -162,7 +161,7 @@ recipe run: build
       (dependency_list
         (identifier)))
     (plate_step
-      body: (using_lua_block
+      body: (exec_lua_block
         (lua_code)))))
 
 ================
@@ -229,6 +228,6 @@ recipe verify-lua: build
     (ingredients_step
       (string))
     (test_step
-      body: (using_lua_block
+      body: (exec_lua_block
         (lua_code))
       timeout: (number))))

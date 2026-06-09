@@ -2,7 +2,7 @@ import cli ./apps/cli
 import server ./apps/server
 
 recipe top
-    cook "build/release.bin" using {
+    cook "build/release.bin" {
         mkdir -p build
         cat $<cli.cli_bin> $<server.server_bin> > $<out>
     }

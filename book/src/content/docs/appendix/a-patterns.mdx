@@ -13,7 +13,7 @@ Small, copy-pasteable Cookfiles for things you'll want to do.
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 ```
 
 ## A.2. Compile and link
@@ -21,10 +21,10 @@ recipe build
 ```cook
 recipe compile
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 
 recipe link
-    cook "build/app" using { gcc $<compile> -o $<out> }
+    cook "build/app" { gcc $<compile> -o $<out> }
 ```
 
 (`link` doesn't need an explicit `: compile` dependency — `$<compile>` already creates the edge, and writing both gets you a "conflicting scheduling intent" warning.)
@@ -36,7 +36,7 @@ Surface form (no discovered inputs — `.d` files get regenerated but Cook doesn
 ```cook
 recipe compile
     ingredients "src/**/*.c"
-    cook "build/$<in.stem>.o" using {
+    cook "build/$<in.stem>.o" {
         mkdir -p .cook/deps
         gcc -MMD -MF .cook/deps/$<in.stem>.d -c $<in> -o $<out>
     }
@@ -72,7 +72,7 @@ Cook auto-creates parent dirs for declared `output`s but not for the `discovered
 ```cook
 recipe build
     ingredients "tests/*.c"
-    cook "build/$<in.stem>" using { gcc $<in> -o $<out> }
+    cook "build/$<in.stem>" { gcc $<in> -o $<out> }
 
 recipe run-tests: build
     ingredients "build/test_*"
@@ -84,11 +84,11 @@ recipe run-tests: build
 ```cook
 recipe build
     ingredients "src/*"
-    cook "build/$<in.name>" using { cp $<in> $<out> }
+    cook "build/$<in.name>" { cp $<in> $<out> }
 
 recipe package: build
     ingredients "build/*"
-    cook "dist/release.tar.gz" using {
+    cook "dist/release.tar.gz" {
         tar czf $<out> -C build .
     }
 ```
@@ -101,7 +101,7 @@ config
 
 recipe build
     ingredients "src/*.c"
-    cook "build/$<TARGET>/$<in.stem>.o" using {
+    cook "build/$<TARGET>/$<in.stem>.o" {
         gcc --target=$<TARGET> -c $<in> -o $<out>
     }
 ```
@@ -116,7 +116,7 @@ cook --set TARGET=arm64-darwin build
 ```cook
 recipe gen
     ingredients "schema.proto"
-    cook "build/types.go" "build/types.py" using {
+    cook "build/types.go" "build/types.py" {
         protoc --go_out=build --python_out=build schema.proto
     }
 ```
@@ -126,7 +126,7 @@ recipe gen
 ```cook
 recipe count
     ingredients "src/*.txt"
-    cook "build/$<in.stem>.count" using >{
+    cook "build/$<in.stem>.count" >{
         local f = io.open(input, "r")
         local txt = f:read("*a")
         f:close()

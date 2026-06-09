@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["neo/sys/*.cpp", "neo/sys/posix/*.cpp"]
       excludes: ["neo/sys/sdl/*.cpp"]
       steps:
-        Cook outputs=["build/sys.o"] using=ShellBlock(["echo build"])
+        Cook outputs=["build/sys.o"] body=ShellBlock(["echo build"])
   chores:
   register_blocks: []
   top_level_module_calls: []

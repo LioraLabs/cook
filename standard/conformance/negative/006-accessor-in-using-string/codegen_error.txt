@@ -1,1 +1,0 @@
-CS-0022: $<protos.stem> is rejected inside using-clause body

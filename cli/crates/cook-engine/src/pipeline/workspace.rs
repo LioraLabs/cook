@@ -918,11 +918,11 @@ mod tests {
         fs::create_dir_all(dir.path().join("lib")).unwrap();
         fs::write(
             dir.path().join("lib/Cookfile"),
-            "recipe lib_build\n    cook \"build/lib.o\" using { echo $<out> }\n",
+            "recipe lib_build\n    cook \"build/lib.o\" { echo $<out> }\n",
         ).unwrap();
         fs::write(
             dir.path().join("Cookfile"),
-            "import lib ./lib\nrecipe demo\n    cook \"build/demo\" using { echo $<lib.lib_build> }\n",
+            "import lib ./lib\nrecipe demo\n    cook \"build/demo\" { echo $<lib.lib_build> }\n",
         ).unwrap();
         fs::write(dir.path().join(".cookroot"), "").unwrap();
 

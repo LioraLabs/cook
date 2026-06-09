@@ -21,7 +21,7 @@ Placeholder in shell block (using clause)
 ================
 
 recipe lib
-    cook "out" using {
+    cook "out" {
         cc -c $<in> -o $<out>
     }
 
@@ -33,15 +33,14 @@ recipe lib
       name: (identifier))
     (cook_step
       outputs: (string)
-      (using_clause
-        shell: (shell_block
-          (shell_content)
-          (placeholder
-            (placeholder_ident))
-          (shell_content)
-          (placeholder
-            (placeholder_ident))
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
 
 ================
 Placeholder in plate body inside shell-quoted string
@@ -106,7 +105,7 @@ Out-indexed and accessor placeholders
 ================
 
 recipe r
-    cook "a.o" "b.o" using {
+    cook "a.o" "b.o" {
         cc -o $<out_1> $<out_2.stem>.tmp
     }
 
@@ -119,15 +118,14 @@ recipe r
     (cook_step
       outputs: (string)
       outputs: (string)
-      (block_using_clause
-        shell: (shell_block
-          (shell_content)
-          (placeholder
-            (placeholder_ident))
-          (shell_content)
-          (placeholder
-            (placeholder_ident))
-          (shell_content))))))
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
 
 ================
 Multiple placeholders in one string

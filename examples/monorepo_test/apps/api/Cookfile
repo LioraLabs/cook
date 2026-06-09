@@ -1,7 +1,7 @@
 # Backend project. All passing.
 
 recipe build
-    cook "build/api.bin" using {
+    cook "build/api.bin" {
         mkdir -p build
         echo "api binary" > $<out>
     }

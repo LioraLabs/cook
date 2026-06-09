@@ -15,7 +15,7 @@ recipe pass_basic
 #     12 separate cache entries.
 recipe pass_iterated
     ingredients "src/inputs/*.txt"
-    cook "build/pass_iterated/$<in.stem>.out" using {
+    cook "build/pass_iterated/$<in.stem>.out" {
         mkdir -p build/pass_iterated
         sleep $<SLEEP>
         echo "ok" > $<out>
@@ -35,7 +35,7 @@ recipe fail_basic
 #     Pins continue-past-failure and mixed pass/fail aggregation.
 recipe fail_partial
     ingredients "src/inputs/*.txt"
-    cook "build/fail_partial/$<in.stem>.out" using {
+    cook "build/fail_partial/$<in.stem>.out" {
         mkdir -p build/fail_partial
         sleep $<SLEEP>
         echo "ok" > $<out>
@@ -49,7 +49,7 @@ recipe fail_partial
 
 # (6) Test whose preceding cook step calls false. Pins blocked status.
 recipe blocked_by_build
-    cook "build/blocked_by_build/never.out" using {
+    cook "build/blocked_by_build/never.out" {
         mkdir -p build/blocked_by_build
         false
     }
@@ -62,7 +62,7 @@ recipe slow_timeout
 # (8) `as` modifier. Pins name override surface.
 recipe named_test
     ingredients "src/inputs/*.txt"
-    cook "build/named_test/$<in.stem>.out" using {
+    cook "build/named_test/$<in.stem>.out" {
         mkdir -p build/named_test
         echo "ok" > $<out>
     }
@@ -71,7 +71,7 @@ recipe named_test
 # (9) Cache replay. Pins cache hit on second run.
 recipe cached_replay
     ingredients "src/inputs/*.txt"
-    cook "build/cached_replay/$<in.stem>.out" using {
+    cook "build/cached_replay/$<in.stem>.out" {
         mkdir -p build/cached_replay
         sleep $<SLEEP>
         echo "ok" > $<out>
@@ -83,7 +83,7 @@ recipe cached_replay
 #      those two re-run.
 recipe rerun_failed_set
     ingredients "src/inputs/*.txt"
-    cook "build/rerun_failed_set/$<in.stem>.out" using {
+    cook "build/rerun_failed_set/$<in.stem>.out" {
         mkdir -p build/rerun_failed_set
         sleep $<SLEEP>
         echo "$<in.stem>" > $<out>

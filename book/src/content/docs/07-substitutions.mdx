@@ -22,7 +22,7 @@ If you see `$<X` *without* a closing `>`, or with a non-identifier character bef
 
 ## 7.2. The four kinds of placeholder
 
-Inside an output pattern, a `using { ... }` body, a `plate`/`test` body, or a bare shell command, a `$<TOKEN>` placeholder resolves in priority order:
+Inside an output pattern, a `{ ... }` body, a `plate`/`test` body, or a bare shell command, a `$<TOKEN>` placeholder resolves in priority order:
 
 1. **Builtin placeholders** — the per-step accessors like `$<in>`, `$<out>`, `$<all>`, `$<out_1>`.
 2. **Recipe references** — `$<lib>` expands to the recipe `lib`'s outputs; `$<lib.stem>` is the same with a path accessor applied.
@@ -35,11 +35,11 @@ There is no silent fallthrough. If you typo a placeholder, you get a clear error
 
 | Placeholder       | Meaning                                              | Where it works                |
 |-------------------|------------------------------------------------------|-------------------------------|
-| `$<in>`           | The current input (in iterating steps)               | `using` body, `plate`, `test` |
-| `$<out>`          | The current output                                   | `using` body                  |
-| `$<all>`          | Every input on one line, space-separated              | `using` body                  |
-| `$<out_1>`, `$<out_2>`, ... | Nth declared output                       | `using` body, multi-output `cook` |
-| `$<in.stem>`      | Stem of the current input (any path accessor)        | output pattern, `using` body  |
+| `$<in>`           | The current input (in iterating steps)               | `cook` body, `plate`, `test` |
+| `$<out>`          | The current output                                   | `cook` body                   |
+| `$<all>`          | Every input on one line, space-separated              | `cook` body                   |
+| `$<out_1>`, `$<out_2>`, ... | Nth declared output                       | `cook` body, multi-output `cook` |
+| `$<in.stem>`      | Stem of the current input (any path accessor)        | output pattern, `cook` body   |
 
 Bare shell commands in a recipe body run in *one-shot* mode — no iteration source, no declared output — so the iteration/output builtins above don't apply there. Bare shell *can* still substitute recipe references (`$<compile>`) and declared env vars (`$<TARGET>`), which is what §7.10's "Try it" does.
 
@@ -57,7 +57,7 @@ Anywhere you can write `$<TOKEN>`, you can write `$<TOKEN.ACCESSOR>` for one of 
 ```cook
 recipe rename
     ingredients "src/*.txt"
-    cook "build/$<in.stem>.md" using { cat $<in> > $<out> }
+    cook "build/$<in.stem>.md" { cat $<in> > $<out> }
 ```
 
 Accessors apply to the resolved path on the left of the dot. `$<in.stem>` = stem of the current input. `$<lib.dir>` = directory of recipe `lib`'s output.
@@ -71,10 +71,10 @@ Inside a step body, a placeholder that *names another recipe* expands to that re
 ```cook
 recipe compile
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 
 recipe link
-    cook "build/app" using { gcc $<compile> -o $<out> }
+    cook "build/app" { gcc $<compile> -o $<out> }
 ```
 
 `$<compile>` in the link body expands to every output of the `compile` recipe, space-separated, exactly as if you'd written `$<all>` referring to compile's outputs. The placeholder also records `link`'s dep on `compile` for you, so no explicit `: compile` is needed (see the tip below). *(Standard §5.5.)*
@@ -94,10 +94,10 @@ We met this in chapter 4. Recap:
 ```cook
 recipe buildtests
     ingredients "tests/*.c"
-    cook "build/$<in.stem>" using { gcc $<in> -o $<out> }
+    cook "build/$<in.stem>" { gcc $<in> -o $<out> }
 
 recipe runtests
-    cook "results/$<buildtests.stem>.txt" using {
+    cook "results/$<buildtests.stem>.txt" {
         ./$<in> > $<out>
     }
 ```
@@ -107,7 +107,7 @@ When an *output pattern* contains `$<lib.ACCESSOR>`, that recipe drives iteratio
 The rules:
 - Only one driver per step.
 - Bare `$<lib>` (no accessor) in an output pattern is a hard error.
-- `$<lib.ACCESSOR>` is forbidden in `using` bodies, `plate` bodies, `test` bodies, and bare shell commands — those have no output pattern and so can't have a driver.
+- `$<lib.ACCESSOR>` is forbidden in `cook` bodies, `plate` bodies, `test` bodies, and bare shell commands — those have no output pattern and so can't have a driver.
 - Placeholder identifiers don't allow hyphens. A recipe named `build-tests` is legal, but `$<build-tests.stem>` won't parse — the lexer stops at the hyphen (Standard §2.11). For drivers, keep the recipe name hyphen-free: `buildtests`, or `build_tests`. (Dotted names like `build.tests` are not allowed at the *declaration* site — dots inside a placeholder always denote either a path accessor or an `import` alias, never a locally-declared recipe segment.)
 
 *(Standard §5.4.)*
@@ -123,7 +123,7 @@ config
 
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using {
+    cook "build/$<in.stem>.o" {
         gcc -c -O$<OPT_LEVEL> --target=$<TARGET> $<in> -o $<out>
     }
 ```
@@ -143,12 +143,12 @@ If a recipe and an env var share a name, the recipe wins. Cook emits a warning n
 
 ## 7.9. Distinguishing Cook placeholders from shell variables
 
-This trips people up coming from `make` or shell-heavy build systems. Inside a `using { ... }` body, two things look superficially similar:
+This trips people up coming from `make` or shell-heavy build systems. Inside a `{ ... }` body, two things look superficially similar:
 
 ```cook
 recipe demo
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using {
+    cook "build/$<in.stem>.o" {
         echo "compiling $<in> for ${TARGET:-x86_64} as $USER"
         gcc -c $<in> -o $<out>
     }
@@ -164,7 +164,7 @@ config
 
 recipe demo
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using {
+    cook "build/$<in.stem>.o" {
         gcc -c $<in> --target=$<TARGET> -o $<out>
     }
 ```

@@ -49,7 +49,7 @@ cook.add_unit({
 })
 ```
 
-Records one shell unit with one input and one output. The same registration is produced by the surface form `cook "main.o" using { gcc -c $<in> -o $<out> }` in a single-output `cook` step (§{steps.cook-single}, §{phl.cook-step}).
+Records one shell unit with one input and one output. The same registration is produced by the surface form `cook "main.o" { gcc -c $<in> -o $<out> }` in a single-output `cook` step (§{steps.cook-single}, §{phl.cook-step}).
 
 ### Example 22.1.2
 
@@ -133,7 +133,7 @@ Records one shell unit whose declared output set is resolved by globbing `apps/w
 
 These helpers are the Lua-side counterparts of the surface `shell_command` (§{steps.shell}) and `interactive_command` (§{steps.shell}) step forms. Each call records one unit (non-interactive or interactive, respectively) with caching disabled. The return value is the empty string; it is returned only so that callers composing results do not fail on `nil` concatenation.
 
-A conforming implementation MUST raise a Lua runtime error when `cook.exec` or `cook.interactive` is called from execute-phase Lua (a `lua_line`, a `lua_block`, or a `using >{ … }` payload). The diagnostic MUST identify the function name and the calling step kind. The same rule applies to other register-only Cook Lua API helpers: `cook.add_unit`, `cook.step_group`, `cook.recipe`. See §{rationale.execute-phase-api}.
+A conforming implementation MUST raise a Lua runtime error when `cook.exec` or `cook.interactive` is called from execute-phase Lua (a `lua_line`, a `lua_block`, or a `>{ … }` payload). The diagnostic MUST identify the function name and the calling step kind. The same rule applies to other register-only Cook Lua API helpers: `cook.add_unit`, `cook.step_group`, `cook.recipe`. See §{rationale.execute-phase-api}.
 
 An implementation SHOULD include a brief migration hint in the diagnostic — for example, suggesting `>>` (`inline_lua_line`) instead of `>` to record the call at register phase, or a top-level `register` block as an alternative register-phase context (informative).
 

@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["out.txt"] using=ShellBlock(["cat <<EOF > out.txt", "a heredoc with a } brace", "and a } here too", "EOF", "echo done"])
+        Cook outputs=["out.txt"] body=ShellBlock(["cat <<EOF > out.txt", "a heredoc with a } brace", "and a } here too", "EOF", "echo done"])
   chores:
   register_blocks: []
   top_level_module_calls: []

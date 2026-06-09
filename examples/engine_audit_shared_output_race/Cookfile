@@ -8,12 +8,12 @@
 # path, which is exactly the race condition we're guarding against.
 
 recipe writer_a
-    cook "build/shared.bin" using {
+    cook "build/shared.bin" {
         mkdir -p build && printf 'a' > $<out>
     }
 
 recipe writer_b
-    cook "build/shared.bin" using {
+    cook "build/shared.bin" {
         mkdir -p build && printf 'b' > $<out>
     }
 

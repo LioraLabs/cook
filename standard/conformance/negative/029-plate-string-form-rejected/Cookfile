@@ -1,4 +1,4 @@
 recipe r
     ingredients "src/*.c"
-    cook "build/{in.stem}.o" using { cc -c {in} -o {out} }
+    cook "build/{in.stem}.o" { cc -c {in} -o {out} }
     plate "./{in}"

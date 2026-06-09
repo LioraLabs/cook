@@ -1,6 +1,6 @@
 recipe build
     ingredients "src.txt"
-    cook "out.txt" using {
+    cook "out.txt" {
         for i in {1..3}; do echo "iter $i" >> $<out>; done
         cp file.{c,h} dest/ 2>/dev/null || true
     }

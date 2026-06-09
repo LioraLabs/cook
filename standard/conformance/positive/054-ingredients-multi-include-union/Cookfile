@@ -7,7 +7,7 @@
 
 recipe build
     ingredients "src/*.c" "include/*.h" !"src/skip.c" !"include/skip.h"
-    cook "build/$<in.stem>.o" using { touch $<out> }
+    cook "build/$<in.stem>.o" { touch $<out> }
 
 recipe show
     ingredients "src/*.c" "include/*.h"

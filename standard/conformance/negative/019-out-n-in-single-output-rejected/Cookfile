@@ -1,4 +1,4 @@
 recipe "build"
-    cook "build/app" using {
+    cook "build/app" {
         gcc -o $<out_1>
     }

@@ -96,9 +96,11 @@ pub(crate) fn try_inline_lua_block(after_open: &str) -> Option<String> {
 
 /// Parse a body payload — the `body` production from App. A.4 (CS-0024).
 ///
-/// `after_kw` is the line text after the body's introducer keyword
-/// (`using` for cook, the empty string for plate/test). `kw_for_diag` is
-/// the keyword name used in error messages (`cook using`, `plate`, `test`).
+/// `after_kw` is the line text starting at the body opener (`{` or `>{`),
+/// i.e. the remainder after the step's output pattern(s) for cook (CS-0099
+/// removed the `using` introducer) or after the keyword for plate/test.
+/// `kw_for_diag` is the step name used in error messages (`cook`, `plate`,
+/// `test`).
 ///
 /// Returns the parsed `Body` plus the new token-stream position.
 pub(crate) fn parse_body_payload(
@@ -190,17 +192,17 @@ pub(crate) fn strip_keyword<'a>(text: &'a str, keyword: &str) -> Option<&'a str>
 ///  * `excludes` — parallel `bool` array marking exclude (`!"…"`) entries.
 ///    Always `false` when `allow_exclude` is false; the caller may ignore.
 ///  * `leftover` — the unparsed remainder of the line where collection
-///    stopped. For `cook`, this is the text starting at `using`. For
-///    `ingredients`, this is empty (no trailing clause).
+///    stopped. For `cook`, this is the text starting at the body opener
+///    (`{` or `>{`). For `ingredients`, this is empty (no trailing clause).
 ///  * `new_pos` — token-stream position pointing at the first token of the
-///    line where collection stopped (e.g. the line containing `using` for
-///    `cook`, or the line that broke the pattern run). NOTE: this differs
+///    line where collection stopped (e.g. the line containing the body
+///    opener for `cook`, or the line that broke the pattern run). NOTE: this differs
 ///    from `collect_lua_block`/`collect_shell_block`, which return a
 ///    position PAST the consumed block. Callers that want "past the stop
 ///    line" must advance one more line themselves.
 ///
 /// The caller must inspect `leftover` to decide whether the stopping line
-/// is well-formed (e.g. begins with `using` for cook, is empty for
+/// is well-formed (e.g. begins with `{` or `>{` for cook, is empty for
 /// ingredients).
 pub(crate) fn collect_quoted_patterns_multiline(
     initial_text: &str,
@@ -410,7 +412,7 @@ pub(crate) fn parse_cook_line(
 ) -> Result<(CookStep, usize), ParseError> {
     let rest = rest.trim();
 
-    // §8.4.2 Lua-expression form: `cook (EXPR) using ...`. Detected by a
+    // §8.4.2 Lua-expression form: `cook (EXPR) >{ ... }`. Detected by a
     // leading `(`; the expression is balanced-paren-scanned (mirroring the
     // chore default-param `=(EXPR)` form, §7.1.1). The one-to-one form
     // admits exactly one output by construction — multi-output mixing with
@@ -434,35 +436,32 @@ pub(crate) fn parse_cook_line(
         if leftover.is_empty() {
             // Declaration-only Lua-expr cook step is meaningless: there's
             // no body to evaluate, and the unit's ingredients can't drive
-            // anything. Reject early — §8.4.2 implies a `using`-bearing step.
+            // anything. Reject early — §8.4.2 implies a body-bearing step.
             return Err(ParseError::Parse {
                 line,
-                message: "cook (LUA_EXPR): expected 'using' after expression"
+                message: "cook (LUA_EXPR): expected a `>{ … }` or `{ … }` body after expression"
                     .to_string(),
             });
         }
 
-        if !leftover.starts_with("using") {
+        if leftover.starts_with("using") {
             return Err(ParseError::Parse {
                 line,
-                message: format!(
-                    "cook (LUA_EXPR): expected 'using' after expression, found: {}",
-                    leftover
-                ),
+                message: "cook (LUA_EXPR): the `using` keyword was removed in CS-0099; write the body directly after the expression: `cook (EXPR) >{ … }`"
+                    .to_string(),
             });
         }
 
-        let after_using = leftover["using".len()..].trim_start();
         let (body, new_pos) = parse_body_payload(
-            after_using,
+            leftover,
             line,
             tokens,
             current_pos,
             source_lines,
-            "cook using",
+            "cook",
         )?;
         return Ok((
-            CookStep { outputs, using_clause: Some(body) },
+            CookStep { outputs, body: Some(body) },
             new_pos,
         ));
     }
@@ -497,30 +496,28 @@ pub(crate) fn parse_cook_line(
             pos += 1;
         }
         return Ok((
-            CookStep { outputs, using_clause: None },
+            CookStep { outputs, body: None },
             pos,
         ));
     }
 
-    if !after_pattern.starts_with("using") {
+    if after_pattern.starts_with("using") {
         return Err(ParseError::Parse {
             line,
-            message: format!("cook: expected 'using' after output pattern, found: {}", after_pattern),
+            message: "cook: the `using` keyword was removed in CS-0099; write the body directly after the output pattern: `cook \"out\" { … }` / `cook \"out\" >{ … }`".to_string(),
         });
     }
 
-    let after_using = after_pattern["using".len()..].trim_start();
-
-    // parse_body_payload needs the line that the `using` keyword sits on.
+    // parse_body_payload needs the line that the body opener sits on.
     // After our multiline pattern walk, pos_after_patterns points at the
     // first token on the line where pattern collection stopped — which is
     // the line `leftover` came from. Read its line number off the token.
-    let using_line = tokens.get(pos_after_patterns).map(|t| t.line).unwrap_or(line);
+    let body_line = tokens.get(pos_after_patterns).map(|t| t.line).unwrap_or(line);
 
     let (body, new_pos) =
-        parse_body_payload(after_using, using_line, tokens, pos_after_patterns, source_lines, "cook using")?;
+        parse_body_payload(after_pattern, body_line, tokens, pos_after_patterns, source_lines, "cook")?;
     Ok((
-        CookStep { outputs, using_clause: Some(body), },
+        CookStep { outputs, body: Some(body), },
         new_pos,
     ))
 }

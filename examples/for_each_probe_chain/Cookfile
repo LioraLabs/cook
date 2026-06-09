@@ -53,7 +53,7 @@ probe services: services_raw
 # record's fields; `$<out>` is the per-member output path.
 recipe render
     ingredients services
-    cook "build/$<in.name>.conf" using {
+    cook "build/$<in.name>.conf" {
         mkdir -p build
         printf 'service  = %s\nurl      = %s\nreplicas = %s\n' \
             "$<in.name>" "$<in.url>" "$<in.replicas>" > $<out>

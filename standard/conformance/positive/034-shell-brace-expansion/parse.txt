@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["src.txt"]
       excludes: []
       steps:
-        Cook outputs=["out.txt"] using=ShellBlock(["for i in {1..3}; do echo \"iter $i\" >> $<out>; done", "cp file.{c,h} dest/ 2>/dev/null || true"])
+        Cook outputs=["out.txt"] body=ShellBlock(["for i in {1..3}; do echo \"iter $i\" >> $<out>; done", "cp file.{c,h} dest/ 2>/dev/null || true"])
   chores:
   register_blocks: []
   top_level_module_calls: []

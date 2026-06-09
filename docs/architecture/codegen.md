@@ -134,7 +134,7 @@ One output per input. Emits a `for` loop. Inside the loop body, `_cook_in` is bo
 
 ```text
 ingredients "src/*.c"
-cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 ```
 
 ```lua
@@ -161,7 +161,7 @@ When the `using_clause` is a `LuaBlock` (`cook_step.rs:182-189`), the emitted un
 Single literal output, single invocation that consumes the whole input list.
 
 ```text
-cook "build/lib.a" using { ar rcs $<out> $<all> }
+cook "build/lib.a" { ar rcs $<out> $<all> }
 ```
 
 ```lua
@@ -181,7 +181,7 @@ The full input list is passed as `inputs = <input_source>`. `_cook_all` is preco
 One iteration item produces N outputs. Pattern is a multi-output cook step where at least one output uses `$<in.X>` or `$<dep.X>`. All patterns must share the same driver (per coherence check above).
 
 ```text
-cook "build/$<in.stem>.js" "build/$<in.stem>.wasm" using { gen $<in> }
+cook "build/$<in.stem>.js" "build/$<in.stem>.wasm" { gen $<in> }
 ```
 
 ```lua
@@ -202,7 +202,7 @@ Only the first declared output is forwarded into `_cook_outputs_N` (cook step ch
 Multi-output cook step where every pattern is literal. One invocation produces all declared outputs; they share a cache entry and are produced atomically.
 
 ```text
-cook "out/parser.rs" "out/parser.h" using { lalrpop src/grammar.lalrpop --out-dir out }
+cook "out/parser.rs" "out/parser.h" { lalrpop src/grammar.lalrpop --out-dir out }
 ```
 
 ```lua
@@ -422,7 +422,7 @@ $<env.HOME>     → cook.require_env("HOME")    ; forced env lookup, even if HOM
 
 ```text
 ingredients "src/*.c"
-cook "build/$<in.stem>.o" using { $<CC> $<CFLAGS> -c $<in> -o $<out> }
+cook "build/$<in.stem>.o" { $<CC> $<CFLAGS> -c $<in> -o $<out> }
 ```
 
 Step body is joined as `set -e\n$<CC> $<CFLAGS> -c $<in> -o $<out>` and lowered to:
@@ -505,7 +505,7 @@ Same level-picking, but adds the surrounding newlines that Lua eats after `[…[
 Beyond per-template builtin checks, `validate_accessor_placement` (`recipe.rs:222`) runs once per recipe per step and rejects:
 
 - **Bare path accessors in an output pattern** — `$<stem>`, `$<name>`, `$<ext>`, `$<dir>` were removed by CS-0033 §6.7. Use `$<in.stem>` (or `$<dep.stem>` for a dep-driven pattern). (`recipe.rs:182-192`)
-- **Bare recipe ref in an output pattern** — `$<lib>` with no accessor has no iteration semantics in an output pattern (Standard §5.4). Use `$<lib.stem>` (or move it into the `using` body). (`recipe.rs:200-210`)
+- **Bare recipe ref in an output pattern** — `$<lib>` with no accessor has no iteration semantics in an output pattern (Standard §5.4). Use `$<lib.stem>` (or move it into the step body). (`recipe.rs:200-210`)
 - **Multi-output coherence** — every output pattern in a multi-output cook step must share the same driver. (`recipe.rs:126`)
 - **Placeholder violations inside shell-block bodies** — wrong mode, wrong output count, malformed `out_0`, etc. (`recipe.rs:264-273`)
 - **`$<lib.X>` in plate / test / bare shell bodies** — these have no output pattern, so cannot declare a driver for dep-accessor iteration (the §5.4 firewall). (`recipe.rs:289-326`, `check_command` at `recipe.rs:569`)

@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["build/*.so"]
       excludes: []
       steps:
-        Cook outputs=["dist/$<in.name>"] using=ShellBlock(["cp $<in> $<out>"])
+        Cook outputs=["dist/$<in.name>"] body=ShellBlock(["cp $<in> $<out>"])
         Plate body=LuaBlock("        cook.sh(\"strip \" .. input)")
   chores:
   register_blocks: []

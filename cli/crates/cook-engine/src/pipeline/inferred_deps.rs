@@ -237,8 +237,8 @@ mod tests {
     #[test]
     fn workspace_inferred_deps_tree_relative() {
         let (_dir, ws) = make_workspace(
-            "import lib ./lib\nrecipe top\n    cook \"build/top\" using { echo $<lib.lib_build> }\n",
-            &[("lib", "recipe lib_build\n    cook \"lib.o\" using { echo $<out> }\n")],
+            "import lib ./lib\nrecipe top\n    cook \"build/top\" { echo $<lib.lib_build> }\n",
+            &[("lib", "recipe lib_build\n    cook \"lib.o\" { echo $<out> }\n")],
         );
         let deps = compute_workspace_inferred_deps(&ws);
         assert_eq!(
@@ -261,20 +261,20 @@ mod tests {
         fs::create_dir_all(dir.path().join("core/lib")).unwrap();
         fs::write(
             dir.path().join("core/lib/Cookfile"),
-            "recipe core_lib\n    cook \"core.o\" using { echo $<out> }\n",
+            "recipe core_lib\n    cook \"core.o\" { echo $<out> }\n",
         )
         .unwrap();
         // apps/web Cookfile — imports core via sigil, refs $<core.core_lib>
         fs::create_dir_all(dir.path().join("apps/web")).unwrap();
         fs::write(
             dir.path().join("apps/web/Cookfile"),
-            "import core //core/lib\nrecipe web_app\n    cook \"web.o\" using { echo $<core.core_lib> }\n",
+            "import core //core/lib\nrecipe web_app\n    cook \"web.o\" { echo $<core.core_lib> }\n",
         )
         .unwrap();
         // root Cookfile: imports BOTH web (tree) AND core (sigil) directly.
         fs::write(
             dir.path().join("Cookfile"),
-            "import web ./apps/web\nimport core //core/lib\nrecipe top\n    cook \"build/top\" using { echo $<web.web_app> $<core.core_lib> }\n",
+            "import web ./apps/web\nimport core //core/lib\nrecipe top\n    cook \"build/top\" { echo $<web.web_app> $<core.core_lib> }\n",
         )
         .unwrap();
         fs::write(dir.path().join(".cookroot"), "").unwrap();
@@ -314,7 +314,7 @@ mod tests {
     /// produce `{"verify" -> ["prepare"]}`.
     #[test]
     fn single_inferred_deps_body_ref_produces_edge() {
-        let src = "recipe prepare\n    cook \"prepare.out\" using { echo $<out> }\nrecipe verify\n    test { echo $<prepare> }\n";
+        let src = "recipe prepare\n    cook \"prepare.out\" { echo $<out> }\nrecipe verify\n    test { echo $<prepare> }\n";
         let cf = cook_lang::parse(src).unwrap();
         let deps = compute_single_inferred_deps(&cf);
         assert_eq!(
@@ -340,7 +340,7 @@ mod tests {
     /// `$<...>`; the diagnostic must match.
     #[test]
     fn single_dep_conflict_uses_sigil_placeholder_syntax() {
-        let src = "recipe compile\n    cook \"compile.out\" using { echo hi > $<out> }\nrecipe link: compile\n    cook \"link.out\" using { echo $<compile> > $<out> }\n";
+        let src = "recipe compile\n    cook \"compile.out\" { echo hi > $<out> }\nrecipe link: compile\n    cook \"link.out\" { echo $<compile> > $<out> }\n";
         let cf = cook_lang::parse(src).unwrap();
         let warnings = single_dep_conflicts(&cf);
         assert_eq!(warnings.len(), 1, "expected exactly one warning, got: {warnings:?}");

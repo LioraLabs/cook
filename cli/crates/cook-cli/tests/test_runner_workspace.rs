@@ -27,7 +27,7 @@ fn cook_binary() -> std::path::PathBuf {
 fn write_workspace(root: &std::path::Path) {
     fs::write(
         root.join("Cookfile"),
-        "import sub ./sub\nrecipe build\n    cook \"build/r.txt\" using { mkdir -p build; printf '' > $<out> }\n",
+        "import sub ./sub\nrecipe build\n    cook \"build/r.txt\" { mkdir -p build; printf '' > $<out> }\n",
     )
     .unwrap();
     fs::create_dir(root.join("sub")).unwrap();

@@ -13,7 +13,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["build/obj/$<protos.stem>.pb.cc"] using=ShellBlock(["protoc --cpp_out=build/obj $<in>"])
+        Cook outputs=["build/obj/$<protos.stem>.pb.cc"] body=ShellBlock(["protoc --cpp_out=build/obj $<in>"])
   chores:
   register_blocks: []
   top_level_module_calls: []

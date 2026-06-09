@@ -10,7 +10,7 @@
 # §{exec.output-materialisation}.
 
 recipe build
-    cook "build/out/foo.txt" using {
+    cook "build/out/foo.txt" {
         echo hi > $<out>
     }
 

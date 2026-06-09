@@ -12,7 +12,7 @@ probe p
     (probe_header
       name: (identifier))
     (produce_step
-      body: (using_lua_block
+      body: (exec_lua_block
         (lua_code)))))
 
 ================
@@ -88,7 +88,7 @@ probe p: a b
         (identifier)
         (identifier)))
     (produce_step
-      body: (using_lua_block
+      body: (exec_lua_block
         (lua_code)))))
 
 ================
@@ -105,7 +105,7 @@ probe cc:zlib
     (probe_header
       name: (identifier))
     (produce_step
-      body: (using_lua_block
+      body: (exec_lua_block
         (lua_code)))))
 
 ================
@@ -122,7 +122,7 @@ probe "cc:zlib"
     (probe_header
       name: (string))
     (produce_step
-      body: (using_lua_block
+      body: (exec_lua_block
         (lua_code)))))
 
 ================
@@ -141,5 +141,5 @@ probe cc:zlib: cc:compiler
       (probe_dep_list
         (identifier)))
     (produce_step
-      body: (using_lua_block
+      body: (exec_lua_block
         (lua_code)))))

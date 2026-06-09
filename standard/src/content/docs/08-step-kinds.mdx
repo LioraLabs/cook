@@ -33,7 +33,7 @@ A `recipe_body` MUST satisfy the **region ordering rule** (App. A.3, "Region ord
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "bin/$<in.stem>" using { cc $<in> -o $<out> }
+    cook "bin/$<in.stem>" { cc $<in> -o $<out> }
     test { ./bin/app }
     @vim notes.txt
     echo done
@@ -75,7 +75,7 @@ The glob language itself — which characters are wildcards, whether `**` matche
 ```cook
 recipe lib
     ingredients "src/*.c" "include/*.h" !"src/lua.c" !"src/luac.c"
-    cook "build/libmath.a" using { ar rcs $<out> $<all> }
+    cook "build/libmath.a" { ar rcs $<out> $<all> }
 ```
 
 The ingredient set is every `.c` file in `src/` and every `.h` file in `include/`, minus `src/lua.c` and `src/luac.c`.
@@ -119,34 +119,34 @@ The four Lua-prefix forms (`>>`, `>>{`, `>`, `>{`) are not subject to this casca
 The "separator" after a step keyword is space, tab, or end of token. A Content line whose first token is `cooking` is a `shell_command`, not a malformed `cook_step`. See parser test `test_strip_keyword`.
 
 ## 8.4. `cook` — single-output form [#steps.cook-single]
-A `cook_step` (§{grammar-appendix.steps}, `cook_step`) declares a build output. The single-output form has exactly one `STRING` output pattern before the optional `using` clause:
+A `cook_step` (§{grammar-appendix.steps}, `cook_step`) declares a build output. The single-output form has exactly one `STRING` output pattern before the optional body (CS-0099 removed the `using` introducer; the body opener follows the pattern directly):
 
 ```ebnf
-cook "out" using_clause?
+cook "out" body?
 ```
 
 The output is a `STRING` whose interior MAY contain substitution placeholders (e.g. `$<in.stem>`, `$<in>`, `$<out>`). The placeholder language is defined by §{phl} for substitution shapes and by §{xref} for cross-recipe references; §{recipes} treats placeholder text as opaque.
 
 A conforming implementation MUST accept all three of the following forms:
 
-| Form | `using_clause` | Semantic |
+| Form | `body` | Semantic |
 |---|---|---|
 | `cook "out"`                    | absent                  | declaration-only: announces the output without a build command (§{grammar-appendix.steps}, "Declaration-only cook step"). The build command is expected to be registered by preceding Lua code or supplied by a later amendment. |
-| `cook "out" using >{ ... }`     | `using_lua_block`       | execute-phase Lua block; produces the build effect, with `inputs` / `outputs` / `input` / `output` bindings per §{lua.using-block-globals}. |
-| `cook "out" using { ... }`      | `shell_block`           | sequence of shell commands, one per non-blank line of the block (§{lexical.brace-blocks}, "Shell block line normalisation"). The block's textual placeholders (§{phl.cook-step}) are substituted at register time. |
+| `cook "out" >{ ... }`           | `exec_lua_block`        | execute-phase Lua block; produces the build effect, with `inputs` / `outputs` / `input` / `output` bindings per §{lua.using-block-globals}. |
+| `cook "out" { ... }`            | `shell_block`           | sequence of shell commands, one per non-blank line of the block (§{lexical.brace-blocks}, "Shell block line normalisation"). The block's textual placeholders (§{phl.cook-step}) are substituted at register time. |
 
-After the `using` keyword, the `using`-dispatch order of §{grammar-appendix.steps} ("`using` dispatch order") applies: `>{` is tested before `{`. The first match wins; the bare-string form is no longer admitted (CS-0022).
+After the output pattern(s), the body-dispatch order of §{grammar-appendix.steps} ("body dispatch order") applies: `>{` is tested before `{`. The first match wins; the bare-string form is no longer admitted (CS-0022), and the former `using` introducer is rejected with a migration diagnostic (CS-0099).
 
 ### Example 8.4.1
 
 ```cook
 recipe lib
     ingredients "lib/*.c"
-    cook "build/obj/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
-    cook "build/libmath.a" using { ar rcs $<out> $<all> }
+    cook "build/obj/$<in.stem>.o" { gcc -c $<in> -o $<out> }
+    cook "build/libmath.a" { ar rcs $<out> $<all> }
 ```
 
-The first `cook` is a one-to-one mapping from each ingredient to one object file. The second is a many-to-one mapping producing a single archive from the collected set. Both use the inline (one-line) `shell_block` form of `using`.
+The first `cook` is a one-to-one mapping from each ingredient to one object file. The second is a many-to-one mapping producing a single archive from the collected set. Both use the inline (one-line) `shell_block` body form.
 
 ### Example 8.4.2
 
@@ -161,10 +161,10 @@ The `cook "bin/app"` step is declaration-only. The following `shell_command` sup
 
 ### Note 8.4.1
 
-The `@` character inside a `shell_block` body is preserved verbatim — it is part of the block's shell text, not an interactive-step marker. The interactive-step dispatch of §{steps.shell} applies only to a Content line's first non-whitespace character, not to text nested inside a `cook` step's `using` clause.
+The `@` character inside a `shell_block` body is preserved verbatim — it is part of the block's shell text, not an interactive-step marker. The interactive-step dispatch of §{steps.shell} applies only to a Content line's first non-whitespace character, not to text nested inside a `cook` step's body.
 
 ### 8.4.1. Iteration mode [#steps.iteration-mode]
-A `cook_step`'s **iteration mode** is determined by its output pattern list, before the `using` clause is consulted. Three modes are defined:
+A `cook_step`'s **iteration mode** is determined by its output pattern list, before the body is consulted. Three modes are defined:
 
 | Output pattern shape | Mode | Driver | Units produced |
 |---|---|---|---|
@@ -184,20 +184,20 @@ When the recipe carries an `ingredients <probe>` source (§{steps.ingredients}),
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }    # one-to-one over own inputs
-    cook "build/app" using { gcc $<all> -o $<out> }              # many-to-one (literal output)
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }    # one-to-one over own inputs
+    cook "build/app" { gcc $<all> -o $<out> }              # many-to-one (literal output)
 ```
 
 ### Note 8.4.1.1
 
-The CS-0022 unification removes `$<in>` from the using-clause's contents as a separate iteration trigger. Iteration mode is decided exclusively by the output pattern list. A using-clause that contains `$<in>` while the output pattern list is fully literal is rejected at load time — see §{phl.cook-step} for the diagnostic shape.
+The CS-0022 unification removes `$<in>` from the body's contents as a separate iteration trigger. Iteration mode is decided exclusively by the output pattern list. A body that contains `$<in>` while the output pattern list is fully literal is rejected at load time — see §{phl.cook-step} for the diagnostic shape.
 
 ### 8.4.2. Lua-expression output [#steps.cook-lua-expr-output]
 
 A `cook_step` MAY substitute a parenthesised Lua expression for the quoted output-path `STRING`:
 
 ```ebnf
-cook_step ::= "cook" ( STRING+ | "(" LUA_EXPR ")" ) using_clause? NEWLINE
+cook_step ::= "cook" ( STRING+ | "(" LUA_EXPR ")" ) body? NEWLINE
 ```
 
 A conforming implementation MUST accept the Lua-expression form under the following rules.
@@ -206,30 +206,30 @@ A conforming implementation MUST accept the Lua-expression form under the follow
 2. **Bindings.** The expression sees the name `input` in scope: the current ingredient's path, a Lua `string`. When the recipe is driven by an `ingredients <probe>` source (§{steps.ingredients}), the expression instead sees `item` bound to the current data member (a table for record members, a string/number/boolean for scalar members) rather than `input`. The expression MAY also reference declarative-region locals (top-level Lua bindings, `config` block writes, register-phase `inline_lua_line` / `inline_lua_block` locals visible to the recipe per §{steps.lua-execution-phase}). The standard library is available subject to the §{lua} sandbox in effect at register time.
 3. **Return value.** The expression's return value MUST coerce to a non-empty string under the same coercion rules the Standard applies to chore Lua-expression defaults (§{chores.params}): `string` verbatim, `number` via Lua `tostring`, `boolean` to `"true"` or `"false"`; any other type — including `nil`, `table`, `function`, `thread`, `userdata` — is a register-phase diagnostic. The empty string is likewise a register-phase diagnostic.
 4. **One-to-one only.** The Lua-expression form is admitted exclusively when the resulting `cook_step` is in **one-to-one over own inputs** mode or **one-to-one over data members** mode (§{steps.iteration-mode}); in the data-member case the expression sees `item` rather than `input` (rule 2). The expression is evaluated per iteration element, so dep-driven and many-to-one modes — neither of which iterates element-by-element — have no well-defined evaluation contract. A conforming implementation MUST reject a Lua-expression-output `cook_step` whose recipe has no `ingredients_step`, or whose iteration source resolves to the empty set, with a register-phase diagnostic.
-5. **Mutual exclusion with quoted-string outputs.** Within a single `cook_step`, the output declaration is either (a) one or more `STRING` patterns with the `$<...>` sigil vocabulary of §{phl.cook-step}, or (b) exactly one parenthesised Lua expression. A conforming implementation MUST reject a `cook_step` that mixes the two forms (e.g. `cook "a.out" (input:gsub(...)) using ...`) with a register-phase diagnostic naming the offending tokens.
-6. **`using` clause.** The `using_clause` of a Lua-expression-output `cook_step` follows the same grammar as the quoted-string form (§{steps.cook-single}): the declaration-only form (no `using`), `using_lua_block` (`>{ ... }`), and `shell_block` (`{ ... }`) are all admitted. The placeholder vocabulary inside the `using_clause` (§{phl.cook-step}) is the one-to-one vocabulary: `$<in>`, `$<in.ACCESSOR>`, `$<out>`. Note that `$<out>` resolves to the Lua-expression's evaluated string for the current iteration; placeholders that index the output position list (`$<out_1>`, `$<out_2>`, …) have no use in this form because the form declares exactly one output per iteration.
+5. **Mutual exclusion with quoted-string outputs.** Within a single `cook_step`, the output declaration is either (a) one or more `STRING` patterns with the `$<...>` sigil vocabulary of §{phl.cook-step}, or (b) exactly one parenthesised Lua expression. A conforming implementation MUST reject a `cook_step` that mixes the two forms (e.g. `cook "a.out" (input:gsub(...)) { ... }`) with a register-phase diagnostic naming the offending tokens.
+6. **Body.** The body of a Lua-expression-output `cook_step` follows the same grammar as the quoted-string form (§{steps.cook-single}): the declaration-only form (no body), `exec_lua_block` (`>{ ... }`), and `shell_block` (`{ ... }`) are all admitted. The placeholder vocabulary inside the body (§{phl.cook-step}) is the one-to-one vocabulary: `$<in>`, `$<in.ACCESSOR>`, `$<out>`. Note that `$<out>` resolves to the Lua-expression's evaluated string for the current iteration; placeholders that index the output position list (`$<out_1>`, `$<out_2>`, …) have no use in this form because the form declares exactly one output per iteration.
 
 ### Example 8.4.2.1
 
 ```cook
 recipe translate-fr
     ingredients "docs/en/**/*.md"
-    cook (input:gsub("/en/", "/fr/")) using >{
+    cook (input:gsub("/en/", "/fr/")) >{
         fs.write_file(output, transform(fs.read_file(input)))
     }
 ```
 
-The expression `input:gsub("/en/", "/fr/")` runs once per matched ingredient with `input` bound to that ingredient's path; the resulting string becomes the unit's `outputs[1]`. The `using_lua_block` sees the `input` and `output` bindings per §{lua.using-block-globals}; `output` is the same string the Lua-expression produced.
+The expression `input:gsub("/en/", "/fr/")` runs once per matched ingredient with `input` bound to that ingredient's path; the resulting string becomes the unit's `outputs[1]`. The `exec_lua_block` sees the `input` and `output` bindings per §{lua.using-block-globals}; `output` is the same string the Lua-expression produced.
 
 ### Example 8.4.2.2
 
 ```cook
 recipe thumbnail
     ingredients "assets/photos/*.jpg"
-    cook (input:gsub("assets/photos", "build/thumb")) using { convert $<in> -resize 256x256 $<out> }
+    cook (input:gsub("assets/photos", "build/thumb")) { convert $<in> -resize 256x256 $<out> }
 ```
 
-Mixes the Lua-expression output form with a `shell_block` `using_clause`. The shell block's `$<in>` and `$<out>` placeholders resolve to the iteration's ingredient path and the Lua-expression's evaluated string, respectively.
+Mixes the Lua-expression output form with a `shell_block` body. The shell block's `$<in>` and `$<out>` placeholders resolve to the iteration's ingredient path and the Lua-expression's evaluated string, respectively.
 
 ### Note 8.4.2.1 — Cache key impact [#steps.cook-lua-expr-output.cache]
 
@@ -244,22 +244,22 @@ The Lua-expression form's defining feature is per-ingredient evaluation: each in
 A conforming implementation rejecting the resolved output value MUST surface a register-phase diagnostic whose message identifies (a) the offending ingredient path and (b) the rule violated (non-string return, empty string). The reference implementation emits `cook (LUA_EXPR) returned non-string or empty value for input <PATH>` from the per-ingredient register-phase guard; an alternative implementation MAY phrase the message differently but MUST carry equivalent information.
 
 ## 8.5. `cook` — multi-output form [#steps.cook-multi]
-A `cook_step` MAY declare two or more outputs by listing additional `STRING` patterns before the `using` clause:
+A `cook_step` MAY declare two or more outputs by listing additional `STRING` patterns before the body:
 
 ```ebnf
-cook "a" "b" ... using_clause
+cook "a" "b" ... body
 ```
 
-When two or more outputs are present and a `using_clause` is given, the `using_clause` is one of the two block forms (§{steps.cook-single}): `using_lua_block` (`>{ ... }`) or `shell_block` (`{ ... }`). The bare-string form `cook "a" "b" using "cmd"` is not admitted at any output count (CS-0022, §{grammar-appendix.steps}).
+When two or more outputs are present and a body is given, the body is one of the two block forms (§{steps.cook-single}): `exec_lua_block` (`>{ ... }`) or `shell_block` (`{ ... }`). The bare-string form was removed in CS-0022, and `cook "a" "b" "cmd"` parses as a three-output declaration-only step rather than a body-bearing one (§{grammar-appendix.steps}).
 
-The declaration-only form of §{steps.cook-single} also applies to the multi-output case: a `cook_step` listing two or more outputs with no `using_clause` is accepted and announces the outputs without providing an inline build command. Its build is assumed to be provided by preceding Lua registrations or a later amendment (App. A.4, "Declaration-only cook step").
+The declaration-only form of §{steps.cook-single} also applies to the multi-output case: a `cook_step` listing two or more outputs with no body is accepted and announces the outputs without providing an inline build command. Its build is assumed to be provided by preceding Lua registrations or a later amendment (App. A.4, "Declaration-only cook step").
 
 ### Example 8.5.1
 
 ```cook
 recipe generate
     ingredients "src/*.rs"
-    cook "staging/out.js" "staging/out.wasm" using {
+    cook "staging/out.js" "staging/out.wasm" {
         ./fake-generator.sh
         mkdir -p staging
         cp pkg/out.js $<out_1>
@@ -274,7 +274,7 @@ One `cook` step declares two outputs produced together by a sequence of shell co
 ```cook
 recipe build_lua
     ingredients "src/*.rs"
-    cook "staging-lua/out.js" "staging-lua/out.wasm" using >{
+    cook "staging-lua/out.js" "staging-lua/out.wasm" >{
         os.execute("mkdir -p staging-lua")
         local sources = table.concat(inputs, " ")
         local js = io.open(outputs[1], "w")
@@ -286,30 +286,30 @@ recipe build_lua
     }
 ```
 
-The same two outputs are produced by a Lua block. The `inputs` and `outputs` names visible to the block are established by the execution model (§{exec.phases}) and the Cook Lua API (§{lua.using-block-globals}); §{recipes} requires only that a block-form `using` clause be accepted as the body.
+The same two outputs are produced by a Lua block. The `inputs` and `outputs` names visible to the block are established by the execution model (§{exec.phases}) and the Cook Lua API (§{lua.using-block-globals}); §{recipes} requires only that a block-form body be accepted.
 
 ### Note 8.5.1
 
-The shape `cook "a" "b" using "cmd"` was rejected pre-CS-0022 with a "block body" diagnostic; under CS-0022 the bare-string form is gone entirely, so the diagnostic at this position now reads "the `using "cmd"` form was removed in CS-0022; rewrite as `using { cmd }`." See parser test `test_string_form_rejected_in_using`.
+The shape `cook "a" "b" using "cmd"` was rejected pre-CS-0022 with a "block body" diagnostic, and under CS-0022 with a bare-string-removal diagnostic. Since CS-0099 the `using` token itself is rejected at this position with the migration diagnostic of §{grammar-appendix.steps} ("`using` is rejected"); conformance fixture `cs0099-using-keyword-rejected` pins it.
 
 ## 8.6. `plate` step [#steps.plate]
-A `plate_step` (§{grammar-appendix.steps}, `plate_step`) is **a `cook` step with no declared outputs**. It has a body — either a `shell_block` (§{grammar-appendix.steps}) or a `using_lua_block` (§{grammar-appendix.steps}) — and no output pattern. It registers work units that perform side-effecting actions whose results do not contribute to the recipe's output list (which remains passthrough per §{xref.dep-recipe-output}).
+A `plate_step` (§{grammar-appendix.steps}, `plate_step`) is **a `cook` step with no declared outputs**. It has a body — either a `shell_block` (§{grammar-appendix.steps}) or an `exec_lua_block` (§{grammar-appendix.steps}) — and no output pattern. It registers work units that perform side-effecting actions whose results do not contribute to the recipe's output list (which remains passthrough per §{xref.dep-recipe-output}).
 
 ```ebnf
 plate_step ::= "plate" body NEWLINE
-body       ::= shell_block | using_lua_block
+body       ::= shell_block | exec_lua_block
 ```
 
-The body grammar is identical to the body grammar of a `cook_step`'s `using_clause` (§{steps.cook-single}). The placeholder vocabulary inside a `plate_step` body is specified in §{phl.plate-test} (shell-block bodies) and §{lua.using-block-globals} (Lua-block bodies), with the per-step-kind admission rules of §{steps.iteration-mode-plate-test}.
+The body grammar is identical to a `cook_step`'s body grammar (§{steps.cook-single}). The placeholder vocabulary inside a `plate_step` body is specified in §{phl.plate-test} (shell-block bodies) and §{lua.using-block-globals} (Lua-block bodies), with the per-step-kind admission rules of §{steps.iteration-mode-plate-test}.
 
-A `plate_step` admits no `using` keyword, no leading `STRING`, and no trailing modifiers. The body follows the keyword directly.
+A `plate_step` admits no leading `STRING` and no trailing modifiers. The body follows the keyword directly.
 
 ### Example 8.6.1
 
 ```cook
 recipe install
     ingredients "src/*.c"
-    cook "build/bin/$<in.stem>" using { cc $<in> -o $<out> }
+    cook "build/bin/$<in.stem>" { cc $<in> -o $<out> }
     plate {
         install -d $PREFIX/bin
         install -m755 $<in> $PREFIX/bin/$<in.name>
@@ -323,7 +323,7 @@ The `plate` step iterates over the preceding `cook` step's output list (one unit
 ```cook
 recipe bundle
     ingredients "src/*.c"
-    cook "build/bin/$<in.stem>" using { cc $<in> -o $<out> }
+    cook "build/bin/$<in.stem>" { cc $<in> -o $<out> }
     plate {
         tar -czf build/bundle.tgz $<all>
     }
@@ -333,7 +333,7 @@ The body uses `$<all>` and no `$<in>`; the step is many-to-one and registers exa
 
 ### Note 8.6.1
 
-A `plate_step`'s body grammar matches a `cook_step`'s `using` payload, but the keyword `using` is not used. A `plate_step` has no separate output declaration to separate from the body, so a separator keyword is not needed. See rationale §{rationale.plate-test-no-output-decl}.
+A `plate_step`'s body grammar matches a `cook_step`'s body. Since CS-0099 the two forms are fully parallel: in both, the body opener follows the step's header material directly. See rationale §{rationale.plate-test-no-output-decl}.
 
 ### Note 8.6.2 — Plate step bodies are NOT sandboxed [#steps.plate-not-sandboxed]
 
@@ -397,7 +397,7 @@ The `as` modifier is **only valid on `test_step`**. A conforming implementation 
 ```cook
 recipe smoke
     ingredients "tests/*.c"
-    cook "build/$<in.stem>" using { cc $<in> -o $<out> }
+    cook "build/$<in.stem>" { cc $<in> -o $<out> }
     test { ./$<in> } timeout 60
 ```
 
@@ -408,7 +408,7 @@ Each test binary is run with a 60-second time bound, and the step expects each t
 ```cook
 recipe coverage
     ingredients "src/*.c"
-    cook "build/bin/$<in.stem>.test" using { cc $<in> -o $<out> }
+    cook "build/bin/$<in.stem>.test" { cc $<in> -o $<out> }
     test >{
         for _, bin in ipairs(inputs) do
             cook.sh("./" .. bin .. " --check")
@@ -423,7 +423,7 @@ The Lua body references `inputs` (no `input`); the step is many-to-one and runs 
 ```cook
 recipe roundtrip
     ingredients "src/*.txt"
-    cook "build/$<in.stem>.out" using { echo > $<out> }
+    cook "build/$<in.stem>.out" { echo > $<out> }
     test { diff $<in> $<out> } as '$<in.stem>-roundtrip' timeout 10
 ```
 
@@ -470,14 +470,14 @@ recipe build
     >>{
         cook.env.CXXFLAGS = "-std=" .. std
     }
-    cook "build/app" using >{
+    cook "build/app" >{
         cook.sh(string.format("%s %s -o %s",
             cook.env.CXX or "g++", table.concat(inputs, " "), output))
     }
     > print("build complete")
 ```
 
-The `>>` line and `>>{ }` block run at register, sharing scope with the `cook` step's `using >{ }` template-string formation. The `> print(...)` line runs at execute, after the cook step's unit completes. (The `using >{ }` block is execute-phase Lua-with-bindings; see §{lua.using-block-globals}.)
+The `>>` line and `>>{ }` block run at register, sharing scope with the `cook` step's `>{ }` template-string formation. The `> print(...)` line runs at execute, after the cook step's unit completes. (The `>{ }` body is execute-phase Lua-with-bindings; see §{lua.using-block-globals}.)
 
 ```cook
 recipe smoke
@@ -534,7 +534,7 @@ The first two steps are interactive commands: the runtime inherits the user's te
 
 ### Note 8.9.1
 
-`@` embedded inside a `cook` step's `using { ... }` shell block body, or elsewhere inside a quoted string, is a literal `@` and does not trigger interactive-step dispatch. The `@` test runs only on the first non-whitespace character of a raw `Content` line. See parser test `test_at_in_cook_using_is_not_interactive`.
+`@` embedded inside a `cook` step's `{ ... }` shell-block body, or elsewhere inside a quoted string, is a literal `@` and does not trigger interactive-step dispatch. The `@` test runs only on the first non-whitespace character of a raw `Content` line. See parser test `test_at_in_cook_body_is_not_interactive`.
 
 ### Note 8.9.2
 
@@ -564,15 +564,15 @@ probe scenes
 
 recipe render
     ingredients scenes
-    cook "build/$<in.id>.silent.mp4" using { ffmpeg -i $<in.id>.blend $<out> }
+    cook "build/$<in.id>.silent.mp4" { ffmpeg -i $<in.id>.blend $<out> }
 
 recipe tts
     ingredients scenes
-    cook "build/$<in.id>.wav" using { tts $<in.id> $<out> }
+    cook "build/$<in.id>.wav" { tts $<in.id> $<out> }
 
 recipe mux
     ingredients scenes
-    cook "build/$<in.id>.mp4" using { ffmpeg -i $<render[]> -i $<tts[]> $<out> }
+    cook "build/$<in.id>.mp4" { ffmpeg -i $<render[]> -i $<tts[]> $<out> }
 ```
 
 For member `{"id":"intro"}`, `mux` builds `build/intro.mp4` by combining `build/intro.silent.mp4` (from `render`) and `build/intro.wav` (from `tts`). For member `{"id":"outro"}` the same pattern repeats independently. Only the `outro` member's units are dirty when `outro.blend` changes — `intro.mp4` is unaffected.

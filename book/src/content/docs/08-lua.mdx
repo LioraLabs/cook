@@ -30,7 +30,7 @@ Cook executes a recipe in **two disjoint phases** — register, then execute. Lu
 ```cook
 recipe build
     ingredients "src/*.txt"
-    cook "build/$<in.stem>.upper" using >{
+    cook "build/$<in.stem>.upper" >{
         local f = io.open(input, "r")
         local txt = f:read("*a")
         f:close()
@@ -40,7 +40,7 @@ recipe build
     }
 ```
 
-`using >{ ... }` declares a Lua-bodied work unit. At execute time, the body runs with `input` bound to the current ingredient and `output` bound to the current output. One unit per ingredient, just like the shell `using { ... }` form.
+`>{ ... }` declares a Lua-bodied work unit. At execute time, the body runs with `input` bound to the current ingredient and `output` bound to the current output. One unit per ingredient, just like the shell `{ ... }` form.
 
 Use Lua-bodied units when the work isn't naturally a shell pipeline — pure data transformations, anything that needs string manipulation, or anything where shell quoting is going to bite you.
 
@@ -144,7 +144,7 @@ chore deploy
 
 Reach for `cook.exec` only when you're generating the commands programmatically.
 
-> **Note — `cook.exec` is register-only.** Calling `cook.exec` from execute-phase Lua (a `>` line, a `>{ ... }` block, or a `using >{ ... }` body) raises a Lua runtime error per Standard §6.3.2. The "I want to shell out from inside an execute-phase body" use case is `cook.sh`. *(Standard §6.3.1, §6.3.2.)*
+> **Note — `cook.exec` is register-only.** Calling `cook.exec` from execute-phase Lua (a `>` line, a `>{ ... }` block, or a `>{ ... }` body) raises a Lua runtime error per Standard §6.3.2. The "I want to shell out from inside an execute-phase body" use case is `cook.sh`. *(Standard §6.3.1, §6.3.2.)*
 
 ## 8.6. The `recipe` global (register phase)
 
@@ -172,7 +172,7 @@ C/C++ compilers produce dependency files that list *every* header consumed durin
 ```cook
 recipe compile
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using {
+    cook "build/$<in.stem>.o" {
         gcc -MMD -MF .cook/deps/$<in.stem>.d -c $<in> -o $<out>
     }
 ```
@@ -217,7 +217,7 @@ After each unit runs, Cook reads `.cook/deps/<stem>.d`, parses it as Make-style 
 ```cook
 recipe count
     ingredients "src/*.c"
-    cook "build/lines.txt" using >{
+    cook "build/lines.txt" >{
         local total = 0
         for _, f in ipairs(inputs) do
             for line in io.lines(f) do

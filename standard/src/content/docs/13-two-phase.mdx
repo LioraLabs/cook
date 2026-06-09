@@ -20,7 +20,7 @@ A conforming implementation MAY register and execute different recipes concurren
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" using { gcc -c $<in> -o $<out> }
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
 ```
 
 Register phase: the recipe body runs once. The `cook` step expands to a step group containing one work unit per matched source file. No `gcc` process is spawned.
@@ -47,7 +47,7 @@ Every Lua expression in a Cookfile is evaluated in exactly one of three timings.
 | `inline_lua_block` (`>>{ … }`)               | §{steps.lua} | **register** | no — inlined |
 | `lua_line` (`>` *body*)                      | §{steps.lua} | **execute** | yes — contributes to the body unit per §{exec.body-bundling} |
 | `lua_block` (`>{ … }`)                       | §{steps.lua} | **execute** | yes — contributes to the body unit |
-| `cook STR using >{ … }` (using-clause Lua)   | §{steps.cook-single}, §{steps.cook-multi} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals} bindings |
+| `cook STR >{ … }` (cook-body Lua)   | §{steps.cook-single}, §{steps.cook-multi} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals} bindings |
 | `cook.add_unit({lua_code = "…"})` payload    | §{lua.add-unit} | **execute** | yes — runs on the worker VM that picks up the unit |
 | `plate { … }` (shell block)                  | §{steps.plate} | **execute** | yes — recorded with shell payload, with §{phl.plate-test} substitutions |
 | `plate >{ … }` (Lua block)                   | §{steps.plate} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals-plate-test} bindings |

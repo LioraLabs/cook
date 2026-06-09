@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["docs/en/**/*.md"]
       excludes: []
       steps:
-        Cook outputs=[LuaExpr("input:gsub(\"/en/\", \"/fr/\")")] using=ShellBlock(["cp $<in> $<out>"])
+        Cook outputs=[LuaExpr("input:gsub(\"/en/\", \"/fr/\")")] body=ShellBlock(["cp $<in> $<out>"])
   chores:
   register_blocks: []
   top_level_module_calls: []
