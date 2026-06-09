@@ -12,7 +12,7 @@
     }
   ],
   "metadata": {
-    "version": "0.14.0",
+    "version": "0.14.1",
     "license": "MIT",
     "description": "Tree-sitter grammar for the Cook build system DSL (claims Cook Standard v0.14)",
     "links": {

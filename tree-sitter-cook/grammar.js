@@ -329,15 +329,25 @@ module.exports = grammar({
     // CONT is an external token (_step_continuation_newline) emitted only
     // when the next line begins with `"` or `!"`; otherwise the declaration
     // terminates and the next line dispatches per App. A.4's priority order.
+    // CS-0095: `ingredients <probe>` — a bare probe key as the member
+    // source (mutually exclusive with glob items; the lexical
+    // discriminator is quote vs bare ident, mirroring the Rust parser).
     ingredients_step: ($) =>
-      seq(
-        "ingredients",
-        choice($.string, $.ingredient_exclude),
-        repeat(seq(
-          optional($._step_continuation_newline),
+      choice(
+        seq(
+          "ingredients",
           choice($.string, $.ingredient_exclude),
-        )),
-        $._newline,
+          repeat(seq(
+            optional($._step_continuation_newline),
+            choice($.string, $.ingredient_exclude),
+          )),
+          $._newline,
+        ),
+        seq(
+          "ingredients",
+          field("probe", alias($._bare_probe_key, $.identifier)),
+          $._newline,
+        ),
       ),
 
     ingredient_exclude: ($) => seq("!", $.string),
@@ -353,7 +363,7 @@ module.exports = grammar({
       choice(
         seq(
           "cook",
-          field("outputs", $.string),
+          field("outputs", choice($.string, $.lua_expr_output)),
           optional(field("body", choice($.shell_block, $.exec_lua_block))),
           $._newline,
         ),
@@ -368,6 +378,15 @@ module.exports = grammar({
           $._newline,
         ),
       ),
+
+    // §8.4.2 (CS-0089): `cook (LUA_EXPR)` — a parenthesised Lua expression
+    // in the output slot, evaluated once per ingredient at register time.
+    // Balanced-paren interior with single-level quoted-string opacity
+    // (mirrors the §7.1.1 chore-param scanner; Lua long-brackets are NOT
+    // handled, per the documented v1 limitation in §8.4.2).
+    // Reuses `_lua_expr_chunk` from the §7.1.1 chore-param scanner above
+    // (same balanced-paren + quoted-string opacity contract).
+    lua_expr_output: ($) => seq("(", repeat($._lua_expr_chunk), ")"),
 
     // App. A.4 `exec_lua_block`: the `>{ … }` execute-phase Lua block in a
     // cook/plate/test body, with §6.4 input/output bindings. Distinct in name
@@ -512,7 +531,7 @@ module.exports = grammar({
       seq(
         "$<",
         alias(
-          token.immediate(/[A-Za-z_][A-Za-z0-9_.]*/),
+          token.immediate(/[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),
@@ -522,7 +541,7 @@ module.exports = grammar({
       seq(
         token.immediate("$<"),
         alias(
-          token.immediate(/[A-Za-z_][A-Za-z0-9_.]*/),
+          token.immediate(/[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),
@@ -576,7 +595,7 @@ module.exports = grammar({
       seq(
         token.immediate("$<"),
         alias(
-          token.immediate(/[A-Za-z_][A-Za-z0-9_.]*/),
+          token.immediate(/[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),

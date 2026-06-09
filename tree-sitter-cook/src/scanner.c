@@ -58,9 +58,16 @@ static bool match_placeholder_lookahead(TSLexer *lexer) {
   lexer->advance(lexer, false);
   if (!iswalpha(lexer->lookahead) && lexer->lookahead != '_') return false;
   lexer->advance(lexer, false);
+  // Continuation charset mirrors cook-luagen's sigil scanner (CS-0074 /
+  // CS-0098): `.` accessors, `:` probe refs, `[]` member accessors, `-`
+  // in probe key segments.
   while (iswalnum(lexer->lookahead) ||
          lexer->lookahead == '_' ||
-         lexer->lookahead == '.') {
+         lexer->lookahead == '.' ||
+         lexer->lookahead == ':' ||
+         lexer->lookahead == '[' ||
+         lexer->lookahead == ']' ||
+         lexer->lookahead == '-') {
     lexer->advance(lexer, false);
   }
   if (lexer->lookahead != '>') return false;

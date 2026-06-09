@@ -553,3 +553,92 @@ recipe emit
       outputs: (string)
       body: (shell_block
         (shell_content)))))
+
+==================
+Cook with Lua-expression output (CS-0089)
+==================
+
+recipe translate
+    ingredients "docs/en/**/*.md"
+    cook (input:gsub("/en/", "/fr/")) { cp $<in> $<out> }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      (identifier))
+    (ingredients_step
+      (string))
+    (cook_step
+      (lua_expr_output
+        (lua_expr_default))
+      (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
+
+==================
+Ingredients probe member source (CS-0095)
+==================
+
+recipe art
+    ingredients cards
+    cook "build/art/$<in.id>.png" { gen "$<in.name>" $<out> }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      (identifier))
+    (ingredients_step
+      (identifier))
+    (cook_step
+      (string
+        (placeholder
+          (placeholder_ident)))
+      (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
+
+==================
+Per-member cross-recipe accessor (CS-0098)
+==================
+
+recipe mux
+    ingredients scenes
+    cook "build/$<in.id>.mp4" { ffmpeg -i $<render[]> -i $<tts[]> $<out> }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      (identifier))
+    (ingredients_step
+      (identifier))
+    (cook_step
+      (string
+        (placeholder
+          (placeholder_ident)))
+      (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))

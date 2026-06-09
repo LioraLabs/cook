@@ -41,6 +41,14 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'at-most-one-ingredients rule (App. A.3) — semantic, not syntactic'],
   ['006-accessor-in-cook-body',
    'accessor placeholders inside cook-step bodies — templater rule, not syntactic'],
+  // CS-0095: `ingredients <probe>` parses cleanly; these rejections are
+  // register-phase (probe declared? array-valued? non-artifact dep?).
+  ['ingredients-probe-undeclared',
+   'CS-0095: undeclared probe key — register-phase rejection, not syntactic'],
+  ['ingredients-probe-non-array',
+   'CS-0095: non-array probe value — register-phase rejection, not syntactic'],
+  ['ingredients-probe-artifact-dep',
+   'CS-0095: probe member source with artifact dep — register-phase rejection, not syntactic'],
   ['008-imperative-then-declarative',
    'recipe-body region rule (Note 4.4.2) — semantic, not syntactic'],
   ['010-triple-arrow-prefix',
