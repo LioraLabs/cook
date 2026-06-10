@@ -1,0 +1,48 @@
+# §8.4.2 `cook (LUA_EXPR)` — Lua-expression output paths (CS-0089 / COOK-59)
+#
+# The quoted output pattern is a TEMPLATE: `build/$<in.stem>.o` can re-prefix
+# and re-suffix a path, but `$<in.stem>` flattens the directory structure —
+# every output lands in one directory. When the output path is a REWRITE of
+# the input path (keep the subtree, swap a prefix, swap an extension), the
+# template vocabulary can't express it. The §8.4.2 form replaces the quoted
+# pattern with a parenthesised Lua expression, evaluated once per ingredient
+# at register time with `input` bound to that ingredient's path.
+#
+#   translate — shell body. docs/en/guide/intro.md → build/fr/guide/intro.md:
+#               the nested subtree survives because the expression rewrites
+#               the whole path instead of templating from the stem.
+#   index     — Lua body (`>{ … }`). Same rewrite idea plus an extension swap;
+#               the body sees the §23.1 `input` / `output` bindings, where
+#               `output` is exactly the string the expression produced.
+#
+# Run:
+#   cook translate         # one rewritten file per source, subtree preserved
+#   cook index             # one .json sidecar per source
+#   ./verify.sh            # asserts codegen shape + execution + 1:1 cache
+
+# Naive "translation": rewrite the path docs/en/** → build/fr/**, and the
+# content Hello → Bonjour. One unit per markdown file (one-to-one over own
+# inputs); the iteration driver is the ingredients list, exactly as with a
+# quoted `$<in.stem>` pattern.
+recipe translate
+    ingredients "docs/en/**/*.md"
+    cook (input:gsub("docs/en", "build/fr")) {
+        sed 's/Hello/Bonjour/g' $<in> > $<out>
+    }
+
+# Per-file metadata sidecar via the execute-phase Lua body. The expression
+# chains two rewrites on one line (the chore-header rule applies: the
+# expression must fit the single `cook` line). `input`/`output` are the
+# §23.1 bindings on the worker VM.
+recipe index
+    ingredients "docs/en/**/*.md"
+    cook (input:gsub("docs/en", "build/meta"):gsub("%.md$", ".json")) >{
+        local lines = 0
+        for _ in io.lines(input) do lines = lines + 1 end
+        local f = io.open(output, "w")
+        f:write(string.format('{"source": "%s", "lines": %d}\n', input, lines))
+        f:close()
+    }
+
+chore clean
+    rm -rf build .cook
