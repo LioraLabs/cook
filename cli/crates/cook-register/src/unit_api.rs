@@ -107,8 +107,24 @@ fn lua_escape(s: &str) -> String {
 fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<String>)>, String> {
     let spans = cook_luagen::sigil::scan(command);
 
-    // Filter to probe-shaped sigils (ident contains `:`).
-    let probe_spans: Vec<_> = spans.iter().filter(|s| s.ident.contains(':')).collect();
+    // CS-0101: `file:` is a reserved placeholder namespace, not a probe key.
+    // Raw register-block add_unit command strings do not support file refs
+    // in v1 — fail loudly rather than misparse `file:x` as a probe key or
+    // silently pass the bytes through.
+    if let Some(span) = spans.iter().find(|s| s.ident.starts_with("file:")) {
+        return Err(format!(
+            "$<{}>: $<file:PATH> is not supported in raw cook.add_unit command strings; \
+             write the step in a Cookfile recipe body instead (CS-0101)",
+            span.ident
+        ));
+    }
+
+    // Filter to probe-shaped sigils (ident contains `:`), excluding the
+    // reserved `file:` namespace (rejected above — belt and braces).
+    let probe_spans: Vec<_> = spans
+        .iter()
+        .filter(|s| s.ident.contains(':') && !s.ident.starts_with("file:"))
+        .collect();
     if probe_spans.is_empty() {
         return Ok(None);
     }
@@ -373,11 +389,30 @@ pub fn register_unit_api(
                 std::mem::take(&mut body.pending_member_dep_input_paths),
             )
         };
+        // CS-0101: resolve `file_refs` patterns (file-reference placeholders)
+        // and fold the matches into this unit's cache input set. Resolution
+        // failures are load-time diagnostics (missing literal / empty glob).
+        // Paths go into cache_meta.input_paths ONLY — never WorkPayload
+        // inputs, which drive _cook_in iteration.
+        let file_ref_patterns: Vec<String> = match tbl.get::<LuaValue>("file_refs") {
+            Ok(LuaValue::Table(t)) => t.sequence_values::<String>().filter_map(Result::ok).collect(),
+            _ => Vec::new(),
+        };
+        let mut file_ref_paths: Vec<String> = Vec::new();
+        for pat in &file_ref_patterns {
+            let resolved = crate::file_ref::resolve_file_ref(&wd_for_add_unit, pat)
+                .map_err(|e| LuaError::runtime(format!("cook.add_unit: {e}")))?;
+            file_ref_paths.extend(resolved);
+        }
+        file_ref_paths.sort();
+        file_ref_paths.dedup();
+
         let cache_input_paths: Vec<String> = inputs
             .iter()
             .cloned()
             .chain(dep_input_paths.into_iter())
             .chain(member_dep_input_paths.into_iter())
+            .chain(file_ref_paths.into_iter())
             .collect();
 
         // Read consulted_env_keys from the table and look up values in cook.env
@@ -1785,6 +1820,35 @@ mod tests {
             "detected probe key must be auto-added to probes; got: {:?}",
             unit.probes
         );
+    }
+
+    /// CS-0101: `$<file:PATH>` in a raw cook.add_unit command string is the
+    /// reserved file-reference namespace, NOT a probe key. v1 does not
+    /// support file refs in raw register-block command strings — the
+    /// template expander must reject them loudly instead of misparsing
+    /// `file` as a probe key.
+    #[test]
+    fn add_unit_command_with_file_ref_sigil_is_rejected() {
+        let (lua, _capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        let err = lua.load(r#"
+            cook.add_unit({
+                inputs = {}, outputs = {"out.txt"},
+                cache = false,
+                command = "render --tokens $<file:tokens.css> > out.txt",
+            })
+        "#)
+        .exec()
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            err.contains("not supported in raw cook.add_unit command strings"),
+            "expected the CS-0101 raw-command rejection; got: {err}"
+        );
+        assert!(err.contains("CS-0101"), "error must cite CS-0101; got: {err}");
     }
 
     /// COOK-96 Task 5: add_unit must record `member` and `output_paths` on the

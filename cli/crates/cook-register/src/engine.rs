@@ -1637,6 +1637,9 @@ fn install_remaining_apis(
         builder.alias_qualified_prefixes.clone(),
     )?;
     crate::context::register_resolve_ingredients(lua, &builder.working_dir)?;
+    // CS-0101: cook.file_ref — register-phase resolution of `$<file:PATH>`
+    // placeholders (hoisted locals emitted by cook-luagen).
+    crate::file_ref::register_file_ref(lua, &builder.working_dir)?;
     crate::codec_api::register_codec_api(lua)?;
     Ok(module_state)
 }

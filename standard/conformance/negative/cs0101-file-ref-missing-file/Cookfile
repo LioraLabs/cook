@@ -1,0 +1,5 @@
+recipe "html"
+    ingredients "src/page.md"
+    cook "build/$<in.stem>.html" {
+        render --tokens $<file:missing.css> $<in> -o $<out>
+    }

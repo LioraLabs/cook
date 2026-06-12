@@ -10,6 +10,7 @@ pub mod dep_output_api;
 pub mod engine;
 pub mod env_api;
 pub mod export_api;
+pub mod file_ref;
 pub mod module_cache;
 pub mod module_loader;
 pub mod probe_api;
