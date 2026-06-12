@@ -125,8 +125,15 @@ fn memo_hash(memo: &mut BTreeMap<PathBuf, String>, abs: &Path) -> String {
 ///   once-per-edit fingerprint oscillation as artifacts catch up.
 /// * **`.1` — CLOSURE contribution**: for every predecessor node with
 ///   `cache_meta`, (a) each declared `input_paths` file resolved against
-///   THAT node's working dir and content-hashed, and (b) one identity pair
-///   `("unit:{cookfile_path}:{recipe_name}:{cache_key}",
+///   THAT node's working dir and content-hashed — also EXCLUDING any path
+///   declared as an output by a node in the closure (i.e. intermediate
+///   artifacts, e.g. `build/lib.txt` appearing as an input to an `app`
+///   node in a lib → app → test chain). This exclusion is required for the
+///   same reason as the own-input exclusion: in a ≥2-level chain those
+///   intermediate artifacts are stale at upfront time and would introduce
+///   once-per-edit fingerprint oscillation. Their *sources* are already
+///   captured by the producing unit's own closure contribution. (b) one
+///   identity pair `("unit:{cookfile_path}:{recipe_name}:{cache_key}",
 ///   "{command_hash:x}:{env_contribution:x}")` so editing a dep's command
 ///   busts downstream tests.
 ///
@@ -230,6 +237,15 @@ fn collect_test_file_inputs(
             };
             for abs in resolved {
                 let abs = lexical_normalize(&abs);
+                // Skip intermediate artifacts produced by another node in the
+                // closure — they are stale at upfront-fingerprint time and
+                // would cause once-per-edit fingerprint oscillation in ≥2-level
+                // chains (e.g. lib → app → test where app's input_paths
+                // includes build/lib.txt). Their sources are already captured
+                // by the producing unit's own closure contribution entry.
+                if produced_upstream(&abs) {
+                    continue;
+                }
                 let hash = memo_hash(hash_memo, &abs);
                 dep.insert(root_rel_key(project_root, &abs), hash);
             }
@@ -1293,6 +1309,81 @@ mod tests {
         assert_ne!(
             a.1, b.1,
             "editing a dep's command must change the closure contribution"
+        );
+    }
+
+    /// Three-node DAG: lib (src/lib.txt → build/lib.txt) ← app
+    /// (build/lib.txt → build/app.txt) ← test (build/app.txt).
+    ///
+    /// Materialising or overwriting the intermediate artifact build/lib.txt
+    /// and the final artifact build/app.txt must NOT move the test's
+    /// fingerprint, because those paths are declared outputs of nodes in the
+    /// closure and must be excluded from hashing (produced_upstream exclusion
+    /// now applied to both own inputs AND closure inputs).
+    ///
+    /// As a sanity-check the test also verifies that editing the original
+    /// *source* (src/lib.txt) DOES change the fingerprint.
+    #[test]
+    fn test_fp_stable_across_two_level_chain_artifact_materialisation() {
+        let dir = tempfile::tempdir().unwrap();
+        let wd = dir.path();
+        std::fs::create_dir_all(wd.join("src")).unwrap();
+        std::fs::write(wd.join("src/lib.txt"), "lib-source").unwrap();
+        // Artifacts do NOT exist yet at upfront fingerprint time (stale build).
+
+        let build_dag = || {
+            let mut dag = cook_dag::Dag::new();
+            // lib: src/lib.txt → build/lib.txt
+            let lib = dag
+                .add_node(
+                    cook_work_node(wd, "lib", &["src/lib.txt"], &["build/lib.txt"], 11),
+                    &[],
+                )
+                .unwrap();
+            // app: build/lib.txt → build/app.txt (depends on lib)
+            let app = dag
+                .add_node(
+                    cook_work_node(wd, "app", &["build/lib.txt"], &["build/app.txt"], 22),
+                    &[lib],
+                )
+                .unwrap();
+            // test: input_paths = ["build/app.txt"] (depends on app)
+            let test = dag
+                .add_node(test_work_node(wd, &["build/app.txt"]), &[app])
+                .unwrap();
+            (dag, test)
+        };
+
+        // Before: no artifacts on disk.
+        let (dag, test_idx) = build_dag();
+        let mut memo = BTreeMap::new();
+        let before = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
+
+        // Materialise both intermediate artifacts with arbitrary content.
+        std::fs::create_dir_all(wd.join("build")).unwrap();
+        std::fs::write(wd.join("build/lib.txt"), "stale-lib-artifact").unwrap();
+        std::fs::write(wd.join("build/app.txt"), "stale-app-artifact").unwrap();
+
+        // After: artifacts exist on disk.
+        let (dag, test_idx) = build_dag();
+        let mut memo = BTreeMap::new();
+        let after = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
+
+        assert_eq!(
+            before, after,
+            "materialising intermediate or final artifacts must not change the fingerprint \
+             (produced_upstream exclusion must apply to closure inputs in ≥2-level chains)"
+        );
+
+        // Sanity: editing the *source* must change the closure contribution.
+        std::fs::write(wd.join("src/lib.txt"), "lib-source-EDITED").unwrap();
+        let (dag, test_idx) = build_dag();
+        let mut memo = BTreeMap::new();
+        let after_src_edit = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
+
+        assert_ne!(
+            before, after_src_edit,
+            "editing the upstream source must change the fingerprint"
         );
     }
 }
