@@ -354,8 +354,9 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
 /// it *before* the module-cache path so a `for_each` recipe body's
 /// `local _items = cook.cache.get("cards")` sees the resolved array instead of
 /// erroring "outside of a module context". Empty for non-`for_each` sessions,
-/// so the module-cache behaviour is unchanged.
-pub type SharedPrepassStore = Rc<RefCell<BTreeMap<String, rmpv::Value>>>;
+/// so the module-cache behaviour is unchanged. Values are decoded
+/// `serde_json::Value`s — JSON-native since CS-0102.
+pub type SharedPrepassStore = Rc<RefCell<BTreeMap<String, serde_json::Value>>>;
 
 pub fn register_cache_api(
     lua: &Lua,
@@ -374,7 +375,7 @@ pub fn register_cache_api(
         // with module-cache keys, so the module-context path below is reached
         // unchanged for every non-`for_each` lookup.
         if let Some(val) = prepass_get.borrow().get(&key) {
-            return crate::probe_value::msgpack_to_lua(lua, val);
+            return crate::probe_value::json_to_lua(lua, val);
         }
         let state = s.borrow();
         let module_name = state.active_module().ok_or_else(|| {

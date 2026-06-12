@@ -123,7 +123,7 @@ A conforming implementation that maintains a cache of recipe execution results M
 
 A conforming implementation MAY layer additional content-addressed artifact storage atop the index files; that layer is outside the scope of this section.
 
-Probe units (§{cat.probes}) participate in the same cache machinery: a probe's fingerprint addresses its msgpack-serialised value in `CacheBackend`, and probe artifacts ride the same `events.jsonl` event stream and Cook Cloud wire protocol as file outputs.
+Probe units (§{cat.probes}) participate in the same cache machinery: a probe's fingerprint addresses its canonical-JSON-serialised value (§{cat.probes.values}) in `CacheBackend`, and probe artifacts ride the same `events.jsonl` event stream and Cook Cloud wire protocol as file outputs.
 
 ### Note 17.5.1 — Chore parameters and caching (informative) [#exec.cache.chore-params]
 

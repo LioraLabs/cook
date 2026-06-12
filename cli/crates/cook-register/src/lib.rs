@@ -153,7 +153,7 @@ pub enum RegisterError {
 
     /// COOK-64 §22.5.9: an `ingredients <probe>` source resolved to a non-array value.
     /// `selector` names the resolved location (`KEY` or `KEY:FIELD`); `shape`
-    /// is the msgpack value-kind that was found instead of a sequence.
+    /// is the JSON value-kind that was found instead of a sequence.
     #[error(
         "ingredients <probe> source '{selector}' must resolve to an array; got {shape} \
          (an ingredients <probe> driver iterates the array's members; §22.5.9)"

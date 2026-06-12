@@ -10,12 +10,7 @@
 //! encode to different canonical bytes (`"-0.0\n"` vs `"0.0\n"`). Because
 //! hashing is byte-based this is fine — but callers must not deduplicate
 //! probe values by `Value` equality before encoding.
-//!
-//! The legacy msgpack helpers ([`encode_msgpack`] / [`decode_msgpack`]) are
-//! retained while the codebase migrates; they will be removed once all call
-//! sites have switched to the JSON codec.
 
-use rmpv::Value as MsgPackValue;
 use serde_json::Value as JsonValue;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -35,7 +30,7 @@ pub fn encode_canonical_json(v: &JsonValue) -> Vec<u8> {
 }
 
 /// Recursively rebuild a [`serde_json::Value`] with bytewise-sorted object
-/// keys. Crate-internal; consumed by [`crate::member::member_to_string_json`]
+/// keys. Crate-internal; consumed by [`crate::member::member_to_string`]
 /// so that compact member rendering shares the same key-ordering logic as the
 /// canonical probe-value store (CS-0102).
 ///
@@ -141,23 +136,9 @@ pub fn write_probe_file(
     Ok(final_path)
 }
 
-/// Encode an rmpv::Value to msgpack bytes.
-pub fn encode_msgpack(v: &MsgPackValue) -> Vec<u8> {
-    let mut buf = Vec::new();
-    rmpv::encode::write_value(&mut buf, v).expect("rmpv encode never fails for in-memory");
-    buf
-}
-
-/// Decode msgpack bytes into an rmpv::Value.
-pub fn decode_msgpack(bytes: &[u8]) -> Result<MsgPackValue, String> {
-    let mut cursor = std::io::Cursor::new(bytes);
-    rmpv::decode::read_value(&mut cursor).map_err(|e| format!("msgpack decode: {}", e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmpv::Value;
     use serde_json::json;
 
     // ── canonical-JSON tests ─────────────────────────────────────────────────
@@ -211,8 +192,9 @@ mod tests {
     }
 
     #[test]
-    fn decode_json_rejects_msgpack_bytes() {
-        // Old msgpack [true] — must be an Err, the stale-artifact defence.
+    fn decode_json_rejects_pre_cs0102_bytes() {
+        // 0x91 0xc3 is the old (pre-CS-0102) encoding of [true] — must be an
+        // Err, the stale-artifact defence.
         assert!(decode_json(&[0x91, 0xc3]).is_err());
     }
 
@@ -262,47 +244,4 @@ mod tests {
         assert_eq!(std::fs::read(&p).unwrap(), b"43\n");
     }
 
-    // ── msgpack round-trip tests (kept while old codec is still live) ────────
-
-    #[test]
-    fn encode_decode_bool() {
-        let v = Value::Boolean(true);
-        let bytes = encode_msgpack(&v);
-        assert_eq!(decode_msgpack(&bytes).unwrap(), v);
-    }
-
-    #[test]
-    fn encode_decode_integer() {
-        let v = Value::Integer(42.into());
-        let bytes = encode_msgpack(&v);
-        assert_eq!(decode_msgpack(&bytes).unwrap(), v);
-    }
-
-    #[test]
-    fn encode_decode_map() {
-        let v = Value::Map(vec![
-            (Value::String("found".into()), Value::Boolean(true)),
-            (
-                Value::String("cflags".into()),
-                Value::Array(vec![Value::String("-I/usr/include".into())]),
-            ),
-        ]);
-        let bytes = encode_msgpack(&v);
-        assert_eq!(decode_msgpack(&bytes).unwrap(), v);
-    }
-
-    #[test]
-    fn encode_decode_nil() {
-        let v = Value::Nil;
-        let bytes = encode_msgpack(&v);
-        assert_eq!(decode_msgpack(&bytes).unwrap(), v);
-    }
-
-    #[test]
-    fn decode_invalid_bytes_returns_error() {
-        // Truncated msgpack — a map header claiming 1 element but no data.
-        // 0x81 = fixmap with 1 entry; no key or value follows → decode error.
-        let bad = vec![0x81];
-        assert!(decode_msgpack(&bad).is_err());
-    }
 }

@@ -151,7 +151,7 @@ pub enum WorkPayload {
         input_paths: Vec<String>,
     },
     /// A probe unit (§22.5.2): runs `produce` (Lua source string) on a worker
-    /// VM and stashes the msgpack-serialised return value under `key`.
+    /// VM and stashes the canonical-JSON-serialised return value under `key`.
     Probe {
         key: String,
         produce: String,

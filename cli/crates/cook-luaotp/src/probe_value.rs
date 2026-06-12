@@ -1,150 +1,15 @@
-//! Lua↔msgpack and Lua↔JSON walkers for the execute-phase probe dispatch (§22.5.4/§22.5.5).
+//! Lua↔JSON walkers for the execute-phase probe dispatch (§22.5.5, CS-0102).
 //!
-//! This is a copy of `cook_register::probe_value::lua_to_msgpack`, kept here
-//! so cook-luaotp does not depend on cook-register (which would make the
-//! dependency graph more complex without benefit).
+//! This is an intentional copy of `cook_register::probe_value`'s walkers,
+//! kept here so cook-luaotp does not depend on cook-register (which would
+//! make the dependency graph more complex without benefit). The walkers
+//! cannot live in cook-contracts because that crate is pure types with no
+//! mlua dependency.
 //!
-//! `encode_msgpack` and `decode_msgpack` come from `cook_contracts::probe_value`
-//! and are shared across all crates.
+//! `encode_canonical_json` and `decode_json` come from
+//! `cook_contracts::probe_value` and are shared across all crates.
 
 use mlua::prelude::*;
-use rmpv::Value as MsgPackValue;
-
-/// Convert a Lua value to msgpack. Validates the value-type contract (§22.5.4)
-/// and rejects non-serialisable values with a path-tagged diagnostic.
-pub fn lua_to_msgpack(v: &LuaValue) -> Result<MsgPackValue, String> {
-    lua_to_msgpack_inner(v, &mut vec![], &mut vec![])
-}
-
-fn lua_to_msgpack_inner(
-    v: &LuaValue,
-    path: &mut Vec<String>,
-    visited: &mut Vec<*const std::ffi::c_void>,
-) -> Result<MsgPackValue, String> {
-    match v {
-        LuaValue::Nil => Ok(MsgPackValue::Nil),
-        LuaValue::Boolean(b) => Ok(MsgPackValue::Boolean(*b)),
-        LuaValue::Integer(i) => Ok(MsgPackValue::Integer((*i).into())),
-        LuaValue::Number(f) => Ok(MsgPackValue::F64(*f)),
-        LuaValue::String(s) => {
-            let bytes = s.as_bytes().to_vec();
-            match std::str::from_utf8(&bytes) {
-                Ok(utf8) => Ok(MsgPackValue::String(rmpv::Utf8String::from(utf8.to_owned()))),
-                Err(_) => Ok(MsgPackValue::Binary(bytes)),
-            }
-        }
-        LuaValue::Table(t) => {
-            let raw_ptr = t.to_pointer();
-            if visited.contains(&raw_ptr) {
-                return Err(format!(
-                    "non-serialisable value at .{} (cycle)",
-                    render_path(path)
-                ));
-            }
-            visited.push(raw_ptr);
-            let result = table_to_msgpack(t, path, visited);
-            visited.pop();
-            result
-        }
-        LuaValue::Function(_) => Err(format!(
-            "non-serialisable value at .{} (function)",
-            render_path(path)
-        )),
-        LuaValue::UserData(_) => Err(format!(
-            "non-serialisable value at .{} (userdata)",
-            render_path(path)
-        )),
-        LuaValue::Thread(_) => Err(format!(
-            "non-serialisable value at .{} (thread)",
-            render_path(path)
-        )),
-        LuaValue::Error(e) => Err(format!(
-            "non-serialisable value at .{} (error: {})",
-            render_path(path),
-            e
-        )),
-        LuaValue::LightUserData(_) => Err(format!(
-            "non-serialisable value at .{} (lightuserdata)",
-            render_path(path)
-        )),
-        _ => Err(format!(
-            "non-serialisable value at .{} (unknown variant)",
-            render_path(path)
-        )),
-    }
-}
-
-fn table_to_msgpack(
-    t: &LuaTable,
-    path: &mut Vec<String>,
-    visited: &mut Vec<*const std::ffi::c_void>,
-) -> Result<MsgPackValue, String> {
-    // First pass: classify keys.
-    let mut int_keys: Vec<i64> = vec![];
-    let mut str_keys: Vec<String> = vec![];
-    let mut other_keys = 0usize;
-    for pair in t.clone().pairs::<LuaValue, LuaValue>() {
-        let (k, _) = pair.map_err(|e| {
-            format!("table iteration failed at .{}: {}", render_path(path), e)
-        })?;
-        match k {
-            LuaValue::Integer(i) => int_keys.push(i),
-            LuaValue::String(s) => str_keys.push(s.to_string_lossy().to_owned()),
-            _ => other_keys += 1,
-        }
-    }
-    if other_keys > 0 {
-        return Err(format!(
-            "non-serialisable value at .{} (mixed/unsupported key types)",
-            render_path(path)
-        ));
-    }
-    if !int_keys.is_empty() && !str_keys.is_empty() {
-        return Err(format!(
-            "non-serialisable value at .{} (mixed string/integer keys not allowed; §22.5.4)",
-            render_path(path)
-        ));
-    }
-
-    if !int_keys.is_empty() {
-        int_keys.sort();
-        for (idx, k) in int_keys.iter().enumerate() {
-            if *k != (idx as i64) + 1 {
-                return Err(format!(
-                    "non-serialisable value at .{}[{}] (array hole; not contiguous 1..N)",
-                    render_path(path),
-                    idx + 1
-                ));
-            }
-        }
-        let mut items = Vec::with_capacity(int_keys.len());
-        for k in &int_keys {
-            path.push(format!("[{}]", k));
-            let v: LuaValue = t.get(*k).map_err(|e| format!("get failed: {}", e))?;
-            let mv = lua_to_msgpack_inner(&v, path, visited)?;
-            path.pop();
-            items.push(mv);
-        }
-        Ok(MsgPackValue::Array(items))
-    } else if !str_keys.is_empty() {
-        str_keys.sort();
-        let mut pairs = Vec::with_capacity(str_keys.len());
-        for k in &str_keys {
-            path.push(k.clone());
-            let v: LuaValue = t.get(k.as_str()).map_err(|e| format!("get failed: {}", e))?;
-            let mv = lua_to_msgpack_inner(&v, path, visited)?;
-            path.pop();
-            pairs.push((
-                MsgPackValue::String(rmpv::Utf8String::from(k.as_str())),
-                mv,
-            ));
-        }
-        Ok(MsgPackValue::Map(pairs))
-    } else {
-        // Empty table — empty Map.
-        Ok(MsgPackValue::Map(vec![]))
-    }
-}
 
 fn render_path(path: &[String]) -> String {
     let mut s = String::new();
@@ -161,63 +26,19 @@ fn render_path(path: &[String]) -> String {
     s
 }
 
-/// Convert an rmpv::Value to a Lua value. Used by `cook.cache.get` on the
-/// execute-phase VM to materialise probe values from the store (§22.5.7).
-pub fn msgpack_to_lua(lua: &Lua, mp: &MsgPackValue) -> LuaResult<LuaValue> {
-    use rmpv::Value as V;
-    Ok(match mp {
-        V::Nil => LuaValue::Nil,
-        V::Boolean(b) => LuaValue::Boolean(*b),
-        V::Integer(i) => match i.as_i64() {
-            Some(n) => LuaValue::Integer(n),
-            None => LuaValue::Number(i.as_f64().unwrap_or(0.0)),
-        },
-        V::F32(f) => LuaValue::Number(*f as f64),
-        V::F64(f) => LuaValue::Number(*f),
-        V::String(s) => {
-            let bytes = s.as_bytes();
-            LuaValue::String(lua.create_string(bytes)?)
-        }
-        V::Binary(bytes) => LuaValue::String(lua.create_string(bytes)?),
-        V::Array(items) => {
-            let t = lua.create_table()?;
-            for (i, v) in items.iter().enumerate() {
-                t.set(i + 1, msgpack_to_lua(lua, v)?)?;
-            }
-            LuaValue::Table(t)
-        }
-        V::Map(pairs) => {
-            let t = lua.create_table()?;
-            for (k, v) in pairs {
-                let key_str = k.as_str().ok_or_else(|| {
-                    LuaError::runtime("non-string map key in msgpack probe value")
-                })?;
-                t.set(key_str, msgpack_to_lua(lua, v)?)?;
-            }
-            LuaValue::Table(t)
-        }
-        V::Ext(_, _) => return Err(LuaError::runtime("msgpack ext type not supported")),
-    })
-}
-
 // ---------------------------------------------------------------------------
 // Lua ↔ JSON walkers (CS-0102 §22.5.5)
 // ---------------------------------------------------------------------------
 //
-// These mirror lua_to_msgpack_inner / table_to_msgpack above, changing only
-// the output constructors. The path-tracking and cycle-detection mechanics
-// are byte-for-byte identical so that diagnostic messages match.
-//
-// Two rejections are NEW here (representable in msgpack, not JSON):
+// Two rejections are specific to the JSON value contract (CS-0102):
 //   • non-UTF-8 Lua string → "... (non-UTF-8 string)" at path
 //   • non-finite float     → "... (non-finite number)" at path
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 /// Convert a Lua value to JSON. Validates the §22.5.5 value contract,
-/// reporting the offending path on failure (mirrors lua_to_msgpack, which
-/// it replaces; CS-0102 additionally rejects non-UTF-8 strings and
-/// non-finite numbers, which JSON cannot carry).
+/// reporting the offending path on failure. CS-0102 rejects non-UTF-8
+/// strings and non-finite numbers, which JSON cannot carry.
 pub fn lua_to_json(v: &LuaValue) -> Result<JsonValue, String> {
     lua_to_json_inner(v, &mut vec![], &mut vec![])
 }
@@ -316,7 +137,7 @@ fn table_to_json(
     }
     if !int_keys.is_empty() && !str_keys.is_empty() {
         return Err(format!(
-            "non-serialisable value at .{} (mixed string/integer keys not allowed; §22.5.4)",
+            "non-serialisable value at .{} (mixed string/integer keys not allowed; §22.5.5)",
             render_path(path)
         ));
     }
@@ -353,14 +174,14 @@ fn table_to_json(
         }
         Ok(JsonValue::Object(map))
     } else {
-        // Empty table — empty Object (mirrors empty-Map decision in msgpack walker).
+        // Empty table — empty Object (the canonical "no entries" shape).
         Ok(JsonValue::Object(JsonMap::new()))
     }
 }
 
 /// Convert a JSON value to a Lua value. Used by `cook.cache.get` on the
-/// execute-phase VM to materialise probe values from the JSON store (§22.5.7).
-/// Replaces msgpack_to_lua once all call sites have migrated to JSON (CS-0102).
+/// execute-phase VM to materialise probe values from the JSON store
+/// (§22.5.7, CS-0102).
 pub fn json_to_lua(lua: &Lua, v: &JsonValue) -> LuaResult<LuaValue> {
     Ok(match v {
         JsonValue::Null => LuaValue::Nil,
@@ -487,5 +308,77 @@ mod tests {
             matches!(v, mlua::Value::Nil),
             "Null must become LuaValue::Nil"
         );
+    }
+
+    #[test]
+    fn lua_to_json_rejects_mixed_key_table() {
+        let lua = mlua::Lua::new();
+        let v: mlua::Value = lua.load(r#"return { [1] = 1, a = 2 }"#).eval().unwrap();
+        let err = lua_to_json(&v).unwrap_err();
+        assert!(err.contains("mixed"), "error must mention 'mixed'; got: {err}");
+    }
+
+    #[test]
+    fn lua_to_json_rejects_array_hole() {
+        let lua = mlua::Lua::new();
+        let v: mlua::Value = lua
+            .load(r#"return { [1] = "a", [3] = "c" }"#)
+            .eval()
+            .unwrap();
+        let err = lua_to_json(&v).unwrap_err();
+        assert!(
+            err.contains("hole") || err.contains("not contiguous"),
+            "error must mention the array hole; got: {err}"
+        );
+    }
+
+    #[test]
+    fn lua_to_json_rejects_cycle() {
+        let lua = mlua::Lua::new();
+        let v: mlua::Value = lua
+            .load(
+                r#"
+                local t = {}
+                t.self = t
+                return t
+            "#,
+            )
+            .eval()
+            .unwrap();
+        let err = lua_to_json(&v).unwrap_err();
+        assert!(err.contains("cycle"), "error must mention 'cycle'; got: {err}");
+    }
+
+    /// Float/integer identity must survive the full encode/decode round trip:
+    /// a Lua float `1.0` stays a float (renders `1.0`, decodes back to f64),
+    /// and a Lua integer `1` stays an integer. Conflating them would change
+    /// canonical bytes and re-key cache entries.
+    #[test]
+    fn float_identity_round_trips() {
+        let lua = mlua::Lua::new();
+
+        let float_v: mlua::Value = lua.load("return 1.0").eval().unwrap();
+        let float_json = lua_to_json(&float_v).unwrap();
+        assert!(float_json.is_f64(), "Lua float 1.0 must map to a JSON float");
+        let float_bytes = cook_contracts::probe_value::encode_canonical_json(&float_json);
+        assert_eq!(float_bytes, b"1.0\n");
+        let float_back = cook_contracts::probe_value::decode_json(&float_bytes).unwrap();
+        assert!(float_back.is_f64(), "decoded 1.0 must stay a float");
+        match json_to_lua(&lua, &float_back).unwrap() {
+            mlua::Value::Number(f) => assert_eq!(f, 1.0),
+            other => panic!("expected Lua float, got {other:?}"),
+        }
+
+        let int_v: mlua::Value = lua.load("return 1").eval().unwrap();
+        let int_json = lua_to_json(&int_v).unwrap();
+        assert!(int_json.is_i64(), "Lua integer 1 must map to a JSON integer");
+        let int_bytes = cook_contracts::probe_value::encode_canonical_json(&int_json);
+        assert_eq!(int_bytes, b"1\n");
+        let int_back = cook_contracts::probe_value::decode_json(&int_bytes).unwrap();
+        assert!(int_back.is_i64(), "decoded 1 must stay an integer");
+        match json_to_lua(&lua, &int_back).unwrap() {
+            mlua::Value::Integer(i) => assert_eq!(i, 1),
+            other => panic!("expected Lua integer, got {other:?}"),
+        }
     }
 }

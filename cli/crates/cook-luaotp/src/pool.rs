@@ -40,7 +40,8 @@ pub struct TestOutput {
 }
 
 /// Payload returned by a completed probe unit (§22.5). `bytes` contains the
-/// msgpack-serialised return value of the `produce` Lua function.
+/// canonical-JSON-serialised return value of the `produce` Lua function
+/// (§22.5.5, CS-0102).
 /// Handled by Task G; present as `None` on all non-probe WorkResults.
 #[derive(Clone, Debug)]
 pub struct ProbeOutput {
@@ -534,9 +535,9 @@ fn register_worker_cook_table(
     // member to its canonical string form (key-sorted JSON for a table, the
     // scalar's bare string otherwise). Used by the `$<in>` placeholder.
     let member_fn = lua.create_function(|_, value: mlua::Value| {
-        let mp = crate::probe_value::lua_to_msgpack(&value)
+        let jv = crate::probe_value::lua_to_json(&value)
             .map_err(|e| mlua::Error::runtime(format!("cook.member_to_string: {e}")))?;
-        Ok(cook_contracts::member::member_to_string(&mp))
+        Ok(cook_contracts::member::member_to_string(&jv))
     })?;
     cook.set("member_to_string", member_fn)?;
 
@@ -664,11 +665,11 @@ fn install_execute_phase_cook_cache(
     let get_fn = lua.create_function(move |lua, key: String| {
         match store_for_get.get(&key) {
             Some(bytes) => {
-                let mp = cook_contracts::probe_value::decode_msgpack(&bytes)
+                let jv = cook_contracts::probe_value::decode_json(&bytes)
                     .map_err(|e| mlua::Error::runtime(format!(
                         "cook.cache.get('{}'): decode failed: {}", key, e
                     )))?;
-                crate::probe_value::msgpack_to_lua(lua, &mp)
+                crate::probe_value::json_to_lua(lua, &jv)
             }
             None => Ok(mlua::Value::Nil),
         }
@@ -697,11 +698,11 @@ fn install_execute_phase_cook_cache(
             let full = format!("{}{}", prefix_for_get, key);
             match store_for_scoped_get.get(&full) {
                 Some(bytes) => {
-                    let mp = cook_contracts::probe_value::decode_msgpack(&bytes)
+                    let jv = cook_contracts::probe_value::decode_json(&bytes)
                         .map_err(|e| mlua::Error::runtime(format!(
                             "cook.cache.get('{}'): decode failed: {}", full, e
                         )))?;
-                    crate::probe_value::msgpack_to_lua(lua, &mp)
+                    crate::probe_value::json_to_lua(lua, &jv)
                 }
                 None => Ok(mlua::Value::Nil),
             }
@@ -1110,9 +1111,9 @@ fn execute_shell(
 /// Execute a `WorkPayload::Probe` unit on the worker Lua VM (§22.5.6).
 ///
 /// Wraps `produce` in `function() ... end` and invokes it, captures the return
-/// value, converts it to msgpack, and returns a `WorkResult` with the
-/// `probe_output` field populated. Errors in the Lua source or in the
-/// msgpack conversion propagate as a normal unit failure.
+/// value, renders it to canonical JSON (§22.5.5, CS-0102), and returns a
+/// `WorkResult` with the `probe_output` field populated. Errors in the Lua
+/// source or in the JSON conversion propagate as a normal unit failure.
 fn execute_probe(
     lua: &mlua::Lua,
     id: usize,
@@ -1139,7 +1140,7 @@ fn execute_probe(
         }
     };
 
-    let mp = match crate::probe_value::lua_to_msgpack(&value) {
+    let jv = match crate::probe_value::lua_to_json(&value) {
         Ok(v) => v,
         Err(e) => {
             return WorkResult {
@@ -1154,7 +1155,7 @@ fn execute_probe(
         }
     };
 
-    let bytes = cook_contracts::probe_value::encode_msgpack(&mp);
+    let bytes = cook_contracts::probe_value::encode_canonical_json(&jv);
 
     WorkResult {
         id,
@@ -2103,8 +2104,8 @@ mod tests {
         );
     }
 
-    /// CS-0074: `cook.cache.get(key)` MUST return the msgpack-decoded value
-    /// that was written into the SharedProbeValueStore by the scheduler (§22.5.7).
+    /// CS-0074/CS-0102: `cook.cache.get(key)` MUST return the JSON-decoded value
+    /// that was written into the probe-value store by the scheduler (§22.5.7).
     #[test]
     fn cook_cache_get_reads_from_probe_value_store() {
         let dir = TempDir::new().unwrap();
@@ -2112,11 +2113,9 @@ mod tests {
 
         // Pre-populate the store as the scheduler would after a probe completes.
         {
-            let mp = rmpv::Value::Map(vec![
-                (rmpv::Value::String("found".into()), rmpv::Value::Boolean(true)),
-                (rmpv::Value::String("version".into()), rmpv::Value::String("1.2.3".into())),
-            ]);
-            let bytes = cook_contracts::probe_value::encode_msgpack(&mp);
+            let bytes = cook_contracts::probe_value::encode_canonical_json(
+                &serde_json::json!({"found": true, "version": "1.2.3"}),
+            );
             pool.probe_value_store().insert("cc:zlib", bytes);
         }
 
@@ -2169,8 +2168,8 @@ mod tests {
         );
     }
 
-    /// CS-0074: `cook.cache.scope(label).get(key)` MUST read from the
-    /// SharedProbeValueStore using the scoped key `"<label>:<key>"`.
+    /// CS-0074/CS-0102: `cook.cache.scope(label).get(key)` MUST read from the
+    /// probe-value store using the scoped key `"<label>:<key>"`.
     #[test]
     fn cook_cache_scope_get_reads_from_probe_value_store() {
         let dir = TempDir::new().unwrap();
@@ -2178,8 +2177,9 @@ mod tests {
 
         // Pre-populate with scoped key format.
         {
-            let mp = rmpv::Value::String("gcc-14".into());
-            let bytes = cook_contracts::probe_value::encode_msgpack(&mp);
+            let bytes = cook_contracts::probe_value::encode_canonical_json(
+                &serde_json::json!("gcc-14"),
+            );
             pool.probe_value_store().insert("cc:compiler", bytes);
         }
 
@@ -2348,11 +2348,12 @@ mod tests {
     // G1: WorkPayload::Probe dispatch tests (CS-0074)
     // -----------------------------------------------------------------
 
-    /// G1: dispatching a `WorkPayload::Probe` MUST produce a successful
-    /// `WorkResult` with `probe_output: Some(ProbeOutput { key, bytes })`
-    /// where `bytes` decodes back to the value returned by `produce` (§22.5.6).
+    /// G1 (CS-0102): dispatching a `WorkPayload::Probe` MUST produce a
+    /// successful `WorkResult` with `probe_output: Some(ProbeOutput { key, bytes })`
+    /// where `bytes` is the canonical-JSON rendering of the value returned by
+    /// `produce` (§22.5.5, §22.5.6).
     #[test]
-    fn probe_unit_produces_msgpack_bytes() {
+    fn probe_unit_produces_canonical_json_bytes() {
         let dir = TempDir::new().unwrap();
         let (pool, rx) = WorkerPool::spawn(1);
 
@@ -2379,14 +2380,19 @@ mod tests {
         assert_eq!(probe_output.key, "test:simple");
         assert!(!probe_output.bytes.is_empty(), "probe bytes must be non-empty");
 
-        let mp = cook_contracts::probe_value::decode_msgpack(&probe_output.bytes)
+        let decoded = cook_contracts::probe_value::decode_json(&probe_output.bytes)
             .expect("must decode");
-        match mp {
-            rmpv::Value::Map(pairs) => {
-                assert_eq!(pairs.len(), 2, "expected 2 fields (found, paths)");
-            }
-            _ => panic!("expected msgpack Map, got {:?}", mp),
-        }
+        assert_eq!(
+            decoded,
+            serde_json::json!({"found": true, "paths": ["a", "b"]}),
+        );
+        // The worker MUST emit the ONE canonical rendering verbatim (CS-0102):
+        // re-encoding the decoded value must reproduce the exact bytes.
+        assert_eq!(
+            probe_output.bytes,
+            cook_contracts::probe_value::encode_canonical_json(&decoded),
+            "ProbeOutput.bytes must be the canonical JSON rendering"
+        );
     }
 
     /// G1: a probe whose `produce` source raises a Lua error MUST fail the

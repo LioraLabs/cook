@@ -121,8 +121,9 @@ pub struct ArtifactMeta {
     #[serde(default = "ArtifactMeta::zero_content_hash")]
     pub content_hash: [u8; 32],
     /// Disambiguates the artifact body kind. `None` (or the default) is the
-    /// legacy "file artifact" case. `Some("probe_value")` is the new
-    /// msgpack-encoded probe-output artifact (CS-0074).
+    /// legacy "file artifact" case. `Some("probe_value")` is the
+    /// canonical-JSON probe-output artifact (CS-0074, encoding revised by
+    /// CS-0102).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
 }

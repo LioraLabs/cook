@@ -6,41 +6,22 @@
 //!  - the `$<in>` placeholder (the member's textual rendering in a command);
 //!  - the per-member cache fingerprint (§17.1 observable #5).
 //!
-//! Per §8.3 the rendering is **canonical key-sorted JSON for a record** (or any
+//! Per §8.3 the rendering is **compact key-sorted JSON for a record** (or any
 //! table) and **the scalar's bare string form otherwise** (no surrounding JSON
-//! quotes). Key-sorting falls out of `serde_json::Map`'s default `BTreeMap`
-//! backing, so a record's rendering is independent of field insertion order.
+//! quotes). Key-sorting goes through [`crate::probe_value`]'s canonicaliser so
+//! a record's rendering is independent of field insertion order (and of
+//! serde_json's `preserve_order` feature).
 
-use rmpv::Value as MsgPackValue;
-use serde_json::Value as JsonValue;
-
-/// Render a `for_each` data member to its canonical string form.
+/// Render a `for_each` data member to its canonical string form (§8.3).
 ///
 /// - A table (record or array) renders as compact, key-sorted JSON.
-/// - A string scalar renders as its raw bytes (no surrounding quotes).
+/// - A string scalar renders as its raw text (no surrounding quotes).
 /// - A number / boolean / nil renders as its JSON scalar text (`42`, `true`,
 ///   `null`).
-pub fn member_to_string(v: &MsgPackValue) -> String {
-    let json = to_json(v);
-    match &json {
-        // A bare string member interpolates verbatim — not as a quoted JSON
-        // string literal.
-        JsonValue::String(s) => s.clone(),
-        // Tables render as canonical JSON; the default `serde_json::Map` is a
-        // `BTreeMap`, so object keys come out lexicographically sorted.
-        JsonValue::Object(_) | JsonValue::Array(_) => {
-            serde_json::to_string(&json).unwrap_or_default()
-        }
-        // Remaining scalars (number / bool / null) share the JSON text form.
-        _ => serde_json::to_string(&json).unwrap_or_default(),
-    }
-}
-
-/// Render a data member to its canonical string form (§8.3), JSON-native.
-/// Replaces the rmpv-input `member_to_string` (deleted in the COOK-91
-/// msgpack retirement); compact key-sorted JSON for tables, bare string
-/// for string scalars, JSON text for the rest.
-pub fn member_to_string_json(json: &serde_json::Value) -> String {
+///
+/// JSON-native since CS-0102 (COOK-91); previously took the pre-CS-0102
+/// decoded value type.
+pub fn member_to_string(json: &serde_json::Value) -> String {
     match json {
         serde_json::Value::String(s) => s.clone(),
         other => serde_json::to_string(&crate::probe_value::canonical_value(other))
@@ -48,147 +29,63 @@ pub fn member_to_string_json(json: &serde_json::Value) -> String {
     }
 }
 
-/// Convert an `rmpv::Value` to a `serde_json::Value`. Map keys are coerced to
-/// their string form (probe records are string-keyed per §22.5.4); the
-/// `serde_json::Map` (a `BTreeMap` by default) yields key-sorted serialisation.
-fn to_json(v: &MsgPackValue) -> JsonValue {
-    match v {
-        MsgPackValue::Nil => JsonValue::Null,
-        MsgPackValue::Boolean(b) => JsonValue::Bool(*b),
-        MsgPackValue::Integer(i) => {
-            if let Some(u) = i.as_u64() {
-                JsonValue::from(u)
-            } else if let Some(s) = i.as_i64() {
-                JsonValue::from(s)
-            } else {
-                JsonValue::Null
-            }
-        }
-        MsgPackValue::F32(f) => {
-            serde_json::Number::from_f64(*f as f64).map_or(JsonValue::Null, JsonValue::Number)
-        }
-        MsgPackValue::F64(f) => {
-            serde_json::Number::from_f64(*f).map_or(JsonValue::Null, JsonValue::Number)
-        }
-        MsgPackValue::String(s) => JsonValue::String(s.as_str().unwrap_or("").to_string()),
-        MsgPackValue::Binary(b) => JsonValue::String(String::from_utf8_lossy(b).into_owned()),
-        MsgPackValue::Array(items) => JsonValue::Array(items.iter().map(to_json).collect()),
-        MsgPackValue::Map(entries) => {
-            let mut map = serde_json::Map::new();
-            for (k, val) in entries {
-                let key = match k {
-                    MsgPackValue::String(s) => s.as_str().unwrap_or("").to_string(),
-                    MsgPackValue::Integer(i) => i.to_string(),
-                    other => member_to_string(other),
-                };
-                map.insert(key, to_json(val));
-            }
-            JsonValue::Object(map)
-        }
-        MsgPackValue::Ext(..) => JsonValue::Null,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmpv::Value;
-
-    // ── JSON-native tests ────────────────────────────────────────────────────
 
     #[test]
-    fn json_renders_record_key_sorted_compact() {
+    fn renders_record_key_sorted_compact() {
         let v = serde_json::json!({"name": "ace", "id": 1});
-        assert_eq!(member_to_string_json(&v), r#"{"id":1,"name":"ace"}"#);
-    }
-
-    #[test]
-    fn json_renders_scalars_bare() {
-        assert_eq!(member_to_string_json(&serde_json::json!("hi")), "hi");
-        assert_eq!(member_to_string_json(&serde_json::json!(42)), "42");
-        assert_eq!(member_to_string_json(&serde_json::json!(true)), "true");
-        assert_eq!(member_to_string_json(&serde_json::Value::Null), "null");
-    }
-
-    /// Equivalence check: `member_to_string` (rmpv) and `member_to_string_json`
-    /// (serde_json) MUST produce identical output for the same logical record,
-    /// including nested structures. A discrepancy would silently re-key every
-    /// fan-out cache entry during the msgpack-retirement migration.
-    #[test]
-    fn rmpv_and_json_render_identically() {
-        // Record: {"id": 1, "name": "ace"} plus a nested array and sub-record.
-        let rmpv_val = Value::Map(vec![
-            (Value::String("id".into()), Value::Integer(1.into())),
-            (Value::String("name".into()), Value::String("ace".into())),
-            (
-                Value::String("tags".into()),
-                Value::Array(vec![Value::String("x".into()), Value::String("y".into())]),
-            ),
-            (
-                Value::String("meta".into()),
-                Value::Map(vec![(Value::String("k".into()), Value::Integer(2.into()))]),
-            ),
-        ]);
-        let json_val = serde_json::json!({
-            "id": 1,
-            "name": "ace",
-            "tags": ["x", "y"],
-            "meta": {"k": 2}
-        });
-        let rmpv_out = member_to_string(&rmpv_val);
-        let json_out = member_to_string_json(&json_val);
-        assert_eq!(
-            rmpv_out, json_out,
-            "BLOCKED: rmpv and JSON renderers diverge.\n  rmpv: {rmpv_out}\n  json: {json_out}"
-        );
-    }
-
-    // ── rmpv tests ───────────────────────────────────────────────────────────
-
-    #[test]
-    fn renders_record_key_sorted() {
-        // Insertion order name-then-id; canonical form sorts id before name.
-        let v = Value::Map(vec![
-            (Value::String("name".into()), Value::String("ace".into())),
-            (Value::String("id".into()), Value::Integer(1.into())),
-        ]);
         assert_eq!(member_to_string(&v), r#"{"id":1,"name":"ace"}"#);
     }
 
     #[test]
     fn renders_scalars_bare() {
-        assert_eq!(member_to_string(&Value::String("hi".into())), "hi");
-        assert_eq!(member_to_string(&Value::Integer(42.into())), "42");
-        assert_eq!(member_to_string(&Value::Boolean(true)), "true");
-        assert_eq!(member_to_string(&Value::Nil), "null");
+        assert_eq!(member_to_string(&serde_json::json!("hi")), "hi");
+        assert_eq!(member_to_string(&serde_json::json!(42)), "42");
+        assert_eq!(member_to_string(&serde_json::json!(true)), "true");
+        assert_eq!(member_to_string(&serde_json::Value::Null), "null");
     }
 
     #[test]
     fn renders_nested_record_and_array() {
-        let v = Value::Map(vec![
-            (
-                Value::String("tags".into()),
-                Value::Array(vec![Value::String("a".into()), Value::String("b".into())]),
-            ),
-            (
-                Value::String("meta".into()),
-                Value::Map(vec![(Value::String("k".into()), Value::Integer(2.into()))]),
-            ),
-        ]);
+        let v = serde_json::json!({
+            "tags": ["a", "b"],
+            "meta": {"k": 2}
+        });
         // Inner strings ARE quoted (JSON); outer keys sorted (meta < tags).
         assert_eq!(member_to_string(&v), r#"{"meta":{"k":2},"tags":["a","b"]}"#);
     }
 
     #[test]
     fn key_sort_is_insertion_order_independent() {
-        let a = Value::Map(vec![
-            (Value::String("b".into()), Value::Integer(2.into())),
-            (Value::String("a".into()), Value::Integer(1.into())),
-        ]);
-        let b = Value::Map(vec![
-            (Value::String("a".into()), Value::Integer(1.into())),
-            (Value::String("b".into()), Value::Integer(2.into())),
-        ]);
-        assert_eq!(member_to_string(&a), member_to_string(&b));
+        // serde_json::json! preserves source order only if preserve_order is
+        // on; the canonicaliser must make these equal regardless.
+        let mut a = serde_json::Map::new();
+        a.insert("b".to_string(), serde_json::json!(2));
+        a.insert("a".to_string(), serde_json::json!(1));
+        let mut b = serde_json::Map::new();
+        b.insert("a".to_string(), serde_json::json!(1));
+        b.insert("b".to_string(), serde_json::json!(2));
+        assert_eq!(
+            member_to_string(&serde_json::Value::Object(a)),
+            member_to_string(&serde_json::Value::Object(b))
+        );
+    }
+
+    /// Nested-structure rendering pin: the exact output for a representative
+    /// member record. A change here re-keys every fan-out cache entry.
+    #[test]
+    fn nested_member_rendering_is_pinned() {
+        let v = serde_json::json!({
+            "id": 1,
+            "name": "ace",
+            "tags": ["x", "y"],
+            "meta": {"k": 2}
+        });
+        assert_eq!(
+            member_to_string(&v),
+            r#"{"id":1,"meta":{"k":2},"name":"ace","tags":["x","y"]}"#
+        );
     }
 }

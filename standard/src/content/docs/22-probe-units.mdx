@@ -158,13 +158,15 @@ cook.probe("cc:zlib", {
 
 A probe's fingerprint MUST be a 32-byte SHA-256 digest over the canonicalised byte representation of its inputs. The canonical representation is built by concatenating, in this fixed order, each of the following sections separated by an ASCII `LF` (0x0A):
 
-1. The literal bytes `COOK_PROBE_FP_V1`.
+1. The literal bytes `COOK_PROBE_FP_V2`.
 2. The probe `key` (UTF-8 bytes).
 3. The `produce` source string (UTF-8 bytes).
 4. The literal bytes `ENV`, followed by each declared env-var name and its current value (or the literal bytes `<unset>` if not set), `<name>=<value>`-formatted, sorted lexicographically by name.
 5. The literal bytes `TOOLS`, followed by each declared tool name and the 32-byte content hash of the resolved binary (32 zero bytes if missing), `<name>=<hex>`-formatted, sorted lexicographically by name.
 6. The literal bytes `FILES`, followed by each declared file path and its 32-byte content hash (32 zero bytes if missing), `<path>=<hex>`-formatted, sorted lexicographically by path.
 7. The literal bytes `UPSTREAM`, followed by each upstream probe key and its 32-byte fingerprint, `<key>=<hex>`-formatted, sorted lexicographically by key.
+
+The marker was bumped from `COOK_PROBE_FP_V1` by CS-0102 when the probe-value encoding changed from msgpack to canonical JSON, so artifacts written under the old encoding are never addressed by a conforming implementation.
 
 The implementation MAY include a non-cryptographic hash (e.g. xxh3_64) as an internal optimisation provided the final 32-byte fingerprint matches what a direct SHA-256 over the canonical bytes would produce.
 
@@ -175,7 +177,7 @@ The function produced by wrapping the `produce` source string (§{cat.probes.api
 - `nil`
 - `boolean`
 - `number` (integer or float)
-- `string` (raw bytes; not constrained to UTF-8)
+- `string` (valid UTF-8; see below)
 - A table whose keys are all strings, OR all integers in `1..N` with no holes (array shape), and whose values are recursively of these types.
 
 Returning a `function`, `userdata`, `thread`, a mixed-key table, or a table containing a cycle MUST cause the probe to fail with a diagnostic naming the offending path. The diagnostic MUST follow the form:
@@ -184,7 +186,9 @@ Returning a `function`, `userdata`, `thread`, a mixed-key table, or a table cont
 probe 'cc:zlib' returned a non-serialisable value at .cflags[3] (function)
 ```
 
-Probe values are serialised to msgpack for storage and cloud transport. The msgpack envelope MUST carry a `schema_version` field (value `1` for this Standard revision) and a `value` field holding the user-returned value. The `produced_at` timestamp MAY appear as an informative field but MUST NOT participate in fingerprinting.
+Probe values are serialised as **canonical JSON** for storage, materialisation, and cloud transport. The canonical rendering is UTF-8 JSON, pretty-printed with two-space indentation, object keys sorted bytewise ascending, with exactly one trailing LF. There is exactly ONE canonical byte sequence per value; a conforming implementation MUST use those bytes verbatim at every serialising site — the `.cook/probes/<key>.json` file (§{cat.probes.exec}), the `CacheBackend` artifact body (`kind: "probe_value"`), and wire transport — without re-encoding. Any hash over a probe value MUST be over the canonical bytes.
+
+The JSON encoding imposes two constraints beyond the value-type list above: a `string` MUST be valid UTF-8, and a `number` MUST be finite (NaN and ±Inf are rejected). A violation MUST cause the probe to fail with the non-serialisable diagnostic above, naming the offending path.
 
 ## 22.5.6. Consumer `probes` [#cat.probes.consumer]
 
@@ -233,9 +237,9 @@ The implementation rewrites this command at codegen time into a Lua step that re
 
 A probe unit MUST run at most once per build invocation.
 
-**Cache hit.** When the probe's fingerprint addresses an existing artifact in the cache backend, the implementation MUST load and deserialise the cached msgpack bytes, validate the `schema_version` field, populate the per-run probe-value store, and skip execution of the `produce` source.
+**Cache hit.** When the probe's fingerprint addresses an existing artifact in the cache backend, the implementation MUST load the cached bytes, validate that they parse as JSON (a parse failure MUST be treated as a cache miss), populate the per-run probe-value store, and skip execution of the `produce` source.
 
-**Cache miss.** When no cached artifact is found, the implementation MUST dispatch the probe to a worker VM, wrap the `produce` source string in `function() ... end`, parse and invoke the resulting function, capture the return value, validate it against §{cat.probes.values}, msgpack-encode it, store the artifact via the cache backend, and populate the per-run probe-value store. If the `produce` source string is malformed Lua, the resulting parse error MUST fail the unit with a diagnostic naming the probe key and the parse error.
+**Cache miss.** When no cached artifact is found, the implementation MUST dispatch the probe to a worker VM, wrap the `produce` source string in `function() ... end`, parse and invoke the resulting function, capture the return value, validate it against §{cat.probes.values}, render it to canonical JSON (§{cat.probes.values}), store the artifact via the cache backend, and populate the per-run probe-value store. If the `produce` source string is malformed Lua, the resulting parse error MUST fail the unit with a diagnostic naming the probe key and the parse error.
 
 The per-run probe-value store is keyed by probe key. Consumer units are dispatched after their `requires`-edge predecessors complete; at dispatch time, the store is fully populated for all required probes.
 
@@ -272,7 +276,9 @@ recipe bar
 `cook bar` MUST execute no probes; `env:slow` is unreached and its
 fingerprint MUST NOT be computed.
 
-**On-disk layout.** Probe artifacts reuse the existing recipe-cache layout. No new directories are introduced. The meta sidecar MUST carry a `kind: "probe_value"` field to disambiguate probe-artifact sidecars from file-artifact sidecars. All other fields of the meta sidecar (integrity hash, schema version) follow §{exec.cache.integrity}.
+**On-disk layout.** Probe artifacts reuse the existing recipe-cache layout. No new directories are introduced for cache storage. The meta sidecar MUST carry a `kind: "probe_value"` field to disambiguate probe-artifact sidecars from file-artifact sidecars. All other fields of the meta sidecar (integrity hash, schema version) follow §{exec.cache.integrity}.
+
+In addition, on every probe completion — cache hit or miss, demand-driven or pre-pass (§{cat.probes.for-each}) — the implementation MUST materialise the canonical bytes at `.cook/probes/<file>` under the project root, where `<file>` is the probe key with the characters `_`, `/`, and `\` escaped for injectivity (the reference implementation rewrites `_` → `_5f`, `/` → `_2f`, `\` → `_5c`, so no two distinct keys share a file name), suffixed `.json`. This file is the canonical local copy of the probe value; the per-run probe-value store is a read-through cache of it.
 
 ## 22.5.9. Cycle detection [#cat.probes.cycles]
 
@@ -309,6 +315,8 @@ Iterating over artifacts produced earlier in the same build (the codegen-then-pr
 > **Note (informative).** An implementation must learn a recipe's `ingredients <probe>`-feeding probe *before* running the recipe body (which reads the resolved array). The reference implementation surfaces the source on the recipe's registration metadata — a `__for_each` descriptor naming the probe key (and optional field) — so the pre-pass resolves the probe from the recipe header without first executing the body (COOK-64). Recipe-level reachability (above) then bounds the pre-pass to the probes of recipes the build target actually reaches.
 
 ## 22.5.11. Implementation status (CS-0074) [#cat.probes.impl-status]
+
+CS-0102 retired the msgpack encoding referenced below in favour of canonical JSON (§{cat.probes.values}); the structural milestones stand as recorded.
 
 C4–C6 implemented: requires resolution (§22.5.6), cycle detection (§22.5.9), execute-VM guard (§22.5.3).
 

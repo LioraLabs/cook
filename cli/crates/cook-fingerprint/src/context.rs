@@ -375,8 +375,10 @@ pub struct ProbeFingerprintInputs {
 pub fn compute_probe_fingerprint(inputs: &ProbeFingerprintInputs) -> [u8; 32] {
     let mut h = Sha256::new();
 
-    // §22.5.3 section 1: literal marker
-    h.update(b"COOK_PROBE_FP_V1\n");
+    // §22.5.3 section 1: literal marker. V1 → V2 by CS-0102 (probe values
+    // re-encoded to canonical JSON): bumping the marker makes every
+    // pre-CS-0102 artifact an unreachable cache key.
+    h.update(b"COOK_PROBE_FP_V2\n");
     // §22.5.3 section 2: key
     h.update(inputs.key.as_bytes());
     h.update(b"\n");
@@ -840,6 +842,30 @@ mod tests {
         let h1 = compute_probe_fingerprint(&a);
         a.upstream_probes[0].1 = [2u8; 32];
         assert_ne!(h1, compute_probe_fingerprint(&a));
+    }
+
+    /// CS-0102 marker bump: the fingerprint preimage starts with
+    /// `COOK_PROBE_FP_V2`, so every artifact addressed under the V1
+    /// (pre-CS-0102) marker is unreachable. The test hand-computes the V1
+    /// digest for the same inputs and asserts the implementation no longer
+    /// produces it.
+    #[test]
+    fn probe_fingerprint_marker_is_v2() {
+        let inputs = ProbeFingerprintInputs {
+            key: "k".into(),
+            produce_source: "return 1".into(),
+            env: vec![], tools: vec![], files: vec![], upstream_probes: vec![],
+        };
+        let fp = compute_probe_fingerprint(&inputs);
+
+        // Hand-computed V1 preimage (the exact bytes compute_probe_fingerprint
+        // hashed before CS-0102): marker, key, produce source, then the four
+        // empty section headers, each LF-terminated.
+        let mut h = Sha256::new();
+        h.update(b"COOK_PROBE_FP_V1\nk\nreturn 1\nENV\nTOOLS\nFILES\nUPSTREAM\n");
+        let v1: [u8; 32] = h.finalize().into();
+
+        assert_ne!(fp, v1, "probe fingerprint still uses the V1 marker");
     }
 
     #[test]

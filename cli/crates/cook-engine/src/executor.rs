@@ -1012,13 +1012,36 @@ pub fn execute_dag(
                                 cache_ctx.backend.as_ref(),
                                 &fp,
                             ) {
-                                Ok(Some(bytes)) => {
+                                // A hit is only accepted when the cached bytes
+                                // parse as probe-value JSON (CS-0102 stale-artifact
+                                // defence, second layer behind the V2 marker).
+                                Ok(Some(bytes))
+                                    if cook_contracts::probe_value::decode_json(&bytes)
+                                        .is_ok() =>
+                                {
                                     // Cache hit — populate store and complete without dispatch.
                                     tracing::debug!(
                                         "probe '{}': cache hit (fp={:x?})",
                                         probe_key,
                                         &fp[..4],
                                     );
+                                    // CS-0102: materialise the canonical local copy at
+                                    // .cook/probes/<key>.json. Non-fatal on failure.
+                                    let probes_dir = cache_ctx
+                                        .project_root
+                                        .join(".cook")
+                                        .join("probes");
+                                    if let Err(e) = cook_contracts::probe_value::write_probe_file(
+                                        &probes_dir,
+                                        &probe_key,
+                                        &bytes,
+                                    ) {
+                                        tracing::warn!(
+                                            "probe '{}': failed to write {}: {e}",
+                                            probe_key,
+                                            probes_dir.display(),
+                                        );
+                                    }
                                     {
                                         pool.probe_value_store()
                                             .insert(&probe_key, bytes);
@@ -1065,6 +1088,20 @@ pub fn execute_dag(
                                         );
                                     }
                                     return submitted;
+                                }
+                                Ok(Some(_)) => {
+                                    // Cached bytes are not probe-value JSON —
+                                    // treat as a miss and re-run produce. Evict
+                                    // the stale entry so the post-run put (G5)
+                                    // can self-heal the key with canonical JSON
+                                    // (CS-0055 conflict detection would reject
+                                    // an overwrite of differing bytes).
+                                    tracing::warn!(
+                                        "probe '{}': cached bytes are not probe-value JSON \
+                                         (pre-CS-0102 artifact?); treating as miss",
+                                        probe_key,
+                                    );
+                                    let _ = cache_ctx.backend.delete(&fp);
                                 }
                                 Ok(None) => {
                                     // Cache miss — fall through to worker dispatch.
@@ -2004,7 +2041,25 @@ pub fn execute_dag(
         // G3 (CS-0074): if this result carries a probe output, write it into
         // the ProbeValueStore immediately so that consumer units
         // dispatched after this point can read it via cook.cache.get (§22.5.7).
+        // CS-0102: first materialise the canonical local copy at
+        // .cook/probes/<key>.json with the worker's bytes verbatim, so the
+        // file, the per-run store, and the CAS artifact (G5 below) hold
+        // byte-identical content. Non-fatal on failure.
         if let Some(ref probe_out) = result.probe_output {
+            if result.success {
+                let probes_dir = cache_ctx.project_root.join(".cook").join("probes");
+                if let Err(e) = cook_contracts::probe_value::write_probe_file(
+                    &probes_dir,
+                    &probe_out.key,
+                    &probe_out.bytes,
+                ) {
+                    tracing::warn!(
+                        "probe '{}': failed to write {}: {e}",
+                        probe_out.key,
+                        probes_dir.display(),
+                    );
+                }
+            }
             pool.probe_value_store()
                 .insert(&probe_out.key, probe_out.bytes.clone());
         }
@@ -3540,7 +3595,7 @@ mod tests {
         cook_fingerprint::compute_probe_fingerprint(&inputs)
     }
 
-    /// Pre-populate the cache backend with known msgpack bytes under the given
+    /// Pre-populate the cache backend with known bytes under the given
     /// fingerprint key. Used to set up the "cache hit" scenario for G4 tests.
     fn seed_probe_cache(backend: &dyn cook_cache::backend::CacheBackend, fp: &[u8; 32], bytes: &[u8]) {
         let mut meta = cook_fingerprint::ArtifactMeta {
@@ -3578,7 +3633,8 @@ mod tests {
         let fp = fingerprint_for(&pu, &wd);
 
         // Seed the backend with the known bytes we expect to see in the store.
-        let expected_bytes: Vec<u8> = vec![0x91, 0xc3]; // msgpack: [true]
+        let expected_bytes =
+            cook_contracts::probe_value::encode_canonical_json(&serde_json::json!([true]));
         seed_probe_cache(cache_ctx.backend.as_ref(), &fp, &expected_bytes);
 
         // Build a DAG with the probe node.
@@ -3625,6 +3681,20 @@ mod tests {
             .expect("post-hit get");
         let stored = post.expect("cache entry must still exist after a hit read");
         assert_eq!(stored, expected_bytes, "cached bytes must survive a hit read");
+
+        // CS-0102: the hit must also materialise the canonical local copy at
+        // .cook/probes/<key>.json with exactly the cached bytes.
+        let probe_file = _tmp.path().join(".cook").join("probes").join("test:hit.json");
+        assert!(
+            probe_file.exists(),
+            "cache hit must write {}",
+            probe_file.display()
+        );
+        assert_eq!(
+            std::fs::read(&probe_file).unwrap(),
+            expected_bytes,
+            ".cook/probes file must hold the exact cached bytes"
+        );
     }
 
     // G5 test: on a cache miss the worker executes the produce source, the
@@ -3675,9 +3745,13 @@ mod tests {
             "probe artifact must be persisted to cache backend after execution (G5)"
         );
 
-        // The value stored must be non-empty (msgpack-encoded 42).
+        // CS-0102: the persisted value must be the canonical JSON rendering of 42.
         let bytes = post.unwrap();
-        assert!(!bytes.is_empty(), "persisted probe bytes must be non-empty");
+        let expected = cook_contracts::probe_value::encode_canonical_json(&serde_json::json!(42));
+        assert_eq!(
+            bytes, expected,
+            "persisted probe bytes must be the canonical JSON rendering"
+        );
 
         // G5: verify the persisted bytes are retrievable from the backend.
         // (G3 — probe-value store — is internal to execute_dag and not
@@ -3687,6 +3761,85 @@ mod tests {
             .expect("second get");
         let persisted = post2.expect("artifact must still be in backend on second read");
         assert_eq!(persisted, bytes, "persisted bytes must round-trip through backend");
+
+        // CS-0102: the miss path must also materialise .cook/probes/<key>.json
+        // with the same bytes (file == store == CAS).
+        let probe_file = _tmp.path().join(".cook").join("probes").join("test:miss.json");
+        assert!(
+            probe_file.exists(),
+            "cache miss must write {}",
+            probe_file.display()
+        );
+        assert_eq!(
+            std::fs::read(&probe_file).unwrap(),
+            expected,
+            ".cook/probes file must hold the exact persisted bytes"
+        );
+    }
+
+    // CS-0102 stale-artifact defence: a cache entry whose bytes are not
+    // probe-value JSON (e.g. a pre-CS-0102 artifact) MUST be treated as a
+    // miss — produce runs, no NodeCacheHit is emitted, and the entry is
+    // overwritten with canonical JSON.
+    #[test]
+    fn probe_cache_hit_with_non_json_bytes_falls_through_to_miss() {
+        use std::sync::mpsc;
+
+        let (_wd, _tmp) = tmp_dir();
+        let wd = _wd.clone();
+        let cache_ctx = make_cache_ctx(&_tmp);
+
+        let produce = "return 7";
+        let pu = probe_unit("test:stale", produce);
+        let fp = fingerprint_for(&pu, &wd);
+
+        // Seed the backend with bytes that are NOT JSON (0x91 0xc3 is the old
+        // encoding of [true]).
+        seed_probe_cache(cache_ctx.backend.as_ref(), &fp, &[0x91, 0xc3]);
+
+        let mut dag = Dag::new();
+        let node_id = dag
+            .add_node(probe_work_node("test:stale", produce, wd), &[])
+            .unwrap();
+
+        let mut probe_units_by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = BTreeMap::new();
+        probe_units_by_node.insert(node_id, pu);
+
+        let (tx, rx) = mpsc::channel();
+        let result = execute_dag(
+            dag,
+            2,
+            BTreeMap::new(),
+            Some(tx),
+            cache_ctx.clone(),
+            None,
+            &BTreeMap::new(),
+            &[],
+            &probe_units_by_node,
+        );
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+
+        // The stale entry must NOT register as a cache hit.
+        let events: Vec<_> = rx.try_iter().collect();
+        let cache_hits: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, EngineEvent::NodeCacheHit { .. }))
+            .collect();
+        assert_eq!(
+            cache_hits.len(),
+            0,
+            "non-JSON cached bytes must fall through to miss; events: {events:#?}"
+        );
+
+        // The backend entry must now hold the canonical JSON rendering of 7.
+        let post = cook_cache::backend::get_bytes(cache_ctx.backend.as_ref(), &fp)
+            .expect("post-run get")
+            .expect("entry must exist after the re-run");
+        assert_eq!(
+            post,
+            cook_contracts::probe_value::encode_canonical_json(&serde_json::json!(7)),
+            "stale entry must be overwritten with canonical JSON"
+        );
     }
 
     // G4/G5 invalidation test: changing a declared env var changes the probe's

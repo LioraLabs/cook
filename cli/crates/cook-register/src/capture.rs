@@ -467,9 +467,9 @@ pub fn install_cook_api(
     // scalar's bare string otherwise). Bound on the register VM so the fan-out
     // codegen's `member = cook.member_to_string(item)` and `$<in>` resolve.
     let member_fn = lua.create_function(|_, value: mlua::Value| {
-        let mp = crate::probe_value::lua_to_msgpack(&value)
+        let jv = crate::probe_value::lua_to_json(&value)
             .map_err(|e| mlua::Error::runtime(format!("cook.member_to_string: {e}")))?;
-        Ok(cook_contracts::member::member_to_string(&mp))
+        Ok(cook_contracts::member::member_to_string(&jv))
     })?;
     cook.set("member_to_string", member_fn)?;
 

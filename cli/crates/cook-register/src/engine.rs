@@ -1170,8 +1170,8 @@ fn run_for_each_prepass(
     for (_, key, field) in &drivers {
         let store = prepass_store.borrow();
         let value = store.get(*key).expect("driver probe evaluated above");
-        let (resolved, selector): (&rmpv::Value, String) = match field {
-            Some(f) => match msgpack_map_get(value, f) {
+        let (resolved, selector): (&serde_json::Value, String) = match field {
+            Some(f) => match json_map_get(value, f) {
                 Some(v) => (v, format!("{key}:{f}")),
                 None => {
                     return Err(RegisterError::ForEachNotArray {
@@ -1182,10 +1182,10 @@ fn run_for_each_prepass(
             },
             None => (value, (*key).to_string()),
         };
-        if !matches!(resolved, rmpv::Value::Array(_)) {
+        if !matches!(resolved, serde_json::Value::Array(_)) {
             return Err(RegisterError::ForEachNotArray {
                 selector,
-                shape: msgpack_shape(resolved).to_string(),
+                shape: json_shape(resolved).to_string(),
             });
         }
     }
@@ -1252,50 +1252,86 @@ fn evaluate_prepass_probe(
     let fp = cook_fingerprint::compute_probe_fingerprint(&inputs);
 
     // Cache GET when a backend is wired; on a miss (or no backend) run
-    // `produce` on the register VM, then PUT.
+    // `produce` on the register VM, then PUT. Cached bytes that do not parse
+    // as probe-value JSON are treated as a miss, never a hard error (CS-0102
+    // stale-artifact defence — the V2 fingerprint marker already makes
+    // pre-CS-0102 entries unreachable; this is the second layer).
     let bytes: Vec<u8> = match cache_ctx {
-        Some(ctx) => match cook_cache::backend::get_bytes(ctx.backend.as_ref(), &fp) {
-            Ok(Some(b)) => b,
-            _ => {
-                let b = run_prepass_produce(lua, key, &probe.produce_source)?;
-                let mut meta = cook_fingerprint::ArtifactMeta {
-                    recipe_namespace: format!("probe:{key}"),
-                    command_hash: 0,
-                    context_hash: 0,
-                    env_contribution: 0,
-                    schema_version: cook_fingerprint::CACHE_VERSION,
-                    size_bytes: b.len() as u64,
-                    tags: std::collections::BTreeSet::new(),
-                    consulted_env_keys: std::collections::BTreeSet::new(),
-                    output_index: 0,
-                    output_path: format!("probe:{key}"),
-                    content_hash: cook_fingerprint::ArtifactMeta::zero_content_hash(),
-                    kind: None,
+        Some(ctx) => {
+            let cached = match cook_cache::backend::get_bytes(ctx.backend.as_ref(), &fp) {
+                Ok(Some(b)) if cook_contracts::probe_value::decode_json(&b).is_ok() => Some(b),
+                Ok(Some(_)) => {
+                    eprintln!(
+                        "cook: warning: probe '{key}': cached bytes are not \
+                         probe-value JSON (pre-CS-0102 artifact?); treating as miss"
+                    );
+                    // Evict the stale entry so the put below can self-heal the
+                    // key (CS-0055 conflict detection rejects overwrites with
+                    // differing bytes).
+                    let _ = ctx.backend.delete(&fp);
+                    None
                 }
-                .as_probe_value();
-                // A cache PUT failure is non-fatal — the value is already in
-                // hand for this pass; we simply forgo persisting it.
-                let _ = cook_cache::backend::put_bytes(ctx.backend.as_ref(), &fp, &b, &mut meta);
-                b
+                _ => None,
+            };
+            match cached {
+                Some(b) => b,
+                None => {
+                    let b = run_prepass_produce(lua, key, &probe.produce_source)?;
+                    let mut meta = cook_fingerprint::ArtifactMeta {
+                        recipe_namespace: format!("probe:{key}"),
+                        command_hash: 0,
+                        context_hash: 0,
+                        env_contribution: 0,
+                        schema_version: cook_fingerprint::CACHE_VERSION,
+                        size_bytes: b.len() as u64,
+                        tags: std::collections::BTreeSet::new(),
+                        consulted_env_keys: std::collections::BTreeSet::new(),
+                        output_index: 0,
+                        output_path: format!("probe:{key}"),
+                        content_hash: cook_fingerprint::ArtifactMeta::zero_content_hash(),
+                        kind: None,
+                    }
+                    .as_probe_value();
+                    // A cache PUT failure is non-fatal — the value is already in
+                    // hand for this pass; we simply forgo persisting it.
+                    let _ =
+                        cook_cache::backend::put_bytes(ctx.backend.as_ref(), &fp, &b, &mut meta);
+                    b
+                }
             }
-        },
+        }
         None => run_prepass_produce(lua, key, &probe.produce_source)?,
     };
 
-    let mp = cook_contracts::probe_value::decode_msgpack(&bytes).map_err(|e| {
+    // CS-0102: materialise the canonical local copy at .cook/probes/<key>.json.
+    // Non-fatal on failure — the in-memory value is already in hand.
+    let probes_dir = cache_ctx
+        .map(|ctx| ctx.project_root.clone())
+        .unwrap_or_else(|| working_dir.to_path_buf())
+        .join(".cook")
+        .join("probes");
+    if let Err(e) = cook_contracts::probe_value::write_probe_file(&probes_dir, key, &bytes) {
+        eprintln!(
+            "cook: warning: probe '{key}': failed to write {}: {e}",
+            probes_dir.display()
+        );
+    }
+
+    let jv = cook_contracts::probe_value::decode_json(&bytes).map_err(|e| {
         RegisterError::ForEachProbeProduceFailed {
             key: key.to_string(),
             message: format!("decode cached value: {e}"),
         }
     })?;
-    prepass_store.borrow_mut().insert(key.to_string(), mp);
+    prepass_store.borrow_mut().insert(key.to_string(), jv);
     upstream_fps.insert(key.to_string(), fp);
     done.insert(key.to_string());
     Ok(())
 }
 
 /// Run a probe's `produce` source on the register VM and return the
-/// msgpack-encoded value (mirrors `cook-luaotp`'s execute-VM `execute_probe`).
+/// canonical-JSON bytes (mirrors `cook-luaotp`'s execute-VM `execute_probe`;
+/// CS-0102).
 fn run_prepass_produce(lua: &Lua, key: &str, produce: &str) -> Result<Vec<u8>, RegisterError> {
     let wrapped = format!("return (function()\n{}\nend)()", produce);
     let chunk = format!("@probe:{key}");
@@ -1307,26 +1343,19 @@ fn run_prepass_produce(lua: &Lua, key: &str, produce: &str) -> Result<Vec<u8>, R
             key: key.to_string(),
             message: e.to_string(),
         })?;
-    let mp = crate::probe_value::lua_to_msgpack(&value).map_err(|e| {
+    let jv = crate::probe_value::lua_to_json(&value).map_err(|e| {
         RegisterError::ForEachProbeProduceFailed {
             key: key.to_string(),
             message: e,
         }
     })?;
-    Ok(crate::probe_value::encode_msgpack(&mp))
+    Ok(crate::probe_value::encode_canonical_json(&jv))
 }
 
-/// Look up a string-keyed field in an rmpv `Map`. `None` for non-maps or a
+/// Look up a string-keyed field in a JSON object. `None` for non-objects or a
 /// missing key.
-fn msgpack_map_get<'a>(v: &'a rmpv::Value, field: &str) -> Option<&'a rmpv::Value> {
-    if let rmpv::Value::Map(pairs) = v {
-        for (k, val) in pairs {
-            if k.as_str() == Some(field) {
-                return Some(val);
-            }
-        }
-    }
-    None
+fn json_map_get<'a>(v: &'a serde_json::Value, field: &str) -> Option<&'a serde_json::Value> {
+    v.as_object().and_then(|m| m.get(field))
 }
 
 /// COOK-64 §22.5.9 static-input rule: reject a `for_each`-feeding probe whose
@@ -1381,17 +1410,15 @@ fn normalise_rel(p: &str) -> String {
     p.strip_prefix("./").unwrap_or(p).to_string()
 }
 
-/// Human-readable msgpack value-kind, for the §22.5.9 non-array diagnostic.
-fn msgpack_shape(v: &rmpv::Value) -> &'static str {
+/// Human-readable JSON value-kind, for the §22.5.9 non-array diagnostic.
+fn json_shape(v: &serde_json::Value) -> &'static str {
     match v {
-        rmpv::Value::Nil => "nil",
-        rmpv::Value::Boolean(_) => "boolean",
-        rmpv::Value::Integer(_) | rmpv::Value::F32(_) | rmpv::Value::F64(_) => "number",
-        rmpv::Value::String(_) => "string",
-        rmpv::Value::Binary(_) => "binary",
-        rmpv::Value::Array(_) => "array",
-        rmpv::Value::Map(_) => "map/record",
-        rmpv::Value::Ext(_, _) => "ext",
+        serde_json::Value::Null => "nil",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "map/record",
     }
 }
 
