@@ -1101,7 +1101,9 @@ pub fn execute_dag(
                                          (pre-CS-0102 artifact?); treating as miss",
                                         probe_key,
                                     );
-                                    let _ = cache_ctx.backend.delete(&fp);
+                                    if let Err(e) = cache_ctx.backend.delete(&fp) {
+                                        tracing::warn!("probe '{}': failed to evict stale cache entry: {e}", probe_key);
+                                    }
                                 }
                                 Ok(None) => {
                                     // Cache miss — fall through to worker dispatch.
