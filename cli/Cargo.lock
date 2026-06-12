@@ -522,6 +522,7 @@ dependencies = [
  "cook-lua-stdlib",
  "mlua",
  "rmpv",
+ "serde_json",
  "tempfile",
 ]
 
