@@ -129,3 +129,9 @@ The `$<libmath>` reference in `app`'s shell body expands at register time to `"b
 A placeholder `$<TOKEN>` whose `TOKEN` begins with `env.` is reserved as the explicit env-var-lookup form. For such a placeholder, the implementation MUST resolve `TOKEN` by stripping the `env.` prefix and looking up the remaining identifier as a declared env var per §{xref.resolution} step 3, regardless of whether a recipe of the same name exists in scope.
 
 The reserved namespace prevents resolution ambiguity. A Cookfile that declares both a recipe named `foo` and an env var `env.foo` will see bare `$<foo>` resolve to the recipe (per the rule order) and `$<env.foo>` resolve to the env var. The recipe-naming rules of §{lexical.keywords} forbid `env` as either the first or last dotted segment of a recipe name, so a recipe cannot be reached via `$<env.X>` form by construction.
+
+## 10.8. The `file:` placeholder namespace [#xref.file-namespace]
+
+> **Normative.**
+
+A placeholder `$<TOKEN>` whose `TOKEN` begins with `file:` is reserved as the file-reference form (CS-0101, §{phl.cook-step}). A conforming implementation MUST dispatch on this prefix before every step of §{xref.resolution} and before the probe-value colon dispatch of §{cat.probes} — a `file:`-prefixed token never resolves as a builtin, recipe, env var, or probe value. Consequently a probe registered under a key beginning with `file:` is not addressable from the sigil surface; implementations SHOULD warn when `cook.probe` is called with such a key. `PATH` MUST be relative: a leading `/` or any `..` segment MUST produce a load-time diagnostic.

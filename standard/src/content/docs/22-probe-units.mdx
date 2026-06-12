@@ -205,7 +205,7 @@ The relative order of `cook.probe` and `cook.add_unit` calls within one register
 
 Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` placeholders that reference probe outputs declared in `probes`. The implementation MUST detect these placeholders during codegen (or register-time capture for direct `cook.add_unit` calls) and rewrite the command into a Lua step that calls `cook.cache.get(key)` (§{lua.both}) and interpolates the resolved value before invoking the shell.
 
-The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{phl.token}). A sigil whose IDENT contains a colon (`:`) is unambiguously a probe-value reference; the implementation MUST dispatch it to the cache-read path described here. A sigil whose IDENT contains no colon retains its existing register-time semantics (built-ins, recipe names, env vars).
+The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{phl.token}). A sigil whose IDENT contains a colon (`:`) **and does not begin with the reserved `file:` prefix (§{xref.file-namespace}, CS-0101)** is unambiguously a probe-value reference; the implementation MUST dispatch it to the cache-read path described here. A sigil whose IDENT contains no colon retains its existing register-time semantics (built-ins, recipe names, env vars).
 
 Substitution rules:
 

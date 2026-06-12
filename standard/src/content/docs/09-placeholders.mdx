@@ -14,10 +14,12 @@ A **placeholder** is the byte sequence `$<IDENT>` appearing in shell text (defin
 
 ```
 placeholder       = "$<" placeholder_ident ">"
-placeholder_ident = bare_ident | out_indexed | out_indexed_acc
+placeholder_ident = bare_ident | out_indexed | out_indexed_acc | file_ref
 bare_ident        = ALPHA (ALPHA | DIGIT | "_" | ".")*
 out_indexed       = "out_" DIGIT+
 out_indexed_acc   = "out_" DIGIT+ "." accessor
+file_ref          = "file:" file_path_char+
+file_path_char    = ALPHA | DIGIT | "." | "-" | "/" | "*"
 accessor          = "stem" | "name" | "ext" | "dir"
 ALPHA             = "a"…"z" | "A"…"Z" | "_"
 DIGIT             = "0"…"9"
@@ -26,6 +28,8 @@ DIGIT             = "0"…"9"
 A byte sequence beginning with `$<` that does not match this production in full — by malformed `IDENT`, missing `>`, or `IDENT` exceeding the production's character set — is **not** a placeholder. Its bytes are literal shell text. A conforming implementation MUST NOT search forward beyond the first non-`IDENT` byte for a closing `>`.
 
 The strict-bail rule eliminates ambiguity between Cook placeholders and shell idioms that use `{`/`}` (`{a,b,c}` brace expansion, `${VAR}` parameter expansion, `awk '{print $1}'`, JSON literals, etc.). None of those forms begin with `$<` followed by an `IDENT` and a `>`, so they are unambiguously literal under this rule.
+
+The `file_ref` alternative (CS-0101) admits an extended character set after the literal prefix `file:` — path separators (`/`) and the glob star (`*`) — and requires at least one `file_path_char`. The strict-bail rule applies unchanged: `$<file:>` (empty path), a path containing a space, or any byte outside `file_path_char` makes the whole sequence literal shell text.
 
 Resolution of a successfully-lexed placeholder is governed by §{xref.resolution}. The closed set of valid `IDENT` resolutions and per-iteration-mode validity rules are stated normatively in §{phl.cook-step}.
 
@@ -53,6 +57,7 @@ The sigil syntax `$<IDENT>` is the sole placeholder surface for shell text as of
 | `$<all>` | many-to-one only | The unit's input list, joined by single space characters |
 | `$<NAME[]>` (NAME is a recipe in scope; CS-0098) | one-to-one inside `ingredients <probe>` fan-out body only | The named recipe's terminal output for the **current iteration member** (§{steps.cross-recipe-member}). `NAME` must be a recipe declared in scope; an unknown name with `[]` falls through to env-var lookup. `$<NAME>` (no brackets) continues to mean all terminal outputs, space-joined, and is unchanged. A conforming implementation MUST reject `$<NAME[]>` appearing outside an `ingredients <probe>` fan-out body with a load-time diagnostic. In the Lua lowering, `$<NAME[]>` emits `cook.dep_output_member("NAME", cook.member_to_string(item))` where `item` is the loop-local fan-out variable. The compiler extracts `$<NAME[]>` as a recipe-level DAG ordering edge (NAME must build before the referencing recipe, identical to the edge produced by bare `$<NAME>`) and folds the referenced output into the current member's cache fingerprint (per-member isolation — §{steps.cross-recipe-member}). Consumer and producer must iterate the same probe (same-probe precondition, v1); cross-probe joins are COOK-99. |
 | `$<NAME>` (NAME is a declared chore parameter, §7.1.1) | chore bodies only | The bound parameter value, POSIX single-quote-escaped to produce a single shell word; for variadic parameters, the space-separated, individually shell-quoted joined form. Scope-limited to chore bodies that declare the parameter. Resolved at register phase, before the shell step is dispatched. |
+| `$<file:PATH>` (CS-0101) | any mode | A **file reference**: expands to `PATH`'s resolved match list — the literal path, or for a glob the sorted matches — space-joined. `PATH` is resolved against the same base as `ingredients` patterns (the declaring Cookfile's directory). For a cacheable unit, the content of each resolved file is folded into the unit's observable input set (§{exec.cache.abstract} observable 6). Resolution is dispatched on the `file:` prefix before any other rule — `file:` is a reserved namespace analogous to `env.` (§{xref.env-namespace}, §{xref.file-namespace}). |
 
 `ACCESSOR` is one of `stem`, `name`, `ext`, `dir`, with semantics defined by §{xref.path-accessors}, when `$<in>` refers to a path member. When `$<in>` refers to a record member (`ingredients <probe>`, §{steps.ingredients}), `ACCESSOR` in `$<in.ACCESSOR>` is instead a **record key**: it selects the member's field, rendered as a string (canonical key-sorted JSON for a nested table value).
 
@@ -73,6 +78,8 @@ A conforming implementation MUST reject the following shapes with a load-time di
 - `$<out_N>` for `N` greater than the step's declared output count.
 - `$<stem>`, `$<name>`, `$<ext>`, or `$<dir>` as a bare sigil (i.e. with no `NAME.` prefix). These bare accessors have no special meaning at the placeholder layer; the correct spelling is `$<in.stem>` etc. The diagnostic MUST name the new form. (A bare `$<stem>` would otherwise resolve through §{xref.resolution} to `cook.require_env("stem")`, which is a confusing failure mode.)
 - `$<in>` used outside any iteration driver — when no `ingredients_step` is present in the recipe, there is no iteration item to bind. The diagnostic MUST state that `$<in>` requires an `ingredients` source.
+- `$<file:PATH>` in a `cook` output pattern. A file reference is an input, not an iteration driver; the diagnostic MUST name CS-0101.
+- A literal `PATH` that names no regular file, or a glob `PATH` matching no files, MUST produce a load-time diagnostic naming the placeholder (mirrors §{xref.resolution} step 4 — no silent empty expansion).
 
 ### Example 9.3.1
 
@@ -112,6 +119,7 @@ A `plate_step` or `test_step` body that is a `shell_block` admits the following 
 | `$<in.ACCESSOR>` | one-to-one | For path members (`ingredients` glob): `path.ACCESSOR(in)` per §{lua.path-helpers}; for record members (`ingredients <probe>`): the value of record field `ACCESSOR` |
 | `$<all>` | many-to-one | The source list, space-joined |
 | `$<NAME>` (NAME is a recipe in scope) | any mode | `cook.dep_output(NAME)` per §{xref.string-substitution} |
+| `$<file:PATH>` (CS-0101) | any mode | File reference per §{phl.cook-step}: expands to the resolved match list, space-joined, with the same load-time missing/empty diagnostics. Plate and test units are registered non-cacheable, so the §{exec.cache.abstract} fingerprint observable does not apply to them; the reference is pure substitution in these positions. |
 | `$<TOKEN>` (none of the above) | any mode | `cook.require_env(TOKEN)` per §{xref.resolution} |
 
 A conforming implementation MUST reject:
