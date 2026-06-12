@@ -335,6 +335,16 @@ impl<T> Dag<T> {
         &self.nodes[id]
     }
 
+    /// IDs of the nodes that `id` depends on (its predecessors), in
+    /// ascending order (deduplicated at insert time).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` is out of range, mirroring [`Dag::node`].
+    pub fn deps(&self, id: usize) -> &[usize] {
+        &self.deps[id]
+    }
+
     /// Number of nodes in the DAG.
     pub fn len(&self) -> usize {
         self.nodes.len()
@@ -622,6 +632,28 @@ mod tests {
         let dag: Dag<i32> = Dag::default();
         assert!(dag.is_empty());
         assert_eq!(dag.len(), 0);
+    }
+
+    // ── deps() predecessor accessor ────────────────────────────────────
+
+    #[test]
+    fn deps_returns_predecessor_ids() {
+        //   a
+        //  / \
+        // b   c
+        //  \ /
+        //   d
+        let mut dag = Dag::new();
+        let a = dag.add_node("a", &[]).unwrap();
+        let b = dag.add_node("b", &[a]).unwrap();
+        let c = dag.add_node("c", &[a]).unwrap();
+        let d = dag.add_node("d", &[b, c]).unwrap();
+
+        assert!(dag.deps(a).is_empty());
+        assert_eq!(dag.deps(b), &[a]);
+        assert_eq!(dag.deps(c), &[a]);
+        // b < c by id, so BTreeSet ordering gives [b, c]
+        assert_eq!(dag.deps(d), &[b, c]);
     }
 
     // ── Send + Sync ────────────────────────────────────────────────────
