@@ -19,3 +19,4 @@ which = "7"
 tempfile = "3"
 cook-cache = { path = "../cook-cache" }
 serde_json = "1"
+toml = "0.8"
