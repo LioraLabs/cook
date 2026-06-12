@@ -6,12 +6,20 @@
 //! the `CacheBackend` artifact body, and any content-hash input — uses
 //! the bytes produced by [`encode_canonical_json`] verbatim.
 //!
+//! **Float note**: `-0.0` and `0.0` are `Value`-equal in serde_json but
+//! encode to different canonical bytes (`"-0.0\n"` vs `"0.0\n"`). Because
+//! hashing is byte-based this is fine — but callers must not deduplicate
+//! probe values by `Value` equality before encoding.
+//!
 //! The legacy msgpack helpers ([`encode_msgpack`] / [`decode_msgpack`]) are
 //! retained while the codebase migrates; they will be removed once all call
 //! sites have switched to the JSON codec.
 
 use rmpv::Value as MsgPackValue;
 use serde_json::Value as JsonValue;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Render a validated probe value (§22.5.5) to its canonical bytes:
 /// pretty-printed JSON, 2-space indent, object keys sorted bytewise,
@@ -51,15 +59,46 @@ pub fn decode_json(bytes: &[u8]) -> Result<JsonValue, String> {
     serde_json::from_slice(bytes).map_err(|e| format!("probe-value JSON decode: {e}"))
 }
 
-/// File name for a probe key under `.cook/probes/`: path separators are
-/// replaced with `__`, then `.json` is appended. Everything else (incl.
-/// `:`) stays literal — POSIX-only today.
+/// File name for a probe key under `.cook/probes/`.
+///
+/// Uses a percent-style escape with `_` as the escape character so that the
+/// mapping is **injective** (no two distinct keys produce the same file name):
+///
+/// | input char | encoded form |
+/// |------------|--------------|
+/// | `_`        | `_5f`        |
+/// | `/`        | `_2f`        |
+/// | `\`        | `_5c`        |
+/// | everything else (incl. `:`) | literal |
+///
+/// Then `.json` is appended.  Keys that contain none of the three special
+/// characters are unchanged — e.g. `cc:zlib` → `cc:zlib.json`.
+///
+/// Injectivity proof sketch: every `_` in the output is either an escaped
+/// `_` (followed by `5f`) or the first byte of an escape sequence (followed
+/// by `2f` or `5c`); a literal `_` cannot appear because every source `_`
+/// is rewritten to `_5f`.  Therefore the decode is unambiguous and distinct
+/// inputs cannot share an output.
 pub fn probe_file_name(key: &str) -> String {
-    format!("{}.json", key.replace(['/', '\\'], "__"))
+    let mut out = String::with_capacity(key.len() + 5);
+    for ch in key.chars() {
+        match ch {
+            '_' => out.push_str("_5f"),
+            '/' => out.push_str("_2f"),
+            '\\' => out.push_str("_5c"),
+            c => out.push(c),
+        }
+    }
+    out.push_str(".json");
+    out
 }
 
 /// Atomically materialise canonical probe bytes at `<dir>/<probe_file_name(key)>`
 /// (write to a temp file in the same dir, then rename). Creates `dir` if absent.
+///
+/// The temp file name includes both the process id and a per-process
+/// monotonic counter so that concurrent threads writing the same key do not
+/// share a tmp path and tear each other's writes.
 pub fn write_probe_file(
     dir: &std::path::Path,
     key: &str,
@@ -68,9 +107,16 @@ pub fn write_probe_file(
     std::fs::create_dir_all(dir)?;
     let name = probe_file_name(key);
     let final_path = dir.join(&name);
-    let tmp_path = dir.join(format!(".{name}.tmp-{}", std::process::id()));
-    std::fs::write(&tmp_path, bytes)?;
-    std::fs::rename(&tmp_path, &final_path)?;
+    let seq = WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp_path = dir.join(format!(".{name}.tmp-{}-{seq}", std::process::id()));
+    if let Err(e) = std::fs::write(&tmp_path, bytes) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, &final_path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
     Ok(final_path)
 }
 
@@ -119,6 +165,23 @@ mod tests {
         assert_eq!(encode_canonical_json(&json!("hi")), b"\"hi\"\n");
     }
 
+    /// Pinned bytes for floats, large integers, and empty containers.
+    /// These must never silently change — a change here means the on-disk
+    /// format has shifted and old cache entries will hash differently.
+    #[test]
+    fn canonical_json_float_and_container_pinned_bytes() {
+        assert_eq!(encode_canonical_json(&json!(1.0_f64)), b"1.0\n");
+        assert_eq!(encode_canonical_json(&json!(0.1_f64)), b"0.1\n");
+        assert_eq!(encode_canonical_json(&json!(-0.0_f64)), b"-0.0\n");
+        assert_eq!(
+            encode_canonical_json(&json!(18446744073709551615u64)),
+            b"18446744073709551615\n"
+        );
+        // Empty object and array — pretty-printed form must be stable.
+        assert_eq!(encode_canonical_json(&json!({})), b"{}\n");
+        assert_eq!(encode_canonical_json(&json!([])), b"[]\n");
+    }
+
     #[test]
     fn decode_json_round_trips_canonical_bytes() {
         let v = json!({"found": true, "cflags": ["-I/usr/include"]});
@@ -132,10 +195,38 @@ mod tests {
         assert!(decode_json(&[0x91, 0xc3]).is_err());
     }
 
+    // ── probe_file_name tests ────────────────────────────────────────────────
+
     #[test]
     fn probe_file_name_escapes_path_separators() {
+        // Unchanged: no special chars.
         assert_eq!(probe_file_name("cc:zlib"), "cc:zlib.json");
-        assert_eq!(probe_file_name("a/b\\c"), "a__b__c.json");
+        // Both separators escaped; `_` itself also escaped.
+        assert_eq!(probe_file_name("a/b\\c"), "a_2fb_5cc.json");
+        // Underscore alone.
+        assert_eq!(probe_file_name("a_b"), "a_5fb.json");
+    }
+
+    /// Injectivity: keys that previously collided under the old `__` scheme
+    /// now map to distinct file names.
+    #[test]
+    fn probe_file_name_is_injective() {
+        // Old scheme: `a/b` → `a__b.json` and `a__b` → `a__b.json` (collision).
+        // New scheme must differ.
+        assert_ne!(probe_file_name("a/b"), probe_file_name("a__b"));
+
+        // `a_b` and `a/b` must be distinct.
+        assert_ne!(probe_file_name("a_b"), probe_file_name("a/b"));
+
+        // All four of these keys must produce four distinct file names.
+        let names: Vec<String> = ["a/b", "a__b", "a_b", "a_5fb"]
+            .iter()
+            .map(|k| probe_file_name(k))
+            .collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), names.len(), "duplicate file names: {names:?}");
     }
 
     #[test]
