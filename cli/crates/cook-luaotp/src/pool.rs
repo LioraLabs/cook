@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -6,11 +5,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 
 use cook_contracts::{OutputStream, StepKind, WorkPayload};
-
-/// Thread-safe map of probe key → msgpack bytes, shared across all workers in
-/// a pool and the engine scheduler. Workers read from it via `cook.cache.get`;
-/// the engine writes to it when a `WorkPayload::Probe` result arrives (§22.5.7).
-pub type SharedProbeValueStore = Arc<Mutex<BTreeMap<String, Vec<u8>>>>;
+use crate::store::ProbeValueStore;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -75,7 +70,7 @@ pub struct WorkerPool {
     /// Per-run probe-value store. Owned here so `probe_value_store()` returns
     /// a clone that the engine scheduler can write probe outputs into after
     /// workers complete their `WorkPayload::Probe` units (§22.5.7).
-    probe_store: SharedProbeValueStore,
+    probe_store: ProbeValueStore,
 }
 
 // ---------------------------------------------------------------------------
@@ -108,8 +103,7 @@ impl WorkerPool {
 
         // Per-run probe-value store: shared across all workers so that
         // `cook.cache.get` on any worker VM sees the same store (§22.5.7).
-        let probe_store: SharedProbeValueStore =
-            Arc::new(Mutex::new(BTreeMap::new()));
+        let probe_store = ProbeValueStore::new();
 
         let (tx, rx) = mpsc::channel();
 
@@ -118,7 +112,7 @@ impl WorkerPool {
         for _ in 0..n {
             let q = Arc::clone(&shared);
             let tx = tx.clone();
-            let store = Arc::clone(&probe_store);
+            let store = probe_store.clone();
 
             let handle = std::thread::spawn(move || {
                 worker_loop(q, tx, store);
@@ -129,11 +123,11 @@ impl WorkerPool {
         (WorkerPool { threads, queue: shared, probe_store }, rx)
     }
 
-    /// Return a clone of the `SharedProbeValueStore` so the engine scheduler
+    /// Return a clone of the `ProbeValueStore` so the engine scheduler
     /// can write probe outputs into it after each `WorkPayload::Probe` unit
     /// completes (§22.5.7).
-    pub fn probe_value_store(&self) -> SharedProbeValueStore {
-        Arc::clone(&self.probe_store)
+    pub fn probe_value_store(&self) -> ProbeValueStore {
+        self.probe_store.clone()
     }
 
     /// Push a work item into the shared queue.
@@ -188,7 +182,7 @@ impl Drop for WorkerPool {
 fn worker_loop(
     queue: Arc<SharedQueue>,
     tx: mpsc::Sender<WorkResult>,
-    probe_store: SharedProbeValueStore,
+    probe_store: ProbeValueStore,
 ) {
     // Each worker creates its own Lua VM.  The VM is `!Send` but never
     // leaves this thread, so this is safe.
@@ -368,7 +362,7 @@ fn register_worker_cook_table(
     current_working_dir: &Arc<Mutex<PathBuf>>,
     current_env_vars: &Arc<Mutex<HashMap<String, String>>>,
     current_recipe: &Arc<Mutex<String>>,
-    probe_store: &SharedProbeValueStore,
+    probe_store: &ProbeValueStore,
 ) -> mlua::Result<()> {
     let cook = lua.create_table()?;
 
@@ -661,17 +655,16 @@ fn register_worker_cook_table(
 fn install_execute_phase_cook_cache(
     lua: &mlua::Lua,
     cook: &mlua::Table,
-    probe_store: &SharedProbeValueStore,
+    probe_store: &ProbeValueStore,
 ) -> mlua::Result<()> {
     let cache_tbl = lua.create_table()?;
 
     // cook.cache.get(key) → value | nil
-    let store_for_get = Arc::clone(probe_store);
+    let store_for_get = probe_store.clone();
     let get_fn = lua.create_function(move |lua, key: String| {
-        let store = store_for_get.lock().unwrap();
-        match store.get(&key) {
+        match store_for_get.get(&key) {
             Some(bytes) => {
-                let mp = cook_contracts::probe_value::decode_msgpack(bytes)
+                let mp = cook_contracts::probe_value::decode_msgpack(&bytes)
                     .map_err(|e| mlua::Error::runtime(format!(
                         "cook.cache.get('{}'): decode failed: {}", key, e
                     )))?;
@@ -693,19 +686,18 @@ fn install_execute_phase_cook_cache(
 
     // cook.cache.scope(label) → { get } — scoped get still works for
     // backwards compat; scoped set is also disabled.
-    let store_for_scope = Arc::clone(probe_store);
+    let store_for_scope = probe_store.clone();
     let scope_fn = lua.create_function(move |lua, label: String| {
         let scoped = lua.create_table()?;
         let prefix = format!("{}:", label);
 
-        let store_for_scoped_get = Arc::clone(&store_for_scope);
+        let store_for_scoped_get = store_for_scope.clone();
         let prefix_for_get = prefix.clone();
         let scoped_get = lua.create_function(move |lua, key: String| {
             let full = format!("{}{}", prefix_for_get, key);
-            let store = store_for_scoped_get.lock().unwrap();
-            match store.get(&full) {
+            match store_for_scoped_get.get(&full) {
                 Some(bytes) => {
-                    let mp = cook_contracts::probe_value::decode_msgpack(bytes)
+                    let mp = cook_contracts::probe_value::decode_msgpack(&bytes)
                         .map_err(|e| mlua::Error::runtime(format!(
                             "cook.cache.get('{}'): decode failed: {}", full, e
                         )))?;
@@ -2125,7 +2117,7 @@ mod tests {
                 (rmpv::Value::String("version".into()), rmpv::Value::String("1.2.3".into())),
             ]);
             let bytes = cook_contracts::probe_value::encode_msgpack(&mp);
-            pool.probe_value_store().lock().unwrap().insert("cc:zlib".into(), bytes);
+            pool.probe_value_store().insert("cc:zlib", bytes);
         }
 
         let code = r#"
@@ -2188,7 +2180,7 @@ mod tests {
         {
             let mp = rmpv::Value::String("gcc-14".into());
             let bytes = cook_contracts::probe_value::encode_msgpack(&mp);
-            pool.probe_value_store().lock().unwrap().insert("cc:compiler".into(), bytes);
+            pool.probe_value_store().insert("cc:compiler", bytes);
         }
 
         let code = r#"

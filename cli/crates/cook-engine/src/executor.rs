@@ -399,6 +399,10 @@ pub fn execute_dag(
     let total = dag.len();
     let (pool, rx) = WorkerPool::spawn(num_workers);
 
+    // CS-0102: the per-run store reads through to the canonical probe files.
+    pool.probe_value_store()
+        .attach_dir(cache_ctx.project_root.join(".cook").join("probes"));
+
     let mut cancelled = vec![false; total];
     let mut pending: usize = 0; // how many work results we're waiting for
     let mut failures: Vec<(usize, String, String)> = Vec::new();
@@ -973,7 +977,7 @@ pub fn execute_dag(
                 // If the probe has a `ProbeUnit` entry in `probe_units_by_node`
                 // (populated by the call site from `RecipeUnits.probes`), we
                 // compute its fingerprint and attempt a cache GET. On a hit we
-                // insert the cached bytes directly into the SharedProbeValueStore
+                // insert the cached bytes directly into the ProbeValueStore
                 // and complete the node without dispatching to a worker, unblocking
                 // downstream consumers. On a miss (or when probe metadata is
                 // absent), we fall through to normal worker dispatch.
@@ -1016,9 +1020,8 @@ pub fn execute_dag(
                                         &fp[..4],
                                     );
                                     {
-                                        let probe_store = pool.probe_value_store();
-                                        let mut store = probe_store.lock().unwrap();
-                                        store.insert(probe_key.clone(), bytes);
+                                        pool.probe_value_store()
+                                            .insert(&probe_key, bytes);
                                     }
                                     // Propagate fingerprint so downstream probes can resolve
                                     // their own upstream_probe_fingerprints entries (mirrors
@@ -1999,12 +2002,11 @@ pub fn execute_dag(
         finished += 1;
 
         // G3 (CS-0074): if this result carries a probe output, write it into
-        // the SharedProbeValueStore immediately so that consumer units
+        // the ProbeValueStore immediately so that consumer units
         // dispatched after this point can read it via cook.cache.get (§22.5.7).
         if let Some(ref probe_out) = result.probe_output {
-            let probe_store = pool.probe_value_store();
-            let mut store = probe_store.lock().unwrap();
-            store.insert(probe_out.key.clone(), probe_out.bytes.clone());
+            pool.probe_value_store()
+                .insert(&probe_out.key, probe_out.bytes.clone());
         }
 
         // G5 (CS-0074): persist probe output to CacheBackend after the worker
@@ -3457,7 +3459,7 @@ mod tests {
     // These tests exercise the G4 (cache lookup before dispatch) and G5
     // (persist probe output to backend after worker returns) paths in
     // execute_dag. They require that:
-    //   - A cache hit populates the SharedProbeValueStore and skips the
+    //   - A cache hit populates the ProbeValueStore and skips the
     //     worker (NodeCacheHit event, no NodeStarted).
     //   - A cache miss dispatches to the worker, which runs the produce
     //     source, and the result is persisted to the backend with
