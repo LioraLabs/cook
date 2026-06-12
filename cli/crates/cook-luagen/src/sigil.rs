@@ -1,4 +1,4 @@
-//! Strict `$<IDENT>` placeholder scanner per CS-0033 §3.1 and CS-0074.
+//! Strict `$<IDENT>` placeholder scanner per CS-0033 §3.1, CS-0074, and CS-0101.
 //!
 //! A Cook placeholder in shell text matches exactly:
 //!   $<IDENT>
@@ -7,14 +7,24 @@
 //!   out_indexed      := "out_" DIGIT+
 //!   out_indexed_acc  := "out_" DIGIT+ "." accessor
 //!   probe_ref        := ALPHA (ALPHA | DIGIT | "_" | ".")* ":" ...
+//!   file_ref         := "file:" PATH_CHAR+
 //!   ACC              := "stem" | "name" | "ext" | "dir"
 //!   ALPHA            := "a"…"z" | "A"…"Z" | "_"
+//!   PATH_CHAR        := ALPHA | DIGIT | "_" | "." | "-" | "/" | "*"
 //!
 //! CS-0074: IDENTs containing a colon (`:`) are probe-value references.
 //! The scanner admits `:`, `.`, `[`, `]`, and `-` as IDENT-continue characters
 //! so that `$<cc:zlib.cflags[2]>` and `$<demo:cc-version.ver>` tokenise as
 //! single spans. The resolver dispatches on the presence of `:` to select
 //! between existing register-time semantics and the new probe-cache-read path.
+//!
+//! CS-0101: The `file:` namespace uses an extended path charset that admits
+//! `/` and `*` (for literal paths and glob patterns). At least one path
+//! character after the prefix is required; strict-bail applies (no forward
+//! search past an out-of-charset byte).  The prefix dispatch occurs before
+//! the generic IDENT-continue loop so that `$<file:dir/*.css>` is a single
+//! well-formed span. Other `xxx:` namespaces continue to use the generic
+//! charset — `$<myfile:x.css>` tokenises via the generic loop.
 //!
 //! Anything not matching the strict shape is literal shell text. The scanner
 //! does not search forward for a `>` past a malformed inner — a `$<foo bar>`
@@ -67,6 +77,25 @@ fn try_match_placeholder(text: &str, start: usize) -> Option<PlaceholderSpan> {
     }
     i += 1;
 
+    // CS-0101: the `file:` namespace admits a path charset (`/`, `*`)
+    // that the generic IDENT charset does not. At least one path char
+    // is required; strict-bail otherwise (the sequence stays literal).
+    const FILE_PREFIX: &str = "file:";
+    if text[ident_start..].starts_with(FILE_PREFIX) {
+        let path_start = ident_start + FILE_PREFIX.len();
+        let mut j = path_start;
+        while j < bytes.len() && is_file_path_continue(bytes[j]) {
+            j += 1;
+        }
+        if j == path_start || j >= bytes.len() || bytes[j] != b'>' {
+            return None;
+        }
+        return Some(PlaceholderSpan {
+            range: start..j + 1,
+            ident: text[ident_start..j].to_string(),
+        });
+    }
+
     // Subsequent characters: ALPHA | DIGIT | _ | . | : | [ | ]
     while i < bytes.len() && is_ident_continue(bytes[i]) {
         i += 1;
@@ -92,6 +121,11 @@ fn is_alpha(b: u8) -> bool {
 #[inline]
 fn is_ident_continue(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b':' || b == b'[' || b == b']' || b == b'-'
+}
+
+#[inline]
+fn is_file_path_continue(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-' | b'/' | b'*')
 }
 
 #[cfg(test)]
@@ -233,6 +267,40 @@ mod tests {
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].range, 3..9);
         assert_eq!(spans[0].ident, "foo");
+    }
+
+    // CS-0101: `file:` prefix admits path characters `/` and `*`.
+    #[test]
+    fn file_ref_literal_path() {
+        assert_eq!(idents("--tokens $<file:tokens.css>"), vec!["file:tokens.css"]);
+    }
+
+    #[test]
+    fn file_ref_with_slash_and_star() {
+        assert_eq!(idents("$<file:templates/*.html>"), vec!["file:templates/*.html"]);
+        assert_eq!(idents("$<file:voice/narrator.wav>"), vec!["file:voice/narrator.wav"]);
+    }
+
+    #[test]
+    fn file_ref_empty_path_is_literal() {
+        assert!(scan("$<file:>").is_empty());
+    }
+
+    #[test]
+    fn file_ref_with_space_is_literal() {
+        assert!(scan("$<file:a b.css>").is_empty());
+    }
+
+    #[test]
+    fn file_ref_strict_bail_no_forward_search() {
+        // out-of-charset byte (`[`) bails; no forward search for `>`
+        assert!(scan("$<file:a[0].css> x").is_empty());
+    }
+
+    #[test]
+    fn file_prefix_only_as_whole_token() {
+        // `myfile:x` is NOT a file ref — generic charset still applies
+        assert_eq!(idents("$<myfile:x.css>"), vec!["myfile:x.css"]);
     }
 
     #[test]

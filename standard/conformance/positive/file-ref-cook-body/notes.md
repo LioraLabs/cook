@@ -1,0 +1,1 @@
+CS-0101: `$<file:PATH>` file references (literal + glob) in a cook shell-block body. Parse layer treats placeholders as raw shell text; register-phase behaviour is pinned by the `register_ok` marker added with the register slice.

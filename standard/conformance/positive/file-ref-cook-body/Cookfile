@@ -1,0 +1,5 @@
+recipe "html"
+    ingredients "src/page.md"
+    cook "build/$<in.stem>.html" {
+        render --tokens $<file:tokens.css> --templates $<file:templates/*.html> $<in> -o $<out>
+    }
