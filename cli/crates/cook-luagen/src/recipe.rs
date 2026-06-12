@@ -178,6 +178,22 @@ fn check_output_pattern_no_bare_accessors(
 ) -> Result<(), CodegenError> {
     for span in sigil::scan(pattern) {
         let inner = span.ident.as_str();
+
+        // CS-0101: `$<file:PATH>` is an input reference, not an iteration
+        // driver — it is rejected in cook output patterns. (This is the
+        // checked-path rejection; `output_pattern_ident_to_lua` carries the
+        // matching SIGIL_ERROR sentinel for the unchecked `generate` path.)
+        if inner.starts_with("file:") {
+            let e = crate::resolver::ResolveError::FileRefInOutputPattern {
+                ident: inner.to_string(),
+            };
+            return Err(CodegenError::PlaceholderViolation {
+                recipe: recipe.to_string(),
+                message: format!("CS-0101: {}", e),
+                line,
+            });
+        }
+
         match inner {
             "stem" | "name" | "ext" | "dir" => {
                 return Err(CodegenError::PlaceholderViolation {
@@ -400,9 +416,14 @@ enum ChunkPiece {
 fn emit_body_unit_with_names(
     out: &mut String,
     bundle: &[Step],
+    bundle_pos: usize,
     uses: &[UseStatement],
     recipe_names: &BTreeSet<String>,
 ) {
+    // CS-0101: bare shell steps are cache = false — `$<file:PATH>` is pure
+    // substitution (hoisted locals, no `file_refs` unit field). Tagged by the
+    // bundle's starting step position for uniqueness within the recipe chunk.
+    let mut file_refs = crate::template::FileRefs::new(format!("b{}", bundle_pos));
     let mut pieces: Vec<ChunkPiece> = Vec::new();
     // Raw shell lines (no sigils) coalesced for cook.sh(long-string).
     let mut shell_run: Vec<String> = Vec::new();
@@ -460,7 +481,7 @@ fn emit_body_unit_with_names(
                         recipes_in_scope: recipe_names,
                     };
                     let mut consulted = ConsultedEnv::new();
-                    let lua_expr = match crate::template::expand_sigil_template(command, &ctx, &mut consulted) {
+                    let lua_expr = match crate::template::expand_sigil_template(command, &ctx, &mut consulted, &mut file_refs) {
                         Ok(e) => e,
                         Err(e) => format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string())),
                     };
@@ -499,6 +520,11 @@ fn emit_body_unit_with_names(
     }
 
     let lua_code_expr = render_chunk_pieces(&pieces);
+    // CS-0101: file-ref locals are read while the RegisterTimeShellCmd pieces
+    // of `lua_code_expr` evaluate (register time), so hoist them just before.
+    if !file_refs.is_empty() {
+        out.push_str(&file_refs.hoist_lines("    "));
+    }
     // cache = false: consulted_env_keys is a cache-keying hint, omitted for
     // units that are never cached. The cacheable cook-step path in
     // cook_step.rs is the only emission site that includes it.
@@ -818,6 +844,7 @@ pub fn generate_with_names(
                                     &mut out,
                                     cook_step,
                                     cook_index,
+                                    i,
                                     recipe_names,
                                 );
                             } else {
@@ -826,6 +853,7 @@ pub fn generate_with_names(
                                     cook_step,
                                     *line,
                                     cook_index,
+                                    i,
                                     prev_cook_index,
                                     &recipe.ingredients,
                                     recipe_names,
@@ -841,7 +869,7 @@ pub fn generate_with_names(
                         } => {
                             out.push_str("    cook.step_group(function()\n");
                             if is_for_each {
-                                generate_for_each_plate_step(&mut out, plate_step, recipe_names);
+                                generate_for_each_plate_step(&mut out, plate_step, *line, recipe_names);
                             } else {
                                 generate_plate_step(
                                     &mut out,
@@ -885,7 +913,15 @@ pub fn generate_with_names(
                             // body-bundling (the next imperative step starts a fresh
                             // body unit).
                             // Apply sigil substitution to the command (CS-0033).
-                            let cmd_expr = expand_shell_command_sigil(command, recipe_names);
+                            // CS-0101: interactive units are cache = false —
+                            // hoisted file-ref locals, no file_refs field.
+                            let mut file_refs =
+                                crate::template::FileRefs::new(format!("l{}", line));
+                            let cmd_expr =
+                                expand_shell_command_sigil(command, recipe_names, &mut file_refs);
+                            if !file_refs.is_empty() {
+                                out.push_str(&file_refs.hoist_lines("    "));
+                            }
                             // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                             // units that are never cached. The cacheable cook-step path in
                             // cook_step.rs is the only emission site that includes it.
@@ -907,6 +943,7 @@ pub fn generate_with_names(
                             emit_body_unit_with_names(
                                 &mut out,
                                 &recipe.steps[bundle_start..i],
+                                bundle_start,
                                 &cookfile.uses,
                                 recipe_names,
                             );
@@ -973,7 +1010,11 @@ fn emit_for_each_items(out: &mut String, fe: &ForEachStep) {
 /// Expand a single shell command through sigil substitution (CS-0033).
 /// Returns a Lua expression suitable for the `command =` field of `cook.add_unit`.
 /// Commands with no sigil placeholders are emitted as Lua long-string literals.
-fn expand_shell_command_sigil(command: &str, recipe_names: &BTreeSet<String>) -> String {
+fn expand_shell_command_sigil(
+    command: &str,
+    recipe_names: &BTreeSet<String>,
+    file_refs: &mut crate::template::FileRefs,
+) -> String {
     let has_sigils = !crate::sigil::scan(command).is_empty();
     if !has_sigils {
         return wrap_lua_string(command);
@@ -984,7 +1025,7 @@ fn expand_shell_command_sigil(command: &str, recipe_names: &BTreeSet<String>) ->
         recipes_in_scope: recipe_names,
     };
     let mut consulted = ConsultedEnv::new();
-    match crate::template::expand_sigil_template(command, &ctx, &mut consulted) {
+    match crate::template::expand_sigil_template(command, &ctx, &mut consulted, file_refs) {
         Ok(e) => e,
         Err(e) => format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string())),
     }
@@ -1007,6 +1048,7 @@ fn expand_chore_shell_command(
     command: &str,
     has_params: bool,
     recipe_names: &BTreeSet<String>,
+    file_refs: &mut crate::template::FileRefs,
 ) -> String {
     let has_sigils = !crate::sigil::scan(command).is_empty();
     // Use the runtime-helper path only when the chore declares params AND the
@@ -1028,7 +1070,7 @@ fn expand_chore_shell_command(
     // recipe names so a `$<recipe>` reference (e.g. launching a just-built
     // binary via `$<dhewm3>`) resolves to that recipe's output and creates the
     // cross-recipe edge — not just `$<ENV_VAR>` → require_env.
-    expand_shell_command_sigil(command, recipe_names)
+    expand_shell_command_sigil(command, recipe_names, file_refs)
 }
 
 /// Compile a `Chore` to register-phase Lua.
@@ -1156,7 +1198,13 @@ pub fn compile_chore(
             Step::Shell { command, line, interactive: true } => {
                 // Apply sigil substitution — chore-aware path defers $<NAME>
                 // expansion to the runtime helper so param values are visible.
-                let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty(), recipe_names);
+                // CS-0101: chore units are cache = false — hoisted file-ref
+                // locals, no file_refs field.
+                let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
+                let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty(), recipe_names, &mut file_refs);
+                if !file_refs.is_empty() {
+                    out.push_str(&file_refs.hoist_lines("    "));
+                }
                 // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                 // units that are never cached. The cacheable cook-step path in
                 // cook_step.rs is the only emission site that includes it.
@@ -1178,7 +1226,12 @@ pub fn compile_chore(
                 // Parser enforces all chore shells are interactive; this arm
                 // is unreachable in a well-formed AST, but emit defensively.
                 if let Step::Shell { command, line, .. } = &chore.steps[i] {
-                    let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty(), recipe_names);
+                    // CS-0101: same hoist-only handling as the interactive arm.
+                    let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
+                    let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty(), recipe_names, &mut file_refs);
+                    if !file_refs.is_empty() {
+                        out.push_str(&file_refs.hoist_lines("    "));
+                    }
                     // cache = false: consulted_env_keys is a cache-keying hint, omitted for
                     // units that are never cached. The cacheable cook-step path in
                     // cook_step.rs is the only emission site that includes it.

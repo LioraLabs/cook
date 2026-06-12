@@ -28,11 +28,13 @@ pub(crate) fn expand_command_template(
     cmd: &str,
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
+    file_refs: &mut FileRefs,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
     let spans = sigil::scan(cmd);
 
     // Collect probe keys by walking sigil spans before doing full expansion,
-    // so we know whether to wrap in a deferred function.
+    // so we know whether to wrap in a deferred function. (A `file:` ident also
+    // contains `:` but resolves to FileRef, not ProbeRef — it never defers.)
     let mut probe_keys: BTreeSet<String> = BTreeSet::new();
     for span in &spans {
         if span.ident.contains(':') {
@@ -45,7 +47,7 @@ pub(crate) fn expand_command_template(
 
     if probe_keys.is_empty() {
         // No probe refs — use existing sigil expansion unchanged.
-        let lua = expand_sigil_template(cmd, ctx, consulted_env)?;
+        let lua = expand_sigil_template(cmd, ctx, consulted_env, file_refs)?;
         return Ok((lua, probe_keys));
     }
 
@@ -58,7 +60,7 @@ pub(crate) fn expand_command_template(
             parts.push(format!("\"{}\"", escape_lua_string(&cmd[cursor..span.range.start])));
         }
         let resolved = crate::resolver::resolve(&span.ident, ctx);
-        let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env)?;
+        let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?;
         parts.push(lua_expr);
         cursor = span.range.end;
     }
@@ -97,6 +99,7 @@ pub(crate) fn expand_for_each_template(
     template: &str,
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
+    file_refs: &mut FileRefs,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
     let spans = sigil::scan(template);
     let mut parts: Vec<String> = Vec::new();
@@ -128,7 +131,7 @@ pub(crate) fn expand_for_each_template(
                     escape_lua_string(name)
                 )
             } else {
-                resolved_to_lua(resolved, &span.ident, consulted_env)?
+                resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?
             }
         };
         parts.push(lua);
@@ -182,6 +185,67 @@ impl ConsultedEnv {
     }
 }
 
+/// CS-0101 accumulator for `$<file:PATTERN>` references seen during template
+/// expansion. Patterns are kept in first-appearance order (deduped); each is
+/// lowered to a register-time hoisted local `_cook_fr_<tag>_<n>` so the
+/// substitution value is computed at register time even when the surrounding
+/// command is wrapped in a probe-deferred `function() return ... end`.
+#[derive(Debug, Clone)]
+pub(crate) struct FileRefs {
+    tag: String,
+    pub patterns: Vec<String>,
+}
+
+impl FileRefs {
+    pub fn new(tag: impl Into<String>) -> Self {
+        Self { tag: tag.into(), patterns: Vec::new() }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    /// Record `pattern` (idempotent) and return the Lua local that will hold
+    /// its space-joined resolution.
+    pub fn local_for(&mut self, pattern: &str) -> String {
+        let idx = match self.patterns.iter().position(|p| p == pattern) {
+            Some(i) => i,
+            None => {
+                self.patterns.push(pattern.to_string());
+                self.patterns.len() - 1
+            }
+        };
+        format!("_cook_fr_{}_{}", self.tag, idx + 1)
+    }
+
+    /// `local _cook_fr_T_1 = cook.file_ref("p1")` … one line per pattern.
+    pub fn hoist_lines(&self, indent: &str) -> String {
+        self.patterns
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                format!(
+                    "{}local _cook_fr_{}_{} = cook.file_ref(\"{}\")\n",
+                    indent,
+                    self.tag,
+                    i + 1,
+                    escape_lua_string(p)
+                )
+            })
+            .collect()
+    }
+
+    /// `{"p1", "p2"}` — the `file_refs` field for cook.add_unit.
+    pub fn to_lua_table(&self) -> String {
+        let items: Vec<String> = self
+            .patterns
+            .iter()
+            .map(|p| format!("\"{}\"", escape_lua_string(p)))
+            .collect();
+        format!("{{{}}}", items.join(", "))
+    }
+}
+
 // ─── New sigil-based substitution engine ────────────────────────────────────
 
 /// Expand a shell-text template using the strict `$<IDENT>` sigil scanner and
@@ -197,6 +261,7 @@ pub(crate) fn expand_sigil_template(
     template: &str,
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
+    file_refs: &mut FileRefs,
 ) -> Result<String, ResolveError> {
     let spans = sigil::scan(template);
     if spans.is_empty() {
@@ -216,7 +281,7 @@ pub(crate) fn expand_sigil_template(
 
         // Resolve the placeholder.
         let resolved = crate::resolver::resolve(&span.ident, ctx);
-        let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env)?;
+        let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?;
         parts.push(lua_expr);
 
         last_end = span.range.end;
@@ -246,6 +311,7 @@ fn resolved_to_lua(
     resolved: Resolved,
     _ident: &str,
     consulted_env: &mut ConsultedEnv,
+    file_refs: &mut FileRefs,
 ) -> Result<String, ResolveError> {
     match resolved {
         Resolved::Builtin(b) => Ok(builtin_to_lua(b)),
@@ -264,6 +330,9 @@ fn resolved_to_lua(
         // CS-0074: probe-value reference — emit a tostring-wrapped cache read.
         // The access expression is pre-built by the resolver.
         Resolved::ProbeRef { access, .. } => Ok(format!("tostring({})", access)),
+        // CS-0101: `$<file:PATH>` — lower to the hoisted register-time local
+        // holding the space-joined match list (see [`FileRefs`]).
+        Resolved::FileRef { pattern } => Ok(file_refs.local_for(&pattern)),
         Resolved::Error(e) => Err(e),
         // COOK-96: $<recipe[]> is only valid inside a fan-out body (expand_for_each_template).
         // Reaching this arm means it appeared in a plain command body where `item` is not in scope.
@@ -485,6 +554,21 @@ fn output_pattern_ident_to_lua(
         // CS-0074: probe refs are not expected in output patterns, but if they appear
         // emit the access expression so they aren't silently swallowed.
         Resolved::ProbeRef { access, .. } => format!("tostring({})", access),
+        // CS-0101: a file reference is an input, not an iteration driver — it is
+        // invalid in a cook output pattern. The checked codegen path rejects it
+        // up front (`check_output_pattern_no_bare_accessors`); this sentinel
+        // covers the unchecked `generate` path, mirroring RecipeMember below.
+        Resolved::FileRef { pattern } => {
+            let e = ResolveError::FileRefInOutputPattern {
+                ident: format!("file:{}", pattern),
+            };
+            format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
+        }
+        // CS-0101: a malformed file-ref path is a hard error, not an env-var
+        // fallback — keep the typed diagnostic visible.
+        Resolved::Error(e @ ResolveError::FileRefBadPath { .. }) => {
+            format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
+        }
         Resolved::Error(_) => {
             // In output patterns, errors fall through to env lookup for backward compat
             // with patterns that use $<TOKEN> where TOKEN is an env var name.
@@ -719,6 +803,14 @@ fn validate_sigil_token(
     line: &str,
     recipe_names: &BTreeSet<String>,
 ) -> Result<(), PlateTestPlaceholderError> {
+    // CS-0101: `$<file:PATH>` is valid in any plate/test body mode (it is a
+    // pure substitution, independent of the iteration source). Accepted before
+    // the shape checks below; a malformed path surfaces from the expansion
+    // path as a SIGIL_ERROR sentinel.
+    if ident.starts_with("file:") {
+        return Ok(());
+    }
+
     // $<out>, $<out_N>, $<out.X>, $<out_N.X>: all rejected.
     if ident == "out"
         || ident.starts_with("out.")
@@ -785,6 +877,7 @@ pub(crate) fn expand_plate_test_body(
     iter_var: &str,
     all_var: &str,
     out: &mut ConsultedEnv,
+    file_refs: &mut FileRefs,
 ) -> String {
     let spans = sigil::scan(template);
     if spans.is_empty() {
@@ -801,7 +894,19 @@ pub(crate) fn expand_plate_test_body(
         }
 
         let ident = &span.ident;
-        let lua = if ident == "in" {
+        // CS-0101: `file:` dispatch first (a plate/test body is substitution-
+        // only — no `file_refs` unit field — but the hoisted local still
+        // substitutes). A bad path lowers to the SIGIL_ERROR sentinel,
+        // matching the other non-Result expansion surfaces.
+        let lua = if let Some(resolved) = crate::resolver::match_file_ref(ident) {
+            match resolved {
+                Resolved::FileRef { pattern } => file_refs.local_for(&pattern),
+                Resolved::Error(e) => {
+                    format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
+                }
+                _ => unreachable!("match_file_ref returns FileRef or Error only"),
+            }
+        } else if ident == "in" {
             iter_var.to_string()
         } else if let Some(acc) = ident.strip_prefix("in.") {
             format!("path.{}({})", acc, iter_var)
@@ -867,6 +972,13 @@ pub(crate) fn validate_placeholders(
         let resolved = crate::resolver::resolve(&span.ident, &rctx);
         if let Resolved::Error(e) = resolved {
             return Err(format!("CS-0022: {}", e));
+        }
+        // CS-0101: a well-formed `$<file:PATH>` is accepted in any cook-step
+        // body mode; skip the accessor shape check below (a `file:` ident can
+        // never be a `recipe.accessor` form). Bad paths were already rejected
+        // by the resolver Error branch above.
+        if span.ident.starts_with("file:") {
+            continue;
         }
         // Additionally check lib.accessor in a cook-step body (rejected by CS-0022 §6.7).
         if let Some(dot) = span.ident.rfind('.') {
@@ -948,7 +1060,7 @@ mod tests {
         let r = empty_recipes();
         let ctx = ctx_oneone_single(&r);
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("echo hello", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("echo hello", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "\"echo hello\"");
         assert!(env.keys.is_empty());
     }
@@ -960,13 +1072,13 @@ mod tests {
         let ctx = ctx_oneshot_none(&r);
         let mut env = ConsultedEnv::new();
 
-        let result = expand_sigil_template("{a,b,c}", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("{a,b,c}", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "\"{a,b,c}\"");
 
-        let result2 = expand_sigil_template("${HOME:-x}", &ctx, &mut env).unwrap();
+        let result2 = expand_sigil_template("${HOME:-x}", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result2, "\"${HOME:-x}\"");
 
-        let result3 = expand_sigil_template("awk '{print $1}'", &ctx, &mut env).unwrap();
+        let result3 = expand_sigil_template("awk '{print $1}'", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result3, "\"awk '{print $1}'\"");
 
         assert!(env.keys.is_empty(), "no env keys should be recorded for shell braces");
@@ -977,7 +1089,7 @@ mod tests {
         let r = empty_recipes();
         let ctx = ctx_oneone_single(&r);
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("$<in>", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("$<in>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "_cook_in");
     }
 
@@ -986,7 +1098,7 @@ mod tests {
         let r = empty_recipes();
         let ctx = ctx_oneone_single(&r);
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("$<out>", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("$<out>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "_cook_out");
     }
 
@@ -996,7 +1108,7 @@ mod tests {
         r.insert("libmath".to_string());
         let ctx = ctx_oneshot_none(&r);
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("gcc $<libmath>", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("gcc $<libmath>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "\"gcc \" .. cook.dep_output(\"libmath\")");
     }
 
@@ -1005,7 +1117,7 @@ mod tests {
         let r = empty_recipes();
         let ctx = ctx_oneshot_none(&r);
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("$<HOME>", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("$<HOME>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "cook.require_env(\"HOME\")");
         assert!(env.keys.contains("HOME"), "HOME should be recorded");
     }
@@ -1015,7 +1127,7 @@ mod tests {
         let r = empty_recipes();
         let ctx = ctx_oneshot_none(&r);
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("$<env.HOME>", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("$<env.HOME>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "cook.require_env(\"HOME\")");
         assert!(env.keys.contains("HOME"));
     }
@@ -1029,7 +1141,7 @@ mod tests {
             recipes_in_scope: &r,
         };
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("$<in>", &ctx, &mut env);
+        let result = expand_sigil_template("$<in>", &ctx, &mut env, &mut FileRefs::new("t"));
         assert!(result.is_err(), "expected error for $<in> in many-to-one mode");
     }
 
@@ -1038,7 +1150,7 @@ mod tests {
         let r = empty_recipes();
         let ctx = ctx_oneone_single(&r);
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("gcc -c $<in> -o $<out>", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("gcc -c $<in> -o $<out>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "\"gcc -c \" .. _cook_in .. \" -o \" .. _cook_out");
     }
 
@@ -1047,7 +1159,7 @@ mod tests {
         let r = empty_recipes();
         let ctx = ctx_oneone_single(&r);
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("build/$<in.stem>.o", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("build/$<in.stem>.o", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "\"build/\" .. path.stem(_cook_in) .. \".o\"");
     }
 
@@ -1073,7 +1185,7 @@ mod tests {
         let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
         let mut env = ConsultedEnv::new();
         let (lua, _) =
-            expand_for_each_template("bin/mux --video $<render[]>", &ctx, &mut env).unwrap();
+            expand_for_each_template("bin/mux --video $<render[]>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(
             lua,
             "\"bin/mux --video \" .. cook.dep_output_member(\"render\", cook.member_to_string(item))"
@@ -1087,7 +1199,7 @@ mod tests {
         recipes.insert("render".to_string());
         let ctx = cook_step_ctx(IterMode::OneToOne, OutputShape::Single, &recipes);
         let mut env = ConsultedEnv::new();
-        let res = expand_command_template("bin/x $<render[]>", &ctx, &mut env);
+        let res = expand_command_template("bin/x $<render[]>", &ctx, &mut env, &mut FileRefs::new("t"));
         assert!(
             matches!(res, Err(ResolveError::RecipeMemberOutsideFanout { .. })),
             "expected RecipeMemberOutsideFanout, got: {res:?}"
@@ -1111,7 +1223,7 @@ mod sigil_template_tests {
         let r = empty_recipes();
         let ctx = ctx_os_n0(&r);
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "\"\"");
     }
 
@@ -1124,7 +1236,7 @@ mod sigil_template_tests {
             recipes_in_scope: &r,
         };
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("ar rcs $<out> $<all>", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("ar rcs $<out> $<all>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "\"ar rcs \" .. _cook_out .. \" \" .. _cook_all");
     }
 
@@ -1137,7 +1249,7 @@ mod sigil_template_tests {
             recipes_in_scope: &r,
         };
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("cp $<out_1> $<out_2>", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("cp $<out_1> $<out_2>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "\"cp \" .. _cook_outs[1] .. \" \" .. _cook_outs[2]");
     }
 
@@ -1147,7 +1259,7 @@ mod sigil_template_tests {
         r.insert("lib".to_string());
         let ctx = ctx_os_n0(&r);
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("$<lib>", &ctx, &mut env).unwrap();
+        let result = expand_sigil_template("$<lib>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(result, "cook.dep_output(\"lib\")");
     }
 }
@@ -1169,7 +1281,7 @@ mod probe_template_tests {
         };
         let mut env = ConsultedEnv::new();
         let (lua, keys) =
-            expand_command_template("gcc -c $<in> -o $<out>", &ctx, &mut env).unwrap();
+            expand_command_template("gcc -c $<in> -o $<out>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(lua, "\"gcc -c \" .. _cook_in .. \" -o \" .. _cook_out");
         assert!(keys.is_empty());
     }
@@ -1185,7 +1297,7 @@ mod probe_template_tests {
         let mut env = ConsultedEnv::new();
         // CS-0074: probe refs now use $<key:field> instead of {{key.field}}.
         let (lua, keys) =
-            expand_command_template("$<cc:zlib.cflags> -c $<in>", &ctx, &mut env).unwrap();
+            expand_command_template("$<cc:zlib.cflags> -c $<in>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         // Must be wrapped in a deferred function since probe refs are present.
         assert!(lua.starts_with("function()"), "got: {}", lua);
         assert!(lua.contains(r#"cook.cache.get("cc:zlib")"#), "got: {}", lua);
@@ -1206,7 +1318,7 @@ mod probe_template_tests {
         };
         let mut env = ConsultedEnv::new();
         let (lua, keys) =
-            expand_command_template("$<cc:compiler> -c foo.c", &ctx, &mut env).unwrap();
+            expand_command_template("$<cc:compiler> -c foo.c", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert!(lua.starts_with("function()"), "got: {}", lua);
         assert!(lua.contains(r#"cook.cache.get("cc:compiler")"#), "got: {}", lua);
         assert!(keys.contains("cc:compiler"), "expected cc:compiler in keys; got: {:?}", keys);
@@ -1223,7 +1335,7 @@ mod probe_template_tests {
         };
         let mut env = ConsultedEnv::new();
         let (lua, keys) =
-            expand_command_template("$<cc:zlib.libs[2]>", &ctx, &mut env).unwrap();
+            expand_command_template("$<cc:zlib.libs[2]>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert!(lua.starts_with("function()"), "got: {}", lua);
         assert!(lua.contains(r#"cook.cache.get("cc:zlib")"#), "got: {}", lua);
         assert!(lua.contains(".libs[2]"), "got: {}", lua);
@@ -1240,7 +1352,7 @@ mod probe_template_tests {
         };
         let mut env = ConsultedEnv::new();
         let (lua, keys) =
-            expand_command_template("$<cc:compiler.path> -c foo.c $<cc:zlib.cflags>", &ctx, &mut env).unwrap();
+            expand_command_template("$<cc:compiler.path> -c foo.c $<cc:zlib.cflags>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert!(lua.starts_with("function()"), "got: {}", lua);
         assert!(keys.contains("cc:compiler"), "keys: {:?}", keys);
         assert!(keys.contains("cc:zlib"), "keys: {:?}", keys);
@@ -1255,7 +1367,7 @@ mod probe_template_tests {
             recipes_in_scope: &r,
         };
         let mut env = ConsultedEnv::new();
-        let (lua, keys) = expand_command_template("echo hello", &ctx, &mut env).unwrap();
+        let (lua, keys) = expand_command_template("echo hello", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert_eq!(lua, "\"echo hello\"");
         assert!(keys.is_empty());
     }

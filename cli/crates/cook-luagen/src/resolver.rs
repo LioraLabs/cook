@@ -67,6 +67,11 @@ pub enum Resolved {
     /// `key` is the probe key (everything before the first `.` or `[`).
     /// `access` is the ready-to-emit Lua expression (e.g. `cook.cache.get("cc:zlib").cflags`).
     ProbeRef { key: String, access: String },
+    /// CS-0101: `$<file:PATH>` — a file reference. Interpolates the resolved
+    /// match list and (for cacheable units) folds each file's content into
+    /// the unit fingerprint. Dispatched on the `file:` prefix BEFORE the
+    /// probe-ref colon dispatch.
+    FileRef { pattern: String },
     Error(ResolveError),
 }
 
@@ -81,6 +86,10 @@ pub enum ResolveError {
     MalformedOutIndex { ident: String },
     #[error("placeholder $<{ident}>: a recipe-member ref `$<recipe[]>` is only valid inside an `ingredients <probe>` fan-out body")]
     RecipeMemberOutsideFanout { ident: String },
+    #[error("placeholder $<{ident}>: file reference paths must be relative and must not contain '..' segments (CS-0101)")]
+    FileRefBadPath { ident: String },
+    #[error("placeholder $<{ident}>: $<file:PATH> is an input reference and is not valid in a cook output pattern (CS-0101)")]
+    FileRefInOutputPattern { ident: String },
 }
 
 /// Three-way outcome of `match_builtin`:
@@ -174,7 +183,31 @@ pub fn match_member_sigil(ident: &str) -> Option<BuiltinKind> {
     }
 }
 
+/// CS-0101: dispatch the `file:` namespace. Returns `Some` for any ident with
+/// the `file:` prefix — either a well-formed [`Resolved::FileRef`] or a
+/// [`ResolveError::FileRefBadPath`] for absolute paths and `..` escapes (the
+/// sigil scanner's path charset admits `/`, `.`, and `-`, so both shapes are
+/// reachable and MUST be rejected here). Shared by [`resolve`] and the
+/// plate/test body expander so the validation lives in exactly one place.
+pub fn match_file_ref(ident: &str) -> Option<Resolved> {
+    let path = ident.strip_prefix("file:")?;
+    if path.starts_with('/') || path.split('/').any(|seg| seg == "..") {
+        return Some(Resolved::Error(ResolveError::FileRefBadPath {
+            ident: ident.to_string(),
+        }));
+    }
+    Some(Resolved::FileRef {
+        pattern: path.to_string(),
+    })
+}
+
 pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
+    // CS-0101: `file:` namespace — dispatched before the probe-ref colon
+    // discriminator so `$<file:x.css>` never parses as probe key `file:x`.
+    if let Some(resolved) = match_file_ref(ident) {
+        return resolved;
+    }
+
     // CS-0074: probe-value reference — IDENT contains `:`.
     // Dispatched before builtin/recipe/env so the colon discriminator is
     // unambiguous (no builtin or recipe name can contain `:`).
@@ -371,6 +404,48 @@ mod tests {
         );
         assert_eq!(match_member_sigil("in."), None); // empty field
         assert_eq!(match_member_sigil("ins"), None); // not the bare `in` token
+    }
+
+    // CS-0101: `file:` dispatch precedes the probe-ref colon dispatch.
+    #[test]
+    fn file_prefix_resolves_to_file_ref_not_probe() {
+        let r = empty();
+        let ctx = ctx_oneshot_none(&r);
+        assert_eq!(
+            resolve("file:tokens.css", &ctx),
+            Resolved::FileRef { pattern: "tokens.css".to_string() }
+        );
+        assert_eq!(
+            resolve("file:templates/*.html", &ctx),
+            Resolved::FileRef { pattern: "templates/*.html".to_string() }
+        );
+    }
+
+    #[test]
+    fn file_ref_absolute_path_is_error() {
+        let r = empty();
+        let ctx = ctx_oneshot_none(&r);
+        assert!(matches!(
+            resolve("file:/etc/passwd", &ctx),
+            Resolved::Error(ResolveError::FileRefBadPath { .. })
+        ));
+    }
+
+    #[test]
+    fn file_ref_parent_escape_is_error() {
+        let r = empty();
+        let ctx = ctx_oneshot_none(&r);
+        assert!(matches!(
+            resolve("file:../secret.css", &ctx),
+            Resolved::Error(ResolveError::FileRefBadPath { .. })
+        ));
+    }
+
+    #[test]
+    fn non_file_colon_ident_still_probe_ref() {
+        let r = empty();
+        let ctx = ctx_oneshot_none(&r);
+        assert!(matches!(resolve("cc:zlib.cflags", &ctx), Resolved::ProbeRef { .. }));
     }
 
     // CS-0074: probe-ref dispatch tests

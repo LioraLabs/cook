@@ -43,12 +43,19 @@ pub(crate) fn generate_plate_step(
         "ingredients".to_string()
     };
 
+    // CS-0101: plate steps are cache = false, so `$<file:PATH>` is pure
+    // substitution — hoisted locals, but NO `file_refs` unit field.
+    let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
+
     match (&plate_step.body, mode) {
         // (1) Shell, OneToOne — loop over source, one unit per item.
         (Body::ShellBlock(lines), PlateTestMode::OneToOne) => {
             let cmd_text = build_shell_block_command(lines);
             let mut consulted = ConsultedEnv::new();
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_plate_in", "{}", &mut consulted);
+            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_plate_in", "{}", &mut consulted, &mut file_refs);
+            if !file_refs.is_empty() {
+                out.push_str(&file_refs.hoist_lines("    "));
+            }
             out.push_str(&format!(
                 "    for _, _plate_in in ipairs({}) do\n        cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}}})\n    end\n",
                 source_expr, cmd_expr, consulted.to_lua_table()
@@ -58,7 +65,10 @@ pub(crate) fn generate_plate_step(
         (Body::ShellBlock(lines), PlateTestMode::ManyToOne) => {
             let cmd_text = build_shell_block_command(lines);
             let mut consulted = ConsultedEnv::new();
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &source_expr, &mut consulted);
+            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &source_expr, &mut consulted, &mut file_refs);
+            if !file_refs.is_empty() {
+                out.push_str(&file_refs.hoist_lines("    "));
+            }
             out.push_str(&format!(
                 "    cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}}})\n",
                 cmd_expr, consulted.to_lua_table()
@@ -68,7 +78,10 @@ pub(crate) fn generate_plate_step(
         (Body::ShellBlock(lines), PlateTestMode::OneShot) => {
             let cmd_text = build_shell_block_command(lines);
             let mut consulted = ConsultedEnv::new();
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", "{}", &mut consulted);
+            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", "{}", &mut consulted, &mut file_refs);
+            if !file_refs.is_empty() {
+                out.push_str(&file_refs.hoist_lines("    "));
+            }
             out.push_str(&format!(
                 "    cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}}})\n",
                 cmd_expr, consulted.to_lua_table()
@@ -138,6 +151,7 @@ pub(crate) fn generate_plate_step(
 pub(crate) fn generate_for_each_plate_step(
     out: &mut String,
     plate_step: &PlateStep,
+    line: usize,
     recipe_names: &BTreeSet<String>,
 ) {
     use crate::resolver::{IterMode, OutputShape};
@@ -146,13 +160,15 @@ pub(crate) fn generate_for_each_plate_step(
     // OneShot + None: a plate body admits member sigils, recipes, env, and
     // probe refs — but neither `$<in>`/`$<all>` nor `$<out>`.
     let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::None, recipe_names);
+    // CS-0101: substitution only (cache = false) — hoists, no file_refs field.
+    let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
 
     match &plate_step.body {
         Body::ShellBlock(lines) => {
             let combined = build_shell_block_command(lines);
             let mut consulted = ConsultedEnv::new();
             let (cmd_concat, probe_keys) =
-                expand_for_each_template(&combined, &ctx, &mut consulted).unwrap_or_else(|e| {
+                expand_for_each_template(&combined, &ctx, &mut consulted, &mut file_refs).unwrap_or_else(|e| {
                     (
                         format!(
                             "\"[[SIGIL_ERROR: {}]]\"",
@@ -166,6 +182,9 @@ pub(crate) fn generate_for_each_plate_step(
             } else {
                 format!("function() return {} end", cmd_concat)
             };
+            if !file_refs.is_empty() {
+                out.push_str(&file_refs.hoist_lines("    "));
+            }
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(&format!(
                 "        cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",

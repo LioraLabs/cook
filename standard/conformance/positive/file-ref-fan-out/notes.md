@@ -1,0 +1,1 @@
+CS-0101: `$<file:PATH>` inside an `ingredients <probe>` fan-out body — the file ref is hoisted ONCE outside the member loop (one `cook.file_ref` local per step, not per member) and the per-member units carry the `file_refs` field for the fingerprint fold.

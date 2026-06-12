@@ -1,0 +1,6 @@
+probe scenes
+    produce as json { echo '[{"id":"intro"},{"id":"outro"}]' }
+
+recipe html
+    ingredients scenes
+    cook "build/$<in.id>.html" { render --tokens $<file:tokens.css> $<in.id> -o $<out> }

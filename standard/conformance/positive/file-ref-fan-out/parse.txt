@@ -1,0 +1,21 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="html" line=4
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        ForEach source=ProbeKey("scenes")
+        Cook outputs=["build/$<in.id>.html"] body=ShellBlock(["render --tokens $<file:tokens.css> $<in.id> -o $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="scenes" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Shell typing=Json commands=["echo '[{\"id\":\"intro\"},{\"id\":\"outro\"}]'"]

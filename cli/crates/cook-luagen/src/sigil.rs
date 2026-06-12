@@ -298,6 +298,14 @@ mod tests {
     }
 
     #[test]
+    fn file_ref_multibyte_path_char_strict_bails() {
+        // The path charset is ASCII-only; a multibyte char (`ü`) is an
+        // out-of-charset byte and MUST strict-bail (sequence stays literal),
+        // never split a UTF-8 code point or forward-search for `>`.
+        assert!(scan("$<file:fü.css>").is_empty());
+    }
+
+    #[test]
     fn file_prefix_only_as_whole_token() {
         // `myfile:x` is NOT a file ref — generic charset still applies
         assert_eq!(idents("$<myfile:x.css>"), vec!["myfile:x.css"]);

@@ -42,7 +42,7 @@ fn test_expand_template_no_placeholders() {
     let r = BTreeSet::new();
     let ctx = ResolveCtx { mode: IterMode::OneToOne, outputs: OutputShape::Single, recipes_in_scope: &r };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("echo hello", &ctx, &mut env).unwrap();
+    let result = expand_sigil_template("echo hello", &ctx, &mut env, &mut crate::template::FileRefs::new("t")).unwrap();
     assert_eq!(result, "\"echo hello\"");
 }
 
@@ -54,7 +54,7 @@ fn test_expand_template_single_placeholder() {
     let r = BTreeSet::new();
     let ctx = ResolveCtx { mode: IterMode::OneToOne, outputs: OutputShape::Single, recipes_in_scope: &r };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("$<in>", &ctx, &mut env).unwrap();
+    let result = expand_sigil_template("$<in>", &ctx, &mut env, &mut crate::template::FileRefs::new("t")).unwrap();
     assert_eq!(result, "_cook_in");
 }
 
@@ -66,7 +66,7 @@ fn test_expand_template_mixed() {
     let r = BTreeSet::new();
     let ctx = ResolveCtx { mode: IterMode::OneToOne, outputs: OutputShape::Single, recipes_in_scope: &r };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("gcc -c $<in> -o $<out>", &ctx, &mut env).unwrap();
+    let result = expand_sigil_template("gcc -c $<in> -o $<out>", &ctx, &mut env, &mut crate::template::FileRefs::new("t")).unwrap();
     assert_eq!(result, "\"gcc -c \" .. _cook_in .. \" -o \" .. _cook_out");
 }
 
@@ -79,7 +79,7 @@ fn test_expand_template_stem_in_path() {
     let r = BTreeSet::new();
     let ctx = ResolveCtx { mode: IterMode::OneShot, outputs: OutputShape::None, recipes_in_scope: &r };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("build/$<stem>.o", &ctx, &mut env).unwrap();
+    let result = expand_sigil_template("build/$<stem>.o", &ctx, &mut env, &mut crate::template::FileRefs::new("t")).unwrap();
     assert_eq!(result, "\"build/\" .. cook.require_env(\"stem\") .. \".o\"");
 }
 
@@ -92,7 +92,7 @@ fn test_expand_template_in_stem_in_path() {
     let r = BTreeSet::new();
     let ctx = ResolveCtx { mode: IterMode::OneToOne, outputs: OutputShape::Single, recipes_in_scope: &r };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("build/$<in.stem>.o", &ctx, &mut env).unwrap();
+    let result = expand_sigil_template("build/$<in.stem>.o", &ctx, &mut env, &mut crate::template::FileRefs::new("t")).unwrap();
     assert_eq!(result, "\"build/\" .. path.stem(_cook_in) .. \".o\"");
 }
 
@@ -104,7 +104,7 @@ fn test_expand_template_all() {
     let r = BTreeSet::new();
     let ctx = ResolveCtx { mode: IterMode::ManyToOne, outputs: OutputShape::Single, recipes_in_scope: &r };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("ar rcs $<out> $<all>", &ctx, &mut env).unwrap();
+    let result = expand_sigil_template("ar rcs $<out> $<all>", &ctx, &mut env, &mut crate::template::FileRefs::new("t")).unwrap();
     assert_eq!(result, "\"ar rcs \" .. _cook_out .. \" \" .. _cook_all");
 }
 
@@ -3458,4 +3458,133 @@ fn test_step_without_ingredients_emits_no_inputs_field() {
     let lua = generate_lua_for_test(src);
     assert!(!lua.contains("inputs = ingredients"),
         "cook-step-sourced tests must not reference the absent ingredients local:\n{lua}");
+}
+
+// ─── CS-0101: $<file:PATH> lowering (hoisted cook.file_ref locals + file_refs field) ─
+
+/// Parse + checked-generate helper for the CS-0101 tests below.
+fn checked_lua(src: &str) -> String {
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    crate::generate_with_names_checked(&cookfile, &names).expect("codegen")
+}
+
+#[test]
+fn file_ref_lowering_hoists_local_and_passes_file_refs() {
+    let src = r#"recipe "html"
+    ingredients "src/page.md"
+    cook "build/$<in.stem>.html" {
+        render --tokens $<file:tokens.css> $<in> -o $<out>
+    }
+end
+"#;
+    let lua = checked_lua(src);
+    assert!(
+        lua.contains("local _cook_fr_s0_1 = cook.file_ref(\"tokens.css\")"),
+        "expected hoisted file-ref local, lua:\n{lua}"
+    );
+    assert!(
+        lua.contains("_cook_fr_s0_1"),
+        "expected substitution via the hoisted local, lua:\n{lua}"
+    );
+    assert!(
+        lua.contains("file_refs = {\"tokens.css\"}"),
+        "expected file_refs field on cook.add_unit, lua:\n{lua}"
+    );
+}
+
+#[test]
+fn file_ref_dedupes_repeated_pattern() {
+    let src = r#"recipe "html"
+    ingredients "src/page.md"
+    cook "build/page.html" {
+        render $<file:t.css> $<file:t.css> -o $<out>
+    }
+end
+"#;
+    let lua = checked_lua(src);
+    let count = lua.matches("cook.file_ref(\"t.css\")").count();
+    assert_eq!(
+        count, 1,
+        "repeated $<file:t.css> must hoist exactly one local, lua:\n{lua}"
+    );
+}
+
+#[test]
+fn file_ref_with_probe_ref_keeps_hoist_outside_deferred_fn() {
+    // Probe refs defer the command into a `function() return ... end` closure;
+    // the file-ref local must be hoisted BEFORE it (captured as an upvalue) so
+    // the substitution value is still computed at register time.
+    let src = r#"recipe "obj"
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" {
+        cc $<cc:zlib.cflags> --tokens $<file:t.css> -c $<in> -o $<out>
+    }
+end
+"#;
+    let lua = checked_lua(src);
+    let hoist_pos = lua
+        .find("local _cook_fr_s0_1 = cook.file_ref(\"t.css\")")
+        .unwrap_or_else(|| panic!("expected hoisted file-ref local, lua:\n{lua}"));
+    let deferred_pos = lua
+        .find("function() return")
+        .unwrap_or_else(|| panic!("expected probe-deferred command closure, lua:\n{lua}"));
+    assert!(
+        hoist_pos < deferred_pos,
+        "file-ref hoist (at {hoist_pos}) must precede the deferred closure (at {deferred_pos}), lua:\n{lua}"
+    );
+}
+
+#[test]
+fn file_ref_in_output_pattern_is_codegen_error() {
+    // CS-0101: a file reference is an input, not an iteration driver —
+    // rejected in cook output patterns at codegen.
+    let src = r#"recipe "bad"
+    ingredients "src/*.md"
+    cook "build/$<file:tokens.css>.html" {
+        render -o $<out>
+    }
+end
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_err(),
+        "$<file:PATH> in an output pattern must be a codegen error"
+    );
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("not valid in a cook output pattern"),
+        "error must explain the output-pattern rejection, got: {err_str}"
+    );
+}
+
+#[test]
+fn file_ref_in_fan_out_hoisted_once_outside_member_loop() {
+    let src = r#"probe scenes
+    produce as json { echo '[{"id":"intro"},{"id":"outro"}]' }
+
+recipe html
+    ingredients scenes
+    cook "build/$<in.id>.html" { render --tokens $<file:t.css> $<in.id> -o $<out> }
+"#;
+    let lua = checked_lua(src);
+    let count = lua.matches("cook.file_ref(").count();
+    assert_eq!(
+        count, 1,
+        "fan-out must hoist the file ref exactly once (outside the member loop), lua:\n{lua}"
+    );
+    let hoist_pos = lua.find("cook.file_ref(").unwrap();
+    let loop_pos = lua
+        .find("for _, item in")
+        .unwrap_or_else(|| panic!("expected member loop, lua:\n{lua}"));
+    assert!(
+        hoist_pos < loop_pos,
+        "file-ref hoist (at {hoist_pos}) must precede the member loop (at {loop_pos}), lua:\n{lua}"
+    );
+    assert!(
+        lua.contains("file_refs = {\"t.css\"}"),
+        "expected file_refs field on the fan-out cook.add_unit, lua:\n{lua}"
+    );
 }
