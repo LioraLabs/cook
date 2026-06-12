@@ -140,6 +140,15 @@ pub enum WorkPayload {
         suite_name: String,
         test_name: String,
         iteration_item: Option<String>,
+        /// COOK-84: working-dir-relative paths of the files this test
+        /// consumes — the recipe's resolved ingredients ∪ the step group's
+        /// dep-output paths (mirrors `cache_input_paths` in
+        /// cook-register/src/unit_api.rs). Carried on the payload, NOT via
+        /// `cache_meta`: the executor relies on Test nodes having
+        /// `cache_meta == None` (cook-engine/src/executor.rs:126/936/1213).
+        /// Folded into the upfront test fingerprint by
+        /// cook-engine/src/run.rs.
+        input_paths: Vec<String>,
     },
     /// A probe unit (§22.5.2): runs `produce` (Lua source string) on a worker
     /// VM and stashes the msgpack-serialised return value under `key`.
@@ -348,6 +357,7 @@ mod tests {
             suite_name: "unit".into(),
             test_name: "test_foo".into(),
             iteration_item: None,
+            input_paths: vec![],
         };
         assert!(matches!(p, WorkPayload::Test { timeout: 30, should_fail: false, .. }));
     }

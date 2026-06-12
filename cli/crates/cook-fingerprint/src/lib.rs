@@ -207,6 +207,7 @@ mod tests {
             suite_name: suite_name.into(),
             test_name: test_name.into(),
             iteration_item: None,
+            input_paths: vec![],
         }
     }
 

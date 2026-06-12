@@ -49,6 +49,26 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
         let iteration_item: Option<String> = tbl.get::<Option<String>>("iteration_item")?
             .filter(|s| !s.is_empty());
 
+        // COOK-84: declared ingredient files for this test (codegen passes the
+        // recipe's resolved `ingredients` local). Unioned below with the step
+        // group's dep-output paths, mirroring cook.add_unit's cache_input_paths
+        // (unit_api.rs).
+        let inputs: Vec<String> = match tbl.get::<LuaTable>("inputs") {
+            Ok(t) => t.sequence_values::<String>().filter_map(Result::ok).collect(),
+            Err(_) => vec![],
+        };
+
+        let mut slot = body_slot_add.borrow_mut();
+        let body = slot.as_mut().ok_or_else(|| {
+            mlua::Error::runtime("cook.add_test called outside a recipe body")
+        })?;
+        // COOK-84: inputs ∪ step_group_dep_input_paths, deduped, order-preserving.
+        let mut input_paths: Vec<String> = inputs;
+        for p in &body.step_group_dep_input_paths {
+            if !input_paths.contains(p) {
+                input_paths.push(p.clone());
+            }
+        }
         let payload = WorkPayload::Test {
             cmd: command,
             line,
@@ -57,12 +77,8 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             suite_name,
             test_name,
             iteration_item,
+            input_paths,
         };
-
-        let mut slot = body_slot_add.borrow_mut();
-        let body = slot.as_mut().ok_or_else(|| {
-            mlua::Error::runtime("cook.add_test called outside a recipe body")
-        })?;
         let dep_kind = if let Some(group_idx) = body.current_group {
             DepKind::TestSibling(group_idx)
         } else {
@@ -276,6 +292,72 @@ mod tests {
 
         assert!(res.is_err());
         assert!(format!("{:?}", res).contains("timeout"));
+    }
+
+    // -----------------------------------------------------------------
+    // COOK-84: input_paths capture (ingredients ∪ step-group dep paths)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn add_test_captures_inputs_into_payload() {
+        let (lua, capture_state) = make_lua_with_test_api();
+        lua.load(r#"
+            cook.add_test({
+                command = "cargo test",
+                suite = "s",
+                name = "t",
+                inputs = { "src/lib.rs", "src/main.rs" },
+            })
+        "#).exec().unwrap();
+        let state = body_ref(&capture_state);
+        match &state.units[0].payload {
+            WorkPayload::Test { input_paths, .. } => {
+                assert_eq!(input_paths, &["src/lib.rs".to_string(), "src/main.rs".to_string()]);
+            }
+            _ => panic!("expected Test payload"),
+        }
+    }
+
+    #[test]
+    fn add_test_unions_step_group_dep_input_paths() {
+        let (lua, capture_state) = make_lua_with_test_api();
+        capture_state.borrow_mut().as_mut().expect("body slot populated for test")
+            .step_group_dep_input_paths
+            .extend(["../core/build/core.so".to_string(), "src/lib.rs".to_string()]);
+        lua.load(r#"
+            cook.add_test({
+                command = "pytest",
+                suite = "s",
+                name = "t",
+                inputs = { "src/lib.rs" },
+            })
+        "#).exec().unwrap();
+        let state = body_ref(&capture_state);
+        match &state.units[0].payload {
+            WorkPayload::Test { input_paths, .. } => {
+                // union, deduped, declared inputs first
+                assert_eq!(input_paths, &["src/lib.rs".to_string(), "../core/build/core.so".to_string()]);
+            }
+            _ => panic!("expected Test payload"),
+        }
+    }
+
+    #[test]
+    fn add_test_without_inputs_still_carries_dep_paths() {
+        let (lua, capture_state) = make_lua_with_test_api();
+        capture_state.borrow_mut().as_mut().expect("body slot populated for test")
+            .step_group_dep_input_paths
+            .push("build/lib.txt".to_string());
+        lua.load(r#"
+            cook.add_test({ command = "true", suite = "s", name = "t" })
+        "#).exec().unwrap();
+        let state = body_ref(&capture_state);
+        match &state.units[0].payload {
+            WorkPayload::Test { input_paths, .. } => {
+                assert_eq!(input_paths, &["build/lib.txt".to_string()]);
+            }
+            _ => panic!("expected Test payload"),
+        }
     }
 
     #[test]

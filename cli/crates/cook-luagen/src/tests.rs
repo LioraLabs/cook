@@ -3441,3 +3441,21 @@ fn probe_no_ingredients_no_deps_omits_those_fields() {
     assert!(!lua.contains("resolve_ingredients"), "lua:\n{lua}");
     assert!(!lua.contains("requires ="), "lua:\n{lua}");
 }
+
+// ─── COOK-84: test-step inputs emission ──────────────────────────────────────
+
+#[test]
+fn test_step_with_ingredients_emits_inputs_field() {
+    let src = "recipe unit\n    ingredients \"src/*.rs\"\n    test {\n        cargo test\n    } timeout 60\n";
+    let lua = generate_lua_for_test(src);
+    assert!(lua.contains("inputs = ingredients,"),
+        "add_test must carry the resolved ingredient list:\n{lua}");
+}
+
+#[test]
+fn test_step_without_ingredients_emits_no_inputs_field() {
+    let src = "recipe build\n    cook \"build/out.txt\" {\n        echo hi > build/out.txt\n    }\n    test {\n        test -s $<in>\n    } timeout 5\n";
+    let lua = generate_lua_for_test(src);
+    assert!(!lua.contains("inputs = ingredients"),
+        "cook-step-sourced tests must not reference the absent ingredients local:\n{lua}");
+}
