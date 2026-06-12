@@ -25,7 +25,7 @@ use cook_contracts::{RecipeUnits, WorkPayload};
 use cook_fingerprint::{CacheBackend, EnvDenylist, ExecutionContext, FingerprintInputs};
 
 use crate::{
-    dag_builder, executor, EngineError, EngineEvent, RecipeKind, RegisteredWorkspace,
+    dag_builder, executor, EngineError, EngineEvent, RecipeKind, RegisteredWorkspace, WorkNode,
 };
 
 // ---------------------------------------------------------------------------
@@ -67,6 +67,176 @@ fn split_recipe_name(name: &str) -> (String, String) {
     } else {
         (String::new(), name.to_string())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Test-fingerprint file inputs — COOK-84 transitive-closure hashing
+// ---------------------------------------------------------------------------
+
+/// Lexically normalize a path: drop `.` components and resolve `..` by
+/// popping the previous component. No filesystem access — purely textual,
+/// so declared paths compare equal regardless of how `working_dir.join`
+/// composed them.
+fn lexical_normalize(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Project-root-relative, forward-slashed pair key (§17.4.4). Falls back to
+/// the absolute path string when `abs` is outside the project root.
+fn root_rel_key(project_root: &Path, abs: &Path) -> String {
+    let rel = abs.strip_prefix(project_root).unwrap_or(abs);
+    rel.to_string_lossy().replace('\\', "/")
+}
+
+/// Content-hash `abs`, memoized across all test nodes in a run. Missing
+/// (or unreadable) files hash to the literal `"missing"` so an absent file
+/// still contributes deterministically to the fingerprint.
+fn memo_hash(memo: &mut BTreeMap<PathBuf, String>, abs: &Path) -> String {
+    if let Some(h) = memo.get(abs) {
+        return h.clone();
+    }
+    let h = cook_fingerprint::hash_file(abs)
+        .map(|h| format!("{h:x}"))
+        .unwrap_or_else(|| "missing".to_string());
+    memo.insert(abs.to_path_buf(), h.clone());
+    h
+}
+
+/// Collect the file-system contributions to a test node's upfront
+/// fingerprint (COOK-84, §17.5.3).
+///
+/// Returns `(cook_outputs, dep_outputs)` for [`FingerprintInputs`]:
+///
+/// * **`.0` — OWN inputs**: the Test payload's `input_paths` resolved
+///   against the test node's working dir, EXCLUDING any path declared as
+///   an output by a node in the test's predecessor closure. Those
+///   artifacts are stale at upfront-fingerprint time; their *sources* are
+///   hashed via the closure contribution instead. The exclusion prevents
+///   once-per-edit fingerprint oscillation as artifacts catch up.
+/// * **`.1` — CLOSURE contribution**: for every predecessor node with
+///   `cache_meta`, (a) each declared `input_paths` file resolved against
+///   THAT node's working dir and content-hashed, and (b) one identity pair
+///   `("unit:{cookfile_path}:{recipe_name}:{cache_key}",
+///   "{command_hash:x}:{env_contribution:x}")` so editing a dep's command
+///   busts downstream tests.
+///
+/// Pair keys are project-root-relative and forward-slashed (§17.4.4);
+/// missing files hash to `"missing"`; file hashes are memoized in
+/// `hash_memo` across all test nodes per run.
+fn collect_test_file_inputs(
+    dag: &cook_dag::Dag<WorkNode>,
+    test_idx: usize,
+    project_root: &Path,
+    hash_memo: &mut BTreeMap<PathBuf, String>,
+) -> (Vec<(String, String)>, Vec<(String, String)>) {
+    use std::collections::VecDeque;
+
+    // (1) BFS predecessor closure (excludes the test node itself).
+    let mut closure: BTreeSet<usize> = BTreeSet::new();
+    let mut queue: VecDeque<usize> = dag.deps(test_idx).iter().copied().collect();
+    while let Some(idx) = queue.pop_front() {
+        if closure.insert(idx) {
+            queue.extend(dag.deps(idx).iter().copied());
+        }
+    }
+
+    // (2) Outputs declared by the closure: literal paths as a normalized
+    //     set, glob patterns as (working_dir, matcher) pairs.
+    let mut literal_outputs: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut glob_outputs: Vec<(PathBuf, globset::GlobMatcher)> = Vec::new();
+    for &idx in &closure {
+        let node = dag.node(idx).payload();
+        let Some(meta) = &node.cache_meta else {
+            continue;
+        };
+        for out in &meta.output_paths {
+            if cook_fingerprint::has_glob_meta(out) {
+                if let Ok(g) = globset::Glob::new(out) {
+                    glob_outputs.push((node.working_dir.clone(), g.compile_matcher()));
+                }
+            } else {
+                literal_outputs.insert(lexical_normalize(&node.working_dir.join(out)));
+            }
+        }
+    }
+    let produced_upstream = |abs: &Path| -> bool {
+        if literal_outputs.contains(abs) {
+            return true;
+        }
+        glob_outputs.iter().any(|(wd, matcher)| {
+            abs.strip_prefix(wd)
+                .map(|rel| matcher.is_match(rel))
+                .unwrap_or(false)
+        })
+    };
+
+    // (3) OWN inputs: the Test payload's input_paths, resolved against the
+    //     test node's working dir, minus predecessor-produced artifacts.
+    let test_node = dag.node(test_idx).payload();
+    let mut own: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(WorkPayload::Test { input_paths, .. }) = &test_node.payload {
+        for input in input_paths {
+            let resolved: Vec<PathBuf> = if cook_fingerprint::has_glob_meta(input) {
+                cook_fingerprint::resolve_glob(&test_node.working_dir, input)
+                    .into_iter()
+                    .map(|rel| test_node.working_dir.join(rel))
+                    .collect()
+            } else {
+                vec![test_node.working_dir.join(input)]
+            };
+            for abs in resolved {
+                let abs = lexical_normalize(&abs);
+                if produced_upstream(&abs) {
+                    continue;
+                }
+                let hash = memo_hash(hash_memo, &abs);
+                own.insert(root_rel_key(project_root, &abs), hash);
+            }
+        }
+    }
+
+    // (4) CLOSURE contribution: dep identity pairs + dep source hashes.
+    let mut dep: BTreeMap<String, String> = BTreeMap::new();
+    for &idx in &closure {
+        let node = dag.node(idx).payload();
+        let Some(meta) = &node.cache_meta else {
+            continue;
+        };
+        dep.insert(
+            format!(
+                "unit:{}:{}:{}",
+                meta.cookfile_path, meta.recipe_name, meta.cache_key
+            ),
+            format!("{:x}:{:x}", meta.command_hash, meta.env_contribution),
+        );
+        for input in &meta.input_paths {
+            let resolved: Vec<PathBuf> = if cook_fingerprint::has_glob_meta(input) {
+                cook_fingerprint::resolve_glob(&node.working_dir, input)
+                    .into_iter()
+                    .map(|rel| node.working_dir.join(rel))
+                    .collect()
+            } else {
+                vec![node.working_dir.join(input)]
+            };
+            for abs in resolved {
+                let abs = lexical_normalize(&abs);
+                let hash = memo_hash(hash_memo, &abs);
+                dep.insert(root_rel_key(project_root, &abs), hash);
+            }
+        }
+    }
+
+    (own.into_iter().collect(), dep.into_iter().collect())
 }
 
 /// Unified engine entry point.
@@ -344,6 +514,7 @@ where
 
     let fingerprint_by_node: BTreeMap<usize, String> = {
         let mut fp_map = BTreeMap::new();
+        let mut hash_memo: BTreeMap<PathBuf, String> = BTreeMap::new();
         for node_idx in 0..dag.len() {
             let work_node = dag.node(node_idx).payload();
             if let Some(WorkPayload::Test { .. }) = &work_node.payload {
@@ -364,9 +535,21 @@ where
                         (name.clone(), hash)
                     })
                     .collect();
+                // COOK-84: hash the test's transitive source closure —
+                // own inputs (minus predecessor-produced artifacts, which
+                // are stale at upfront time) plus every closure dep's
+                // declared source inputs and unit identity. Editing a dep's
+                // source or command busts the test's fingerprint without
+                // waiting for artifacts to be rebuilt.
+                let (cook_outputs, dep_outputs) = collect_test_file_inputs(
+                    &dag,
+                    node_idx,
+                    &cache_ctx.project_root,
+                    &mut hash_memo,
+                );
                 let inputs = FingerprintInputs {
-                    cook_outputs: vec![],  // Phase 5 v1 stub
-                    dep_outputs: vec![],   // Phase 5 v1 stub
+                    cook_outputs,
+                    dep_outputs,
                     env_keys,
                     tool_hashes,
                 };
@@ -921,5 +1104,195 @@ mod tests {
             }
             other => panic!("expected CycleDetected, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // collect_test_file_inputs — COOK-84 transitive-closure fingerprinting
+    // -----------------------------------------------------------------------
+
+    fn cook_work_node(
+        wd: &std::path::Path,
+        recipe: &str,
+        inputs: &[&str],
+        outputs: &[&str],
+        command_hash: u64,
+    ) -> crate::WorkNode {
+        crate::WorkNode {
+            payload: Some(WorkPayload::Shell {
+                cmd: "build".into(),
+                line: 1,
+            }),
+            recipe_name: recipe.into(),
+            cache_meta: Some(cook_contracts::CacheMeta {
+                recipe_name: recipe.into(),
+                project_id: String::new(),
+                cookfile_path: "Cookfile".into(),
+                cache_key: outputs.first().copied().unwrap_or("k").into(),
+                input_paths: inputs.iter().map(|s| s.to_string()).collect(),
+                output_paths: outputs.iter().map(|s| s.to_string()).collect(),
+                command_hash,
+                context_hash: 0,
+                env_contribution: 0,
+                consulted_env: Default::default(),
+                discovered_inputs: None,
+            }),
+            working_dir: wd.to_path_buf(),
+            env_vars: Default::default(),
+        }
+    }
+
+    fn test_work_node(wd: &std::path::Path, input_paths: &[&str]) -> crate::WorkNode {
+        crate::WorkNode {
+            payload: Some(WorkPayload::Test {
+                cmd: "check".into(),
+                line: 1,
+                timeout: 5,
+                should_fail: false,
+                suite_name: "s".into(),
+                test_name: "t".into(),
+                iteration_item: None,
+                input_paths: input_paths.iter().map(|s| s.to_string()).collect(),
+            }),
+            recipe_name: "s".into(),
+            // Binding invariant: Test nodes carry no cache_meta (the executor
+            // relies on this — see cook-contracts WorkPayload::Test docs).
+            cache_meta: None,
+            working_dir: wd.to_path_buf(),
+            env_vars: Default::default(),
+        }
+    }
+
+    /// One cook node (`lib`) producing `build/lib.txt` from `src/lib.txt`,
+    /// plus one test node depending on it that consumes its own source
+    /// (`src/own.txt`) and the dep's declared artifact (`build/lib.txt`).
+    fn closure_fixture(wd: &std::path::Path) -> (cook_dag::Dag<crate::WorkNode>, usize) {
+        std::fs::create_dir_all(wd.join("src")).unwrap();
+        std::fs::write(wd.join("src/lib.txt"), "ok").unwrap();
+        std::fs::write(wd.join("src/own.txt"), "own").unwrap();
+
+        let mut dag = cook_dag::Dag::new();
+        let lib = dag
+            .add_node(
+                cook_work_node(wd, "lib", &["src/lib.txt"], &["build/lib.txt"], 11),
+                &[],
+            )
+            .unwrap();
+        let test = dag
+            .add_node(
+                test_work_node(wd, &["src/own.txt", "build/lib.txt"]),
+                &[lib],
+            )
+            .unwrap();
+        (dag, test)
+    }
+
+    #[test]
+    fn test_fp_inputs_change_when_dep_source_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let wd = dir.path();
+        let (dag, test_idx) = closure_fixture(wd);
+
+        let mut memo = BTreeMap::new();
+        let before = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
+
+        std::fs::write(wd.join("src/lib.txt"), "broken").unwrap();
+
+        let mut memo = BTreeMap::new();
+        let after = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
+
+        assert_ne!(
+            before.1, after.1,
+            "editing a dep's source file must change the closure contribution"
+        );
+    }
+
+    #[test]
+    fn test_fp_inputs_change_when_own_input_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let wd = dir.path();
+        let (dag, test_idx) = closure_fixture(wd);
+
+        let mut memo = BTreeMap::new();
+        let before = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
+
+        std::fs::write(wd.join("src/own.txt"), "changed").unwrap();
+
+        let mut memo = BTreeMap::new();
+        let after = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
+
+        assert_ne!(
+            before.0, after.0,
+            "editing the test's own input must change the own-input contribution"
+        );
+    }
+
+    #[test]
+    fn test_fp_excludes_predecessor_produced_artifacts() {
+        // The dep's declared output (build/lib.txt) is stale at upfront
+        // fingerprint time. It must be EXCLUDED from the test's own inputs
+        // (sources are hashed instead) so the fingerprint does not oscillate
+        // once-per-edit as the artifact catches up.
+        let dir = tempfile::tempdir().unwrap();
+        let wd = dir.path();
+        let (dag, test_idx) = closure_fixture(wd);
+
+        let mut memo = BTreeMap::new();
+        let before = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
+
+        std::fs::create_dir_all(wd.join("build")).unwrap();
+        std::fs::write(wd.join("build/lib.txt"), "artifact").unwrap();
+
+        let mut memo = BTreeMap::new();
+        let after = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
+
+        assert_eq!(
+            before, after,
+            "predecessor-produced artifacts must not contribute to the fingerprint"
+        );
+    }
+
+    #[test]
+    fn test_fp_inputs_change_when_dep_command_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let wd = dir.path();
+        std::fs::create_dir_all(wd.join("src")).unwrap();
+        std::fs::write(wd.join("src/lib.txt"), "ok").unwrap();
+        std::fs::write(wd.join("src/own.txt"), "own").unwrap();
+
+        let build_dag = |command_hash: u64| {
+            let mut dag = cook_dag::Dag::new();
+            let lib = dag
+                .add_node(
+                    cook_work_node(
+                        wd,
+                        "lib",
+                        &["src/lib.txt"],
+                        &["build/lib.txt"],
+                        command_hash,
+                    ),
+                    &[],
+                )
+                .unwrap();
+            let test = dag
+                .add_node(
+                    test_work_node(wd, &["src/own.txt", "build/lib.txt"]),
+                    &[lib],
+                )
+                .unwrap();
+            (dag, test)
+        };
+
+        let (dag_a, test_a) = build_dag(11);
+        let (dag_b, test_b) = build_dag(12);
+
+        let mut memo = BTreeMap::new();
+        let a = collect_test_file_inputs(&dag_a, test_a, wd, &mut memo);
+        let mut memo = BTreeMap::new();
+        let b = collect_test_file_inputs(&dag_b, test_b, wd, &mut memo);
+
+        assert_ne!(
+            a.1, b.1,
+            "editing a dep's command must change the closure contribution"
+        );
     }
 }
