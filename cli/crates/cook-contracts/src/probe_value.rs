@@ -34,9 +34,17 @@ pub fn encode_canonical_json(v: &JsonValue) -> Vec<u8> {
     s.into_bytes()
 }
 
-/// Recursively rebuild objects with bytewise-sorted keys. Explicit so the
-/// canonical rendering is independent of serde_json's `preserve_order`
-/// feature (additive; any future transitive dep could flip it).
+/// Recursively rebuild a [`serde_json::Value`] with bytewise-sorted object
+/// keys. Crate-internal; consumed by [`crate::member::member_to_string_json`]
+/// so that compact member rendering shares the same key-ordering logic as the
+/// canonical probe-value store (CS-0102).
+///
+/// Explicit so the canonical rendering is independent of serde_json's
+/// `preserve_order` feature (additive; any future transitive dep could flip it).
+pub(crate) fn canonical_value(v: &JsonValue) -> JsonValue {
+    canonicalise(v)
+}
+
 fn canonicalise(v: &JsonValue) -> JsonValue {
     match v {
         JsonValue::Array(items) => JsonValue::Array(items.iter().map(canonicalise).collect()),
@@ -79,6 +87,19 @@ pub fn decode_json(bytes: &[u8]) -> Result<JsonValue, String> {
 /// by `2f` or `5c`); a literal `_` cannot appear because every source `_`
 /// is rewritten to `_5f`.  Therefore the decode is unambiguous and distinct
 /// inputs cannot share an output.
+///
+/// **Platform caveat — `:` passes through literally.**  Colons are valid in
+/// POSIX file names and the common `cc:zlib` style relies on this.  Windows
+/// treats `:` as a drive-separator and rejects it in path components; Windows
+/// support is deferred to SHI-176 Phase 5 and will require an additional
+/// escape rule for `:`.
+///
+/// **Case-sensitivity caveat — injectivity is at the string level.**
+/// On case-insensitive filesystems (macOS APFS default, Windows NTFS) two
+/// probe keys that differ only by ASCII case — e.g. `CC:Zlib` vs `cc:zlib`
+/// — would map to distinct file names but the OS may treat those names as
+/// the same path, silently clobbering one entry.  Callers SHOULD normalise
+/// probe keys to lowercase to avoid this on case-insensitive mounts.
 pub fn probe_file_name(key: &str) -> String {
     let mut out = String::with_capacity(key.len() + 5);
     for ch in key.chars() {

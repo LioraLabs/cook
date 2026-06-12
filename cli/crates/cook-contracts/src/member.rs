@@ -36,6 +36,18 @@ pub fn member_to_string(v: &MsgPackValue) -> String {
     }
 }
 
+/// Render a data member to its canonical string form (§8.3), JSON-native.
+/// Replaces the rmpv-input `member_to_string` (deleted in the COOK-91
+/// msgpack retirement); compact key-sorted JSON for tables, bare string
+/// for string scalars, JSON text for the rest.
+pub fn member_to_string_json(json: &serde_json::Value) -> String {
+    match json {
+        serde_json::Value::String(s) => s.clone(),
+        other => serde_json::to_string(&crate::probe_value::canonical_value(other))
+            .unwrap_or_default(),
+    }
+}
+
 /// Convert an `rmpv::Value` to a `serde_json::Value`. Map keys are coerced to
 /// their string form (probe records are string-keyed per §22.5.4); the
 /// `serde_json::Map` (a `BTreeMap` by default) yields key-sorted serialisation.
@@ -81,6 +93,57 @@ fn to_json(v: &MsgPackValue) -> JsonValue {
 mod tests {
     use super::*;
     use rmpv::Value;
+
+    // ── JSON-native tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn json_renders_record_key_sorted_compact() {
+        let v = serde_json::json!({"name": "ace", "id": 1});
+        assert_eq!(member_to_string_json(&v), r#"{"id":1,"name":"ace"}"#);
+    }
+
+    #[test]
+    fn json_renders_scalars_bare() {
+        assert_eq!(member_to_string_json(&serde_json::json!("hi")), "hi");
+        assert_eq!(member_to_string_json(&serde_json::json!(42)), "42");
+        assert_eq!(member_to_string_json(&serde_json::json!(true)), "true");
+        assert_eq!(member_to_string_json(&serde_json::Value::Null), "null");
+    }
+
+    /// Equivalence check: `member_to_string` (rmpv) and `member_to_string_json`
+    /// (serde_json) MUST produce identical output for the same logical record,
+    /// including nested structures. A discrepancy would silently re-key every
+    /// fan-out cache entry during the msgpack-retirement migration.
+    #[test]
+    fn rmpv_and_json_render_identically() {
+        // Record: {"id": 1, "name": "ace"} plus a nested array and sub-record.
+        let rmpv_val = Value::Map(vec![
+            (Value::String("id".into()), Value::Integer(1.into())),
+            (Value::String("name".into()), Value::String("ace".into())),
+            (
+                Value::String("tags".into()),
+                Value::Array(vec![Value::String("x".into()), Value::String("y".into())]),
+            ),
+            (
+                Value::String("meta".into()),
+                Value::Map(vec![(Value::String("k".into()), Value::Integer(2.into()))]),
+            ),
+        ]);
+        let json_val = serde_json::json!({
+            "id": 1,
+            "name": "ace",
+            "tags": ["x", "y"],
+            "meta": {"k": 2}
+        });
+        let rmpv_out = member_to_string(&rmpv_val);
+        let json_out = member_to_string_json(&json_val);
+        assert_eq!(
+            rmpv_out, json_out,
+            "BLOCKED: rmpv and JSON renderers diverge.\n  rmpv: {rmpv_out}\n  json: {json_out}"
+        );
+    }
+
+    // ── rmpv tests ───────────────────────────────────────────────────────────
 
     #[test]
     fn renders_record_key_sorted() {
