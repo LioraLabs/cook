@@ -8,7 +8,6 @@ description = "Build artifact cache backend for the Cook build system"
 cook-contracts = { path = "../cook-contracts" }
 cook-fingerprint = { path = "../cook-fingerprint" }
 serde = { version = "1", features = ["derive"] }
-bincode = "1"
 sha2 = "0.10"
 hex = "0.4"
 serde_json = "1"

@@ -11,14 +11,22 @@
 //! `FileRecord` / per-step keys are computed) is by definition an incompatible
 //! on-disk-format change, so the two move together.
 //!
+//! **Index format (v4+).** Each recipe is stored as a human-readable TOML file
+//! at `<cache_dir>/<recipe_name>.toml`. The u64 hash fields (`command_hash`,
+//! `context_hash`, `env_contribution`, `FileRecord.hash`) are serialised as
+//! zero-padded 16-digit lowercase hex strings via `cook_fingerprint::record::hex_u64`.
+//! The `schema_version` field is always the first key written by `toml::to_string`.
+//! TOML is non-positional, so a file missing `schema_version` deserialises via
+//! `default_cache_schema()` to 1 and is refused by the exact-match check.
+//! Pre-v4 bincode `.bin` files are never opened by this loader.
+//!
 //! **Read policy (CS-0048).** A recipe cache whose `schema_version` exceeds
 //! `CACHE_VERSION` is refused — the file was written by a future cook, and
 //! the current binary cannot reason about its layout. A cache whose
 //! `schema_version` is *less than* `CACHE_VERSION` is also refused today
-//! because pre-v1.0 caches use a positional bincode layout where field
-//! evolution was non-additive; older files cannot be safely deserialized
-//! into the current struct shape. Both rejection paths surface as a
-//! cache-miss (the file is regeneratable; no hard error is needed).
+//! because any schema mismatch is non-additive pre-v1.0. Both rejection
+//! paths surface as a cache-miss (the file is regeneratable; no hard error
+//! is needed).
 //!
 //! **Evolution policy (v1.0+).** Future `RecipeCache` evolution is
 //! additive-only: new fields are introduced with `#[serde(default)]` and the
@@ -32,10 +40,10 @@ use std::path::Path;
 
 pub use cook_fingerprint::record::{FileRecord, StepEntry, CACHE_VERSION};
 
-/// Default value used by `serde` if a persisted cache predates the explicit
-/// `schema_version` field name. Bincode is positional, so the field is always
-/// present in practice; this default is the belt-and-braces guard for any
-/// future JSON / non-positional encoding of the same struct.
+/// Default value used by `serde` when `schema_version` is absent from the
+/// TOML file. TOML is non-positional, so a missing key is plausible (e.g. a
+/// hand-edited or pre-v4 file). Defaulting to 1 ensures the exact-match
+/// version check refuses the file — 1 != CACHE_VERSION (currently 4).
 fn default_cache_schema() -> u32 { 1 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -67,13 +75,12 @@ impl RecipeCache {
     }
 
     pub fn load(cache_dir: &Path, recipe_name: &str) -> Option<Self> {
-        let path = cache_dir.join(format!("{}.bin", recipe_name));
-        let bytes = std::fs::read(&path).ok()?;
-        let cache: Self = bincode::deserialize(&bytes).ok()?;
+        let path = cache_dir.join(format!("{}.toml", recipe_name));
+        let text = std::fs::read_to_string(&path).ok()?;
+        let cache: Self = toml::from_str(&text).ok()?;
         // CS-0048 read policy. See crate docs: today the check is exact
-        // equality because pre-v1.0 layout evolution was non-additive; the
-        // forward-compatible `<= CACHE_VERSION` form takes effect once the
-        // additive-only contract starts at v1.0.
+        // equality (pre-v1.0); the forward-compatible `<= CACHE_VERSION`
+        // form takes effect once the additive-only contract starts at v1.0.
         if cache.schema_version != CACHE_VERSION {
             return None;
         }
@@ -82,11 +89,11 @@ impl RecipeCache {
 
     pub fn save(&self, cache_dir: &Path, recipe_name: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(cache_dir)?;
-        let target = cache_dir.join(format!("{}.bin", recipe_name));
-        let tmp = cache_dir.join(format!("{}.bin.tmp", recipe_name));
-        let bytes = bincode::serialize(self)
+        let target = cache_dir.join(format!("{}.toml", recipe_name));
+        let tmp = cache_dir.join(format!("{}.toml.tmp", recipe_name));
+        let text = toml::to_string(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        std::fs::write(&tmp, &bytes)?;
+        std::fs::write(&tmp, &text)?;
         std::fs::rename(&tmp, &target)?;
         Ok(())
     }
@@ -134,15 +141,15 @@ mod tests {
     }
 
     #[test]
-    fn version_is_three() {
-        assert_eq!(CACHE_VERSION, 3);
+    fn version_is_four() {
+        assert_eq!(CACHE_VERSION, 4);
     }
 
     #[test]
     fn round_trip_with_new_fields() {
         let original = make_populated_cache();
-        let bytes = bincode::serialize(&original).expect("serialize");
-        let restored: RecipeCache = bincode::deserialize(&bytes).expect("deserialize");
+        let text = toml::to_string(&original).expect("serialize");
+        let restored: RecipeCache = toml::from_str(&text).expect("deserialize");
         assert_eq!(original, restored);
         assert_eq!(restored.schema_version, CACHE_VERSION);
         let step = restored.steps.get("compile_main").unwrap();
@@ -154,8 +161,8 @@ mod tests {
     #[test]
     fn empty_cache_round_trip() {
         let original = RecipeCache::new();
-        let bytes = bincode::serialize(&original).expect("serialize");
-        let restored: RecipeCache = bincode::deserialize(&bytes).expect("deserialize");
+        let text = toml::to_string(&original).expect("serialize");
+        let restored: RecipeCache = toml::from_str(&text).expect("deserialize");
         assert_eq!(original, restored);
     }
 
@@ -172,9 +179,21 @@ mod tests {
             context_hash: 0xc0c0c0c0,
             env_contribution: 0xe0e0e0e0,
         };
-        let bytes = bincode::serialize(&step).expect("serialize");
-        let restored: StepEntry = bincode::deserialize(&bytes).expect("deserialize");
+        let text = toml::to_string(&step).expect("serialize");
+        let restored: StepEntry = toml::from_str(&text).expect("deserialize");
         assert_eq!(step, restored);
+    }
+
+    #[test]
+    fn saved_index_is_human_readable_toml() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        make_populated_cache().save(dir.path(), "my_recipe").expect("save");
+        let path = dir.path().join("my_recipe.toml");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(text.contains("schema_version = 4"), "got: {text}");
+        assert!(text.contains(r#"command_hash = "0102030405060708""#), "got: {text}");
+        assert!(text.contains(r#"hash = "1234567890abcdef""#), "got: {text}");
+        assert!(!dir.path().join("my_recipe.toml.tmp").exists(), "tmp renamed away");
     }
 
     #[test]
@@ -195,22 +214,19 @@ mod tests {
     #[test]
     fn load_corrupted_returns_none() {
         let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(dir.path().join("bad.bin"), b"not bincode").expect("write");
+        std::fs::write(dir.path().join("bad.toml"), b"= not toml [").expect("write");
         assert!(RecipeCache::load(dir.path(), "bad").is_none());
     }
 
     #[test]
-    fn load_v2_returns_none_via_version_check() {
+    fn load_old_schema_version_returns_none() {
+        // CS-0048: a cache saved with schema_version=3 (bincode era) must be
+        // refused — we save via current API then hand-patch the version field.
         let dir = tempfile::tempdir().expect("tempdir");
-        // Hand-craft a "v2" cache: just write a struct with schema_version=2.
-        // We use a minimal serde value that bincode would accept as the v3 layout
-        // but with schema_version=2 — the version check rejects it before any
-        // field mismatch matters.
-        let mut wrong_version = RecipeCache::new();
-        wrong_version.schema_version = 2;
-        let bytes = bincode::serialize(&wrong_version).expect("serialize");
-        std::fs::write(dir.path().join("old.bin"), &bytes).expect("write");
-        assert!(RecipeCache::load(dir.path(), "old").is_none());
+        let mut old = RecipeCache::new();
+        old.schema_version = 3;
+        old.save(dir.path(), "old_v3").expect("save");
+        assert!(RecipeCache::load(dir.path(), "old_v3").is_none());
     }
 
     #[test]
@@ -220,8 +236,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut future = RecipeCache::new();
         future.schema_version = CACHE_VERSION + 1;
-        let bytes = bincode::serialize(&future).expect("serialize");
-        std::fs::write(dir.path().join("future.bin"), &bytes).expect("write");
+        future.save(dir.path(), "future").expect("save");
         assert!(RecipeCache::load(dir.path(), "future").is_none());
     }
 
@@ -230,8 +245,27 @@ mod tests {
         // CS-0048: writers always emit `schema_version = CACHE_VERSION`.
         let cache = RecipeCache::new();
         assert_eq!(cache.schema_version, CACHE_VERSION);
-        let bytes = bincode::serialize(&cache).expect("serialize");
-        let restored: RecipeCache = bincode::deserialize(&bytes).expect("deserialize");
+        let text = toml::to_string(&cache).expect("serialize");
+        let restored: RecipeCache = toml::from_str(&text).expect("deserialize");
         assert_eq!(restored.schema_version, CACHE_VERSION);
+    }
+
+    #[test]
+    fn load_index_missing_schema_version_returns_none() {
+        // TOML is non-positional: missing schema_version deserialises to
+        // default_cache_schema() = 1, which != CACHE_VERSION, so load refuses.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("noversion.toml"), "[globs]\n\n[steps]\n")
+            .expect("write");
+        assert!(RecipeCache::load(dir.path(), "noversion").is_none());
+    }
+
+    #[test]
+    fn load_ignores_legacy_bin_file() {
+        // Pre-v4 .bin files must not be loaded — loader only opens .toml.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("legacy.bin"), b"\x00\x01junk bytes\xff")
+            .expect("write");
+        assert!(RecipeCache::load(dir.path(), "legacy").is_none());
     }
 }

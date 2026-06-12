@@ -37,7 +37,7 @@ import from the crate that owns the type.
 |---|---|
 | `lib.rs` | `hash_str`, `compute_test_fingerprint`, `FingerprintInputs`, `resolve_glob` |
 | `check.rs` | `needs_rebuild_cook`, `needs_rebuild_plate`, `hash_env`, `hash_file`, `stat_mtime`, `RebuildResult`, `RebuildReason`, `RestoreCtx`, `install_depfile_parser` |
-| `record.rs` | `FileRecord`, `StepEntry`, `CACHE_VERSION` (currently `3`) |
+| `record.rs` | `FileRecord`, `StepEntry`, `CACHE_VERSION` (currently `4`) |
 | `context.rs` | `ExecutionContext`, `MachineIdentity`, `ToolHash`, `step_context_hash` |
 | `envkey.rs` | `EnvDenylist`, `env_contribution` |
 | `backend.rs` | `CacheBackend` trait, `ArtifactMeta`, `BackendError`, `BackendConfig`, `CloudKey`, `CloudKeyInputs`, `cloud_key`, `artifact_key` |
@@ -55,7 +55,7 @@ engine install `cook-cache::parse_make_depfile` at startup without
 |---|---|
 | `lib.rs` | Re-exports + crate docs |
 | `backend.rs` | `LocalBackend` (v3 filesystem CAS), `VerifyingReader`, `get_bytes`/`put_bytes` helpers |
-| `store.rs` | `RecipeCache` on-disk format (bincode), `load`/`save`, atomic rename |
+| `store.rs` | `RecipeCache` on-disk format (TOML, hex-string hashes), `load`/`save`, atomic rename |
 | `manager.rs` | `ThreadSafeCacheManager`, `CacheState`, `SharedCacheState`, `record_completion` |
 | `cache_ctx.rs` | `CacheContext` (per-build aggregate of exec ctx, denylist, backend, cloud config) |
 | `cloud_backend.rs` | `CloudBackend` HTTP client implementing `CacheBackend` |
@@ -143,7 +143,7 @@ composed in `cook_fingerprint::backend::cloud_key`
 (`cli/crates/cook-fingerprint/src/backend.rs:271`). The input struct
 `CloudKeyInputs` carries:
 
-1. `schema_version` (currently `CACHE_VERSION = 3`)
+1. `schema_version` (currently `CACHE_VERSION = 4`)
 2. `recipe_namespace` — `"{project_id}/{cookfile_path}::{recipe_name}"`
 3. `command_hash`
 4. `context_hash`
@@ -290,23 +290,32 @@ dependent steps to rebuild via `InputSetChanged`.
 
 ### Recipe cache file layout
 
-`RecipeCache::save` (cli/crates/cook-cache/src/store.rs:83) writes
-`.cook/cache/{recipe_name}.bin` via bincode:
+`RecipeCache::save` (cli/crates/cook-cache/src/store.rs) writes
+`.cook/cache/{recipe_name}.toml` as a human-readable TOML file:
 
-1. Serialise to bytes.
-2. Write to `{recipe_name}.bin.tmp`.
-3. `fs::rename` to the final `.bin` path.
+1. Serialise to a TOML string. u64 hash fields (`command_hash`,
+   `context_hash`, `env_contribution`, `FileRecord.hash`) are emitted as
+   zero-padded 16-digit lowercase hex strings via
+   `cook_fingerprint::record::hex_u64`; `mtime` stays a TOML integer.
+2. Write to `{recipe_name}.toml.tmp`.
+3. `fs::rename` to the final `.toml` path.
 
 `rename` is atomic on POSIX, so a reader sees either the prior cache or the
-new cache, never a torn write. `RecipeCache::load` (store.rs:69) reads the
-file, deserialises with bincode, and refuses any cache whose
+new cache, never a torn write. `RecipeCache::load` reads the `.toml` file,
+deserialises with `toml::from_str`, and refuses any cache whose
 `schema_version != CACHE_VERSION` — both downgrades and upgrades surface as
 `None` (the cache is regeneratable; no error is needed).
 
+Pre-v4 bincode `.bin` and `.bin.tmp` files written directly inside
+`.cook/cache/` are not read by this loader (it only opens `.toml`). Orphaned
+`.bin`/`.bin.tmp` files in `.cook/cache/` are deleted once by
+`ThreadSafeCacheManager::new` — non-recursive, so the `tests/` JSON cache
+under `.cook/cache/tests/` is untouched. Running `cook clean` (`rm -rf
+.cook`) removes them along with everything else.
+
 Per the CS-0048 read policy in `store.rs` crate docs: today's check is
-exact equality because pre-v1.0 layout evolution was non-additive. Once v1.0
-ships, evolution is additive-only (`#[serde(default)]` on new fields) until
-the next breaking bump.
+exact equality (pre-v1.0); the forward-compatible `<= CACHE_VERSION` form
+takes effect once the additive-only contract starts at v1.0.
 
 ### Artifact CAS layout
 
@@ -466,7 +475,7 @@ The parallel scheduler runs many units concurrently. `ThreadSafeCacheManager`
 ```text
 ThreadSafeCacheManager {
     caches:    Mutex<HashMap<String, RecipeCache>>,  // recipe_name -> in-memory cache
-    cache_dir: PathBuf,                              // root for .bin files
+    cache_dir: PathBuf,                              // root for .toml index files
     dirty:     Mutex<HashSet<String>>,               // recipes with unsaved changes
 }
 ```
@@ -475,7 +484,7 @@ Key methods (`cli/crates/cook-cache/src/manager.rs`):
 
 | Method | Behaviour |
 |---|---|
-| `load_recipe(name)` (manager.rs:91) | Load the named recipe's `.bin` (or insert empty default) |
+| `load_recipe(name)` (manager.rs:91) | Load the named recipe's `.toml` index (or insert empty default) |
 | `get_or_load(name)` (manager.rs:127) | Return a clone of the in-memory cache, loading on demand |
 | `update_step(name, key, entry)` (manager.rs:97) | Insert/replace a step entry and mark the recipe dirty |
 | `record_completion(name, key, meta, wd)` (manager.rs:137) | Build a `StepEntry` from `CacheMeta` (fingerprinting inputs/outputs via `collect_records`), append the depfile to outputs when `discovered_inputs` is set, then `update_step` |

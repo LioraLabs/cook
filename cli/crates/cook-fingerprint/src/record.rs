@@ -13,7 +13,10 @@ use serde::{Deserialize, Serialize};
 /// TOML integers are i64, so a u64 hash with the high bit set cannot
 /// round-trip as a TOML integer. Hex strings are also what humans expect to
 /// see when reading the index. Writers emit exactly 16 lowercase hex digits;
-/// the reader accepts any width `u64::from_str_radix` can parse.
+/// the reader accepts any width that `u64::from_str_radix(s, 16)` can parse —
+/// including uppercase hex (`"DEADBEEF"`) and a leading `+` sign, per
+/// `from_str_radix` semantics (Postel leniency). Strings longer than 16 hex
+/// digits that overflow `u64` are rejected.
 pub mod hex_u64 {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -28,8 +31,9 @@ pub mod hex_u64 {
 }
 
 /// Fingerprint schema version. Bump on any breaking change to `StepEntry` /
-/// `FileRecord` / cache key composition.
-pub const CACHE_VERSION: u32 = 3;
+/// `FileRecord` / cache key composition. v4 (COOK-92): recipe index is TOML
+/// (`<recipe>.toml`) with u64 hash fields as lowercase hex strings.
+pub const CACHE_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StepEntry {
@@ -89,5 +93,45 @@ context_hash = "00"
 env_contribution = "00"
 "#;
         assert!(toml::from_str::<StepEntry>(bad).is_err());
+    }
+
+    #[test]
+    fn hex_deserialize_rejects_17_digit_overflow() {
+        // 17 hex digits exceed u64::MAX — from_str_radix returns Err.
+        let bad = r#"
+inputs = []
+outputs = []
+command_hash = "10000000000000000"
+context_hash = "00"
+env_contribution = "00"
+"#;
+        assert!(toml::from_str::<StepEntry>(bad).is_err());
+    }
+
+    #[test]
+    fn hex_deserialize_rejects_empty_string() {
+        let bad = r#"
+inputs = []
+outputs = []
+command_hash = ""
+context_hash = "00"
+env_contribution = "00"
+"#;
+        assert!(toml::from_str::<StepEntry>(bad).is_err());
+    }
+
+    #[test]
+    fn hex_deserialize_accepts_uppercase() {
+        // Postel leniency: uppercase hex in reader is fine even though the
+        // writer always emits lowercase.
+        let src = r#"
+inputs = []
+outputs = []
+command_hash = "DEADBEEFCAFE0001"
+context_hash = "00"
+env_contribution = "00"
+"#;
+        let entry: StepEntry = toml::from_str(src).expect("uppercase hex should parse");
+        assert_eq!(entry.command_hash, 0xDEADBEEFCAFE0001u64);
     }
 }
