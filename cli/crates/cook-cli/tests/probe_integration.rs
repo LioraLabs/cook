@@ -379,3 +379,97 @@ recipe build
         );
     }
 }
+
+/// CS-0102 (COOK-91): a probe completion materialises its value at
+/// `.cook/probes/<key>.json` as canonical JSON — UTF-8, two-space pretty
+/// printing, object keys sorted bytewise (alpha before zeta), exactly one
+/// trailing LF — and a warm rerun (cache hit) leaves the file byte-identical.
+///
+/// The probe key and produce source are uniquified per invocation so the
+/// host-wide persistent cache (~/.cache/cook/cloud) cannot serve a stale
+/// value across `cargo test` runs.
+#[test]
+fn probe_value_file_is_canonical_json_and_survives_warm_rerun() {
+    let tmp = TempDir::new().unwrap();
+    let uniq = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let probe_key = format!("test:canon-{uniq}");
+    // Insertion order zeta-then-alpha so key-sorting is observable in the file.
+    let cookfile = format!(
+        r#"
+recipe build
+    >>{{
+        cook.probe("{probe_key}", {{
+            inputs = {{}},
+            produce = [[
+                -- uniq={uniq}
+                return {{ zeta = "last", alpha = {{ 1, 2 }} }}
+            ]],
+        }})
+        cook.add_unit({{
+            name = "consume",
+            inputs = {{}},
+            outputs = {{"done.marker"}},
+            probes = {{"{probe_key}"}},
+            command = "echo $<{probe_key}.zeta> > done.marker",
+        }})
+    }}
+"#
+    );
+    fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();
+
+    // First run (cold): probe executes, file must be materialised.
+    run_cook(tmp.path(), &["build"]).expect("first run should succeed");
+    let marker = fs::read_to_string(tmp.path().join("done.marker")).unwrap();
+    assert!(
+        marker.contains("last"),
+        "consumer must read the probe value; got marker: {marker:?}"
+    );
+
+    let probe_file = tmp
+        .path()
+        .join(".cook")
+        .join("probes")
+        .join(format!("{probe_key}.json"));
+    assert!(
+        probe_file.exists(),
+        "probe completion must write {}",
+        probe_file.display()
+    );
+
+    let bytes1 = fs::read(&probe_file).unwrap();
+    let text = std::str::from_utf8(&bytes1).expect("probe file must be valid UTF-8");
+
+    // Exactly one trailing LF.
+    assert!(text.ends_with('\n'), "must end with LF; got: {text:?}");
+    assert!(
+        !text.ends_with("\n\n"),
+        "must end with exactly ONE trailing LF; got: {text:?}"
+    );
+
+    // Canonical rendering pinned byte-for-byte: two-space pretty printing,
+    // keys sorted bytewise ascending (alpha before zeta).
+    let expected_text = "{\n  \"alpha\": [\n    1,\n    2\n  ],\n  \"zeta\": \"last\"\n}\n";
+    assert_eq!(
+        text, expected_text,
+        "probe file must be the canonical JSON rendering (pretty, 2-space, key-sorted)"
+    );
+
+    // And it parses to the expected value.
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes1).expect("must parse as JSON");
+    assert_eq!(parsed, serde_json::json!({"alpha": [1, 2], "zeta": "last"}));
+
+    // Warm rerun (cache hit): the file must be byte-identical.
+    run_cook(tmp.path(), &["build"]).expect("second run should succeed");
+    let bytes2 = fs::read(&probe_file).unwrap();
+    assert_eq!(
+        bytes1, bytes2,
+        "warm rerun must leave .cook/probes/<key>.json byte-identical"
+    );
+}
