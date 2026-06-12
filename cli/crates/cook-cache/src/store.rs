@@ -77,7 +77,14 @@ impl RecipeCache {
     pub fn load(cache_dir: &Path, recipe_name: &str) -> Option<Self> {
         let path = cache_dir.join(format!("{}.toml", recipe_name));
         let text = std::fs::read_to_string(&path).ok()?;
-        let cache: Self = toml::from_str(&text).ok()?;
+        let cache: Self = toml::from_str(&text).map_err(|e| {
+            tracing::debug!(
+                path = %path.display(),
+                error = %e,
+                "recipe cache TOML parse failed — treating as cache miss"
+            );
+            e
+        }).ok()?;
         // CS-0048 read policy. See crate docs: today the check is exact
         // equality (pre-v1.0); the forward-compatible `<= CACHE_VERSION`
         // form takes effect once the additive-only contract starts at v1.0.
@@ -96,6 +103,31 @@ impl RecipeCache {
         std::fs::write(&tmp, &text)?;
         std::fs::rename(&tmp, &target)?;
         Ok(())
+    }
+}
+
+/// One-time hygiene sweep (COOK-92): delete orphaned pre-v4 bincode indexes
+/// (`*.bin`) and torn temp files (`*.bin.tmp`) sitting directly inside
+/// `cache_dir`. There is no migration — the loader only reads `.toml` — so
+/// these files are dead weight left by older cook versions.
+///
+/// Non-recursive on purpose: `.cook/cache/tests/` (the JSON test cache) and
+/// any other subdirectory are never touched. The artifact store lives under
+/// a different root entirely (`~/.cache/cook/...`) and is out of scope.
+/// Idempotent and infallible: a missing dir or a failed unlink is ignored
+/// (the next construction retries).
+pub fn sweep_orphaned_bin_indexes(cache_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(cache_dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.ends_with(".bin") || name.ends_with(".bin.tmp") {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 }
 

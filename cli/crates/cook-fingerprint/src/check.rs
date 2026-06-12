@@ -17,11 +17,14 @@ fn empty_hash() -> u64 {
 pub fn stat_mtime(path: &Path) -> Option<u64> {
     let meta = std::fs::metadata(path).ok()?;
     let mtime = meta.modified().ok()?;
+    // TOML integers are i64; clamp absurd future mtimes so save() never
+    // fails on a file with an astronomically large mtime (COOK-92).
     Some(
-        mtime
+        (mtime
             .duration_since(std::time::UNIX_EPOCH)
             .ok()?
-            .as_millis() as u64,
+            .as_millis() as u64)
+            .min(i64::MAX as u64),
     )
 }
 

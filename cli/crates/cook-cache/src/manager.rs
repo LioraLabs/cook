@@ -81,6 +81,9 @@ pub struct ThreadSafeCacheManager {
 
 impl ThreadSafeCacheManager {
     pub fn new(cache_dir: PathBuf) -> Self {
+        // COOK-92 one-time sweep: drop orphaned pre-v4 `.bin` indexes on the
+        // first touch of this cache dir. No-op once they are gone.
+        crate::store::sweep_orphaned_bin_indexes(&cache_dir);
         Self {
             caches: Mutex::new(HashMap::new()),
             cache_dir,
@@ -421,6 +424,32 @@ mod tests {
         let loaded = store::RecipeCache::load(dir.path(), "rec").expect("load");
         assert!(loaded.steps.contains_key("keep"));
         assert!(!loaded.steps.contains_key("drop"), "stale step pruned");
+    }
+
+    #[test]
+    fn manager_construction_sweeps_orphaned_bin_indexes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Legacy bincode index + torn tmp from an interrupted pre-v4 write.
+        std::fs::write(dir.path().join("old_recipe.bin"), b"\x03legacy").expect("bin");
+        std::fs::write(dir.path().join("old_recipe.bin.tmp"), b"torn").expect("tmp");
+        // Things the sweep must NOT touch: the TOML index, and subdirs
+        // (the tests/ JSON cache lives under the same root).
+        store::RecipeCache::new().save(dir.path(), "current").expect("save");
+        std::fs::create_dir_all(dir.path().join("tests/ab")).expect("mkdir");
+        std::fs::write(dir.path().join("tests/ab/abcd1234.json"), b"{}").expect("json");
+        let _mgr = ThreadSafeCacheManager::new(dir.path().to_path_buf());
+        assert!(!dir.path().join("old_recipe.bin").exists(), ".bin swept");
+        assert!(!dir.path().join("old_recipe.bin.tmp").exists(), ".bin.tmp swept");
+        assert!(dir.path().join("current.toml").exists(), "toml index untouched");
+        assert!(dir.path().join("tests/ab/abcd1234.json").exists(), "test cache untouched");
+    }
+
+    #[test]
+    fn manager_construction_tolerates_missing_cache_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("does-not-exist");
+        let _mgr = ThreadSafeCacheManager::new(missing); // must not panic or create the dir
+        assert!(!dir.path().join("does-not-exist").exists());
     }
 
     #[test]

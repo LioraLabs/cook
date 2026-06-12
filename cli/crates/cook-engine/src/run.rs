@@ -313,8 +313,8 @@ where
             ) else {
                 continue;
             };
-            let bin_name = recipe_cache_bin_name(ru, name);
-            let prior = cm.get_or_load(&bin_name);
+            let index_name = recipe_cache_index_name(ru, name);
+            let prior = cm.get_or_load(&index_name);
             let mut outs: BTreeMap<PathBuf, u64> = BTreeMap::new();
             for step in prior.steps.values() {
                 for o in &step.outputs {
@@ -451,11 +451,11 @@ where
     })
 }
 
-/// The on-disk `.bin` name a recipe's cache is stored under: the `recipe_name`
+/// The on-disk index name a recipe's cache is stored under (`.cook/cache/<name>.toml`): the `recipe_name`
 /// its captured units carry in their [`cook_contracts::CacheMeta`] (which the
 /// executor uses as the manager's per-recipe key), falling back to the
 /// recipe's own name for unit-less meta-targets.
-fn recipe_cache_bin_name(ru: &RecipeUnits, fallback: &str) -> String {
+fn recipe_cache_index_name(ru: &RecipeUnits, fallback: &str) -> String {
     ru.units
         .iter()
         .find_map(|u| u.cache_meta.as_ref().map(|m| m.recipe_name.clone()))
@@ -523,10 +523,10 @@ fn reconcile_outputs(
             cache_managers.get(name),
             registered_workspace.units_by_recipe.get(name),
         ) {
-            let bin_name = recipe_cache_bin_name(ru, name);
+            let index_name = recipe_cache_index_name(ru, name);
             let wd = ru.working_dir.clone();
             let live_ref = &live;
-            cm.retain_steps(&bin_name, move |_k, step| {
+            cm.retain_steps(&index_name, move |_k, step| {
                 step.outputs.is_empty()
                     || step
                         .outputs
