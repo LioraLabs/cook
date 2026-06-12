@@ -49,6 +49,12 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0095: non-array probe value — register-phase rejection, not syntactic'],
   ['ingredients-probe-artifact-dep',
    'CS-0095: probe member source with artifact dep — register-phase rejection, not syntactic'],
+  // CS-0101: `$<file:PATH>` parses cleanly anywhere a placeholder does;
+  // these rejections are codegen-phase / register-phase.
+  ['cs0101-file-ref-in-output-pattern',
+   'CS-0101: file-ref placeholder in an output pattern — codegen-phase rejection, not syntactic'],
+  ['cs0101-file-ref-missing-file',
+   'CS-0101: file-ref to a missing file — register-phase rejection, not syntactic'],
   ['008-imperative-then-declarative',
    'recipe-body region rule (Note 4.4.2) — semantic, not syntactic'],
   ['010-triple-arrow-prefix',

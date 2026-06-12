@@ -527,11 +527,15 @@ module.exports = grammar({
     //     non-immediately because the scanner consumed any leading WS.
     //   • `_string_placeholder` — used inside string literals where every
     //     token MUST be immediate to keep extras out of the string body.
+    //
+    // CS-0101: the `file:` namespace admits a path charset (`/`, `*`;
+    // drops `:`, `[`, `]`) — the `file:` alternative is listed FIRST so
+    // the longer path match wins over the generic IDENT form.
     placeholder: ($) =>
       seq(
         "$<",
         alias(
-          token.immediate(/[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
+          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),
@@ -541,7 +545,7 @@ module.exports = grammar({
       seq(
         token.immediate("$<"),
         alias(
-          token.immediate(/[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
+          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),
@@ -595,7 +599,9 @@ module.exports = grammar({
       seq(
         token.immediate("$<"),
         alias(
-          token.immediate(/[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
+          // CS-0101: `file:` path-charset alternative first (see
+          // `placeholder` above).
+          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),

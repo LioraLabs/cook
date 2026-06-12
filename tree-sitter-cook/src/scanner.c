@@ -57,10 +57,44 @@ static bool match_placeholder_lookahead(TSLexer *lexer) {
   if (lexer->lookahead != '<') return false;
   lexer->advance(lexer, false);
   if (!iswalpha(lexer->lookahead) && lexer->lookahead != '_') return false;
-  lexer->advance(lexer, false);
-  // Continuation charset mirrors cook-luagen's sigil scanner (CS-0074 /
-  // CS-0098): `.` accessors, `:` probe refs, `[]` member accessors, `-`
-  // in probe key segments.
+
+  // CS-0101: file: prefix switches to the path charset. Mirror
+  // cook-luagen sigil.rs. Track the 5-byte `file:` prefix as we go;
+  // on a prefix mismatch we fall back to the generic loop with NO
+  // rewind, because every char of a partial "file:" prefix (letters +
+  // colon) is valid generic-continuation and stays inside the ident.
+  static const char FILE_PREFIX[5] = {'f', 'i', 'l', 'e', ':'};
+  unsigned prefix_len = 0;
+  while (prefix_len < 5 &&
+         lexer->lookahead == (int32_t)FILE_PREFIX[prefix_len]) {
+    lexer->advance(lexer, false);
+    prefix_len++;
+  }
+  if (prefix_len == 5) {
+    // Full `file:` prefix — continuation charset is the path set
+    // (alnum | _ . - / *; drops : [ ]). At least one path char is
+    // required; strict-bail otherwise (the sequence stays literal).
+    bool has_path_char = false;
+    while (iswalnum(lexer->lookahead) ||
+           lexer->lookahead == '_' ||
+           lexer->lookahead == '.' ||
+           lexer->lookahead == '-' ||
+           lexer->lookahead == '/' ||
+           lexer->lookahead == '*') {
+      lexer->advance(lexer, false);
+      has_path_char = true;
+    }
+    if (!has_path_char) return false;
+    if (lexer->lookahead != '>') return false;
+    lexer->advance(lexer, false);
+    return true;
+  }
+
+  // Generic ident. Continuation charset mirrors cook-luagen's sigil
+  // scanner (CS-0074 / CS-0098): `.` accessors, `:` probe refs, `[]`
+  // member accessors, `-` in probe key segments. The first ident char
+  // (validated above) is consumed by this loop unless the prefix
+  // tracker already advanced past it.
   while (iswalnum(lexer->lookahead) ||
          lexer->lookahead == '_' ||
          lexer->lookahead == '.' ||

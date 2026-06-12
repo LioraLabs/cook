@@ -165,3 +165,66 @@ recipe r
       (placeholder
         (placeholder_ident))
       (shell_content))))
+
+================
+File-reference placeholder in shell block (CS-0101)
+================
+
+recipe html
+    ingredients "src/page.md"
+    cook "build/$<in.stem>.html" {
+        render --tokens $<file:tokens.css> $<in> -o $<out>
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      (string))
+    (cook_step
+      outputs: (string
+        (placeholder
+          (placeholder_ident)))
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
+
+================
+Glob file-reference placeholder in shell block (CS-0101)
+================
+
+recipe html
+    ingredients "src/page.md"
+    cook "out.html" {
+        render --templates $<file:templates/*.html> -o $<out>
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      (string))
+    (cook_step
+      outputs: (string)
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
