@@ -2148,3 +2148,42 @@ fn disp_inline_single_line_block_is_rejected() {
     let src = "recipe r\n    seal host {\n        local { cook \"s.o\" { cc -c s.c } }\n    }\n";
     assert!(parse(src).is_err());
 }
+
+#[test]
+fn disp_inline_block_at_recipe_top_level_is_shell() {
+    // §8.4.3 rule 13: at recipe-body top level (not inside a block), an inline
+    // `local { … }` line is non-reserved and falls through to shell_command —
+    // it is NOT a disposition and NOT an error.
+    let src = "recipe r\n    local { cook \"s.o\" { cc -c s.c } }\n";
+    let cf = parse(src).unwrap();
+    assert!(matches!(cf.recipes[0].steps[0], crate::ast::Step::Shell { .. }));
+}
+
+#[test]
+fn disp_decorator_line_override_inside_seal_block() {
+    // A `local` DECORATOR LINE (not an inner block) inside a `seal` block
+    // overrides the inherited seal on the following cook (§8.4.3 rule 10).
+    let src = "recipe build\n    seal host {\n        local\n        cook \"s.o\" { cc -c s.c }\n    }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    assert!(d.local);
+    assert!(d.seal.is_empty(), "decorator-line local must drop inherited seal");
+}
+
+#[test]
+fn disp_seal_block_with_multiline_cook_body() {
+    // The block's closing `}` is distinguishable from a multi-line cook body's
+    // own `}`: parse_cook_line consumes the body's brace, so the block `}` is a
+    // separate line. Pins the `}`-distinguishability path.
+    let src = "recipe build\n    seal host {\n        cook \"a.o\" {\n            cc -c a.c -o a.o\n        }\n    }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    assert!(d.seal.contains("host"));
+    // exactly one cook, with a multi-line shell body
+    let cooks: Vec<_> = cf.recipes[0]
+        .steps
+        .iter()
+        .filter(|s| matches!(s, crate::ast::Step::Cook { .. }))
+        .collect();
+    assert_eq!(cooks.len(), 1);
+}

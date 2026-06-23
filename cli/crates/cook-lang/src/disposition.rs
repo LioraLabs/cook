@@ -99,7 +99,7 @@ pub(crate) fn parse_seal_refs(refs: &[String], line: usize) -> Result<Vec<String
                 !s.is_empty()
                     && s.chars()
                         .next()
-                        .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+                        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
                     && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
             });
         if !ok {

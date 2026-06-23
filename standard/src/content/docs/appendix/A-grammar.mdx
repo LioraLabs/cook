@@ -264,7 +264,7 @@ ingredients "src/*.c"
 2. Prefix `cook` + separator → `cook_step`.
 3. Prefix `plate` + separator → `plate_step`.
 4. Prefix `test` + separator → `test_step`.
-5. First token is `seal`, `local`, `pinned`, or `record` and the line is a well-formed `disposition` — either bare (a `disposition_line`, with only `seal_ref`s permitted after `seal`) or terminated by `{` (a `disposition_block` opener) → disposition (§{steps.cook-disposition}). A `local`/`pinned`/`record` keyword followed by other non-`{` content does NOT match and falls through to rule 7.
+5. First token is `seal`, `local`, `pinned`, or `record` and the line is a well-formed `disposition` — either bare (a `disposition_line`, with only `seal_ref`s permitted after `seal`) or terminated by `{` (a `disposition_block` opener) → disposition (§{steps.cook-disposition}). A `local`/`pinned`/`record` keyword followed by other non-`{` content does NOT match and falls through to rule 7. (The disposition keywords are disjoint from the `ingredients`/`cook`/`plate`/`test` keywords of rules 1–4, so an implementation MAY test this alternative in any order relative to them without changing the dispatch result.)
 6. First character is `@` and the remainder is non-empty → `interactive_command`.
 7. Otherwise → `shell_command`.
 
