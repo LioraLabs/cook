@@ -42,8 +42,6 @@ pub struct StepEntry {
     #[serde(with = "hex_u64")]
     pub command_hash: u64,
     #[serde(with = "hex_u64")]
-    pub context_hash: u64,
-    #[serde(with = "hex_u64")]
     pub env_contribution: u64,
 }
 
@@ -69,12 +67,10 @@ mod tests {
             }],
             outputs: vec![],
             command_hash: 0x0102030405060708,
-            context_hash: 0xffffffffffffffff,
             env_contribution: 0,
         };
         let s = toml::to_string(&entry).expect("toml serialize");
         assert!(s.contains(r#"command_hash = "0102030405060708""#), "got: {s}");
-        assert!(s.contains(r#"context_hash = "ffffffffffffffff""#), "got: {s}");
         assert!(s.contains(r#"env_contribution = "0000000000000000""#), "got: {s}");
         assert!(s.contains(r#"hash = "1234567890abcdef""#), "got: {s}");
         // mtime is a timestamp, not a hash — it stays a TOML integer.
@@ -89,7 +85,6 @@ mod tests {
 inputs = []
 outputs = []
 command_hash = "not-hex"
-context_hash = "00"
 env_contribution = "00"
 "#;
         assert!(toml::from_str::<StepEntry>(bad).is_err());
@@ -102,7 +97,6 @@ env_contribution = "00"
 inputs = []
 outputs = []
 command_hash = "10000000000000000"
-context_hash = "00"
 env_contribution = "00"
 "#;
         assert!(toml::from_str::<StepEntry>(bad).is_err());
@@ -114,7 +108,6 @@ env_contribution = "00"
 inputs = []
 outputs = []
 command_hash = ""
-context_hash = "00"
 env_contribution = "00"
 "#;
         assert!(toml::from_str::<StepEntry>(bad).is_err());
@@ -128,7 +121,6 @@ env_contribution = "00"
 inputs = []
 outputs = []
 command_hash = "DEADBEEFCAFE0001"
-context_hash = "00"
 env_contribution = "00"
 "#;
         let entry: StepEntry = toml::from_str(src).expect("uppercase hex should parse");

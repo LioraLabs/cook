@@ -49,7 +49,6 @@ fn warmup_collapses_to_two_runs() {
         &["a.o"],
         0xc0de,
         0,
-        0,
         wd,
         None,
         Some(&di),
@@ -76,7 +75,6 @@ fn warmup_collapses_to_two_runs() {
         ],
         outputs: vec![fr(wd, "a.o"), fr(wd, ".cook/deps/a.d")],
         command_hash: 0xc0de,
-        context_hash: 0,
         env_contribution: 0,
     };
 
@@ -86,7 +84,6 @@ fn warmup_collapses_to_two_runs() {
         &["a.c"],
         &["a.o"],
         0xc0de,
-        0,
         0,
         wd,
         None,
@@ -103,7 +100,6 @@ fn warmup_collapses_to_two_runs() {
         &["a.c"],
         &["a.o"],
         0xc0de,
-        0,
         0,
         wd,
         None,

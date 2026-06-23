@@ -466,27 +466,25 @@ pub fn register_unit_api(
 
         // Retrieve the CacheContext if it was threaded in from cook-engine.
         // If absent (tests, legacy call sites where the engine has not yet
-        // built its `CacheContext`), fall back to context_hash = 0 / empty
-        // project_id, but still compute env_contribution from the captured
-        // consulted_env so a value change in any tracked env key invalidates
-        // the cache. COOK-59 Task 4.5: without this, the static Lua scanner
-        // for `cook.env.<KEY>` reads can record keys whose values never
-        // reach the cache fingerprint — the very gap the scanner exists
+        // built its `CacheContext`), still compute env_contribution from the
+        // captured consulted_env so a value change in any tracked env key
+        // invalidates the cache. COOK-59 Task 4.5: without this, the static
+        // Lua scanner for `cook.env.<KEY>` reads can record keys whose values
+        // never reach the cache fingerprint — the very gap the scanner exists
         // to close.
         let cache_ctx = lua
             .app_data_ref::<std::sync::Arc<cook_cache::cache_ctx::CacheContext>>();
 
-        let (context_hash, env_contribution_val, project_id, cookfile_path) =
+        let (env_contribution_val, project_id, cookfile_path) =
             if let Some(ctx) = cache_ctx {
-                let ch = ctx.exec_ctx.step_context_hash(&command);
                 let ec = cook_cache::envkey::env_contribution(&consulted_env, &ctx.denylist);
                 let pid = ctx.project_id.clone();
                 let cfp = cookfile_relative_path(lua);
-                (ch, ec, pid, cfp)
+                (ec, pid, cfp)
             } else {
                 let baseline = cook_cache::envkey::EnvDenylist::baseline();
                 let ec = cook_cache::envkey::env_contribution(&consulted_env, &baseline);
-                (0, ec, String::new(), cookfile_relative_path(lua))
+                (ec, String::new(), cookfile_relative_path(lua))
             };
 
         // Read optional discovered_inputs table.
@@ -542,7 +540,6 @@ pub fn register_unit_api(
                 &output_paths,
                 &cache_input_paths,
                 command_hash,
-                context_hash,
                 env_contribution_val,
             );
             Some(CacheMeta {
@@ -553,7 +550,6 @@ pub fn register_unit_api(
                 input_paths: cache_input_paths,
                 output_paths: output_paths.clone(),
                 command_hash,
-                context_hash,
                 env_contribution: env_contribution_val,
                 consulted_env,
                 discovered_inputs,
@@ -791,36 +787,27 @@ pub fn register_unit_api(
     Ok(())
 }
 
-/// Build a local cache key that encodes context_hash and env_contribution
-/// so simultaneous variant builds (debug↔release, gcc↔clang) coexist
-/// without overwriting each other.
+/// Build a local cache key that encodes env_contribution so simultaneous
+/// variant builds (e.g. different env-selected toolchains) coexist without
+/// overwriting each other.
 fn build_local_cache_key(
     _cookfile_path: &str,
     _recipe: &str,
     output_paths: &[String],
     inputs: &[String],
     command_hash: u64,
-    context_hash: u64,
     env_contribution: u64,
 ) -> String {
     if let Some(first) = output_paths.first() {
-        // When context or env differ from zero (real values), embed them to
-        // avoid cross-variant collisions.
-        if context_hash != 0 || env_contribution != 0 {
-            format!(
-                "{first}@{:x}:{:x}",
-                context_hash, env_contribution
-            )
+        if env_contribution != 0 {
+            format!("{first}@{:x}", env_contribution)
         } else {
             first.clone()
         }
     } else {
         let base = inputs.first().map(|s| s.as_str()).unwrap_or("");
-        if context_hash != 0 || env_contribution != 0 {
-            format!(
-                "{}@{:x}:{:x}:{:x}",
-                base, command_hash, context_hash, env_contribution
-            )
+        if env_contribution != 0 {
+            format!("{}@{:x}:{:x}", base, command_hash, env_contribution)
         } else {
             format!("{}@{:x}", base, command_hash)
         }
@@ -880,7 +867,6 @@ mod tests {
         let dir_path = dir.path().to_path_buf();
         std::mem::forget(dir); // tests are short-lived; let the OS clean up
         std::sync::Arc::new(cook_cache::cache_ctx::CacheContext {
-            exec_ctx: std::sync::Arc::new(cook_cache::context::ExecutionContext::probe()),
             denylist: std::sync::Arc::new(cook_cache::envkey::EnvDenylist::baseline()),
             backend: std::sync::Arc::new(cook_cache::backend::LocalBackend::new(dir_path.clone())),
             cloud_config: std::sync::Arc::new(cook_cache::cloud_config::CloudConfig::default()),

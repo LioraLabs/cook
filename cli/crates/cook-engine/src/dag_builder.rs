@@ -1217,7 +1217,6 @@ mod tests {
             input_paths: vec![],
             output_paths: outputs.iter().map(|s| s.to_string()).collect(),
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,

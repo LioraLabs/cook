@@ -319,7 +319,6 @@ fn build_wave(
                         &input_refs,
                         &current_outputs,
                         meta.command_hash,
-                        meta.context_hash,
                         meta.env_contribution,
                         &ru.working_dir,
                         None,
@@ -621,7 +620,6 @@ mod tests {
             input_paths: vec![source.into()],
             output_paths: vec![output.into()],
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: Some(DiscoveredInputs {
@@ -828,7 +826,6 @@ mod tests {
             input_paths: vec!["a.cpp".into()],
             output_paths: vec!["a.o".into()],
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: Some(DiscoveredInputs {
@@ -865,7 +862,6 @@ mod tests {
             input_paths: vec!["b.cpp".into(), "shared.h".into()],
             output_paths: vec!["b.o".into()],
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
@@ -988,7 +984,6 @@ mod tests {
             input_paths: vec!["a.cpp".into()],
             output_paths: vec!["a.o".into()],
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
@@ -1022,7 +1017,6 @@ mod tests {
             input_paths: vec!["a.o".into()],
             output_paths: vec!["libfoo.a".into()],
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: Some(DiscoveredInputs {

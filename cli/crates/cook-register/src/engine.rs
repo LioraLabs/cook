@@ -1280,7 +1280,6 @@ fn evaluate_prepass_probe(
                     let mut meta = cook_fingerprint::ArtifactMeta {
                         recipe_namespace: format!("probe:{key}"),
                         command_hash: 0,
-                        context_hash: 0,
                         env_contribution: 0,
                         schema_version: cook_fingerprint::CACHE_VERSION,
                         size_bytes: b.len() as u64,
