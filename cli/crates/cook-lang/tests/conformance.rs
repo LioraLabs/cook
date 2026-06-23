@@ -279,6 +279,8 @@ fn format_probe(p: &Probe) -> String {
             };
             format!("Shell typing={} commands={}", typing_str, repr_list(commands))
         }
+        ProbeProduce::Tools(names) => format!("Tools names={}", repr_list(names)),
+        ProbeProduce::Env(names) => format!("Env names={}", repr_list(names)),
     };
     format!(
         "    Probe name={} line={}\n      deps: {}\n      ingredients: {}\n      excludes: {}\n      produce: {}",

@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="sdk" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Env names=["SDKROOT", "CC"]

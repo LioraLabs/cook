@@ -135,13 +135,23 @@ probe_dep_list ::= probe_ref (WS probe_ref)*
 probe_ref      ::= BARE_PROBE_KEY | STRING
 IDENT          ::= /[A-Za-z_][A-Za-z0-9_]*/
 probe_body     ::= ingredients_step? produce_step
-produce_step   ::= "produce" ("as" produce_type)? body NEWLINE
-produce_type   ::= "json" | "lines"
+produce_step     ::= "produce" ( ("as" produce_type)? body | "as" source_list_kind name_list ) NEWLINE
+produce_type     ::= "json" | "lines"
+source_list_kind ::= "tools" | "env"
+name_list        ::= "{" ( IDENT ((WS | ",") WS* IDENT)* )? "}"
 ```
 
 `ingredients_step` is defined in §{grammar-appendix.steps}; `body ::= exec_lua_block | shell_block` is also defined there (the body-dispatch tests `>{` before `{`).
 
 **Probe body (normative).** A `probe_body` comprises an optional `ingredients_step` followed by exactly one `produce_step`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The `as` `produce_type` modifier is valid ONLY when `body` is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) it MUST be rejected, since a Lua block already returns a structured value (§{cat.probes.decl}).
+
+**Source-list kinds (normative).** The `as tools` and `as env` forms take a
+`name_list` — a brace-delimited, comma/whitespace-separated list of bare `IDENT`
+names — NOT a `body`. A conforming implementation MUST reject an empty
+`name_list`, a name that is not an `IDENT`, and a `body` (in particular a
+`>{ … }` `exec_lua_block`) supplied where a `name_list` is required
+(§{cat.probes.decl}). The `name_list` is written on a single physical line
+(unlike a multi-line `shell_block`).
 
 **Module-prefix colon disambiguation (normative).** The EBNF above admits an apparent ambiguity: the `:` in `BARE_PROBE_KEY` and the `:` that introduces `probe_dep_list` are spelled identically. The rule is purely positional:
 

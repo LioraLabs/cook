@@ -110,6 +110,15 @@ pub enum ProbeProduce {
     Lua(String),
     /// `produce [as json|lines] { … }` — value is stdout, typed.
     Shell { commands: Vec<String>, typing: ShellProduceType },
+    /// `produce as tools { cc, ld }` — the brace content is a LIST of bare tool
+    /// names (NOT a shell body). Each is PATH-resolved and its binary hashed;
+    /// the value is `{ NAME = { path, hash }, … }`. The hash is both the value
+    /// and the re-run trigger (COOK-164).
+    Tools(Vec<String>),
+    /// `produce as env { SDKROOT }` — the brace content is a LIST of bare env
+    /// var names (NOT a shell body). The value is `{ NAME = value_or_nil, … }`;
+    /// reading the env records the consulted-env determinant (COOK-164).
+    Env(Vec<String>),
 }
 
 /// How a shell-block `produce`'s stdout becomes the probe value (§22.5).
