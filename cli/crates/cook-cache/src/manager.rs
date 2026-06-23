@@ -191,7 +191,6 @@ impl ThreadSafeCacheManager {
             inputs: new_inputs,
             outputs: new_outputs,
             command_hash: meta.command_hash,
-            context_hash: meta.context_hash,
             env_contribution: meta.env_contribution,
         };
         self.update_step(recipe_name, cache_key, entry.clone());
@@ -217,7 +216,6 @@ mod tests {
                 hash: 0x11223344,
             }],
             command_hash,
-            context_hash: 0,
             env_contribution: 0,
         }
     }

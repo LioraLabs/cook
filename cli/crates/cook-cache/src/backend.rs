@@ -442,7 +442,6 @@ mod tests {
         ArtifactMeta {
             recipe_namespace: "cook/Cookfile::build".into(),
             command_hash: 0xdead_beef,
-            context_hash: 0x1111_2222,
             env_contribution: 0x3333_4444,
             schema_version: 3,
             size_bytes: 5,

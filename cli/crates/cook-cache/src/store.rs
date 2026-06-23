@@ -13,7 +13,7 @@
 //!
 //! **Index format (v4+).** Each recipe is stored as a human-readable TOML file
 //! at `<cache_dir>/<recipe_name>.toml`. The u64 hash fields (`command_hash`,
-//! `context_hash`, `env_contribution`, `FileRecord.hash`) are serialised as
+//! `env_contribution`, `FileRecord.hash`) are serialised as
 //! zero-padded 16-digit lowercase hex strings via `cook_fingerprint::record::hex_u64`.
 //! The `schema_version` field is always the first key written by `toml::to_string`.
 //! TOML is non-positional, so a file missing `schema_version` deserialises via
@@ -164,7 +164,6 @@ mod tests {
                 hash: 0xabcdef1234567890,
             }],
             command_hash: 0x0102030405060708,
-            context_hash: 0x1111111111111111,
             env_contribution: 0x2222222222222222,
         };
         cache.steps.insert("compile_main".to_string(), step);
@@ -186,7 +185,6 @@ mod tests {
         assert_eq!(restored.schema_version, CACHE_VERSION);
         let step = restored.steps.get("compile_main").unwrap();
         assert_eq!(step.command_hash, 0x0102030405060708);
-        assert_eq!(step.context_hash, 0x1111111111111111);
         assert_eq!(step.env_contribution, 0x2222222222222222);
     }
 
@@ -208,7 +206,6 @@ mod tests {
             }],
             outputs: vec![],
             command_hash: 0xdeadbeefcafe,
-            context_hash: 0xc0c0c0c0,
             env_contribution: 0xe0e0e0e0,
         };
         let text = toml::to_string(&step).expect("serialize");

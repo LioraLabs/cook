@@ -23,7 +23,6 @@ fn make_step_with_thin_inputs(source_path: &str, source_hash: u64) -> StepEntry 
             hash: 0xabcd_efab_cdef_abcd,
         }],
         command_hash: 0x1111,
-        context_hash: 0x2222,
         env_contribution: 0x3333,
     }
 }
@@ -44,7 +43,6 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
         schema_version: CACHE_VERSION,
         recipe_namespace: "myproj/Cookfile::build",
         command_hash: entry_a.command_hash,
-        context_hash: entry_a.context_hash,
         env_contribution: entry_a.env_contribution,
         sorted_input_content_hashes: &sorted_hashes,
     };
@@ -55,7 +53,6 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
     let mut meta = ArtifactMeta {
         recipe_namespace: "myproj/Cookfile::build".into(),
         command_hash: entry_a.command_hash,
-        context_hash: entry_a.context_hash,
         env_contribution: entry_a.env_contribution,
         schema_version: CACHE_VERSION,
         size_bytes: artifact_bytes.len() as u64,
@@ -77,7 +74,6 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
         schema_version: CACHE_VERSION,
         recipe_namespace: "myproj/Cookfile::build",
         command_hash: entry_b.command_hash,
-        context_hash: entry_b.context_hash,
         env_contribution: entry_b.env_contribution,
         sorted_input_content_hashes: &sorted_b,
     };
@@ -114,7 +110,6 @@ fn header_change_after_pull_invalidates_correctly() {
         ],
         outputs: entry_thin.outputs.clone(),
         command_hash: entry_thin.command_hash,
-        context_hash: entry_thin.context_hash,
         env_contribution: entry_thin.env_contribution,
     };
 
@@ -127,7 +122,6 @@ fn header_change_after_pull_invalidates_correctly() {
         schema_version: CACHE_VERSION,
         recipe_namespace: "myproj/Cookfile::build",
         command_hash: entry_thin.command_hash,
-        context_hash: entry_thin.context_hash,
         env_contribution: entry_thin.env_contribution,
         sorted_input_content_hashes: &h_thin,
     });
@@ -135,7 +129,6 @@ fn header_change_after_pull_invalidates_correctly() {
         schema_version: CACHE_VERSION,
         recipe_namespace: "myproj/Cookfile::build",
         command_hash: entry_with_header.command_hash,
-        context_hash: entry_with_header.context_hash,
         env_contribution: entry_with_header.env_contribution,
         sorted_input_content_hashes: &h_fat,
     });

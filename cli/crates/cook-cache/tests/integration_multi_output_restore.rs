@@ -58,7 +58,7 @@ fn multi_output_restore_writes_all_outputs() {
         schema_version: CACHE_VERSION,
         recipe_namespace,
         command_hash: 0x1234,
-        context_hash: 0,
+
         env_contribution: 0,
         sorted_input_content_hashes: &sorted,
     });
@@ -75,7 +75,7 @@ fn multi_output_restore_writes_all_outputs() {
         let mut meta = ArtifactMeta {
             recipe_namespace: recipe_namespace.into(),
             command_hash: 0x1234,
-            context_hash: 0,
+    
             env_contribution: 0,
             schema_version: CACHE_VERSION,
             size_bytes: bytes.len() as u64,
@@ -101,7 +101,7 @@ fn multi_output_restore_writes_all_outputs() {
         inputs: vec![in_record],
         outputs: vec![foo_record, bar_record],
         command_hash: 0x1234,
-        context_hash: 0,
+
         env_contribution: 0,
     };
 
@@ -114,7 +114,6 @@ fn multi_output_restore_writes_all_outputs() {
         &["in.txt"],
         &["foo.out", "bar.out"],
         0x1234,
-        0,
         0,
         wd,
         Some(&ctx),
@@ -162,7 +161,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         schema_version: CACHE_VERSION,
         recipe_namespace,
         command_hash: 0x1234,
-        context_hash: 0,
+
         env_contribution: 0,
         sorted_input_content_hashes: &sorted,
     });
@@ -171,7 +170,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
     let mut meta0 = ArtifactMeta {
         recipe_namespace: recipe_namespace.into(),
         command_hash: 0x1234,
-        context_hash: 0,
+
         env_contribution: 0,
         schema_version: CACHE_VERSION,
         size_bytes: 11,
@@ -188,7 +187,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         inputs: vec![in_record],
         outputs: vec![foo_record, bar_record],
         command_hash: 0x1234,
-        context_hash: 0,
+
         env_contribution: 0,
     };
     let ctx = RestoreCtx {
@@ -200,7 +199,6 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         &["in.txt"],
         &["foo.out", "bar.out"],
         0x1234,
-        0,
         0,
         wd,
         Some(&ctx),
