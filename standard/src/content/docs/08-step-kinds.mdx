@@ -278,7 +278,11 @@ A conforming implementation MUST enforce, at parse time:
 #### Disposition blocks [#steps.cook-disposition.block]
 
 ```ebnf
-disposition_block ::= disposition "{" NEWLINE recipe_step+ "}" NEWLINE
+disposition_block      ::= disposition "{" NEWLINE disposition_block_item+ "}" NEWLINE
+disposition_block_item ::= disposition_line* cook_step
+                        | disposition_block
+                        | comment
+                        | NEWLINE
 ```
 
 A `disposition` followed by `{` opens a block whose enclosed `cook` steps each inherit the block's disposition **additively**. A conforming implementation MUST enforce:
@@ -286,8 +290,9 @@ A `disposition` followed by `{` opens a block whose enclosed `cook` steps each i
 8. **Additive inheritance.** Each enclosed `cook` step's effective disposition is the additive union of every enclosing block's disposition and the step's own decorator lines: `seal` refs union, `record` propagates.
 9. **Blocks nest.** A `disposition_block` MAY contain further `disposition_block`s; inheritance composes through the nesting.
 10. **`local`/`pinned` override.** When a `local` or `pinned` disposition (a decorator line or an inner block) applies to a `cook` step nested under a `seal` block, the step is `local`/`pinned` and its inherited `seal` refs are dropped — it is no longer sealed/shared. `local` and `pinned` remain mutually exclusive (rule 4).
-11. **At least one `cook`.** A `disposition_block` MUST contain at least one `cook_step`; an empty block, or a block whose decorators dangle with no following `cook`, MUST be rejected. Non-`cook` steps MAY appear inside a `disposition_block` and carry no disposition.
+11. **`cook`-only body.** A `disposition_block` body consists only of `cook` steps, nested `disposition_block`s, decorator lines (each immediately preceding a `cook`), comments, and blank lines. It MUST contain at least one `cook_step` (directly or via a nested block); an empty block, a block whose decorators dangle with no following `cook`, or a block containing any other step kind (`ingredients`, `plate`, `test`, a shell or Lua step) MUST be rejected. The other step kinds carry no disposition and belong in the recipe body, not inside a disposition block.
 12. **Termination.** A `disposition_block` is terminated by a recipe-body line that is exactly `}`. An unterminated block (end of recipe before the matching `}`) MUST be rejected with a diagnostic naming the opening line.
+13. **Opener is line-final.** The opening `{` MUST end its physical line (the block body begins on the following line, per `disposition "{" NEWLINE`). A fully-inline single-line form such as `local { cook "s.o" { … } }` is NOT a `disposition_block` and MUST be rejected.
 
 ### Example 8.4.3.1
 

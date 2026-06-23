@@ -1,0 +1,4 @@
+recipe r
+    local
+    pinned
+    cook "x.o" { cc -c x.c }

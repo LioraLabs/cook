@@ -461,7 +461,7 @@ pub(crate) fn parse_cook_line(
             "cook",
         )?;
         return Ok((
-            CookStep { outputs, body: Some(body) },
+            CookStep { outputs, body: Some(body), disposition: crate::ast::Disposition::default() },
             new_pos,
         ));
     }
@@ -496,7 +496,7 @@ pub(crate) fn parse_cook_line(
             pos += 1;
         }
         return Ok((
-            CookStep { outputs, body: None },
+            CookStep { outputs, body: None, disposition: crate::ast::Disposition::default() },
             pos,
         ));
     }
@@ -517,7 +517,7 @@ pub(crate) fn parse_cook_line(
     let (body, new_pos) =
         parse_body_payload(after_pattern, body_line, tokens, pos_after_patterns, source_lines, "cook")?;
     Ok((
-        CookStep { outputs, body: Some(body), },
+        CookStep { outputs, body: Some(body), disposition: crate::ast::Disposition::default() },
         new_pos,
     ))
 }

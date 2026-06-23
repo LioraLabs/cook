@@ -1982,3 +1982,169 @@ fn cs0099_register_block_body_still_rejected() {
     let msg = err.to_string();
     assert!(msg.contains(">{"), "got: {}", msg);
 }
+
+// ── COOK-160: cook-step disposition (§8.4.3) ───────────────────────
+
+/// Helper: extract the single cook step's disposition from a parsed recipe.
+#[cfg(test)]
+fn first_cook_disposition(cf: &Cookfile) -> &crate::ast::Disposition {
+    for step in &cf.recipes[0].steps {
+        if let crate::ast::Step::Cook { step, .. } = step {
+            return &step.disposition;
+        }
+    }
+    panic!("no cook step found");
+}
+
+#[test]
+fn disp_seal_line_above_cook() {
+    let src = "recipe build\n    seal host\n    cook \"x.o\" { cc -c x.c }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    assert!(d.seal.contains("host"));
+    assert!(!d.local && !d.pinned && !d.record);
+}
+
+#[test]
+fn disp_seal_lines_stack_additively_with_record() {
+    let src = "recipe build\n    seal host\n    seal gpu driver\n    record\n    cook \"x.o\" { cc -c x.c }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    let got: Vec<&str> = d.seal.iter().map(|s| s.as_str()).collect();
+    assert_eq!(got, vec!["driver", "gpu", "host"]); // sorted, deduped
+    assert!(d.record);
+}
+
+#[test]
+fn disp_local_line_above_cook() {
+    let src = "recipe build\n    local\n    cook \"x.o\" { cc -c x.c }\n";
+    let cf = parse(src).unwrap();
+    assert!(first_cook_disposition(&cf).local);
+}
+
+#[test]
+fn disp_pinned_line_above_cook() {
+    let src = "recipe build\n    pinned\n    cook \"x.o\" { cc -c x.c }\n";
+    let cf = parse(src).unwrap();
+    assert!(first_cook_disposition(&cf).pinned);
+}
+
+#[test]
+fn disp_seal_block_applies_to_all_enclosed_cooks() {
+    let src = "recipe build\n    seal host {\n        cook \"a.o\" { cc -c a.c }\n        cook \"b.o\" { cc -c b.c }\n    }\n";
+    let cf = parse(src).unwrap();
+    let mut n = 0;
+    for step in &cf.recipes[0].steps {
+        if let crate::ast::Step::Cook { step, .. } = step {
+            assert!(step.disposition.seal.contains("host"), "cook missing seal host");
+            n += 1;
+        }
+    }
+    assert_eq!(n, 2);
+}
+
+#[test]
+fn disp_local_block_inside_seal_overrides() {
+    // Block openers are multi-line: `local {` then the cook on its own line(s),
+    // then a closing `}` line (App. A.4 `disposition "{" NEWLINE …`).
+    let src = "recipe build\n    seal host {\n        local {\n            cook \"s.o\" { cc -c s.c }\n        }\n    }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    assert!(d.local);
+    assert!(d.seal.is_empty(), "local must drop inherited seal refs");
+}
+
+#[test]
+fn disp_nested_seal_blocks_union() {
+    let src = "recipe build\n    seal a {\n        seal b {\n            cook \"x.o\" { cc -c x.c }\n        }\n    }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    let got: Vec<&str> = d.seal.iter().map(|s| s.as_str()).collect();
+    assert_eq!(got, vec!["a", "b"]);
+}
+
+#[test]
+fn disp_decorator_line_inside_block_adds_to_inherited() {
+    let src = "recipe build\n    seal host {\n        seal gpu\n        cook \"x.o\" { cc -c x.c }\n    }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    let got: Vec<&str> = d.seal.iter().map(|s| s.as_str()).collect();
+    assert_eq!(got, vec!["gpu", "host"]);
+}
+
+#[test]
+fn disp_unannotated_cook_has_default_disposition() {
+    let src = "recipe build\n    cook \"x.o\" { cc -c x.c }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    assert_eq!(*d, crate::ast::Disposition::default());
+}
+
+// negative paths
+
+#[test]
+fn disp_dangling_decorator_without_cook_errors() {
+    let src = "recipe r\n    seal host\n    plate { echo hi }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_dangling_decorator_at_eof_errors() {
+    let src = "recipe r\n    seal host\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_local_and_pinned_mutually_exclusive_errors() {
+    let src = "recipe r\n    local\n    pinned\n    cook \"x.o\" { cc -c x.c }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_seal_quoted_ref_errors() {
+    let src = "recipe r\n    seal \"host\"\n    cook \"x.o\" { cc -c x.c }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_seal_triple_colon_ref_errors() {
+    let src = "recipe r\n    seal a:b:c\n    cook \"x.o\" { cc -c x.c }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_unterminated_block_errors() {
+    let src = "recipe r\n    seal host {\n        cook \"a.o\" { cc -c a.c }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_empty_block_errors() {
+    let src = "recipe r\n    seal host {\n    }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_block_with_non_cook_step_errors() {
+    let src = "recipe r\n    seal host {\n        echo nope\n    }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_local_keyword_with_trailing_content_is_shell() {
+    // `local foo` is NOT a disposition line — falls through to shell_command.
+    let src = "recipe r\n    local foo\n";
+    let cf = parse(src).unwrap();
+    // it parsed as a shell step, not a disposition error
+    assert!(matches!(cf.recipes[0].steps[0], crate::ast::Step::Shell { .. }));
+}
+
+#[test]
+fn disp_inline_single_line_block_is_rejected() {
+    // The block opener `{` must end its line (App. A.4 `disposition "{" NEWLINE`).
+    // A fully-inline `local { cook … }` is not admitted — the `{`-suffix check
+    // fails (line ends with `}`), so it is neither a block opener nor a bare
+    // decorator, and is rejected.
+    let src = "recipe r\n    seal host {\n        local { cook \"s.o\" { cc -c s.c } }\n    }\n";
+    assert!(parse(src).is_err());
+}
