@@ -173,8 +173,9 @@ shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
 disposition_line      ::= ("seal" probe_ref+ | "local" | "pinned" | "record") NEWLINE
                           /* a disposition_line MUST be immediately followed by a
                              cook_step; skeleton — see §8.4.3 */
-disposition_block     ::= ("seal" probe_ref+ | "local" | "pinned" | "record") shell_block
-                          /* block wraps one or more cook_step items; skeleton — see §8.4.3 */
+disposition_block     ::= ("seal" probe_ref+ | "local" | "pinned" | "record") "{" cook_step+ "}"
+                          /* the brace block wraps one or more cook_step items
+                             (NOT shell text); skeleton — see §8.4.3 */
 
 plate_step            ::= "plate" body NEWLINE
 test_step             ::= "test"  body test_modifiers NEWLINE
