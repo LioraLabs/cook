@@ -54,8 +54,7 @@ pub enum RebuildResult {
 pub enum RebuildReason {
     NoCacheEntry,
     CommandHashChanged,
-    ContextChanged,        // NEW
-    EnvChanged,            // NEW
+    EnvChanged,
     OutputMissing,
     OutputChanged,
     InputSetChanged,
@@ -159,7 +158,6 @@ pub fn needs_rebuild_cook(
     current_inputs: &[&str],
     current_outputs: &[&str],
     command_hash: u64,
-    context_hash: u64,
     env_contribution: u64,
     working_dir: &Path,
     restore_ctx: Option<&RestoreCtx>,
@@ -171,9 +169,6 @@ pub fn needs_rebuild_cook(
     };
     if entry.command_hash != command_hash {
         return (RebuildResult::Rebuild(RebuildReason::CommandHashChanged), None);
-    }
-    if entry.context_hash != context_hash {
-        return (RebuildResult::Rebuild(RebuildReason::ContextChanged), None);
     }
     if entry.env_contribution != env_contribution {
         return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
@@ -319,7 +314,6 @@ pub fn needs_rebuild_cook(
         inputs: updated_inputs,
         outputs: entry.outputs.clone(),
         command_hash: entry.command_hash,
-        context_hash: entry.context_hash,
         env_contribution: entry.env_contribution,
     };
     (RebuildResult::Skip, Some(updated))
@@ -342,7 +336,6 @@ fn try_restore(
         schema_version: CACHE_VERSION,
         recipe_namespace: ctx.recipe_namespace,
         command_hash: entry.command_hash,
-        context_hash: entry.context_hash,
         env_contribution: entry.env_contribution,
         sorted_input_content_hashes: &sorted,
     };
@@ -397,7 +390,6 @@ pub fn needs_rebuild_plate(
     entry: Option<&StepEntry>,
     current_inputs: &[&str],
     command_hash: u64,
-    context_hash: u64,
     env_contribution: u64,
     working_dir: &Path,
 ) -> (RebuildResult, Option<StepEntry>) {
@@ -407,9 +399,6 @@ pub fn needs_rebuild_plate(
     };
     if entry.command_hash != command_hash {
         return (RebuildResult::Rebuild(RebuildReason::CommandHashChanged), None);
-    }
-    if entry.context_hash != context_hash {
-        return (RebuildResult::Rebuild(RebuildReason::ContextChanged), None);
     }
     if entry.env_contribution != env_contribution {
         return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
@@ -421,7 +410,6 @@ pub fn needs_rebuild_plate(
                 inputs: updated_inputs,
                 outputs: vec![],
                 command_hash: entry.command_hash,
-                context_hash: entry.context_hash,
                 env_contribution: entry.env_contribution,
             };
             (RebuildResult::Skip, Some(updated))
@@ -517,7 +505,7 @@ mod tests {
     fn test_no_cache_entry_rebuilds() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (result, updated) =
-            needs_rebuild_cook(None, &["in.c"], &["out.o"], 0xdead, 0, 0, dir.path(), None, None);
+            needs_rebuild_cook(None, &["in.c"], &["out.o"], 0xdead, 0, dir.path(), None, None);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::NoCacheEntry));
         assert!(updated.is_none());
     }
@@ -536,12 +524,11 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![out_record],
             command_hash: 0x1111,
-            context_hash: 0,
             env_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0x2222, 0, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0x2222, 0, wd, None, None);
         assert_eq!(
             result,
             RebuildResult::Rebuild(RebuildReason::CommandHashChanged)
@@ -562,12 +549,11 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![],
             command_hash: 0xbeef,
-            context_hash: 0,
             env_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, wd, None, None);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::OutputMissing));
         assert!(updated.is_none());
     }
@@ -586,12 +572,11 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![out_record],
             command_hash: 0xbeef,
-            context_hash: 0,
             env_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, wd, None, None);
         assert_eq!(result, RebuildResult::Skip);
         assert!(updated.is_some());
     }
@@ -623,12 +608,11 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![out_record],
             command_hash: 0xbeef,
-            context_hash: 0,
             env_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, wd, None, None);
         assert_eq!(
             result,
             RebuildResult::Rebuild(RebuildReason::InputChanged("in.c".to_string()))
@@ -639,7 +623,7 @@ mod tests {
     #[test]
     fn test_plate_no_cache_entry_runs() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (result, updated) = needs_rebuild_plate(None, &["in.c"], 0xdead, 0, 0, dir.path());
+        let (result, updated) = needs_rebuild_plate(None, &["in.c"], 0xdead, 0, dir.path());
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::NoCacheEntry));
         assert!(updated.is_none());
     }
@@ -656,11 +640,10 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![],
             command_hash: 0xbeef,
-            context_hash: 0,
             env_contribution: 0,
         };
 
-        let (result, updated) = needs_rebuild_plate(Some(&entry), &["in.c"], 0xbeef, 0, 0, wd);
+        let (result, updated) = needs_rebuild_plate(Some(&entry), &["in.c"], 0xbeef, 0, wd);
         assert_eq!(result, RebuildResult::Skip);
         let updated = updated.expect("should have updated entry");
         assert!(updated.outputs.is_empty());
@@ -706,31 +689,8 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // New tests for context/env rebuild reasons
+    // New tests for env rebuild reason
     // -------------------------------------------------------------------------
-
-    #[test]
-    fn context_hash_changed_rebuilds() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let wd = dir.path();
-        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
-        std::fs::write(wd.join("out.o"), b"binary").expect("write");
-
-        let in_record = make_file_record("in.c", wd);
-        let out_record = make_file_record("out.o", wd);
-
-        let entry = StepEntry {
-            inputs: vec![in_record],
-            outputs: vec![out_record],
-            command_hash: 0xbeef,
-            context_hash: 0x1111,
-            env_contribution: 0,
-        };
-
-        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0x9999, 0, wd, None, None);
-        assert_eq!(result, RebuildResult::Rebuild(RebuildReason::ContextChanged));
-        assert!(updated.is_none());
-    }
 
     #[test]
     fn env_contribution_changed_rebuilds() {
@@ -746,32 +706,11 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![out_record],
             command_hash: 0xbeef,
-            context_hash: 0,
             env_contribution: 0x1111,
         };
 
-        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0x9999, wd, None, None);
+        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0x9999, wd, None, None);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::EnvChanged));
-        assert!(updated.is_none());
-    }
-
-    #[test]
-    fn plate_context_hash_changed_rebuilds() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let wd = dir.path();
-        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
-        let in_record = make_file_record("in.c", wd);
-
-        let entry = StepEntry {
-            inputs: vec![in_record],
-            outputs: vec![],
-            command_hash: 0xbeef,
-            context_hash: 0x1111,
-            env_contribution: 0,
-        };
-
-        let (result, updated) = needs_rebuild_plate(Some(&entry), &["in.c"], 0xbeef, 0x9999, 0, wd);
-        assert_eq!(result, RebuildResult::Rebuild(RebuildReason::ContextChanged));
         assert!(updated.is_none());
     }
 
@@ -807,7 +746,6 @@ mod tests {
                 hash: out_hash,
             }],
             command_hash: 0xc0de,
-            context_hash: 0,
             env_contribution: 0,
         };
 
@@ -824,7 +762,6 @@ mod tests {
             &["src.c"],
             &["out.o"],
             0xc0de,
-            0,
             0,
             wd,
             None,
@@ -860,7 +797,6 @@ mod tests {
                 hash: out_hash,
             }],
             command_hash: 0xc0de,
-            context_hash: 0,
             env_contribution: 0,
         };
 
@@ -877,7 +813,6 @@ mod tests {
             &["out.o"],
             0xc0de,
             0,
-            0,
             wd,
             None,
             Some(&di),
@@ -891,9 +826,37 @@ mod tests {
         use std::sync::OnceLock;
         static ONCE: OnceLock<()> = OnceLock::new();
         ONCE.get_or_init(|| {
-            crate::install_depfile_parser(|p, s, wd, fmt| {
+            // Minimal inline make-depfile parser for tests. Parses lines of the
+            // form `target: dep1 dep2 ...` and returns the deps as workspace-
+            // relative paths. Avoids a cook-cache dev-dep (which is broken in
+            // downstream crates during this cache-trust-v3 refactor).
+            crate::install_depfile_parser(|p, source_path, wd, fmt| {
                 if fmt != "make" { return Err(()); }
-                cook_cache::parse_make_depfile(p, s, wd).map_err(|_| ())
+                let content = std::fs::read_to_string(p).map_err(|_| ())?;
+                let mut deps: Vec<String> = Vec::new();
+                for line in content.lines() {
+                    let line = line.trim_end_matches('\\').trim();
+                    let rest = if let Some(pos) = line.find(':') {
+                        &line[pos + 1..]
+                    } else {
+                        line
+                    };
+                    for tok in rest.split_whitespace() {
+                        let tok = tok.trim();
+                        if tok.is_empty() || tok == source_path { continue; }
+                        let path = if std::path::Path::new(tok).is_absolute() {
+                            tok.to_string()
+                        } else {
+                            let full = wd.join(tok);
+                            match full.strip_prefix(wd) {
+                                Ok(rel) => rel.to_string_lossy().into_owned(),
+                                Err(_) => tok.to_string(),
+                            }
+                        };
+                        deps.push(path);
+                    }
+                }
+                Ok(deps)
             });
         });
     }

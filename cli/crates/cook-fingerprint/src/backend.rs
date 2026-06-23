@@ -98,7 +98,6 @@ pub type BackendResult<T> = Result<T, BackendError>;
 pub struct ArtifactMeta {
     pub recipe_namespace: String,
     pub command_hash: u64,
-    pub context_hash: u64,
     pub env_contribution: u64,
     pub schema_version: u32,
     pub size_bytes: u64,
@@ -253,7 +252,6 @@ pub struct CloudKeyInputs<'a> {
     pub schema_version: u32,
     pub recipe_namespace: &'a str,
     pub command_hash: u64,
-    pub context_hash: u64,
     pub env_contribution: u64,
     /// Caller MUST sort by path before passing. The slice is hashed in given
     /// order; sorting is the caller's responsibility (cf. spec §5.3).
@@ -287,7 +285,6 @@ pub fn cloud_key(inputs: &CloudKeyInputs<'_>) -> CloudKey {
     h.update(inputs.recipe_namespace.as_bytes());
     h.update([0x00]); // delimiter
     h.update(inputs.command_hash.to_le_bytes());
-    h.update(inputs.context_hash.to_le_bytes());
     h.update(inputs.env_contribution.to_le_bytes());
     for hash in inputs.sorted_input_content_hashes {
         h.update(hash.to_le_bytes());
@@ -343,7 +340,6 @@ mod tests {
             schema_version: 3,
             recipe_namespace: "cook/Cookfile::build",
             command_hash: 0xAAAA,
-            context_hash: 0xBBBB,
             env_contribution: 0xCCCC,
             sorted_input_content_hashes: &[0x1111, 0x2222, 0x3333],
         }
@@ -362,14 +358,6 @@ mod tests {
         let a = make_key_inputs();
         let mut b = a;
         b.command_hash = 0xFFFF;
-        assert_ne!(cloud_key(&a), cloud_key(&b));
-    }
-
-    #[test]
-    fn cloud_key_changes_on_context_hash_change() {
-        let a = make_key_inputs();
-        let mut b = a;
-        b.context_hash = 0xFFFF;
         assert_ne!(cloud_key(&a), cloud_key(&b));
     }
 
@@ -432,7 +420,6 @@ mod tests {
             r#"{{
                 "recipe_namespace": "ns",
                 "command_hash": 0,
-                "context_hash": 0,
                 "env_contribution": 0,
                 "schema_version": 1,
                 "size_bytes": 0,
@@ -469,7 +456,6 @@ mod tests {
         let meta = ArtifactMeta {
             recipe_namespace: "ns".into(),
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             schema_version: 1,
             size_bytes: 0,
@@ -489,7 +475,6 @@ mod tests {
         let meta = ArtifactMeta {
             recipe_namespace: "ns".into(),
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             schema_version: 1,
             size_bytes: 0,
