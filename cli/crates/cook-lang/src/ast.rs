@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct UseStatement {
     pub module_name: String,
@@ -200,10 +202,26 @@ impl From<String> for OutputPattern {
     }
 }
 
+/// Cache disposition of a `cook` step (Cache-trust v3, §8.4.3). All-default
+/// = unannotated. Parser/grammar surface only; the cache-key effect lands in
+/// COOK-161/162/163.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Disposition {
+    /// `local` — opt out of sharing (local cache only).
+    pub local: bool,
+    /// `pinned` — designated-producer / fetch-only.
+    pub pinned: bool,
+    /// `record` — record divergence for the oracle.
+    pub record: bool,
+    /// `seal` refs — sorted, de-duplicated bare probe keys (additive).
+    pub seal: BTreeSet<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CookStep {
     pub outputs: Vec<OutputPattern>,
     pub body: Option<Body>,
+    pub disposition: Disposition,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -293,6 +311,7 @@ mod tests {
                         body: Some(Body::ShellBlock(
                             vec!["gcc -c {in} -o {out}".to_string()],
                         )),
+                        disposition: Disposition::default(),
                     },
                     line: 4,
                 },
@@ -327,6 +346,7 @@ mod tests {
         let step = CookStep {
             outputs: vec![OutputPattern::Quoted("bin/app".to_string())],
             body: None,
+            disposition: Disposition::default(),
         };
         assert!(step.body.is_none());
     }
@@ -338,6 +358,7 @@ mod tests {
             body: Some(Body::LuaBlock(
                 "cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)".to_string(),
             )),
+            disposition: Disposition::default(),
         };
         assert!(matches!(step.body, Some(Body::LuaBlock(_))));
     }
