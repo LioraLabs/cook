@@ -170,6 +170,11 @@ cook_step             ::= "cook" cook_output body? NEWLINE
 cook_output           ::= STRING+ | "(" LUA_EXPR ")"
 exec_lua_block        ::= ">{" LUA_BLOCK_CONTENT "}"
 shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
+disposition_line      ::= ("seal" probe_ref+ | "local" | "pinned" | "record") NEWLINE
+                          /* a disposition_line MUST be immediately followed by a
+                             cook_step; skeleton — see §8.4.3 */
+disposition_block     ::= ("seal" probe_ref+ | "local" | "pinned" | "record") shell_block
+                          /* block wraps one or more cook_step items; skeleton — see §8.4.3 */
 
 plate_step            ::= "plate" body NEWLINE
 test_step             ::= "test"  body test_modifiers NEWLINE
@@ -245,6 +250,8 @@ ingredients "src/*.c"
 **`using` is rejected (CS-0099).** The former body introducer `using` (`cook STR { … }` / `cook STR >{ … }`, removed in CS-0099) MUST be rejected at the body position with a migration diagnostic that names CS-0099 and states that the keyword was removed. The body opener follows the output pattern(s) directly. Conformance fixture `cs0099-using-keyword-rejected` pins the diagnostic.
 
 **Declaration-only cook step.** A `cook_step` whose body is absent is a declaration — it announces the output without providing a build command inline. Its build is assumed to be provided by preceding Lua registrations or a later amendment.
+
+**Disposition lines and blocks (skeleton; normative detail in §8.4.3).** A `cook_step` MAY be preceded by one or more `disposition_line`s, or enclosed in a `disposition_block`. The four dispositions are `seal probe_ref+` (additive and stackable — the named probe values fold into the unit's cache key, §{exec.cache.single-key}), `local` (cache locally; opt out of sharing), `pinned` (fetch-only designated-producer — a cache miss is a hard error, not a rebuild), and `record` (a non-reproducible recording). A `disposition_line` MUST be immediately followed by a `cook_step`; a `disposition_line` with no following `cook_step` MUST be rejected. Within a `disposition_block`, an inner `local` or `pinned` overrides an enclosing `seal` for the units it covers; block and line dispositions compose additively. There is **no** project-default ("global") seal set and **no** `seal only` narrowing form. The binding rule, additive precedence, mutual-exclusion constraints, effective-seal-set computation, and diagnostics are specified normatively in §8.4.3; this appendix carries the surface skeleton only.
 
 **Step-dispatch priority (normative).** A single `Content` line inside a recipe body is dispatched in this order, with the first match winning:
 
