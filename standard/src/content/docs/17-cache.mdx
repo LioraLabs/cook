@@ -26,7 +26,25 @@ When the cache indicates that a unit is up-to-date, the implementation MAY skip 
 
 A unit for which the register-phase record disables caching — for example, a bare shell step or an `@` step, whose registration form sets the cache flag to false — MUST be executed on every run of the containing recipe.
 
-### 17.1.1. Tracking Lua reads of `cook.env` [#exec.cache.lua-env-reads]
+### 17.1.1. The single cache key [#exec.cache.single-key]
+
+A cacheable work unit — a step with at least one declared output — has **exactly one** cache key. The key is a content-addressed digest:
+
+> `key = H( declared input contents, command text / Lua chunk, declared output paths, consulted environment values, declared probe values )`
+
+where:
+
+- **declared input contents** are the contents of the unit's `ingredients` (§{steps.ingredients}), its `$<file:PATH>` references (§{phl.cook-step}), and its depfile-discovered inputs (§{exec.cache.discovered-inputs}), content-hashed;
+- **command text / Lua chunk** is observable 1 of §17.1;
+- **declared output paths** is observable 3 of §17.1;
+- **consulted environment values** are the post-denylist values of the environment keys the unit reads — `$<KEY>` sigils and the `cook.env.KEY` static reads of §{exec.cache.lua-env-reads};
+- **declared probe values** are the canonical values (§{cat.probes.values}) of every probe in the unit's *effective seal set* — the probes the author sealed the unit on (the disposition surface of §8.4.3, an additive set with no project-default and no narrowing form).
+
+The key MUST NOT include any determinant the author did not declare. In particular, host or machine identity — target triple, libc version, locale — is NOT folded into the key unless the author declared it as a probe and sealed on it (`seal host`). The engine infers no machine-identity, tool, or environment determinant of its own; it caches over exactly what the author declared.
+
+The **local cache and the shared (cross-machine) store are addressed by this same key.** There is no separate "shared" key and no two-tier loose/strict split. A consumer reuses a stored artifact for a key K if and only if it computes the same K, which holds if and only if every real determinant of the unit was declared. The cache is **trustworthy** exactly when serving a stored artifact for K — instead of re-running the unit — would produce a byte-equivalent artifact in the consumer's current context. Soundness therefore rests on author-declared determinants; under-declaration is the cache-correctness failure mode, observed and classified by the divergence oracle (the shadow-divergence tool surfaced by the reference implementation as `cook cache verify`, which classifies a divergence as an under-keyed determinant versus benign non-determinism). A unit may further opt out of sharing (cache locally only) or require fetch-only service through its disposition (§8.4.3).
+
+### 17.1.2. Tracking Lua reads of `cook.env` [#exec.cache.lua-env-reads]
 
 > **Normative.** A `cook` step whose `>{ … }` body is a Lua block (§{lua.using-block-globals}) MAY read environment values through the `cook.env.<KEY>` accessor (§{lua.cook-env}). When it does, those reads MUST contribute to the unit's `consulted_env_keys` set (§{xref.resolution}) on the same footing as a shell-body `$<KEY>` sigil contributes. The recording is required for the cache-invalidation contract of §17.1: a value change in any consulted key MUST invalidate the unit's cache fingerprint.
 >
