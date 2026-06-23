@@ -75,7 +75,6 @@ fn warmup_collapses_to_two_runs() {
         ],
         outputs: vec![fr(wd, "a.o"), fr(wd, ".cook/deps/a.d")],
         command_hash: 0xc0de,
-
         env_contribution: 0,
     };
 

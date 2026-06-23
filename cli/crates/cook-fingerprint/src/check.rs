@@ -826,37 +826,9 @@ mod tests {
         use std::sync::OnceLock;
         static ONCE: OnceLock<()> = OnceLock::new();
         ONCE.get_or_init(|| {
-            // Minimal inline make-depfile parser for tests. Parses lines of the
-            // form `target: dep1 dep2 ...` and returns the deps as workspace-
-            // relative paths. Avoids a cook-cache dev-dep (which is broken in
-            // downstream crates during this cache-trust-v3 refactor).
-            crate::install_depfile_parser(|p, source_path, wd, fmt| {
+            crate::install_depfile_parser(|p, s, wd, fmt| {
                 if fmt != "make" { return Err(()); }
-                let content = std::fs::read_to_string(p).map_err(|_| ())?;
-                let mut deps: Vec<String> = Vec::new();
-                for line in content.lines() {
-                    let line = line.trim_end_matches('\\').trim();
-                    let rest = if let Some(pos) = line.find(':') {
-                        &line[pos + 1..]
-                    } else {
-                        line
-                    };
-                    for tok in rest.split_whitespace() {
-                        let tok = tok.trim();
-                        if tok.is_empty() || tok == source_path { continue; }
-                        let path = if std::path::Path::new(tok).is_absolute() {
-                            tok.to_string()
-                        } else {
-                            let full = wd.join(tok);
-                            match full.strip_prefix(wd) {
-                                Ok(rel) => rel.to_string_lossy().into_owned(),
-                                Err(_) => tok.to_string(),
-                            }
-                        };
-                        deps.push(path);
-                    }
-                }
-                Ok(deps)
+                cook_cache::parse_make_depfile(p, s, wd).map_err(|_| ())
             });
         });
     }

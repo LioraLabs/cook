@@ -619,7 +619,8 @@ mod tests {
             cache_key: "k0".into(),
             input_paths: vec![source.into()],
             output_paths: vec![output.into()],
-            command_hash: 0,            env_contribution: 0,
+            command_hash: 0,
+            env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: Some(DiscoveredInputs {
                 from: depfile_rel.into(),
@@ -824,7 +825,8 @@ mod tests {
             cache_key: "k_a".into(),
             input_paths: vec!["a.cpp".into()],
             output_paths: vec!["a.o".into()],
-            command_hash: 0,            env_contribution: 0,
+            command_hash: 0,
+            env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: Some(DiscoveredInputs {
                 from: "a.d".into(),
@@ -859,7 +861,8 @@ mod tests {
             cache_key: "k_b".into(),
             input_paths: vec!["b.cpp".into(), "shared.h".into()],
             output_paths: vec!["b.o".into()],
-            command_hash: 0,            env_contribution: 0,
+            command_hash: 0,
+            env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
         };
@@ -980,7 +983,8 @@ mod tests {
             cache_key: "k_c".into(),
             input_paths: vec!["a.cpp".into()],
             output_paths: vec!["a.o".into()],
-            command_hash: 0,            env_contribution: 0,
+            command_hash: 0,
+            env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
         };
@@ -1012,7 +1016,8 @@ mod tests {
             cache_key: "k_a".into(),
             input_paths: vec!["a.o".into()],
             output_paths: vec!["libfoo.a".into()],
-            command_hash: 0,            env_contribution: 0,
+            command_hash: 0,
+            env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: Some(DiscoveredInputs {
                 from: "archive.d".into(),

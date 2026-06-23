@@ -11,7 +11,6 @@ fn two_recipes_same_output_path_different_keys() {
         schema_version: CACHE_VERSION,
         recipe_namespace: "myproj/Cookfile::build",
         command_hash: 0xAA,
-
         env_contribution: 0xCC,
         sorted_input_content_hashes: &inputs,
     });
@@ -19,7 +18,6 @@ fn two_recipes_same_output_path_different_keys() {
         schema_version: CACHE_VERSION,
         recipe_namespace: "myproj/Cookfile::test",  // different recipe
         command_hash: 0xAA,
-
         env_contribution: 0xCC,
         sorted_input_content_hashes: &inputs,
     });
@@ -33,7 +31,6 @@ fn cross_project_same_recipe_name_different_keys() {
         schema_version: CACHE_VERSION,
         recipe_namespace: "proj-a/Cookfile::build",
         command_hash: 0xAA,
-
         env_contribution: 0xCC,
         sorted_input_content_hashes: &inputs,
     });
@@ -41,7 +38,6 @@ fn cross_project_same_recipe_name_different_keys() {
         schema_version: CACHE_VERSION,
         recipe_namespace: "proj-b/Cookfile::build",
         command_hash: 0xAA,
-
         env_contribution: 0xCC,
         sorted_input_content_hashes: &inputs,
     });
@@ -55,7 +51,6 @@ fn cross_cookfile_same_recipe_name_different_keys() {
         schema_version: CACHE_VERSION,
         recipe_namespace: "proj/Cookfile::build",
         command_hash: 0xAA,
-
         env_contribution: 0xCC,
         sorted_input_content_hashes: &inputs,
     });
@@ -63,7 +58,6 @@ fn cross_cookfile_same_recipe_name_different_keys() {
         schema_version: CACHE_VERSION,
         recipe_namespace: "proj/services/api/Cookfile::build",
         command_hash: 0xAA,
-
         env_contribution: 0xCC,
         sorted_input_content_hashes: &inputs,
     });

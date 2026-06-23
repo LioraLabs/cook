@@ -57,7 +57,6 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         schema_version: CACHE_VERSION,
         recipe_namespace,
         command_hash: 0xbeef,
-
         env_contribution: 0,
         sorted_input_content_hashes: &sorted,
     });
@@ -67,7 +66,6 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
     let mut meta = ArtifactMeta {
         recipe_namespace: recipe_namespace.into(),
         command_hash: 0xbeef,
-
         env_contribution: 0,
         schema_version: CACHE_VERSION,
         size_bytes: 13,
@@ -91,7 +89,6 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         inputs: vec![in_record],
         outputs: vec![out_record],
         command_hash: 0xbeef,
-
         env_contribution: 0,
     };
 
@@ -145,7 +142,6 @@ fn restore_miss_falls_through_to_output_changed() {
         inputs: vec![in_record],
         outputs: vec![out_record],
         command_hash: 0xbeef,
-
         env_contribution: 0,
     };
 
@@ -209,7 +205,6 @@ fn restore_rejects_tampered_backend_bytes() {
         schema_version: CACHE_VERSION,
         recipe_namespace,
         command_hash: 0xbeef,
-
         env_contribution: 0,
         sorted_input_content_hashes: &sorted,
     });
@@ -223,7 +218,6 @@ fn restore_rejects_tampered_backend_bytes() {
     let mut meta = ArtifactMeta {
         recipe_namespace: recipe_namespace.into(),
         command_hash: 0xbeef,
-
         env_contribution: 0,
         schema_version: CACHE_VERSION,
         size_bytes: tampered.len() as u64,
@@ -247,7 +241,6 @@ fn restore_rejects_tampered_backend_bytes() {
         inputs: vec![in_record],
         outputs: vec![out_record],
         command_hash: 0xbeef,
-
         env_contribution: 0,
     };
 
@@ -307,7 +300,6 @@ fn restore_with_no_ctx_returns_output_changed() {
         inputs: vec![in_record],
         outputs: vec![out_record],
         command_hash: 0xbeef,
-
         env_contribution: 0,
     };
 

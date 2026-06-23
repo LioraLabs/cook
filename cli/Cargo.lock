@@ -460,6 +460,7 @@ dependencies = [
 name = "cook-fingerprint"
 version = "0.1.0"
 dependencies = [
+ "cook-cache",
  "cook-contracts",
  "glob",
  "serde",
