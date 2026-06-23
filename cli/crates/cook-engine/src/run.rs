@@ -22,7 +22,7 @@ use cook_cache::{
     cloud_config::CloudConfig, TestCache, ThreadSafeCacheManager,
 };
 use cook_contracts::{RecipeUnits, WorkPayload};
-use cook_fingerprint::{CacheBackend, EnvDenylist, ExecutionContext, FingerprintInputs};
+use cook_fingerprint::{CacheBackend, EnvDenylist, FingerprintInputs};
 
 use crate::{
     dag_builder, executor, EngineError, EngineEvent, RecipeKind, RegisteredWorkspace, WorkNode,
@@ -540,17 +540,6 @@ where
                     .filter(|(k, _)| !cache_ctx.denylist.is_ignored(k))
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
-                let tool_hashes: Vec<(String, String)> = cache_ctx
-                    .exec_ctx
-                    .declared_tools
-                    .iter()
-                    .map(|(name, path)| {
-                        let hash = cook_fingerprint::hash_file(path)
-                            .map(|h| format!("{h:x}"))
-                            .unwrap_or_else(|| "0".to_string());
-                        (name.clone(), hash)
-                    })
-                    .collect();
                 // COOK-84: hash the test's transitive source closure —
                 // own inputs (minus predecessor-produced artifacts, which
                 // are stale at upfront time) plus every closure dep's
@@ -567,7 +556,6 @@ where
                     cook_outputs,
                     dep_outputs,
                     env_keys,
-                    tool_hashes,
                 };
                 let fp = cook_fingerprint::compute_test_fingerprint(
                     work_node.payload.as_ref().expect("checked above"),
@@ -824,20 +812,6 @@ fn build_cache_ctx(project_root: &Path) -> Result<Arc<CacheContext>, EngineError
     let mut denylist = EnvDenylist::baseline();
     denylist.extend_with(cloud_config.cache_ignore_env());
     let denylist = Arc::new(denylist);
-    let exec_ctx = Arc::new(
-        ExecutionContext::probe_with_declared_tools(cloud_config.cache_tools())
-            .map_err(|e| EngineError::CacheError(e.to_string()))?,
-    );
-    if !exec_ctx.declared_tools.is_empty() {
-        tracing::debug!(
-            "declared cache tools: {:?}",
-            exec_ctx
-                .declared_tools
-                .iter()
-                .map(|(n, p)| format!("{n} -> {}", p.display()))
-                .collect::<Vec<_>>()
-        );
-    }
     let cache_dir = cloud_config
         .cache_dir()
         .map(std::path::PathBuf::from)
@@ -878,7 +852,6 @@ fn build_cache_ctx(project_root: &Path) -> Result<Arc<CacheContext>, EngineError
     }
     let project_id = cloud_config.project_id_or_fallback(project_root);
     Ok(Arc::new(CacheContext {
-        exec_ctx,
         denylist,
         backend,
         cloud_config: Arc::new(cloud_config),
@@ -1147,7 +1120,6 @@ mod tests {
                 input_paths: inputs.iter().map(|s| s.to_string()).collect(),
                 output_paths: outputs.iter().map(|s| s.to_string()).collect(),
                 command_hash,
-                context_hash: 0,
                 env_contribution: 0,
                 consulted_env: Default::default(),
                 discovered_inputs: None,

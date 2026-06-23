@@ -652,7 +652,6 @@ pub fn execute_dag(
             &input_refs,
             &current_outputs,
             meta.command_hash,
-            meta.context_hash,
             meta.env_contribution,
             &work_node.working_dir,
             Some(&restore_ctx),
@@ -1854,7 +1853,6 @@ pub fn execute_dag(
                                             schema_version: CACHE_VERSION,
                                             recipe_namespace: &recipe_namespace,
                                             command_hash: meta.command_hash,
-                                            context_hash: meta.context_hash,
                                             env_contribution: meta.env_contribution,
                                             sorted_input_content_hashes: &sorted_hashes,
                                         };
@@ -1879,7 +1877,6 @@ pub fn execute_dag(
                                             let mut artifact_meta = ArtifactMeta {
                                                 recipe_namespace: recipe_namespace.clone(),
                                                 command_hash: meta.command_hash,
-                                                context_hash: meta.context_hash,
                                                 env_contribution: meta.env_contribution,
                                                 schema_version: CACHE_VERSION,
                                                 size_bytes: bytes.len() as u64,
@@ -1919,7 +1916,6 @@ pub fn execute_dag(
                                                     let mut artifact_meta = ArtifactMeta {
                                                         recipe_namespace: recipe_namespace.clone(),
                                                         command_hash: meta.command_hash,
-                                                        context_hash: meta.context_hash,
                                                         env_contribution: meta.env_contribution,
                                                         schema_version: CACHE_VERSION,
                                                         size_bytes: bytes.len() as u64,
@@ -2087,7 +2083,6 @@ pub fn execute_dag(
                     let mut artifact_meta = ArtifactMeta {
                         recipe_namespace: format!("probe:{}", probe_out.key),
                         command_hash: 0,
-                        context_hash: 0,
                         env_contribution: 0,
                         schema_version: CACHE_VERSION,
                         size_bytes: probe_out.bytes.len() as u64,
@@ -2233,7 +2228,6 @@ pub fn execute_dag(
                                 schema_version: CACHE_VERSION,
                                 recipe_namespace: &recipe_namespace,
                                 command_hash: meta.command_hash,
-                                context_hash: meta.context_hash,
                                 env_contribution: meta.env_contribution,
                                 sorted_input_content_hashes: &sorted_hashes,
                             };
@@ -2256,7 +2250,6 @@ pub fn execute_dag(
                                 let mut artifact_meta = ArtifactMeta {
                                     recipe_namespace: recipe_namespace.clone(),
                                     command_hash: meta.command_hash,
-                                    context_hash: meta.context_hash,
                                     env_contribution: meta.env_contribution,
                                     schema_version: CACHE_VERSION,
                                     size_bytes: bytes.len() as u64,
@@ -2296,7 +2289,6 @@ pub fn execute_dag(
                                         let mut artifact_meta = ArtifactMeta {
                                             recipe_namespace: recipe_namespace.clone(),
                                             command_hash: meta.command_hash,
-                                            context_hash: meta.context_hash,
                                             env_contribution: meta.env_contribution,
                                             schema_version: CACHE_VERSION,
                                             size_bytes: bytes.len() as u64,
@@ -2672,9 +2664,8 @@ mod tests {
         use cook_cache::{
             backend::LocalBackend, cache_ctx::CacheContext, cloud_config::CloudConfig,
         };
-        use cook_fingerprint::{EnvDenylist, ExecutionContext};
+        use cook_fingerprint::EnvDenylist;
         Arc::new(CacheContext {
-            exec_ctx: Arc::new(ExecutionContext::probe()),
             denylist: Arc::new(EnvDenylist::baseline()),
             backend: Arc::new(LocalBackend::new(tmp.path().join("cloud"))),
             cloud_config: Arc::new(CloudConfig::default()),
@@ -2908,7 +2899,6 @@ mod tests {
             input_paths: vec![],
             output_paths: output_paths.into_iter().map(String::from).collect(),
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
@@ -3603,7 +3593,6 @@ mod tests {
         let mut meta = cook_fingerprint::ArtifactMeta {
             recipe_namespace: "probe:test".into(),
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             schema_version: cook_fingerprint::CACHE_VERSION,
             size_bytes: bytes.len() as u64,
