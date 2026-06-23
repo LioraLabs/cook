@@ -106,7 +106,7 @@ A conforming implementation MAY cache the result of a `test_step` unit (§{steps
    - The content fingerprints of every cook-step output the test consumes via §{steps.iteration-mode-plate-test} source-list flattening.
    - The content fingerprints of every recipe output the test references via `cook.dep_output(NAME)` or `$<NAME>` cross-recipe substitution (§{xref.string-substitution}).
    - The deterministic env-key set as filtered through the implementation's `EnvDenylist` (the existing fingerprint mechanism for cook units per §{exec.cache.abstract}).
-   - The tool-binary hash set per §{exec.cache.tool-binary}.
+   - The values of every probe in the unit's effective seal set, on the same footing as the single cache key's probe-value fold (§{exec.cache.single-key}).
    - The `timeout` modifier value.
    - The `should_fail` modifier value.
 

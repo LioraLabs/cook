@@ -164,7 +164,7 @@ export const SLUG_MAPPING: Record<string, string> = {
   // ── Chapter 17 — Cache semantics ─────────────────────────────────────────
   'sec-17':      'exec.cache',
   'sec-17-1':    'exec.cache.abstract',
-  'sec-17-1-1':  'exec.cache.tool-binary',
+  'sec-17-1-1':  'exec.cache.single-key',
   'sec-17-2':    'exec.cache.integrity',
   'sec-17-3':    'exec.cache.discovered-inputs',
   'sec-17-4':    'exec.cache.test-unit',
