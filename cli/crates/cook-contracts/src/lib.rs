@@ -210,8 +210,6 @@ pub struct CacheMeta {
     pub input_paths: Vec<String>,
     pub output_paths: Vec<String>,
     pub command_hash: u64,
-    /// NEW: machine + tool identity. Phase 6 wires real values; zero until then.
-    pub context_hash: u64,
     /// NEW: post-denylist env contribution. Phase 5 wires real values; zero until then.
     pub env_contribution: u64,
     /// NEW: the (key, value) pairs the command consulted post-denylist.
@@ -372,7 +370,6 @@ mod tests {
             input_paths: vec!["src/main.rs".into()],
             output_paths: vec!["target/debug/app".into()],
             command_hash: 42,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
@@ -393,7 +390,6 @@ mod tests {
             input_paths: vec![],
             output_paths: vec![],
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
@@ -411,7 +407,6 @@ mod tests {
             input_paths: vec!["src/a.c".into()],
             output_paths: vec!["build/a.o".into()],
             command_hash: 0xdead,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: Some(DiscoveredInputs {
@@ -434,7 +429,6 @@ mod tests {
             input_paths: vec![],
             output_paths: vec![],
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
@@ -634,7 +628,6 @@ mod tests {
                 input_paths: vec!["main.c".into()],
                 output_paths: vec!["app".into()],
                 command_hash: 9999,
-                context_hash: 0,
                 env_contribution: 0,
                 consulted_env: std::collections::BTreeMap::new(),
                 discovered_inputs: None,

@@ -229,7 +229,6 @@ mod tests {
             input_paths,
             output_paths,
             command_hash: 0xdeadbeef,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,

@@ -19,7 +19,6 @@ fn make_meta(output_paths: Vec<String>) -> CacheMeta {
         input_paths: vec!["src.c".into()],
         output_paths,
         command_hash: 0xC0DE,
-        context_hash: 0,
         env_contribution: 0,
         consulted_env: std::collections::BTreeMap::new(),
         discovered_inputs: None,
