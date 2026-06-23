@@ -69,6 +69,7 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   'recipes.body-bundling':           'exec.body-bundling',
   'recipes.termination':             'toplevel.termination',
 
+  'exec.cache.tool-binary':          'exec.cache.single-key',
   'exec.phase-classification':       'exec.phases.classification',
 
   'lua.shell-placeholders':            'phl.cook-step',

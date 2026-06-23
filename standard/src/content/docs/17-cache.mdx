@@ -20,18 +20,29 @@ The **observable inputs** of a work unit are those of its properties that are de
 
 > **Note (informative).** An implementation MAY realise the materialised-member observable (5) by folding the canonical member rendering into the unit's command-text contribution (observable 1) rather than as a distinct fingerprint field; the two are observably equivalent because both make the member part of the inputs the fingerprint depends on. The reference implementation takes this approach (COOK-64): the codegen attaches the canonical member to each fan-out unit, which is mixed into the command hash at registration.
 
-A conforming implementation MAY additionally consider the content of the declared input files, the modification times of the declared output files, the content of the recipe's ingredient set, the identity of the host machine on which the unit will execute (e.g., target triple, libc version, locale-affecting environment variables), and the resolved content of the binaries invoked by the unit's command text. It MUST NOT consider wall-clock time, process identifiers, or any state not derivable from the sources above. An implementation MAY exclude from the resolved-environment observable a set of environment variables whose values are known not to affect work-unit output (e.g., ambient session state, credentials unrelated to the build product); the specific set is implementation-defined.
-
-### 17.1.1. Tool-binary fingerprinting (informative) [#exec.cache.tool-binary]
-
-When an implementation chooses to consider "the resolved content of the binaries invoked by the unit's command text", it MUST identify those binaries by inspecting the unit's literal command text — there is no separate manifest of invoked tools. Because shell quoting, command chaining (`;`, `&&`, `||`, pipes), command substitution (`$(...)`, backticks), subshells, and indirect invocation (`xargs`, `find -exec`, scripts) make exhaustive recovery undecidable in general, an implementation is permitted to recognise only a tractable subset of executables and is free to document its tractable subset.
-
-The reference implementation recognises the **first executable token of each newline-separated statement**, after skipping leading `VAR=value` env-prefix tokens (POSIX command-prefix env assignments), and folds the content hash of each unique resolved binary into the unit's context fingerprint in deterministic order. Tools invoked indirectly — through `;`/`&&`/`||`/pipes, command substitution, subshells, or scripts that themselves invoke tools — are NOT fingerprinted by this pass; authors who require those tools to participate in cache invalidation are advised to place each invocation on its own line, declare them via the project-level configuration mechanism described below, or add a regular file the recipe declares as an input. This recognition policy is implementation-defined; other implementations are free to recognise more or less.
-An implementation MAY additionally accept a project-level **declared toolchain** — a list of executable names the build environment promises will be relevant to every unit's identity regardless of whether the auto-detection above sees them in the unit's command text. When supported, the declared toolchain MUST be resolved once per build; each resolved binary's content hash MUST contribute to the context fingerprint of every cacheable unit; an empty or absent declaration MUST contribute observationally inert bytes (so projects that do not use the mechanism produce a deterministic, distinguishable identity contribution); and a declared name that fails to resolve at build start MUST cause the build to fail before any unit executes. The reference implementation exposes this mechanism as `cache.tools` in `.cook/cloud.toml`. This mechanism is intended for environments where toolchain identity is governed at the environment layer (dev containers, `nix-shell`, hermetic Docker) and the implementation's auto-detection cannot see the relevant binary in the literal command text.
+A conforming implementation MAY additionally consider the content of the declared input files, the modification times of the declared output files, and the content of the recipe's ingredient set. It MUST NOT consider wall-clock time, process identifiers, or any state not derivable from the sources above. An implementation MAY exclude from the resolved-environment observable a set of environment variables whose values are known not to affect work-unit output (e.g., ambient session state, credentials unrelated to the build product); the specific set is implementation-defined.
 
 When the cache indicates that a unit is up-to-date, the implementation MAY skip executing the unit and MUST treat it as successfully completed for the purposes of the dependency graph. When the cache indicates that a unit is stale or absent, the implementation MUST execute the unit and, on success, MAY record the unit's completion in the cache for subsequent runs.
 
 A unit for which the register-phase record disables caching — for example, a bare shell step or an `@` step, whose registration form sets the cache flag to false — MUST be executed on every run of the containing recipe.
+
+### 17.1.1. The single cache key [#exec.cache.single-key]
+
+A cacheable work unit — a step with at least one declared output — has **exactly one** cache key. The key is a content-addressed digest:
+
+> `key = H( declared input contents, command text / Lua chunk, declared output paths, consulted environment values, declared probe values )`
+
+where:
+
+- **declared input contents** are the contents of the unit's `ingredients` (§{steps.ingredients}), its `$<file:PATH>` references (§{phl.cook-step}), and its depfile-discovered inputs (§{exec.cache.discovered-inputs}), content-hashed;
+- **command text / Lua chunk** is observable 1 of §17.1;
+- **declared output paths** is observable 3 of §17.1;
+- **consulted environment values** are the post-denylist values of the environment keys the unit reads — `$<KEY>` sigils and the `cook.env.KEY` static reads of §{exec.cache.lua-env-reads};
+- **declared probe values** are the canonical values (§{cat.probes.values}) of every probe in the unit's *effective seal set* — the probes the author sealed the unit on (the disposition surface of §8.4.3, an additive set with no project-default and no narrowing form).
+
+The key MUST NOT include any determinant the author did not declare. In particular, host or machine identity — target triple, libc version, locale — is NOT folded into the key unless the author declared it as a probe and sealed on it (`seal host`). The engine infers no machine-identity, tool, or environment determinant of its own; it caches over exactly what the author declared.
+
+The **local cache and the shared (cross-machine) store are addressed by this same key.** There is no separate "shared" key and no two-tier loose/strict split. A consumer reuses a stored artifact for a key K if and only if it computes the same K, which holds if and only if every real determinant of the unit was declared. The cache is **trustworthy** exactly when serving a stored artifact for K — instead of re-running the unit — would produce a byte-equivalent artifact in the consumer's current context. Soundness therefore rests on author-declared determinants; under-declaration is the cache-correctness failure mode, observed and classified by the divergence oracle (the shadow-divergence tool surfaced by the reference implementation as `cook cache verify`, which classifies a divergence as an under-keyed determinant versus benign non-determinism). A unit may further opt out of sharing (cache locally only) or require fetch-only service through its disposition (§8.4.3).
 
 ### 17.1.2. Tracking Lua reads of `cook.env` [#exec.cache.lua-env-reads]
 
@@ -95,7 +106,7 @@ A conforming implementation MAY cache the result of a `test_step` unit (§{steps
    - The content fingerprints of every cook-step output the test consumes via §{steps.iteration-mode-plate-test} source-list flattening.
    - The content fingerprints of every recipe output the test references via `cook.dep_output(NAME)` or `$<NAME>` cross-recipe substitution (§{xref.string-substitution}).
    - The deterministic env-key set as filtered through the implementation's `EnvDenylist` (the existing fingerprint mechanism for cook units per §{exec.cache.abstract}).
-   - The tool-binary hash set per §{exec.cache.tool-binary}.
+   - The values of every probe in the unit's effective seal set, on the same footing as the single cache key's probe-value fold (§{exec.cache.single-key}).
    - The `timeout` modifier value.
    - The `should_fail` modifier value.
 

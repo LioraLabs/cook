@@ -152,7 +152,7 @@ cook.probe("cc:zlib", {
 | Sub-key | Type | Semantics |
 |---|---|---|
 | `env` | list[string] | Env-var names. The current value of each named variable contributes to the probe's fingerprint. Reuses the env-contribution mechanism of §{exec.cache.abstract}. |
-| `tools` | list[string] | Tool names (e.g. `"pkg-config"`). Resolved via PATH at probe execution time; the content hash of the resolved binary contributes to the fingerprint per §{exec.cache.tool-binary}. A tool not found on PATH folds as `(name, "<missing>")`; the probe runs and SHOULD surface a diagnostic. |
+| `tools` | list[string] | Tool names (e.g. `"pkg-config"`). Resolved via PATH at probe execution time; the content hash of the resolved binary contributes to the probe's value, which folds into the cache key of any unit that seals on this probe (§{exec.cache.single-key}). A tool not found on PATH folds as `(name, "<missing>")`; the probe runs and SHOULD surface a diagnostic. |
 | `files` | list[string] | File paths relative to the Cookfile root. The content hash of each file contributes to the fingerprint. A missing file folds as `(path, "<missing>")`. |
 | `requires` | list[string] | Upstream probe keys. Each named probe's full fingerprint is folded into this probe's fingerprint (chained invalidation). The `requires` graph among probes MUST be acyclic (§{cat.probes.cycles}). |
 
