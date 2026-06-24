@@ -285,6 +285,10 @@ fn collect_test_file_inputs(
 /// * `no_prune` - When true, disables stale-output reconciliation (§17.7) for
 ///   this invocation (`--no-prune` / `COOK_NO_PRUNE`). Orphaned outputs are
 ///   retained instead of swept.
+/// * `no_publish` - When true, suppresses ALL shared-store uploads for this
+///   invocation (`--no-publish` / `COOK_NO_PUBLISH`). Fetch, drift-restore,
+///   and `pinned` cold-fetch are unaffected. Combined with `[cloud] publish`
+///   in `build_cache_ctx` to compute `CacheContext::publish_enabled`.
 /// * `on_event` - Callback invoked for each engine event (progress, errors,
 ///   etc.). The terminating [`EngineEvent::Finished`] event is emitted here
 ///   automatically; callers do not need to send one themselves.
@@ -296,13 +300,14 @@ pub fn run<F>(
     num_jobs: usize,
     rerun_patterns: &[String],
     no_prune: bool,
+    no_publish: bool,
     on_event: F,
 ) -> Result<RunResult, EngineError>
 where
     F: Fn(EngineEvent) + Send + Sync,
 {
     let started = std::time::Instant::now();
-    let cache_ctx = match build_cache_ctx(project_root) {
+    let cache_ctx = match build_cache_ctx(project_root, no_publish) {
         Ok(c) => c,
         Err(e) => {
             on_event(EngineEvent::Finished {
@@ -806,7 +811,7 @@ fn toposort_reachable(
 /// context (machine identity + declared-tool hashing), selects either the
 /// local or cloud backend, and assembles the shared `CacheContext` carried
 /// by every register pass and worker.
-fn build_cache_ctx(project_root: &Path) -> Result<Arc<CacheContext>, EngineError> {
+fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<Arc<CacheContext>, EngineError> {
     let cloud_config = CloudConfig::load_or_default(project_root)
         .map_err(|e| EngineError::CacheError(format!("invalid .cook/cloud.toml: {e}")))?;
     let mut denylist = EnvDenylist::baseline();
@@ -851,12 +856,19 @@ fn build_cache_ctx(project_root: &Path) -> Result<Arc<CacheContext>, EngineError
         tracing::warn!("cache backend unavailable: {e}; continuing with backend disabled");
     }
     let project_id = cloud_config.project_id_or_fallback(project_root);
+    // COOK-168: read-only / publish-off client mode. Config opt-out
+    // (`[cloud] publish = false`) OR an invocation flag (`--no-publish` /
+    // `COOK_NO_PUBLISH`, passed as `no_publish`) suppresses every upload.
+    // The flag can only turn publishing OFF, never force it on over a
+    // `publish = false` config.
+    let publish_enabled = cloud_config.publish() && !no_publish;
     Ok(Arc::new(CacheContext {
         denylist,
         backend,
         cloud_config: Arc::new(cloud_config),
         project_root: project_root.to_path_buf(),
         project_id,
+        publish_enabled,
     }))
 }
 
@@ -920,6 +932,7 @@ mod tests {
             1,
             &[],
             false,
+            false,
             |_| {},
         );
         assert!(result.is_ok());
@@ -942,6 +955,7 @@ mod tests {
             &reachable,
             1,
             &[],
+            false,
             false,
             |_| {},
         );
@@ -966,6 +980,7 @@ mod tests {
             &reachable,
             1,
             &[],
+            false,
             false,
             |event| events.lock().unwrap().push(event),
         );
@@ -998,6 +1013,7 @@ mod tests {
             &reachable,
             1,
             &[],
+            false,
             false,
             |event| events.lock().unwrap().push(event),
         );

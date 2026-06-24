@@ -16,4 +16,9 @@ pub struct CacheContext {
     pub cloud_config: Arc<CloudConfig>,
     pub project_root: PathBuf,
     pub project_id: String,
+    /// When false, the executor suppresses ALL shared-store uploads for this
+    /// invocation (read-only / publish-off client mode, COOK-168). Fetch,
+    /// drift-restore, and `pinned` cold-fetch are unaffected. Resolved from
+    /// `[cloud] publish` (default true) AND `--no-publish` / `COOK_NO_PUBLISH`.
+    pub publish_enabled: bool,
 }

@@ -2836,6 +2836,7 @@ mod tests {
             cloud_config: Arc::new(CloudConfig::default()),
             project_root: tmp.path().to_path_buf(),
             project_id: "test".to_string(),
+            publish_enabled: true,
         })
     }
 
