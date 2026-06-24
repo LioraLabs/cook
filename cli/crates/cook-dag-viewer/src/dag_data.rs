@@ -643,8 +643,7 @@ mod tests {
                 format: "make".into(),
             }),
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         };
         let unit = CapturedUnit {
@@ -853,8 +852,7 @@ mod tests {
                 format: "make".into(),
             }),
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         };
         let unit_a = CapturedUnit {
@@ -890,8 +888,7 @@ mod tests {
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         };
         let unit_b = CapturedUnit {
@@ -1016,8 +1013,7 @@ mod tests {
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         };
         let unit_compile = CapturedUnit {
@@ -1056,8 +1052,7 @@ mod tests {
                 format: "make".into(),
             }),
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         };
         let unit_archive = CapturedUnit {

@@ -2043,7 +2043,8 @@ fn disp_seal_line_above_cook() {
     let cf = parse(src).unwrap();
     let d = first_cook_disposition(&cf);
     assert!(d.seal.contains("host"));
-    assert!(!d.local && !d.pinned && !d.record);
+    assert_eq!(d.sharing, cook_contracts::Sharing::Shared);
+    assert!(!d.record);
 }
 
 #[test]
@@ -2060,14 +2061,14 @@ fn disp_seal_lines_stack_additively_with_record() {
 fn disp_local_line_above_cook() {
     let src = "recipe build\n    local\n    cook \"x.o\" { cc -c x.c }\n";
     let cf = parse(src).unwrap();
-    assert!(first_cook_disposition(&cf).local);
+    assert_eq!(first_cook_disposition(&cf).sharing, cook_contracts::Sharing::Local);
 }
 
 #[test]
 fn disp_pinned_line_above_cook() {
     let src = "recipe build\n    pinned\n    cook \"x.o\" { cc -c x.c }\n";
     let cf = parse(src).unwrap();
-    assert!(first_cook_disposition(&cf).pinned);
+    assert_eq!(first_cook_disposition(&cf).sharing, cook_contracts::Sharing::Pinned);
 }
 
 #[test]
@@ -2091,7 +2092,7 @@ fn disp_local_block_inside_seal_overrides() {
     let src = "recipe build\n    seal host {\n        local {\n            cook \"s.o\" { cc -c s.c }\n        }\n    }\n";
     let cf = parse(src).unwrap();
     let d = first_cook_disposition(&cf);
-    assert!(d.local);
+    assert_eq!(d.sharing, cook_contracts::Sharing::Local);
     assert!(d.seal.is_empty(), "local must drop inherited seal refs");
 }
 
@@ -2207,7 +2208,7 @@ fn disp_decorator_line_override_inside_seal_block() {
     let src = "recipe build\n    seal host {\n        local\n        cook \"s.o\" { cc -c s.c }\n    }\n";
     let cf = parse(src).unwrap();
     let d = first_cook_disposition(&cf);
-    assert!(d.local);
+    assert_eq!(d.sharing, cook_contracts::Sharing::Local);
     assert!(d.seal.is_empty(), "decorator-line local must drop inherited seal");
 }
 

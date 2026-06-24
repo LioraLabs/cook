@@ -478,6 +478,7 @@ dependencies = [
 name = "cook-lang"
 version = "0.1.0"
 dependencies = [
+ "cook-contracts",
  "glob",
  "thiserror 2.0.18",
 ]

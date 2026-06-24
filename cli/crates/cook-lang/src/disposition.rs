@@ -118,7 +118,7 @@ pub(crate) fn parse_seal_refs(refs: &[String], line: usize) -> Result<Vec<String
 /// Union `refs` into `d.seal`. If `d` is already `local`/`pinned` (unshared),
 /// seal refs are inert and dropped.
 pub(crate) fn apply_seal(d: &mut Disposition, refs: &[String]) {
-    if d.local || d.pinned {
+    if d.sharing != cook_contracts::Sharing::Shared {
         return;
     }
     for r in refs {
@@ -131,28 +131,29 @@ pub(crate) fn apply_record(d: &mut Disposition) {
 }
 
 /// Set `local`; mutually exclusive with `pinned`. `local` drops inherited
-/// seal refs (§8.4.3 override rule).
+/// seal refs (§8.4.3 override rule). The mutual-exclusion diagnostic is
+/// preserved: an author who already wrote `pinned` gets the same error.
 pub(crate) fn apply_local(d: &mut Disposition, line: usize) -> Result<(), ParseError> {
-    if d.pinned {
+    if d.sharing == cook_contracts::Sharing::Pinned {
         return Err(ParseError::Parse {
             line,
             message: "disposition: `local` and `pinned` are mutually exclusive".into(),
         });
     }
-    d.local = true;
+    d.sharing = cook_contracts::Sharing::Local;
     d.seal.clear();
     Ok(())
 }
 
 /// Set `pinned`; mutually exclusive with `local`. Drops inherited seal refs.
 pub(crate) fn apply_pinned(d: &mut Disposition, line: usize) -> Result<(), ParseError> {
-    if d.local {
+    if d.sharing == cook_contracts::Sharing::Local {
         return Err(ParseError::Parse {
             line,
             message: "disposition: `local` and `pinned` are mutually exclusive".into(),
         });
     }
-    d.pinned = true;
+    d.sharing = cook_contracts::Sharing::Pinned;
     d.seal.clear();
     Ok(())
 }
@@ -336,7 +337,7 @@ mod tests {
         let mut d = Disposition::default();
         apply_seal(&mut d, &["host".to_string()]);
         apply_local(&mut d, 1).expect("local should succeed");
-        assert!(d.local);
+        assert_eq!(d.sharing, cook_contracts::Sharing::Local);
         assert!(d.seal.is_empty());
     }
 

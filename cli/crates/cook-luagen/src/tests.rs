@@ -3680,23 +3680,22 @@ fn unsealed_step_emits_no_seal_field() {
 fn local_disposition_emits_local_field() {
     let src = "recipe build\n    local\n    cook \"scratch.o\" { cc -c scratch.c -o scratch.o }\n";
     let lua = generate_lua_for_test(src);
-    // `local` is a reserved Lua keyword, so it is bracket-quoted as a table key.
-    assert!(lua.contains("[\"local\"] = true"), "local disposition must emit '[\"local\"] = true' in cook.add_unit:\n{lua}");
+    // I3: sharing is a plain string field (no reserved-keyword bracket-quote).
+    assert!(lua.contains("sharing = \"local\""), "local disposition must emit 'sharing = \"local\"' in cook.add_unit:\n{lua}");
 }
 
 #[test]
 fn pinned_disposition_emits_pinned_field() {
     let src = "recipe build\n    pinned\n    cook \"vendor.a\" { ar rcs vendor.a obj.o }\n";
     let lua = generate_lua_for_test(src);
-    assert!(lua.contains("pinned = true"), "pinned disposition must emit 'pinned = true' in cook.add_unit:\n{lua}");
+    assert!(lua.contains("sharing = \"pinned\""), "pinned disposition must emit 'sharing = \"pinned\"' in cook.add_unit:\n{lua}");
 }
 
 #[test]
 fn plain_step_emits_neither_local_nor_pinned() {
     let src = "recipe build\n    cook \"x.o\" { cc -c x.c -o x.o }\n";
     let lua = generate_lua_for_test(src);
-    assert!(!lua.contains("local = true"), "plain step must NOT emit 'local = true':\n{lua}");
-    assert!(!lua.contains("pinned = true"), "plain step must NOT emit 'pinned = true':\n{lua}");
+    assert!(!lua.contains("sharing ="), "plain step must NOT emit a sharing field:\n{lua}");
 }
 
 #[test]

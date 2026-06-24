@@ -197,6 +197,61 @@ pub struct DiscoveredInputs {
     pub format: String,
 }
 
+/// A unit's sharing disposition (Cache-trust v3, §8.4.3). `local` and `pinned`
+/// are spec-mutually-exclusive, so they are modelled as ONE enum rather than two
+/// independent bools — `(local, pinned) = (true, true)` is unrepresentable.
+///
+/// `record` is a SEPARATE orthogonal bool (it waives byte-equivalence) and is
+/// NOT folded in here.
+///
+/// Serialises across the codegen↔register Lua boundary as a string field
+/// `sharing = "local"` / `"pinned"`, omitted entirely for `Shared` (so plain
+/// steps stay byte-identical and the reserved-keyword `["local"]` bracket-quote
+/// hack is gone).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Sharing {
+    /// Default: the unit participates in the shared content-addressed cache.
+    #[default]
+    Shared,
+    /// `local` — opt out of sharing (local `StepEntry` index only).
+    Local,
+    /// `pinned` — designated-producer / fetch-only.
+    Pinned,
+}
+
+impl Sharing {
+    /// True for `Local`. Convenience for the many call sites that previously
+    /// read a `local` bool.
+    pub fn is_local(self) -> bool {
+        matches!(self, Sharing::Local)
+    }
+
+    /// True for `Pinned`.
+    pub fn is_pinned(self) -> bool {
+        matches!(self, Sharing::Pinned)
+    }
+
+    /// The lowercase wire string used on the codegen↔register Lua boundary, or
+    /// `None` for `Shared` (which is emitted as the absence of the field).
+    pub fn as_wire_str(self) -> Option<&'static str> {
+        match self {
+            Sharing::Shared => None,
+            Sharing::Local => Some("local"),
+            Sharing::Pinned => Some("pinned"),
+        }
+    }
+
+    /// Parse a wire string back into a `Sharing`. Unknown strings map to
+    /// `Shared` (the register reader treats absence / unknown as default).
+    pub fn from_wire_str(s: &str) -> Self {
+        match s {
+            "local" => Sharing::Local,
+            "pinned" => Sharing::Pinned,
+            _ => Sharing::Shared,
+        }
+    }
+}
+
 /// Metadata used by the caching subsystem to determine whether a unit can be
 /// skipped.
 #[derive(Debug, Clone, PartialEq)]
@@ -220,15 +275,12 @@ pub struct CacheMeta {
     /// canonical values fold into the cache key at execute-phase. Sorted /
     /// de-duplicated (`BTreeSet`). Empty for unsealed / `local` / `pinned` units.
     pub seal_keys: std::collections::BTreeSet<String>,
-    /// COOK-162 §3/§17: sharing opt-out. When true the unit is cached in the
-    /// local `StepEntry` index only and MUST NOT be published to or fetched
-    /// from the shared `CacheBackend`. Does not change the cache key.
-    pub local: bool,
-    /// COOK-162 §3/§17: fetch-only / designated-producer. When true the unit
-    /// MUST be served from cache (local index or a backend fetch-by-key) and
-    /// MUST NEVER be reproduced by the consumer; a cold miss is a HARD ERROR.
-    /// Mutually exclusive with `local`. Does not change the cache key.
-    pub pinned: bool,
+    /// COOK-162 §3/§17: sharing disposition. `Local` caches in the local
+    /// `StepEntry` index only (never published to / fetched from the shared
+    /// `CacheBackend`); `Pinned` is fetch-only / designated-producer (MUST be
+    /// served from cache, a cold miss is a HARD ERROR). `Local` and `Pinned`
+    /// are mutually exclusive by construction. Does not change the cache key.
+    pub sharing: Sharing,
     /// COOK-163: `record` disposition — this unit produces an intrinsically
     /// NON-reproducible artifact (LLM / image gen). Keyed normally (the key is
     /// unchanged), but byte-equivalence is WAIVED: a present (or restorable)
@@ -393,8 +445,7 @@ mod tests {
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         };
         assert_eq!(m.recipe_name, "build");
@@ -417,8 +468,7 @@ mod tests {
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         };
         assert!(m.output_paths.is_empty());
@@ -441,8 +491,7 @@ mod tests {
                 format: "make".into(),
             }),
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         };
         let di = m.discovered_inputs.as_ref().expect("present");
@@ -464,8 +513,7 @@ mod tests {
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         };
         assert!(m.discovered_inputs.is_none());
@@ -488,8 +536,7 @@ mod tests {
             consulted_env: Default::default(),
             discovered_inputs: None,
             seal_keys: seal.clone(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         };
         assert_eq!(meta.seal_keys, seal);
@@ -509,8 +556,7 @@ mod tests {
             consulted_env: Default::default(),
             discovered_inputs: None,
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         };
         assert!(!meta.record, "record defaults to false");
@@ -714,8 +760,7 @@ mod tests {
                 consulted_env: std::collections::BTreeMap::new(),
                 discovered_inputs: None,
                 seal_keys: Default::default(),
-                local: false,
-                pinned: false,
+            sharing: Default::default(),
                 record: false,
             }),
             dep_kind: DepKind::StepGroup(0),

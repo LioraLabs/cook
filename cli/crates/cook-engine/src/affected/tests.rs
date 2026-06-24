@@ -20,8 +20,7 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         consulted_env: BTreeMap::new(),
         discovered_inputs: None,
         seal_keys: Default::default(),
-        local: false,
-        pinned: false,
+            sharing: Default::default(),
         record: false,
     };
     let unit = CapturedUnit {

@@ -682,7 +682,7 @@ pub fn execute_dag(
         // COOK-162 §3: a `local` unit MUST NOT consult the shared backend at all
         // — not even on drift restore. Withholding the RestoreCtx confines it to
         // the local StepEntry index.
-        let restore_arg = if meta.local { None } else { Some(&restore_ctx) };
+        let restore_arg = if meta.sharing.is_local() { None } else { Some(&restore_ctx) };
         let (result, updated) = needs_rebuild_cook(
             entry,
             &input_refs,
@@ -704,7 +704,7 @@ pub fn execute_dag(
         // RebuildResult::Rebuild — a local miss (includes a cold entry == None).
         // COOK-162 §3: `local` units never reach the backend, so a local miss is
         // a plain Miss → rebuild.
-        if meta.local {
+        if meta.sharing.is_local() {
             return CacheDecision::Miss;
         }
         // Shared unit: attempt a cold fetch-by-key from the backend by
@@ -714,7 +714,7 @@ pub fn execute_dag(
         let input_hashes = match cook_fingerprint::hash_input_paths(&input_refs, &work_node.working_dir) {
             Some(h) => h,
             None => {
-                return if meta.pinned {
+                return if meta.sharing.is_pinned() {
                     CacheDecision::PinnedColdMiss
                 } else {
                     CacheDecision::Miss
@@ -731,7 +731,7 @@ pub fn execute_dag(
             &work_node.working_dir,
         ) {
             CacheDecision::Hit
-        } else if meta.pinned {
+        } else if meta.sharing.is_pinned() {
             // Fetch-only unit absent from BOTH the local index and the shared
             // store: a hard error. The caller MUST NOT dispatch it.
             CacheDecision::PinnedColdMiss
@@ -2535,7 +2535,7 @@ fn publish_completion(
     // COOK-162 §3: `local` units never publish to the shared store.
     // COOK-168: publish-off / read-only client mode suppresses ALL uploads
     // globally; fetch-by-key is unaffected.
-    let publish_to_backend = !meta.local && cache_ctx.publish_enabled;
+    let publish_to_backend = !meta.sharing.is_local() && cache_ctx.publish_enabled;
 
     // Upload one artifact per declared output (2026-05-02 addendum spec §5.1).
     // Each artifact is keyed by artifact_key(cloud_key, idx, path) so a future
@@ -3020,8 +3020,7 @@ mod tests {
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         }
     }
@@ -3044,14 +3043,12 @@ mod tests {
         recipe: &str,
         wd: PathBuf,
         outputs: Vec<&str>,
-        local: bool,
-        pinned: bool,
+        sharing: cook_contracts::Sharing,
     ) -> WorkNode {
         let mut meta = cook_meta(outputs);
         meta.recipe_name = recipe.to_string();
         meta.cache_key = format!("k_{recipe}");
-        meta.local = local;
-        meta.pinned = pinned;
+        meta.sharing = sharing;
         WorkNode {
             payload: Some(payload),
             recipe_name: recipe.to_string(),
@@ -3089,8 +3086,7 @@ mod tests {
                 "loc",
                 wd.clone(),
                 vec!["out.txt"],
-                /* local */ true,
-                /* pinned */ false,
+                cook_contracts::Sharing::Local,
             ),
             &[],
         )
@@ -3119,8 +3115,7 @@ mod tests {
                 "pin",
                 wd.clone(),
                 vec!["out.txt"],
-                /* local */ false,
-                /* pinned */ true,
+                cook_contracts::Sharing::Pinned,
             ),
             &[],
         )

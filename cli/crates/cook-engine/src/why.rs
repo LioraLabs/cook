@@ -193,12 +193,10 @@ pub fn explain(
         let key_hex = unit_key_hex(meta, &det);
         let (status, manifest_diff) =
             classify(node, meta, cache_ctx, cache_managers, &det, &key_hex);
-        let disposition = if meta.local {
-            Disposition::Local
-        } else if meta.pinned {
-            Disposition::Pinned
-        } else {
-            Disposition::Unannotated
+        let disposition = match meta.sharing {
+            cook_contracts::Sharing::Local => Disposition::Local,
+            cook_contracts::Sharing::Pinned => Disposition::Pinned,
+            cook_contracts::Sharing::Shared => Disposition::Unannotated,
         };
         units.push(WhyUnit {
             recipe_name: meta.recipe_name.clone(),
@@ -290,7 +288,7 @@ fn classify(
     if local_step_hit(node, meta, det, cache_managers) {
         return (CacheStatus::LocalHit, None);
     }
-    if meta.local {
+    if meta.sharing.is_local() {
         return (CacheStatus::LocalOnlyMiss, None);
     }
     // C1: read-only shared-store probe — recompute artifact keys and confirm the
@@ -299,7 +297,7 @@ fn classify(
     if shared_artifacts_present(cache_ctx, key_hex, meta) {
         return (CacheStatus::SharedHit, None);
     }
-    if meta.pinned {
+    if meta.sharing.is_pinned() {
         return (
             CacheStatus::PinnedColdMiss,
             manifest_diff(cache_ctx, key_hex, det),

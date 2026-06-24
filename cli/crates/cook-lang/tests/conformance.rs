@@ -214,11 +214,16 @@ fn format_step(step: &Step) -> String {
             // §8.4.3: render the disposition only when non-default, so existing
             // fixtures (unannotated cooks) keep byte-identical `parse.txt`.
             let d = &step.disposition;
-            if d.local || d.pinned || d.record || !d.seal.is_empty() {
+            // I3: render the spec-surface local/pinned bools (derived from the
+            // internal Sharing enum) so existing parse.txt fixtures stay
+            // byte-identical.
+            let local = d.sharing.is_local();
+            let pinned = d.sharing.is_pinned();
+            if local || pinned || d.record || !d.seal.is_empty() {
                 let seal: Vec<&str> = d.seal.iter().map(|x| x.as_str()).collect();
                 s.push_str(&format!(
                     " disposition=[local={} pinned={} record={} seal={:?}]",
-                    d.local, d.pinned, d.record, seal
+                    local, pinned, d.record, seal
                 ));
             }
             s

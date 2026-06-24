@@ -556,9 +556,14 @@ pub fn register_unit_api(
             }
         };
 
-        // COOK-162: sharing disposition booleans emitted by codegen.
-        let disp_local = matches!(tbl.get::<LuaValue>("local"), Ok(LuaValue::Boolean(true)));
-        let disp_pinned = matches!(tbl.get::<LuaValue>("pinned"), Ok(LuaValue::Boolean(true)));
+        // COOK-162 / I3: sharing disposition emitted by codegen as a string
+        // field `sharing = "local"|"pinned"`, omitted for the shared default.
+        let sharing = match tbl.get::<LuaValue>("sharing") {
+            Ok(LuaValue::String(s)) => {
+                cook_contracts::Sharing::from_wire_str(&s.to_string_lossy())
+            }
+            _ => cook_contracts::Sharing::Shared,
+        };
         // COOK-163: opts.record — the `record` disposition. Marks an
         // intrinsically non-reproducible artifact; byte-equivalence is waived
         // at the cache decision (the key is unchanged). Accept only a bool.
@@ -594,8 +599,7 @@ pub fn register_unit_api(
                 consulted_env,
                 discovered_inputs,
                 seal_keys: seal_keys.clone(),
-                local: disp_local,
-                pinned: disp_pinned,
+                sharing,
                 record,
             })
         } else {
@@ -1764,10 +1768,10 @@ mod tests {
 
     #[test]
     fn add_unit_local_pinned_disposition_booleans() {
-        // COOK-162: opts.local and opts.pinned are parsed as booleans into CacheMeta.
-        // Three sub-cases: local=true, pinned=true, neither.
+        // COOK-162 / I3: opts.sharing ("local"/"pinned") is parsed into the
+        // CacheMeta.sharing enum. Three sub-cases: local, pinned, neither.
 
-        // Case 1: local = true → CacheMeta.local == true, .pinned == false
+        // Case 1: sharing = "local" → CacheMeta.sharing == Local
         {
             let (lua, capture_state) = make_lua_with_unit_api("recipe");
             lua.set_app_data(fake_cache_ctx());
@@ -1776,18 +1780,21 @@ mod tests {
                 cook.add_unit({
                     command = "echo local",
                     output = "out.txt",
-                    ["local"] = true,
+                    sharing = "local",
                 })
             "#)
             .exec()
             .unwrap();
             let state = body_ref(&capture_state);
             let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
-            assert!(cm.local, "local=true should propagate to CacheMeta.local");
-            assert!(!cm.pinned, "local=true should leave CacheMeta.pinned false");
+            assert_eq!(
+                cm.sharing,
+                cook_contracts::Sharing::Local,
+                "sharing=\"local\" should propagate to CacheMeta.sharing"
+            );
         }
 
-        // Case 2: pinned = true → CacheMeta.local == false, .pinned == true
+        // Case 2: sharing = "pinned" → CacheMeta.sharing == Pinned
         {
             let (lua, capture_state) = make_lua_with_unit_api("recipe");
             lua.set_app_data(fake_cache_ctx());
@@ -1796,18 +1803,21 @@ mod tests {
                 cook.add_unit({
                     command = "echo pinned",
                     output = "out.txt",
-                    pinned = true,
+                    sharing = "pinned",
                 })
             "#)
             .exec()
             .unwrap();
             let state = body_ref(&capture_state);
             let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
-            assert!(!cm.local, "pinned=true should leave CacheMeta.local false");
-            assert!(cm.pinned, "pinned=true should propagate to CacheMeta.pinned");
+            assert_eq!(
+                cm.sharing,
+                cook_contracts::Sharing::Pinned,
+                "sharing=\"pinned\" should propagate to CacheMeta.sharing"
+            );
         }
 
-        // Case 3: neither → both false
+        // Case 3: neither → Shared default
         {
             let (lua, capture_state) = make_lua_with_unit_api("recipe");
             lua.set_app_data(fake_cache_ctx());
@@ -1822,8 +1832,11 @@ mod tests {
             .unwrap();
             let state = body_ref(&capture_state);
             let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
-            assert!(!cm.local, "omitting local should leave CacheMeta.local false");
-            assert!(!cm.pinned, "omitting pinned should leave CacheMeta.pinned false");
+            assert_eq!(
+                cm.sharing,
+                cook_contracts::Sharing::Shared,
+                "omitting sharing should leave CacheMeta.sharing Shared"
+            );
         }
     }
 

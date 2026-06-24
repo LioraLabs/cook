@@ -216,11 +216,10 @@ impl From<String> for OutputPattern {
 /// COOK-161/162/163.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Disposition {
-    /// `local` — opt out of sharing (local cache only).
-    pub local: bool,
-    /// `pinned` — designated-producer / fetch-only.
-    pub pinned: bool,
-    /// `record` — record divergence for the oracle.
+    /// `local` / `pinned` sharing — mutually exclusive, so modelled as one
+    /// `Sharing` enum (`(local, pinned) = (true, true)` is unrepresentable).
+    pub sharing: cook_contracts::Sharing,
+    /// `record` — record divergence for the oracle. Orthogonal to `sharing`.
     pub record: bool,
     /// `seal` refs — sorted, de-duplicated bare probe keys (additive).
     pub seal: BTreeSet<String>,

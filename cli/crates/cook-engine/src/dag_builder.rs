@@ -1221,8 +1221,7 @@ mod tests {
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
-            local: false,
-            pinned: false,
+            sharing: Default::default(),
             record: false,
         }
     }
