@@ -334,6 +334,11 @@ fn build_wave(
                         &ru.working_dir,
                         None,
                         None,
+                        // COOK-163: honour the unit's record disposition so the
+                        // static view doesn't falsely flag a present-but-drifted
+                        // record output as needing a rebuild (execute-phase would
+                        // Skip it — byte-equivalence is waived, §17.1.3).
+                        meta.record,
                     );
                     Some(matches!(result, RebuildResult::Skip))
                 }
@@ -640,6 +645,7 @@ mod tests {
             seal_keys: Default::default(),
             local: false,
             pinned: false,
+            record: false,
         };
         let unit = CapturedUnit {
             payload: WorkPayload::Shell {
@@ -849,6 +855,7 @@ mod tests {
             seal_keys: Default::default(),
             local: false,
             pinned: false,
+            record: false,
         };
         let unit_a = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
@@ -885,6 +892,7 @@ mod tests {
             seal_keys: Default::default(),
             local: false,
             pinned: false,
+            record: false,
         };
         let unit_b = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "clang -c b.cpp".into(), line: 1 },
@@ -1010,6 +1018,7 @@ mod tests {
             seal_keys: Default::default(),
             local: false,
             pinned: false,
+            record: false,
         };
         let unit_compile = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
@@ -1049,6 +1058,7 @@ mod tests {
             seal_keys: Default::default(),
             local: false,
             pinned: false,
+            record: false,
         };
         let unit_archive = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "ar rcs libfoo.a a.o".into(), line: 1 },

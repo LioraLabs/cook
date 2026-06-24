@@ -3698,3 +3698,23 @@ fn plain_step_emits_neither_local_nor_pinned() {
     assert!(!lua.contains("local = true"), "plain step must NOT emit 'local = true':\n{lua}");
     assert!(!lua.contains("pinned = true"), "plain step must NOT emit 'pinned = true':\n{lua}");
 }
+
+#[test]
+fn record_disposition_emits_record_field() {
+    let src = "recipe build\n    record\n    cook \"out.png\" { gen-image }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(
+        lua.contains("record = true"),
+        "record-annotated cook step must emit record = true, got:\n{lua}"
+    );
+}
+
+#[test]
+fn unannotated_cook_emits_no_record_field() {
+    let src = "recipe build\n    cook \"out.o\" { cc -c }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(
+        !lua.contains("record ="),
+        "unannotated cook step must not emit record, got:\n{lua}"
+    );
+}

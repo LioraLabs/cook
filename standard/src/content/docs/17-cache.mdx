@@ -80,6 +80,19 @@ The unit's *disposition* (§{steps.cook-disposition}) selects its sharing policy
 `local` and `pinned` are mutually exclusive (§{steps.cook-disposition}). Every fetch from the shared store — drift restore or cold fetch-by-key — is subject to the integrity verification of §{exec.cache.integrity}: a fetched artifact whose bytes fail verification is treated as a miss.
 
 > **Note (informative).** Because the local index and the shared store share the one key (§{exec.cache.single-key}), a machine-independent unit (one that sealed no host probe) shares fleet-wide: any machine that recomputes the key serves the same artifact. A `local` unit is the deliberate exception — its output stays on the machine that produced it. A `pinned` unit shifts the trust boundary from "reproduce on demand" to "a designated producer populated the shared store"; consuming a pinned unit that was never produced is a hard error rather than a silent local rebuild, which is the point of the disposition. (CS-0108.)
+### 17.1.4. The `record` disposition [#exec.cache.record]
+
+A `cook` step MAY carry the `record` disposition (§{steps.cook-disposition}). Its artifact is cached and shared and keyed by the single cache key (§{exec.cache.single-key}) EXACTLY as an unannotated step: `record` adds NO determinant and changes NO component of the key.
+
+A `record` step asserts that its output is intrinsically NON-reproducible — for example an LLM completion or a generative image — so that re-running it in an identical context is NOT guaranteed to produce a byte-equivalent artifact.
+
+Byte-equivalence is therefore WAIVED for a `record` step. When the cache holds an artifact for the step's key, an implementation MUST treat that stored artifact as authoritative and MUST NOT re-execute the producer to reconcile a content difference; a present (on-disk or restorable) output is served as-is. A cold miss — no stored artifact and none restorable — MUST execute the producer once and MAY record its output.
+
+`record` composes with `seal`: a change to any sealed determinant changes the key (§{exec.cache.single-key}) and therefore re-generates the recording, exactly as for any unit. `record` composes with `local`/`pinned` (§{steps.cook-disposition}); that sharing/fetch policy is orthogonal to the byte-equivalence waiver.
+
+The divergence oracle (`cook cache verify`) MUST NOT classify a content difference on a `record` step as an under-keyed determinant: the author has declared the output non-reproducible and owns determinant completeness through the step's effective seal set.
+
+> **Note (informative).** The reference implementation realises the waiver as a `record` boolean carried on the unit's cache metadata; at the cache decision a `record` unit does not schedule a present-but-content-drifted output for restore or rebuild. The cache schema version is unchanged. (CS-0109.)
 
 ## 17.2. Cache integrity [#exec.cache.integrity]
 An implementation that records output content in a content-addressable store — whether local, shared between machines, or remote — MUST treat that store as untrusted at restore time. When the implementation reads bytes from the store with the intent to install them as the on-disk content of a declared output, it MUST recompute the same content fingerprint that it recorded for that output and MUST compare the recomputed fingerprint to the recorded one. If the two fingerprints differ, the implementation MUST NOT install the bytes; it MUST treat the read as a cache miss and MUST fall through to the rebuild path defined in §{exec.cache.abstract} above.

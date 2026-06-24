@@ -688,6 +688,7 @@ pub fn execute_dag(
             &work_node.working_dir,
             restore_arg,
             meta.discovered_inputs.as_ref(),
+            meta.record,
         );
         if matches!(result, RebuildResult::Skip) {
             if let Some(updated_entry) = updated {
@@ -3069,6 +3070,7 @@ mod tests {
             seal_keys: Default::default(),
             local: false,
             pinned: false,
+            record: false,
         }
     }
 

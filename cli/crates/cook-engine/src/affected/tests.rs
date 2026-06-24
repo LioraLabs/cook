@@ -22,6 +22,7 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         seal_keys: Default::default(),
         local: false,
         pinned: false,
+        record: false,
     };
     let unit = CapturedUnit {
         payload: WorkPayload::Shell { cmd: "echo build".into(), line: 1 },

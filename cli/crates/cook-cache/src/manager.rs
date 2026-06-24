@@ -241,6 +241,7 @@ mod tests {
             seal_keys: Default::default(),
             local: false,
             pinned: false,
+            record: false,
         }
     }
 

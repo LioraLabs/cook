@@ -161,11 +161,10 @@ fn file_refs_field(file_refs: &crate::template::FileRefs) -> String {
     }
 }
 
-/// COOK-161 + COOK-162: render the optional `, seal = {...}, local = true,
-/// pinned = true` cook.add_unit fields from the step's disposition. Empty when
-/// the step declares no seal and no sharing flag, so existing goldens for plain
-/// steps stay byte-identical. `record` is intentionally NOT emitted here
-/// (COOK-163 owns it).
+/// COOK-161 + COOK-162 + COOK-163: render the optional `, seal = {...},
+/// ["local"] = true, pinned = true, record = true` cook.add_unit fields from the
+/// step's disposition. Empty when the step declares no seal, no sharing flag, and
+/// no `record`, so existing goldens for plain steps stay byte-identical.
 fn disposition_field(disp: &Disposition) -> String {
     let mut out = String::new();
     if !disp.seal.is_empty() {
@@ -180,7 +179,19 @@ fn disposition_field(disp: &Disposition) -> String {
     if disp.pinned {
         out.push_str(", pinned = true");
     }
+    out.push_str(&record_field(disp.record));
     out
+}
+
+/// COOK-163: render the optional `, record = true` cook.add_unit field when the
+/// step carries the `record` disposition. Empty otherwise so unannotated-step
+/// goldens stay byte-identical.
+fn record_field(record: bool) -> String {
+    if record {
+        ", record = true".to_string()
+    } else {
+        String::new()
+    }
 }
 
 pub(crate) fn generate_cook_step(

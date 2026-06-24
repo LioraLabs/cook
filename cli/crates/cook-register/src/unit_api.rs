@@ -559,6 +559,19 @@ pub fn register_unit_api(
         // COOK-162: sharing disposition booleans emitted by codegen.
         let disp_local = matches!(tbl.get::<LuaValue>("local"), Ok(LuaValue::Boolean(true)));
         let disp_pinned = matches!(tbl.get::<LuaValue>("pinned"), Ok(LuaValue::Boolean(true)));
+        // COOK-163: opts.record — the `record` disposition. Marks an
+        // intrinsically non-reproducible artifact; byte-equivalence is waived
+        // at the cache decision (the key is unchanged). Accept only a bool.
+        let record: bool = match tbl.get::<LuaValue>("record") {
+            Ok(LuaValue::Nil) => false,
+            Ok(LuaValue::Boolean(b)) => b,
+            Ok(_) => {
+                return Err(LuaError::runtime(
+                    "cook.add_unit: record must be a boolean".to_string(),
+                ))
+            }
+            Err(_) => false,
+        };
 
         let cache_meta = if cache_enabled {
             let cache_key = build_local_cache_key(
@@ -583,6 +596,7 @@ pub fn register_unit_api(
                 seal_keys: seal_keys.clone(),
                 local: disp_local,
                 pinned: disp_pinned,
+                record,
             })
         } else {
             None
@@ -1996,5 +2010,61 @@ mod tests {
         let u = state.units.last().expect("a unit was captured");
         assert_eq!(u.member.as_deref(), Some("{\"id\":\"s1\"}"));
         assert_eq!(u.output_paths, vec!["build/s1.mp4".to_string()]);
+    }
+
+    #[test]
+    fn add_unit_record_flag_threads_to_cache_meta() {
+        // COOK-163: opts.record marks an intrinsically non-reproducible artifact.
+        // The register layer must read opts.record and set it on CacheMeta.
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "x.o",
+                outputs = { "x.o" },
+                command = "cc",
+                record = true,
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        let cm = u.cache_meta.as_ref().expect("cache_meta present");
+        assert!(
+            cm.record,
+            "record must be true on CacheMeta when opts.record = true; got: {}",
+            cm.record
+        );
+    }
+
+    #[test]
+    fn add_unit_record_defaults_false() {
+        // COOK-163: when opts.record is absent, it defaults to false.
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "x.o",
+                outputs = { "x.o" },
+                command = "cc",
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        let cm = u.cache_meta.as_ref().expect("cache_meta present");
+        assert!(
+            !cm.record,
+            "record must be false on CacheMeta when opts.record is absent; got: {}",
+            cm.record
+        );
     }
 }

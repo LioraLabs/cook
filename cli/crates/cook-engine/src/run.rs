@@ -1126,6 +1126,7 @@ mod tests {
                 seal_keys: Default::default(),
                 local: false,
                 pinned: false,
+                record: false,
             }),
             working_dir: wd.to_path_buf(),
             env_vars: Default::default(),
