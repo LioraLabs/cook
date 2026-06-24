@@ -643,6 +643,92 @@ fn build_registered_workspace(
 // cmd_run
 // ---------------------------------------------------------------------------
 
+pub fn cmd_cache_verify(
+    globals: &Globals,
+    args: &crate::cli::CacheVerifyArgs,
+) -> Result<(), CookError> {
+    let recipe_name = args.recipe.as_deref().unwrap_or("build");
+    let config = args.config.as_deref();
+    let parsed = read_and_parse(globals)?;
+    pipeline::validate_selected_config(&parsed.cookfile, config)
+        .map_err(pipeline_error_to_cook_error)?;
+    let num_jobs = resolve_num_jobs(globals);
+    let targets = vec![recipe_name.to_string()];
+
+    let registered = build_registered_workspace(globals, &parsed, config, recipe_name, &[])?;
+    let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
+
+    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets)
+        .map_err(|e| match e {
+            cook_engine::analyzer::GraphError::CycleDetected(name) => {
+                CookError::Other(format!("dependency cycle involving: {name}"))
+            }
+            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
+                CookError::RecipeNotFound(name)
+            }
+            other => CookError::Other(other.to_string()),
+        })?;
+    let reachable: std::collections::BTreeSet<String> = edges.keys().cloned().collect();
+
+    let project_root =
+        std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
+
+    let report = cook_engine::verify::verify_cache(
+        &project_root, &registered, &edges, &reachable, num_jobs, recipe_name,
+    )
+    .map_err(CookError::Other)?;
+
+    if args.json {
+        print_verify_json(&report);
+    } else {
+        print_verify_human(&report);
+    }
+    if report.exit_code() != 0 {
+        std::process::exit(report.exit_code());
+    }
+    Ok(())
+}
+
+fn print_verify_human(report: &cook_engine::verify::VerifyReport) {
+    use cook_engine::verify::UnitVerdict;
+    for u in &report.units {
+        let extra = match &u.verdict {
+            UnitVerdict::Divergence { detail } | UnitVerdict::Error { detail } => {
+                format!(" — {detail}")
+            }
+            _ => String::new(),
+        };
+        println!("[{}] {}/{}{}", u.verdict.label(), u.recipe, u.unit, extra);
+    }
+    println!(
+        "verify: {} unit(s), {} divergence(s), {} error(s)",
+        report.units.len(),
+        report.divergences(),
+        report.errors()
+    );
+}
+
+fn print_verify_json(report: &cook_engine::verify::VerifyReport) {
+    use cook_engine::verify::UnitVerdict;
+    // Hand-rolled JSON to avoid leaking serde derives into the engine crate.
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut items = Vec::new();
+    for u in &report.units {
+        let (verdict, detail) = match &u.verdict {
+            UnitVerdict::Pass => ("pass", String::new()),
+            UnitVerdict::RecordExempt => ("record_exempt", String::new()),
+            UnitVerdict::Divergence { detail } => ("divergence", detail.clone()),
+            UnitVerdict::Error { detail } => ("error", detail.clone()),
+        };
+        items.push(format!(
+            "{{\"recipe\":\"{}\",\"unit\":\"{}\",\"key\":\"{}\",\"verdict\":\"{}\",\"detail\":\"{}\"}}",
+            esc(&u.recipe), esc(&u.unit), esc(&u.key), verdict, esc(&detail)
+        ));
+    }
+    println!("{{\"units\":[{}],\"divergences\":{},\"errors\":{}}}",
+        items.join(","), report.divergences(), report.errors());
+}
+
 pub fn cmd_run(
     globals: &Globals,
     recipe_name: &str,

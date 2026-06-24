@@ -132,6 +132,10 @@ pub enum Cmd {
     /// Show logs for past builds.
     Logs(LogsArgs),
 
+    /// Cache fidelity tooling. `cook cache verify` re-runs cached steps and
+    /// reports byte-divergence under a matching key (CI fidelity tool, §17.9).
+    Cache(CacheArgs),
+
     /// Watch ingredients and re-run on change.
     Serve(ServeArgs),
 
@@ -223,6 +227,31 @@ pub struct LogsArgs {
     /// Color theme: auto (default) or mono.
     #[arg(long, default_value = "auto")]
     pub theme: String,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct CacheArgs {
+    #[command(subcommand)]
+    pub cmd: CacheCmd,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum CacheCmd {
+    /// Re-run cached steps and report byte-divergence under a matching key.
+    /// Opt-in CI fidelity tool: exits non-zero on any divergence. `record`
+    /// steps are byte-exempt (§17.1.4). NOT a trust gate.
+    Verify(CacheVerifyArgs),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct CacheVerifyArgs {
+    /// Recipe to verify (default: 'build').
+    pub recipe: Option<String>,
+    /// Config preset.
+    pub config: Option<String>,
+    /// Emit machine-readable JSON instead of a human summary.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -471,6 +500,30 @@ mod tests {
                 assert!(args.json);
             }
             other => panic!("expected Cmd::Affected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cache_verify_subcommand_defaults() {
+        let cli = parse(&["cache", "verify"]);
+        match cli.cmd {
+            Some(Cmd::Cache(CacheArgs { cmd: CacheCmd::Verify(a) })) => {
+                assert!(a.recipe.is_none());
+                assert!(!a.json);
+            }
+            other => panic!("expected Cmd::Cache verify, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cache_verify_recipe_and_json() {
+        let cli = parse(&["cache", "verify", "build", "--json"]);
+        match cli.cmd {
+            Some(Cmd::Cache(CacheArgs { cmd: CacheCmd::Verify(a) })) => {
+                assert_eq!(a.recipe.as_deref(), Some("build"));
+                assert!(a.json);
+            }
+            other => panic!("expected Cmd::Cache verify, got {other:?}"),
         }
     }
 

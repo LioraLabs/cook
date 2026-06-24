@@ -14,7 +14,7 @@ use cook_cli::modules;
 
 use cli::{Cli, Cmd};
 use error::CookError;
-use pipeline::{cmd_affected, cmd_dag, cmd_emit_lua, cmd_init, cmd_list, cmd_menu, cmd_run, cmd_serve, cmd_test};
+use pipeline::{cmd_affected, cmd_cache_verify, cmd_dag, cmd_emit_lua, cmd_init, cmd_list, cmd_menu, cmd_run, cmd_serve, cmd_test};
 
 fn main() {
     let version_string: &'static str = Box::leak(Box::new(format!(
@@ -63,6 +63,9 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
             cook_logs::cmd_logs(&project_root, selector, cook_logs::Theme::default())
                 .map_err(|e| CookError::Other(e.to_string()))
         }
+        Some(Cmd::Cache(args)) => match args.cmd {
+            crate::cli::CacheCmd::Verify(v) => cmd_cache_verify(&globals, &v),
+        },
         Some(Cmd::Serve(args)) => cmd_serve(
             &globals,
             args.recipe.as_deref().unwrap_or("build"),
