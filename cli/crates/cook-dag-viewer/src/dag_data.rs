@@ -334,7 +334,11 @@ fn build_wave(
                         &ru.working_dir,
                         None,
                         None,
-                        false,
+                        // COOK-163: honour the unit's record disposition so the
+                        // static view doesn't falsely flag a present-but-drifted
+                        // record output as needing a rebuild (execute-phase would
+                        // Skip it — byte-equivalence is waived, §17.1.3).
+                        meta.record,
                     );
                     Some(matches!(result, RebuildResult::Skip))
                 }
