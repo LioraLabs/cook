@@ -6,7 +6,7 @@
 //! construction). A non-`record` unit whose re-run produces different bytes is a
 //! divergence (§17.1.1 byte-equivalence broken — an under-keyed determinant or a
 //! non-reproducible producer). A `record` unit (§17.1.4) is byte-exempt and gets
-//! a weaker exists/non-empty check. This is a fidelity/diagnostic tool, NOT a
+//! a weaker exists (re-produced) check. This is a fidelity/diagnostic tool, NOT a
 //! trust gate (COOK-167).
 
 use std::collections::BTreeMap;
@@ -17,8 +17,8 @@ use std::path::Path;
 pub enum UnitVerdict {
     /// Re-run reproduced byte-identical outputs under the matching key.
     Pass,
-    /// `record` unit: byte-equivalence waived (§17.1.4); re-run produced the
-    /// declared outputs and they were non-empty.
+    /// `record` unit: byte-equivalence waived (§17.1.4); re-run re-produced
+    /// the declared outputs (presence check; bytes intentionally not compared).
     RecordExempt,
     /// Re-run produced different bytes under a matching key — the cache would
     /// serve a non-byte-equivalent artifact. Under-keyed determinant or
@@ -90,6 +90,46 @@ fn copy_dir_shallow_filtered(src: &Path, dst: &Path) -> std::io::Result<()> {
         // symlinks: best-effort skip
     }
     Ok(())
+}
+
+/// Pure verdict: compare a unit's recorded output hashes against the re-run's.
+/// `record` => byte-equivalence waived (§17.1.4): a re-produced, present output
+/// passes regardless of bytes; an absent recorded output is an Error (producer
+/// failed to make the artifact at all). Non-`record` => any hash mismatch or a
+/// recorded output absent from the re-run is a Divergence.
+pub fn classify(
+    record: bool,
+    recorded: &BTreeMap<String, u64>,
+    rerun: &BTreeMap<String, u64>,
+) -> UnitVerdict {
+    if record {
+        for path in recorded.keys() {
+            if !rerun.contains_key(path) {
+                return UnitVerdict::Error {
+                    detail: format!("record unit failed to re-produce output `{path}`"),
+                };
+            }
+        }
+        return UnitVerdict::RecordExempt;
+    }
+    for (path, recorded_hash) in recorded {
+        match rerun.get(path) {
+            None => {
+                return UnitVerdict::Divergence {
+                    detail: format!("output `{path}` absent after re-run under matching key"),
+                };
+            }
+            Some(rerun_hash) if rerun_hash != recorded_hash => {
+                return UnitVerdict::Divergence {
+                    detail: format!(
+                        "output `{path}` bytes differ under matching key (cache {recorded_hash:016x} != re-run {rerun_hash:016x})"
+                    ),
+                };
+            }
+            Some(_) => {}
+        }
+    }
+    UnitVerdict::Pass
 }
 
 /// Re-execute `cmd` in a throwaway copy of `working_dir`, then return the
@@ -198,5 +238,49 @@ mod tests {
         assert_eq!(r.exit_code(), 0);
         r.units.push(UnitReport { recipe: "build".into(), unit: "b.o".into(), key: "k2".into(), verdict: UnitVerdict::Divergence { detail: "bytes differ".into() } });
         assert_ne!(r.exit_code(), 0);
+    }
+
+    #[test]
+    fn matching_bytes_pass() {
+        let recorded: BTreeMap<String, u64> = [("a.o".to_string(), 42u64)].into();
+        let rerun: BTreeMap<String, u64> = [("a.o".to_string(), 42u64)].into();
+        assert_eq!(classify(false, &recorded, &rerun), UnitVerdict::Pass);
+    }
+
+    #[test]
+    fn differing_bytes_diverge_for_non_record() {
+        let recorded: BTreeMap<String, u64> = [("a.o".to_string(), 42u64)].into();
+        let rerun: BTreeMap<String, u64> = [("a.o".to_string(), 99u64)].into();
+        match classify(false, &recorded, &rerun) {
+            UnitVerdict::Divergence { detail } => assert!(detail.contains("a.o")),
+            v => panic!("expected divergence, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn record_unit_byte_difference_is_exempt() {
+        let recorded: BTreeMap<String, u64> = [("img.png".to_string(), 42u64)].into();
+        let rerun: BTreeMap<String, u64> = [("img.png".to_string(), 99u64)].into();
+        assert_eq!(classify(true, &recorded, &rerun), UnitVerdict::RecordExempt);
+    }
+
+    #[test]
+    fn record_unit_missing_output_is_error() {
+        let recorded: BTreeMap<String, u64> = [("img.png".to_string(), 42u64)].into();
+        let rerun: BTreeMap<String, u64> = BTreeMap::new();
+        match classify(true, &recorded, &rerun) {
+            UnitVerdict::Error { .. } => {}
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn non_record_missing_output_is_divergence() {
+        let recorded: BTreeMap<String, u64> = [("a.o".to_string(), 42u64)].into();
+        let rerun: BTreeMap<String, u64> = BTreeMap::new();
+        match classify(false, &recorded, &rerun) {
+            UnitVerdict::Divergence { .. } => {}
+            v => panic!("expected divergence, got {v:?}"),
+        }
     }
 }
