@@ -1868,8 +1868,15 @@ pub fn cmd_why(
 
     let (edges, reachable) = resolve_reachable_closure(&registered, recipe_name)?;
 
-    let project_root = pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
-        .map_err(pipeline_error_to_cook_error)?;
+    // `cook why` MUST recompute the same cache key K as `cook run` would, so it
+    // MUST anchor the cache context at the SAME project_root the executor uses.
+    // `run_with_progress` passes `std::env::current_dir()` straight into
+    // `cook_engine::run::run` (it becomes `CacheContext::project_root`, which
+    // drives the `project_id` folded into K and the `.cook/probes` anchor).
+    // Using `resolve_workspace_root` here instead would diverge under a
+    // symlinked cwd or a `.cookroot` marker above cwd, silently making `why`
+    // explain a different K than `run` builds — defeating the whole point.
+    let project_root = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
     let cache_ctx = cook_engine::build_cache_ctx_for_cli(&project_root, globals.no_publish)
         .map_err(engine_error_to_cook_error)?;
     let cache_managers = cook_engine::cache_managers_for_cli(&registered, &reachable);
@@ -1907,7 +1914,10 @@ fn render_why_plain(report: &cook_engine::why::WhyReport) -> String {
             CacheStatus::PinnedColdMiss => "MISS (pinned, cold)".to_string(),
             CacheStatus::MissingInput { path } => format!("MISS (input '{path}' missing)"),
         };
-        s.push_str(&format!("\n{} [{}]  key {}\n", u.cache_key, status, u.key_hex));
+        s.push_str(&format!(
+            "\n{} :: {} [{}]  key {}\n",
+            u.recipe_name, u.cache_key, status, u.key_hex
+        ));
         s.push_str(&format!("  command_hash      {:016x}\n", u.determinants.command_hash));
         s.push_str(&format!("  env_contribution  {:016x}\n", u.determinants.env_contribution));
         s.push_str(&format!("  seal_contribution {:016x}\n", u.determinants.seal_contribution));
@@ -2089,6 +2099,7 @@ fn why_unit_json(u: &cook_engine::why::WhyUnit) -> serde_json::Value {
     };
 
     let mut obj = serde_json::Map::new();
+    obj.insert("recipe".to_string(), serde_json::Value::String(u.recipe_name.clone()));
     obj.insert("cache_key".to_string(), serde_json::Value::String(u.cache_key.clone()));
     obj.insert("key".to_string(), serde_json::Value::String(u.key_hex.clone()));
     obj.insert("line".to_string(), serde_json::json!(u.line));
