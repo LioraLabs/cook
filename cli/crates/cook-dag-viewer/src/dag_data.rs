@@ -334,6 +334,7 @@ fn build_wave(
                         &ru.working_dir,
                         None,
                         None,
+                        false,
                     );
                     Some(matches!(result, RebuildResult::Skip))
                 }

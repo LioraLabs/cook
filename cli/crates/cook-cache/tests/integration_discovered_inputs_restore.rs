@@ -131,6 +131,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
         wd,
         Some(&restore_ctx),
         Some(&di),
+        false,
     );
 
     assert!(matches!(result, RebuildResult::Skip),

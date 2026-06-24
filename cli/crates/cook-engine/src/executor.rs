@@ -661,6 +661,7 @@ pub fn execute_dag(
             &work_node.working_dir,
             Some(&restore_ctx),
             meta.discovered_inputs.as_ref(),
+            meta.record,
         );
         if matches!(result, RebuildResult::Skip) {
             if let Some(updated_entry) = updated {
