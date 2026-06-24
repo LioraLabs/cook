@@ -22,6 +22,12 @@ use cook_luaotp::{WorkItem, WorkerPool};
 
 use crate::{EngineError, EngineEvent, NodeKind, RecipeKind, WorkNode};
 
+/// COOK-165: expose the cache schema version to the read-only `why::explain`
+/// walk so its recomputed cloud_key matches the executor's.
+pub(crate) fn cache_version() -> u32 {
+    CACHE_VERSION
+}
+
 // ---------------------------------------------------------------------------
 // RecipeTracker
 // ---------------------------------------------------------------------------

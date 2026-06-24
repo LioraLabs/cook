@@ -475,20 +475,9 @@ where
     }
 
     // 5. Per-recipe cache managers. One per reachable recipe, anchored at
-    //    that recipe's prefix's working_dir.
-    let cache_managers: BTreeMap<String, Arc<ThreadSafeCacheManager>> = reachable
-        .iter()
-        .map(|name| {
-            let prefix = split_recipe_name(name).0;
-            let wd = registered_workspace
-                .working_dir_by_prefix
-                .get(&prefix)
-                .cloned()
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
-            let cache_dir = wd.join(".cook").join("cache");
-            (name.clone(), Arc::new(ThreadSafeCacheManager::new(cache_dir)))
-        })
-        .collect();
+    //    that recipe's prefix's working_dir. Shared with `cook why` via
+    //    `cache_managers_for_cli` so the two paths can never drift.
+    let cache_managers = cache_managers_for_cli(registered_workspace, reachable);
 
     // §17.7 stale-output reconciliation: snapshot each reached recipe's prior
     // recorded outputs (absolute path → recorded content hash) BEFORE the run
@@ -744,6 +733,13 @@ fn reconcile_outputs(
 /// [`dag_builder::build_dag`]'s intra-call `recipe_leaves` accumulator has
 /// every dep present before the dependent recipe is processed. Recipes
 /// missing from `edges` are placed first (no deps known).
+pub(crate) fn toposort_reachable_pub(
+    edges: &BTreeMap<String, Vec<String>>,
+    reachable: &BTreeSet<String>,
+) -> Result<Vec<String>, EngineError> {
+    toposort_reachable(edges, reachable)
+}
+
 fn toposort_reachable(
     edges: &BTreeMap<String, Vec<String>>,
     reachable: &BTreeSet<String>,
@@ -811,7 +807,35 @@ fn toposort_reachable(
 /// context (machine identity + declared-tool hashing), selects either the
 /// local or cloud backend, and assembles the shared `CacheContext` carried
 /// by every register pass and worker.
-fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<Arc<CacheContext>, EngineError> {
+/// CLI helper: build a `CacheContext` for read-only introspection (cook why).
+pub fn build_cache_ctx_for_cli(
+    project_root: &Path,
+    no_publish: bool,
+) -> Result<Arc<CacheContext>, EngineError> {
+    build_cache_ctx(project_root, no_publish)
+}
+
+/// CLI helper: per-recipe cache managers, identical to what `run_inner` builds.
+pub fn cache_managers_for_cli(
+    ws: &RegisteredWorkspace,
+    reachable: &BTreeSet<String>,
+) -> BTreeMap<String, Arc<ThreadSafeCacheManager>> {
+    reachable
+        .iter()
+        .map(|name| {
+            let prefix = split_recipe_name(name).0;
+            let wd = ws
+                .working_dir_by_prefix
+                .get(&prefix)
+                .cloned()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let cache_dir = wd.join(".cook").join("cache");
+            (name.clone(), Arc::new(ThreadSafeCacheManager::new(cache_dir)))
+        })
+        .collect()
+}
+
+pub(crate) fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<Arc<CacheContext>, EngineError> {
     let cloud_config = CloudConfig::load_or_default(project_root)
         .map_err(|e| EngineError::CacheError(format!("invalid .cook/cloud.toml: {e}")))?;
     let mut denylist = EnvDenylist::baseline();

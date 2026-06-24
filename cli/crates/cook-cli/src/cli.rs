@@ -145,6 +145,11 @@ pub enum Cmd {
     /// Requires `--since=<ref>`.
     Affected(AffectedArgs),
 
+    /// Explain the cache key per unit: every determinant attributed to its
+    /// source, hit/miss status, and — on a shared miss — the diff against the
+    /// cached artifact's producer determinant manifest. Read-only; runs nothing.
+    Why(WhyArgs),
+
     /// Run a recipe by name. Captured for any first positional that does not
     /// match a reserved subcommand. The first element is the recipe name
     /// (with a leading `+` stripped if present); the optional second element
@@ -205,6 +210,17 @@ pub struct DagArgs {
     /// DAG TUI theme: auto (default) or mono.
     #[arg(long = "theme", default_value = "auto")]
     pub theme: String,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct WhyArgs {
+    /// Recipe to explain (default: 'build').
+    pub recipe: Option<String>,
+    /// Config preset.
+    pub config: Option<String>,
+    /// Emit machine-readable JSON instead of the human-readable report.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -366,6 +382,22 @@ mod tests {
                 assert_eq!(args.theme, "mono");
             }
             other => panic!("expected Cmd::Dag, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn why_subcommand_defaults() {
+        match parse(&["why"]).cmd {
+            Some(Cmd::Why(a)) => { assert!(a.recipe.is_none()); assert!(!a.json); }
+            other => panic!("expected Cmd::Why, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn why_subcommand_recipe_and_json() {
+        match parse(&["why", "build", "--json"]).cmd {
+            Some(Cmd::Why(a)) => { assert_eq!(a.recipe.as_deref(), Some("build")); assert!(a.json); }
+            other => panic!("expected Cmd::Why, got {other:?}"),
         }
     }
 
