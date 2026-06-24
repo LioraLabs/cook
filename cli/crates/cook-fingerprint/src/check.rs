@@ -396,6 +396,13 @@ fn try_restore(
 /// serve a unit's declared outputs straight from the shared backend by
 /// recomputing its one key. Returns true iff every output was fetched, verified,
 /// and written. `sorted_input_content_hashes` MUST already be sorted.
+///
+/// `output_paths` are the unit's declared output paths. On the cold path (no
+/// StepEntry) a glob unit's declared outputs are still raw patterns (e.g.
+/// `*.o`), not the concrete paths the publish path keyed its artifacts under,
+/// so a glob unit never cold-fetches and falls through to rebuild — a `pinned`
+/// glob unit therefore cold-misses (a hard error). An empty `output_paths`
+/// slice returns false (no artifacts to serve is not a hit).
 #[allow(clippy::too_many_arguments)]
 pub fn fetch_by_key(
     ctx: &RestoreCtx,
@@ -406,6 +413,9 @@ pub fn fetch_by_key(
     output_paths: &[&str],
     working_dir: &std::path::Path,
 ) -> bool {
+    if output_paths.is_empty() {
+        return false;
+    }
     let key_inputs = crate::backend::CloudKeyInputs {
         schema_version: CACHE_VERSION,
         recipe_namespace: ctx.recipe_namespace,
@@ -430,9 +440,17 @@ pub fn fetch_by_key(
         }
         let abs = working_dir.join(path);
         if let Some(parent) = abs.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if std::fs::create_dir_all(parent).is_err() {
+                return false;
+            }
         }
-        if std::fs::write(&abs, &bytes).is_err() {
+        // Atomic write via tmp + rename (mirrors try_restore): never expose a
+        // torn output to a concurrent reader.
+        let tmp = abs.with_extension("cook.tmp");
+        if std::fs::write(&tmp, &bytes).is_err() {
+            return false;
+        }
+        if std::fs::rename(&tmp, &abs).is_err() {
             return false;
         }
     }

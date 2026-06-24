@@ -157,13 +157,15 @@ fn machine_independent_unit_hits_across_host_change_sealed_unit_misses() {
     );
     assert_eq!(runs(wd, "shared.runlog"), 1, "run4: shared still hits");
 
-    // Run 5 (SIMHOST=alpha again, now warm on alpha): the entry persisted in run4
-    // is the alpha-keyed one, so the sealed unit hits locally — host stays 2.
+    // Run 5 (SIMHOST=alpha again): a cold-fetch Hit does not persist a local
+    // StepEntry (no update_step), so the local index still holds the beta entry
+    // from run3. The sealed unit therefore hits again via COOK-162 cold
+    // fetch-by-key against the still-present alpha-keyed artifact — host stays 2.
     build(wd, "alpha");
     assert_eq!(
         runs(wd, "host.runlog"),
         2,
-        "run5: warm on alpha must hit — the alpha-keyed entry is the freshest \
-         persisted one"
+        "run5: alpha must hit again via cold fetch-by-key — the alpha-keyed \
+         artifact remains in the shared store"
     );
 }
