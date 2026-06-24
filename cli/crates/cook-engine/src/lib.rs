@@ -17,7 +17,9 @@ mod seal;
 pub mod why;
 
 pub use registered_workspace::RegisteredWorkspace;
-pub use run::{run, RunResult, TestScope};
+pub use run::{
+    build_cache_ctx_for_cli, cache_managers_for_cli, run, RunResult, TestScope,
+};
 pub use why::{
     diff_against_manifest, explain, CacheStatus, DeterminantDiff, Disposition, UnitDeterminants,
     WhyReport, WhyUnit,

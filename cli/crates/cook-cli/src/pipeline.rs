@@ -1823,3 +1823,325 @@ pub fn cmd_affected(
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// cmd_why — explain the cache key per unit (read-only; runs nothing)
+// ---------------------------------------------------------------------------
+
+/// Derive the `(edges, reachable)` pair that `cook run` would consume for
+/// `recipe_name`, using the EXACT derivation `run_with_progress` / `cmd_run`
+/// rely on: `build_recipe_infos_from_registered` → `dependency_edges_multi`
+/// over `targets = [recipe_name]` → `reachable = edges.keys()`. Reusing this
+/// derivation verbatim guarantees `cook why` and `cook run` agree on the
+/// closure.
+fn resolve_reachable_closure(
+    registered: &RegisteredWorkspace,
+    recipe_name: &str,
+) -> Result<(BTreeMap<String, Vec<String>>, BTreeSet<String>), CookError> {
+    let recipe_infos = pipeline::build_recipe_infos_from_registered(registered);
+    let targets = vec![recipe_name.to_string()];
+    let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets).map_err(
+        |e| match e {
+            cook_engine::analyzer::GraphError::CycleDetected(name) => {
+                CookError::Other(format!("dependency cycle involving: {name}"))
+            }
+            cook_engine::analyzer::GraphError::UnknownRecipe(name) => {
+                CookError::RecipeNotFound(name)
+            }
+            other => CookError::Other(other.to_string()),
+        },
+    )?;
+    let reachable: BTreeSet<String> = edges.keys().cloned().collect();
+    Ok((edges, reachable))
+}
+
+pub fn cmd_why(
+    globals: &Globals,
+    recipe_name: &str,
+    config: Option<&str>,
+    json: bool,
+) -> Result<(), CookError> {
+    let parsed = read_and_parse(globals)?;
+    pipeline::validate_selected_config(&parsed.cookfile, config)
+        .map_err(pipeline_error_to_cook_error)?;
+    let registered = build_registered_workspace(globals, &parsed, config, recipe_name, &[])?;
+
+    let (edges, reachable) = resolve_reachable_closure(&registered, recipe_name)?;
+
+    let project_root = pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
+        .map_err(pipeline_error_to_cook_error)?;
+    let cache_ctx = cook_engine::build_cache_ctx_for_cli(&project_root, globals.no_publish)
+        .map_err(engine_error_to_cook_error)?;
+    let cache_managers = cook_engine::cache_managers_for_cli(&registered, &reachable);
+    let probes_dir = project_root.join(".cook").join("probes");
+
+    let report = cook_engine::why::explain(
+        recipe_name,
+        &registered,
+        &edges,
+        &reachable,
+        &cache_ctx,
+        &cache_managers,
+        &probes_dir,
+    )
+    .map_err(engine_error_to_cook_error)?;
+
+    if json {
+        print!("{}", render_why_json(&report));
+    } else {
+        print!("{}", render_why_plain(&report));
+    }
+    Ok(())
+}
+
+fn render_why_plain(report: &cook_engine::why::WhyReport) -> String {
+    use cook_engine::why::CacheStatus;
+    let mut s = String::new();
+    s.push_str(&format!("why {}\n", report.recipe));
+    for u in &report.units {
+        let status = match &u.status {
+            CacheStatus::LocalHit => "HIT (local)".to_string(),
+            CacheStatus::SharedHit => "HIT (shared)".to_string(),
+            CacheStatus::SharedMiss => "MISS (shared)".to_string(),
+            CacheStatus::LocalOnlyMiss => "MISS (local-only)".to_string(),
+            CacheStatus::PinnedColdMiss => "MISS (pinned, cold)".to_string(),
+            CacheStatus::MissingInput { path } => format!("MISS (input '{path}' missing)"),
+        };
+        s.push_str(&format!("\n{} [{}]  key {}\n", u.cache_key, status, u.key_hex));
+        s.push_str(&format!("  command_hash      {:016x}\n", u.determinants.command_hash));
+        s.push_str(&format!("  env_contribution  {:016x}\n", u.determinants.env_contribution));
+        s.push_str(&format!("  seal_contribution {:016x}\n", u.determinants.seal_contribution));
+        if !u.determinants.inputs.is_empty() {
+            s.push_str("  inputs:\n");
+            for (p, h) in &u.determinants.inputs {
+                s.push_str(&format!("    {p}  {h:016x}\n"));
+            }
+        }
+        if !u.determinants.output_paths.is_empty() {
+            s.push_str("  outputs:\n");
+            for p in &u.determinants.output_paths {
+                s.push_str(&format!("    {p}\n"));
+            }
+        }
+        if !u.determinants.consulted_env.is_empty() {
+            s.push_str("  env (consulted):\n");
+            for (k, v) in &u.determinants.consulted_env {
+                s.push_str(&format!("    {k} = {v}\n"));
+            }
+        }
+        if !u.determinants.sealed_probes.is_empty() {
+            s.push_str("  sealed probes:\n");
+            for (k, v) in &u.determinants.sealed_probes {
+                s.push_str(&format!("    {k} = {v}{}\n", tools_probe_paths(v)));
+            }
+        }
+        match &u.manifest_diff {
+            Some(diffs) if diffs.is_empty() => {
+                s.push_str(
+                    "  shared-miss diff: producer manifest determinants are identical to ours \
+                     (artifact not published, or absent from this backend)\n",
+                );
+            }
+            Some(diffs) => {
+                s.push_str("  shared-miss diff vs producer manifest:\n");
+                for d in diffs {
+                    s.push_str(&format!("    {}\n", render_diff(d)));
+                }
+            }
+            None => {
+                if matches!(u.status, CacheStatus::SharedMiss | CacheStatus::PinnedColdMiss) {
+                    s.push_str(
+                        "  shared-miss diff: no producer manifest published for this key\n",
+                    );
+                }
+            }
+        }
+    }
+    s
+}
+
+/// Extract a " (cc→/usr/bin/cc, …)" suffix from a tools-probe JSON value
+/// ({"NAME":{"path":...,"hash":...}}). Empty for non-tools probe values.
+fn tools_probe_paths(value: &str) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(value) else {
+        return String::new();
+    };
+    let Some(obj) = v.as_object() else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    for (name, entry) in obj {
+        if let Some(p) = entry.get("path").and_then(|p| p.as_str()) {
+            parts.push(format!("{name}→{p}"));
+        }
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("  ({})", parts.join(", "))
+    }
+}
+
+fn render_diff(d: &cook_engine::why::DeterminantDiff) -> String {
+    use cook_engine::why::DeterminantDiff::*;
+    match d {
+        CommandHash { ours, theirs } => {
+            format!("command_hash: ours {ours:016x} != producer {theirs:016x}")
+        }
+        EnvContribution { ours, theirs } => {
+            format!("env_contribution: ours {ours:016x} != producer {theirs:016x}")
+        }
+        SealContribution { ours, theirs } => {
+            format!("seal_contribution: ours {ours:016x} != producer {theirs:016x}")
+        }
+        Input { path, ours, theirs } => {
+            format!("input {path}: ours {ours:?} != producer {theirs:?}")
+        }
+        Env { key, ours, theirs } => format!("env {key}: ours {ours:?} != producer {theirs:?}"),
+        Probe { key, ours, theirs } => {
+            format!("probe {key}: ours {ours:?} != producer {theirs:?}")
+        }
+        OutputPaths { ours, theirs } => format!("outputs: ours {ours:?} != producer {theirs:?}"),
+    }
+}
+
+fn render_why_json(report: &cook_engine::why::WhyReport) -> String {
+    let units: Vec<serde_json::Value> = report.units.iter().map(why_unit_json).collect();
+    serde_json::to_string_pretty(&serde_json::json!({
+        "recipe": report.recipe,
+        "units": units,
+    }))
+    .unwrap_or_default()
+        + "\n"
+}
+
+fn why_unit_json(u: &cook_engine::why::WhyUnit) -> serde_json::Value {
+    use cook_engine::why::CacheStatus;
+
+    let mut status_obj = serde_json::Map::new();
+    let status_str = match &u.status {
+        CacheStatus::LocalHit => "local_hit",
+        CacheStatus::SharedHit => "shared_hit",
+        CacheStatus::SharedMiss => "shared_miss",
+        CacheStatus::LocalOnlyMiss => "local_only_miss",
+        CacheStatus::PinnedColdMiss => "pinned_cold_miss",
+        CacheStatus::MissingInput { path } => {
+            status_obj.insert(
+                "missing_input_path".to_string(),
+                serde_json::Value::String(path.clone()),
+            );
+            "missing_input"
+        }
+    };
+
+    let disposition = match u.disposition {
+        cook_engine::why::Disposition::Unannotated => "unannotated",
+        cook_engine::why::Disposition::Local => "local",
+        cook_engine::why::Disposition::Pinned => "pinned",
+    };
+
+    let inputs: serde_json::Map<String, serde_json::Value> = u
+        .determinants
+        .inputs
+        .iter()
+        .map(|(p, h)| {
+            (
+                p.clone(),
+                serde_json::Value::String(format!("{h:016x}")),
+            )
+        })
+        .collect();
+
+    let consulted_env: serde_json::Map<String, serde_json::Value> = u
+        .determinants
+        .consulted_env
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+        .collect();
+
+    let sealed_probes: serde_json::Map<String, serde_json::Value> = u
+        .determinants
+        .sealed_probes
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+        .collect();
+
+    let determinants = serde_json::json!({
+        "command_hash": format!("{:016x}", u.determinants.command_hash),
+        "env_contribution": format!("{:016x}", u.determinants.env_contribution),
+        "seal_contribution": format!("{:016x}", u.determinants.seal_contribution),
+        "inputs": serde_json::Value::Object(inputs),
+        "output_paths": u.determinants.output_paths.clone(),
+        "consulted_env": serde_json::Value::Object(consulted_env),
+        "sealed_probes": serde_json::Value::Object(sealed_probes),
+    });
+
+    let manifest_diff = match &u.manifest_diff {
+        None => serde_json::Value::Null,
+        Some(diffs) => {
+            serde_json::Value::Array(diffs.iter().map(determinant_diff_json).collect())
+        }
+    };
+
+    let mut obj = serde_json::Map::new();
+    obj.insert("cache_key".to_string(), serde_json::Value::String(u.cache_key.clone()));
+    obj.insert("key".to_string(), serde_json::Value::String(u.key_hex.clone()));
+    obj.insert("line".to_string(), serde_json::json!(u.line));
+    obj.insert("status".to_string(), serde_json::Value::String(status_str.to_string()));
+    for (k, v) in status_obj {
+        obj.insert(k, v);
+    }
+    obj.insert("disposition".to_string(), serde_json::Value::String(disposition.to_string()));
+    obj.insert("determinants".to_string(), determinants);
+    obj.insert("manifest_diff".to_string(), manifest_diff);
+    serde_json::Value::Object(obj)
+}
+
+fn determinant_diff_json(d: &cook_engine::why::DeterminantDiff) -> serde_json::Value {
+    use cook_engine::why::DeterminantDiff::*;
+    let hexopt = |o: &Option<u64>| match o {
+        Some(h) => serde_json::Value::String(format!("{h:016x}")),
+        None => serde_json::Value::Null,
+    };
+    let stropt = |o: &Option<String>| match o {
+        Some(s) => serde_json::Value::String(s.clone()),
+        None => serde_json::Value::Null,
+    };
+    match d {
+        CommandHash { ours, theirs } => serde_json::json!({
+            "determinant": "command_hash",
+            "ours": format!("{ours:016x}"),
+            "producer": format!("{theirs:016x}"),
+        }),
+        EnvContribution { ours, theirs } => serde_json::json!({
+            "determinant": "env_contribution",
+            "ours": format!("{ours:016x}"),
+            "producer": format!("{theirs:016x}"),
+        }),
+        SealContribution { ours, theirs } => serde_json::json!({
+            "determinant": "seal_contribution",
+            "ours": format!("{ours:016x}"),
+            "producer": format!("{theirs:016x}"),
+        }),
+        Input { path, ours, theirs } => serde_json::json!({
+            "determinant": format!("input:{path}"),
+            "ours": hexopt(ours),
+            "producer": hexopt(theirs),
+        }),
+        Env { key, ours, theirs } => serde_json::json!({
+            "determinant": format!("env:{key}"),
+            "ours": stropt(ours),
+            "producer": stropt(theirs),
+        }),
+        Probe { key, ours, theirs } => serde_json::json!({
+            "determinant": format!("probe:{key}"),
+            "ours": stropt(ours),
+            "producer": stropt(theirs),
+        }),
+        OutputPaths { ours, theirs } => serde_json::json!({
+            "determinant": "output_paths",
+            "ours": ours.clone(),
+            "producer": theirs.clone(),
+        }),
+    }
+}

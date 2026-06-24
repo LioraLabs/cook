@@ -818,6 +818,34 @@ fn toposort_reachable(
 /// context (machine identity + declared-tool hashing), selects either the
 /// local or cloud backend, and assembles the shared `CacheContext` carried
 /// by every register pass and worker.
+/// CLI helper: build a `CacheContext` for read-only introspection (cook why).
+pub fn build_cache_ctx_for_cli(
+    project_root: &Path,
+    no_publish: bool,
+) -> Result<Arc<CacheContext>, EngineError> {
+    build_cache_ctx(project_root, no_publish)
+}
+
+/// CLI helper: per-recipe cache managers, identical to what `run_inner` builds.
+pub fn cache_managers_for_cli(
+    ws: &RegisteredWorkspace,
+    reachable: &BTreeSet<String>,
+) -> BTreeMap<String, Arc<ThreadSafeCacheManager>> {
+    reachable
+        .iter()
+        .map(|name| {
+            let prefix = split_recipe_name(name).0;
+            let wd = ws
+                .working_dir_by_prefix
+                .get(&prefix)
+                .cloned()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let cache_dir = wd.join(".cook").join("cache");
+            (name.clone(), Arc::new(ThreadSafeCacheManager::new(cache_dir)))
+        })
+        .collect()
+}
+
 pub(crate) fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<Arc<CacheContext>, EngineError> {
     let cloud_config = CloudConfig::load_or_default(project_root)
         .map_err(|e| EngineError::CacheError(format!("invalid .cook/cloud.toml: {e}")))?;

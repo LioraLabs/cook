@@ -14,7 +14,10 @@ use cook_cli::modules;
 
 use cli::{Cli, Cmd};
 use error::CookError;
-use pipeline::{cmd_affected, cmd_dag, cmd_emit_lua, cmd_init, cmd_list, cmd_menu, cmd_run, cmd_serve, cmd_test};
+use pipeline::{
+    cmd_affected, cmd_dag, cmd_emit_lua, cmd_init, cmd_list, cmd_menu, cmd_run, cmd_serve, cmd_test,
+    cmd_why,
+};
 
 fn main() {
     let version_string: &'static str = Box::leak(Box::new(format!(
@@ -70,6 +73,12 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         ),
         Some(Cmd::EmitLua) => cmd_emit_lua(&globals),
         Some(Cmd::Affected(args)) => cmd_affected(&globals, &args),
+        Some(Cmd::Why(args)) => cmd_why(
+            &globals,
+            args.recipe.as_deref().unwrap_or("build"),
+            args.config.as_deref(),
+            args.json,
+        ),
         Some(Cmd::Recipe(parts)) => dispatch_recipe(&globals, &parts),
     }
 }
