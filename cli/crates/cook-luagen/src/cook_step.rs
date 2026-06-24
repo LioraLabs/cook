@@ -665,6 +665,7 @@ mod cs_0022_mode_tests {
                 .map(|s| OutputPattern::Quoted((*s).to_string()))
                 .collect(),
             body,
+            disposition: Default::default(),
         }
     }
 

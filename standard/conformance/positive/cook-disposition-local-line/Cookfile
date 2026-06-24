@@ -1,0 +1,3 @@
+recipe build
+    local
+    cook "scratch.o" { cc -c scratch.c -o scratch.o }

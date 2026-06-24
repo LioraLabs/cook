@@ -66,6 +66,7 @@ recipe_body           ::= declarative_region imperative_region?
 declarative_region    ::= declarative_item*
 declarative_item      ::= ingredients_step
                        | cook_step
+                       | disposition_block
                        | plate_step
                        | test_step
                        | inline_lua_line
@@ -166,7 +167,7 @@ ingredients_step      ::= "ingredients" ( ingredient+ | probe_ref ) NEWLINE
 ingredient            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
 
-cook_step             ::= "cook" cook_output body? NEWLINE
+cook_step             ::= disposition_line* "cook" cook_output body? NEWLINE
 cook_output           ::= STRING+ | "(" LUA_EXPR ")"
 exec_lua_block        ::= ">{" LUA_BLOCK_CONTENT "}"
 shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
@@ -176,6 +177,15 @@ disposition_line      ::= ("seal" probe_ref+ | "local" | "pinned" | "record") NE
 disposition_block     ::= ("seal" probe_ref+ | "local" | "pinned" | "record") "{" cook_step+ "}"
                           /* the brace block wraps one or more cook_step items
                              (NOT shell text); skeleton — see §8.4.3 */
+
+disposition_line       ::= disposition NEWLINE
+disposition_block      ::= disposition "{" NEWLINE disposition_block_item+ "}" NEWLINE
+disposition_block_item ::= disposition_line* cook_step
+                        | disposition_block
+                        | comment
+                        | NEWLINE
+disposition            ::= "seal" seal_ref* | "local" | "pinned" | "record"
+seal_ref               ::= BARE_PROBE_KEY        /* NOT the STRING form */
 
 plate_step            ::= "plate" body NEWLINE
 test_step             ::= "test"  body test_modifiers NEWLINE
@@ -252,7 +262,7 @@ ingredients "src/*.c"
 
 **Declaration-only cook step.** A `cook_step` whose body is absent is a declaration — it announces the output without providing a build command inline. Its build is assumed to be provided by preceding Lua registrations or a later amendment.
 
-**Disposition lines and blocks (skeleton; normative detail in §8.4.3).** A `cook_step` MAY be preceded by one or more `disposition_line`s, or enclosed in a `disposition_block`. The four dispositions are `seal probe_ref+` (additive and stackable — the named probe values fold into the unit's cache key, §{exec.cache.single-key}), `local` (cache locally; opt out of sharing), `pinned` (fetch-only designated-producer — a cache miss is a hard error, not a rebuild), and `record` (a non-reproducible recording). A `disposition_line` MUST be immediately followed by a `cook_step`; a `disposition_line` with no following `cook_step` MUST be rejected. Within a `disposition_block`, an inner `local` or `pinned` overrides an enclosing `seal` for the units it covers; block and line dispositions compose additively. There is **no** project-default ("global") seal set and **no** `seal only` narrowing form. The binding rule, additive precedence, mutual-exclusion constraints, effective-seal-set computation, and diagnostics are specified normatively in §8.4.3; this appendix carries the surface skeleton only.
+**Cook-step disposition (normative).** A `cook_step` MAY be prefixed by one or more `disposition_line`s, and `cook_step`s MAY be wrapped in a `disposition_block`. A `disposition` is `seal seal_ref*`, `local`, `pinned`, or `record`. The full surface and its parse-time rules are normative in §{steps.cook-disposition}; in summary, a conforming implementation MUST enforce: a `disposition_line` run immediately precedes a `cook_step` (comments/blank lines excepted) or is rejected as a dangling decorator; `seal` is additive and stackable and its `seal_ref` set is sorted and de-duplicated; `local` and `pinned` are mutually exclusive; `local`/`pinned`/`record` admit no `seal_ref`; a `seal_ref` is a bare `BARE_PROBE_KEY` (the `STRING` form and a third `:IDENT` segment are rejected, as in §{grammar-appendix.probe}); a `disposition_block` inherits its `disposition` additively onto each enclosed `cook_step`, nests, requires at least one enclosed `cook_step`, admits only `cook_step`s / nested `disposition_block`s / decorator lines / comments / blank lines in its body (any other step kind is rejected), and is terminated by a `}` line; and a `local`/`pinned` disposition nested under a `seal` block overrides it (the step is unsealed). `seal`, `local`, `pinned`, and `record` are NOT reserved words.
 
 **Step-dispatch priority (normative).** A single `Content` line inside a recipe body is dispatched in this order, with the first match winning:
 
@@ -260,8 +270,9 @@ ingredients "src/*.c"
 2. Prefix `cook` + separator → `cook_step`.
 3. Prefix `plate` + separator → `plate_step`.
 4. Prefix `test` + separator → `test_step`.
-5. First character is `@` and the remainder is non-empty → `interactive_command`.
-6. Otherwise → `shell_command`.
+5. First token is `seal`, `local`, `pinned`, or `record` and the line is a well-formed `disposition` — either bare (a `disposition_line`, with only `seal_ref`s permitted after `seal`) or terminated by `{` (a `disposition_block` opener) → disposition (§{steps.cook-disposition}). A `local`/`pinned`/`record` keyword followed by other non-`{` content does NOT match and falls through to rule 7. (The disposition keywords are disjoint from the `ingredients`/`cook`/`plate`/`test` keywords of rules 1–4, so an implementation MAY test this alternative in any order relative to them without changing the dispatch result.)
+6. First character is `@` and the remainder is non-empty → `interactive_command`.
+7. Otherwise → `shell_command`.
 
 Note: CS-0072 removed the former rule 5 that classified a `Content` line matching `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` as `module_call` (register-phase Lua) from the recipe-body cascade. Top-level module_call dispatch is now governed by §{toplevel.module-call}; authors who want register-phase Lua inside a recipe body MUST use the `>>` or `>>{` prefix.
 

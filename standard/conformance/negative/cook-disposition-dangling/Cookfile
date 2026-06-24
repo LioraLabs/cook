@@ -1,0 +1,3 @@
+recipe r
+    seal host
+    plate { echo hi }

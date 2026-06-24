@@ -1,0 +1,7 @@
+recipe build
+    seal host {
+        cook "a.o" { cc -c a.c -o a.o }
+        local {
+            cook "scratch.o" { cc -c scratch.c -o scratch.o }
+        }
+    }

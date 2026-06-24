@@ -206,11 +206,22 @@ fn format_step(step: &Step) -> String {
         Step::InlineLua { code, .. } => format!("InlineLua code={}", repr(code)),
         Step::InlineLuaBlock { code, .. } => format!("InlineLuaBlock code={}", repr(code)),
         Step::Cook { step, .. } => {
-            format!(
+            let mut s = format!(
                 "Cook outputs={} body={}",
                 format_output_patterns(&step.outputs),
                 format_body(&step.body),
-            )
+            );
+            // §8.4.3: render the disposition only when non-default, so existing
+            // fixtures (unannotated cooks) keep byte-identical `parse.txt`.
+            let d = &step.disposition;
+            if d.local || d.pinned || d.record || !d.seal.is_empty() {
+                let seal: Vec<&str> = d.seal.iter().map(|x| x.as_str()).collect();
+                s.push_str(&format!(
+                    " disposition=[local={} pinned={} record={} seal={:?}]",
+                    d.local, d.pinned, d.record, seal
+                ));
+            }
+            s
         }
         // §8.x: ingredients <probe> desugar node — probe-key source only (COOK-97).
         Step::ForEach { step, .. } => format!(

@@ -1,0 +1,15 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["a.o"] body=ShellBlock(["cc -c a.c -o a.o"]) disposition=[local=false pinned=false record=false seal=["host"]]
+        Cook outputs=["scratch.o"] body=ShellBlock(["cc -c scratch.c -o scratch.o"]) disposition=[local=true pinned=false record=false seal=[]]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

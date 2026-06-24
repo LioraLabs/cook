@@ -192,6 +192,7 @@ fn test_cook_step_one_to_one() {
                 body: Some(Body::ShellBlock(
                     vec!["gcc -c $<in> -o $<out>".to_string()],
                 )),
+                disposition: Default::default(),
             },
             line: 3,
         }],
@@ -232,6 +233,7 @@ fn test_cook_step_many_to_one() {
                     body: Some(Body::ShellBlock(
                         vec!["gcc -c $<in> -o $<out>".to_string()],
                     )),
+                    disposition: Default::default(),
                 },
                 line: 3,
             },
@@ -241,6 +243,7 @@ fn test_cook_step_many_to_one() {
                     body: Some(Body::ShellBlock(
                         vec!["ar rcs $<out> $<all>".to_string()],
                     )),
+                    disposition: Default::default(),
                 },
                 line: 4,
             },
@@ -270,6 +273,7 @@ fn test_cook_step_declaration() {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("bin/app".to_string())],
                 body: None,
+                disposition: Default::default(),
             },
             line: 3,
         }],
@@ -294,6 +298,7 @@ fn test_cook_step_lua_block() {
                 body: Some(Body::LuaBlock(
                     "cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)".to_string(),
                 )),
+                disposition: Default::default(),
             },
             line: 3,
         }],
@@ -325,6 +330,7 @@ fn test_plate_step() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("bin/$<in.stem>".to_string())],
                     body: None,
+                    disposition: Default::default(),
                 },
                 line: 2,
             },
@@ -494,6 +500,7 @@ fn test_cook_step_emits_step_group() {
                 body: Some(Body::ShellBlock(
                     vec!["gcc -c $<in> -o $<out>".to_string()],
                 )),
+                disposition: Default::default(),
             },
             line: 3,
         }],
@@ -529,6 +536,7 @@ fn test_plate_step_emits_step_group() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("bin/app".to_string())],
                     body: None,
+                    disposition: Default::default(),
                 },
                 line: 2,
             },
@@ -562,6 +570,7 @@ fn test_config_var_in_cook_step() {
                 body: Some(Body::ShellBlock(
                     vec!["$<CC> $<CFLAGS> -c $<in> -o $<out>".to_string()],
                 )),
+                disposition: Default::default(),
             },
             line: 3,
         }],
@@ -593,6 +602,7 @@ fn test_config_var_only_template() {
                 body: Some(Body::ShellBlock(
                     vec!["$<CC> -c $<in> -o $<out>".to_string()],
                 )),
+                disposition: Default::default(),
             },
             line: 3,
         }],
@@ -615,6 +625,7 @@ fn test_no_config_vars_unchanged() {
                 body: Some(Body::ShellBlock(
                     vec!["gcc -c $<in> -o $<out>".to_string()],
                 )),
+                disposition: Default::default(),
             },
             line: 3,
         }],
@@ -665,6 +676,7 @@ fn test_cook_step_lua_block_no_raw_string() {
                 body: Some(Body::LuaBlock(
                     "cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)".to_string(),
                 )),
+                disposition: Default::default(),
             },
             line: 3,
         }],
@@ -722,6 +734,7 @@ fn test_test_step_codegen() {
                     body: Some(Body::ShellBlock(
                         vec!["cc $<in> -o $<out>".to_string()],
                     )),
+                    disposition: Default::default(),
                 },
                 line: 3,
             },
@@ -820,6 +833,7 @@ fn test_no_hash_in_output() {
                     body: Some(Body::ShellBlock(
                         vec!["gcc -c $<in> -o $<out>".to_string()],
                     )),
+                    disposition: Default::default(),
                 },
                 line: 3,
             },
@@ -990,6 +1004,7 @@ fn test_dep_ref_in_command_emits_dep_output() {
                     // CS-0022: one-to-one output pattern so body can use $<in>
                     outputs: vec![OutputPattern::Quoted("build/obj/$<in.stem>.o".to_string())],
                     body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
+                    disposition: Default::default(),
                 },
                 line: 3,
             },
@@ -1000,6 +1015,7 @@ fn test_dep_ref_in_command_emits_dep_output() {
                     body: Some(Body::ShellBlock(vec![
                         "gcc -o $<out> $<all> $<libmath> $<libstr>".into(),
                     ])),
+                    disposition: Default::default(),
                 },
                 line: 4,
             },
@@ -1030,6 +1046,7 @@ fn test_env_var_still_works_when_not_recipe() {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/$<in.stem>.o".to_string())],
                 body: Some(Body::ShellBlock(vec!["$<CC> -c $<in> -o $<out>".into()])),
+                disposition: Default::default(),
             },
             line: 3,
         }],
@@ -1188,6 +1205,7 @@ fn test_dep_ref_in_plate_command() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("bin/runner".to_string())],
                     body: None,
+                    disposition: Default::default(),
                 },
                 line: 2,
             },
@@ -1220,6 +1238,7 @@ fn test_dep_driven_iteration_codegen() {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/obj/$<protos.stem>.o".to_string())],
                 body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
+                disposition: Default::default(),
             },
             line: 2,
         }],
@@ -1252,6 +1271,7 @@ fn test_dep_driven_followed_by_many_to_one() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/obj/$<protos.stem>.o".to_string())],
                     body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
+                    disposition: Default::default(),
                 },
                 line: 2,
             },
@@ -1259,6 +1279,7 @@ fn test_dep_driven_followed_by_many_to_one() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libprotos.a".to_string())],
                     body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    disposition: Default::default(),
                 },
                 line: 3,
             },
@@ -1286,6 +1307,7 @@ fn test_mixed_dep_iteration_and_substitution() {
                 body: Some(Body::ShellBlock(vec![
                     "gcc -c $<in> -I$<core>/include -o $<out>".into(),
                 ])),
+                disposition: Default::default(),
             },
             line: 2,
         }],
@@ -1400,6 +1422,7 @@ fn test_cross_recipe_deps_codegen_integration() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/obj/math/$<in.stem>.o".into())],
                     body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
+                    disposition: Default::default(),
                 },
                 line: 3,
             },
@@ -1407,6 +1430,7 @@ fn test_cross_recipe_deps_codegen_integration() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libmath.a".into())],
                     body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    disposition: Default::default(),
                 },
                 line: 4,
             },
@@ -1416,6 +1440,7 @@ fn test_cross_recipe_deps_codegen_integration() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/obj/str/$<in.stem>.o".into())],
                     body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
+                    disposition: Default::default(),
                 },
                 line: 8,
             },
@@ -1423,6 +1448,7 @@ fn test_cross_recipe_deps_codegen_integration() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libstr.a".into())],
                     body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    disposition: Default::default(),
                 },
                 line: 9,
             },
@@ -1433,6 +1459,7 @@ fn test_cross_recipe_deps_codegen_integration() {
                     // CS-0022: literal output → many-to-one; body uses $<all>
                     outputs: vec![OutputPattern::Quoted("build/obj/main.o".into())],
                     body: Some(Body::ShellBlock(vec!["gcc -c $<all> -o $<out>".into()])),
+                    disposition: Default::default(),
                 },
                 line: 13,
             },
@@ -1442,6 +1469,7 @@ fn test_cross_recipe_deps_codegen_integration() {
                     body: Some(Body::ShellBlock(vec![
                         "gcc -o $<out> $<all> $<libmath> $<libstr>".into(),
                     ])),
+                    disposition: Default::default(),
                 },
                 line: 14,
             },
@@ -1596,6 +1624,7 @@ fn test_empty_output_reference_warns_not_errors() {
                     body: Some(Body::ShellBlock(vec![
                         "echo $<empty_recipe> > $<out>".into(),
                     ])),
+                    disposition: Default::default(),
                 },
                 line: 2,
             }],
@@ -1633,6 +1662,7 @@ fn test_accessor_placeholder_in_using_string_without_driver_is_rejected() {
                     body: Some(Body::ShellBlock(vec![
                         "echo $<protos.stem>".into(), // accessor in shell-block only
                     ])),
+                    disposition: Default::default(),
                 },
                 line: 2,
             }],
@@ -1666,6 +1696,7 @@ fn test_accessor_placeholder_in_plate_command_rejected() {
                     step: CookStep {
                         outputs: vec![OutputPattern::Quoted("bin/app".to_string())],
                         body: None,
+                        disposition: Default::default(),
                     },
                     line: 2,
                 },
@@ -1759,6 +1790,7 @@ fn test_accessor_placeholder_with_driver_in_output_pattern_ok() {
                     body: Some(Body::ShellBlock(vec![
                         "gcc -c $<in> -o $<out>".into(),
                     ])),
+                    disposition: Default::default(),
                 },
                 line: 2,
             }],
@@ -2626,6 +2658,7 @@ fn cook_step_iterates_union_of_all_include_globs() {
                 body: Some(Body::ShellBlock(
                     vec!["touch $<out>".to_string()],
                 )),
+                disposition: Default::default(),
             },
             line: 3,
         }],
@@ -2662,6 +2695,7 @@ fn cook_step_many_to_one_iterates_union_too() {
                 body: Some(Body::ShellBlock(
                     vec!["echo $<all>".to_string()],
                 )),
+                disposition: Default::default(),
             },
             line: 3,
         }],
@@ -2792,6 +2826,7 @@ fn plate_step_after_cook_passthroughs_cook_outputs() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("out/$<in.stem>.o".to_string())],
                     body: Some(Body::ShellBlock(vec!["touch $<out>".to_string()])),
+                    disposition: Default::default(),
                 },
                 line: 3,
             },
@@ -2878,6 +2913,7 @@ fn cook_step_excludes_threaded_through_resolve_ingredients() {
                 body: Some(Body::ShellBlock(
                     vec!["touch $<out>".to_string()],
                 )),
+                disposition: Default::default(),
             },
             line: 3,
         }],
