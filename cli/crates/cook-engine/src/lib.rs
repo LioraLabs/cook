@@ -14,9 +14,11 @@ pub mod reconcile;
 pub mod registered_workspace;
 pub mod run;
 mod seal;
+pub mod why;
 
 pub use registered_workspace::RegisteredWorkspace;
 pub use run::{run, RunResult, TestScope};
+pub use why::{diff_against_manifest, CacheStatus, DeterminantDiff, UnitDeterminants};
 
 // Re-export the registration-phase public types so consumers can build a
 // `RegisteredWorkspace` without taking a direct `cook-register` dependency.
