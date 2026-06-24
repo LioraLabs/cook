@@ -102,6 +102,269 @@ fn diff_map_str(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Read-only `explain()` walk (COOK-165 Task 3)
+// ---------------------------------------------------------------------------
+
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::sync::Arc;
+
+use cook_cache::cache_ctx::CacheContext;
+use cook_cache::ThreadSafeCacheManager;
+use cook_contracts::WorkPayload;
+
+use crate::{dag_builder, RegisteredWorkspace, WorkNode};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Disposition {
+    Unannotated,
+    Local,
+    Pinned,
+}
+
+#[derive(Debug, Clone)]
+pub struct WhyUnit {
+    pub recipe_name: String,
+    pub cache_key: String,
+    pub key_hex: String,
+    pub disposition: Disposition,
+    pub status: CacheStatus,
+    pub determinants: UnitDeterminants,
+    pub line: u32,
+    /// On a shared miss: Some(diffs) if a producer manifest was found (empty ⇒
+    /// determinants identical to ours), None if no manifest exists for K.
+    pub manifest_diff: Option<Vec<DeterminantDiff>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WhyReport {
+    pub recipe: String,
+    pub units: Vec<WhyUnit>,
+}
+
+/// Build a read-only determinant explanation for `target`'s reachable closure.
+/// Executes nothing. `probes_dir` is `<workspace>/.cook/probes`; sealed probe
+/// values are read through from there (materialised on a prior run).
+#[allow(clippy::too_many_arguments)]
+pub fn explain(
+    target: &str,
+    registered_workspace: &RegisteredWorkspace,
+    edges: &BTreeMap<String, Vec<String>>,
+    reachable: &BTreeSet<String>,
+    cache_ctx: &CacheContext,
+    cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+    probes_dir: &Path,
+) -> Result<WhyReport, crate::EngineError> {
+    let topo = crate::run::toposort_reachable_pub(edges, reachable)?;
+    let mut all_units = Vec::with_capacity(topo.len());
+    for name in &topo {
+        let units = registered_workspace
+            .units_by_recipe
+            .get(name)
+            .ok_or_else(|| crate::EngineError::UnknownRecipe(name.clone()))?;
+        let mut u = units.clone();
+        if let Some(deps) = edges.get(name) {
+            u.deps = deps.clone();
+        }
+        all_units.push(u);
+    }
+    let dag = dag_builder::build_dag(all_units)?;
+
+    let probe_store = cook_luaotp::ProbeValueStore::new();
+    if probes_dir.exists() {
+        probe_store.attach_dir(probes_dir.to_path_buf());
+    }
+
+    let mut units = Vec::new();
+    for idx in 0..dag.len() {
+        let node = dag.node(idx).payload();
+        let Some(meta) = &node.cache_meta else {
+            continue;
+        };
+        if meta.output_paths.is_empty() {
+            continue;
+        }
+        let det = resolve_unit_determinants(node, meta, &probe_store);
+        let key_hex = unit_key_hex(meta, &det);
+        let (status, manifest_diff) =
+            classify(node, meta, cache_ctx, cache_managers, &det, &key_hex);
+        let disposition = if meta.local {
+            Disposition::Local
+        } else if meta.pinned {
+            Disposition::Pinned
+        } else {
+            Disposition::Unannotated
+        };
+        units.push(WhyUnit {
+            recipe_name: meta.recipe_name.clone(),
+            cache_key: meta.cache_key.clone(),
+            key_hex,
+            disposition,
+            status,
+            determinants: det,
+            line: node_line(node),
+            manifest_diff,
+        });
+    }
+    Ok(WhyReport {
+        recipe: target.to_string(),
+        units,
+    })
+}
+
+fn node_line(node: &WorkNode) -> u32 {
+    match &node.payload {
+        Some(WorkPayload::Shell { line, .. }) => *line as u32,
+        Some(WorkPayload::Test { line, .. }) => *line as u32,
+        Some(WorkPayload::Probe { line, .. }) => *line as u32,
+        _ => 0,
+    }
+}
+
+pub(crate) fn resolve_unit_determinants(
+    node: &WorkNode,
+    meta: &cook_contracts::CacheMeta,
+    probe_store: &cook_luaotp::ProbeValueStore,
+) -> UnitDeterminants {
+    let mut inputs = BTreeMap::new();
+    for p in &meta.input_paths {
+        let h = cook_fingerprint::hash_file(&node.working_dir.join(p)).unwrap_or(0);
+        inputs.insert(p.clone(), h);
+    }
+    let seal_contribution = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
+    let mut sealed_probes = BTreeMap::new();
+    for key in &meta.seal_keys {
+        let val = probe_store
+            .get(key)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_else(|| "<unmaterialised>".to_string());
+        sealed_probes.insert(key.clone(), val);
+    }
+    UnitDeterminants {
+        command_hash: meta.command_hash,
+        env_contribution: meta.env_contribution,
+        seal_contribution,
+        inputs,
+        output_paths: meta.output_paths.clone(),
+        consulted_env: meta.consulted_env.clone(),
+        sealed_probes,
+    }
+}
+
+fn unit_key_hex(meta: &cook_contracts::CacheMeta, det: &UnitDeterminants) -> String {
+    let mut sorted: Vec<u64> = det.inputs.values().copied().collect();
+    sorted.sort();
+    let recipe_namespace = format!(
+        "{}/{}::{}",
+        meta.project_id, meta.cookfile_path, meta.recipe_name
+    );
+    let k = cook_fingerprint::cloud_key(&cook_fingerprint::CloudKeyInputs {
+        schema_version: crate::executor::cache_version(),
+        recipe_namespace: &recipe_namespace,
+        command_hash: det.command_hash,
+        env_contribution: det.env_contribution,
+        seal_contribution: det.seal_contribution,
+        sorted_input_content_hashes: &sorted,
+    });
+    k.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn classify(
+    node: &WorkNode,
+    meta: &cook_contracts::CacheMeta,
+    cache_ctx: &CacheContext,
+    cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+    det: &UnitDeterminants,
+    key_hex: &str,
+) -> (CacheStatus, Option<Vec<DeterminantDiff>>) {
+    if local_step_hit(node, meta, det, cache_managers) {
+        return (CacheStatus::LocalHit, None);
+    }
+    if meta.local {
+        return (CacheStatus::LocalOnlyMiss, None);
+    }
+    let recipe_namespace = format!(
+        "{}/{}::{}",
+        meta.project_id, meta.cookfile_path, meta.recipe_name
+    );
+    let mut sorted: Vec<u64> = det.inputs.values().copied().collect();
+    sorted.sort();
+    let restore = cook_fingerprint::RestoreCtx {
+        backend: cache_ctx.backend.as_ref(),
+        recipe_namespace: &recipe_namespace,
+    };
+    let outs: Vec<&str> = meta.output_paths.iter().map(|s| s.as_str()).collect();
+    let shared_hit = cook_fingerprint::fetch_by_key(
+        &restore,
+        det.command_hash,
+        det.env_contribution,
+        det.seal_contribution,
+        &sorted,
+        &outs,
+        &node.working_dir,
+    );
+    if shared_hit {
+        return (CacheStatus::SharedHit, None);
+    }
+    if meta.pinned {
+        return (
+            CacheStatus::PinnedColdMiss,
+            manifest_diff(cache_ctx, key_hex, det),
+        );
+    }
+    (CacheStatus::SharedMiss, manifest_diff(cache_ctx, key_hex, det))
+}
+
+fn local_step_hit(
+    node: &WorkNode,
+    meta: &cook_contracts::CacheMeta,
+    det: &UnitDeterminants,
+    cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
+) -> bool {
+    let Some(cm) = cache_managers.get(&node.recipe_name) else {
+        return false;
+    };
+    let cache = cm.get_or_load(&meta.recipe_name);
+    let Some(entry) = cache.steps.get(&meta.cache_key) else {
+        return false;
+    };
+    let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
+    let outs: Vec<&str> = meta.output_paths.iter().map(|s| s.as_str()).collect();
+    let (result, _updated) = cook_fingerprint::needs_rebuild_cook(
+        Some(entry),
+        &input_refs,
+        &outs,
+        det.command_hash,
+        det.env_contribution,
+        det.seal_contribution,
+        &node.working_dir,
+        None,
+        meta.discovered_inputs.as_ref(),
+        meta.record,
+    );
+    matches!(result, cook_fingerprint::RebuildResult::Skip)
+}
+
+fn manifest_diff(
+    cache_ctx: &CacheContext,
+    key_hex: &str,
+    det: &UnitDeterminants,
+) -> Option<Vec<DeterminantDiff>> {
+    let bytes = key_hex.as_bytes();
+    if bytes.len() != 64 {
+        return None;
+    }
+    let mut k = [0u8; 32];
+    for i in 0..32 {
+        let s = std::str::from_utf8(&bytes[i * 2..i * 2 + 2]).ok()?;
+        k[i] = u8::from_str_radix(s, 16).ok()?;
+    }
+    let manifest = cache_ctx.backend.get_manifest(&k).ok().flatten()?;
+    Some(diff_against_manifest(det, &manifest))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

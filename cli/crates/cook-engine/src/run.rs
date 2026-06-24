@@ -744,6 +744,13 @@ fn reconcile_outputs(
 /// [`dag_builder::build_dag`]'s intra-call `recipe_leaves` accumulator has
 /// every dep present before the dependent recipe is processed. Recipes
 /// missing from `edges` are placed first (no deps known).
+pub(crate) fn toposort_reachable_pub(
+    edges: &BTreeMap<String, Vec<String>>,
+    reachable: &BTreeSet<String>,
+) -> Result<Vec<String>, EngineError> {
+    toposort_reachable(edges, reachable)
+}
+
 fn toposort_reachable(
     edges: &BTreeMap<String, Vec<String>>,
     reachable: &BTreeSet<String>,
