@@ -99,6 +99,10 @@ pub struct ArtifactMeta {
     pub recipe_namespace: String,
     pub command_hash: u64,
     pub env_contribution: u64,
+    /// COOK-161 / CS-0107: the unit's effective-seal-set value fold. Diagnostic
+    /// + key-consistency; defaults to 0 for legacy sidecars.
+    #[serde(default)]
+    pub seal_contribution: u64,
     pub schema_version: u32,
     pub size_bytes: u64,
     pub tags: BTreeSet<String>,
@@ -253,6 +257,9 @@ pub struct CloudKeyInputs<'a> {
     pub recipe_namespace: &'a str,
     pub command_hash: u64,
     pub env_contribution: u64,
+    /// COOK-161 / CS-0107: the unit's effective-seal-set value fold (see
+    /// `StepEntry.seal_contribution`). Zero for an unsealed unit.
+    pub seal_contribution: u64,
     /// Caller MUST sort by path before passing. The slice is hashed in given
     /// order; sorting is the caller's responsibility (cf. spec §5.3).
     pub sorted_input_content_hashes: &'a [u64],
@@ -286,6 +293,7 @@ pub fn cloud_key(inputs: &CloudKeyInputs<'_>) -> CloudKey {
     h.update([0x00]); // delimiter
     h.update(inputs.command_hash.to_le_bytes());
     h.update(inputs.env_contribution.to_le_bytes());
+    h.update(inputs.seal_contribution.to_le_bytes());
     for hash in inputs.sorted_input_content_hashes {
         h.update(hash.to_le_bytes());
     }
@@ -341,6 +349,7 @@ mod tests {
             recipe_namespace: "cook/Cookfile::build",
             command_hash: 0xAAAA,
             env_contribution: 0xCCCC,
+            seal_contribution: 0xDDDD,
             sorted_input_content_hashes: &[0x1111, 0x2222, 0x3333],
         }
     }
@@ -413,6 +422,21 @@ mod tests {
         assert_eq!(k.len(), 32);
     }
 
+    #[test]
+    fn cloud_key_changes_on_seal_contribution_change() {
+        let a = make_key_inputs();
+        let mut b = a;
+        b.seal_contribution = 0xFFFF;
+        assert_ne!(cloud_key(&a), cloud_key(&b));
+    }
+
+    #[test]
+    fn cloud_key_zero_seal_is_stable() {
+        let a = make_key_inputs();
+        let b = a;
+        assert_eq!(cloud_key(&a), cloud_key(&b));
+    }
+
     // ---- CS-0074 ArtifactMeta.kind tests ----
 
     fn minimal_meta_json(extra: &str) -> String {
@@ -457,6 +481,7 @@ mod tests {
             recipe_namespace: "ns".into(),
             command_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
             schema_version: 1,
             size_bytes: 0,
             tags: BTreeSet::new(),
@@ -476,6 +501,7 @@ mod tests {
             recipe_namespace: "ns".into(),
             command_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
             schema_version: 1,
             size_bytes: 0,
             tags: BTreeSet::new(),

@@ -338,6 +338,7 @@ fn try_restore(
         recipe_namespace: ctx.recipe_namespace,
         command_hash: entry.command_hash,
         env_contribution: entry.env_contribution,
+        seal_contribution: entry.seal_contribution,
         sorted_input_content_hashes: &sorted,
     };
     let cloud_k = crate::backend::cloud_key(&key_inputs);
