@@ -172,7 +172,10 @@ fn disposition_field(disp: &Disposition) -> String {
         out.push_str(&format!(", seal = {}", probe_keys_to_lua_table(&disp.seal)));
     }
     if disp.local {
-        out.push_str(", local = true");
+        // `local` is a reserved Lua keyword, so it cannot be a bare table key —
+        // it MUST be bracket-quoted. The register reader looks it up as the
+        // string key "local" (cook-register/unit_api.rs), so the value is found.
+        out.push_str(", [\"local\"] = true");
     }
     if disp.pinned {
         out.push_str(", pinned = true");
@@ -772,7 +775,8 @@ mod cook_162_disposition_field_tests {
     fn disposition_field_emits_local_and_pinned() {
         let mut d = Disposition::default();
         d.local = true;
-        assert_eq!(disposition_field(&d), ", local = true");
+        // `local` is bracket-quoted because it is a reserved Lua keyword.
+        assert_eq!(disposition_field(&d), ", [\"local\"] = true");
         let mut d2 = Disposition::default();
         d2.pinned = true;
         assert_eq!(disposition_field(&d2), ", pinned = true");
