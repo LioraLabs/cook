@@ -3670,3 +3670,31 @@ fn unsealed_step_emits_no_seal_field() {
     let lua = generate_lua_for_test(src);
     assert!(!lua.contains("seal ="), "unsealed step must not emit seal:\n{lua}");
 }
+
+// COOK-162: codegen for `local` / `pinned` disposition decorators.
+// Standard §22.1 specifies these as cook.add_unit fields; the conformance
+// fixtures cook-disposition-local-line and cook-disposition-pinned-line pin
+// the parse representation. These tests pin the codegen emission.
+
+#[test]
+fn local_disposition_emits_local_field() {
+    let src = "recipe build\n    local\n    cook \"scratch.o\" { cc -c scratch.c -o scratch.o }\n";
+    let lua = generate_lua_for_test(src);
+    // `local` is a reserved Lua keyword, so it is bracket-quoted as a table key.
+    assert!(lua.contains("[\"local\"] = true"), "local disposition must emit '[\"local\"] = true' in cook.add_unit:\n{lua}");
+}
+
+#[test]
+fn pinned_disposition_emits_pinned_field() {
+    let src = "recipe build\n    pinned\n    cook \"vendor.a\" { ar rcs vendor.a obj.o }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(lua.contains("pinned = true"), "pinned disposition must emit 'pinned = true' in cook.add_unit:\n{lua}");
+}
+
+#[test]
+fn plain_step_emits_neither_local_nor_pinned() {
+    let src = "recipe build\n    cook \"x.o\" { cc -c x.c -o x.o }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(!lua.contains("local = true"), "plain step must NOT emit 'local = true':\n{lua}");
+    assert!(!lua.contains("pinned = true"), "plain step must NOT emit 'pinned = true':\n{lua}");
+}

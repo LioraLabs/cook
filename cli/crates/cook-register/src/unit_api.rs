@@ -556,6 +556,10 @@ pub fn register_unit_api(
             }
         };
 
+        // COOK-162: sharing disposition booleans emitted by codegen.
+        let disp_local = matches!(tbl.get::<LuaValue>("local"), Ok(LuaValue::Boolean(true)));
+        let disp_pinned = matches!(tbl.get::<LuaValue>("pinned"), Ok(LuaValue::Boolean(true)));
+
         let cache_meta = if cache_enabled {
             let cache_key = build_local_cache_key(
                 &cookfile_path,
@@ -577,6 +581,8 @@ pub fn register_unit_api(
                 consulted_env,
                 discovered_inputs,
                 seal_keys: seal_keys.clone(),
+                local: disp_local,
+                pinned: disp_pinned,
             })
         } else {
             None
@@ -1739,6 +1745,71 @@ mod tests {
             "sealed key must be on CacheMeta.seal_keys; got: {:?}",
             cm.seal_keys
         );
+    }
+
+    #[test]
+    fn add_unit_local_pinned_disposition_booleans() {
+        // COOK-162: opts.local and opts.pinned are parsed as booleans into CacheMeta.
+        // Three sub-cases: local=true, pinned=true, neither.
+
+        // Case 1: local = true → CacheMeta.local == true, .pinned == false
+        {
+            let (lua, capture_state) = make_lua_with_unit_api("recipe");
+            lua.set_app_data(fake_cache_ctx());
+            lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+            lua.load(r#"
+                cook.add_unit({
+                    command = "echo local",
+                    output = "out.txt",
+                    ["local"] = true,
+                })
+            "#)
+            .exec()
+            .unwrap();
+            let state = body_ref(&capture_state);
+            let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
+            assert!(cm.local, "local=true should propagate to CacheMeta.local");
+            assert!(!cm.pinned, "local=true should leave CacheMeta.pinned false");
+        }
+
+        // Case 2: pinned = true → CacheMeta.local == false, .pinned == true
+        {
+            let (lua, capture_state) = make_lua_with_unit_api("recipe");
+            lua.set_app_data(fake_cache_ctx());
+            lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+            lua.load(r#"
+                cook.add_unit({
+                    command = "echo pinned",
+                    output = "out.txt",
+                    pinned = true,
+                })
+            "#)
+            .exec()
+            .unwrap();
+            let state = body_ref(&capture_state);
+            let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
+            assert!(!cm.local, "pinned=true should leave CacheMeta.local false");
+            assert!(cm.pinned, "pinned=true should propagate to CacheMeta.pinned");
+        }
+
+        // Case 3: neither → both false
+        {
+            let (lua, capture_state) = make_lua_with_unit_api("recipe");
+            lua.set_app_data(fake_cache_ctx());
+            lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+            lua.load(r#"
+                cook.add_unit({
+                    command = "echo neither",
+                    output = "out.txt",
+                })
+            "#)
+            .exec()
+            .unwrap();
+            let state = body_ref(&capture_state);
+            let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
+            assert!(!cm.local, "omitting local should leave CacheMeta.local false");
+            assert!(!cm.pinned, "omitting pinned should leave CacheMeta.pinned false");
+        }
     }
 
     #[test]

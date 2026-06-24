@@ -65,6 +65,22 @@ The **local cache and the shared (cross-machine) store are addressed by this sam
 >
 > The recording mechanism is shared with the shell-side `$<KEY>` sigil capture: the keys flow into the unit's `consulted_env_keys` list and are looked up against `cook.env` at unit-registration time, exactly as shell-body sigils are.
 
+### 17.1.3. Sharing and disposition effect [#exec.cache.sharing]
+
+Caching over the local index is always on. **Sharing** — publishing a unit's output artifacts to, and fetching them from, the shared content-addressed store — is also on by default for every cacheable unit, keyed by the same single key (§{exec.cache.single-key}). The local index and the shared store are addressed by that one key; a consumer reuses a shared artifact for a key K if and only if it recomputes K. A unit with no declared output (e.g. a `plate`, §{exec.cache.reconcile}) and any side-effecting step is never cached or shared.
+
+The unit's *disposition* (§{steps.cook-disposition}) selects its sharing policy. The disposition does not change the key (§{exec.cache.single-key}); it changes only whether the shared store participates and how a miss is resolved. A conforming implementation MUST observe:
+
+1. *(unannotated)* / `seal` — the unit MUST publish each declared output to the shared store after a successful run, and MUST attempt to fetch its outputs from the shared store by key before executing — both when a local cache entry exists but its outputs have drifted or are missing (the restore of §{exec.cache.integrity}), and on a *cold miss* where no local cache entry exists. On a final miss (neither store holds the key) the unit is rebuilt.
+
+2. `local` — the unit is cached in the local index only. It MUST NOT publish any output to, and MUST NOT fetch any output from, the shared store — not on a cold miss and not on a drifted-output restore. On any miss the unit is rebuilt.
+
+3. `pinned` — the unit is **fetch-only / designated-producer**: it MUST be served from cache — the local index or a fetch-by-key from the shared store — and MUST NEVER be reproduced by the consumer. When neither store holds an artifact for the unit's key (a cold miss), a conforming implementation MUST fail the build with a diagnostic that names the pinned unit; it MUST NOT execute the unit, and it MUST NOT serve any dependent that required the unit's outputs.
+
+`local` and `pinned` are mutually exclusive (§{steps.cook-disposition}). Every fetch from the shared store — drift restore or cold fetch-by-key — is subject to the integrity verification of §{exec.cache.integrity}: a fetched artifact whose bytes fail verification is treated as a miss.
+
+> **Note (informative).** Because the local index and the shared store share the one key (§{exec.cache.single-key}), a machine-independent unit (one that sealed no host probe) shares fleet-wide: any machine that recomputes the key serves the same artifact. A `local` unit is the deliberate exception — its output stays on the machine that produced it. A `pinned` unit shifts the trust boundary from "reproduce on demand" to "a designated producer populated the shared store"; consuming a pinned unit that was never produced is a hard error rather than a silent local rebuild, which is the point of the disposition. (CS-0108.)
+
 ## 17.2. Cache integrity [#exec.cache.integrity]
 An implementation that records output content in a content-addressable store — whether local, shared between machines, or remote — MUST treat that store as untrusted at restore time. When the implementation reads bytes from the store with the intent to install them as the on-disk content of a declared output, it MUST recompute the same content fingerprint that it recorded for that output and MUST compare the recomputed fingerprint to the recorded one. If the two fingerprints differ, the implementation MUST NOT install the bytes; it MUST treat the read as a cache miss and MUST fall through to the rebuild path defined in §{exec.cache.abstract} above.
 

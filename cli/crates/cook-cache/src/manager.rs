@@ -239,6 +239,8 @@ mod tests {
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
+            local: false,
+            pinned: false,
         }
     }
 

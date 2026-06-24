@@ -220,6 +220,15 @@ pub struct CacheMeta {
     /// canonical values fold into the cache key at execute-phase. Sorted /
     /// de-duplicated (`BTreeSet`). Empty for unsealed / `local` / `pinned` units.
     pub seal_keys: std::collections::BTreeSet<String>,
+    /// COOK-162 §3/§17: sharing opt-out. When true the unit is cached in the
+    /// local `StepEntry` index only and MUST NOT be published to or fetched
+    /// from the shared `CacheBackend`. Does not change the cache key.
+    pub local: bool,
+    /// COOK-162 §3/§17: fetch-only / designated-producer. When true the unit
+    /// MUST be served from cache (local index or a backend fetch-by-key) and
+    /// MUST NEVER be reproduced by the consumer; a cold miss is a HARD ERROR.
+    /// Mutually exclusive with `local`. Does not change the cache key.
+    pub pinned: bool,
 }
 
 /// A single captured unit of work within a recipe.
@@ -378,6 +387,8 @@ mod tests {
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
+            local: false,
+            pinned: false,
         };
         assert_eq!(m.recipe_name, "build");
         assert_eq!(m.command_hash, 42);
@@ -399,6 +410,8 @@ mod tests {
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
+            local: false,
+            pinned: false,
         };
         assert!(m.output_paths.is_empty());
     }
@@ -420,6 +433,8 @@ mod tests {
                 format: "make".into(),
             }),
             seal_keys: Default::default(),
+            local: false,
+            pinned: false,
         };
         let di = m.discovered_inputs.as_ref().expect("present");
         assert_eq!(di.from, ".cook/deps/a.d");
@@ -440,6 +455,8 @@ mod tests {
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
+            local: false,
+            pinned: false,
         };
         assert!(m.discovered_inputs.is_none());
     }
@@ -461,6 +478,8 @@ mod tests {
             consulted_env: Default::default(),
             discovered_inputs: None,
             seal_keys: seal.clone(),
+            local: false,
+            pinned: false,
         };
         assert_eq!(meta.seal_keys, seal);
     }
@@ -661,6 +680,8 @@ mod tests {
                 consulted_env: std::collections::BTreeMap::new(),
                 discovered_inputs: None,
                 seal_keys: Default::default(),
+                local: false,
+                pinned: false,
             }),
             dep_kind: DepKind::StepGroup(0),
             probes: vec![],

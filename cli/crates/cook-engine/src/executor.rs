@@ -599,26 +599,49 @@ pub fn execute_dag(
         }
     }
 
+    /// Outcome of the per-node cache check (COOK-162).
+    enum CacheDecision {
+        /// Served from cache (local hit, drift-restore, or cold fetch-by-key). Skip execution.
+        Hit,
+        /// Not in cache; dispatch the unit normally.
+        Miss,
+        /// `pinned` unit absent from both the local index and the shared store. MUST
+        /// NOT be rebuilt — the caller raises a hard failure.
+        PinnedColdMiss,
+    }
+
     // ----- helper: check cache for a work node -----
     // Returns true if the node can be skipped (cache hit). When `cache_ctx`
     // exposes a backend, a hit-but-drifted entry is restored from the
     // artifact store rather than rebuilt (2026-05-02 addendum spec §5.2).
+    //
+    // COOK-162 §3/§17 sharing: the disposition (`local`/`pinned`) on the unit's
+    // CacheMeta selects which stores are consulted —
+    //   - unannotated: local StepEntry, drift-restore from backend, AND a cold
+    //     fetch-by-key from the backend; a cold final miss falls through to
+    //     rebuild.
+    //   - `local`: local StepEntry ONLY. The backend is never consulted (not for
+    //     drift restore, not for cold fetch). A cold miss falls through to
+    //     rebuild.
+    //   - `pinned`: fetch-only. Served from the local index OR a backend
+    //     fetch-by-key. A cold miss in BOTH stores is a hard error — the unit
+    //     MUST NOT be rebuilt; the caller raises a failure.
     fn check_node_cache(
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
         probe_store: &cook_luaotp::ProbeValueStore,
-    ) -> bool {
+    ) -> CacheDecision {
         let meta = match &work_node.cache_meta {
             Some(m) => m,
-            None => return false,
+            None => return CacheDecision::Miss,
         };
         if meta.output_paths.is_empty() {
-            return false;
+            return CacheDecision::Miss;
         }
         let cm = match cache_managers.get(&work_node.recipe_name) {
             Some(cm) => cm,
-            None => return false,
+            None => return CacheDecision::Miss,
         };
         let cache = cm.get_or_load(&meta.recipe_name);
         let entry = cache.steps.get(&meta.cache_key);
@@ -651,6 +674,10 @@ pub fn execute_dag(
         // COOK-161: fold the effective seal set's probe values (materialised
         // by now — the unit depends on its sealed probes) into the key.
         let seal_contrib = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
+        // COOK-162 §3: a `local` unit MUST NOT consult the shared backend at all
+        // — not even on drift restore. Withholding the RestoreCtx confines it to
+        // the local StepEntry index.
+        let restore_arg = if meta.local { None } else { Some(&restore_ctx) };
         let (result, updated) = needs_rebuild_cook(
             entry,
             &input_refs,
@@ -659,16 +686,51 @@ pub fn execute_dag(
             meta.env_contribution,
             seal_contrib,
             &work_node.working_dir,
-            Some(&restore_ctx),
+            restore_arg,
             meta.discovered_inputs.as_ref(),
         );
         if matches!(result, RebuildResult::Skip) {
             if let Some(updated_entry) = updated {
                 cm.update_step(&meta.recipe_name, &meta.cache_key, updated_entry);
             }
-            true
+            return CacheDecision::Hit;
+        }
+        // RebuildResult::Rebuild — a local miss (includes a cold entry == None).
+        // COOK-162 §3: `local` units never reach the backend, so a local miss is
+        // a plain Miss → rebuild.
+        if meta.local {
+            return CacheDecision::Miss;
+        }
+        // Shared unit: attempt a cold fetch-by-key from the backend by
+        // recomputing the one key from the declared inputs. A declared input
+        // that is missing on disk means the unit cannot be a clean hit; treat it
+        // as a backend miss.
+        let input_hashes = match cook_fingerprint::hash_input_paths(&input_refs, &work_node.working_dir) {
+            Some(h) => h,
+            None => {
+                return if meta.pinned {
+                    CacheDecision::PinnedColdMiss
+                } else {
+                    CacheDecision::Miss
+                };
+            }
+        };
+        if cook_fingerprint::fetch_by_key(
+            &restore_ctx,
+            meta.command_hash,
+            meta.env_contribution,
+            seal_contrib,
+            &input_hashes,
+            &current_outputs,
+            &work_node.working_dir,
+        ) {
+            CacheDecision::Hit
+        } else if meta.pinned {
+            // Fetch-only unit absent from BOTH the local index and the shared
+            // store: a hard error. The caller MUST NOT dispatch it.
+            CacheDecision::PinnedColdMiss
         } else {
-            false
+            CacheDecision::Miss
         }
     }
 
@@ -870,46 +932,74 @@ pub fn execute_dag(
                 };
                 // Check artifact cache before executing (no-op for Test nodes since they
                 // have no cache_meta, but kept for structural symmetry).
-                if check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
-                    ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
-                    emit(
-                        event_tx,
-                        EngineEvent::NodeCacheHit {
-                            recipe: work_node.recipe_name.clone(),
-                            node_name: payload.display_name(),
-                            artifact: work_node.cache_meta.as_ref()
-                                .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
-                        },
-                    );
-                    finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
-
-                    *finished += 1;
-                    let newly_ready = dag.complete(id);
-                    let mut submitted = 0;
-                    for nid in newly_ready {
-                        submitted += process_ready(
-                            dag,
-                            nid,
-                            pool,
-                            cancelled,
-                            finished,
-                            interactive_queue,
+                // COOK-162: `pinned` cold-miss aborts the node like a failed step.
+                match check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
+                    CacheDecision::Hit => {
+                        ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                        emit(
                             event_tx,
-                            trackers,
-                            cache_managers,
-                            cache_ctx,
-                            failures,
-                            test_cache,
-                            fingerprint_by_node,
-                            cached_test_results,
-                            rerun_patterns,
-                            blocked_results,
-                            probe_units_by_node,
-                            upstream_probe_fingerprints,
-                            probe_fingerprint_by_node,
+                            EngineEvent::NodeCacheHit {
+                                recipe: work_node.recipe_name.clone(),
+                                node_name: payload.display_name(),
+                                artifact: work_node.cache_meta.as_ref()
+                                    .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
+                            },
                         );
+                        finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
+
+                        *finished += 1;
+                        let newly_ready = dag.complete(id);
+                        let mut submitted = 0;
+                        for nid in newly_ready {
+                            submitted += process_ready(
+                                dag,
+                                nid,
+                                pool,
+                                cancelled,
+                                finished,
+                                interactive_queue,
+                                event_tx,
+                                trackers,
+                                cache_managers,
+                                cache_ctx,
+                                failures,
+                                test_cache,
+                                fingerprint_by_node,
+                                cached_test_results,
+                                rerun_patterns,
+                                blocked_results,
+                                probe_units_by_node,
+                                upstream_probe_fingerprints,
+                                probe_fingerprint_by_node,
+                            );
+                        }
+                        return submitted;
                     }
-                    return submitted;
+                    CacheDecision::PinnedColdMiss => {
+                        ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                        let msg = format!(
+                            "pinned unit '{}' has no cached artifact for its key and MUST NOT be rebuilt (designated-producer / fetch-only; Standard §17 sharing)",
+                            payload.display_name()
+                        );
+                        emit(
+                            event_tx,
+                            EngineEvent::NodeFailed {
+                                recipe: work_node.recipe_name.clone(),
+                                node_name: payload.display_name(),
+                                elapsed: std::time::Duration::ZERO,
+                                error: msg.clone(),
+                            },
+                        );
+                        failures.push((id, work_node.recipe_name.clone(), msg));
+                        finish_recipe_node(trackers, &work_node.recipe_name, false, true, event_tx);
+                        *finished += 1;
+                        let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
+                        for dep_id in dependents {
+                            cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name(), blocked_results);
+                        }
+                        return 0;
+                    }
+                    CacheDecision::Miss => {}
                 }
 
                 ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
@@ -1179,47 +1269,81 @@ pub fn execute_dag(
                 1
             }
             Some(payload) => {
-                // Check cache before executing
-                if check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
-                    ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
-                    emit(
-                        event_tx,
-                        EngineEvent::NodeCacheHit {
-                            recipe: work_node.recipe_name.clone(),
-                            node_name: payload.display_name(),
-                            artifact: work_node.cache_meta.as_ref()
-                                .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
-                        },
-                    );
-                    finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
-
-                    *finished += 1;
-                    let newly_ready = dag.complete(id);
-                    let mut submitted = 0;
-                    for nid in newly_ready {
-                        submitted += process_ready(
-                            dag,
-                            nid,
-                            pool,
-                            cancelled,
-                            finished,
-                            interactive_queue,
+                // Check cache before executing.
+                // COOK-162: `pinned` cold-miss aborts the node like a failed step.
+                match check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
+                    CacheDecision::Hit => {
+                        ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                        emit(
                             event_tx,
-                            trackers,
-                            cache_managers,
-                            cache_ctx,
-                            failures,
-                            test_cache,
-                            fingerprint_by_node,
-                            cached_test_results,
-                            rerun_patterns,
-                            blocked_results,
-                            probe_units_by_node,
-                            upstream_probe_fingerprints,
-                            probe_fingerprint_by_node,
+                            EngineEvent::NodeCacheHit {
+                                recipe: work_node.recipe_name.clone(),
+                                node_name: payload.display_name(),
+                                artifact: work_node.cache_meta.as_ref()
+                                    .and_then(|m| m.output_paths.first().map(std::path::PathBuf::from)),
+                            },
                         );
+                        finish_recipe_node(trackers, &work_node.recipe_name, true, false, event_tx);
+
+                        *finished += 1;
+                        let newly_ready = dag.complete(id);
+                        let mut submitted = 0;
+                        for nid in newly_ready {
+                            submitted += process_ready(
+                                dag,
+                                nid,
+                                pool,
+                                cancelled,
+                                finished,
+                                interactive_queue,
+                                event_tx,
+                                trackers,
+                                cache_managers,
+                                cache_ctx,
+                                failures,
+                                test_cache,
+                                fingerprint_by_node,
+                                cached_test_results,
+                                rerun_patterns,
+                                blocked_results,
+                                probe_units_by_node,
+                                upstream_probe_fingerprints,
+                                probe_fingerprint_by_node,
+                            );
+                        }
+                        return submitted;
                     }
-                    return submitted;
+                    CacheDecision::PinnedColdMiss => {
+                        ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
+                        let msg = format!(
+                            "pinned unit '{}' has no cached artifact for its key and MUST NOT be rebuilt (designated-producer / fetch-only; Standard §17 sharing)",
+                            payload.display_name()
+                        );
+                        emit(
+                            event_tx,
+                            EngineEvent::NodeFailed {
+                                recipe: work_node.recipe_name.clone(),
+                                node_name: payload.display_name(),
+                                elapsed: Duration::ZERO,
+                                error: msg.clone(),
+                            },
+                        );
+                        failures.push((id, work_node.recipe_name.clone(), msg));
+                        finish_recipe_node(
+                            trackers,
+                            &work_node.recipe_name,
+                            false,
+                            true,
+                            event_tx,
+                        );
+                        *finished += 1;
+                        let dependents: Vec<usize> = dag.node(id).dependents().to_vec();
+                        for dep_id in dependents {
+                            cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name(), blocked_results);
+                        }
+                        return 0;
+                    }
+                    CacheDecision::Miss => {}
                 }
 
                 ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
@@ -1872,6 +1996,9 @@ pub fn execute_dag(
                                         };
                                         let cloud_k = cloud_key(&key_inputs);
 
+                                        // COOK-162 §3: `local` units never publish to the shared store.
+                                        let publish_to_backend = !meta.local;
+
                                         // Upload one artifact per declared output (2026-05-02 addendum
                                         // spec §5.1). Each artifact is keyed by
                                         // artifact_key(cloud_key, idx, path) so a future cache hit can
@@ -1903,13 +2030,15 @@ pub fn execute_dag(
                                                 content_hash: ArtifactMeta::zero_content_hash(),
                                                 kind: None,
                                             };
-                                            if let Err(e) = cook_cache::backend::put_bytes(
-                                                cache_ctx.backend.as_ref(),
-                                                &artifact_k,
-                                                &bytes,
-                                                &mut artifact_meta,
-                                            ) {
-                                                tracing::warn!("cache backend put failed for {}: {}", output_path, e);
+                                            if publish_to_backend {
+                                                if let Err(e) = cook_cache::backend::put_bytes(
+                                                    cache_ctx.backend.as_ref(),
+                                                    &artifact_k,
+                                                    &bytes,
+                                                    &mut artifact_meta,
+                                                ) {
+                                                    tracing::warn!("cache backend put failed for {}: {}", output_path, e);
+                                                }
                                             }
                                         }
 
@@ -1947,16 +2076,18 @@ pub fn execute_dag(
                                                         content_hash: ArtifactMeta::zero_content_hash(),
                                                         kind: None,
                                                     };
-                                                    if let Err(e) = cook_cache::backend::put_bytes(
-                                                        cache_ctx.backend.as_ref(),
-                                                        &artifact_k,
-                                                        &bytes,
-                                                        &mut artifact_meta,
-                                                    ) {
-                                                        tracing::warn!(
-                                                            "cache backend put failed for depfile {}: {e}",
-                                                            di.from
-                                                        );
+                                                    if publish_to_backend {
+                                                        if let Err(e) = cook_cache::backend::put_bytes(
+                                                            cache_ctx.backend.as_ref(),
+                                                            &artifact_k,
+                                                            &bytes,
+                                                            &mut artifact_meta,
+                                                        ) {
+                                                            tracing::warn!(
+                                                                "cache backend put failed for depfile {}: {e}",
+                                                                di.from
+                                                            );
+                                                        }
                                                     }
                                                 }
                                                 Err(e) => {
@@ -2257,6 +2388,9 @@ pub fn execute_dag(
                             };
                             let cloud_k = cloud_key(&key_inputs);
 
+                            // COOK-162 §3: `local` units never publish to the shared store.
+                            let publish_to_backend = !meta.local;
+
                             // Upload one artifact per declared output (2026-05-02 addendum
                             // spec §5.1).
                             // CS-0085: iterate the resolved (glob-expanded) list.
@@ -2286,13 +2420,15 @@ pub fn execute_dag(
                                     content_hash: ArtifactMeta::zero_content_hash(),
                                     kind: None,
                                 };
-                                if let Err(e) = cook_cache::backend::put_bytes(
-                                    cache_ctx.backend.as_ref(),
-                                    &artifact_k,
-                                    &bytes,
-                                    &mut artifact_meta,
-                                ) {
-                                    tracing::warn!("cache backend put failed for {}: {}", output_path, e);
+                                if publish_to_backend {
+                                    if let Err(e) = cook_cache::backend::put_bytes(
+                                        cache_ctx.backend.as_ref(),
+                                        &artifact_k,
+                                        &bytes,
+                                        &mut artifact_meta,
+                                    ) {
+                                        tracing::warn!("cache backend put failed for {}: {}", output_path, e);
+                                    }
                                 }
                             }
 
@@ -2330,16 +2466,18 @@ pub fn execute_dag(
                                             content_hash: ArtifactMeta::zero_content_hash(),
                                             kind: None,
                                         };
-                                        if let Err(e) = cook_cache::backend::put_bytes(
-                                            cache_ctx.backend.as_ref(),
-                                            &artifact_k,
-                                            &bytes,
-                                            &mut artifact_meta,
-                                        ) {
-                                            tracing::warn!(
-                                                "cache backend put failed for depfile {}: {e}",
-                                                di.from
-                                            );
+                                        if publish_to_backend {
+                                            if let Err(e) = cook_cache::backend::put_bytes(
+                                                cache_ctx.backend.as_ref(),
+                                                &artifact_k,
+                                                &bytes,
+                                                &mut artifact_meta,
+                                            ) {
+                                                tracing::warn!(
+                                                    "cache backend put failed for depfile {}: {e}",
+                                                    di.from
+                                                );
+                                            }
                                         }
                                     }
                                     Err(e) => {
@@ -2929,6 +3067,8 @@ mod tests {
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
+            local: false,
+            pinned: false,
         }
     }
 
@@ -2940,6 +3080,116 @@ mod tests {
             working_dir: wd,
             env_vars: default_env(),
         }
+    }
+
+    /// Build a cook node carrying a COOK-162 disposition (`local`/`pinned`) on
+    /// its CacheMeta. The CacheMeta's `recipe_name` is set to match the node's
+    /// recipe so `check_node_cache`'s cache-manager lookup resolves.
+    fn cook_node_disposition(
+        payload: WorkPayload,
+        recipe: &str,
+        wd: PathBuf,
+        outputs: Vec<&str>,
+        local: bool,
+        pinned: bool,
+    ) -> WorkNode {
+        let mut meta = cook_meta(outputs);
+        meta.recipe_name = recipe.to_string();
+        meta.cache_key = format!("k_{recipe}");
+        meta.local = local;
+        meta.pinned = pinned;
+        WorkNode {
+            payload: Some(payload),
+            recipe_name: recipe.to_string(),
+            cache_meta: Some(meta),
+            working_dir: wd,
+            env_vars: default_env(),
+        }
+    }
+
+    /// A `cache_managers` map carrying one fresh, empty manager for `recipe`,
+    /// backed by a temp cache dir. Required so `check_node_cache` does not
+    /// short-circuit to Miss on a missing manager.
+    fn empty_cache_managers(recipe: &str, dir: &std::path::Path) -> BTreeMap<String, Arc<ThreadSafeCacheManager>> {
+        let mut m = BTreeMap::new();
+        m.insert(
+            recipe.to_string(),
+            Arc::new(ThreadSafeCacheManager::new(dir.to_path_buf())),
+        );
+        m
+    }
+
+    // COOK-162 §3 sharing — `local` unit with no local StepEntry and an EMPTY
+    // shared backend must NOT consult the backend and must fall through to a
+    // normal rebuild (Miss). The node runs, produces its output, and succeeds.
+    #[test]
+    fn test_executor_cook162_local_cold_miss_rebuilds() {
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+        let managers = empty_cache_managers("loc", _tmp.path());
+
+        let mut dag = Dag::new();
+        dag.add_node(
+            cook_node_disposition(
+                shell("echo hi > out.txt"),
+                "loc",
+                wd.clone(),
+                vec!["out.txt"],
+                /* local */ true,
+                /* pinned */ false,
+            ),
+            &[],
+        )
+        .unwrap();
+
+        let result = execute_dag(dag, 1, managers, None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
+        assert!(result.is_ok(), "local cold-miss should rebuild, got: {result:?}");
+        assert!(wd.join("out.txt").exists(), "local unit should have run");
+    }
+
+    // COOK-162 §3 sharing — `pinned` (fetch-only) unit absent from BOTH the
+    // local index and the EMPTY shared backend is a HARD ERROR. The unit MUST
+    // NOT be dispatched/rebuilt; execute_dag returns TaskFailures and the
+    // declared output is never produced.
+    #[test]
+    fn test_executor_cook162_pinned_cold_miss_is_fatal() {
+        let (wd, _tmp) = tmp_dir();
+        let cache_ctx = make_cache_ctx(&_tmp);
+        let managers = empty_cache_managers("pin", _tmp.path());
+
+        let mut dag = Dag::new();
+        dag.add_node(
+            cook_node_disposition(
+                // If this ran, it would create out.txt — it MUST NOT.
+                shell("echo hi > out.txt"),
+                "pin",
+                wd.clone(),
+                vec!["out.txt"],
+                /* local */ false,
+                /* pinned */ true,
+            ),
+            &[],
+        )
+        .unwrap();
+
+        let result = execute_dag(dag, 1, managers, None, cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
+        let err = result.expect_err("pinned cold-miss must be fatal");
+        match err {
+            EngineError::TaskFailures { failures, .. } => {
+                assert_eq!(failures.len(), 1, "exactly one failure expected");
+                assert_eq!(failures[0].1, "pin");
+                assert!(
+                    failures[0].2.contains("pinned") && failures[0].2.contains("MUST NOT be rebuilt"),
+                    "diagnostic should explain the fetch-only contract; got: {}",
+                    failures[0].2
+                );
+            }
+            other => panic!("expected TaskFailures, got: {other:?}"),
+        }
+        assert!(
+            !wd.join("out.txt").exists(),
+            "pinned cold-miss MUST NOT dispatch the unit"
+        );
     }
 
     // 10. CS-0050: a cook step's missing output parent dir is created

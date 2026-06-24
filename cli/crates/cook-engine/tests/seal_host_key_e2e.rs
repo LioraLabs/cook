@@ -139,28 +139,33 @@ fn machine_independent_unit_hits_across_host_change_sealed_unit_misses() {
     );
 
     // Run 4 (back to SIMHOST=alpha): the local cache index keeps only the most
-    // recent StepEntry per cache_key, which now holds the *beta* seal value. The
-    // alpha check therefore misses on seal_contribution and rebuilds (host -> 3).
-    // This is correct single-key behaviour — the key is a pure function of the
-    // sealed value, and the rebuild check compares against the last persisted
-    // entry, not a history of every value seen.
+    // recent StepEntry per cache_key, which now holds the *beta* seal value, so
+    // the local check misses on seal_contribution. Under COOK-162 §3 sharing a
+    // cold local miss on a NON-`local` unit consults the shared store by
+    // recomputing the unit's one key from the *current* (alpha) seal value — and
+    // the alpha-keyed artifact is still in the shared backend from runs 1/2. So
+    // the unit is served by a cold fetch-by-key (host stays 2), NOT rebuilt.
+    // This is the single-key sharing contract: the key is a pure function of the
+    // sealed value, and any previously-published artifact for that key is reused
+    // fleet-wide regardless of what the local index last persisted.
     build(wd, "alpha");
     assert_eq!(
         runs(wd, "host.runlog"),
-        3,
-        "run4: returning to the alpha host value rebuilds — the persisted entry \
-         holds the beta seal value, so the alpha key misses"
+        2,
+        "run4: returning to the alpha host value HITS via COOK-162 cold \
+         fetch-by-key — the alpha-keyed artifact is still in the shared store"
     );
     assert_eq!(runs(wd, "shared.runlog"), 1, "run4: shared still hits");
 
-    // Run 5 (SIMHOST=alpha again, now warm on alpha): the entry persisted in run4
-    // is the alpha-keyed one, so the sealed unit hits — confirming the miss in
-    // run4 was a key change, not an every-run rebuild.
+    // Run 5 (SIMHOST=alpha again): a cold-fetch Hit does not persist a local
+    // StepEntry (no update_step), so the local index still holds the beta entry
+    // from run3. The sealed unit therefore hits again via COOK-162 cold
+    // fetch-by-key against the still-present alpha-keyed artifact — host stays 2.
     build(wd, "alpha");
     assert_eq!(
         runs(wd, "host.runlog"),
-        3,
-        "run5: warm on alpha must hit — proves run4 was a key change, not a \
-         broken always-rebuild"
+        2,
+        "run5: alpha must hit again via cold fetch-by-key — the alpha-keyed \
+         artifact remains in the shared store"
     );
 }
