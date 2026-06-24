@@ -2005,6 +2005,11 @@ fn render_diff(d: &cook_engine::why::DeterminantDiff) -> String {
     }
 }
 
+// Deterministic JSON output (sorted object keys, §17.1.6 informative note)
+// relies on `serde_json` being built WITHOUT the `preserve_order` feature, so
+// `serde_json::Map` is BTreeMap-backed and serialises keys sorted regardless of
+// insertion order. The determinant maps themselves are already `BTreeMap` in the
+// engine; this note covers the per-unit object keys assembled here.
 fn render_why_json(report: &cook_engine::why::WhyReport) -> String {
     let units: Vec<serde_json::Value> = report.units.iter().map(why_unit_json).collect();
     serde_json::to_string_pretty(&serde_json::json!({

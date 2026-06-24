@@ -475,20 +475,9 @@ where
     }
 
     // 5. Per-recipe cache managers. One per reachable recipe, anchored at
-    //    that recipe's prefix's working_dir.
-    let cache_managers: BTreeMap<String, Arc<ThreadSafeCacheManager>> = reachable
-        .iter()
-        .map(|name| {
-            let prefix = split_recipe_name(name).0;
-            let wd = registered_workspace
-                .working_dir_by_prefix
-                .get(&prefix)
-                .cloned()
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
-            let cache_dir = wd.join(".cook").join("cache");
-            (name.clone(), Arc::new(ThreadSafeCacheManager::new(cache_dir)))
-        })
-        .collect();
+    //    that recipe's prefix's working_dir. Shared with `cook why` via
+    //    `cache_managers_for_cli` so the two paths can never drift.
+    let cache_managers = cache_managers_for_cli(registered_workspace, reachable);
 
     // §17.7 stale-output reconciliation: snapshot each reached recipe's prior
     // recorded outputs (absolute path → recorded content hash) BEFORE the run
