@@ -2245,21 +2245,30 @@ pub fn execute_dag(
                         kind: None,
                     }
                     .as_probe_value();
-                    if let Err(e) = cook_cache::backend::put_bytes(
-                        cache_ctx.backend.as_ref(),
-                        &fp,
-                        &probe_out.bytes,
-                        &mut artifact_meta,
-                    ) {
-                        tracing::warn!(
-                            "probe '{}': cache backend put failed ({}); continuing without caching",
-                            probe_out.key, e,
-                        );
-                    } else {
-                        tracing::debug!(
-                            "probe '{}': cached output (fp={:x?})",
-                            probe_out.key, &fp[..4],
-                        );
+                    // COOK-168: publish-off / read-only client mode suppresses
+                    // ALL shared-store uploads, including probe values — fetch
+                    // by key is unaffected. The canonical local copy
+                    // (.cook/probes/<key>.json) and the per-run ProbeValueStore
+                    // were already populated above (CS-0102 / G3), so same-build
+                    // consumers and downstream probes still read the value; only
+                    // the shared-backend put is skipped.
+                    if cache_ctx.publish_enabled {
+                        if let Err(e) = cook_cache::backend::put_bytes(
+                            cache_ctx.backend.as_ref(),
+                            &fp,
+                            &probe_out.bytes,
+                            &mut artifact_meta,
+                        ) {
+                            tracing::warn!(
+                                "probe '{}': cache backend put failed ({}); continuing without caching",
+                                probe_out.key, e,
+                            );
+                        } else {
+                            tracing::debug!(
+                                "probe '{}': cached output (fp={:x?})",
+                                probe_out.key, &fp[..4],
+                            );
+                        }
                     }
                 } else {
                     // No fingerprint was computed at dispatch time (probe_units_by_node

@@ -270,3 +270,75 @@ fn publish_off_fresh_build_succeeds_and_publishes_nothing() {
         cache.path().display(),
     );
 }
+
+/// Test C: a fresh build that includes a `probe` succeeds under publish-off
+/// and uploads NOTHING — including the probe value. The probe-value put is the
+/// fifth shared-store upload site; publish-off must suppress it too so the
+/// §17.1.3 / CS-0111 "no artifact for ANY unit" guarantee holds. The probe's
+/// canonical local copy (`.cook/probes/<key>.json`) and the per-run store are
+/// still populated, so the consuming unit reads the value and runs to
+/// completion.
+#[test]
+fn publish_off_probe_build_succeeds_and_publishes_nothing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cache = tempfile::tempdir().expect("cache tempdir");
+    let wd = tmp.path();
+
+    assert_eq!(
+        artifact_file_count(cache.path()),
+        0,
+        "precondition: cache tempdir must start empty"
+    );
+
+    // A top-level `probe` plus a unit that seals on it. Executing a reachable
+    // sealed unit forces the probe to run (its value folds into the unit's
+    // key), which exercises the probe-value upload site — the fifth shared-
+    // store put. Under publish-off it must upload nothing. (Sealing, as in
+    // `seal_host_key_e2e.rs`, avoids entangling probe value-substitution
+    // syntax; the point here is purely that the probe's put is suppressed.)
+    write_fixture(
+        wd,
+        cache.path(),
+        &cloud_toml_publish_off(cache.path()),
+        r#"probe tag
+    produce { echo PUBOFF }
+
+recipe make
+    ingredients "src/in.txt"
+    seal tag
+    cook "out/art.txt" {
+        cp src/in.txt out/art.txt
+        echo ran >> out/art.runlog
+    }
+"#,
+    );
+
+    // Cold both sides, publish OFF.
+    build(wd, "make");
+
+    // (1) The output was produced — the sealed unit ran and the probe executed
+    //     to provide the sealed determinant, despite publish being off.
+    assert!(
+        wd.join("out/art.txt").exists(),
+        "publish-off probe build: the sealed unit MUST run and produce its output"
+    );
+
+    // (2) The probe's canonical local copy exists — local materialisation is
+    //     unaffected by publish-off.
+    assert!(
+        wd.join(".cook").join("probes").exists(),
+        "publish-off probe build: the local probe materialisation dir MUST exist"
+    );
+
+    // (3) The shared store holds NOTHING — neither the unit artifact NOR the
+    //     probe value was uploaded.
+    let count = artifact_file_count(cache.path());
+    assert_eq!(
+        count,
+        0,
+        "publish-off probe build: the shared store MUST remain empty — the probe \
+         value is a shared-store upload site and publish-off suppresses it too \
+         (found {count} artifact file(s) under {})",
+        cache.path().display(),
+    );
+}
