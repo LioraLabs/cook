@@ -2100,6 +2100,35 @@ pub fn execute_dag(
                                                 }
                                             }
                                         }
+
+                                        // COOK-166: persist the producer determinant manifest
+                                        // alongside the shared artifacts, keyed by the unit's
+                                        // cloud_key K. `local` units skip this
+                                        // (publish_to_backend is false).
+                                        if publish_to_backend {
+                                            let manifest = build_determinant_manifest(
+                                                CACHE_VERSION,
+                                                &recipe_namespace,
+                                                &cloud_k,
+                                                meta.command_hash,
+                                                meta.env_contribution,
+                                                seal_contrib,
+                                                &step_entry.inputs,
+                                                &resolved_output_paths,
+                                                &meta.consulted_env,
+                                                &meta.seal_keys,
+                                                &pool.probe_value_store(),
+                                            );
+                                            if let Err(e) = cache_ctx
+                                                .backend
+                                                .as_ref()
+                                                .put_manifest(&cloud_k, &manifest)
+                                            {
+                                                tracing::warn!(
+                                                    "determinant manifest put failed for {recipe_namespace}: {e}"
+                                                );
+                                            }
+                                        }
                                     }
                                     Err(e) => {
                                         tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
@@ -2490,6 +2519,35 @@ pub fn execute_dag(
                                     }
                                 }
                             }
+
+                            // COOK-166: persist the producer determinant manifest
+                            // alongside the shared artifacts, keyed by the unit's
+                            // cloud_key K. `local` units skip this
+                            // (publish_to_backend is false).
+                            if publish_to_backend {
+                                let manifest = build_determinant_manifest(
+                                    CACHE_VERSION,
+                                    &recipe_namespace,
+                                    &cloud_k,
+                                    meta.command_hash,
+                                    meta.env_contribution,
+                                    seal_contrib,
+                                    &step_entry.inputs,
+                                    &resolved_output_paths,
+                                    &meta.consulted_env,
+                                    &meta.seal_keys,
+                                    &pool.probe_value_store(),
+                                );
+                                if let Err(e) = cache_ctx
+                                    .backend
+                                    .as_ref()
+                                    .put_manifest(&cloud_k, &manifest)
+                                {
+                                    tracing::warn!(
+                                        "determinant manifest put failed for {recipe_namespace}: {e}"
+                                    );
+                                }
+                            }
                         }
                         Err(e) => {
                             tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
@@ -2787,9 +2845,6 @@ pub fn execute_dag(
 /// `sealed` probe values are read from the `ProbeValueStore` for each key in
 /// the effective seal set, decoded as UTF-8 canonical JSON (lossy decode guards
 /// the theoretically-impossible non-UTF-8 case — probe values are canonical JSON).
-// COOK-166: not yet wired into the publish site (that lands in a follow-up
-// task); the helper is exercised by the unit test in the meantime.
-#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 fn build_determinant_manifest(
     schema_version: u32,
