@@ -218,6 +218,7 @@ mod tests {
             }],
             command_hash,
             env_contribution: 0,
+            seal_contribution: 0,
         }
     }
 

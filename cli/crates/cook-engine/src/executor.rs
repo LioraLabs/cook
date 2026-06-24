@@ -647,12 +647,15 @@ pub fn execute_dag(
             backend: cache_ctx.backend.as_ref(),
             recipe_namespace: &recipe_namespace,
         };
+        // seal_contribution not yet threaded through CacheMeta;
+        // passes 0 until contracts grow the field (COOK-161).
         let (result, updated) = needs_rebuild_cook(
             entry,
             &input_refs,
             &current_outputs,
             meta.command_hash,
             meta.env_contribution,
+            0,
             &work_node.working_dir,
             Some(&restore_ctx),
             meta.discovered_inputs.as_ref(),
@@ -1854,6 +1857,8 @@ pub fn execute_dag(
                                             recipe_namespace: &recipe_namespace,
                                             command_hash: meta.command_hash,
                                             env_contribution: meta.env_contribution,
+                                            // seal_contribution not yet in CacheMeta (COOK-161)
+                                            seal_contribution: 0,
                                             sorted_input_content_hashes: &sorted_hashes,
                                         };
                                         let cloud_k = cloud_key(&key_inputs);
@@ -1878,6 +1883,7 @@ pub fn execute_dag(
                                                 recipe_namespace: recipe_namespace.clone(),
                                                 command_hash: meta.command_hash,
                                                 env_contribution: meta.env_contribution,
+                                                seal_contribution: 0,
                                                 schema_version: CACHE_VERSION,
                                                 size_bytes: bytes.len() as u64,
                                                 tags: std::collections::BTreeSet::new(),
@@ -1917,6 +1923,7 @@ pub fn execute_dag(
                                                         recipe_namespace: recipe_namespace.clone(),
                                                         command_hash: meta.command_hash,
                                                         env_contribution: meta.env_contribution,
+                                                        seal_contribution: 0,
                                                         schema_version: CACHE_VERSION,
                                                         size_bytes: bytes.len() as u64,
                                                         tags: std::collections::BTreeSet::new(),
@@ -2084,6 +2091,7 @@ pub fn execute_dag(
                         recipe_namespace: format!("probe:{}", probe_out.key),
                         command_hash: 0,
                         env_contribution: 0,
+                        seal_contribution: 0,
                         schema_version: CACHE_VERSION,
                         size_bytes: probe_out.bytes.len() as u64,
                         tags: std::collections::BTreeSet::new(),
@@ -2229,6 +2237,8 @@ pub fn execute_dag(
                                 recipe_namespace: &recipe_namespace,
                                 command_hash: meta.command_hash,
                                 env_contribution: meta.env_contribution,
+                                // seal_contribution not yet in CacheMeta (COOK-161)
+                                seal_contribution: 0,
                                 sorted_input_content_hashes: &sorted_hashes,
                             };
                             let cloud_k = cloud_key(&key_inputs);
@@ -2251,6 +2261,7 @@ pub fn execute_dag(
                                     recipe_namespace: recipe_namespace.clone(),
                                     command_hash: meta.command_hash,
                                     env_contribution: meta.env_contribution,
+                                    seal_contribution: 0,
                                     schema_version: CACHE_VERSION,
                                     size_bytes: bytes.len() as u64,
                                     tags: std::collections::BTreeSet::new(),
@@ -2290,6 +2301,7 @@ pub fn execute_dag(
                                             recipe_namespace: recipe_namespace.clone(),
                                             command_hash: meta.command_hash,
                                             env_contribution: meta.env_contribution,
+                                            seal_contribution: 0,
                                             schema_version: CACHE_VERSION,
                                             size_bytes: bytes.len() as u64,
                                             tags: std::collections::BTreeSet::new(),

@@ -24,6 +24,7 @@ fn make_step_with_thin_inputs(source_path: &str, source_hash: u64) -> StepEntry 
         }],
         command_hash: 0x1111,
         env_contribution: 0x3333,
+        seal_contribution: 0,
     }
 }
 
@@ -44,6 +45,7 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
         recipe_namespace: "myproj/Cookfile::build",
         command_hash: entry_a.command_hash,
         env_contribution: entry_a.env_contribution,
+        seal_contribution: 0,
         sorted_input_content_hashes: &sorted_hashes,
     };
     let key = cloud_key(&inputs_for_key);
@@ -54,6 +56,7 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
         recipe_namespace: "myproj/Cookfile::build".into(),
         command_hash: entry_a.command_hash,
         env_contribution: entry_a.env_contribution,
+        seal_contribution: 0,
         schema_version: CACHE_VERSION,
         size_bytes: artifact_bytes.len() as u64,
         tags: Default::default(),
@@ -75,6 +78,7 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
         recipe_namespace: "myproj/Cookfile::build",
         command_hash: entry_b.command_hash,
         env_contribution: entry_b.env_contribution,
+        seal_contribution: 0,
         sorted_input_content_hashes: &sorted_b,
     };
     let key_b = cloud_key(&inputs_for_key_b);
@@ -111,6 +115,7 @@ fn header_change_after_pull_invalidates_correctly() {
         outputs: entry_thin.outputs.clone(),
         command_hash: entry_thin.command_hash,
         env_contribution: entry_thin.env_contribution,
+        seal_contribution: 0,
     };
 
     let mut h_thin: Vec<u64> = entry_thin.inputs.iter().map(|fr| fr.hash).collect();
@@ -123,6 +128,7 @@ fn header_change_after_pull_invalidates_correctly() {
         recipe_namespace: "myproj/Cookfile::build",
         command_hash: entry_thin.command_hash,
         env_contribution: entry_thin.env_contribution,
+        seal_contribution: 0,
         sorted_input_content_hashes: &h_thin,
     });
     let key_fat = cloud_key(&CloudKeyInputs {
@@ -130,6 +136,7 @@ fn header_change_after_pull_invalidates_correctly() {
         recipe_namespace: "myproj/Cookfile::build",
         command_hash: entry_with_header.command_hash,
         env_contribution: entry_with_header.env_contribution,
+        seal_contribution: 0,
         sorted_input_content_hashes: &h_fat,
     });
 

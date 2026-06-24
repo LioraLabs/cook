@@ -59,6 +59,7 @@ fn multi_output_restore_writes_all_outputs() {
         recipe_namespace,
         command_hash: 0x1234,
         env_contribution: 0,
+        seal_contribution: 0,
         sorted_input_content_hashes: &sorted,
     });
 
@@ -75,6 +76,7 @@ fn multi_output_restore_writes_all_outputs() {
             recipe_namespace: recipe_namespace.into(),
             command_hash: 0x1234,
             env_contribution: 0,
+            seal_contribution: 0,
             schema_version: CACHE_VERSION,
             size_bytes: bytes.len() as u64,
             tags: BTreeSet::new(),
@@ -100,6 +102,7 @@ fn multi_output_restore_writes_all_outputs() {
         outputs: vec![foo_record, bar_record],
         command_hash: 0x1234,
         env_contribution: 0,
+        seal_contribution: 0,
     };
 
     let ctx = RestoreCtx {
@@ -111,6 +114,7 @@ fn multi_output_restore_writes_all_outputs() {
         &["in.txt"],
         &["foo.out", "bar.out"],
         0x1234,
+        0,
         0,
         wd,
         Some(&ctx),
@@ -159,6 +163,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         recipe_namespace,
         command_hash: 0x1234,
         env_contribution: 0,
+        seal_contribution: 0,
         sorted_input_content_hashes: &sorted,
     });
     // Seed only the first artifact.
@@ -167,6 +172,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         recipe_namespace: recipe_namespace.into(),
         command_hash: 0x1234,
         env_contribution: 0,
+        seal_contribution: 0,
         schema_version: CACHE_VERSION,
         size_bytes: 11,
         tags: BTreeSet::new(),
@@ -183,6 +189,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         outputs: vec![foo_record, bar_record],
         command_hash: 0x1234,
         env_contribution: 0,
+        seal_contribution: 0,
     };
     let ctx = RestoreCtx {
         backend: backend.as_ref(),
@@ -193,6 +200,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         &["in.txt"],
         &["foo.out", "bar.out"],
         0x1234,
+        0,
         0,
         wd,
         Some(&ctx),

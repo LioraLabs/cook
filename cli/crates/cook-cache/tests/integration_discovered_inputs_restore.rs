@@ -69,6 +69,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
         ],
         command_hash: 0xc0de,
         env_contribution: 0,
+        seal_contribution: 0,
     };
 
     // Compose cloud_key from the fat input set.
@@ -79,6 +80,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
         recipe_namespace: &recipe_namespace,
         command_hash: 0xc0de,
         env_contribution: 0,
+        seal_contribution: 0,
         sorted_input_content_hashes: &sorted,
     });
 
@@ -91,6 +93,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
         recipe_namespace: recipe_namespace.clone(),
         command_hash: 0xc0de,
         env_contribution: 0,
+        seal_contribution: 0,
         schema_version: CACHE_VERSION,
         size_bytes: size,
         tags: Default::default(),
@@ -123,6 +126,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
         &["a.c"],
         &["a.o"],
         0xc0de,
+        0,
         0,
         wd,
         Some(&restore_ctx),

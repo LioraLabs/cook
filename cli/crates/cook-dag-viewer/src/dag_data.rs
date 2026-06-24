@@ -314,12 +314,15 @@ fn build_wave(
                     let current_outputs: Vec<&str> =
                         meta.output_paths.iter().map(|s| s.as_str()).collect();
                     // Viewer query — no restore side-effects.
+                    // seal_contribution not yet threaded through CacheMeta;
+                    // passes 0 until contracts grow the field (COOK-161).
                     let (result, _) = needs_rebuild_cook(
                         entry,
                         &input_refs,
                         &current_outputs,
                         meta.command_hash,
                         meta.env_contribution,
+                        0,
                         &ru.working_dir,
                         None,
                         None,
