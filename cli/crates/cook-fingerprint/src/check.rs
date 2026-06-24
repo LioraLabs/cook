@@ -315,6 +315,7 @@ pub fn needs_rebuild_cook(
         outputs: entry.outputs.clone(),
         command_hash: entry.command_hash,
         env_contribution: entry.env_contribution,
+        seal_contribution: entry.seal_contribution,
     };
     (RebuildResult::Skip, Some(updated))
 }
@@ -411,6 +412,7 @@ pub fn needs_rebuild_plate(
                 outputs: vec![],
                 command_hash: entry.command_hash,
                 env_contribution: entry.env_contribution,
+                seal_contribution: entry.seal_contribution,
             };
             (RebuildResult::Skip, Some(updated))
         }
@@ -525,6 +527,7 @@ mod tests {
             outputs: vec![out_record],
             command_hash: 0x1111,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
@@ -550,6 +553,7 @@ mod tests {
             outputs: vec![],
             command_hash: 0xbeef,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
@@ -573,6 +577,7 @@ mod tests {
             outputs: vec![out_record],
             command_hash: 0xbeef,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
@@ -609,6 +614,7 @@ mod tests {
             outputs: vec![out_record],
             command_hash: 0xbeef,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
@@ -641,6 +647,7 @@ mod tests {
             outputs: vec![],
             command_hash: 0xbeef,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) = needs_rebuild_plate(Some(&entry), &["in.c"], 0xbeef, 0, wd);
@@ -707,6 +714,7 @@ mod tests {
             outputs: vec![out_record],
             command_hash: 0xbeef,
             env_contribution: 0x1111,
+            seal_contribution: 0,
         };
 
         let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0x9999, wd, None, None);
@@ -747,6 +755,7 @@ mod tests {
             }],
             command_hash: 0xc0de,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let di = DiscoveredInputs {
@@ -798,6 +807,7 @@ mod tests {
             }],
             command_hash: 0xc0de,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let di = DiscoveredInputs {

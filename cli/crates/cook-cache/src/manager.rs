@@ -192,6 +192,7 @@ impl ThreadSafeCacheManager {
             outputs: new_outputs,
             command_hash: meta.command_hash,
             env_contribution: meta.env_contribution,
+            seal_contribution: 0,
         };
         self.update_step(recipe_name, cache_key, entry.clone());
         Ok(entry)
