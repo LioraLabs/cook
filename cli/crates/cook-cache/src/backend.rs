@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 pub use cook_fingerprint::backend::{
     artifact_key, cloud_key, ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend,
-    CloudKey, CloudKeyInputs,
+    CloudKey, CloudKeyInputs, DeterminantManifest,
 };
 
 /// Streaming SHA-256 verifier: wraps an `R: Read`, tees bytes through a
@@ -430,6 +430,54 @@ impl CacheBackend for LocalBackend {
         std::fs::metadata(&self.root)
             .map(|_| ())
             .map_err(|e| BackendError::Other(format!("root {}: {e}", self.root.display())))
+    }
+
+    fn put_manifest(
+        &self,
+        key: &CloudKey,
+        manifest: &DeterminantManifest,
+    ) -> BackendResult<()> {
+        let path = self.path_for(key).with_extension("provenance.json");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| BackendError::Other(format!("mkdir {}: {e}", parent.display())))?;
+        }
+        let bytes = serde_json::to_vec(manifest)
+            .map_err(|e| BackendError::Other(format!("serialize manifest: {e}")))?;
+        // Build the temp path explicitly: `path` already ends in
+        // `…62.provenance.json`, so `with_extension("…tmp")` would replace
+        // the `.json` segment and mangle the sibling base. Append `.tmp` to
+        // the full file name instead so temp and final are siblings.
+        let tmp = path.with_file_name(format!(
+            "{}.tmp",
+            path.file_name().unwrap().to_string_lossy()
+        ));
+        std::fs::write(&tmp, &bytes)
+            .map_err(|e| BackendError::Other(format!("write {}: {e}", tmp.display())))?;
+        std::fs::rename(&tmp, &path)
+            .map_err(|e| BackendError::Other(format!("rename {}: {e}", path.display())))?;
+        Ok(())
+    }
+
+    fn get_manifest(&self, key: &CloudKey) -> BackendResult<Option<DeterminantManifest>> {
+        let path = self.path_for(key).with_extension("provenance.json");
+        match std::fs::read(&path) {
+            Ok(b) => match serde_json::from_slice::<DeterminantManifest>(&b) {
+                Ok(m) => Ok(Some(m)),
+                Err(e) => {
+                    tracing::warn!(
+                        "determinant manifest: malformed sidecar at {} ({e}); treating as absent",
+                        path.display()
+                    );
+                    Ok(None)
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(BackendError::Other(format!(
+                "read manifest {}: {e}",
+                path.display()
+            ))),
+        }
     }
 }
 
@@ -1065,5 +1113,57 @@ mod tests {
 
         let got = get_bytes(&backend, &k).expect("get").expect("hit");
         assert_eq!(got, bytes);
+    }
+
+    // ─── COOK-166 / CS-0110: determinant manifest sidecar ───────────────────
+
+    fn sample_manifest() -> DeterminantManifest {
+        use std::collections::BTreeMap;
+        let mut inputs = BTreeMap::new();
+        inputs.insert("src/a.c".to_string(), 0xAABB_u64);
+        let mut env = BTreeMap::new();
+        env.insert("CC".to_string(), "clang".to_string());
+        let mut probes = BTreeMap::new();
+        probes.insert("host".to_string(), "\"x86_64-linux\"".to_string());
+        DeterminantManifest {
+            schema_version: 5,
+            recipe_namespace: "cook/Cookfile::build".into(),
+            key: "ab".repeat(32),
+            command_hash: 0x1111,
+            env_contribution: 0x2222,
+            seal_contribution: 0x3333,
+            inputs,
+            output_paths: vec!["build/a.o".into()],
+            consulted_env: env,
+            sealed_probes: probes,
+        }
+    }
+
+    #[test]
+    fn local_backend_manifest_round_trip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x80);
+        let m = sample_manifest();
+        backend.put_manifest(&k, &m).expect("put_manifest");
+        let got = backend.get_manifest(&k).expect("get_manifest").expect("present");
+        assert_eq!(got, m);
+    }
+
+    #[test]
+    fn local_backend_manifest_miss_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        assert!(backend.get_manifest(&key(0x81)).expect("get_manifest").is_none());
+    }
+
+    #[test]
+    fn local_backend_manifest_stored_beside_artifact() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = LocalBackend::new(dir.path().to_path_buf());
+        let k = key(0x82);
+        backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
+        let prov = backend.path_for(&k).with_extension("provenance.json");
+        assert!(prov.exists(), "manifest sidecar must exist at {}", prov.display());
     }
 }

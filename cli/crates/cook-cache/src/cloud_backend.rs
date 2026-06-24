@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::backend::VerifyingReader;
 use cook_fingerprint::backend::{
     ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend, CloudKey,
+    DeterminantManifest,
 };
 
 /// Sync HTTP client implementing `CacheBackend` against a remote artifact
@@ -472,6 +473,24 @@ impl CacheBackend for CloudBackend {
                 Err(e) => Err(map_ureq_error(e, "health")),
             }
         })
+    }
+
+    /// COOK-166 / CS-0110: the determinant manifest is local-filesystem
+    /// diagnostic data (a `provenance.json` sidecar). The cloud backend has
+    /// no manifest endpoint yet (producer-attestation upload is deferred to
+    /// M2); this is a no-op so a manifest never blocks a build.
+    fn put_manifest(
+        &self,
+        _key: &CloudKey,
+        _manifest: &DeterminantManifest,
+    ) -> BackendResult<()> {
+        Ok(())
+    }
+
+    /// No manifest endpoint yet — a cloud miss is the absence case, never an
+    /// error.
+    fn get_manifest(&self, _key: &CloudKey) -> BackendResult<Option<DeterminantManifest>> {
+        Ok(None)
     }
 }
 
