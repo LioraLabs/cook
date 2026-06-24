@@ -924,6 +924,7 @@ mod tests {
             cloud_config: std::sync::Arc::new(cook_cache::cloud_config::CloudConfig::default()),
             project_root: dir_path,
             project_id: "test-project".to_string(),
+            publish_enabled: true,
         })
     }
 
