@@ -1999,7 +1999,9 @@ pub fn execute_dag(
                                         let cloud_k = cloud_key(&key_inputs);
 
                                         // COOK-162 §3: `local` units never publish to the shared store.
-                                        let publish_to_backend = !meta.local;
+                                        // COOK-168: publish-off / read-only client mode suppresses
+                                        // ALL uploads globally; fetch-by-key is unaffected.
+                                        let publish_to_backend = !meta.local && cache_ctx.publish_enabled;
 
                                         // Upload one artifact per declared output (2026-05-02 addendum
                                         // spec §5.1). Each artifact is keyed by
@@ -2273,21 +2275,30 @@ pub fn execute_dag(
                         kind: None,
                     }
                     .as_probe_value();
-                    if let Err(e) = cook_cache::backend::put_bytes(
-                        cache_ctx.backend.as_ref(),
-                        &fp,
-                        &probe_out.bytes,
-                        &mut artifact_meta,
-                    ) {
-                        tracing::warn!(
-                            "probe '{}': cache backend put failed ({}); continuing without caching",
-                            probe_out.key, e,
-                        );
-                    } else {
-                        tracing::debug!(
-                            "probe '{}': cached output (fp={:x?})",
-                            probe_out.key, &fp[..4],
-                        );
+                    // COOK-168: publish-off / read-only client mode suppresses
+                    // ALL shared-store uploads, including probe values — fetch
+                    // by key is unaffected. The canonical local copy
+                    // (.cook/probes/<key>.json) and the per-run ProbeValueStore
+                    // were already populated above (CS-0102 / G3), so same-build
+                    // consumers and downstream probes still read the value; only
+                    // the shared-backend put is skipped.
+                    if cache_ctx.publish_enabled {
+                        if let Err(e) = cook_cache::backend::put_bytes(
+                            cache_ctx.backend.as_ref(),
+                            &fp,
+                            &probe_out.bytes,
+                            &mut artifact_meta,
+                        ) {
+                            tracing::warn!(
+                                "probe '{}': cache backend put failed ({}); continuing without caching",
+                                probe_out.key, e,
+                            );
+                        } else {
+                            tracing::debug!(
+                                "probe '{}': cached output (fp={:x?})",
+                                probe_out.key, &fp[..4],
+                            );
+                        }
                     }
                 } else {
                     // No fingerprint was computed at dispatch time (probe_units_by_node
@@ -2420,7 +2431,9 @@ pub fn execute_dag(
                             let cloud_k = cloud_key(&key_inputs);
 
                             // COOK-162 §3: `local` units never publish to the shared store.
-                            let publish_to_backend = !meta.local;
+                            // COOK-168: publish-off / read-only client mode suppresses
+                            // ALL uploads globally; fetch-by-key is unaffected.
+                            let publish_to_backend = !meta.local && cache_ctx.publish_enabled;
 
                             // Upload one artifact per declared output (2026-05-02 addendum
                             // spec §5.1).
@@ -2991,6 +3004,7 @@ mod tests {
             cloud_config: Arc::new(CloudConfig::default()),
             project_root: tmp.path().to_path_buf(),
             project_id: "test".to_string(),
+            publish_enabled: true,
         })
     }
 

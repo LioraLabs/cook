@@ -80,6 +80,21 @@ The unit's *disposition* (§{steps.cook-disposition}) selects its sharing policy
 `local` and `pinned` are mutually exclusive (§{steps.cook-disposition}). Every fetch from the shared store — drift restore or cold fetch-by-key — is subject to the integrity verification of §{exec.cache.integrity}: a fetched artifact whose bytes fail verification is treated as a miss.
 
 > **Note (informative).** Because the local index and the shared store share the one key (§{exec.cache.single-key}), a machine-independent unit (one that sealed no host probe) shares fleet-wide: any machine that recomputes the key serves the same artifact. A `local` unit is the deliberate exception — its output stays on the machine that produced it. A `pinned` unit shifts the trust boundary from "reproduce on demand" to "a designated producer populated the shared store"; consuming a pinned unit that was never produced is a hard error rather than a silent local rebuild, which is the point of the disposition. (CS-0108.)
+
+A conforming implementation MAY offer a per-client **publish-off (read-only)
+mode**: an invocation-level switch (e.g. `--no-publish` / `COOK_NO_PUBLISH`) or a
+project config (`[cloud] publish = false` in `.cook/cloud.toml`) under which the
+client MUST NOT publish any artifact to the shared store for ANY unit, while it
+MUST still fetch by key, drift-restore, and serve `pinned` units from the shared
+store exactly as in the default mode. Publish-off is orthogonal to a unit's
+disposition: it suppresses every upload globally (as `local` does per-unit) and
+changes no key (§{exec.cache.single-key}). The engine MUST NOT assume a
+locally-produced artifact was published; a fresh build under publish-off
+completes by running the unit and recording it locally. Publish-off is a
+client-side convenience for read-only consumers; *write-authorization* to a
+shared store is the backend's concern (e.g. credentialed access), not a property
+the client asserts. (CS-0111.)
+
 ### 17.1.4. The `record` disposition [#exec.cache.record]
 
 A `cook` step MAY carry the `record` disposition (§{steps.cook-disposition}). Its artifact is cached and shared and keyed by the single cache key (§{exec.cache.single-key}) EXACTLY as an unannotated step: `record` adds NO determinant and changes NO component of the key.
