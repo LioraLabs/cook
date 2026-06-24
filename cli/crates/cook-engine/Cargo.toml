@@ -13,6 +13,7 @@ cook-dag = { path = "../cook-dag" }
 cook-luaotp = { path = "../cook-luaotp" }
 cook-cache = { path = "../cook-cache" }
 cook-fingerprint = { path = "../cook-fingerprint" }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 thiserror = "2"
 dirs = "5"
 globset = "0.4"

@@ -166,6 +166,7 @@ impl ThreadSafeCacheManager {
         cache_key: &str,
         meta: &CacheMeta,
         working_dir: &Path,
+        seal_contribution: u64,
     ) -> Result<StepEntry, RecordError> {
         let new_inputs = collect_records(&meta.input_paths, working_dir)
             .map_err(|p| RecordError::MissingFile(p))?;
@@ -192,7 +193,10 @@ impl ThreadSafeCacheManager {
             outputs: new_outputs,
             command_hash: meta.command_hash,
             env_contribution: meta.env_contribution,
-            seal_contribution: 0,
+            // COOK-161: the effective seal set's execute-phase value fold,
+            // computed by the engine from the materialised probe values and
+            // passed in (the CacheMeta carries only the seal *key set*).
+            seal_contribution,
         };
         self.update_step(recipe_name, cache_key, entry.clone());
         Ok(entry)
@@ -319,7 +323,7 @@ mod tests {
         let cm = ThreadSafeCacheManager::new(cache_dir.clone());
 
         let meta = make_cache_meta(vec!["in.c".into()], vec!["out.o".into()]);
-        cm.record_completion("rec", "step_one", &meta, wd).expect("record ok");
+        cm.record_completion("rec", "step_one", &meta, wd, 0).expect("record ok");
         cm.flush_all().expect("flush");
 
         let loaded = store::RecipeCache::load(&cache_dir, "rec").expect("load");
@@ -341,7 +345,7 @@ mod tests {
         let cm = ThreadSafeCacheManager::new(cache_dir.clone());
 
         let meta = make_cache_meta(vec!["in.c".into()], vec!["out.o".into()]);
-        let err = cm.record_completion("rec", "step_one", &meta, wd).unwrap_err();
+        let err = cm.record_completion("rec", "step_one", &meta, wd, 0).unwrap_err();
         assert!(matches!(err, RecordError::MissingFile(_)));
 
         // Verify nothing was written.
@@ -371,7 +375,7 @@ mod tests {
             format: "make".into(),
         });
 
-        let entry = mgr.record_completion("rec", "k", &meta, wd).expect("rec");
+        let entry = mgr.record_completion("rec", "k", &meta, wd, 0).expect("rec");
 
         let output_paths: Vec<&str> =
             entry.outputs.iter().map(|fr| fr.path.as_str()).collect();
@@ -393,12 +397,12 @@ mod tests {
 
         // First successful record.
         let meta = make_cache_meta(vec!["in.c".into()], vec!["out.o".into()]);
-        cm.record_completion("rec", "step_one", &meta, wd).expect("record 1");
+        cm.record_completion("rec", "step_one", &meta, wd, 0).expect("record 1");
         cm.flush_all().expect("flush 1");
 
         // Now remove the input and try again — must err and leave prior entry intact.
         std::fs::remove_file(wd.join("in.c")).expect("rm");
-        let err = cm.record_completion("rec", "step_one", &meta, wd).unwrap_err();
+        let err = cm.record_completion("rec", "step_one", &meta, wd, 0).unwrap_err();
         assert!(matches!(err, RecordError::MissingFile(_)));
         cm.flush_all().expect("flush 2");
 
