@@ -237,14 +237,10 @@ pub(crate) fn resolve_unit_determinants(
         inputs.insert(p.clone(), h);
     }
     let seal_contribution = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
-    let mut sealed_probes = BTreeMap::new();
-    for key in &meta.seal_keys {
-        let val = probe_store
-            .get(key)
-            .and_then(|b| String::from_utf8(b).ok())
-            .unwrap_or_else(|| "<unmaterialised>".to_string());
-        sealed_probes.insert(key.clone(), val);
-    }
+    // C2: share the producer's sealed-probe resolution (absent → empty string)
+    // so a shared-miss diff doesn't falsely report a probe difference against a
+    // manifest that persisted the empty-string encoding.
+    let sealed_probes = crate::seal::resolve_sealed_probes(&meta.seal_keys, probe_store);
     UnitDeterminants {
         command_hash: meta.command_hash,
         env_contribution: meta.env_contribution,
@@ -259,9 +255,10 @@ pub(crate) fn resolve_unit_determinants(
 fn unit_key_hex(meta: &cook_contracts::CacheMeta, det: &UnitDeterminants) -> String {
     let mut sorted: Vec<u64> = det.inputs.values().copied().collect();
     sorted.sort();
-    let recipe_namespace = format!(
-        "{}/{}::{}",
-        meta.project_id, meta.cookfile_path, meta.recipe_name
+    let recipe_namespace = cook_fingerprint::recipe_namespace(
+        &meta.project_id,
+        &meta.cookfile_path,
+        &meta.recipe_name,
     );
     let k = cook_fingerprint::cloud_key(&cook_fingerprint::CloudKeyInputs {
         schema_version: crate::executor::cache_version(),
@@ -271,7 +268,7 @@ fn unit_key_hex(meta: &cook_contracts::CacheMeta, det: &UnitDeterminants) -> Str
         seal_contribution: det.seal_contribution,
         sorted_input_content_hashes: &sorted,
     });
-    k.iter().map(|b| format!("{b:02x}")).collect()
+    hex::encode(k)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -352,18 +349,9 @@ fn shared_artifacts_present(
 }
 
 /// Decode a 64-char lowercase-hex string into a 32-byte cloud key. Returns None
-/// on any length or non-hex error.
+/// on any length or non-hex error. C2: uses `hex::decode` (no hand-rolled hex).
 fn decode_key_hex(key_hex: &str) -> Option<[u8; 32]> {
-    let bytes = key_hex.as_bytes();
-    if bytes.len() != 64 {
-        return None;
-    }
-    let mut k = [0u8; 32];
-    for i in 0..32 {
-        let s = std::str::from_utf8(&bytes[i * 2..i * 2 + 2]).ok()?;
-        k[i] = u8::from_str_radix(s, 16).ok()?;
-    }
-    Some(k)
+    hex::decode(key_hex).ok()?.try_into().ok()
 }
 
 fn local_step_hit(

@@ -10,9 +10,38 @@
 //! cache is checked or its outputs are committed, every sealed probe's value is
 //! present in the `ProbeValueStore`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cook_luaotp::ProbeValueStore;
+
+/// Resolve the effective seal set to its canonical `key -> value` map, the form
+/// persisted on a `DeterminantManifest.sealed_probes` and recomputed on the
+/// consumer side by `cook why`.
+///
+/// C2 (COOK-91 review): this is the SINGLE source of the absent-probe encoding
+/// rule. A sealed key absent from the store folds to an **empty string** —
+/// mirroring `seal_contribution`'s empty-bytes fold and the bytes a verifier
+/// recomposing the digest from `sealed_probes` would see. Producer and consumer
+/// MUST agree, or a shared-miss diff in `cook why` falsely reports a probe
+/// difference. The probe-dependency wiring makes the absent case unreachable in
+/// practice; the empty-string fold is the safe, digest-consistent fallback.
+///
+/// Values are decoded as UTF-8 (lossy guards the theoretically-impossible
+/// non-UTF-8 case — probe values are canonical JSON).
+pub(crate) fn resolve_sealed_probes(
+    seal: &BTreeSet<String>,
+    store: &ProbeValueStore,
+) -> BTreeMap<String, String> {
+    seal.iter()
+        .map(|k| {
+            let value = store
+                .get(k)
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .unwrap_or_default();
+            (k.clone(), value)
+        })
+        .collect()
+}
 
 /// xxh3_64 of the unit's *effective seal set* rendered as sorted
 /// `key\0<canonical-json-bytes>` records joined by `\n`. Returns 0 for an empty

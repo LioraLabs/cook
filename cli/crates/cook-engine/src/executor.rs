@@ -14,7 +14,7 @@ use cook_cache::{CacheContext, TestCache, TestCacheEntry, TestCacheOutcome, Thre
 use cook_contracts::WorkPayload;
 use cook_fingerprint::backend::DeterminantManifest;
 use cook_fingerprint::{
-    artifact_key, cloud_key, needs_rebuild_cook, ArtifactMeta, CloudKeyInputs,
+    artifact_key, cloud_key, needs_rebuild_cook, recipe_namespace, ArtifactMeta, CloudKeyInputs,
     RebuildResult, RestoreCtx, CACHE_VERSION,
 };
 use cook_dag::Dag;
@@ -670,10 +670,8 @@ pub fn execute_dag(
         };
         let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
         let current_outputs: Vec<&str> = current_outputs_storage.iter().map(|s| s.as_str()).collect();
-        let recipe_namespace = format!(
-            "{}/{}::{}",
-            meta.project_id, meta.cookfile_path, meta.recipe_name
-        );
+        let recipe_namespace =
+            recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
         let restore_ctx = RestoreCtx {
             backend: cache_ctx.backend.as_ref(),
             recipe_namespace: &recipe_namespace,
@@ -2523,10 +2521,8 @@ fn publish_completion(
     // Compute cloud_key for this unit (spec §5.3).
     let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
     sorted_hashes.sort();
-    let recipe_namespace = format!(
-        "{}/{}::{}",
-        meta.project_id, meta.cookfile_path, meta.recipe_name
-    );
+    let recipe_namespace =
+        recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
     let cloud_k = cloud_key(&CloudKeyInputs {
         schema_version: CACHE_VERSION,
         recipe_namespace: &recipe_namespace,
@@ -2672,21 +2668,9 @@ fn build_determinant_manifest(
 ) -> DeterminantManifest {
     let inputs_map: std::collections::BTreeMap<String, u64> =
         inputs.iter().map(|fr| (fr.path.clone(), fr.hash)).collect();
-    // A sealed key absent from the store folds into `seal_contribution`
-    // (crate::seal) as an *empty value* — its key still distinguishes the
-    // digest. Mirror that here (empty string, not omission) so a verifier
-    // recomposing the seal from `sealed_probes` agrees with the digest. The
-    // probe-dependency wiring makes the absent case unreachable in practice.
-    let sealed_probes: std::collections::BTreeMap<String, String> = seal_keys
-        .iter()
-        .map(|k| {
-            let value = probe_store
-                .get(k)
-                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-                .unwrap_or_default();
-            (k.clone(), value)
-        })
-        .collect();
+    // C2: single-source the sealed-probe resolution (absent → empty string)
+    // so producer and `cook why` consumer cannot drift.
+    let sealed_probes = crate::seal::resolve_sealed_probes(seal_keys, probe_store);
     DeterminantManifest {
         schema_version,
         recipe_namespace: recipe_namespace.to_string(),

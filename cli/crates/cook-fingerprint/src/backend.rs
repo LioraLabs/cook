@@ -347,6 +347,14 @@ pub struct CloudKeyInputs<'a> {
     pub sorted_input_content_hashes: &'a [u64],
 }
 
+/// Compose the canonical `recipe_namespace` string for a unit:
+/// `"<project_id>/<cookfile_path>::<recipe>"`. This is the SINGLE source of
+/// that composition — every cloud_key, ArtifactMeta, and DeterminantManifest
+/// namespace MUST come from here so the three sites cannot drift (spec §5.3).
+pub fn recipe_namespace(project_id: &str, cookfile_path: &str, recipe: &str) -> String {
+    format!("{project_id}/{cookfile_path}::{recipe}")
+}
+
 /// Derive an output-scoped artifact key from a cache entry's cloud_key.
 ///
 /// One logical cache entry can produce multiple output artifacts. Each
