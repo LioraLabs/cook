@@ -397,12 +397,21 @@ fn try_restore(
 /// recomputing its one key. Returns true iff every output was fetched, verified,
 /// and written. `sorted_input_content_hashes` MUST already be sorted.
 ///
-/// `output_paths` are the unit's declared output paths. On the cold path (no
-/// StepEntry) a glob unit's declared outputs are still raw patterns (e.g.
-/// `*.o`), not the concrete paths the publish path keyed its artifacts under,
-/// so a glob unit never cold-fetches and falls through to rebuild — a `pinned`
-/// glob unit therefore cold-misses (a hard error). An empty `output_paths`
+/// `output_paths` are the unit's declared output paths. An empty `output_paths`
 /// slice returns false (no artifacts to serve is not a hit).
+///
+/// Two unit shapes intrinsically cannot cold-fetch and so fall through to
+/// rebuild (and, for a `pinned` unit, to a hard cold-miss error):
+///   * **Glob outputs** — on the cold path the declared outputs are still raw
+///     patterns (e.g. `*.o`), not the concrete paths the publish path keyed its
+///     artifacts under.
+///   * **`discovered_inputs` (depfile) units** — the publish path folds the
+///     depfile-discovered inputs into the key, but a cold consumer has no
+///     depfile yet, so the `sorted_input_content_hashes` passed here (derived
+///     from the *declared* inputs only) recompute a different key. This affects
+///     the cc/cook_cc compile path; a fuller fix (deferred follow-up) would
+///     surface the discovered inputs on the cold path before keying.
+/// Both degrade safely: a non-pinned unit rebuilds; a `pinned` unit cold-misses.
 #[allow(clippy::too_many_arguments)]
 pub fn fetch_by_key(
     ctx: &RestoreCtx,
