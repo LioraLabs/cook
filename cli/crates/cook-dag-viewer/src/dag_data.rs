@@ -638,6 +638,7 @@ mod tests {
                 format: "make".into(),
             }),
             seal_keys: Default::default(),
+            record: false,
         };
         let unit = CapturedUnit {
             payload: WorkPayload::Shell {
@@ -845,6 +846,7 @@ mod tests {
                 format: "make".into(),
             }),
             seal_keys: Default::default(),
+            record: false,
         };
         let unit_a = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
@@ -879,6 +881,7 @@ mod tests {
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
+            record: false,
         };
         let unit_b = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "clang -c b.cpp".into(), line: 1 },
@@ -1002,6 +1005,7 @@ mod tests {
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
+            record: false,
         };
         let unit_compile = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
@@ -1039,6 +1043,7 @@ mod tests {
                 format: "make".into(),
             }),
             seal_keys: Default::default(),
+            record: false,
         };
         let unit_archive = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "ar rcs libfoo.a a.o".into(), line: 1 },

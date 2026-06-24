@@ -1124,6 +1124,7 @@ mod tests {
                 consulted_env: Default::default(),
                 discovered_inputs: None,
                 seal_keys: Default::default(),
+                record: false,
             }),
             working_dir: wd.to_path_buf(),
             env_vars: Default::default(),

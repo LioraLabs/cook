@@ -220,6 +220,12 @@ pub struct CacheMeta {
     /// canonical values fold into the cache key at execute-phase. Sorted /
     /// de-duplicated (`BTreeSet`). Empty for unsealed / `local` / `pinned` units.
     pub seal_keys: std::collections::BTreeSet<String>,
+    /// COOK-163: `record` disposition — this unit produces an intrinsically
+    /// NON-reproducible artifact (LLM / image gen). Keyed normally (the key is
+    /// unchanged), but byte-equivalence is WAIVED: a present (or restorable)
+    /// artifact is authoritative and MUST NOT be re-produced on output drift.
+    /// This is also the seam COOK-167's verifier reads to skip byte-checking.
+    pub record: bool,
 }
 
 /// A single captured unit of work within a recipe.
@@ -378,6 +384,7 @@ mod tests {
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
+            record: false,
         };
         assert_eq!(m.recipe_name, "build");
         assert_eq!(m.command_hash, 42);
@@ -399,6 +406,7 @@ mod tests {
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
+            record: false,
         };
         assert!(m.output_paths.is_empty());
     }
@@ -420,6 +428,7 @@ mod tests {
                 format: "make".into(),
             }),
             seal_keys: Default::default(),
+            record: false,
         };
         let di = m.discovered_inputs.as_ref().expect("present");
         assert_eq!(di.from, ".cook/deps/a.d");
@@ -440,6 +449,7 @@ mod tests {
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
             seal_keys: Default::default(),
+            record: false,
         };
         assert!(m.discovered_inputs.is_none());
     }
@@ -461,8 +471,30 @@ mod tests {
             consulted_env: Default::default(),
             discovered_inputs: None,
             seal_keys: seal.clone(),
+            record: false,
         };
         assert_eq!(meta.seal_keys, seal);
+    }
+
+    #[test]
+    fn cache_meta_carries_record_flag() {
+        let mut meta = CacheMeta {
+            recipe_name: "r".into(),
+            project_id: String::new(),
+            cookfile_path: String::new(),
+            cache_key: "k".into(),
+            input_paths: vec![],
+            output_paths: vec!["out".into()],
+            command_hash: 0,
+            env_contribution: 0,
+            consulted_env: Default::default(),
+            discovered_inputs: None,
+            seal_keys: Default::default(),
+            record: false,
+        };
+        assert!(!meta.record, "record defaults to false");
+        meta.record = true;
+        assert!(meta.record, "record flag is settable and read back");
     }
 
     #[test]
@@ -661,6 +693,7 @@ mod tests {
                 consulted_env: std::collections::BTreeMap::new(),
                 discovered_inputs: None,
                 seal_keys: Default::default(),
+                record: false,
             }),
             dep_kind: DepKind::StepGroup(0),
             probes: vec![],
