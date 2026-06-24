@@ -2,7 +2,7 @@
 //! cache persistence layer. Cook Cloud's R2/D1 backend implements this trait;
 //! `cook-cache::backend::LocalBackend` is the v3 filesystem implementation.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::time::Duration;
 
@@ -144,6 +144,85 @@ impl ArtifactMeta {
     pub fn as_probe_value(mut self) -> Self {
         self.kind = Some("probe_value".into());
         self
+    }
+}
+
+/// COOK-166 / CS-0110: the producer **determinant manifest** persisted
+/// alongside a shared artifact. It records the *resolved values* that formed
+/// the unit's single cache key K (§{exec.cache.single-key}) — not the artifact
+/// bytes, and NOT an attestation of which producer ran (deferred to M2). It
+/// powers `cook why`-on-miss and the shadow-divergence verifier: a consumer
+/// that recomputes a different K can diff its determinants against this
+/// manifest to attribute the miss to a specific input, env value, or probe.
+///
+/// All collections are ordered (`BTreeMap`) so the same K yields byte-identical
+/// manifest bytes — the determinism invariant the verifier relies on. `u64`
+/// hashes serialize as zero-padded lowercase hex strings (the `hex_u64`
+/// convention of `record.rs`) so a high-bit value round-trips through JSON.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeterminantManifest {
+    pub schema_version: u32,
+    pub recipe_namespace: String,
+    /// Hex of the unit's `cloud_key` (K). Self-identifying; the verifier
+    /// confirms the recorded determinants recompose to this key.
+    pub key: String,
+    #[serde(with = "hex_u64")]
+    pub command_hash: u64,
+    #[serde(with = "hex_u64")]
+    pub env_contribution: u64,
+    #[serde(with = "hex_u64")]
+    pub seal_contribution: u64,
+    /// Declared input workspace-path → content hash. Resolved form of
+    /// `CloudKeyInputs::sorted_input_content_hashes`.
+    #[serde(with = "hex_u64_map")]
+    pub inputs: BTreeMap<String, u64>,
+    /// Resolved (glob-expanded) declared output paths.
+    pub output_paths: Vec<String>,
+    /// Post-denylist consulted env key → value. Resolved form of
+    /// `env_contribution`.
+    pub consulted_env: BTreeMap<String, String>,
+    /// Effective-seal-set probe key → canonical-JSON value bytes (UTF-8).
+    /// Resolved form of `seal_contribution`.
+    pub sealed_probes: BTreeMap<String, String>,
+}
+
+/// Serialize a `u64` as a zero-padded 16-char lowercase hex string so it
+/// survives JSON without the i64 high-bit hazard. Deserialize is
+/// case-insensitive (Postel).
+mod hex_u64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(v: &u64, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&format!("{v:016x}"))
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+        let s = String::deserialize(d)?;
+        u64::from_str_radix(&s, 16).map_err(serde::de::Error::custom)
+    }
+}
+
+/// `hex_u64` for the *values* of a `BTreeMap<String, u64>`.
+mod hex_u64_map {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+    pub fn serialize<S: Serializer>(
+        m: &BTreeMap<String, u64>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        let rendered: BTreeMap<&String, String> =
+            m.iter().map(|(k, v)| (k, format!("{v:016x}"))).collect();
+        rendered.serialize(s)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<BTreeMap<String, u64>, D::Error> {
+        let raw: BTreeMap<String, String> = BTreeMap::deserialize(d)?;
+        raw.into_iter()
+            .map(|(k, v)| {
+                u64::from_str_radix(&v, 16)
+                    .map(|n| (k, n))
+                    .map_err(serde::de::Error::custom)
+            })
+            .collect()
     }
 }
 
@@ -516,4 +595,34 @@ mod tests {
     }
 
     // ---- end CS-0074 ----
+
+    #[test]
+    fn determinant_manifest_serializes_deterministically() {
+        use std::collections::BTreeMap;
+        let mut inputs = BTreeMap::new();
+        inputs.insert("src/a.c".to_string(), 0xAABB_u64);
+        inputs.insert("src/b.c".to_string(), 0xFFFF_FFFF_FFFF_FFFF_u64);
+        let mut env = BTreeMap::new();
+        env.insert("CC".to_string(), "clang".to_string());
+        let mut probes = BTreeMap::new();
+        probes.insert("host".to_string(), "\"x86_64-linux\"".to_string());
+        let m = DeterminantManifest {
+            schema_version: 5,
+            recipe_namespace: "cook/Cookfile::build".into(),
+            key: "ab".repeat(32),
+            command_hash: 0x1234,
+            env_contribution: 0x5678,
+            seal_contribution: 0x9abc,
+            inputs,
+            output_paths: vec!["build/a.o".into()],
+            consulted_env: env,
+            sealed_probes: probes,
+        };
+        let a = serde_json::to_vec(&m).unwrap();
+        let b = serde_json::to_vec(&m.clone()).unwrap();
+        assert_eq!(a, b, "same manifest must serialize to identical bytes");
+        let back: DeterminantManifest = serde_json::from_slice(&a).unwrap();
+        assert_eq!(back.inputs["src/b.c"], 0xFFFF_FFFF_FFFF_FFFF_u64);
+        assert_eq!(back, m);
+    }
 }
