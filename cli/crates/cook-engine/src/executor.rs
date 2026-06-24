@@ -1920,228 +1920,17 @@ pub fn execute_dag(
                             },
                         );
 
-                        // Update cache if needed
+                        // Update cache if needed (C1: single-source publish path).
                         if let Some(meta) = &dag.node(id).payload().cache_meta {
                             if let Some(cm) = cache_managers.get(&dag.node(id).payload().recipe_name) {
-                                // CS-0085 §17.6: expand any glob patterns in output_paths
-                                // against the unit's working directory before recording.
                                 let working_dir = dag.node(id).payload().working_dir.clone();
-                                let resolved_output_paths = resolve_output_paths(&meta.output_paths, &working_dir);
-                                let mut meta_for_record = meta.clone();
-                                meta_for_record.output_paths = resolved_output_paths.clone();
-                                // COOK-161: fold the effective seal set's probe
-                                // values into the persisted key (the sealed
-                                // probes have run by now — the unit depends on
-                                // them).
-                                let seal_contrib = crate::seal::seal_contribution(
-                                    &meta.seal_keys,
+                                publish_completion(
+                                    cm,
+                                    meta,
+                                    &working_dir,
                                     &pool.probe_value_store(),
+                                    &cache_ctx,
                                 );
-                                match cm.record_completion(&meta.recipe_name, &meta.cache_key, &meta_for_record, &dag.node(id).payload().working_dir, seal_contrib) {
-                                    Ok(step_entry) => {
-                                        // Post-execution augmentation: parse the just-written
-                                        // depfile and append discovered FileRecords to
-                                        // step_entry.inputs, then persist the augmented entry.
-                                        let mut step_entry = step_entry;
-                                        if let Some(di) = &meta.discovered_inputs {
-                                            let working_dir = &dag.node(id).payload().working_dir;
-                                            let abs_depfile = working_dir.join(&di.from);
-                                            let source_for_skip = meta
-                                                .input_paths
-                                                .first()
-                                                .map(String::as_str)
-                                                .unwrap_or("");
-                                            match cook_cache::parse_make_depfile(
-                                                &abs_depfile,
-                                                source_for_skip,
-                                                working_dir,
-                                            ) {
-                                                Ok(discovered_paths) => {
-                                                    match cook_cache::collect_records_public(&discovered_paths, working_dir) {
-                                                        Ok(records) => {
-                                                            for rec in records {
-                                                                step_entry.inputs.push(rec);
-                                                            }
-                                                            // clone: step_entry.inputs is borrowed below for cloud_key composition.
-                                                            cm.update_step(
-                                                                &meta.recipe_name,
-                                                                &meta.cache_key,
-                                                                step_entry.clone(),
-                                                            );
-                                                        }
-                                                        Err(p) => {
-                                                            tracing::warn!(
-                                                                "discovered-inputs: failed to hash discovered path '{}'", p
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!(
-                                                        "discovered-inputs: depfile parse failed for '{}': {e}",
-                                                        di.from
-                                                    );
-                                                }
-                                            }
-                                        }
-
-                                        // Compute cloud_key for this unit (spec §5.3).
-                                        let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
-                                        sorted_hashes.sort();
-
-                                        let recipe_namespace = format!(
-                                            "{}/{}::{}",
-                                            meta.project_id, meta.cookfile_path, meta.recipe_name
-                                        );
-
-                                        let key_inputs = CloudKeyInputs {
-                                            schema_version: CACHE_VERSION,
-                                            recipe_namespace: &recipe_namespace,
-                                            command_hash: meta.command_hash,
-                                            env_contribution: meta.env_contribution,
-                                            seal_contribution: seal_contrib,
-                                            sorted_input_content_hashes: &sorted_hashes,
-                                        };
-                                        let cloud_k = cloud_key(&key_inputs);
-
-                                        // COOK-162 §3: `local` units never publish to the shared store.
-                                        // COOK-168: publish-off / read-only client mode suppresses
-                                        // ALL uploads globally; fetch-by-key is unaffected.
-                                        let publish_to_backend = !meta.local && cache_ctx.publish_enabled;
-
-                                        // Upload one artifact per declared output (2026-05-02 addendum
-                                        // spec §5.1). Each artifact is keyed by
-                                        // artifact_key(cloud_key, idx, path) so a future cache hit can
-                                        // restore them all independently.
-                                        // CS-0085: iterate the resolved (glob-expanded) list.
-                                        for (out_idx, output_path) in resolved_output_paths.iter().enumerate() {
-                                            let abs_output = dag.node(id).payload().working_dir.join(output_path);
-                                            let bytes = match std::fs::read(&abs_output) {
-                                                Ok(b) => b,
-                                                Err(_) => continue,
-                                            };
-                                            let artifact_k = artifact_key(
-                                                &cloud_k,
-                                                out_idx as u32,
-                                                output_path,
-                                            );
-                                            let mut artifact_meta = ArtifactMeta {
-                                                recipe_namespace: recipe_namespace.clone(),
-                                                command_hash: meta.command_hash,
-                                                env_contribution: meta.env_contribution,
-                                                seal_contribution: seal_contrib,
-                                                schema_version: CACHE_VERSION,
-                                                size_bytes: bytes.len() as u64,
-                                                tags: std::collections::BTreeSet::new(),
-                                                consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-                                                output_index: out_idx as u32,
-                                                output_path: output_path.clone(),
-                                                // CS-0054: stamped by the backend on put.
-                                                content_hash: ArtifactMeta::zero_content_hash(),
-                                                kind: None,
-                                            };
-                                            if publish_to_backend {
-                                                if let Err(e) = cook_cache::backend::put_bytes(
-                                                    cache_ctx.backend.as_ref(),
-                                                    &artifact_k,
-                                                    &bytes,
-                                                    &mut artifact_meta,
-                                                ) {
-                                                    tracing::warn!("cache backend put failed for {}: {}", output_path, e);
-                                                }
-                                            }
-                                        }
-
-                                        // Upload the depfile as an implicit artifact at index
-                                        // outputs.len() so a future restore can pull it back.
-                                        // CS-0085: depfile_idx uses the resolved count to match
-                                        // the index record_completion appended it at.
-                                        if let Some(di) = &meta.discovered_inputs {
-                                            let depfile_idx = resolved_output_paths.len() as u32;
-                                            let working_dir = &dag.node(id).payload().working_dir;
-                                            let abs_depfile = working_dir.join(&di.from);
-                                            match std::fs::read(&abs_depfile) {
-                                                Ok(bytes) => {
-                                                    let artifact_k = artifact_key(
-                                                        &cloud_k,
-                                                        depfile_idx,
-                                                        &di.from,
-                                                    );
-                                                    let mut artifact_meta = ArtifactMeta {
-                                                        recipe_namespace: recipe_namespace.clone(),
-                                                        command_hash: meta.command_hash,
-                                                        env_contribution: meta.env_contribution,
-                                                        seal_contribution: seal_contrib,
-                                                        schema_version: CACHE_VERSION,
-                                                        size_bytes: bytes.len() as u64,
-                                                        tags: std::collections::BTreeSet::new(),
-                                                        consulted_env_keys: meta
-                                                            .consulted_env
-                                                            .keys()
-                                                            .cloned()
-                                                            .collect(),
-                                                        output_index: depfile_idx,
-                                                        output_path: di.from.clone(),
-                                                        // CS-0054: stamped by the backend on put.
-                                                        content_hash: ArtifactMeta::zero_content_hash(),
-                                                        kind: None,
-                                                    };
-                                                    if publish_to_backend {
-                                                        if let Err(e) = cook_cache::backend::put_bytes(
-                                                            cache_ctx.backend.as_ref(),
-                                                            &artifact_k,
-                                                            &bytes,
-                                                            &mut artifact_meta,
-                                                        ) {
-                                                            tracing::warn!(
-                                                                "cache backend put failed for depfile {}: {e}",
-                                                                di.from
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!(
-                                                        "discovered-inputs: depfile '{}' not found after execution: {e}",
-                                                        di.from
-                                                    );
-                                                }
-                                            }
-                                        }
-
-                                        // COOK-166: persist the producer determinant manifest
-                                        // alongside the shared artifacts, keyed by the unit's
-                                        // cloud_key K. `local` units skip this
-                                        // (publish_to_backend is false).
-                                        if publish_to_backend {
-                                            let manifest = build_determinant_manifest(
-                                                CACHE_VERSION,
-                                                &recipe_namespace,
-                                                &cloud_k,
-                                                meta.command_hash,
-                                                meta.env_contribution,
-                                                seal_contrib,
-                                                &step_entry.inputs,
-                                                &resolved_output_paths,
-                                                &meta.consulted_env,
-                                                &meta.seal_keys,
-                                                &pool.probe_value_store(),
-                                            );
-                                            if let Err(e) = cache_ctx
-                                                .backend
-                                                .as_ref()
-                                                .put_manifest(&cloud_k, &manifest)
-                                            {
-                                                tracing::warn!(
-                                                    "determinant manifest put failed for {recipe_namespace}: {e}"
-                                                );
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
-                                    }
-                                }
                             }
                         }
 
@@ -2355,223 +2144,17 @@ pub fn execute_dag(
             );
 
             // Update cache entry if this node has cache metadata
+            // (C1: single-source publish path).
             if let Some(meta) = &dag.node(result.id).payload().cache_meta {
                 if let Some(cm) = cache_managers.get(&dag.node(result.id).payload().recipe_name) {
-                    // CS-0085 §17.6: expand any glob patterns in output_paths
-                    // against the unit's working directory before recording.
-                    let working_dir_2 = dag.node(result.id).payload().working_dir.clone();
-                    let resolved_output_paths = resolve_output_paths(&meta.output_paths, &working_dir_2);
-                    let mut meta_for_record = meta.clone();
-                    meta_for_record.output_paths = resolved_output_paths.clone();
-                    // COOK-161: fold the effective seal set's probe values into
-                    // the persisted key (sealed probes have run by now).
-                    let seal_contrib = crate::seal::seal_contribution(
-                        &meta.seal_keys,
+                    let working_dir = dag.node(result.id).payload().working_dir.clone();
+                    publish_completion(
+                        cm,
+                        meta,
+                        &working_dir,
                         &pool.probe_value_store(),
+                        &cache_ctx,
                     );
-                    match cm.record_completion(&meta.recipe_name, &meta.cache_key, &meta_for_record, &dag.node(result.id).payload().working_dir, seal_contrib) {
-                        Ok(step_entry) => {
-                            // Post-execution augmentation: parse the just-written
-                            // depfile and append discovered FileRecords to
-                            // step_entry.inputs, then persist the augmented entry.
-                            let mut step_entry = step_entry;
-                            if let Some(di) = &meta.discovered_inputs {
-                                let working_dir = &dag.node(result.id).payload().working_dir;
-                                let abs_depfile = working_dir.join(&di.from);
-                                let source_for_skip = meta
-                                    .input_paths
-                                    .first()
-                                    .map(String::as_str)
-                                    .unwrap_or("");
-                                match cook_cache::parse_make_depfile(
-                                    &abs_depfile,
-                                    source_for_skip,
-                                    working_dir,
-                                ) {
-                                    Ok(discovered_paths) => {
-                                        match cook_cache::collect_records_public(&discovered_paths, working_dir) {
-                                            Ok(records) => {
-                                                for rec in records {
-                                                    step_entry.inputs.push(rec);
-                                                }
-                                                // clone: step_entry.inputs is borrowed below for cloud_key composition.
-                                                cm.update_step(
-                                                    &meta.recipe_name,
-                                                    &meta.cache_key,
-                                                    step_entry.clone(),
-                                                );
-                                            }
-                                            Err(p) => {
-                                                tracing::warn!(
-                                                    "discovered-inputs: failed to hash discovered path '{}'", p
-                                                );
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "discovered-inputs: depfile parse failed for '{}': {e}",
-                                            di.from
-                                        );
-                                    }
-                                }
-                            }
-
-                            // Compute cloud_key for this unit (spec §5.3).
-                            let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
-                            sorted_hashes.sort();
-
-                            let recipe_namespace = format!(
-                                "{}/{}::{}",
-                                meta.project_id, meta.cookfile_path, meta.recipe_name
-                            );
-
-                            let key_inputs = CloudKeyInputs {
-                                schema_version: CACHE_VERSION,
-                                recipe_namespace: &recipe_namespace,
-                                command_hash: meta.command_hash,
-                                env_contribution: meta.env_contribution,
-                                seal_contribution: seal_contrib,
-                                sorted_input_content_hashes: &sorted_hashes,
-                            };
-                            let cloud_k = cloud_key(&key_inputs);
-
-                            // COOK-162 §3: `local` units never publish to the shared store.
-                            // COOK-168: publish-off / read-only client mode suppresses
-                            // ALL uploads globally; fetch-by-key is unaffected.
-                            let publish_to_backend = !meta.local && cache_ctx.publish_enabled;
-
-                            // Upload one artifact per declared output (2026-05-02 addendum
-                            // spec §5.1).
-                            // CS-0085: iterate the resolved (glob-expanded) list.
-                            for (out_idx, output_path) in resolved_output_paths.iter().enumerate() {
-                                let abs_output = dag.node(result.id).payload().working_dir.join(output_path);
-                                let bytes = match std::fs::read(&abs_output) {
-                                    Ok(b) => b,
-                                    Err(_) => continue,
-                                };
-                                let artifact_k = artifact_key(
-                                    &cloud_k,
-                                    out_idx as u32,
-                                    output_path,
-                                );
-                                let mut artifact_meta = ArtifactMeta {
-                                    recipe_namespace: recipe_namespace.clone(),
-                                    command_hash: meta.command_hash,
-                                    env_contribution: meta.env_contribution,
-                                    seal_contribution: seal_contrib,
-                                    schema_version: CACHE_VERSION,
-                                    size_bytes: bytes.len() as u64,
-                                    tags: std::collections::BTreeSet::new(),
-                                    consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-                                    output_index: out_idx as u32,
-                                    output_path: output_path.clone(),
-                                    // CS-0054: stamped by the backend on put.
-                                    content_hash: ArtifactMeta::zero_content_hash(),
-                                    kind: None,
-                                };
-                                if publish_to_backend {
-                                    if let Err(e) = cook_cache::backend::put_bytes(
-                                        cache_ctx.backend.as_ref(),
-                                        &artifact_k,
-                                        &bytes,
-                                        &mut artifact_meta,
-                                    ) {
-                                        tracing::warn!("cache backend put failed for {}: {}", output_path, e);
-                                    }
-                                }
-                            }
-
-                            // Upload the depfile as an implicit artifact at index
-                            // outputs.len() so a future restore can pull it back.
-                            // CS-0085: depfile_idx uses the resolved count to match
-                            // the index record_completion appended it at.
-                            if let Some(di) = &meta.discovered_inputs {
-                                let depfile_idx = resolved_output_paths.len() as u32;
-                                let working_dir = &dag.node(result.id).payload().working_dir;
-                                let abs_depfile = working_dir.join(&di.from);
-                                match std::fs::read(&abs_depfile) {
-                                    Ok(bytes) => {
-                                        let artifact_k = artifact_key(
-                                            &cloud_k,
-                                            depfile_idx,
-                                            &di.from,
-                                        );
-                                        let mut artifact_meta = ArtifactMeta {
-                                            recipe_namespace: recipe_namespace.clone(),
-                                            command_hash: meta.command_hash,
-                                            env_contribution: meta.env_contribution,
-                                            seal_contribution: seal_contrib,
-                                            schema_version: CACHE_VERSION,
-                                            size_bytes: bytes.len() as u64,
-                                            tags: std::collections::BTreeSet::new(),
-                                            consulted_env_keys: meta
-                                                .consulted_env
-                                                .keys()
-                                                .cloned()
-                                                .collect(),
-                                            output_index: depfile_idx,
-                                            output_path: di.from.clone(),
-                                            // CS-0054: stamped by the backend on put.
-                                            content_hash: ArtifactMeta::zero_content_hash(),
-                                            kind: None,
-                                        };
-                                        if publish_to_backend {
-                                            if let Err(e) = cook_cache::backend::put_bytes(
-                                                cache_ctx.backend.as_ref(),
-                                                &artifact_k,
-                                                &bytes,
-                                                &mut artifact_meta,
-                                            ) {
-                                                tracing::warn!(
-                                                    "cache backend put failed for depfile {}: {e}",
-                                                    di.from
-                                                );
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "discovered-inputs: depfile '{}' not found after execution: {e}",
-                                            di.from
-                                        );
-                                    }
-                                }
-                            }
-
-                            // COOK-166: persist the producer determinant manifest
-                            // alongside the shared artifacts, keyed by the unit's
-                            // cloud_key K. `local` units skip this
-                            // (publish_to_backend is false).
-                            if publish_to_backend {
-                                let manifest = build_determinant_manifest(
-                                    CACHE_VERSION,
-                                    &recipe_namespace,
-                                    &cloud_k,
-                                    meta.command_hash,
-                                    meta.env_contribution,
-                                    seal_contrib,
-                                    &step_entry.inputs,
-                                    &resolved_output_paths,
-                                    &meta.consulted_env,
-                                    &meta.seal_keys,
-                                    &pool.probe_value_store(),
-                                );
-                                if let Err(e) = cache_ctx
-                                    .backend
-                                    .as_ref()
-                                    .put_manifest(&cloud_k, &manifest)
-                                {
-                                    tracing::warn!(
-                                        "determinant manifest put failed for {recipe_namespace}: {e}"
-                                    );
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
-                        }
-                    }
                 }
             }
 
@@ -2855,6 +2438,215 @@ pub fn execute_dag(
             failures,
             partial_test_results: partial,
         })
+    }
+}
+
+/// Single-source completion → record → cloud_key → artifact/depfile upload →
+/// determinant-manifest path, shared by both completion sites (the restored /
+/// interactive path and the freshly-executed worker path). The two call sites
+/// differ only in which node id sources `working_dir`; everything below — the
+/// `publish_to_backend` derivation, the `seal_contribution` recompute, the
+/// upload loops, and the manifest write — lives here ONCE so the publish/upload
+/// contract is single-source.
+///
+/// `working_dir` is the unit's resolved working directory; `meta` is the unit's
+/// `CacheMeta`; `cm` is its recipe's cache manager; `probe_store` is the pool's
+/// `ProbeValueStore`. Behaviour-preserving extraction of the two ~210-line
+/// blocks (COOK-91 review C1).
+fn publish_completion(
+    cm: &ThreadSafeCacheManager,
+    meta: &cook_contracts::CacheMeta,
+    working_dir: &std::path::Path,
+    probe_store: &cook_luaotp::ProbeValueStore,
+    cache_ctx: &CacheContext,
+) {
+    // CS-0085 §17.6: expand any glob patterns in output_paths against the
+    // unit's working directory before recording.
+    let resolved_output_paths = resolve_output_paths(&meta.output_paths, working_dir);
+    let mut meta_for_record = meta.clone();
+    meta_for_record.output_paths = resolved_output_paths.clone();
+    // COOK-161: fold the effective seal set's probe values into the persisted
+    // key (the sealed probes have run by now — the unit depends on them).
+    let seal_contrib = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
+    let step_entry = match cm.record_completion(
+        &meta.recipe_name,
+        &meta.cache_key,
+        &meta_for_record,
+        working_dir,
+        seal_contrib,
+    ) {
+        Ok(step_entry) => step_entry,
+        Err(e) => {
+            tracing::warn!(
+                "cache: skipping record for {}::{}: {e}",
+                meta.recipe_name,
+                meta.cache_key
+            );
+            return;
+        }
+    };
+
+    // Post-execution augmentation: parse the just-written depfile and append
+    // discovered FileRecords to step_entry.inputs, then persist the augmented
+    // entry.
+    let mut step_entry = step_entry;
+    if let Some(di) = &meta.discovered_inputs {
+        let abs_depfile = working_dir.join(&di.from);
+        let source_for_skip = meta.input_paths.first().map(String::as_str).unwrap_or("");
+        match cook_cache::parse_make_depfile(&abs_depfile, source_for_skip, working_dir) {
+            Ok(discovered_paths) => {
+                match cook_cache::collect_records_public(&discovered_paths, working_dir) {
+                    Ok(records) => {
+                        for rec in records {
+                            step_entry.inputs.push(rec);
+                        }
+                        // clone: step_entry.inputs is borrowed below for cloud_key composition.
+                        cm.update_step(&meta.recipe_name, &meta.cache_key, step_entry.clone());
+                    }
+                    Err(p) => {
+                        tracing::warn!(
+                            "discovered-inputs: failed to hash discovered path '{}'",
+                            p
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "discovered-inputs: depfile parse failed for '{}': {e}",
+                    di.from
+                );
+            }
+        }
+    }
+
+    // Compute cloud_key for this unit (spec §5.3).
+    let mut sorted_hashes: Vec<u64> = step_entry.inputs.iter().map(|fr| fr.hash).collect();
+    sorted_hashes.sort();
+    let recipe_namespace = format!(
+        "{}/{}::{}",
+        meta.project_id, meta.cookfile_path, meta.recipe_name
+    );
+    let cloud_k = cloud_key(&CloudKeyInputs {
+        schema_version: CACHE_VERSION,
+        recipe_namespace: &recipe_namespace,
+        command_hash: meta.command_hash,
+        env_contribution: meta.env_contribution,
+        seal_contribution: seal_contrib,
+        sorted_input_content_hashes: &sorted_hashes,
+    });
+
+    // COOK-162 §3: `local` units never publish to the shared store.
+    // COOK-168: publish-off / read-only client mode suppresses ALL uploads
+    // globally; fetch-by-key is unaffected.
+    let publish_to_backend = !meta.local && cache_ctx.publish_enabled;
+
+    // Upload one artifact per declared output (2026-05-02 addendum spec §5.1).
+    // Each artifact is keyed by artifact_key(cloud_key, idx, path) so a future
+    // cache hit can restore them all independently.
+    // CS-0085: iterate the resolved (glob-expanded) list.
+    for (out_idx, output_path) in resolved_output_paths.iter().enumerate() {
+        let abs_output = working_dir.join(output_path);
+        let bytes = match std::fs::read(&abs_output) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let artifact_k = artifact_key(&cloud_k, out_idx as u32, output_path);
+        let mut artifact_meta = ArtifactMeta {
+            recipe_namespace: recipe_namespace.clone(),
+            command_hash: meta.command_hash,
+            env_contribution: meta.env_contribution,
+            seal_contribution: seal_contrib,
+            schema_version: CACHE_VERSION,
+            size_bytes: bytes.len() as u64,
+            tags: std::collections::BTreeSet::new(),
+            consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+            output_index: out_idx as u32,
+            output_path: output_path.clone(),
+            // CS-0054: stamped by the backend on put.
+            content_hash: ArtifactMeta::zero_content_hash(),
+            kind: None,
+        };
+        if publish_to_backend {
+            if let Err(e) = cook_cache::backend::put_bytes(
+                cache_ctx.backend.as_ref(),
+                &artifact_k,
+                &bytes,
+                &mut artifact_meta,
+            ) {
+                tracing::warn!("cache backend put failed for {}: {}", output_path, e);
+            }
+        }
+    }
+
+    // Upload the depfile as an implicit artifact at index outputs.len() so a
+    // future restore can pull it back.
+    // CS-0085: depfile_idx uses the resolved count to match the index
+    // record_completion appended it at.
+    if let Some(di) = &meta.discovered_inputs {
+        let depfile_idx = resolved_output_paths.len() as u32;
+        let abs_depfile = working_dir.join(&di.from);
+        match std::fs::read(&abs_depfile) {
+            Ok(bytes) => {
+                let artifact_k = artifact_key(&cloud_k, depfile_idx, &di.from);
+                let mut artifact_meta = ArtifactMeta {
+                    recipe_namespace: recipe_namespace.clone(),
+                    command_hash: meta.command_hash,
+                    env_contribution: meta.env_contribution,
+                    seal_contribution: seal_contrib,
+                    schema_version: CACHE_VERSION,
+                    size_bytes: bytes.len() as u64,
+                    tags: std::collections::BTreeSet::new(),
+                    consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                    output_index: depfile_idx,
+                    output_path: di.from.clone(),
+                    // CS-0054: stamped by the backend on put.
+                    content_hash: ArtifactMeta::zero_content_hash(),
+                    kind: None,
+                };
+                if publish_to_backend {
+                    if let Err(e) = cook_cache::backend::put_bytes(
+                        cache_ctx.backend.as_ref(),
+                        &artifact_k,
+                        &bytes,
+                        &mut artifact_meta,
+                    ) {
+                        tracing::warn!(
+                            "cache backend put failed for depfile {}: {e}",
+                            di.from
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "discovered-inputs: depfile '{}' not found after execution: {e}",
+                    di.from
+                );
+            }
+        }
+    }
+
+    // COOK-166: persist the producer determinant manifest alongside the shared
+    // artifacts, keyed by the unit's cloud_key K. `local` units skip this
+    // (publish_to_backend is false).
+    if publish_to_backend {
+        let manifest = build_determinant_manifest(
+            CACHE_VERSION,
+            &recipe_namespace,
+            &cloud_k,
+            meta.command_hash,
+            meta.env_contribution,
+            seal_contrib,
+            &step_entry.inputs,
+            &resolved_output_paths,
+            &meta.consulted_env,
+            &meta.seal_keys,
+            probe_store,
+        );
+        if let Err(e) = cache_ctx.backend.as_ref().put_manifest(&cloud_k, &manifest) {
+            tracing::warn!("determinant manifest put failed for {recipe_namespace}: {e}");
+        }
     }
 }
 
