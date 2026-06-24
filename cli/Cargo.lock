@@ -448,6 +448,7 @@ dependencies = [
  "dirs",
  "dotenvy",
  "globset",
+ "hex",
  "pathdiff",
  "serde",
  "serde_json",
