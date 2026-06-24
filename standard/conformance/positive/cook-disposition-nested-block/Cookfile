@@ -1,0 +1,6 @@
+recipe build
+    seal a {
+        seal b {
+            cook "x.o" { cc -c x.c -o x.o }
+        }
+    }

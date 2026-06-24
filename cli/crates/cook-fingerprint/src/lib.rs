@@ -1,7 +1,7 @@
 //! Fingerprint and cache-key computation for the Cook build system.
 //!
 //! This crate is the "what changed?" surface: pure functions that compute
-//! content hashes, env contributions, machine/tool identity, and the
+//! content hashes, env contributions, probe fingerprints, and the
 //! SHA-256 cache keys that address artifacts in any backend. It also defines
 //! the `CacheBackend` trait — the seam the persistence layer (filesystem,
 //! Cook Cloud, etc.) implements.
@@ -22,16 +22,14 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 pub use backend::{
-    artifact_key, cloud_key, ArtifactMeta, BackendError, BackendResult, CacheBackend, CloudKey,
-    CloudKeyInputs,
+    artifact_key, cloud_key, recipe_namespace, ArtifactMeta, BackendError, BackendResult,
+    CacheBackend, CloudKey, CloudKeyInputs,
 };
 pub use check::{
-    hash_env, hash_file, install_depfile_parser, needs_rebuild_cook, needs_rebuild_plate,
-    stat_mtime, RebuildReason, RebuildResult, RestoreCtx,
+    fetch_by_key, hash_env, hash_file, hash_input_paths, install_depfile_parser,
+    needs_rebuild_cook, needs_rebuild_plate, stat_mtime, RebuildReason, RebuildResult, RestoreCtx,
 };
-pub use context::{
-    compute_probe_fingerprint, ExecutionContext, MachineIdentity, ProbeFingerprintInputs, ToolHash,
-};
+pub use context::{compute_probe_fingerprint, ProbeFingerprintInputs};
 pub use probe::resolve_probe_inputs;
 pub use envkey::{env_contribution, EnvDenylist};
 pub use record::{FileRecord, StepEntry, CACHE_VERSION};
@@ -60,8 +58,6 @@ pub struct FingerprintInputs {
     pub dep_outputs: Vec<(String, String)>,
     /// `(key, value)` for env-var contributions.
     pub env_keys: Vec<(String, String)>,
-    /// `(tool_name, hash)` for tool-version contributions.
-    pub tool_hashes: Vec<(String, String)>,
 }
 
 /// Hash a sorted list of `(key, value)` pairs into `h`.
@@ -85,7 +81,6 @@ fn hash_pairs(h: &mut Sha256, v: &[(String, String)]) {
 ///   4. `cook_outputs` — sorted by `(path, fingerprint)`
 ///   5. `dep_outputs`  — sorted by `(path, fingerprint)`
 ///   6. `env_keys`     — sorted by `(key, value)`
-///   7. `tool_hashes`  — sorted by `(name, hash)`
 ///
 /// **Excluded:** `suite_name`, `test_name` — these are display metadata.
 /// Renaming a test via `as STRING` MUST NOT bust its fingerprint (§3.3).
@@ -121,11 +116,10 @@ pub fn compute_test_fingerprint(
     h.update([if should_fail { 1u8 } else { 0u8 }]);
     h.update(b"\0");
 
-    // 4-7. sorted pair lists
+    // 4-6. sorted pair lists
     hash_pairs(&mut h, &inputs.cook_outputs);
     hash_pairs(&mut h, &inputs.dep_outputs);
     hash_pairs(&mut h, &inputs.env_keys);
-    hash_pairs(&mut h, &inputs.tool_hashes);
 
     format!("sha256:{:x}", h.finalize())
 }
@@ -274,7 +268,6 @@ mod tests {
             cook_outputs: vec![("out/lib.a".into(), "sha256:abc".into())],
             dep_outputs: vec![],
             env_keys: vec![("CC".into(), "gcc".into())],
-            tool_hashes: vec![("bash".into(), "sha256:def".into())],
         };
         let fp1 = compute_test_fingerprint(&payload, &inputs);
         let fp2 = compute_test_fingerprint(&payload, &inputs);

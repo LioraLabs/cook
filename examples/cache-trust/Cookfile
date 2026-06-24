@@ -1,0 +1,70 @@
+# cache-trust — the Cache-trust v3 single-key model (COOK-158 §4–§6).
+#
+# ONE content-addressed key per unit over declared determinants. Sharing is on
+# by default; dispositions are policy + determinant declarations, never a
+# separate "strict" key. Host identity is a declared probe, not engine-baked.
+
+# Host identity as a declared probe (target triple / libc / locale stand-in).
+# `verify.sh` flips SIMHOST to simulate moving to a different machine.
+probe host
+    produce as env { SIMHOST }
+
+# (unannotated) shares fleet-wide: no host determinant, so its key is
+# machine-independent. A lint/codegen/docs artifact — reproducible anywhere.
+recipe portable
+    ingredients "src.txt"
+    cook "build/portable.txt" {
+        mkdir -p build
+        sed 's/^/[portable] /' src.txt > $<out>
+    }
+
+# `seal host`: the author asserts the output is a pure function of inputs +
+# the host probe value. The host value folds into the key, so a host change
+# re-keys and rebuilds (what a hand-written `cc -c` step needs).
+recipe hostdep
+    ingredients "src.txt"
+    seal host
+    cook "build/hostdep.txt" {
+        mkdir -p build
+        printf '[hostdep on %s] ' "$SIMHOST" > $<out>
+        cat src.txt >> $<out>
+    }
+
+# `local`: cached locally, never published to / fetched from the shared store.
+# For side-effecting or deliberately-unshared units.
+recipe scratch
+    ingredients "src.txt"
+    local
+    cook "build/scratch.txt" {
+        mkdir -p build
+        sed 's/^/[scratch] /' src.txt > $<out>
+    }
+
+# `record`: the output is intrinsically non-reproducible (LLM / image gen);
+# byte-equivalence is waived and a warm hit reuses the recording rather than
+# re-generating. Here `date +%N` stands in for a non-reproducible producer.
+recipe generate
+    record
+    cook "build/generated.txt" {
+        mkdir -p build
+        date +%N > $<out>
+    }
+
+# `pinned`: fetch-only / designated-producer. The artifact MUST come from the
+# cache (local index or shared store); a cold miss is a HARD ERROR, never a
+# local rebuild. For outputs a trusted producer (e.g. CI) populates and that
+# consumers must not reproduce themselves. Shown cross-machine in
+# `share-local.sh` / `share-docker.sh`, where a cold miss aborts the build.
+recipe pin
+    ingredients "src.txt"
+    pinned
+    cook "build/pinned.txt" {
+        mkdir -p build
+        sed 's/^/[pinned] /' src.txt > $<out>
+    }
+
+# Everything reproducible. (`generate` is run on its own — see README.)
+recipe build: portable hostdep scratch
+
+chore clean
+    rm -rf build .cook

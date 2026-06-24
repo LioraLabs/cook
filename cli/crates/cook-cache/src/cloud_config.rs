@@ -8,6 +8,11 @@ use std::time::Duration;
 use cook_fingerprint::backend::BackendConfig;
 use serde::Deserialize;
 
+/// serde default for `CloudSection::publish` — absent key means "publish".
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct CloudConfig {
     #[serde(default)]
@@ -16,7 +21,7 @@ pub struct CloudConfig {
     pub cache: CacheSection,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CloudSection {
     #[serde(default)]
     pub enabled: bool,
@@ -39,6 +44,27 @@ pub struct CloudSection {
     pub backoff_max_ms: Option<u64>,
     #[serde(default)]
     pub max_artifact_mib: Option<u64>,
+    /// COOK-168. When `false`, this client operates in read-only mode:
+    /// cache lookups still work, but no artifacts are uploaded to the
+    /// shared store. Defaults to `true` (publish enabled) when absent.
+    #[serde(default = "default_true")]
+    pub publish: bool,
+}
+
+impl Default for CloudSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: None,
+            project: None,
+            timeout_secs: None,
+            max_retries: None,
+            backoff_initial_ms: None,
+            backoff_max_ms: None,
+            max_artifact_mib: None,
+            publish: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -47,13 +73,6 @@ pub struct CacheSection {
     pub ignore_env: Vec<String>,
     #[serde(default)]
     pub cache_dir: Option<String>,
-    /// Declared toolchain pinning (CS-0052). Each name is resolved via `which`
-    /// at build start; the resolved binaries' content hashes fold into every
-    /// step's context_hash. An empty list (or absent field) is observationally
-    /// inert. Misdeclared names cause a build-start error — see the design at
-    /// standard/specs/2026-05-04-cache-declared-tools-design.md.
-    #[serde(default)]
-    pub tools: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -165,8 +184,12 @@ impl CloudConfig {
         self.cache.cache_dir.as_deref()
     }
 
-    pub fn cache_tools(&self) -> &[String] {
-        &self.cache.tools
+    /// Whether this client publishes produced artifacts to the shared store.
+    /// Defaults to `true`; a `[cloud] publish = false` makes the client
+    /// read-only (fetch-by-key still works). Honoured globally by the
+    /// executor's upload paths (COOK-168).
+    pub fn publish(&self) -> bool {
+        self.cloud.publish
     }
 
     /// Build a `BackendConfig` for this project (CS-0057). Starts from
@@ -284,24 +307,6 @@ ignore_env = ["GITHUB_TOKEN", "MY_API_KEY"]
         assert_eq!(ignore.len(), 2);
         assert!(ignore.contains(&"GITHUB_TOKEN".to_string()));
         assert!(ignore.contains(&"MY_API_KEY".to_string()));
-    }
-
-    #[test]
-    fn cache_tools_parsed() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        write_toml(dir.path(), r#"
-[cache]
-tools = ["gcc", "ld", "strip"]
-"#);
-        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
-        assert_eq!(cfg.cache_tools(), &["gcc", "ld", "strip"]);
-    }
-
-    #[test]
-    fn cache_tools_default_empty() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
-        assert!(cfg.cache_tools().is_empty());
     }
 
     #[test]
@@ -473,5 +478,37 @@ api_key = "stale-toml-secret-should-be-ignored"
         let cfg = CloudConfig::load_or_default(dir.path()).expect("legacy field is ignored, not rejected");
         assert_eq!(cfg.resolved_api_key().as_deref(), Some("env-takes-precedence"));
         unsafe { std::env::remove_var("COOK_CLOUD_API_KEY"); }
+    }
+
+    // ─── COOK-168: [cloud] publish field ─────────────────────────────────────
+
+    #[test]
+    fn publish_defaults_to_true_when_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        assert!(cfg.publish(), "publish must default to true when [cloud] publish is unset");
+    }
+
+    #[test]
+    fn publish_false_parsed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+publish = false
+"#);
+        let cfg = CloudConfig::load_or_default(dir.path()).expect("load");
+        assert!(!cfg.publish(), "publish = false must parse to false");
+    }
+
+    #[test]
+    fn publish_off_does_not_require_cloud_enabled() {
+        // publish-off is orthogonal to cloud.enabled; a publish=false config with
+        // cloud disabled loads cleanly (no project/endpoint required).
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_toml(dir.path(), r#"
+[cloud]
+publish = false
+"#);
+        assert!(CloudConfig::load_or_default(dir.path()).is_ok());
     }
 }

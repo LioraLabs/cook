@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct UseStatement {
     pub module_name: String,
@@ -110,6 +112,15 @@ pub enum ProbeProduce {
     Lua(String),
     /// `produce [as json|lines] { … }` — value is stdout, typed.
     Shell { commands: Vec<String>, typing: ShellProduceType },
+    /// `produce as tools { cc, ld }` — the brace content is a LIST of bare tool
+    /// names (NOT a shell body). Each is PATH-resolved and its binary hashed;
+    /// the value is `{ NAME = { path, hash }, … }`. The hash is both the value
+    /// and the re-run trigger (COOK-164).
+    Tools(Vec<String>),
+    /// `produce as env { SDKROOT }` — the brace content is a LIST of bare env
+    /// var names (NOT a shell body). The value is `{ NAME = value_or_nil, … }`;
+    /// reading the env records the consulted-env determinant (COOK-164).
+    Env(Vec<String>),
 }
 
 /// How a shell-block `produce`'s stdout becomes the probe value (§22.5).
@@ -200,10 +211,25 @@ impl From<String> for OutputPattern {
     }
 }
 
+/// Cache disposition of a `cook` step (Cache-trust v3, §8.4.3). All-default
+/// = unannotated. Parser/grammar surface only; the cache-key effect lands in
+/// COOK-161/162/163.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Disposition {
+    /// `local` / `pinned` sharing — mutually exclusive, so modelled as one
+    /// `Sharing` enum (`(local, pinned) = (true, true)` is unrepresentable).
+    pub sharing: cook_contracts::Sharing,
+    /// `record` — record divergence for the oracle. Orthogonal to `sharing`.
+    pub record: bool,
+    /// `seal` refs — sorted, de-duplicated bare probe keys (additive).
+    pub seal: BTreeSet<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CookStep {
     pub outputs: Vec<OutputPattern>,
     pub body: Option<Body>,
+    pub disposition: Disposition,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -293,6 +319,7 @@ mod tests {
                         body: Some(Body::ShellBlock(
                             vec!["gcc -c {in} -o {out}".to_string()],
                         )),
+                        disposition: Disposition::default(),
                     },
                     line: 4,
                 },
@@ -327,6 +354,7 @@ mod tests {
         let step = CookStep {
             outputs: vec![OutputPattern::Quoted("bin/app".to_string())],
             body: None,
+            disposition: Disposition::default(),
         };
         assert!(step.body.is_none());
     }
@@ -338,6 +366,7 @@ mod tests {
             body: Some(Body::LuaBlock(
                 "cook.sh(\"gcc -c \" .. input .. \" -o \" .. output)".to_string(),
             )),
+            disposition: Disposition::default(),
         };
         assert!(matches!(step.body, Some(Body::LuaBlock(_))));
     }

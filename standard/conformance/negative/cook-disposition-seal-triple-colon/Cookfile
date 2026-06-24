@@ -1,0 +1,3 @@
+recipe r
+    seal a:b:c
+    cook "x.o" { cc -c x.c }

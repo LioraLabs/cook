@@ -37,6 +37,22 @@ fn cook_binary() -> std::path::PathBuf {
 }
 
 fn run_cook(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    // Isolate the shared cache backend per test dir. Without this the build
+    // uses the global `~/.cache/cook/cloud` store, and COOK-162 cold
+    // fetch-by-key would serve an output published by a previous (cross-test)
+    // run as a spurious first-run cache hit, perturbing the mtimes these tests
+    // assert on. Pointing `cache_dir` inside the tempdir keeps each test's
+    // shared store private and empty until the test itself populates it.
+    let cloud_toml = dir.join(".cook/cloud.toml");
+    if !cloud_toml.exists() {
+        fs::create_dir_all(dir.join(".cook")).map_err(|e| e.to_string())?;
+        let shared = dir.join(".cook/shared-cache");
+        fs::write(
+            &cloud_toml,
+            format!("[cache]\ncache_dir = {:?}\n", shared.to_string_lossy()),
+        )
+        .map_err(|e| e.to_string())?;
+    }
     let out = Command::new(cook_binary())
         .args(args)
         .current_dir(dir)

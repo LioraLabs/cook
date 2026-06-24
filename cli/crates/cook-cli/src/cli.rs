@@ -82,6 +82,13 @@ pub struct Globals {
     /// instead of sweeping them. Also settable via `COOK_NO_PRUNE=1`.
     #[arg(long = "no-prune", global = true)]
     pub no_prune: bool,
+
+    /// Read-only / publish-off client mode: fetch cached artifacts by key but
+    /// never publish locally-produced artifacts to the shared store. Also
+    /// settable via `COOK_NO_PUBLISH=1` or `[cloud] publish = false` in
+    /// `.cook/cloud.toml`. Write-authorization itself is backend IAM.
+    #[arg(long = "no-publish", global = true)]
+    pub no_publish: bool,
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -125,6 +132,10 @@ pub enum Cmd {
     /// Show logs for past builds.
     Logs(LogsArgs),
 
+    /// Cache fidelity tooling. `cook cache verify` re-runs cached steps and
+    /// reports byte-divergence under a matching key (CI fidelity tool, §17.8).
+    Cache(CacheArgs),
+
     /// Watch ingredients and re-run on change.
     Serve(ServeArgs),
 
@@ -137,6 +148,11 @@ pub enum Cmd {
     /// Uses three-dot merge-base semantics and includes working-tree state.
     /// Requires `--since=<ref>`.
     Affected(AffectedArgs),
+
+    /// Explain the cache key per unit: every determinant attributed to its
+    /// source, hit/miss status, and — on a shared miss — the diff against the
+    /// cached artifact's producer determinant manifest. Read-only; runs nothing.
+    Why(WhyArgs),
 
     /// Run a recipe by name. Captured for any first positional that does not
     /// match a reserved subcommand. The first element is the recipe name
@@ -201,6 +217,17 @@ pub struct DagArgs {
 }
 
 #[derive(clap::Args, Debug, Clone)]
+pub struct WhyArgs {
+    /// Recipe to explain (default: 'build').
+    pub recipe: Option<String>,
+    /// Config preset.
+    pub config: Option<String>,
+    /// Emit machine-readable JSON instead of the human-readable report.
+    #[arg(long = "json")]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
 pub struct LogsArgs {
     /// Specific build id (directory name under .cook/logs/).
     pub build_id: Option<String>,
@@ -216,6 +243,31 @@ pub struct LogsArgs {
     /// Color theme: auto (default) or mono.
     #[arg(long, default_value = "auto")]
     pub theme: String,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct CacheArgs {
+    #[command(subcommand)]
+    pub cmd: CacheCmd,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum CacheCmd {
+    /// Re-run cached steps and report byte-divergence under a matching key.
+    /// Opt-in CI fidelity tool: exits non-zero on any divergence. `record`
+    /// steps are byte-exempt (§17.1.4). NOT a trust gate.
+    Verify(CacheVerifyArgs),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct CacheVerifyArgs {
+    /// Recipe to verify (default: 'build').
+    pub recipe: Option<String>,
+    /// Config preset.
+    pub config: Option<String>,
+    /// Emit machine-readable JSON instead of a human summary.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -363,6 +415,22 @@ mod tests {
     }
 
     #[test]
+    fn why_subcommand_defaults() {
+        match parse(&["why"]).cmd {
+            Some(Cmd::Why(a)) => { assert!(a.recipe.is_none()); assert!(!a.json); }
+            other => panic!("expected Cmd::Why, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn why_subcommand_recipe_and_json() {
+        match parse(&["why", "build", "--json"]).cmd {
+            Some(Cmd::Why(a)) => { assert_eq!(a.recipe.as_deref(), Some("build")); assert!(a.json); }
+            other => panic!("expected Cmd::Why, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn serve_subcommand_with_recipe() {
         let cli = parse(&["serve", "host", "prod"]);
         match cli.cmd {
@@ -464,6 +532,30 @@ mod tests {
                 assert!(args.json);
             }
             other => panic!("expected Cmd::Affected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cache_verify_subcommand_defaults() {
+        let cli = parse(&["cache", "verify"]);
+        match cli.cmd {
+            Some(Cmd::Cache(CacheArgs { cmd: CacheCmd::Verify(a) })) => {
+                assert!(a.recipe.is_none());
+                assert!(!a.json);
+            }
+            other => panic!("expected Cmd::Cache verify, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cache_verify_recipe_and_json() {
+        let cli = parse(&["cache", "verify", "build", "--json"]);
+        match cli.cmd {
+            Some(Cmd::Cache(CacheArgs { cmd: CacheCmd::Verify(a) })) => {
+                assert_eq!(a.recipe.as_deref(), Some("build"));
+                assert!(a.json);
+            }
+            other => panic!("expected Cmd::Cache verify, got {other:?}"),
         }
     }
 

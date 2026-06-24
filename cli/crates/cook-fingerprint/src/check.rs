@@ -54,8 +54,8 @@ pub enum RebuildResult {
 pub enum RebuildReason {
     NoCacheEntry,
     CommandHashChanged,
-    ContextChanged,        // NEW
-    EnvChanged,            // NEW
+    EnvChanged,
+    SealChanged,
     OutputMissing,
     OutputChanged,
     InputSetChanged,
@@ -154,16 +154,24 @@ pub struct RestoreCtx<'a> {
 /// match but whose on-disk outputs have drifted (or are missing) will attempt
 /// to restore each output's bytes from the backend before falling back to
 /// `OutputChanged`/`OutputMissing` rebuild. See spec §5.2.
+///
+/// When `record` is `true` (the `record` disposition — an intrinsically
+/// non-reproducible artifact such as LLM/image generation), byte-equivalence is
+/// waived (§17.1.3): a present-but-content-drifted output is treated as
+/// authoritative and is NOT scheduled for restore/rebuild. A genuinely missing
+/// output still falls through to restore/rebuild as normal — `record` cannot
+/// conjure bytes without a backend.
 pub fn needs_rebuild_cook(
     entry: Option<&StepEntry>,
     current_inputs: &[&str],
     current_outputs: &[&str],
     command_hash: u64,
-    context_hash: u64,
     env_contribution: u64,
+    seal_contribution: u64,
     working_dir: &Path,
     restore_ctx: Option<&RestoreCtx>,
     discovered_inputs: Option<&cook_contracts::DiscoveredInputs>,
+    record: bool,
 ) -> (RebuildResult, Option<StepEntry>) {
     let entry = match entry {
         None => return (RebuildResult::Rebuild(RebuildReason::NoCacheEntry), None),
@@ -172,11 +180,11 @@ pub fn needs_rebuild_cook(
     if entry.command_hash != command_hash {
         return (RebuildResult::Rebuild(RebuildReason::CommandHashChanged), None);
     }
-    if entry.context_hash != context_hash {
-        return (RebuildResult::Rebuild(RebuildReason::ContextChanged), None);
-    }
     if entry.env_contribution != env_contribution {
         return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
+    }
+    if entry.seal_contribution != seal_contribution {
+        return (RebuildResult::Rebuild(RebuildReason::SealChanged), None);
     }
 
     // Pre-check augmentation: when the unit declares discovered_inputs and
@@ -282,11 +290,17 @@ pub fn needs_rebuild_cook(
             output_missing_seen = true;
             continue;
         }
-        if let Some(disk_mtime) = stat_mtime(&abs) {
-            if disk_mtime != cached_out.mtime {
-                if let Some(disk_hash) = hash_file(&abs) {
-                    if disk_hash != cached_out.hash {
-                        needs_restore.push(i);
+        // §17.1.3 record disposition: a present-but-drifted output is
+        // authoritative for a record unit — byte-equivalence is waived, so the
+        // drift check is suppressed. (The missing-output push above stays
+        // unguarded: record cannot conjure bytes without a backend.)
+        if !record {
+            if let Some(disk_mtime) = stat_mtime(&abs) {
+                if disk_mtime != cached_out.mtime {
+                    if let Some(disk_hash) = hash_file(&abs) {
+                        if disk_hash != cached_out.hash {
+                            needs_restore.push(i);
+                        }
                     }
                 }
             }
@@ -319,8 +333,8 @@ pub fn needs_rebuild_cook(
         inputs: updated_inputs,
         outputs: entry.outputs.clone(),
         command_hash: entry.command_hash,
-        context_hash: entry.context_hash,
         env_contribution: entry.env_contribution,
+        seal_contribution: entry.seal_contribution,
     };
     (RebuildResult::Skip, Some(updated))
 }
@@ -342,8 +356,8 @@ fn try_restore(
         schema_version: CACHE_VERSION,
         recipe_namespace: ctx.recipe_namespace,
         command_hash: entry.command_hash,
-        context_hash: entry.context_hash,
         env_contribution: entry.env_contribution,
+        seal_contribution: entry.seal_contribution,
         sorted_input_content_hashes: &sorted,
     };
     let cloud_k = crate::backend::cloud_key(&key_inputs);
@@ -392,13 +406,102 @@ fn try_restore(
     true
 }
 
+/// Cold fetch-by-key (COOK-162 §3 sharing): with no local StepEntry, attempt to
+/// serve a unit's declared outputs straight from the shared backend by
+/// recomputing its one key. Returns true iff every output was fetched, verified,
+/// and written. `sorted_input_content_hashes` MUST already be sorted.
+///
+/// `output_paths` are the unit's declared output paths. An empty `output_paths`
+/// slice returns false (no artifacts to serve is not a hit).
+///
+/// Two unit shapes intrinsically cannot cold-fetch and so fall through to
+/// rebuild (and, for a `pinned` unit, to a hard cold-miss error):
+///   * **Glob outputs** — on the cold path the declared outputs are still raw
+///     patterns (e.g. `*.o`), not the concrete paths the publish path keyed its
+///     artifacts under.
+///   * **`discovered_inputs` (depfile) units** — the publish path folds the
+///     depfile-discovered inputs into the key, but a cold consumer has no
+///     depfile yet, so the `sorted_input_content_hashes` passed here (derived
+///     from the *declared* inputs only) recompute a different key. This affects
+///     the cc/cook_cc compile path; a fuller fix (deferred follow-up) would
+///     surface the discovered inputs on the cold path before keying.
+/// Both degrade safely: a non-pinned unit rebuilds; a `pinned` unit cold-misses.
+#[allow(clippy::too_many_arguments)]
+pub fn fetch_by_key(
+    ctx: &RestoreCtx,
+    command_hash: u64,
+    env_contribution: u64,
+    seal_contribution: u64,
+    sorted_input_content_hashes: &[u64],
+    output_paths: &[&str],
+    working_dir: &std::path::Path,
+) -> bool {
+    if output_paths.is_empty() {
+        return false;
+    }
+    let key_inputs = crate::backend::CloudKeyInputs {
+        schema_version: CACHE_VERSION,
+        recipe_namespace: ctx.recipe_namespace,
+        command_hash,
+        env_contribution,
+        seal_contribution,
+        sorted_input_content_hashes,
+    };
+    let cloud_k = crate::backend::cloud_key(&key_inputs);
+    for (idx, path) in output_paths.iter().enumerate() {
+        let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
+        let mut reader = match ctx.backend.get(&artifact_k) {
+            Ok(Some(r)) => r,
+            _ => return false,
+        };
+        // Drain the streaming reader (CS-0054 verify-on-restore): the streaming
+        // verifier raises io::Error(InvalidData) at EOF on hash mismatch; treat
+        // any read failure as a miss.
+        let mut bytes = Vec::new();
+        if std::io::Read::read_to_end(&mut reader, &mut bytes).is_err() {
+            return false;
+        }
+        let abs = working_dir.join(path);
+        if let Some(parent) = abs.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                return false;
+            }
+        }
+        // Atomic write via tmp + rename (mirrors try_restore): never expose a
+        // torn output to a concurrent reader.
+        let tmp = abs.with_extension("cook.tmp");
+        if std::fs::write(&tmp, &bytes).is_err() {
+            return false;
+        }
+        if std::fs::rename(&tmp, &abs).is_err() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Hash each declared input path's on-disk content, sorted ascending. Returns
+/// None if any declared input is missing (the unit cannot be a clean hit).
+pub fn hash_input_paths(input_paths: &[&str], working_dir: &std::path::Path) -> Option<Vec<u64>> {
+    let mut hashes = Vec::with_capacity(input_paths.len());
+    for p in input_paths {
+        let abs = working_dir.join(p);
+        match hash_file(&abs) {
+            Some(h) => hashes.push(h),
+            None => return None,
+        }
+    }
+    hashes.sort();
+    Some(hashes)
+}
+
 /// Check if a plate layer (no output) needs to re-run.
 pub fn needs_rebuild_plate(
     entry: Option<&StepEntry>,
     current_inputs: &[&str],
     command_hash: u64,
-    context_hash: u64,
     env_contribution: u64,
+    seal_contribution: u64,
     working_dir: &Path,
 ) -> (RebuildResult, Option<StepEntry>) {
     let entry = match entry {
@@ -408,11 +511,11 @@ pub fn needs_rebuild_plate(
     if entry.command_hash != command_hash {
         return (RebuildResult::Rebuild(RebuildReason::CommandHashChanged), None);
     }
-    if entry.context_hash != context_hash {
-        return (RebuildResult::Rebuild(RebuildReason::ContextChanged), None);
-    }
     if entry.env_contribution != env_contribution {
         return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
+    }
+    if entry.seal_contribution != seal_contribution {
+        return (RebuildResult::Rebuild(RebuildReason::SealChanged), None);
     }
     match check_inputs(&entry.inputs, current_inputs, working_dir) {
         Err(reason) => (RebuildResult::Rebuild(reason), None),
@@ -421,8 +524,8 @@ pub fn needs_rebuild_plate(
                 inputs: updated_inputs,
                 outputs: vec![],
                 command_hash: entry.command_hash,
-                context_hash: entry.context_hash,
                 env_contribution: entry.env_contribution,
+                seal_contribution: entry.seal_contribution,
             };
             (RebuildResult::Skip, Some(updated))
         }
@@ -517,7 +620,7 @@ mod tests {
     fn test_no_cache_entry_rebuilds() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (result, updated) =
-            needs_rebuild_cook(None, &["in.c"], &["out.o"], 0xdead, 0, 0, dir.path(), None, None);
+            needs_rebuild_cook(None, &["in.c"], &["out.o"], 0xdead, 0, 0, dir.path(), None, None, false);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::NoCacheEntry));
         assert!(updated.is_none());
     }
@@ -536,12 +639,12 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![out_record],
             command_hash: 0x1111,
-            context_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0x2222, 0, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0x2222, 0, 0, wd, None, None, false);
         assert_eq!(
             result,
             RebuildResult::Rebuild(RebuildReason::CommandHashChanged)
@@ -562,12 +665,12 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![],
             command_hash: 0xbeef,
-            context_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None, false);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::OutputMissing));
         assert!(updated.is_none());
     }
@@ -586,12 +689,12 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![out_record],
             command_hash: 0xbeef,
-            context_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None, false);
         assert_eq!(result, RebuildResult::Skip);
         assert!(updated.is_some());
     }
@@ -623,16 +726,119 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![out_record],
             command_hash: 0xbeef,
-            context_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None, false);
         assert_eq!(
             result,
             RebuildResult::Rebuild(RebuildReason::InputChanged("in.c".to_string()))
         );
+        assert!(updated.is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // COOK-163: record disposition waives output-drift rebuild
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn record_unit_with_drifted_present_output_skips() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        std::fs::write(wd.join("out.o"), b"binary").expect("write");
+
+        let in_record = make_file_record("in.c", wd);
+
+        // Recorded output hash deliberately does NOT match the on-disk content,
+        // and the mtime is stale (0) so the drift fast-path fires.
+        let out_record = FileRecord {
+            path: "out.o".to_string(),
+            mtime: 0, // guaranteed to differ from any real mtime
+            hash: xxhash_rust::xxh3::xxh3_64(b"different recorded bytes"),
+        };
+
+        let entry = StepEntry {
+            inputs: vec![in_record],
+            outputs: vec![out_record],
+            command_hash: 0xbeef,
+            env_contribution: 0,
+            seal_contribution: 0,
+        };
+
+        // Control: a non-record unit with a drifted present output and no
+        // restore_ctx falls through to OutputChanged rebuild.
+        let (control, _) = needs_rebuild_cook(
+            Some(&entry),
+            &["in.c"],
+            &["out.o"],
+            0xbeef,
+            0,
+            0,
+            wd,
+            None,
+            None,
+            false,
+        );
+        assert!(matches!(control, RebuildResult::Rebuild(_)));
+
+        // Waiver: a record unit treats the present-but-drifted output as
+        // authoritative — Skip, with an updated entry.
+        let (result, updated) = needs_rebuild_cook(
+            Some(&entry),
+            &["in.c"],
+            &["out.o"],
+            0xbeef,
+            0,
+            0,
+            wd,
+            None,
+            None,
+            true,
+        );
+        assert_eq!(result, RebuildResult::Skip);
+        assert!(updated.is_some());
+    }
+
+    #[test]
+    fn record_unit_with_missing_output_still_rebuilds_without_restore() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        // out.o is intentionally NOT created — genuinely missing.
+
+        let in_record = make_file_record("in.c", wd);
+        let out_record = FileRecord {
+            path: "out.o".to_string(),
+            mtime: 0,
+            hash: xxhash_rust::xxh3::xxh3_64(b"recorded bytes"),
+        };
+
+        let entry = StepEntry {
+            inputs: vec![in_record],
+            outputs: vec![out_record],
+            command_hash: 0xbeef,
+            env_contribution: 0,
+            seal_contribution: 0,
+        };
+
+        // record cannot conjure bytes without a backend: a genuinely missing
+        // output still restores/rebuilds.
+        let (result, updated) = needs_rebuild_cook(
+            Some(&entry),
+            &["in.c"],
+            &["out.o"],
+            0xbeef,
+            0,
+            0,
+            wd,
+            None,
+            None,
+            true,
+        );
+        assert_eq!(result, RebuildResult::Rebuild(RebuildReason::OutputMissing));
         assert!(updated.is_none());
     }
 
@@ -656,8 +862,8 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![],
             command_hash: 0xbeef,
-            context_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) = needs_rebuild_plate(Some(&entry), &["in.c"], 0xbeef, 0, 0, wd);
@@ -706,31 +912,8 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // New tests for context/env rebuild reasons
+    // New tests for env rebuild reason
     // -------------------------------------------------------------------------
-
-    #[test]
-    fn context_hash_changed_rebuilds() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let wd = dir.path();
-        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
-        std::fs::write(wd.join("out.o"), b"binary").expect("write");
-
-        let in_record = make_file_record("in.c", wd);
-        let out_record = make_file_record("out.o", wd);
-
-        let entry = StepEntry {
-            inputs: vec![in_record],
-            outputs: vec![out_record],
-            command_hash: 0xbeef,
-            context_hash: 0x1111,
-            env_contribution: 0,
-        };
-
-        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0x9999, 0, wd, None, None);
-        assert_eq!(result, RebuildResult::Rebuild(RebuildReason::ContextChanged));
-        assert!(updated.is_none());
-    }
 
     #[test]
     fn env_contribution_changed_rebuilds() {
@@ -746,32 +929,38 @@ mod tests {
             inputs: vec![in_record],
             outputs: vec![out_record],
             command_hash: 0xbeef,
-            context_hash: 0,
             env_contribution: 0x1111,
+            seal_contribution: 0,
         };
 
-        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0x9999, wd, None, None);
+        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0x9999, 0, wd, None, None, false);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::EnvChanged));
         assert!(updated.is_none());
     }
 
     #[test]
-    fn plate_context_hash_changed_rebuilds() {
+    fn seal_contribution_changed_rebuilds() {
         let dir = tempfile::tempdir().expect("tempdir");
         let wd = dir.path();
         std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        std::fs::write(wd.join("out.o"), b"binary").expect("write");
+
         let in_record = make_file_record("in.c", wd);
+        let out_record = make_file_record("out.o", wd);
 
         let entry = StepEntry {
             inputs: vec![in_record],
-            outputs: vec![],
+            outputs: vec![out_record],
             command_hash: 0xbeef,
-            context_hash: 0x1111,
             env_contribution: 0,
+            seal_contribution: 0x1111,
         };
 
-        let (result, updated) = needs_rebuild_plate(Some(&entry), &["in.c"], 0xbeef, 0x9999, 0, wd);
-        assert_eq!(result, RebuildResult::Rebuild(RebuildReason::ContextChanged));
+        // Same command/env/inputs/outputs, different seal value -> SealChanged.
+        let (result, updated) = needs_rebuild_cook(
+            Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0x9999, wd, None, None, false,
+        );
+        assert_eq!(result, RebuildResult::Rebuild(RebuildReason::SealChanged));
         assert!(updated.is_none());
     }
 
@@ -807,8 +996,8 @@ mod tests {
                 hash: out_hash,
             }],
             command_hash: 0xc0de,
-            context_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let di = DiscoveredInputs {
@@ -829,6 +1018,7 @@ mod tests {
             wd,
             None,
             Some(&di),
+            false,
         );
 
         assert!(matches!(result, RebuildResult::Skip),
@@ -860,8 +1050,8 @@ mod tests {
                 hash: out_hash,
             }],
             command_hash: 0xc0de,
-            context_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let di = DiscoveredInputs {
@@ -881,6 +1071,7 @@ mod tests {
             wd,
             None,
             Some(&di),
+            false,
         );
 
         // Augmentation no-ops; current=[src.c] vs entry=[src.c, hdr.h] → InputSetChanged.

@@ -1670,6 +1670,47 @@ fn produce_as_on_lua_block_is_error() {
         "got: {err}");
 }
 
+// ── COOK-164: produce as tools / produce as env ───────────────────────
+
+#[test]
+fn produce_as_tools_parses_name_list() {
+    let cf = parse("probe toolchain\n    produce as tools { cc, ld }\n").unwrap();
+    let p = &cf.probes[0];
+    assert_eq!(p.produce, crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into()]));
+}
+
+#[test]
+fn produce_as_tools_accepts_whitespace_separators() {
+    let cf = parse("probe toolchain\n    produce as tools { cc ld   ar }\n").unwrap();
+    let p = &cf.probes[0];
+    assert_eq!(p.produce, crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into(), "ar".into()]));
+}
+
+#[test]
+fn produce_as_env_parses_name_list() {
+    let cf = parse("probe sdk\n    produce as env { SDKROOT, CC }\n").unwrap();
+    let p = &cf.probes[0];
+    assert_eq!(p.produce, crate::ast::ProbeProduce::Env(vec!["SDKROOT".into(), "CC".into()]));
+}
+
+#[test]
+fn produce_as_tools_empty_list_is_error() {
+    let err = parse("probe t\n    produce as tools {  }\n").unwrap_err();
+    assert!(format!("{err}").contains("at least one"), "got: {err}");
+}
+
+#[test]
+fn produce_as_tools_lua_block_is_error() {
+    let err = parse("probe t\n    produce as tools >{ return {} }\n").unwrap_err();
+    assert!(format!("{err}").contains("NAME LIST"), "got: {err}");
+}
+
+#[test]
+fn produce_as_env_invalid_name_is_error() {
+    let err = parse("probe t\n    produce as env { 1bad }\n").unwrap_err();
+    assert!(format!("{err}").contains("name"), "got: {err}");
+}
+
 // ── COOK-67 Task 3: probe declaration parser ────────────────────────
 
 #[test]
@@ -1981,4 +2022,210 @@ fn cs0099_register_block_body_still_rejected() {
     let err = parse(src).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains(">{"), "got: {}", msg);
+}
+
+// ── COOK-160: cook-step disposition (§8.4.3) ───────────────────────
+
+/// Helper: extract the single cook step's disposition from a parsed recipe.
+#[cfg(test)]
+fn first_cook_disposition(cf: &Cookfile) -> &crate::ast::Disposition {
+    for step in &cf.recipes[0].steps {
+        if let crate::ast::Step::Cook { step, .. } = step {
+            return &step.disposition;
+        }
+    }
+    panic!("no cook step found");
+}
+
+#[test]
+fn disp_seal_line_above_cook() {
+    let src = "recipe build\n    seal host\n    cook \"x.o\" { cc -c x.c }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    assert!(d.seal.contains("host"));
+    assert_eq!(d.sharing, cook_contracts::Sharing::Shared);
+    assert!(!d.record);
+}
+
+#[test]
+fn disp_seal_lines_stack_additively_with_record() {
+    let src = "recipe build\n    seal host\n    seal gpu driver\n    record\n    cook \"x.o\" { cc -c x.c }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    let got: Vec<&str> = d.seal.iter().map(|s| s.as_str()).collect();
+    assert_eq!(got, vec!["driver", "gpu", "host"]); // sorted, deduped
+    assert!(d.record);
+}
+
+#[test]
+fn disp_local_line_above_cook() {
+    let src = "recipe build\n    local\n    cook \"x.o\" { cc -c x.c }\n";
+    let cf = parse(src).unwrap();
+    assert_eq!(first_cook_disposition(&cf).sharing, cook_contracts::Sharing::Local);
+}
+
+#[test]
+fn disp_pinned_line_above_cook() {
+    let src = "recipe build\n    pinned\n    cook \"x.o\" { cc -c x.c }\n";
+    let cf = parse(src).unwrap();
+    assert_eq!(first_cook_disposition(&cf).sharing, cook_contracts::Sharing::Pinned);
+}
+
+#[test]
+fn disp_seal_block_applies_to_all_enclosed_cooks() {
+    let src = "recipe build\n    seal host {\n        cook \"a.o\" { cc -c a.c }\n        cook \"b.o\" { cc -c b.c }\n    }\n";
+    let cf = parse(src).unwrap();
+    let mut n = 0;
+    for step in &cf.recipes[0].steps {
+        if let crate::ast::Step::Cook { step, .. } = step {
+            assert!(step.disposition.seal.contains("host"), "cook missing seal host");
+            n += 1;
+        }
+    }
+    assert_eq!(n, 2);
+}
+
+#[test]
+fn disp_local_block_inside_seal_overrides() {
+    // Block openers are multi-line: `local {` then the cook on its own line(s),
+    // then a closing `}` line (App. A.4 `disposition "{" NEWLINE …`).
+    let src = "recipe build\n    seal host {\n        local {\n            cook \"s.o\" { cc -c s.c }\n        }\n    }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    assert_eq!(d.sharing, cook_contracts::Sharing::Local);
+    assert!(d.seal.is_empty(), "local must drop inherited seal refs");
+}
+
+#[test]
+fn disp_nested_seal_blocks_union() {
+    let src = "recipe build\n    seal a {\n        seal b {\n            cook \"x.o\" { cc -c x.c }\n        }\n    }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    let got: Vec<&str> = d.seal.iter().map(|s| s.as_str()).collect();
+    assert_eq!(got, vec!["a", "b"]);
+}
+
+#[test]
+fn disp_decorator_line_inside_block_adds_to_inherited() {
+    let src = "recipe build\n    seal host {\n        seal gpu\n        cook \"x.o\" { cc -c x.c }\n    }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    let got: Vec<&str> = d.seal.iter().map(|s| s.as_str()).collect();
+    assert_eq!(got, vec!["gpu", "host"]);
+}
+
+#[test]
+fn disp_unannotated_cook_has_default_disposition() {
+    let src = "recipe build\n    cook \"x.o\" { cc -c x.c }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    assert_eq!(*d, crate::ast::Disposition::default());
+}
+
+// negative paths
+
+#[test]
+fn disp_dangling_decorator_without_cook_errors() {
+    let src = "recipe r\n    seal host\n    plate { echo hi }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_dangling_decorator_at_eof_errors() {
+    let src = "recipe r\n    seal host\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_local_and_pinned_mutually_exclusive_errors() {
+    let src = "recipe r\n    local\n    pinned\n    cook \"x.o\" { cc -c x.c }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_seal_quoted_ref_errors() {
+    let src = "recipe r\n    seal \"host\"\n    cook \"x.o\" { cc -c x.c }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_seal_triple_colon_ref_errors() {
+    let src = "recipe r\n    seal a:b:c\n    cook \"x.o\" { cc -c x.c }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_unterminated_block_errors() {
+    let src = "recipe r\n    seal host {\n        cook \"a.o\" { cc -c a.c }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_empty_block_errors() {
+    let src = "recipe r\n    seal host {\n    }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_block_with_non_cook_step_errors() {
+    let src = "recipe r\n    seal host {\n        echo nope\n    }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_local_keyword_with_trailing_content_is_shell() {
+    // `local foo` is NOT a disposition line — falls through to shell_command.
+    let src = "recipe r\n    local foo\n";
+    let cf = parse(src).unwrap();
+    // it parsed as a shell step, not a disposition error
+    assert!(matches!(cf.recipes[0].steps[0], crate::ast::Step::Shell { .. }));
+}
+
+#[test]
+fn disp_inline_single_line_block_is_rejected() {
+    // The block opener `{` must end its line (App. A.4 `disposition "{" NEWLINE`).
+    // A fully-inline `local { cook … }` is not admitted — the `{`-suffix check
+    // fails (line ends with `}`), so it is neither a block opener nor a bare
+    // decorator, and is rejected.
+    let src = "recipe r\n    seal host {\n        local { cook \"s.o\" { cc -c s.c } }\n    }\n";
+    assert!(parse(src).is_err());
+}
+
+#[test]
+fn disp_inline_block_at_recipe_top_level_is_shell() {
+    // §8.4.3 rule 13: at recipe-body top level (not inside a block), an inline
+    // `local { … }` line is non-reserved and falls through to shell_command —
+    // it is NOT a disposition and NOT an error.
+    let src = "recipe r\n    local { cook \"s.o\" { cc -c s.c } }\n";
+    let cf = parse(src).unwrap();
+    assert!(matches!(cf.recipes[0].steps[0], crate::ast::Step::Shell { .. }));
+}
+
+#[test]
+fn disp_decorator_line_override_inside_seal_block() {
+    // A `local` DECORATOR LINE (not an inner block) inside a `seal` block
+    // overrides the inherited seal on the following cook (§8.4.3 rule 10).
+    let src = "recipe build\n    seal host {\n        local\n        cook \"s.o\" { cc -c s.c }\n    }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    assert_eq!(d.sharing, cook_contracts::Sharing::Local);
+    assert!(d.seal.is_empty(), "decorator-line local must drop inherited seal");
+}
+
+#[test]
+fn disp_seal_block_with_multiline_cook_body() {
+    // The block's closing `}` is distinguishable from a multi-line cook body's
+    // own `}`: parse_cook_line consumes the body's brace, so the block `}` is a
+    // separate line. Pins the `}`-distinguishability path.
+    let src = "recipe build\n    seal host {\n        cook \"a.o\" {\n            cc -c a.c -o a.o\n        }\n    }\n";
+    let cf = parse(src).unwrap();
+    let d = first_cook_disposition(&cf);
+    assert!(d.seal.contains("host"));
+    // exactly one cook, with a multi-line shell body
+    let cooks: Vec<_> = cf.recipes[0]
+        .steps
+        .iter()
+        .filter(|s| matches!(s, crate::ast::Step::Cook { .. }))
+        .collect();
+    assert_eq!(cooks.len(), 1);
 }

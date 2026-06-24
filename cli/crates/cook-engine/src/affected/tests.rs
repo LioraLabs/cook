@@ -16,10 +16,12 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         input_paths: inputs.iter().map(|s| s.to_string()).collect(),
         output_paths: vec![],
         command_hash: 0,
-        context_hash: 0,
         env_contribution: 0,
         consulted_env: BTreeMap::new(),
         discovered_inputs: None,
+        seal_keys: Default::default(),
+            sharing: Default::default(),
+        record: false,
     };
     let unit = CapturedUnit {
         payload: WorkPayload::Shell { cmd: "echo build".into(), line: 1 },

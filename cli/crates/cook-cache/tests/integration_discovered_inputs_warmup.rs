@@ -53,6 +53,7 @@ fn warmup_collapses_to_two_runs() {
         wd,
         None,
         Some(&di),
+        false,
     );
     assert!(matches!(r1, RebuildResult::Rebuild(RebuildReason::NoCacheEntry)),
         "fresh check returns NoCacheEntry");
@@ -76,8 +77,8 @@ fn warmup_collapses_to_two_runs() {
         ],
         outputs: vec![fr(wd, "a.o"), fr(wd, ".cook/deps/a.d")],
         command_hash: 0xc0de,
-        context_hash: 0,
         env_contribution: 0,
+        seal_contribution: 0,
     };
 
     // ---- Run 2: pre-check augments current_inputs, equality check skips ----
@@ -91,6 +92,7 @@ fn warmup_collapses_to_two_runs() {
         wd,
         None,
         Some(&di),
+        false,
     );
     assert!(matches!(r2, RebuildResult::Skip),
         "Run 2 should hit (augmented current matches fat entry); got {r2:?}");
@@ -108,6 +110,7 @@ fn warmup_collapses_to_two_runs() {
         wd,
         None,
         Some(&di),
+        false,
     );
     assert!(matches!(r3, RebuildResult::Rebuild(RebuildReason::InputChanged(_))),
         "Run 3 should rebuild because a.h content changed; got {r3:?}");

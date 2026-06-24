@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["vendor.a"] body=ShellBlock(["ar rcs vendor.a obj.o"]) disposition=[local=false pinned=true record=false seal=[]]
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

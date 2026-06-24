@@ -302,6 +302,7 @@ mod tests {
                     body: Some(Body::ShellBlock(
                         vec!["gcc -o $<out> $<in> $<libmath> $<libstr>".to_string()],
                     )),
+                    disposition: Default::default(),
                 },
                 line: 2,
             }],
@@ -324,6 +325,7 @@ mod tests {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/$<protos.stem>.pb.cc".to_string())],
                     body: None,
+                    disposition: Default::default(),
                 },
                 line: 2,
             }],
@@ -419,6 +421,7 @@ mod tests {
                     body: Some(Body::ShellBlock(vec![
                         "gcc -o $<out> main.c $<libmath>".to_string(),
                     ])),
+                    disposition: Default::default(),
                 },
                 line: 2,
             }],

@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="toolchain" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Tools names=["cc", "ld"]

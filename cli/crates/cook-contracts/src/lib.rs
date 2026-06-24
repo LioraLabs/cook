@@ -197,6 +197,61 @@ pub struct DiscoveredInputs {
     pub format: String,
 }
 
+/// A unit's sharing disposition (Cache-trust v3, §8.4.3). `local` and `pinned`
+/// are spec-mutually-exclusive, so they are modelled as ONE enum rather than two
+/// independent bools — `(local, pinned) = (true, true)` is unrepresentable.
+///
+/// `record` is a SEPARATE orthogonal bool (it waives byte-equivalence) and is
+/// NOT folded in here.
+///
+/// Serialises across the codegen↔register Lua boundary as a string field
+/// `sharing = "local"` / `"pinned"`, omitted entirely for `Shared` (so plain
+/// steps stay byte-identical and the reserved-keyword `["local"]` bracket-quote
+/// hack is gone).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Sharing {
+    /// Default: the unit participates in the shared content-addressed cache.
+    #[default]
+    Shared,
+    /// `local` — opt out of sharing (local `StepEntry` index only).
+    Local,
+    /// `pinned` — designated-producer / fetch-only.
+    Pinned,
+}
+
+impl Sharing {
+    /// True for `Local`. Convenience for the many call sites that previously
+    /// read a `local` bool.
+    pub fn is_local(self) -> bool {
+        matches!(self, Sharing::Local)
+    }
+
+    /// True for `Pinned`.
+    pub fn is_pinned(self) -> bool {
+        matches!(self, Sharing::Pinned)
+    }
+
+    /// The lowercase wire string used on the codegen↔register Lua boundary, or
+    /// `None` for `Shared` (which is emitted as the absence of the field).
+    pub fn as_wire_str(self) -> Option<&'static str> {
+        match self {
+            Sharing::Shared => None,
+            Sharing::Local => Some("local"),
+            Sharing::Pinned => Some("pinned"),
+        }
+    }
+
+    /// Parse a wire string back into a `Sharing`. Unknown strings map to
+    /// `Shared` (the register reader treats absence / unknown as default).
+    pub fn from_wire_str(s: &str) -> Self {
+        match s {
+            "local" => Sharing::Local,
+            "pinned" => Sharing::Pinned,
+            _ => Sharing::Shared,
+        }
+    }
+}
+
 /// Metadata used by the caching subsystem to determine whether a unit can be
 /// skipped.
 #[derive(Debug, Clone, PartialEq)]
@@ -210,14 +265,28 @@ pub struct CacheMeta {
     pub input_paths: Vec<String>,
     pub output_paths: Vec<String>,
     pub command_hash: u64,
-    /// NEW: machine + tool identity. Phase 6 wires real values; zero until then.
-    pub context_hash: u64,
     /// NEW: post-denylist env contribution. Phase 5 wires real values; zero until then.
     pub env_contribution: u64,
     /// NEW: the (key, value) pairs the command consulted post-denylist.
     /// Phase 5 wires real values; empty BTreeMap until then.
     pub consulted_env: std::collections::BTreeMap<String, String>,
     pub discovered_inputs: Option<DiscoveredInputs>,
+    /// COOK-161: the unit's *effective seal set* — bare probe keys whose
+    /// canonical values fold into the cache key at execute-phase. Sorted /
+    /// de-duplicated (`BTreeSet`). Empty for unsealed / `local` / `pinned` units.
+    pub seal_keys: std::collections::BTreeSet<String>,
+    /// COOK-162 §3/§17: sharing disposition. `Local` caches in the local
+    /// `StepEntry` index only (never published to / fetched from the shared
+    /// `CacheBackend`); `Pinned` is fetch-only / designated-producer (MUST be
+    /// served from cache, a cold miss is a HARD ERROR). `Local` and `Pinned`
+    /// are mutually exclusive by construction. Does not change the cache key.
+    pub sharing: Sharing,
+    /// COOK-163: `record` disposition — this unit produces an intrinsically
+    /// NON-reproducible artifact (LLM / image gen). Keyed normally (the key is
+    /// unchanged), but byte-equivalence is WAIVED: a present (or restorable)
+    /// artifact is authoritative and MUST NOT be re-produced on output drift.
+    /// This is also the seam COOK-167's verifier reads to skip byte-checking.
+    pub record: bool,
 }
 
 /// A single captured unit of work within a recipe.
@@ -372,10 +441,12 @@ mod tests {
             input_paths: vec!["src/main.rs".into()],
             output_paths: vec!["target/debug/app".into()],
             command_hash: 42,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
+            seal_keys: Default::default(),
+            sharing: Default::default(),
+            record: false,
         };
         assert_eq!(m.recipe_name, "build");
         assert_eq!(m.command_hash, 42);
@@ -393,10 +464,12 @@ mod tests {
             input_paths: vec![],
             output_paths: vec![],
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
+            seal_keys: Default::default(),
+            sharing: Default::default(),
+            record: false,
         };
         assert!(m.output_paths.is_empty());
     }
@@ -411,13 +484,15 @@ mod tests {
             input_paths: vec!["src/a.c".into()],
             output_paths: vec!["build/a.o".into()],
             command_hash: 0xdead,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: Some(DiscoveredInputs {
                 from: ".cook/deps/a.d".into(),
                 format: "make".into(),
             }),
+            seal_keys: Default::default(),
+            sharing: Default::default(),
+            record: false,
         };
         let di = m.discovered_inputs.as_ref().expect("present");
         assert_eq!(di.from, ".cook/deps/a.d");
@@ -434,12 +509,59 @@ mod tests {
             input_paths: vec![],
             output_paths: vec![],
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
+            seal_keys: Default::default(),
+            sharing: Default::default(),
+            record: false,
         };
         assert!(m.discovered_inputs.is_none());
+    }
+
+    #[test]
+    fn cache_meta_carries_seal_keys() {
+        let mut seal = std::collections::BTreeSet::new();
+        seal.insert("host".to_string());
+        seal.insert("cc:toolchain".to_string());
+        let meta = CacheMeta {
+            recipe_name: "build".into(),
+            project_id: String::new(),
+            cookfile_path: "Cookfile".into(),
+            cache_key: "k".into(),
+            input_paths: vec![],
+            output_paths: vec!["x.o".into()],
+            command_hash: 1,
+            env_contribution: 0,
+            consulted_env: Default::default(),
+            discovered_inputs: None,
+            seal_keys: seal.clone(),
+            sharing: Default::default(),
+            record: false,
+        };
+        assert_eq!(meta.seal_keys, seal);
+    }
+
+    #[test]
+    fn cache_meta_carries_record_flag() {
+        let mut meta = CacheMeta {
+            recipe_name: "r".into(),
+            project_id: String::new(),
+            cookfile_path: String::new(),
+            cache_key: "k".into(),
+            input_paths: vec![],
+            output_paths: vec!["out".into()],
+            command_hash: 0,
+            env_contribution: 0,
+            consulted_env: Default::default(),
+            discovered_inputs: None,
+            seal_keys: Default::default(),
+            sharing: Default::default(),
+            record: false,
+        };
+        assert!(!meta.record, "record defaults to false");
+        meta.record = true;
+        assert!(meta.record, "record flag is settable and read back");
     }
 
     #[test]
@@ -634,10 +756,12 @@ mod tests {
                 input_paths: vec!["main.c".into()],
                 output_paths: vec!["app".into()],
                 command_hash: 9999,
-                context_hash: 0,
                 env_contribution: 0,
                 consulted_env: std::collections::BTreeMap::new(),
                 discovered_inputs: None,
+                seal_keys: Default::default(),
+            sharing: Default::default(),
+                record: false,
             }),
             dep_kind: DepKind::StepGroup(0),
             probes: vec![],

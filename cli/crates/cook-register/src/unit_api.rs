@@ -466,27 +466,25 @@ pub fn register_unit_api(
 
         // Retrieve the CacheContext if it was threaded in from cook-engine.
         // If absent (tests, legacy call sites where the engine has not yet
-        // built its `CacheContext`), fall back to context_hash = 0 / empty
-        // project_id, but still compute env_contribution from the captured
-        // consulted_env so a value change in any tracked env key invalidates
-        // the cache. COOK-59 Task 4.5: without this, the static Lua scanner
-        // for `cook.env.<KEY>` reads can record keys whose values never
-        // reach the cache fingerprint — the very gap the scanner exists
+        // built its `CacheContext`), still compute env_contribution from the
+        // captured consulted_env so a value change in any tracked env key
+        // invalidates the cache. COOK-59 Task 4.5: without this, the static
+        // Lua scanner for `cook.env.<KEY>` reads can record keys whose values
+        // never reach the cache fingerprint — the very gap the scanner exists
         // to close.
         let cache_ctx = lua
             .app_data_ref::<std::sync::Arc<cook_cache::cache_ctx::CacheContext>>();
 
-        let (context_hash, env_contribution_val, project_id, cookfile_path) =
+        let (env_contribution_val, project_id, cookfile_path) =
             if let Some(ctx) = cache_ctx {
-                let ch = ctx.exec_ctx.step_context_hash(&command);
                 let ec = cook_cache::envkey::env_contribution(&consulted_env, &ctx.denylist);
                 let pid = ctx.project_id.clone();
                 let cfp = cookfile_relative_path(lua);
-                (ch, ec, pid, cfp)
+                (ec, pid, cfp)
             } else {
                 let baseline = cook_cache::envkey::EnvDenylist::baseline();
                 let ec = cook_cache::envkey::env_contribution(&consulted_env, &baseline);
-                (0, ec, String::new(), cookfile_relative_path(lua))
+                (ec, String::new(), cookfile_relative_path(lua))
             };
 
         // Read optional discovered_inputs table.
@@ -535,6 +533,51 @@ pub fn register_unit_api(
                 }
             };
 
+        // COOK-161: opts.seal — optional list of bare probe keys the author sealed
+        // this unit on (§8.4.3). Their canonical VALUES fold into the cache key at
+        // execute-phase; here we carry only the key set.
+        let seal_keys: std::collections::BTreeSet<String> = match tbl.get::<LuaValue>("seal") {
+            Ok(LuaValue::Nil) => Default::default(),
+            Ok(LuaValue::Table(t)) => {
+                let mut out = std::collections::BTreeSet::new();
+                for v in t.sequence_values::<String>() {
+                    out.insert(v.map_err(|e| {
+                        LuaError::runtime(format!(
+                            "cook.add_unit: seal must be a list of strings: {e}"
+                        ))
+                    })?);
+                }
+                out
+            }
+            _ => {
+                return Err(LuaError::runtime(
+                    "cook.add_unit: seal must be a table of strings".to_string(),
+                ))
+            }
+        };
+
+        // COOK-162 / I3: sharing disposition emitted by codegen as a string
+        // field `sharing = "local"|"pinned"`, omitted for the shared default.
+        let sharing = match tbl.get::<LuaValue>("sharing") {
+            Ok(LuaValue::String(s)) => {
+                cook_contracts::Sharing::from_wire_str(&s.to_string_lossy())
+            }
+            _ => cook_contracts::Sharing::Shared,
+        };
+        // COOK-163: opts.record — the `record` disposition. Marks an
+        // intrinsically non-reproducible artifact; byte-equivalence is waived
+        // at the cache decision (the key is unchanged). Accept only a bool.
+        let record: bool = match tbl.get::<LuaValue>("record") {
+            Ok(LuaValue::Nil) => false,
+            Ok(LuaValue::Boolean(b)) => b,
+            Ok(_) => {
+                return Err(LuaError::runtime(
+                    "cook.add_unit: record must be a boolean".to_string(),
+                ))
+            }
+            Err(_) => false,
+        };
+
         let cache_meta = if cache_enabled {
             let cache_key = build_local_cache_key(
                 &cookfile_path,
@@ -542,7 +585,6 @@ pub fn register_unit_api(
                 &output_paths,
                 &cache_input_paths,
                 command_hash,
-                context_hash,
                 env_contribution_val,
             );
             Some(CacheMeta {
@@ -553,10 +595,12 @@ pub fn register_unit_api(
                 input_paths: cache_input_paths,
                 output_paths: output_paths.clone(),
                 command_hash,
-                context_hash,
                 env_contribution: env_contribution_val,
                 consulted_env,
                 discovered_inputs,
+                seal_keys: seal_keys.clone(),
+                sharing,
+                record,
             })
         } else {
             None
@@ -596,6 +640,14 @@ pub fn register_unit_api(
             }
             Err(_) => vec![],
         };
+
+        // Sealed probes are execute-phase determinants — the unit must run after
+        // them so their values are materialised before the cache check (COOK-161).
+        for k in &seal_keys {
+            if !probes.contains(k) {
+                probes.push(k.clone());
+            }
+        }
 
         // is_chore is read BEFORE the if/else below (and before the later
         // mutable borrow) so the borrow doesn't overlap with mutable use.
@@ -791,36 +843,27 @@ pub fn register_unit_api(
     Ok(())
 }
 
-/// Build a local cache key that encodes context_hash and env_contribution
-/// so simultaneous variant builds (debug↔release, gcc↔clang) coexist
-/// without overwriting each other.
+/// Build a local cache key that encodes env_contribution so simultaneous
+/// variant builds (e.g. different env-selected toolchains) coexist without
+/// overwriting each other.
 fn build_local_cache_key(
     _cookfile_path: &str,
     _recipe: &str,
     output_paths: &[String],
     inputs: &[String],
     command_hash: u64,
-    context_hash: u64,
     env_contribution: u64,
 ) -> String {
     if let Some(first) = output_paths.first() {
-        // When context or env differ from zero (real values), embed them to
-        // avoid cross-variant collisions.
-        if context_hash != 0 || env_contribution != 0 {
-            format!(
-                "{first}@{:x}:{:x}",
-                context_hash, env_contribution
-            )
+        if env_contribution != 0 {
+            format!("{first}@{:x}", env_contribution)
         } else {
             first.clone()
         }
     } else {
         let base = inputs.first().map(|s| s.as_str()).unwrap_or("");
-        if context_hash != 0 || env_contribution != 0 {
-            format!(
-                "{}@{:x}:{:x}:{:x}",
-                base, command_hash, context_hash, env_contribution
-            )
+        if env_contribution != 0 {
+            format!("{}@{:x}:{:x}", base, command_hash, env_contribution)
         } else {
             format!("{}@{:x}", base, command_hash)
         }
@@ -880,12 +923,12 @@ mod tests {
         let dir_path = dir.path().to_path_buf();
         std::mem::forget(dir); // tests are short-lived; let the OS clean up
         std::sync::Arc::new(cook_cache::cache_ctx::CacheContext {
-            exec_ctx: std::sync::Arc::new(cook_cache::context::ExecutionContext::probe()),
             denylist: std::sync::Arc::new(cook_cache::envkey::EnvDenylist::baseline()),
             backend: std::sync::Arc::new(cook_cache::backend::LocalBackend::new(dir_path.clone())),
             cloud_config: std::sync::Arc::new(cook_cache::cloud_config::CloudConfig::default()),
             project_root: dir_path,
             project_id: "test-project".to_string(),
+            publish_enabled: true,
         })
     }
 
@@ -1689,6 +1732,115 @@ mod tests {
     }
 
     #[test]
+    fn add_unit_seal_field_sets_cache_meta_and_probes() {
+        // COOK-161: opts.seal carries the effective seal set onto CacheMeta and
+        // unions into the unit's probe-dependency vec so the unit runs after the
+        // sealed probes are materialised.
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "x.o",
+                outputs = { "x.o" },
+                command = "cc",
+                seal = { "host" },
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        assert!(
+            u.probes.contains(&"host".to_string()),
+            "sealed key must be unioned into probes; got: {:?}",
+            u.probes
+        );
+        let cm = u.cache_meta.as_ref().expect("cache_meta present");
+        assert!(
+            cm.seal_keys.contains("host"),
+            "sealed key must be on CacheMeta.seal_keys; got: {:?}",
+            cm.seal_keys
+        );
+    }
+
+    #[test]
+    fn add_unit_local_pinned_disposition_booleans() {
+        // COOK-162 / I3: opts.sharing ("local"/"pinned") is parsed into the
+        // CacheMeta.sharing enum. Three sub-cases: local, pinned, neither.
+
+        // Case 1: sharing = "local" → CacheMeta.sharing == Local
+        {
+            let (lua, capture_state) = make_lua_with_unit_api("recipe");
+            lua.set_app_data(fake_cache_ctx());
+            lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+            lua.load(r#"
+                cook.add_unit({
+                    command = "echo local",
+                    output = "out.txt",
+                    sharing = "local",
+                })
+            "#)
+            .exec()
+            .unwrap();
+            let state = body_ref(&capture_state);
+            let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
+            assert_eq!(
+                cm.sharing,
+                cook_contracts::Sharing::Local,
+                "sharing=\"local\" should propagate to CacheMeta.sharing"
+            );
+        }
+
+        // Case 2: sharing = "pinned" → CacheMeta.sharing == Pinned
+        {
+            let (lua, capture_state) = make_lua_with_unit_api("recipe");
+            lua.set_app_data(fake_cache_ctx());
+            lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+            lua.load(r#"
+                cook.add_unit({
+                    command = "echo pinned",
+                    output = "out.txt",
+                    sharing = "pinned",
+                })
+            "#)
+            .exec()
+            .unwrap();
+            let state = body_ref(&capture_state);
+            let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
+            assert_eq!(
+                cm.sharing,
+                cook_contracts::Sharing::Pinned,
+                "sharing=\"pinned\" should propagate to CacheMeta.sharing"
+            );
+        }
+
+        // Case 3: neither → Shared default
+        {
+            let (lua, capture_state) = make_lua_with_unit_api("recipe");
+            lua.set_app_data(fake_cache_ctx());
+            lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+            lua.load(r#"
+                cook.add_unit({
+                    command = "echo neither",
+                    output = "out.txt",
+                })
+            "#)
+            .exec()
+            .unwrap();
+            let state = body_ref(&capture_state);
+            let cm = state.units[0].cache_meta.as_ref().expect("cache_meta present");
+            assert_eq!(
+                cm.sharing,
+                cook_contracts::Sharing::Shared,
+                "omitting sharing should leave CacheMeta.sharing Shared"
+            );
+        }
+    }
+
+    #[test]
     fn add_unit_without_probes_defaults_to_empty() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
         lua.set_app_data(fake_cache_ctx());
@@ -1872,5 +2024,61 @@ mod tests {
         let u = state.units.last().expect("a unit was captured");
         assert_eq!(u.member.as_deref(), Some("{\"id\":\"s1\"}"));
         assert_eq!(u.output_paths, vec!["build/s1.mp4".to_string()]);
+    }
+
+    #[test]
+    fn add_unit_record_flag_threads_to_cache_meta() {
+        // COOK-163: opts.record marks an intrinsically non-reproducible artifact.
+        // The register layer must read opts.record and set it on CacheMeta.
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "x.o",
+                outputs = { "x.o" },
+                command = "cc",
+                record = true,
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        let cm = u.cache_meta.as_ref().expect("cache_meta present");
+        assert!(
+            cm.record,
+            "record must be true on CacheMeta when opts.record = true; got: {}",
+            cm.record
+        );
+    }
+
+    #[test]
+    fn add_unit_record_defaults_false() {
+        // COOK-163: when opts.record is absent, it defaults to false.
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "x.o",
+                outputs = { "x.o" },
+                command = "cc",
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        let cm = u.cache_meta.as_ref().expect("cache_meta present");
+        assert!(
+            !cm.record,
+            "record must be false on CacheMeta when opts.record is absent; got: {}",
+            cm.record
+        );
     }
 }

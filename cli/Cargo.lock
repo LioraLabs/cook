@@ -448,12 +448,14 @@ dependencies = [
  "dirs",
  "dotenvy",
  "globset",
+ "hex",
  "pathdiff",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -476,6 +478,7 @@ dependencies = [
 name = "cook-lang"
 version = "0.1.0"
 dependencies = [
+ "cook-contracts",
  "glob",
  "thiserror 2.0.18",
 ]

@@ -22,7 +22,7 @@ use cook_cache::{
     cloud_config::CloudConfig, TestCache, ThreadSafeCacheManager,
 };
 use cook_contracts::{RecipeUnits, WorkPayload};
-use cook_fingerprint::{CacheBackend, EnvDenylist, ExecutionContext, FingerprintInputs};
+use cook_fingerprint::{CacheBackend, EnvDenylist, FingerprintInputs};
 
 use crate::{
     dag_builder, executor, EngineError, EngineEvent, RecipeKind, RegisteredWorkspace, WorkNode,
@@ -61,7 +61,7 @@ pub struct RunResult {
 ///
 /// `"backend.proto.generate"` -> `("backend.proto", "generate")`
 /// `"build"` -> `("", "build")`
-fn split_recipe_name(name: &str) -> (String, String) {
+pub(crate) fn split_recipe_name(name: &str) -> (String, String) {
     if let Some(dot_pos) = name.rfind('.') {
         (name[..dot_pos].to_string(), name[dot_pos + 1..].to_string())
     } else {
@@ -285,6 +285,10 @@ fn collect_test_file_inputs(
 /// * `no_prune` - When true, disables stale-output reconciliation (§17.7) for
 ///   this invocation (`--no-prune` / `COOK_NO_PRUNE`). Orphaned outputs are
 ///   retained instead of swept.
+/// * `no_publish` - When true, suppresses ALL shared-store uploads for this
+///   invocation (`--no-publish` / `COOK_NO_PUBLISH`). Fetch, drift-restore,
+///   and `pinned` cold-fetch are unaffected. Combined with `[cloud] publish`
+///   in `build_cache_ctx` to compute `CacheContext::publish_enabled`.
 /// * `on_event` - Callback invoked for each engine event (progress, errors,
 ///   etc.). The terminating [`EngineEvent::Finished`] event is emitted here
 ///   automatically; callers do not need to send one themselves.
@@ -296,13 +300,14 @@ pub fn run<F>(
     num_jobs: usize,
     rerun_patterns: &[String],
     no_prune: bool,
+    no_publish: bool,
     on_event: F,
 ) -> Result<RunResult, EngineError>
 where
     F: Fn(EngineEvent) + Send + Sync,
 {
     let started = std::time::Instant::now();
-    let cache_ctx = match build_cache_ctx(project_root) {
+    let cache_ctx = match build_cache_ctx(project_root, no_publish) {
         Ok(c) => c,
         Err(e) => {
             on_event(EngineEvent::Finished {
@@ -470,20 +475,9 @@ where
     }
 
     // 5. Per-recipe cache managers. One per reachable recipe, anchored at
-    //    that recipe's prefix's working_dir.
-    let cache_managers: BTreeMap<String, Arc<ThreadSafeCacheManager>> = reachable
-        .iter()
-        .map(|name| {
-            let prefix = split_recipe_name(name).0;
-            let wd = registered_workspace
-                .working_dir_by_prefix
-                .get(&prefix)
-                .cloned()
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
-            let cache_dir = wd.join(".cook").join("cache");
-            (name.clone(), Arc::new(ThreadSafeCacheManager::new(cache_dir)))
-        })
-        .collect();
+    //    that recipe's prefix's working_dir. Shared with `cook why` via
+    //    `cache_managers_for_cli` so the two paths can never drift.
+    let cache_managers = cache_managers_for_cli(registered_workspace, reachable);
 
     // §17.7 stale-output reconciliation: snapshot each reached recipe's prior
     // recorded outputs (absolute path → recorded content hash) BEFORE the run
@@ -540,17 +534,6 @@ where
                     .filter(|(k, _)| !cache_ctx.denylist.is_ignored(k))
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
-                let tool_hashes: Vec<(String, String)> = cache_ctx
-                    .exec_ctx
-                    .declared_tools
-                    .iter()
-                    .map(|(name, path)| {
-                        let hash = cook_fingerprint::hash_file(path)
-                            .map(|h| format!("{h:x}"))
-                            .unwrap_or_else(|| "0".to_string());
-                        (name.clone(), hash)
-                    })
-                    .collect();
                 // COOK-84: hash the test's transitive source closure —
                 // own inputs (minus predecessor-produced artifacts, which
                 // are stale at upfront time) plus every closure dep's
@@ -567,7 +550,6 @@ where
                     cook_outputs,
                     dep_outputs,
                     env_keys,
-                    tool_hashes,
                 };
                 let fp = cook_fingerprint::compute_test_fingerprint(
                     work_node.payload.as_ref().expect("checked above"),
@@ -654,7 +636,7 @@ where
 /// its captured units carry in their [`cook_contracts::CacheMeta`] (which the
 /// executor uses as the manager's per-recipe key), falling back to the
 /// recipe's own name for unit-less meta-targets.
-fn recipe_cache_index_name(ru: &RecipeUnits, fallback: &str) -> String {
+pub(crate) fn recipe_cache_index_name(ru: &RecipeUnits, fallback: &str) -> String {
     ru.units
         .iter()
         .find_map(|u| u.cache_meta.as_ref().map(|m| m.recipe_name.clone()))
@@ -751,6 +733,13 @@ fn reconcile_outputs(
 /// [`dag_builder::build_dag`]'s intra-call `recipe_leaves` accumulator has
 /// every dep present before the dependent recipe is processed. Recipes
 /// missing from `edges` are placed first (no deps known).
+pub(crate) fn toposort_reachable_pub(
+    edges: &BTreeMap<String, Vec<String>>,
+    reachable: &BTreeSet<String>,
+) -> Result<Vec<String>, EngineError> {
+    toposort_reachable(edges, reachable)
+}
+
 fn toposort_reachable(
     edges: &BTreeMap<String, Vec<String>>,
     reachable: &BTreeSet<String>,
@@ -818,26 +807,40 @@ fn toposort_reachable(
 /// context (machine identity + declared-tool hashing), selects either the
 /// local or cloud backend, and assembles the shared `CacheContext` carried
 /// by every register pass and worker.
-fn build_cache_ctx(project_root: &Path) -> Result<Arc<CacheContext>, EngineError> {
+/// CLI helper: build a `CacheContext` for read-only introspection (cook why).
+pub fn build_cache_ctx_for_cli(
+    project_root: &Path,
+    no_publish: bool,
+) -> Result<Arc<CacheContext>, EngineError> {
+    build_cache_ctx(project_root, no_publish)
+}
+
+/// CLI helper: per-recipe cache managers, identical to what `run_inner` builds.
+pub fn cache_managers_for_cli(
+    ws: &RegisteredWorkspace,
+    reachable: &BTreeSet<String>,
+) -> BTreeMap<String, Arc<ThreadSafeCacheManager>> {
+    reachable
+        .iter()
+        .map(|name| {
+            let prefix = split_recipe_name(name).0;
+            let wd = ws
+                .working_dir_by_prefix
+                .get(&prefix)
+                .cloned()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let cache_dir = wd.join(".cook").join("cache");
+            (name.clone(), Arc::new(ThreadSafeCacheManager::new(cache_dir)))
+        })
+        .collect()
+}
+
+pub(crate) fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<Arc<CacheContext>, EngineError> {
     let cloud_config = CloudConfig::load_or_default(project_root)
         .map_err(|e| EngineError::CacheError(format!("invalid .cook/cloud.toml: {e}")))?;
     let mut denylist = EnvDenylist::baseline();
     denylist.extend_with(cloud_config.cache_ignore_env());
     let denylist = Arc::new(denylist);
-    let exec_ctx = Arc::new(
-        ExecutionContext::probe_with_declared_tools(cloud_config.cache_tools())
-            .map_err(|e| EngineError::CacheError(e.to_string()))?,
-    );
-    if !exec_ctx.declared_tools.is_empty() {
-        tracing::debug!(
-            "declared cache tools: {:?}",
-            exec_ctx
-                .declared_tools
-                .iter()
-                .map(|(n, p)| format!("{n} -> {}", p.display()))
-                .collect::<Vec<_>>()
-        );
-    }
     let cache_dir = cloud_config
         .cache_dir()
         .map(std::path::PathBuf::from)
@@ -877,13 +880,19 @@ fn build_cache_ctx(project_root: &Path) -> Result<Arc<CacheContext>, EngineError
         tracing::warn!("cache backend unavailable: {e}; continuing with backend disabled");
     }
     let project_id = cloud_config.project_id_or_fallback(project_root);
+    // COOK-168: read-only / publish-off client mode. Config opt-out
+    // (`[cloud] publish = false`) OR an invocation flag (`--no-publish` /
+    // `COOK_NO_PUBLISH`, passed as `no_publish`) suppresses every upload.
+    // The flag can only turn publishing OFF, never force it on over a
+    // `publish = false` config.
+    let publish_enabled = cloud_config.publish() && !no_publish;
     Ok(Arc::new(CacheContext {
-        exec_ctx,
         denylist,
         backend,
         cloud_config: Arc::new(cloud_config),
         project_root: project_root.to_path_buf(),
         project_id,
+        publish_enabled,
     }))
 }
 
@@ -947,6 +956,7 @@ mod tests {
             1,
             &[],
             false,
+            false,
             |_| {},
         );
         assert!(result.is_ok());
@@ -969,6 +979,7 @@ mod tests {
             &reachable,
             1,
             &[],
+            false,
             false,
             |_| {},
         );
@@ -993,6 +1004,7 @@ mod tests {
             &reachable,
             1,
             &[],
+            false,
             false,
             |event| events.lock().unwrap().push(event),
         );
@@ -1025,6 +1037,7 @@ mod tests {
             &reachable,
             1,
             &[],
+            false,
             false,
             |event| events.lock().unwrap().push(event),
         );
@@ -1147,10 +1160,12 @@ mod tests {
                 input_paths: inputs.iter().map(|s| s.to_string()).collect(),
                 output_paths: outputs.iter().map(|s| s.to_string()).collect(),
                 command_hash,
-                context_hash: 0,
                 env_contribution: 0,
                 consulted_env: Default::default(),
                 discovered_inputs: None,
+                seal_keys: Default::default(),
+            sharing: Default::default(),
+                record: false,
             }),
             working_dir: wd.to_path_buf(),
             env_vars: Default::default(),

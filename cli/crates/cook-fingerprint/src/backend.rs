@@ -2,7 +2,7 @@
 //! cache persistence layer. Cook Cloud's R2/D1 backend implements this trait;
 //! `cook-cache::backend::LocalBackend` is the v3 filesystem implementation.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::time::Duration;
 
@@ -98,8 +98,11 @@ pub type BackendResult<T> = Result<T, BackendError>;
 pub struct ArtifactMeta {
     pub recipe_namespace: String,
     pub command_hash: u64,
-    pub context_hash: u64,
     pub env_contribution: u64,
+    /// COOK-161 / CS-0107: the unit's effective-seal-set value fold. Diagnostic
+    /// + key-consistency; defaults to 0 for legacy sidecars.
+    #[serde(default)]
+    pub seal_contribution: u64,
     pub schema_version: u32,
     pub size_bytes: u64,
     pub tags: BTreeSet<String>,
@@ -141,6 +144,72 @@ impl ArtifactMeta {
     pub fn as_probe_value(mut self) -> Self {
         self.kind = Some("probe_value".into());
         self
+    }
+}
+
+/// COOK-166 / CS-0110: the producer **determinant manifest** persisted
+/// alongside a shared artifact. It records the *resolved values* that formed
+/// the unit's single cache key K (§{exec.cache.single-key}) — not the artifact
+/// bytes, and NOT an attestation of which producer ran (deferred to M2). It
+/// powers `cook why`-on-miss and the shadow-divergence verifier: a consumer
+/// that recomputes a different K can diff its determinants against this
+/// manifest to attribute the miss to a specific input, env value, or probe.
+///
+/// All collections are ordered (`BTreeMap`) so the same K yields byte-identical
+/// manifest bytes — the determinism invariant the verifier relies on. `u64`
+/// hashes serialize as zero-padded lowercase hex strings (the `hex_u64`
+/// convention of `record.rs`) so a high-bit value round-trips through JSON.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeterminantManifest {
+    pub schema_version: u32,
+    pub recipe_namespace: String,
+    /// Hex of the unit's `cloud_key` (K). Self-identifying; the verifier
+    /// confirms the recorded determinants recompose to this key.
+    pub key: String,
+    #[serde(with = "crate::record::hex_u64")]
+    pub command_hash: u64,
+    #[serde(with = "crate::record::hex_u64")]
+    pub env_contribution: u64,
+    #[serde(with = "crate::record::hex_u64")]
+    pub seal_contribution: u64,
+    /// Declared input workspace-path → content hash. Resolved form of
+    /// `CloudKeyInputs::sorted_input_content_hashes`.
+    #[serde(with = "hex_u64_map")]
+    pub inputs: BTreeMap<String, u64>,
+    /// Resolved (glob-expanded) declared output paths.
+    pub output_paths: Vec<String>,
+    /// Post-denylist consulted env key → value. Resolved form of
+    /// `env_contribution`.
+    pub consulted_env: BTreeMap<String, String>,
+    /// Effective-seal-set probe key → canonical-JSON value bytes (UTF-8).
+    /// Resolved form of `seal_contribution`.
+    pub sealed_probes: BTreeMap<String, String>,
+}
+
+/// `hex_u64` (see [`crate::record::hex_u64`]) for the *values* of a
+/// `BTreeMap<String, u64>`.
+mod hex_u64_map {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+    pub fn serialize<S: Serializer>(
+        m: &BTreeMap<String, u64>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        let rendered: BTreeMap<&String, String> =
+            m.iter().map(|(k, v)| (k, format!("{v:016x}"))).collect();
+        rendered.serialize(s)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<BTreeMap<String, u64>, D::Error> {
+        let raw: BTreeMap<String, String> = BTreeMap::deserialize(d)?;
+        raw.into_iter()
+            .map(|(k, v)| {
+                u64::from_str_radix(&v, 16)
+                    .map(|n| (k, n))
+                    .map_err(serde::de::Error::custom)
+            })
+            .collect()
     }
 }
 
@@ -244,6 +313,22 @@ pub trait CacheBackend: Send + Sync {
 
     /// Lightweight health check. Engine calls once at build start.
     fn health(&self) -> BackendResult<()>;
+
+    /// COOK-166 / CS-0110: persist the producer determinant manifest for the
+    /// unit addressed by `key` (the unit's `cloud_key` K). Retrievable by the
+    /// same key via [`CacheBackend::get_manifest`]. Diagnostic/verification
+    /// data — NOT integrity-critical; a correct rebuild writes byte-identical
+    /// content, so this is idempotent (last write wins on identical bytes).
+    fn put_manifest(
+        &self,
+        key: &CloudKey,
+        manifest: &DeterminantManifest,
+    ) -> BackendResult<()>;
+
+    /// Fetch the determinant manifest for `key`. `Ok(None)` on miss or on a
+    /// malformed/legacy sidecar (the manifest is best-effort diagnostic data;
+    /// a missing manifest is never an error).
+    fn get_manifest(&self, key: &CloudKey) -> BackendResult<Option<DeterminantManifest>>;
 }
 
 /// Inputs to `cloud_key()`. The struct is `Copy` so callers can build it once
@@ -253,11 +338,21 @@ pub struct CloudKeyInputs<'a> {
     pub schema_version: u32,
     pub recipe_namespace: &'a str,
     pub command_hash: u64,
-    pub context_hash: u64,
     pub env_contribution: u64,
+    /// COOK-161 / CS-0107: the unit's effective-seal-set value fold (see
+    /// `StepEntry.seal_contribution`). Zero for an unsealed unit.
+    pub seal_contribution: u64,
     /// Caller MUST sort by path before passing. The slice is hashed in given
     /// order; sorting is the caller's responsibility (cf. spec §5.3).
     pub sorted_input_content_hashes: &'a [u64],
+}
+
+/// Compose the canonical `recipe_namespace` string for a unit:
+/// `"<project_id>/<cookfile_path>::<recipe>"`. This is the SINGLE source of
+/// that composition — every cloud_key, ArtifactMeta, and DeterminantManifest
+/// namespace MUST come from here so the three sites cannot drift (spec §5.3).
+pub fn recipe_namespace(project_id: &str, cookfile_path: &str, recipe: &str) -> String {
+    format!("{project_id}/{cookfile_path}::{recipe}")
 }
 
 /// Derive an output-scoped artifact key from a cache entry's cloud_key.
@@ -287,8 +382,8 @@ pub fn cloud_key(inputs: &CloudKeyInputs<'_>) -> CloudKey {
     h.update(inputs.recipe_namespace.as_bytes());
     h.update([0x00]); // delimiter
     h.update(inputs.command_hash.to_le_bytes());
-    h.update(inputs.context_hash.to_le_bytes());
     h.update(inputs.env_contribution.to_le_bytes());
+    h.update(inputs.seal_contribution.to_le_bytes());
     for hash in inputs.sorted_input_content_hashes {
         h.update(hash.to_le_bytes());
     }
@@ -343,8 +438,8 @@ mod tests {
             schema_version: 3,
             recipe_namespace: "cook/Cookfile::build",
             command_hash: 0xAAAA,
-            context_hash: 0xBBBB,
             env_contribution: 0xCCCC,
+            seal_contribution: 0xDDDD,
             sorted_input_content_hashes: &[0x1111, 0x2222, 0x3333],
         }
     }
@@ -362,14 +457,6 @@ mod tests {
         let a = make_key_inputs();
         let mut b = a;
         b.command_hash = 0xFFFF;
-        assert_ne!(cloud_key(&a), cloud_key(&b));
-    }
-
-    #[test]
-    fn cloud_key_changes_on_context_hash_change() {
-        let a = make_key_inputs();
-        let mut b = a;
-        b.context_hash = 0xFFFF;
         assert_ne!(cloud_key(&a), cloud_key(&b));
     }
 
@@ -425,6 +512,21 @@ mod tests {
         assert_eq!(k.len(), 32);
     }
 
+    #[test]
+    fn cloud_key_changes_on_seal_contribution_change() {
+        let a = make_key_inputs();
+        let mut b = a;
+        b.seal_contribution = 0xFFFF;
+        assert_ne!(cloud_key(&a), cloud_key(&b));
+    }
+
+    #[test]
+    fn cloud_key_zero_seal_is_stable() {
+        let a = make_key_inputs();
+        let b = a;
+        assert_eq!(cloud_key(&a), cloud_key(&b));
+    }
+
     // ---- CS-0074 ArtifactMeta.kind tests ----
 
     fn minimal_meta_json(extra: &str) -> String {
@@ -432,7 +534,6 @@ mod tests {
             r#"{{
                 "recipe_namespace": "ns",
                 "command_hash": 0,
-                "context_hash": 0,
                 "env_contribution": 0,
                 "schema_version": 1,
                 "size_bytes": 0,
@@ -469,8 +570,8 @@ mod tests {
         let meta = ArtifactMeta {
             recipe_namespace: "ns".into(),
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
             schema_version: 1,
             size_bytes: 0,
             tags: BTreeSet::new(),
@@ -489,8 +590,8 @@ mod tests {
         let meta = ArtifactMeta {
             recipe_namespace: "ns".into(),
             command_hash: 0,
-            context_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
             schema_version: 1,
             size_bytes: 0,
             tags: BTreeSet::new(),
@@ -505,4 +606,34 @@ mod tests {
     }
 
     // ---- end CS-0074 ----
+
+    #[test]
+    fn determinant_manifest_serializes_deterministically() {
+        use std::collections::BTreeMap;
+        let mut inputs = BTreeMap::new();
+        inputs.insert("src/a.c".to_string(), 0xAABB_u64);
+        inputs.insert("src/b.c".to_string(), 0xFFFF_FFFF_FFFF_FFFF_u64);
+        let mut env = BTreeMap::new();
+        env.insert("CC".to_string(), "clang".to_string());
+        let mut probes = BTreeMap::new();
+        probes.insert("host".to_string(), "\"x86_64-linux\"".to_string());
+        let m = DeterminantManifest {
+            schema_version: 5,
+            recipe_namespace: "cook/Cookfile::build".into(),
+            key: "ab".repeat(32),
+            command_hash: 0x1234,
+            env_contribution: 0x5678,
+            seal_contribution: 0x9abc,
+            inputs,
+            output_paths: vec!["build/a.o".into()],
+            consulted_env: env,
+            sealed_probes: probes,
+        };
+        let a = serde_json::to_vec(&m).unwrap();
+        let b = serde_json::to_vec(&m.clone()).unwrap();
+        assert_eq!(a, b, "same manifest must serialize to identical bytes");
+        let back: DeterminantManifest = serde_json::from_slice(&a).unwrap();
+        assert_eq!(back.inputs["src/b.c"], 0xFFFF_FFFF_FFFF_FFFF_u64);
+        assert_eq!(back, m);
+    }
 }

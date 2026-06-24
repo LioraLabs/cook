@@ -15,8 +15,8 @@ fn key_for(env_contrib: u64) -> [u8; 32] {
         schema_version: CACHE_VERSION,
         recipe_namespace: "proj/Cookfile::build",
         command_hash: 0x1111,
-        context_hash: 0x2222,
         env_contribution: env_contrib,
+        seal_contribution: 0,
         sorted_input_content_hashes: &[0xaa, 0xbb],
     })
 }
@@ -59,8 +59,8 @@ fn toggling_back_rehits_prior_entry() {
     let meta_for = |env_c: u64| ArtifactMeta {
         recipe_namespace: "proj/Cookfile::build".into(),
         command_hash: 0x1111,
-        context_hash: 0x2222,
         env_contribution: env_c,
+        seal_contribution: 0,
         schema_version: CACHE_VERSION,
         size_bytes: 5,
         tags: Default::default(),

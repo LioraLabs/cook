@@ -13,9 +13,16 @@ pub mod recipe_dag;
 pub mod reconcile;
 pub mod registered_workspace;
 pub mod run;
+mod seal;
+pub mod verify;
+pub mod why;
 
 pub use registered_workspace::RegisteredWorkspace;
-pub use run::{run, RunResult, TestScope};
+pub use run::{
+    build_cache_ctx_for_cli, cache_managers_for_cli, run, RunResult, TestScope,
+};
+// `cook why` types are consumed through the `cook_engine::why::` module path
+// (CLI renderers, E2E); no flat re-export — one public name per type.
 
 // Re-export the registration-phase public types so consumers can build a
 // `RegisteredWorkspace` without taking a direct `cook-register` dependency.

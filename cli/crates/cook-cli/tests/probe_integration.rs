@@ -33,6 +33,22 @@ fn cook_binary() -> std::path::PathBuf {
 }
 
 fn run_cook(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    // Isolate the shared cache backend per test dir (see file_ref_integration's
+    // run_cook for the rationale). Without this, COOK-162 cold fetch-by-key can
+    // serve a previous run's output from the global `~/.cache/cook/cloud` store
+    // as a spurious first-run hit, so no local StepEntry is recorded and the
+    // `.cook/cache` index assertions below break. The shared store points at a
+    // private subdir; the StepEntry index at `.cook/cache` is unaffected.
+    let cloud_toml = dir.join(".cook/cloud.toml");
+    if !cloud_toml.exists() {
+        fs::create_dir_all(dir.join(".cook")).map_err(|e| e.to_string())?;
+        let shared = dir.join(".cook/shared-cache");
+        fs::write(
+            &cloud_toml,
+            format!("[cache]\ncache_dir = {:?}\n", shared.to_string_lossy()),
+        )
+        .map_err(|e| e.to_string())?;
+    }
     let out = Command::new(cook_binary())
         .args(args)
         .current_dir(dir)

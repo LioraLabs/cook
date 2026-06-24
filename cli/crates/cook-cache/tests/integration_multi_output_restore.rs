@@ -58,8 +58,8 @@ fn multi_output_restore_writes_all_outputs() {
         schema_version: CACHE_VERSION,
         recipe_namespace,
         command_hash: 0x1234,
-        context_hash: 0,
         env_contribution: 0,
+        seal_contribution: 0,
         sorted_input_content_hashes: &sorted,
     });
 
@@ -75,8 +75,8 @@ fn multi_output_restore_writes_all_outputs() {
         let mut meta = ArtifactMeta {
             recipe_namespace: recipe_namespace.into(),
             command_hash: 0x1234,
-            context_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
             schema_version: CACHE_VERSION,
             size_bytes: bytes.len() as u64,
             tags: BTreeSet::new(),
@@ -101,8 +101,8 @@ fn multi_output_restore_writes_all_outputs() {
         inputs: vec![in_record],
         outputs: vec![foo_record, bar_record],
         command_hash: 0x1234,
-        context_hash: 0,
         env_contribution: 0,
+        seal_contribution: 0,
     };
 
     let ctx = RestoreCtx {
@@ -119,6 +119,7 @@ fn multi_output_restore_writes_all_outputs() {
         wd,
         Some(&ctx),
         None,
+        false,
     );
 
     assert_eq!(result, RebuildResult::Skip);
@@ -162,8 +163,8 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         schema_version: CACHE_VERSION,
         recipe_namespace,
         command_hash: 0x1234,
-        context_hash: 0,
         env_contribution: 0,
+        seal_contribution: 0,
         sorted_input_content_hashes: &sorted,
     });
     // Seed only the first artifact.
@@ -171,8 +172,8 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
     let mut meta0 = ArtifactMeta {
         recipe_namespace: recipe_namespace.into(),
         command_hash: 0x1234,
-        context_hash: 0,
         env_contribution: 0,
+        seal_contribution: 0,
         schema_version: CACHE_VERSION,
         size_bytes: 11,
         tags: BTreeSet::new(),
@@ -188,8 +189,8 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         inputs: vec![in_record],
         outputs: vec![foo_record, bar_record],
         command_hash: 0x1234,
-        context_hash: 0,
         env_contribution: 0,
+        seal_contribution: 0,
     };
     let ctx = RestoreCtx {
         backend: backend.as_ref(),
@@ -205,6 +206,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
         wd,
         Some(&ctx),
         None,
+        false,
     );
     assert!(matches!(
         result,
