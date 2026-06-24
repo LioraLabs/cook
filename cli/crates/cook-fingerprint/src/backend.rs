@@ -166,11 +166,11 @@ pub struct DeterminantManifest {
     /// Hex of the unit's `cloud_key` (K). Self-identifying; the verifier
     /// confirms the recorded determinants recompose to this key.
     pub key: String,
-    #[serde(with = "hex_u64")]
+    #[serde(with = "crate::record::hex_u64")]
     pub command_hash: u64,
-    #[serde(with = "hex_u64")]
+    #[serde(with = "crate::record::hex_u64")]
     pub env_contribution: u64,
-    #[serde(with = "hex_u64")]
+    #[serde(with = "crate::record::hex_u64")]
     pub seal_contribution: u64,
     /// Declared input workspace-path → content hash. Resolved form of
     /// `CloudKeyInputs::sorted_input_content_hashes`.
@@ -186,21 +186,8 @@ pub struct DeterminantManifest {
     pub sealed_probes: BTreeMap<String, String>,
 }
 
-/// Serialize a `u64` as a zero-padded 16-char lowercase hex string so it
-/// survives JSON without the i64 high-bit hazard. Deserialize is
-/// case-insensitive (Postel).
-mod hex_u64 {
-    use serde::{Deserialize, Deserializer, Serializer};
-    pub fn serialize<S: Serializer>(v: &u64, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&format!("{v:016x}"))
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
-        let s = String::deserialize(d)?;
-        u64::from_str_radix(&s, 16).map_err(serde::de::Error::custom)
-    }
-}
-
-/// `hex_u64` for the *values* of a `BTreeMap<String, u64>`.
+/// `hex_u64` (see [`crate::record::hex_u64`]) for the *values* of a
+/// `BTreeMap<String, u64>`.
 mod hex_u64_map {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::collections::BTreeMap;

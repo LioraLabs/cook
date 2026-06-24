@@ -2861,12 +2861,19 @@ fn build_determinant_manifest(
 ) -> DeterminantManifest {
     let inputs_map: std::collections::BTreeMap<String, u64> =
         inputs.iter().map(|fr| (fr.path.clone(), fr.hash)).collect();
+    // A sealed key absent from the store folds into `seal_contribution`
+    // (crate::seal) as an *empty value* — its key still distinguishes the
+    // digest. Mirror that here (empty string, not omission) so a verifier
+    // recomposing the seal from `sealed_probes` agrees with the digest. The
+    // probe-dependency wiring makes the absent case unreachable in practice.
     let sealed_probes: std::collections::BTreeMap<String, String> = seal_keys
         .iter()
-        .filter_map(|k| {
-            probe_store
+        .map(|k| {
+            let value = probe_store
                 .get(k)
-                .map(|bytes| (k.clone(), String::from_utf8_lossy(&bytes).into_owned()))
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .unwrap_or_default();
+            (k.clone(), value)
         })
         .collect();
     DeterminantManifest {
