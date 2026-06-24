@@ -24,6 +24,8 @@ sidebar:
 | `outputs`           | array of string | absent | Multiple declared output paths or glob patterns (§{steps.cook-multi}, §{lua.add-unit-output-globs}). Glob patterns are resolved against the unit's working directory after the command completes (§{exec.cache.output-globs}). |
 | `ingredient_groups` | array of arrays of string | `{}` | For Lua-code units, the sequence of ingredient groups exposed as `input_N` (§{lua.exe}). |
 | `discovered_inputs` | table         | absent  | If present, declares a file the command writes during the execute phase that records additional input paths the command consumed (§{exec.cache.discovered-inputs}). Subfields: `from` (string, required, working-directory-relative path) and `format` (string, required; the only mandatory format is `"make"`). |
+| `local`             | boolean        | `false` | Sharing opt-out: the unit is served from and written to the local cache only; its artifact is NOT uploaded to or fetched from the shared store (§{steps.cook-disposition}). Corresponds to the `local` disposition decorator. |
+| `pinned`            | boolean        | `false` | Designated-producer / fetch-only: the unit's artifact is fetched from the shared store if present and, when produced locally, is uploaded; the unit itself is not re-run if a shared entry exists (§{steps.cook-disposition}). Corresponds to the `pinned` disposition decorator. |
 
 **Output-field exclusivity.** A conforming implementation MUST reject `spec` if both `output` and `outputs` are set, raising a Lua runtime error.
 
