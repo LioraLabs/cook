@@ -1220,6 +1220,7 @@ mod tests {
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
+            seal_keys: Default::default(),
         }
     }
 

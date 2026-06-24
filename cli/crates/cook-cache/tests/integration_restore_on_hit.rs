@@ -58,6 +58,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         recipe_namespace,
         command_hash: 0xbeef,
         env_contribution: 0,
+        seal_contribution: 0,
         sorted_input_content_hashes: &sorted,
     });
     let artifact_k = artifact_key(&cloud_k, 0, "out.o");
@@ -67,6 +68,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         recipe_namespace: recipe_namespace.into(),
         command_hash: 0xbeef,
         env_contribution: 0,
+        seal_contribution: 0,
         schema_version: CACHE_VERSION,
         size_bytes: 13,
         tags: BTreeSet::new(),
@@ -90,6 +92,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         outputs: vec![out_record],
         command_hash: 0xbeef,
         env_contribution: 0,
+        seal_contribution: 0,
     };
 
     let ctx = RestoreCtx {
@@ -101,6 +104,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         &["in.c"],
         &["out.o"],
         0xbeef,
+        0,
         0,
         wd,
         Some(&ctx),
@@ -143,6 +147,7 @@ fn restore_miss_falls_through_to_output_changed() {
         outputs: vec![out_record],
         command_hash: 0xbeef,
         env_contribution: 0,
+        seal_contribution: 0,
     };
 
     let ctx = RestoreCtx {
@@ -154,6 +159,7 @@ fn restore_miss_falls_through_to_output_changed() {
         &["in.c"],
         &["out.o"],
         0xbeef,
+        0,
         0,
         wd,
         Some(&ctx),
@@ -206,6 +212,7 @@ fn restore_rejects_tampered_backend_bytes() {
         recipe_namespace,
         command_hash: 0xbeef,
         env_contribution: 0,
+        seal_contribution: 0,
         sorted_input_content_hashes: &sorted,
     });
     let artifact_k = artifact_key(&cloud_k, 0, "out.o");
@@ -219,6 +226,7 @@ fn restore_rejects_tampered_backend_bytes() {
         recipe_namespace: recipe_namespace.into(),
         command_hash: 0xbeef,
         env_contribution: 0,
+        seal_contribution: 0,
         schema_version: CACHE_VERSION,
         size_bytes: tampered.len() as u64,
         tags: BTreeSet::new(),
@@ -242,6 +250,7 @@ fn restore_rejects_tampered_backend_bytes() {
         outputs: vec![out_record],
         command_hash: 0xbeef,
         env_contribution: 0,
+        seal_contribution: 0,
     };
 
     let ctx = RestoreCtx {
@@ -253,6 +262,7 @@ fn restore_rejects_tampered_backend_bytes() {
         &["in.c"],
         &["out.o"],
         0xbeef,
+        0,
         0,
         wd,
         Some(&ctx),
@@ -301,6 +311,7 @@ fn restore_with_no_ctx_returns_output_changed() {
         outputs: vec![out_record],
         command_hash: 0xbeef,
         env_contribution: 0,
+        seal_contribution: 0,
     };
 
     let (result, _) = needs_rebuild_cook(
@@ -308,6 +319,7 @@ fn restore_with_no_ctx_returns_output_changed() {
         &["in.c"],
         &["out.o"],
         0xbeef,
+        0,
         0,
         wd,
         None,

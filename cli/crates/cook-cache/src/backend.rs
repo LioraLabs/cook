@@ -443,6 +443,7 @@ mod tests {
             recipe_namespace: "cook/Cookfile::build".into(),
             command_hash: 0xdead_beef,
             env_contribution: 0x3333_4444,
+            seal_contribution: 0,
             schema_version: 3,
             size_bytes: 5,
             tags: BTreeSet::new(),

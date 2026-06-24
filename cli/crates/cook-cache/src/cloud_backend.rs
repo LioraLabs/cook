@@ -491,6 +491,7 @@ mod tests {
             recipe_namespace: "cook/Cookfile::build".into(),
             command_hash: 0,
             env_contribution: 0,
+            seal_contribution: 0,
             schema_version: 3,
             size_bytes: 0,
             tags: BTreeSet::new(),

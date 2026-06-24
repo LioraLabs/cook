@@ -55,6 +55,7 @@ pub enum RebuildReason {
     NoCacheEntry,
     CommandHashChanged,
     EnvChanged,
+    SealChanged,
     OutputMissing,
     OutputChanged,
     InputSetChanged,
@@ -159,6 +160,7 @@ pub fn needs_rebuild_cook(
     current_outputs: &[&str],
     command_hash: u64,
     env_contribution: u64,
+    seal_contribution: u64,
     working_dir: &Path,
     restore_ctx: Option<&RestoreCtx>,
     discovered_inputs: Option<&cook_contracts::DiscoveredInputs>,
@@ -172,6 +174,9 @@ pub fn needs_rebuild_cook(
     }
     if entry.env_contribution != env_contribution {
         return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
+    }
+    if entry.seal_contribution != seal_contribution {
+        return (RebuildResult::Rebuild(RebuildReason::SealChanged), None);
     }
 
     // Pre-check augmentation: when the unit declares discovered_inputs and
@@ -315,6 +320,7 @@ pub fn needs_rebuild_cook(
         outputs: entry.outputs.clone(),
         command_hash: entry.command_hash,
         env_contribution: entry.env_contribution,
+        seal_contribution: entry.seal_contribution,
     };
     (RebuildResult::Skip, Some(updated))
 }
@@ -337,6 +343,7 @@ fn try_restore(
         recipe_namespace: ctx.recipe_namespace,
         command_hash: entry.command_hash,
         env_contribution: entry.env_contribution,
+        seal_contribution: entry.seal_contribution,
         sorted_input_content_hashes: &sorted,
     };
     let cloud_k = crate::backend::cloud_key(&key_inputs);
@@ -391,6 +398,7 @@ pub fn needs_rebuild_plate(
     current_inputs: &[&str],
     command_hash: u64,
     env_contribution: u64,
+    seal_contribution: u64,
     working_dir: &Path,
 ) -> (RebuildResult, Option<StepEntry>) {
     let entry = match entry {
@@ -403,6 +411,9 @@ pub fn needs_rebuild_plate(
     if entry.env_contribution != env_contribution {
         return (RebuildResult::Rebuild(RebuildReason::EnvChanged), None);
     }
+    if entry.seal_contribution != seal_contribution {
+        return (RebuildResult::Rebuild(RebuildReason::SealChanged), None);
+    }
     match check_inputs(&entry.inputs, current_inputs, working_dir) {
         Err(reason) => (RebuildResult::Rebuild(reason), None),
         Ok(updated_inputs) => {
@@ -411,6 +422,7 @@ pub fn needs_rebuild_plate(
                 outputs: vec![],
                 command_hash: entry.command_hash,
                 env_contribution: entry.env_contribution,
+                seal_contribution: entry.seal_contribution,
             };
             (RebuildResult::Skip, Some(updated))
         }
@@ -505,7 +517,7 @@ mod tests {
     fn test_no_cache_entry_rebuilds() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (result, updated) =
-            needs_rebuild_cook(None, &["in.c"], &["out.o"], 0xdead, 0, dir.path(), None, None);
+            needs_rebuild_cook(None, &["in.c"], &["out.o"], 0xdead, 0, 0, dir.path(), None, None);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::NoCacheEntry));
         assert!(updated.is_none());
     }
@@ -525,10 +537,11 @@ mod tests {
             outputs: vec![out_record],
             command_hash: 0x1111,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0x2222, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0x2222, 0, 0, wd, None, None);
         assert_eq!(
             result,
             RebuildResult::Rebuild(RebuildReason::CommandHashChanged)
@@ -550,10 +563,11 @@ mod tests {
             outputs: vec![],
             command_hash: 0xbeef,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::OutputMissing));
         assert!(updated.is_none());
     }
@@ -573,10 +587,11 @@ mod tests {
             outputs: vec![out_record],
             command_hash: 0xbeef,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None);
         assert_eq!(result, RebuildResult::Skip);
         assert!(updated.is_some());
     }
@@ -609,10 +624,11 @@ mod tests {
             outputs: vec![out_record],
             command_hash: 0xbeef,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let (result, updated) =
-            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, wd, None, None);
+            needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0, wd, None, None);
         assert_eq!(
             result,
             RebuildResult::Rebuild(RebuildReason::InputChanged("in.c".to_string()))
@@ -623,7 +639,7 @@ mod tests {
     #[test]
     fn test_plate_no_cache_entry_runs() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (result, updated) = needs_rebuild_plate(None, &["in.c"], 0xdead, 0, dir.path());
+        let (result, updated) = needs_rebuild_plate(None, &["in.c"], 0xdead, 0, 0, dir.path());
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::NoCacheEntry));
         assert!(updated.is_none());
     }
@@ -641,9 +657,10 @@ mod tests {
             outputs: vec![],
             command_hash: 0xbeef,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
-        let (result, updated) = needs_rebuild_plate(Some(&entry), &["in.c"], 0xbeef, 0, wd);
+        let (result, updated) = needs_rebuild_plate(Some(&entry), &["in.c"], 0xbeef, 0, 0, wd);
         assert_eq!(result, RebuildResult::Skip);
         let updated = updated.expect("should have updated entry");
         assert!(updated.outputs.is_empty());
@@ -707,10 +724,37 @@ mod tests {
             outputs: vec![out_record],
             command_hash: 0xbeef,
             env_contribution: 0x1111,
+            seal_contribution: 0,
         };
 
-        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0x9999, wd, None, None);
+        let (result, updated) = needs_rebuild_cook(Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0x9999, 0, wd, None, None);
         assert_eq!(result, RebuildResult::Rebuild(RebuildReason::EnvChanged));
+        assert!(updated.is_none());
+    }
+
+    #[test]
+    fn seal_contribution_changed_rebuilds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = dir.path();
+        std::fs::write(wd.join("in.c"), b"int main(){}").expect("write");
+        std::fs::write(wd.join("out.o"), b"binary").expect("write");
+
+        let in_record = make_file_record("in.c", wd);
+        let out_record = make_file_record("out.o", wd);
+
+        let entry = StepEntry {
+            inputs: vec![in_record],
+            outputs: vec![out_record],
+            command_hash: 0xbeef,
+            env_contribution: 0,
+            seal_contribution: 0x1111,
+        };
+
+        // Same command/env/inputs/outputs, different seal value -> SealChanged.
+        let (result, updated) = needs_rebuild_cook(
+            Some(&entry), &["in.c"], &["out.o"], 0xbeef, 0, 0x9999, wd, None, None,
+        );
+        assert_eq!(result, RebuildResult::Rebuild(RebuildReason::SealChanged));
         assert!(updated.is_none());
     }
 
@@ -747,6 +791,7 @@ mod tests {
             }],
             command_hash: 0xc0de,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let di = DiscoveredInputs {
@@ -762,6 +807,7 @@ mod tests {
             &["src.c"],
             &["out.o"],
             0xc0de,
+            0,
             0,
             wd,
             None,
@@ -798,6 +844,7 @@ mod tests {
             }],
             command_hash: 0xc0de,
             env_contribution: 0,
+            seal_contribution: 0,
         };
 
         let di = DiscoveredInputs {
@@ -812,6 +859,7 @@ mod tests {
             &["src.c"],
             &["out.o"],
             0xc0de,
+            0,
             0,
             wd,
             None,

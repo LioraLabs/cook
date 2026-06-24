@@ -313,13 +313,24 @@ fn build_wave(
                         meta.input_paths.iter().map(|s| s.as_str()).collect();
                     let current_outputs: Vec<&str> =
                         meta.output_paths.iter().map(|s| s.as_str()).collect();
-                    // Viewer query — no restore side-effects.
+                    // Viewer query — no restore side-effects (COOK-161). The
+                    // viewer has no live ProbeValueStore (sealed probe values only
+                    // exist during an execute-phase DAG walk, not in this static
+                    // graph view), so it cannot re-fold the seal set. It instead
+                    // compares the persisted entry's own seal_contribution against
+                    // itself, so a clean *sealed* unit is correctly shown as
+                    // up-to-date rather than falsely flagged SealChanged. The one
+                    // thing this cannot detect is a probe-value drift since the
+                    // last build — invisible in a static view, and harmless since
+                    // the viewer never writes the cache.
+                    let seal_contribution = entry.map(|e| e.seal_contribution).unwrap_or(0);
                     let (result, _) = needs_rebuild_cook(
                         entry,
                         &input_refs,
                         &current_outputs,
                         meta.command_hash,
                         meta.env_contribution,
+                        seal_contribution,
                         &ru.working_dir,
                         None,
                         None,
@@ -626,6 +637,7 @@ mod tests {
                 from: depfile_rel.into(),
                 format: "make".into(),
             }),
+            seal_keys: Default::default(),
         };
         let unit = CapturedUnit {
             payload: WorkPayload::Shell {
@@ -832,6 +844,7 @@ mod tests {
                 from: "a.d".into(),
                 format: "make".into(),
             }),
+            seal_keys: Default::default(),
         };
         let unit_a = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
@@ -865,6 +878,7 @@ mod tests {
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
+            seal_keys: Default::default(),
         };
         let unit_b = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "clang -c b.cpp".into(), line: 1 },
@@ -987,6 +1001,7 @@ mod tests {
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
+            seal_keys: Default::default(),
         };
         let unit_compile = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "clang -c a.cpp".into(), line: 1 },
@@ -1023,6 +1038,7 @@ mod tests {
                 from: "archive.d".into(),
                 format: "make".into(),
             }),
+            seal_keys: Default::default(),
         };
         let unit_archive = CapturedUnit {
             payload: WorkPayload::Shell { cmd: "ar rcs libfoo.a a.o".into(), line: 1 },

@@ -607,6 +607,7 @@ pub fn execute_dag(
         work_node: &WorkNode,
         cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
         cache_ctx: &CacheContext,
+        probe_store: &cook_luaotp::ProbeValueStore,
     ) -> bool {
         let meta = match &work_node.cache_meta {
             Some(m) => m,
@@ -647,12 +648,16 @@ pub fn execute_dag(
             backend: cache_ctx.backend.as_ref(),
             recipe_namespace: &recipe_namespace,
         };
+        // COOK-161: fold the effective seal set's probe values (materialised
+        // by now — the unit depends on its sealed probes) into the key.
+        let seal_contrib = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
         let (result, updated) = needs_rebuild_cook(
             entry,
             &input_refs,
             &current_outputs,
             meta.command_hash,
             meta.env_contribution,
+            seal_contrib,
             &work_node.working_dir,
             Some(&restore_ctx),
             meta.discovered_inputs.as_ref(),
@@ -865,7 +870,7 @@ pub fn execute_dag(
                 };
                 // Check artifact cache before executing (no-op for Test nodes since they
                 // have no cache_meta, but kept for structural symmetry).
-                if check_node_cache(work_node, cache_managers, cache_ctx) {
+                if check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
                     ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                     emit(
                         event_tx,
@@ -1175,7 +1180,7 @@ pub fn execute_dag(
             }
             Some(payload) => {
                 // Check cache before executing
-                if check_node_cache(work_node, cache_managers, cache_ctx) {
+                if check_node_cache(work_node, cache_managers, cache_ctx, &pool.probe_value_store()) {
                     ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                     emit(
                         event_tx,
@@ -1792,7 +1797,15 @@ pub fn execute_dag(
                                 let resolved_output_paths = resolve_output_paths(&meta.output_paths, &working_dir);
                                 let mut meta_for_record = meta.clone();
                                 meta_for_record.output_paths = resolved_output_paths.clone();
-                                match cm.record_completion(&meta.recipe_name, &meta.cache_key, &meta_for_record, &dag.node(id).payload().working_dir) {
+                                // COOK-161: fold the effective seal set's probe
+                                // values into the persisted key (the sealed
+                                // probes have run by now — the unit depends on
+                                // them).
+                                let seal_contrib = crate::seal::seal_contribution(
+                                    &meta.seal_keys,
+                                    &pool.probe_value_store(),
+                                );
+                                match cm.record_completion(&meta.recipe_name, &meta.cache_key, &meta_for_record, &dag.node(id).payload().working_dir, seal_contrib) {
                                     Ok(step_entry) => {
                                         // Post-execution augmentation: parse the just-written
                                         // depfile and append discovered FileRecords to
@@ -1854,6 +1867,7 @@ pub fn execute_dag(
                                             recipe_namespace: &recipe_namespace,
                                             command_hash: meta.command_hash,
                                             env_contribution: meta.env_contribution,
+                                            seal_contribution: seal_contrib,
                                             sorted_input_content_hashes: &sorted_hashes,
                                         };
                                         let cloud_k = cloud_key(&key_inputs);
@@ -1878,6 +1892,7 @@ pub fn execute_dag(
                                                 recipe_namespace: recipe_namespace.clone(),
                                                 command_hash: meta.command_hash,
                                                 env_contribution: meta.env_contribution,
+                                                seal_contribution: seal_contrib,
                                                 schema_version: CACHE_VERSION,
                                                 size_bytes: bytes.len() as u64,
                                                 tags: std::collections::BTreeSet::new(),
@@ -1917,6 +1932,7 @@ pub fn execute_dag(
                                                         recipe_namespace: recipe_namespace.clone(),
                                                         command_hash: meta.command_hash,
                                                         env_contribution: meta.env_contribution,
+                                                        seal_contribution: seal_contrib,
                                                         schema_version: CACHE_VERSION,
                                                         size_bytes: bytes.len() as u64,
                                                         tags: std::collections::BTreeSet::new(),
@@ -2084,6 +2100,7 @@ pub fn execute_dag(
                         recipe_namespace: format!("probe:{}", probe_out.key),
                         command_hash: 0,
                         env_contribution: 0,
+                        seal_contribution: 0,
                         schema_version: CACHE_VERSION,
                         size_bytes: probe_out.bytes.len() as u64,
                         tags: std::collections::BTreeSet::new(),
@@ -2167,7 +2184,13 @@ pub fn execute_dag(
                     let resolved_output_paths = resolve_output_paths(&meta.output_paths, &working_dir_2);
                     let mut meta_for_record = meta.clone();
                     meta_for_record.output_paths = resolved_output_paths.clone();
-                    match cm.record_completion(&meta.recipe_name, &meta.cache_key, &meta_for_record, &dag.node(result.id).payload().working_dir) {
+                    // COOK-161: fold the effective seal set's probe values into
+                    // the persisted key (sealed probes have run by now).
+                    let seal_contrib = crate::seal::seal_contribution(
+                        &meta.seal_keys,
+                        &pool.probe_value_store(),
+                    );
+                    match cm.record_completion(&meta.recipe_name, &meta.cache_key, &meta_for_record, &dag.node(result.id).payload().working_dir, seal_contrib) {
                         Ok(step_entry) => {
                             // Post-execution augmentation: parse the just-written
                             // depfile and append discovered FileRecords to
@@ -2229,6 +2252,7 @@ pub fn execute_dag(
                                 recipe_namespace: &recipe_namespace,
                                 command_hash: meta.command_hash,
                                 env_contribution: meta.env_contribution,
+                                seal_contribution: seal_contrib,
                                 sorted_input_content_hashes: &sorted_hashes,
                             };
                             let cloud_k = cloud_key(&key_inputs);
@@ -2251,6 +2275,7 @@ pub fn execute_dag(
                                     recipe_namespace: recipe_namespace.clone(),
                                     command_hash: meta.command_hash,
                                     env_contribution: meta.env_contribution,
+                                    seal_contribution: seal_contrib,
                                     schema_version: CACHE_VERSION,
                                     size_bytes: bytes.len() as u64,
                                     tags: std::collections::BTreeSet::new(),
@@ -2290,6 +2315,7 @@ pub fn execute_dag(
                                             recipe_namespace: recipe_namespace.clone(),
                                             command_hash: meta.command_hash,
                                             env_contribution: meta.env_contribution,
+                                            seal_contribution: seal_contrib,
                                             schema_version: CACHE_VERSION,
                                             size_bytes: bytes.len() as u64,
                                             tags: std::collections::BTreeSet::new(),
@@ -2902,6 +2928,7 @@ mod tests {
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
+            seal_keys: Default::default(),
         }
     }
 
@@ -3602,6 +3629,7 @@ mod tests {
             output_path: "probe:test".into(),
             content_hash: cook_fingerprint::ArtifactMeta::zero_content_hash(),
             kind: None,
+            seal_contribution: 0,
         }
         .as_probe_value();
         cook_cache::backend::put_bytes(backend, fp, bytes, &mut meta)

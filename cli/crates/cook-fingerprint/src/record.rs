@@ -32,8 +32,10 @@ pub mod hex_u64 {
 
 /// Fingerprint schema version. Bump on any breaking change to `StepEntry` /
 /// `FileRecord` / cache key composition. v4 (COOK-92): recipe index is TOML
-/// (`<recipe>.toml`) with u64 hash fields as lowercase hex strings.
-pub const CACHE_VERSION: u32 = 4;
+/// (`<recipe>.toml`) with u64 hash fields as lowercase hex strings. v5
+/// (COOK-161): the single content-addressed key folds the unit's effective
+/// seal set's probe values via `StepEntry.seal_contribution` (CS-0107).
+pub const CACHE_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StepEntry {
@@ -43,6 +45,12 @@ pub struct StepEntry {
     pub command_hash: u64,
     #[serde(with = "hex_u64")]
     pub env_contribution: u64,
+    /// COOK-161 / CS-0107: xxh3_64 of the unit's *effective seal set* rendered
+    /// as sorted `key\0<canonical-json-bytes>` records joined by `\n`. Zero for
+    /// a unit with an empty seal set (the unannotated / `local` / `pinned`
+    /// case), keeping non-sealed entries byte-stable apart from the version bump.
+    #[serde(default, with = "hex_u64")]
+    pub seal_contribution: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -68,6 +76,7 @@ mod tests {
             outputs: vec![],
             command_hash: 0x0102030405060708,
             env_contribution: 0,
+            seal_contribution: 0,
         };
         let s = toml::to_string(&entry).expect("toml serialize");
         assert!(s.contains(r#"command_hash = "0102030405060708""#), "got: {s}");
@@ -125,5 +134,25 @@ env_contribution = "00"
 "#;
         let entry: StepEntry = toml::from_str(src).expect("uppercase hex should parse");
         assert_eq!(entry.command_hash, 0xDEADBEEFCAFE0001u64);
+    }
+
+    #[test]
+    fn cache_version_is_5() {
+        assert_eq!(CACHE_VERSION, 5);
+    }
+
+    #[test]
+    fn seal_contribution_round_trips_as_hex() {
+        let entry = StepEntry {
+            inputs: vec![],
+            outputs: vec![],
+            command_hash: 0x0102030405060708,
+            env_contribution: 0,
+            seal_contribution: 0xAABBCCDDEEFF0011,
+        };
+        let s = toml::to_string(&entry).expect("toml serialize");
+        assert!(s.contains(r#"seal_contribution = "aabbccddeeff0011""#), "got: {s}");
+        let back: StepEntry = toml::from_str(&s).expect("toml deserialize");
+        assert_eq!(entry, back);
     }
 }

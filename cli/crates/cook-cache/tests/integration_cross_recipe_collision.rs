@@ -12,6 +12,7 @@ fn two_recipes_same_output_path_different_keys() {
         recipe_namespace: "myproj/Cookfile::build",
         command_hash: 0xAA,
         env_contribution: 0xCC,
+        seal_contribution: 0,
         sorted_input_content_hashes: &inputs,
     });
     let key_b = cloud_key(&CloudKeyInputs {
@@ -19,6 +20,7 @@ fn two_recipes_same_output_path_different_keys() {
         recipe_namespace: "myproj/Cookfile::test",  // different recipe
         command_hash: 0xAA,
         env_contribution: 0xCC,
+        seal_contribution: 0,
         sorted_input_content_hashes: &inputs,
     });
     assert_ne!(key_a, key_b, "different recipe → different cloud_key");
@@ -32,6 +34,7 @@ fn cross_project_same_recipe_name_different_keys() {
         recipe_namespace: "proj-a/Cookfile::build",
         command_hash: 0xAA,
         env_contribution: 0xCC,
+        seal_contribution: 0,
         sorted_input_content_hashes: &inputs,
     });
     let key_b = cloud_key(&CloudKeyInputs {
@@ -39,6 +42,7 @@ fn cross_project_same_recipe_name_different_keys() {
         recipe_namespace: "proj-b/Cookfile::build",
         command_hash: 0xAA,
         env_contribution: 0xCC,
+        seal_contribution: 0,
         sorted_input_content_hashes: &inputs,
     });
     assert_ne!(key_a, key_b, "different project → different cloud_key");
@@ -52,6 +56,7 @@ fn cross_cookfile_same_recipe_name_different_keys() {
         recipe_namespace: "proj/Cookfile::build",
         command_hash: 0xAA,
         env_contribution: 0xCC,
+        seal_contribution: 0,
         sorted_input_content_hashes: &inputs,
     });
     let key_b = cloud_key(&CloudKeyInputs {
@@ -59,6 +64,7 @@ fn cross_cookfile_same_recipe_name_different_keys() {
         recipe_namespace: "proj/services/api/Cookfile::build",
         command_hash: 0xAA,
         env_contribution: 0xCC,
+        seal_contribution: 0,
         sorted_input_content_hashes: &inputs,
     });
     assert_ne!(key_a, key_b, "different sub-Cookfile → different cloud_key");

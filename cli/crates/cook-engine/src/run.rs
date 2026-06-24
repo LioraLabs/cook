@@ -1123,6 +1123,7 @@ mod tests {
                 env_contribution: 0,
                 consulted_env: Default::default(),
                 discovered_inputs: None,
+                seal_keys: Default::default(),
             }),
             working_dir: wd.to_path_buf(),
             env_vars: Default::default(),

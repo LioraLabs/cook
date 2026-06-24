@@ -13,6 +13,7 @@ pub mod recipe_dag;
 pub mod reconcile;
 pub mod registered_workspace;
 pub mod run;
+mod seal;
 
 pub use registered_workspace::RegisteredWorkspace;
 pub use run::{run, RunResult, TestScope};

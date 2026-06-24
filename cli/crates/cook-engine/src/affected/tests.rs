@@ -19,6 +19,7 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         env_contribution: 0,
         consulted_env: BTreeMap::new(),
         discovered_inputs: None,
+        seal_keys: Default::default(),
     };
     let unit = CapturedUnit {
         payload: WorkPayload::Shell { cmd: "echo build".into(), line: 1 },

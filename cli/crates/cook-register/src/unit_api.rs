@@ -533,6 +533,29 @@ pub fn register_unit_api(
                 }
             };
 
+        // COOK-161: opts.seal — optional list of bare probe keys the author sealed
+        // this unit on (§8.4.3). Their canonical VALUES fold into the cache key at
+        // execute-phase; here we carry only the key set.
+        let seal_keys: std::collections::BTreeSet<String> = match tbl.get::<LuaValue>("seal") {
+            Ok(LuaValue::Nil) => Default::default(),
+            Ok(LuaValue::Table(t)) => {
+                let mut out = std::collections::BTreeSet::new();
+                for v in t.sequence_values::<String>() {
+                    out.insert(v.map_err(|e| {
+                        LuaError::runtime(format!(
+                            "cook.add_unit: seal must be a list of strings: {e}"
+                        ))
+                    })?);
+                }
+                out
+            }
+            _ => {
+                return Err(LuaError::runtime(
+                    "cook.add_unit: seal must be a table of strings".to_string(),
+                ))
+            }
+        };
+
         let cache_meta = if cache_enabled {
             let cache_key = build_local_cache_key(
                 &cookfile_path,
@@ -553,6 +576,7 @@ pub fn register_unit_api(
                 env_contribution: env_contribution_val,
                 consulted_env,
                 discovered_inputs,
+                seal_keys: seal_keys.clone(),
             })
         } else {
             None
@@ -592,6 +616,14 @@ pub fn register_unit_api(
             }
             Err(_) => vec![],
         };
+
+        // Sealed probes are execute-phase determinants — the unit must run after
+        // them so their values are materialised before the cache check (COOK-161).
+        for k in &seal_keys {
+            if !probes.contains(k) {
+                probes.push(k.clone());
+            }
+        }
 
         // is_chore is read BEFORE the if/else below (and before the later
         // mutable borrow) so the borrow doesn't overlap with mutable use.
@@ -1672,6 +1704,41 @@ mod tests {
         let state = body_ref(&capture_state);
         let u = state.units.first().expect("one unit");
         assert_eq!(u.probes, vec!["cc:zlib", "cc:compiler"]);
+    }
+
+    #[test]
+    fn add_unit_seal_field_sets_cache_meta_and_probes() {
+        // COOK-161: opts.seal carries the effective seal set onto CacheMeta and
+        // unions into the unit's probe-dependency vec so the unit runs after the
+        // sealed probes are materialised.
+        let (lua, capture_state) = make_lua_with_unit_api("recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+
+        lua.load(r#"
+            cook.add_unit({
+                name = "x.o",
+                outputs = { "x.o" },
+                command = "cc",
+                seal = { "host" },
+            })
+        "#)
+        .exec()
+        .unwrap();
+
+        let state = body_ref(&capture_state);
+        let u = state.units.first().expect("one unit");
+        assert!(
+            u.probes.contains(&"host".to_string()),
+            "sealed key must be unioned into probes; got: {:?}",
+            u.probes
+        );
+        let cm = u.cache_meta.as_ref().expect("cache_meta present");
+        assert!(
+            cm.seal_keys.contains("host"),
+            "sealed key must be on CacheMeta.seal_keys; got: {:?}",
+            cm.seal_keys
+        );
     }
 
     #[test]
