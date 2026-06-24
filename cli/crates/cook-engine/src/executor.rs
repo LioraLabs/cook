@@ -1998,7 +1998,9 @@ pub fn execute_dag(
                                         let cloud_k = cloud_key(&key_inputs);
 
                                         // COOK-162 §3: `local` units never publish to the shared store.
-                                        let publish_to_backend = !meta.local;
+                                        // COOK-168: publish-off / read-only client mode suppresses
+                                        // ALL uploads globally; fetch-by-key is unaffected.
+                                        let publish_to_backend = !meta.local && cache_ctx.publish_enabled;
 
                                         // Upload one artifact per declared output (2026-05-02 addendum
                                         // spec §5.1). Each artifact is keyed by
@@ -2390,7 +2392,9 @@ pub fn execute_dag(
                             let cloud_k = cloud_key(&key_inputs);
 
                             // COOK-162 §3: `local` units never publish to the shared store.
-                            let publish_to_backend = !meta.local;
+                            // COOK-168: publish-off / read-only client mode suppresses
+                            // ALL uploads globally; fetch-by-key is unaffected.
+                            let publish_to_backend = !meta.local && cache_ctx.publish_enabled;
 
                             // Upload one artifact per declared output (2026-05-02 addendum
                             // spec §5.1).
