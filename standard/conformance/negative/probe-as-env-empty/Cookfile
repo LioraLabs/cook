@@ -1,0 +1,2 @@
+probe t
+    produce as env {  }

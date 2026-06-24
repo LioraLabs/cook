@@ -1670,6 +1670,47 @@ fn produce_as_on_lua_block_is_error() {
         "got: {err}");
 }
 
+// ── COOK-164: produce as tools / produce as env ───────────────────────
+
+#[test]
+fn produce_as_tools_parses_name_list() {
+    let cf = parse("probe toolchain\n    produce as tools { cc, ld }\n").unwrap();
+    let p = &cf.probes[0];
+    assert_eq!(p.produce, crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into()]));
+}
+
+#[test]
+fn produce_as_tools_accepts_whitespace_separators() {
+    let cf = parse("probe toolchain\n    produce as tools { cc ld   ar }\n").unwrap();
+    let p = &cf.probes[0];
+    assert_eq!(p.produce, crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into(), "ar".into()]));
+}
+
+#[test]
+fn produce_as_env_parses_name_list() {
+    let cf = parse("probe sdk\n    produce as env { SDKROOT, CC }\n").unwrap();
+    let p = &cf.probes[0];
+    assert_eq!(p.produce, crate::ast::ProbeProduce::Env(vec!["SDKROOT".into(), "CC".into()]));
+}
+
+#[test]
+fn produce_as_tools_empty_list_is_error() {
+    let err = parse("probe t\n    produce as tools {  }\n").unwrap_err();
+    assert!(format!("{err}").contains("at least one"), "got: {err}");
+}
+
+#[test]
+fn produce_as_tools_lua_block_is_error() {
+    let err = parse("probe t\n    produce as tools >{ return {} }\n").unwrap_err();
+    assert!(format!("{err}").contains("NAME LIST"), "got: {err}");
+}
+
+#[test]
+fn produce_as_env_invalid_name_is_error() {
+    let err = parse("probe t\n    produce as env { 1bad }\n").unwrap_err();
+    assert!(format!("{err}").contains("name"), "got: {err}");
+}
+
 // ── COOK-67 Task 3: probe declaration parser ────────────────────────
 
 #[test]

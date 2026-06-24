@@ -3457,6 +3457,38 @@ fn probe_shell_lines_builds_array() {
 }
 
 #[test]
+fn probe_tools_lowers_with_command_v_and_sha256() {
+    let cf = make_probe_cf(ProbeProduce::Tools(vec!["cc".into(), "ld".into()]));
+    let lua = generate(&cf);
+    assert!(lua.contains("command -v cc"), "lua:\n{lua}");
+    assert!(lua.contains("command -v ld"), "lua:\n{lua}");
+    assert!(lua.contains("sha256sum"), "lua:\n{lua}");
+    assert!(lua.contains("path = _p"), "lua:\n{lua}");
+    assert!(lua.contains("hash = _h"), "lua:\n{lua}");
+    // Table keys must be quoted-string literals, NOT long-bracket `[[name]]`
+    // (which is ambiguous as a table index — `_t[[[name]]]`).
+    assert!(lua.contains(r#"_t["cc"]"#), "lua:\n{lua}");
+    assert!(lua.contains(r#"_t["ld"]"#), "lua:\n{lua}");
+    // The re-run TRIGGER: the named tools must be declared as probe inputs so
+    // the fingerprint folds each binary's hash (COOK-164). Without this the
+    // probe is a permanent cache hit and never re-runs on a tool upgrade.
+    assert!(lua.contains(r#"tools = {"cc", "ld"}"#), "lua:\n{lua}");
+}
+
+#[test]
+fn probe_env_lowers_with_cook_env_reads() {
+    let cf = make_probe_cf(ProbeProduce::Env(vec!["SDKROOT".into(), "CC".into()]));
+    let lua = generate(&cf);
+    assert!(lua.contains("cook.env.SDKROOT"), "lua:\n{lua}");
+    assert!(lua.contains("cook.env.CC"), "lua:\n{lua}");
+    assert!(lua.contains(r#"_e["SDKROOT"]"#), "lua:\n{lua}");
+    assert!(lua.contains(r#"_e["CC"]"#), "lua:\n{lua}");
+    // The re-run TRIGGER: named env-vars declared as probe inputs so the
+    // fingerprint folds each env value (COOK-164).
+    assert!(lua.contains(r#"env = {"SDKROOT", "CC"}"#), "lua:\n{lua}");
+}
+
+#[test]
 fn probe_shell_produce_with_brackets_escalates_levels() {
     // A shell command containing `]]` must not collide with the long-bracket
     // wraps: the inner `cook.sh([=[ … ]=])` escalates past the `]]`, and the

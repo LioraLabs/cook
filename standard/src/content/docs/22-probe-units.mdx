@@ -64,6 +64,10 @@ the offending line:
   — a conforming implementation MUST reject with a diagnostic indicating that `as`
   is valid only on shell-block produce forms, since a Lua block already returns a
   typed value.
+- A `produce as tools` / `produce as env` source list that is empty, contains a
+  non-`IDENT` name, or is given a `>{ … }` Lua block in place of a name list — a
+  conforming implementation MUST reject with a diagnostic identifying the probe
+  and the offending construct.
 
 The `produce` body reuses the `body ::= exec_lua_block | shell_block` grammar of
 §{steps.cook-single} (the body-dispatch: `>{` is tested before `{`). The probe
@@ -75,10 +79,31 @@ value is determined by the body form:
   typed by the optional `as` modifier — bare → the stdout string (one trailing
   newline trimmed); `as lines` → the stdout split on `LF` into an array of
   strings; `as json` → the stdout parsed as one JSON value.
+- `produce as tools { NAME, … }` (source list): the brace content is a
+  comma/whitespace-separated LIST of bare tool names (`IDENT`), NOT a shell or
+  Lua body. A conforming implementation MUST PATH-resolve each name and
+  content-hash the resolved binary; the probe value is a JSON object keyed by
+  tool name, each entry an object `{ "path": <resolved path>, "hash": <content
+  hash> }`. The hash is BOTH the probe value AND its re-run trigger: a change to
+  the resolved binary changes the hash, re-fingerprinting the probe and any
+  dependent unit — freshness without a `volatile` annotation. A name that does
+  not resolve on PATH MUST fail the probe with a diagnostic naming the tool. A
+  conforming implementation MUST reject an empty list (`{ }`) and a `>{ … }` Lua
+  block (the brace content is a name list, not a body).
+- `produce as env { NAME, … }` (source list): the brace content is a
+  comma/whitespace-separated LIST of bare environment-variable names (`IDENT`),
+  NOT a shell or Lua body. The probe value is a JSON object keyed by variable
+  name; an unset variable is OMITTED from the object. Reading each variable
+  records it as a consulted-environment determinant (§{cat.probes.inputs}), so
+  the environment values fingerprint the probe. A conforming implementation MUST
+  reject an empty list (`{ }`) and a `>{ … }` Lua block.
 
-The `as` modifier is valid ONLY on the shell-block form. A conforming
-implementation MUST reject `as` applied to a `>{ … }` Lua-block produce with a
-register-phase diagnostic, since a Lua block already returns a structured value.
+The `as json` and `as lines` modifiers are valid ONLY on the shell-block form; a
+conforming implementation MUST reject either applied to a `>{ … }` Lua-block
+produce with a register-phase diagnostic, since a Lua block already returns a
+structured value. The `as tools` and `as env` source-list kinds take a brace
+NAME LIST, not a body; a conforming implementation MUST reject a `>{ … }` Lua
+block (or any body form) supplied where a name list is required.
 
 **Coexistence.** The native `probe` declaration and the register-phase
 `cook.probe()` API register into one probe table within a register pass; a key
