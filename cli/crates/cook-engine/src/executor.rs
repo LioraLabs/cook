@@ -2914,6 +2914,7 @@ mod tests {
             env_contribution: 0,
             consulted_env: BTreeMap::new(),
             discovered_inputs: None,
+            seal_keys: Default::default(),
         }
     }
 
@@ -3614,6 +3615,7 @@ mod tests {
             output_path: "probe:test".into(),
             content_hash: cook_fingerprint::ArtifactMeta::zero_content_hash(),
             kind: None,
+            seal_contribution: 0,
         }
         .as_probe_value();
         cook_cache::backend::put_bytes(backend, fp, bytes, &mut meta)

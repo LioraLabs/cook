@@ -216,6 +216,10 @@ pub struct CacheMeta {
     /// Phase 5 wires real values; empty BTreeMap until then.
     pub consulted_env: std::collections::BTreeMap<String, String>,
     pub discovered_inputs: Option<DiscoveredInputs>,
+    /// COOK-161: the unit's *effective seal set* — bare probe keys whose
+    /// canonical values fold into the cache key at execute-phase. Sorted /
+    /// de-duplicated (`BTreeSet`). Empty for unsealed / `local` / `pinned` units.
+    pub seal_keys: std::collections::BTreeSet<String>,
 }
 
 /// A single captured unit of work within a recipe.
@@ -373,6 +377,7 @@ mod tests {
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
+            seal_keys: Default::default(),
         };
         assert_eq!(m.recipe_name, "build");
         assert_eq!(m.command_hash, 42);
@@ -393,6 +398,7 @@ mod tests {
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
+            seal_keys: Default::default(),
         };
         assert!(m.output_paths.is_empty());
     }
@@ -413,6 +419,7 @@ mod tests {
                 from: ".cook/deps/a.d".into(),
                 format: "make".into(),
             }),
+            seal_keys: Default::default(),
         };
         let di = m.discovered_inputs.as_ref().expect("present");
         assert_eq!(di.from, ".cook/deps/a.d");
@@ -432,8 +439,30 @@ mod tests {
             env_contribution: 0,
             consulted_env: std::collections::BTreeMap::new(),
             discovered_inputs: None,
+            seal_keys: Default::default(),
         };
         assert!(m.discovered_inputs.is_none());
+    }
+
+    #[test]
+    fn cache_meta_carries_seal_keys() {
+        let mut seal = std::collections::BTreeSet::new();
+        seal.insert("host".to_string());
+        seal.insert("cc:toolchain".to_string());
+        let meta = CacheMeta {
+            recipe_name: "build".into(),
+            project_id: String::new(),
+            cookfile_path: "Cookfile".into(),
+            cache_key: "k".into(),
+            input_paths: vec![],
+            output_paths: vec!["x.o".into()],
+            command_hash: 1,
+            env_contribution: 0,
+            consulted_env: Default::default(),
+            discovered_inputs: None,
+            seal_keys: seal.clone(),
+        };
+        assert_eq!(meta.seal_keys, seal);
     }
 
     #[test]
@@ -631,6 +660,7 @@ mod tests {
                 env_contribution: 0,
                 consulted_env: std::collections::BTreeMap::new(),
                 discovered_inputs: None,
+                seal_keys: Default::default(),
             }),
             dep_kind: DepKind::StepGroup(0),
             probes: vec![],
