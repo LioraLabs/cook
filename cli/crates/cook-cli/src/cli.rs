@@ -82,6 +82,13 @@ pub struct Globals {
     /// instead of sweeping them. Also settable via `COOK_NO_PRUNE=1`.
     #[arg(long = "no-prune", global = true)]
     pub no_prune: bool,
+
+    /// Read-only / publish-off client mode: fetch cached artifacts by key but
+    /// never publish locally-produced artifacts to the shared store. Also
+    /// settable via `COOK_NO_PUBLISH=1` or `[cloud] publish = false` in
+    /// `.cook/cloud.toml`. Write-authorization itself is backend IAM.
+    #[arg(long = "no-publish", global = true)]
+    pub no_publish: bool,
 }
 
 #[derive(clap::Args, Debug, Clone)]

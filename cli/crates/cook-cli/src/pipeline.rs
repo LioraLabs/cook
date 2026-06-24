@@ -454,6 +454,17 @@ fn no_prune_enabled(globals: &Globals) -> bool {
             .unwrap_or(false)
 }
 
+/// True when this invocation must run in publish-off / read-only mode, set
+/// by `--no-publish` or a non-empty `COOK_NO_PUBLISH` env var. This only
+/// turns publishing OFF; it never overrides a `[cloud] publish = false`
+/// config back on. (COOK-168.)
+fn no_publish_enabled(globals: &Globals) -> bool {
+    globals.no_publish
+        || std::env::var("COOK_NO_PUBLISH")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+}
+
 /// Walks the unified work-unit DAG built from `registered_workspace`. The
 /// recipe-level edge map (and therefore the reachable closure) is computed
 /// here from `recipe_infos` via `analyzer::dependency_edges_multi`; the
@@ -518,6 +529,7 @@ fn run_with_progress(
     let bridge_thread = bridge_engine_to_progress_events(engine_rx, bridge_tx);
 
     let no_prune = no_prune_enabled(globals);
+    let no_publish = no_publish_enabled(globals);
     let result = cook_engine::run::run(
         &project_root,
         registered_workspace,
@@ -526,6 +538,7 @@ fn run_with_progress(
         num_jobs,
         &[],
         no_prune,
+        no_publish,
         move |event| {
             let _ = engine_tx.send(event);
         },
@@ -887,6 +900,7 @@ pub fn cmd_test(
             num_jobs,
             &rerun_patterns,
             no_prune_enabled(globals),
+            no_publish_enabled(globals),
             on_event,
         ) {
             Ok(r) => r.test_results,
