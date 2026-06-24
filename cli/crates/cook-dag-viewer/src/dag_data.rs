@@ -314,15 +314,23 @@ fn build_wave(
                     let current_outputs: Vec<&str> =
                         meta.output_paths.iter().map(|s| s.as_str()).collect();
                     // Viewer query — no restore side-effects.
-                    // seal_contribution not yet threaded through CacheMeta;
-                    // passes 0 until contracts grow the field (COOK-161).
+                    // ponytail(COOK-161): passes seal_contribution = 0 because the
+                    // viewer has no live ProbeValueStore (probe values only exist
+                    // during an execute-phase DAG walk, not in this static graph
+                    // view). Consequence: a clean *sealed* unit whose persisted
+                    // entry carries a non-zero seal value is shown as needing a
+                    // rebuild (SealChanged). Cosmetic only — the viewer never
+                    // writes the cache. A faithful status would require threading
+                    // the executor's ProbeValueStore (or the persisted entry's
+                    // seal_contribution as the comparand) into the viewer.
+                    let seal_contribution = entry.map(|e| e.seal_contribution).unwrap_or(0);
                     let (result, _) = needs_rebuild_cook(
                         entry,
                         &input_refs,
                         &current_outputs,
                         meta.command_hash,
                         meta.env_contribution,
-                        0,
+                        seal_contribution,
                         &ru.working_dir,
                         None,
                         None,
