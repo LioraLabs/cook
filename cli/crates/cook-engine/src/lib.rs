@@ -14,6 +14,7 @@ pub mod reconcile;
 pub mod registered_workspace;
 pub mod run;
 mod seal;
+pub mod verify;
 pub mod why;
 
 pub use registered_workspace::RegisteredWorkspace;

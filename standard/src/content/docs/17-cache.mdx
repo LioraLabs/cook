@@ -261,3 +261,40 @@ A conforming implementation:
 Reconciliation is default-on. An implementation MUST provide an opt-out (the reference implementation: `--no-prune`, or the `COOK_NO_PRUNE` environment variable) that disables the sweep for an invocation; with it set, orphaned outputs are retained.
 
 > **Note (informative).** Reconciliation reuses the output paths and content hashes the cache already records (§17.1, §17.6) — there is no new on-disk ledger — and is guarded so a user-modified artifact is always kept. It is the output-file analogue of the integrity rule of §17.2: Cook never silently leaves stale bytes behind, whether in a restored artifact or an orphaned output.
+
+## 17.8. Determinant-fidelity verification (`cook cache verify`) [#exec.cache.verify]
+
+The divergence oracle is surfaced by the reference implementation as the opt-in
+command `cook cache verify`. It is a **fidelity / diagnostic tool, not a trust
+gate**: trust rests on author-declared determinants (§17.1.1), and this command
+*observes* whether those declarations are complete. An implementation is NOT
+required to run it to be conformant; when run, it MUST behave as follows.
+
+For each cacheable unit (§17.1.1) the cache holds an artifact for under its key
+K, the verifier re-executes the unit in the current context and compares the
+re-produced output bytes against the bytes the cache would serve for K:
+
+- If the unit is **not** a `record` unit (§17.1.4) and a re-produced output's
+  bytes differ from the cached bytes under the matching key K — or a recorded
+  output is not re-produced at all — the verifier MUST report a **divergence**.
+  A divergence is either an under-keyed determinant (a real determinant was not
+  declared, so K failed to distinguish two contexts) or a non-reproducible
+  producer. The command MUST exit non-zero when any divergence is reported.
+- If the unit **is** a `record` unit, the verifier MUST NOT perform the byte
+  comparison: byte-equivalence is waived for `record` (§17.1.4). It MAY apply a
+  weaker check — that each recorded output is re-produced — and MUST NOT
+  classify a `record` content difference as a divergence.
+- A faithfully-keyed, reproducible unit re-produces byte-identical outputs and
+  MUST be reported as passing.
+
+Where a producer determinant manifest (§17.1.5) is retrievable for K, the
+implementation SHOULD attach its recorded determinants (consulted environment,
+sealed probe values, declared inputs) to a divergence report to aid
+attribution. Manifest absence MUST NOT change the byte verdict.
+
+> **Note (informative).** Running the verifier across machines (e.g. in CI on a
+> host distinct from the producer) is the intended deployment: a unit that
+> shares fleet-wide yet embeds an undeclared host determinant surfaces as a
+> divergence there. Running it twice on one machine against the same workspace
+> is the local degenerate case — K matches by construction, so any divergence
+> is purely a producer/determinant property. (CS-0113.)
