@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use cook_cache::{CacheContext, TestCache, TestCacheEntry, TestCacheOutcome, ThreadSafeCacheManager};
 use cook_contracts::WorkPayload;
+use cook_fingerprint::backend::DeterminantManifest;
 use cook_fingerprint::{
     artifact_key, cloud_key, needs_rebuild_cook, ArtifactMeta, CloudKeyInputs,
     RebuildResult, RestoreCtx, CACHE_VERSION,
@@ -2099,6 +2100,35 @@ pub fn execute_dag(
                                                 }
                                             }
                                         }
+
+                                        // COOK-166: persist the producer determinant manifest
+                                        // alongside the shared artifacts, keyed by the unit's
+                                        // cloud_key K. `local` units skip this
+                                        // (publish_to_backend is false).
+                                        if publish_to_backend {
+                                            let manifest = build_determinant_manifest(
+                                                CACHE_VERSION,
+                                                &recipe_namespace,
+                                                &cloud_k,
+                                                meta.command_hash,
+                                                meta.env_contribution,
+                                                seal_contrib,
+                                                &step_entry.inputs,
+                                                &resolved_output_paths,
+                                                &meta.consulted_env,
+                                                &meta.seal_keys,
+                                                &pool.probe_value_store(),
+                                            );
+                                            if let Err(e) = cache_ctx
+                                                .backend
+                                                .as_ref()
+                                                .put_manifest(&cloud_k, &manifest)
+                                            {
+                                                tracing::warn!(
+                                                    "determinant manifest put failed for {recipe_namespace}: {e}"
+                                                );
+                                            }
+                                        }
                                     }
                                     Err(e) => {
                                         tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
@@ -2489,6 +2519,35 @@ pub fn execute_dag(
                                     }
                                 }
                             }
+
+                            // COOK-166: persist the producer determinant manifest
+                            // alongside the shared artifacts, keyed by the unit's
+                            // cloud_key K. `local` units skip this
+                            // (publish_to_backend is false).
+                            if publish_to_backend {
+                                let manifest = build_determinant_manifest(
+                                    CACHE_VERSION,
+                                    &recipe_namespace,
+                                    &cloud_k,
+                                    meta.command_hash,
+                                    meta.env_contribution,
+                                    seal_contrib,
+                                    &step_entry.inputs,
+                                    &resolved_output_paths,
+                                    &meta.consulted_env,
+                                    &meta.seal_keys,
+                                    &pool.probe_value_store(),
+                                );
+                                if let Err(e) = cache_ctx
+                                    .backend
+                                    .as_ref()
+                                    .put_manifest(&cloud_k, &manifest)
+                                {
+                                    tracing::warn!(
+                                        "determinant manifest put failed for {recipe_namespace}: {e}"
+                                    );
+                                }
+                            }
                         }
                         Err(e) => {
                             tracing::warn!("cache: skipping record for {}::{}: {e}", meta.recipe_name, meta.cache_key);
@@ -2780,6 +2839,57 @@ pub fn execute_dag(
     }
 }
 
+/// COOK-166: build the producer determinant manifest from the resolved values
+/// the publish site already holds. `key` is the unit's `cloud_key` (K). The
+/// `inputs` slice is `step_entry.inputs` (post depfile-discovery augmentation);
+/// `sealed` probe values are read from the `ProbeValueStore` for each key in
+/// the effective seal set, decoded as UTF-8 canonical JSON (lossy decode guards
+/// the theoretically-impossible non-UTF-8 case — probe values are canonical JSON).
+#[allow(clippy::too_many_arguments)]
+fn build_determinant_manifest(
+    schema_version: u32,
+    recipe_namespace: &str,
+    key: &[u8; 32],
+    command_hash: u64,
+    env_contribution: u64,
+    seal_contribution: u64,
+    inputs: &[cook_fingerprint::FileRecord],
+    output_paths: &[String],
+    consulted_env: &std::collections::BTreeMap<String, String>,
+    seal_keys: &std::collections::BTreeSet<String>,
+    probe_store: &cook_luaotp::ProbeValueStore,
+) -> DeterminantManifest {
+    let inputs_map: std::collections::BTreeMap<String, u64> =
+        inputs.iter().map(|fr| (fr.path.clone(), fr.hash)).collect();
+    // A sealed key absent from the store folds into `seal_contribution`
+    // (crate::seal) as an *empty value* — its key still distinguishes the
+    // digest. Mirror that here (empty string, not omission) so a verifier
+    // recomposing the seal from `sealed_probes` agrees with the digest. The
+    // probe-dependency wiring makes the absent case unreachable in practice.
+    let sealed_probes: std::collections::BTreeMap<String, String> = seal_keys
+        .iter()
+        .map(|k| {
+            let value = probe_store
+                .get(k)
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .unwrap_or_default();
+            (k.clone(), value)
+        })
+        .collect();
+    DeterminantManifest {
+        schema_version,
+        recipe_namespace: recipe_namespace.to_string(),
+        key: hex::encode(key),
+        command_hash,
+        env_contribution,
+        seal_contribution,
+        inputs: inputs_map,
+        output_paths: output_paths.to_vec(),
+        consulted_env: consulted_env.clone(),
+        sealed_probes,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2792,6 +2902,51 @@ mod tests {
             cmd: cmd.to_string(),
             line: 0,
         }
+    }
+
+    #[test]
+    fn build_determinant_manifest_captures_resolved_determinants() {
+        use cook_fingerprint::FileRecord;
+        use std::collections::{BTreeMap, BTreeSet};
+        let inputs = vec![
+            FileRecord {
+                path: "src/b.c".into(),
+                mtime: 0,
+                hash: 0x2222,
+            },
+            FileRecord {
+                path: "src/a.c".into(),
+                mtime: 0,
+                hash: 0x1111,
+            },
+        ];
+        let mut consulted = BTreeMap::new();
+        consulted.insert("CC".to_string(), "clang".to_string());
+        let mut seal_keys = BTreeSet::new();
+        seal_keys.insert("host".to_string());
+        let store = cook_luaotp::ProbeValueStore::new();
+        store.insert("host", b"\"x86_64-linux\"".to_vec());
+
+        let m = build_determinant_manifest(
+            CACHE_VERSION,
+            "cook/Cookfile::build",
+            &[0xABu8; 32],
+            0x1234,
+            0x5678,
+            0x9abc,
+            &inputs,
+            &["build/a.o".to_string()],
+            &consulted,
+            &seal_keys,
+            &store,
+        );
+        assert_eq!(m.recipe_namespace, "cook/Cookfile::build");
+        assert_eq!(m.key, "ab".repeat(32));
+        assert_eq!(m.inputs["src/a.c"], 0x1111);
+        assert_eq!(m.inputs["src/b.c"], 0x2222);
+        assert_eq!(m.output_paths, vec!["build/a.o".to_string()]);
+        assert_eq!(m.consulted_env["CC"], "clang");
+        assert_eq!(m.sealed_probes["host"], "\"x86_64-linux\"");
     }
 
     fn tmp_dir() -> (PathBuf, TempDir) {

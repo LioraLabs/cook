@@ -94,6 +94,16 @@ The divergence oracle (`cook cache verify`) MUST NOT classify a content differen
 
 > **Note (informative).** The reference implementation realises the waiver as a `record` boolean carried on the unit's cache metadata; at the cache decision a `record` unit does not schedule a present-but-content-drifted output for restore or rebuild. The cache schema version is unchanged. (CS-0109.)
 
+### 17.1.5. Producer determinant manifest [#exec.cache.determinant-manifest]
+
+An implementation that publishes a unit's output artifacts to the shared content-addressed store (§{exec.cache.sharing}) SHOULD persist, retrievable by the same single cache key K (§{exec.cache.single-key}), a **producer determinant manifest**: the resolved determinant values that formed K — the declared input contents (as path → content-hash), the command/Lua-chunk hash, the declared output paths, the consulted environment values, and the values of every probe in the unit's effective seal set. The manifest records the resolved *values* behind K's component digests, not the artifact bytes.
+
+The manifest exists for diagnosis and verification: it lets a `cook why` query attribute a cache miss to the specific differing determinant, and it lets the divergence oracle (`cook cache verify`) confirm that a unit's recorded determinants recompose to K. A conforming manifest MUST serialise deterministically — the same K MUST yield byte-identical manifest content — which requires ordered (sorted-key) serialisation of every map.
+
+The manifest is NOT an attestation of *which* producer made the artifact; cryptographic producer-identity attestation is out of scope at this revision. A `local` unit (§{steps.cook-disposition}) publishes no shared artifact and therefore no manifest. A missing or malformed manifest MUST NOT be treated as a cache error — it is best-effort diagnostic data, and an implementation that cannot read it falls back to its key-only behaviour.
+
+> **Note (informative).** The reference implementation persists the manifest as a JSON sidecar adjacent to the artifact bytes, keyed by the unit's cloud key (one manifest per unit, shared across the unit's N output artifacts since they share K). Maps serialise as sorted-key JSON objects and `u64` digests as zero-padded lowercase hex strings, so the same key yields byte-identical content. It is exposed through the cache backend as `put_manifest` / `get_manifest` and is the data source for `cook why`-on-miss and the divergence verifier. (CS-0110.)
+
 ## 17.2. Cache integrity [#exec.cache.integrity]
 An implementation that records output content in a content-addressable store — whether local, shared between machines, or remote — MUST treat that store as untrusted at restore time. When the implementation reads bytes from the store with the intent to install them as the on-disk content of a declared output, it MUST recompute the same content fingerprint that it recorded for that output and MUST compare the recomputed fingerprint to the recorded one. If the two fingerprints differ, the implementation MUST NOT install the bytes; it MUST treat the read as a cache miss and MUST fall through to the rebuild path defined in §{exec.cache.abstract} above.
 
