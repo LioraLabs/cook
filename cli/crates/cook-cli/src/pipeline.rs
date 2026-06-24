@@ -674,7 +674,7 @@ pub fn cmd_cache_verify(
         std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
 
     let report = cook_engine::verify::verify_cache(
-        &project_root, &registered, &edges, &reachable, num_jobs, recipe_name,
+        &project_root, &registered, &edges, &reachable, num_jobs,
     )
     .map_err(CookError::Other)?;
 

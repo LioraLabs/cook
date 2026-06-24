@@ -192,7 +192,6 @@ pub fn verify_cache(
     edges: &BTreeMap<String, Vec<String>>,
     reachable: &BTreeSet<String>,
     num_jobs: usize,
-    _recipe: &str,
 ) -> Result<VerifyReport, String> {
     // 1. Populate: a normal run records StepEntry.outputs (path,hash) per unit.
     crate::run::run(
@@ -275,7 +274,6 @@ mod tests {
             &std::collections::BTreeMap<String, Vec<String>>,
             &std::collections::BTreeSet<String>,
             usize,
-            &str,
         ) -> Result<VerifyReport, String> = verify_cache;
         let _ = _f;
     }

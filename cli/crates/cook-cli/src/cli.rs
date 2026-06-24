@@ -133,7 +133,7 @@ pub enum Cmd {
     Logs(LogsArgs),
 
     /// Cache fidelity tooling. `cook cache verify` re-runs cached steps and
-    /// reports byte-divergence under a matching key (CI fidelity tool, §17.9).
+    /// reports byte-divergence under a matching key (CI fidelity tool, §17.8).
     Cache(CacheArgs),
 
     /// Watch ingredients and re-run on change.
