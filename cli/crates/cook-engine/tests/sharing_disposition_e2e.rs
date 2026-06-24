@@ -191,18 +191,7 @@ fn unannotated_unit_publishes_then_fetches_by_key() {
 }
 
 /// Test 2: a `local` unit caches locally but NEVER publishes to the shared store.
-///
-/// IGNORED pending a codegen fix: `cook-luagen/src/cook_step.rs:175` emits the
-/// disposition field as `, local = true`, using `local` (a reserved Lua keyword)
-/// as a bare table key — invalid Lua. Any Cookfile with a `local` decorator
-/// therefore fails to parse (`syntax error: unexpected symbol near 'local'`), so
-/// the unit never runs and this property cannot be exercised end-to-end. The
-/// register reader (`cook-register/src/unit_api.rs:560`) already reads the field
-/// as the string key `"local"`, and its own unit test constructs the table with
-/// the bracketed form `["local"] = true`; the codegen emitter must match it
-/// (`, ["local"] = true`). Remove `#[ignore]` once that one-line fix lands.
 #[test]
-#[ignore = "blocked on cook_step.rs:175 codegen bug — `local = true` is invalid Lua (reserved keyword as bare table key); see COOK-162 finding"]
 fn local_unit_does_not_publish_to_shared_store() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cache = tempfile::tempdir().expect("cache tempdir");

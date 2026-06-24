@@ -2388,6 +2388,9 @@ pub fn execute_dag(
                             };
                             let cloud_k = cloud_key(&key_inputs);
 
+                            // COOK-162 §3: `local` units never publish to the shared store.
+                            let publish_to_backend = !meta.local;
+
                             // Upload one artifact per declared output (2026-05-02 addendum
                             // spec §5.1).
                             // CS-0085: iterate the resolved (glob-expanded) list.
@@ -2417,13 +2420,15 @@ pub fn execute_dag(
                                     content_hash: ArtifactMeta::zero_content_hash(),
                                     kind: None,
                                 };
-                                if let Err(e) = cook_cache::backend::put_bytes(
-                                    cache_ctx.backend.as_ref(),
-                                    &artifact_k,
-                                    &bytes,
-                                    &mut artifact_meta,
-                                ) {
-                                    tracing::warn!("cache backend put failed for {}: {}", output_path, e);
+                                if publish_to_backend {
+                                    if let Err(e) = cook_cache::backend::put_bytes(
+                                        cache_ctx.backend.as_ref(),
+                                        &artifact_k,
+                                        &bytes,
+                                        &mut artifact_meta,
+                                    ) {
+                                        tracing::warn!("cache backend put failed for {}: {}", output_path, e);
+                                    }
                                 }
                             }
 
@@ -2461,16 +2466,18 @@ pub fn execute_dag(
                                             content_hash: ArtifactMeta::zero_content_hash(),
                                             kind: None,
                                         };
-                                        if let Err(e) = cook_cache::backend::put_bytes(
-                                            cache_ctx.backend.as_ref(),
-                                            &artifact_k,
-                                            &bytes,
-                                            &mut artifact_meta,
-                                        ) {
-                                            tracing::warn!(
-                                                "cache backend put failed for depfile {}: {e}",
-                                                di.from
-                                            );
+                                        if publish_to_backend {
+                                            if let Err(e) = cook_cache::backend::put_bytes(
+                                                cache_ctx.backend.as_ref(),
+                                                &artifact_k,
+                                                &bytes,
+                                                &mut artifact_meta,
+                                            ) {
+                                                tracing::warn!(
+                                                    "cache backend put failed for depfile {}: {e}",
+                                                    di.from
+                                                );
+                                            }
                                         }
                                     }
                                     Err(e) => {
