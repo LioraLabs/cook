@@ -392,6 +392,68 @@ fn try_restore(
     true
 }
 
+/// Cold fetch-by-key (COOK-162 §3 sharing): with no local StepEntry, attempt to
+/// serve a unit's declared outputs straight from the shared backend by
+/// recomputing its one key. Returns true iff every output was fetched, verified,
+/// and written. `sorted_input_content_hashes` MUST already be sorted.
+#[allow(clippy::too_many_arguments)]
+pub fn fetch_by_key(
+    ctx: &RestoreCtx,
+    command_hash: u64,
+    env_contribution: u64,
+    seal_contribution: u64,
+    sorted_input_content_hashes: &[u64],
+    output_paths: &[&str],
+    working_dir: &std::path::Path,
+) -> bool {
+    let key_inputs = crate::backend::CloudKeyInputs {
+        schema_version: CACHE_VERSION,
+        recipe_namespace: ctx.recipe_namespace,
+        command_hash,
+        env_contribution,
+        seal_contribution,
+        sorted_input_content_hashes,
+    };
+    let cloud_k = crate::backend::cloud_key(&key_inputs);
+    for (idx, path) in output_paths.iter().enumerate() {
+        let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
+        let mut reader = match ctx.backend.get(&artifact_k) {
+            Ok(Some(r)) => r,
+            _ => return false,
+        };
+        // Drain the streaming reader (CS-0054 verify-on-restore): the streaming
+        // verifier raises io::Error(InvalidData) at EOF on hash mismatch; treat
+        // any read failure as a miss.
+        let mut bytes = Vec::new();
+        if std::io::Read::read_to_end(&mut reader, &mut bytes).is_err() {
+            return false;
+        }
+        let abs = working_dir.join(path);
+        if let Some(parent) = abs.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if std::fs::write(&abs, &bytes).is_err() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Hash each declared input path's on-disk content, sorted ascending. Returns
+/// None if any declared input is missing (the unit cannot be a clean hit).
+pub fn hash_input_paths(input_paths: &[&str], working_dir: &std::path::Path) -> Option<Vec<u64>> {
+    let mut hashes = Vec::with_capacity(input_paths.len());
+    for p in input_paths {
+        let abs = working_dir.join(p);
+        match hash_file(&abs) {
+            Some(h) => hashes.push(h),
+            None => return None,
+        }
+    }
+    hashes.sort();
+    Some(hashes)
+}
+
 /// Check if a plate layer (no output) needs to re-run.
 pub fn needs_rebuild_plate(
     entry: Option<&StepEntry>,

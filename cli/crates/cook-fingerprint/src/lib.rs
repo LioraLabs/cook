@@ -26,8 +26,8 @@ pub use backend::{
     CloudKeyInputs,
 };
 pub use check::{
-    hash_env, hash_file, install_depfile_parser, needs_rebuild_cook, needs_rebuild_plate,
-    stat_mtime, RebuildReason, RebuildResult, RestoreCtx,
+    fetch_by_key, hash_env, hash_file, hash_input_paths, install_depfile_parser,
+    needs_rebuild_cook, needs_rebuild_plate, stat_mtime, RebuildReason, RebuildResult, RestoreCtx,
 };
 pub use context::{compute_probe_fingerprint, ProbeFingerprintInputs};
 pub use probe::resolve_probe_inputs;
