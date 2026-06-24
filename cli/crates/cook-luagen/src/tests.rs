@@ -3656,3 +3656,17 @@ recipe html
         "expected file_refs field on the fan-out cook.add_unit, lua:\n{lua}"
     );
 }
+
+#[test]
+fn seal_disposition_emits_seal_field() {
+    let src = "recipe build\n    seal host\n    cook \"x.o\" { cc -c x.c -o x.o }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(lua.contains("seal = {\"host\"}"), "generated lua:\n{lua}");
+}
+
+#[test]
+fn unsealed_step_emits_no_seal_field() {
+    let src = "recipe build\n    cook \"x.o\" { cc -c x.c -o x.o }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(!lua.contains("seal ="), "unsealed step must not emit seal:\n{lua}");
+}
