@@ -811,7 +811,7 @@ fn toposort_reachable(
 /// context (machine identity + declared-tool hashing), selects either the
 /// local or cloud backend, and assembles the shared `CacheContext` carried
 /// by every register pass and worker.
-fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<Arc<CacheContext>, EngineError> {
+pub(crate) fn build_cache_ctx(project_root: &Path, no_publish: bool) -> Result<Arc<CacheContext>, EngineError> {
     let cloud_config = CloudConfig::load_or_default(project_root)
         .map_err(|e| EngineError::CacheError(format!("invalid .cook/cloud.toml: {e}")))?;
     let mut denylist = EnvDenylist::baseline();
