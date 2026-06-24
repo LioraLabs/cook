@@ -3198,7 +3198,8 @@ mod tests {
                 wd,
             ),
             &[],
-        );
+        )
+        .unwrap();
 
         let (tx, rx) = mpsc::channel::<EngineEvent>();
         let result = execute_dag(dag, 1, BTreeMap::new(), Some(tx), cache_ctx, None, &BTreeMap::new(), &[], &BTreeMap::new());
