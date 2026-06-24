@@ -3670,3 +3670,23 @@ fn unsealed_step_emits_no_seal_field() {
     let lua = generate_lua_for_test(src);
     assert!(!lua.contains("seal ="), "unsealed step must not emit seal:\n{lua}");
 }
+
+#[test]
+fn record_disposition_emits_record_field() {
+    let src = "recipe build\n    record\n    cook \"out.png\" { gen-image }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(
+        lua.contains("record = true"),
+        "record-annotated cook step must emit record = true, got:\n{lua}"
+    );
+}
+
+#[test]
+fn unannotated_cook_emits_no_record_field() {
+    let src = "recipe build\n    cook \"out.o\" { cc -c }\n";
+    let lua = generate_lua_for_test(src);
+    assert!(
+        !lua.contains("record ="),
+        "unannotated cook step must not emit record, got:\n{lua}"
+    );
+}

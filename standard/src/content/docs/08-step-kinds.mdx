@@ -254,7 +254,7 @@ There are four dispositions:
 | `seal` | `seal` `seal_ref`* | Asserts purity: the step's output is a pure function of its declared inputs, command, consulted env, and the named probe determinants. **Additive and stackable.** |
 | `local` | `local` | Opt out of sharing — local cache only. |
 | `pinned` | `pinned` | Designated-producer / fetch-only. |
-| `record` | `record` | Record divergence for the shadow-divergence oracle (§{exec.cache}). |
+| `record` | `record` | Marks an intrinsically non-reproducible artifact; byte-equivalence is waived at the cache decision (§{exec.cache.record}). |
 
 A `seal_ref` is a bare `BARE_PROBE_KEY` — `IDENT (":" IDENT)?`, module-prefixable (e.g. `cc:toolchain`). The quoted `STRING` form of §{grammar-appendix.probe} is NOT admitted in a seal list, and a third contiguous `:IDENT` segment (`a:b:c`) MUST be rejected, exactly as for `probe_ref` in §{grammar-appendix.probe}.
 

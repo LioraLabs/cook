@@ -172,6 +172,17 @@ fn seal_field(seal: &BTreeSet<String>) -> String {
     }
 }
 
+/// COOK-163: render the optional `, record = true` cook.add_unit field when the
+/// step carries the `record` disposition. Empty otherwise so unannotated-step
+/// goldens stay byte-identical.
+fn record_field(record: bool) -> String {
+    if record {
+        ", record = true".to_string()
+    } else {
+        String::new()
+    }
+}
+
 pub(crate) fn generate_cook_step(
     out: &mut String,
     cook_step: &CookStep,
@@ -253,8 +264,8 @@ pub(crate) fn generate_cook_step(
                     };
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
-                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}{}{}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
                     )
                 }
                 Some(Body::LuaBlock(code)) => {
@@ -262,8 +273,8 @@ pub(crate) fn generate_cook_step(
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}}})\n",
-                        code_literal, ing_groups, env_keys, seal_field(&cook_step.disposition.seal)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}{}}})\n",
+                        code_literal, ing_groups, env_keys, seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
                     )
                 }
                 None => {
@@ -336,8 +347,8 @@ pub(crate) fn generate_cook_step(
                     };
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
-                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}{}{}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
                     )
                 }
                 Some(Body::LuaBlock(code)) => {
@@ -345,8 +356,8 @@ pub(crate) fn generate_cook_step(
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}}})\n",
-                        code_literal, ing_groups, env_keys, seal_field(&cook_step.disposition.seal)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}{}}})\n",
+                        code_literal, ing_groups, env_keys, seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
                     )
                 }
                 None => {
@@ -407,8 +418,8 @@ pub(crate) fn generate_cook_step(
                         out.push_str(&file_refs.hoist_lines("    "));
                     }
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = {}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
-                        input_source, lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal)
+                        "    cook.add_unit({{inputs = {}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}{}{}}})\n",
+                        input_source, lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
                     ));
                 }
                 Some(Body::LuaBlock(code)) => {
@@ -416,8 +427,8 @@ pub(crate) fn generate_cook_step(
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = {}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}}})\n",
-                        input_source, code_literal, ing_groups, env_keys, seal_field(&cook_step.disposition.seal)
+                        "    cook.add_unit({{inputs = {}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}{}}})\n",
+                        input_source, code_literal, ing_groups, env_keys, seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
                     ));
                 }
                 None => unreachable!("ManyToOne mode requires a using-clause"),
@@ -466,8 +477,8 @@ pub(crate) fn generate_cook_step(
                     };
                     let probes_lua = probe_keys_to_lua_table(&probe_keys);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
-                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, command = {}, probes = {}, consulted_env_keys = {}{}{}{}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
                     )
                 }
                 Some(Body::LuaBlock(code)) => {
@@ -475,8 +486,8 @@ pub(crate) fn generate_cook_step(
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}}})\n",
-                        code_literal, ing_groups, env_keys, seal_field(&cook_step.disposition.seal)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}{}}})\n",
+                        code_literal, ing_groups, env_keys, seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
                     )
                 }
                 None => unreachable!("OneToMany mode requires a using-clause"),
@@ -542,8 +553,8 @@ pub(crate) fn generate_cook_step(
                         out.push_str(&file_refs.hoist_lines("    "));
                     }
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, command = {}, probes = {}, consulted_env_keys = {}{}{}}})\n",
-                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal)
+                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, command = {}, probes = {}, consulted_env_keys = {}{}{}{}}})\n",
+                        lua_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
                     ));
                 }
                 Some(Body::LuaBlock(code)) => {
@@ -551,8 +562,8 @@ pub(crate) fn generate_cook_step(
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}}})\n",
-                        code_literal, ing_groups, env_keys, seal_field(&cook_step.disposition.seal)
+                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}{}}})\n",
+                        code_literal, ing_groups, env_keys, seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
                     ));
                 }
                 _ => unreachable!("BlockStep mode requires ShellBlock or LuaBlock using-clause"),
@@ -630,8 +641,8 @@ pub(crate) fn generate_for_each_cook_step(
             };
             let probes_lua = probe_keys_to_lua_table(&probe_keys);
             format!(
-                "        cook.add_unit({{inputs = {{}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}, member = cook.member_to_string(item){}}})\n",
-                cmd_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal)
+                "        cook.add_unit({{inputs = {{}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}, member = cook.member_to_string(item){}{}}})\n",
+                cmd_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
             )
         }
         Some(Body::LuaBlock(code)) => {
@@ -640,15 +651,15 @@ pub(crate) fn generate_for_each_cook_step(
             let code_literal = crate::lua_string::wrap_lua_string(code);
             let env_keys = lua_body_consulted_env_keys(code);
             format!(
-                "        cook.add_unit({{inputs = {{}}, output = _cook_out, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}}})\n",
-                code_literal, env_keys, seal_field(&cook_step.disposition.seal)
+                "        cook.add_unit({{inputs = {{}}, output = _cook_out, lua_code = {}, consulted_env_keys = {}, member = cook.member_to_string(item){}{}}})\n",
+                code_literal, env_keys, seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
             )
         }
         None => {
             // Declaration-only: one declared output per member, no command.
             format!(
-                "        cook.add_unit({{inputs = {{}}, output = _cook_out, member = cook.member_to_string(item){}}})\n",
-                seal_field(&cook_step.disposition.seal)
+                "        cook.add_unit({{inputs = {{}}, output = _cook_out, member = cook.member_to_string(item){}{}}})\n",
+                seal_field(&cook_step.disposition.seal), record_field(cook_step.disposition.record)
             )
         }
     };
