@@ -61,7 +61,7 @@ pub struct RunResult {
 ///
 /// `"backend.proto.generate"` -> `("backend.proto", "generate")`
 /// `"build"` -> `("", "build")`
-fn split_recipe_name(name: &str) -> (String, String) {
+pub(crate) fn split_recipe_name(name: &str) -> (String, String) {
     if let Some(dot_pos) = name.rfind('.') {
         (name[..dot_pos].to_string(), name[dot_pos + 1..].to_string())
     } else {
@@ -647,7 +647,7 @@ where
 /// its captured units carry in their [`cook_contracts::CacheMeta`] (which the
 /// executor uses as the manager's per-recipe key), falling back to the
 /// recipe's own name for unit-less meta-targets.
-fn recipe_cache_index_name(ru: &RecipeUnits, fallback: &str) -> String {
+pub(crate) fn recipe_cache_index_name(ru: &RecipeUnits, fallback: &str) -> String {
     ru.units
         .iter()
         .find_map(|u| u.cache_meta.as_ref().map(|m| m.recipe_name.clone()))

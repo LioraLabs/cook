@@ -9,8 +9,11 @@
 //! a weaker exists (re-produced) check. This is a fidelity/diagnostic tool, NOT a
 //! trust gate (COOK-167).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+
+use crate::RegisteredWorkspace;
+use cook_contracts::WorkPayload;
 
 /// Per-unit verdict from the re-run-and-compare pass.
 #[derive(Debug, Clone, PartialEq)]
@@ -177,9 +180,105 @@ pub fn rerun_outputs_in_sandbox(
     Ok(out)
 }
 
+/// Run the recipe to populate the cache, then re-run every cacheable unit in a
+/// sandbox and compare against the recorded outputs under the matching key.
+///
+/// `edges` / `reachable` are the same maps `run()` consumes. K matches by
+/// construction because the populate run and the re-run see the same workspace,
+/// so any byte divergence is purely a producer/determinant property.
+pub fn verify_cache(
+    project_root: &Path,
+    workspace: &RegisteredWorkspace,
+    edges: &BTreeMap<String, Vec<String>>,
+    reachable: &BTreeSet<String>,
+    num_jobs: usize,
+    _recipe: &str,
+) -> Result<VerifyReport, String> {
+    // 1. Populate: a normal run records StepEntry.outputs (path,hash) per unit.
+    crate::run::run(
+        project_root,
+        workspace,
+        edges,
+        reachable,
+        num_jobs,
+        &[],
+        /*no_prune*/ false,
+        /*no_publish*/ true,
+        |_e| {},
+    )
+    .map_err(|e| format!("populate run failed: {e}"))?;
+
+    let mut report = VerifyReport::default();
+    for (recipe_name, units) in &workspace.units_by_recipe {
+        // Only verify recipes that were part of this run's reachable closure.
+        if !reachable.contains(recipe_name) {
+            continue;
+        }
+        // Per-recipe cache manager, anchored exactly like the executor.
+        let prefix = crate::run::split_recipe_name(recipe_name).0;
+        let wd = workspace
+            .working_dir_by_prefix
+            .get(&prefix)
+            .cloned()
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let cache_dir = wd.join(".cook").join("cache");
+        let mgr = cook_cache::ThreadSafeCacheManager::new(cache_dir);
+        let index_name = crate::run::recipe_cache_index_name(units, recipe_name);
+        let recipe_cache = mgr.get_or_load(&index_name);
+
+        for unit in &units.units {
+            let Some(meta) = &unit.cache_meta else {
+                continue;
+            };
+            if meta.output_paths.is_empty() {
+                continue;
+            }
+            let cmd = match &unit.payload {
+                WorkPayload::Shell { cmd, .. } => cmd.clone(),
+                _ => continue, // only shell units are byte-verifiable here
+            };
+            let Some(entry) = recipe_cache.steps.get(&meta.cache_key) else {
+                continue; // not cached this run — nothing to verify
+            };
+            let recorded: BTreeMap<String, u64> =
+                entry.outputs.iter().map(|f| (f.path.clone(), f.hash)).collect();
+
+            let verdict = match rerun_outputs_in_sandbox(
+                &cmd,
+                &units.working_dir,
+                &units.env_vars,
+                &meta.output_paths,
+            ) {
+                Ok(rerun) => classify(meta.record, &recorded, &rerun),
+                Err(e) => UnitVerdict::Error { detail: e },
+            };
+            report.units.push(UnitReport {
+                recipe: recipe_name.clone(),
+                unit: meta.output_paths.first().cloned().unwrap_or_default(),
+                key: meta.cache_key.clone(),
+                verdict,
+            });
+        }
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verify_cache_entry_exists() {
+        let _f: fn(
+            &std::path::Path,
+            &crate::RegisteredWorkspace,
+            &std::collections::BTreeMap<String, Vec<String>>,
+            &std::collections::BTreeSet<String>,
+            usize,
+            &str,
+        ) -> Result<VerifyReport, String> = verify_cache;
+        let _ = _f;
+    }
 
     #[test]
     fn rerun_in_sandbox_hashes_declared_outputs() {
