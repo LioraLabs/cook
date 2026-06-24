@@ -17,6 +17,10 @@ pub enum CacheStatus {
     SharedMiss,
     LocalOnlyMiss,
     PinnedColdMiss,
+    /// A declared input is absent on disk: the unit cannot be a clean hit and no
+    /// key is computed (mirrors `hash_input_paths` returning None). Rendered as
+    /// `MISS (input '<path>' missing)`.
+    MissingInput { path: String },
 }
 
 /// One determinant difference found when diffing consumer determinants against a
@@ -279,33 +283,23 @@ fn classify(
     det: &UnitDeterminants,
     key_hex: &str,
 ) -> (CacheStatus, Option<Vec<DeterminantDiff>>) {
+    // I1: a declared input absent on disk means the unit cannot be a clean hit
+    // and no real key exists (mirrors `hash_input_paths` returning None at
+    // executor.rs:710). Attribute the miss to that input rather than fabricating
+    // a `0`-hash key that can never match a real manifest.
+    if let Some(p) = first_missing_input(meta, &node.working_dir) {
+        return (CacheStatus::MissingInput { path: p }, None);
+    }
     if local_step_hit(node, meta, det, cache_managers) {
         return (CacheStatus::LocalHit, None);
     }
     if meta.local {
         return (CacheStatus::LocalOnlyMiss, None);
     }
-    let recipe_namespace = format!(
-        "{}/{}::{}",
-        meta.project_id, meta.cookfile_path, meta.recipe_name
-    );
-    let mut sorted: Vec<u64> = det.inputs.values().copied().collect();
-    sorted.sort();
-    let restore = cook_fingerprint::RestoreCtx {
-        backend: cache_ctx.backend.as_ref(),
-        recipe_namespace: &recipe_namespace,
-    };
-    let outs: Vec<&str> = meta.output_paths.iter().map(|s| s.as_str()).collect();
-    let shared_hit = cook_fingerprint::fetch_by_key(
-        &restore,
-        det.command_hash,
-        det.env_contribution,
-        det.seal_contribution,
-        &sorted,
-        &outs,
-        &node.working_dir,
-    );
-    if shared_hit {
+    // C1: read-only shared-store probe — recompute artifact keys and confirm the
+    // backend holds every output, but NEVER write to the working tree (unlike
+    // `fetch_by_key`, which restores). `cook why` is strictly read-only.
+    if shared_artifacts_present(cache_ctx, key_hex, meta) {
         return (CacheStatus::SharedHit, None);
     }
     if meta.pinned {
@@ -315,6 +309,61 @@ fn classify(
         );
     }
     (CacheStatus::SharedMiss, manifest_diff(cache_ctx, key_hex, det))
+}
+
+fn first_missing_input(
+    meta: &cook_contracts::CacheMeta,
+    working_dir: &Path,
+) -> Option<String> {
+    meta.input_paths
+        .iter()
+        .find(|p| cook_fingerprint::hash_file(&working_dir.join(p)).is_none())
+        .cloned()
+}
+
+/// Read-only shared-store probe: recompute the artifact keys and check the
+/// backend has every output, draining each reader for integrity verification
+/// (CS-0054) but NEVER writing to the working tree. `cook why` is read-only.
+fn shared_artifacts_present(
+    cache_ctx: &CacheContext,
+    key_hex: &str,
+    meta: &cook_contracts::CacheMeta,
+) -> bool {
+    let Some(cloud_k) = decode_key_hex(key_hex) else {
+        return false;
+    };
+    if meta.output_paths.is_empty() {
+        return false;
+    }
+    for (idx, path) in meta.output_paths.iter().enumerate() {
+        let artifact_k = cook_fingerprint::artifact_key(&cloud_k, idx as u32, path);
+        match cache_ctx.backend.get(&artifact_k) {
+            Ok(Some(mut reader)) => {
+                // Drain to trigger streaming verify-on-restore; discard bytes.
+                let mut sink = std::io::sink();
+                if std::io::copy(&mut reader, &mut sink).is_err() {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Decode a 64-char lowercase-hex string into a 32-byte cloud key. Returns None
+/// on any length or non-hex error.
+fn decode_key_hex(key_hex: &str) -> Option<[u8; 32]> {
+    let bytes = key_hex.as_bytes();
+    if bytes.len() != 64 {
+        return None;
+    }
+    let mut k = [0u8; 32];
+    for i in 0..32 {
+        let s = std::str::from_utf8(&bytes[i * 2..i * 2 + 2]).ok()?;
+        k[i] = u8::from_str_radix(s, 16).ok()?;
+    }
+    Some(k)
 }
 
 fn local_step_hit(
@@ -331,7 +380,17 @@ fn local_step_hit(
         return false;
     };
     let input_refs: Vec<&str> = meta.input_paths.iter().map(|s| s.as_str()).collect();
-    let outs: Vec<&str> = meta.output_paths.iter().map(|s| s.as_str()).collect();
+    // I2: for glob outputs the raw pattern strings don't exist on disk; passing
+    // them to needs_rebuild_cook would trip OutputMissing → spurious miss. Mirror
+    // check_node_cache (executor.rs:654-664) by substituting the StepEntry's
+    // recorded concrete output paths when any declared output is a glob.
+    let any_glob = meta.output_paths.iter().any(|s| cook_fingerprint::has_glob_meta(s));
+    let current_outputs_storage: Vec<String> = if any_glob {
+        entry.outputs.iter().map(|f| f.path.clone()).collect()
+    } else {
+        meta.output_paths.clone()
+    };
+    let outs: Vec<&str> = current_outputs_storage.iter().map(|s| s.as_str()).collect();
     let (result, _updated) = cook_fingerprint::needs_rebuild_cook(
         Some(entry),
         &input_refs,
@@ -352,15 +411,7 @@ fn manifest_diff(
     key_hex: &str,
     det: &UnitDeterminants,
 ) -> Option<Vec<DeterminantDiff>> {
-    let bytes = key_hex.as_bytes();
-    if bytes.len() != 64 {
-        return None;
-    }
-    let mut k = [0u8; 32];
-    for i in 0..32 {
-        let s = std::str::from_utf8(&bytes[i * 2..i * 2 + 2]).ok()?;
-        k[i] = u8::from_str_radix(s, 16).ok()?;
-    }
+    let k = decode_key_hex(key_hex)?;
     let manifest = cache_ctx.backend.get_manifest(&k).ok().flatten()?;
     Some(diff_against_manifest(det, &manifest))
 }
