@@ -6,7 +6,7 @@ over its declared determinants; sharing is on by default; dispositions are
 policy + determinant declarations, never a separate "strict" key. Host identity
 is a declared probe, not engine-baked.
 
-Four recipes, one per disposition:
+Five recipes, one per disposition:
 
 | recipe     | disposition   | behaviour |
 |------------|---------------|-----------|
@@ -14,14 +14,23 @@ Four recipes, one per disposition:
 | `hostdep`  | `seal host`   | the `host` probe value folds into the key; a host change re-keys and rebuilds |
 | `scratch`  | `local`       | cached locally, never published to / fetched from the shared store |
 | `generate` | `record`      | non-reproducible output; a warm hit reuses the recording instead of re-generating |
+| `pin`      | `pinned`      | fetch-only: served from the cache, never rebuilt; a cold miss is a HARD ERROR |
 
-The `host` probe reads `$SIMHOST` (`produce as env { SIMHOST }`) so the demo can
+The `host` probe reads `$SIMHOST` (`produce as env { SIMHOST }`) so the demos can
 simulate moving to a different machine by changing one environment variable —
 in a real Cookfile it would be `cc -dumpmachine` or `uname -srm`.
 
-The fifth disposition, `pinned` (fetch-only: a cache miss is a hard error, never
-a rebuild), needs a pre-populated shared store and so can't be shown in a
-self-contained single-machine demo — see the cross-machine E2E test
-`cli/crates/cook-engine/tests/cache_trust_cross_machine_e2e.rs`.
+## Running it
 
-Run: `bash verify.sh`.
+| script | what it shows |
+|--------|---------------|
+| `bash verify.sh`        | single machine: the four cacheable dispositions on one host (cold build → warm hits, `record` value stability, host-change re-key) |
+| `bash share-local.sh`   | **cross-machine sharing** on one host: two checkouts with independent local caches share one store. `portable` reuses by key across a host change; `hostdep` (`seal host`) and `scratch` (`local`) miss; `generate` (`record`) reuses the exact recording; `pin` (`pinned`) cold-miss hard-errors. Proof is `cook why`'s per-unit HIT/MISS classification. |
+| `bash share-docker.sh`  | the same, made concrete across **two real containers** sharing a store: a `builder` container publishes `portable` by key, a `consumer` container fetches the exact bytes by key without re-running the command. Skips cleanly if Docker is unavailable (override the base image with `COOK_DEMO_IMAGE`). |
+
+All three locate the `cook` binary at `../../cli/target/debug/cook` by default
+(override with `COOK=/path/to/cook`); build it first with
+`(cd ../../cli && cargo build --bin cook)`.
+
+The cross-machine behaviours are also pinned by the E2E test
+`cli/crates/cook-engine/tests/cache_trust_cross_machine_e2e.rs`.

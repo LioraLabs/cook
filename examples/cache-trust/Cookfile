@@ -50,6 +50,19 @@ recipe generate
         date +%N > $<out>
     }
 
+# `pinned`: fetch-only / designated-producer. The artifact MUST come from the
+# cache (local index or shared store); a cold miss is a HARD ERROR, never a
+# local rebuild. For outputs a trusted producer (e.g. CI) populates and that
+# consumers must not reproduce themselves. Shown cross-machine in
+# `share-local.sh` / `share-docker.sh`, where a cold miss aborts the build.
+recipe pin
+    ingredients "src.txt"
+    pinned
+    cook "build/pinned.txt" {
+        mkdir -p build
+        sed 's/^/[pinned] /' src.txt > $<out>
+    }
+
 # Everything reproducible. (`generate` is run on its own — see README.)
 recipe build: portable hostdep scratch
 
