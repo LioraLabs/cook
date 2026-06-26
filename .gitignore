@@ -43,10 +43,8 @@ bin/
 .worktrees/
 docs/superpowers/
 
-# Claude Code per-repo config: personal settings stay local, but shared
-# skills under .claude/skills/ are tracked so the team picks them up.
-.claude/*
-!.claude/skills/
+# Editor / agent local config — keep out of the published repo.
+.claude/
 
 # Canopy
 .canopy/
