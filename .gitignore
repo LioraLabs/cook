@@ -5,6 +5,13 @@
 **/.env
 **/.env.*
 
+# Confidential / internal docs — keep local, never publish
+/docs/business-plan.md
+/docs/pitch/
+/marketing/positioning.md
+/docs/article-ai-language-spec-draft1.md
+/docs/article-ai-language-spec-draft2.md
+
 # Rust
 target/
 
