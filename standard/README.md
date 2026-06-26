@@ -27,14 +27,14 @@ pnpm test                # run plugin tests
 cook standard.lint       # normative-keyword lint (routes through cook_modules/checks.lua)
 ```
 
-## Hosting on the tailnet
+## Hosting the preview on your network
 
 ```bash
 pnpm build   # if dist/ isn't current
 pnpm host
 ```
 
-`pnpm host` runs `astro preview --host`, binding the preview server to `0.0.0.0:4321` so it's reachable from any tailnet device at `http://archbtw:4321/` (or `http://archbtw.story-pike.ts.net:4321/`). The tailnet hostname is allowlisted in `astro.config.mjs` under `vite.preview.allowedHosts`. If this repo ever moves to a different host, update that list.
+`pnpm host` runs `astro preview --host`, binding the preview server to `0.0.0.0:4321` so it's reachable from other devices on your network (e.g. `http://<your-host>:4321/`). If your environment requires it, allowlist the host in `astro.config.mjs` under `vite.preview.allowedHosts`.
 
 ## Changing the Standard
 
