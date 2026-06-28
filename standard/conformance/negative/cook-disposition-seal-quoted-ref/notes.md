@@ -1,1 +1,2 @@
-COOK-160: a seal probe ref must be bare (IDENT[:IDENT]); the quoted form is rejected.
+COOK-171: a `seal` ref (recipe-level step or trailing modifier) is a bare
+BARE_PROBE_KEY; the quoted STRING form is rejected.

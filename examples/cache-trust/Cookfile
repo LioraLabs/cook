@@ -7,7 +7,7 @@
 # Host identity as a declared probe (target triple / libc / locale stand-in).
 # `verify.sh` flips SIMHOST to simulate moving to a different machine.
 probe host
-    produce as env { SIMHOST }
+    envs { SIMHOST }
 
 # (unannotated) shares fleet-wide: no host determinant, so its key is
 # machine-independent. A lint/codegen/docs artifact — reproducible anywhere.
@@ -34,21 +34,19 @@ recipe hostdep
 # For side-effecting or deliberately-unshared units.
 recipe scratch
     ingredients "src.txt"
-    local
     cook "build/scratch.txt" {
         mkdir -p build
         sed 's/^/[scratch] /' src.txt > $<out>
-    }
+    } local
 
-# `record`: the output is intrinsically non-reproducible (LLM / image gen);
+# `nondet`: the output is intrinsically non-reproducible (LLM / image gen);
 # byte-equivalence is waived and a warm hit reuses the recording rather than
 # re-generating. Here `date +%N` stands in for a non-reproducible producer.
 recipe generate
-    record
     cook "build/generated.txt" {
         mkdir -p build
         date +%N > $<out>
-    }
+    } nondet
 
 # `pinned`: fetch-only / designated-producer. The artifact MUST come from the
 # cache (local index or shared store); a cold miss is a HARD ERROR, never a
@@ -57,11 +55,10 @@ recipe generate
 # `share-local.sh` / `share-docker.sh`, where a cold miss aborts the build.
 recipe pin
     ingredients "src.txt"
-    pinned
     cook "build/pinned.txt" {
         mkdir -p build
         sed 's/^/[pinned] /' src.txt > $<out>
-    }
+    } pinned
 
 # Everything reproducible. (`generate` is run on its own — see README.)
 recipe build: portable hostdep scratch

@@ -1636,7 +1636,7 @@ fn for_each_keyword_no_longer_recognized() {
     assert!(parse(source).is_err());
 }
 
-// ── COOK-67 Task 4: produce as json|lines typing ───────────────────
+// ── COOK-67 Task 4 / COOK-174: leading-kind producer typing ─────────
 
 fn probe_of(src: &str) -> crate::ast::Probe {
     crate::parse(src).unwrap().probes.into_iter().next().unwrap()
@@ -1644,70 +1644,70 @@ fn probe_of(src: &str) -> crate::ast::Probe {
 
 #[test]
 fn produce_shell_default_is_string() {
-    let p = probe_of("probe x\n    produce { cat data.json }\n");
+    let p = probe_of("probe x\n    { cat data.json }\n");
     assert!(matches!(p.produce, crate::ast::ProbeProduce::Shell {
         typing: crate::ast::ShellProduceType::String, .. }));
 }
 
 #[test]
-fn produce_shell_as_json() {
-    let p = probe_of("probe x\n    produce as json { cat data.json }\n");
+fn produce_shell_json() {
+    let p = probe_of("probe x\n    json { cat data.json }\n");
     assert!(matches!(p.produce, crate::ast::ProbeProduce::Shell {
         typing: crate::ast::ShellProduceType::Json, .. }));
 }
 
 #[test]
-fn produce_shell_as_lines() {
-    let p = probe_of("probe x\n    produce as lines { git tag --list }\n");
+fn produce_shell_lines() {
+    let p = probe_of("probe x\n    lines { git tag --list }\n");
     assert!(matches!(p.produce, crate::ast::ProbeProduce::Shell {
         typing: crate::ast::ShellProduceType::Lines, .. }));
 }
 
 #[test]
-fn produce_as_on_lua_block_is_error() {
-    let err = crate::parse("probe x\n    produce as json >{ return {} }\n").unwrap_err();
-    assert!(format!("{err}").contains("`as` is only valid on a shell-block"),
+fn produce_json_on_lua_block_is_error() {
+    let err = crate::parse("probe x\n    json >{ return {} }\n").unwrap_err();
+    assert!(format!("{err}").contains("shell block"),
         "got: {err}");
 }
 
-// ── COOK-164: produce as tools / produce as env ───────────────────────
+// ── COOK-164 / COOK-174: tools / envs name-list producers ─────────────
 
 #[test]
-fn produce_as_tools_parses_name_list() {
-    let cf = parse("probe toolchain\n    produce as tools { cc, ld }\n").unwrap();
+fn produce_tools_parses_name_list() {
+    let cf = parse("probe toolchain\n    tools { cc, ld }\n").unwrap();
     let p = &cf.probes[0];
     assert_eq!(p.produce, crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into()]));
 }
 
 #[test]
-fn produce_as_tools_accepts_whitespace_separators() {
-    let cf = parse("probe toolchain\n    produce as tools { cc ld   ar }\n").unwrap();
+fn produce_tools_accepts_whitespace_separators() {
+    let cf = parse("probe toolchain\n    tools { cc ld   ar }\n").unwrap();
     let p = &cf.probes[0];
     assert_eq!(p.produce, crate::ast::ProbeProduce::Tools(vec!["cc".into(), "ld".into(), "ar".into()]));
 }
 
 #[test]
-fn produce_as_env_parses_name_list() {
-    let cf = parse("probe sdk\n    produce as env { SDKROOT, CC }\n").unwrap();
+fn produce_envs_parses_name_list() {
+    let cf = parse("probe sdk\n    envs { SDKROOT, CC }\n").unwrap();
     let p = &cf.probes[0];
-    assert_eq!(p.produce, crate::ast::ProbeProduce::Env(vec!["SDKROOT".into(), "CC".into()]));
+    assert_eq!(p.produce, crate::ast::ProbeProduce::Envs(vec!["SDKROOT".into(), "CC".into()]));
 }
 
 #[test]
-fn produce_as_tools_empty_list_is_error() {
-    let err = parse("probe t\n    produce as tools {  }\n").unwrap_err();
+fn produce_tools_empty_list_is_error() {
+    let err = parse("probe t\n    tools {  }\n").unwrap_err();
     assert!(format!("{err}").contains("at least one"), "got: {err}");
 }
 
 #[test]
-fn produce_as_tools_lua_block_is_error() {
-    let err = parse("probe t\n    produce as tools >{ return {} }\n").unwrap_err();
+fn produce_tools_lua_block_is_error() {
+    let err = parse("probe t\n    tools >{ return {} }\n").unwrap_err();
     assert!(format!("{err}").contains("NAME LIST"), "got: {err}");
 }
 
 #[test]
-fn produce_as_env_invalid_name_is_error() {
-    let err = parse("probe t\n    produce as env { 1bad }\n").unwrap_err();
+fn produce_envs_invalid_name_is_error() {
+    let err = parse("probe t\n    envs { 1bad }\n").unwrap_err();
     assert!(format!("{err}").contains("name"), "got: {err}");
 }
 
@@ -1715,7 +1715,7 @@ fn produce_as_env_invalid_name_is_error() {
 
 #[test]
 fn parse_probe_lua_block_with_deps_and_ingredients() {
-    let src = "probe services: cards services_raw\n    ingredients \"data/services.json\"\n    produce >{\n        return {}\n    }\n";
+    let src = "probe services: cards services_raw\n    ingredients \"data/services.json\"\n    >{\n        return {}\n    }\n";
     let cf = crate::parse(src).unwrap();
     assert_eq!(cf.probes.len(), 1);
     let p = &cf.probes[0];
@@ -1727,7 +1727,7 @@ fn parse_probe_lua_block_with_deps_and_ingredients() {
 
 #[test]
 fn parse_probe_terminates_at_next_recipe() {
-    let src = "probe a\n    produce >{ return 1 }\nrecipe build\n    echo hi\n";
+    let src = "probe a\n    >{ return 1 }\nrecipe build\n    echo hi\n";
     let cf = crate::parse(src).unwrap();
     assert_eq!(cf.probes.len(), 1);
     assert_eq!(cf.recipes.len(), 1);
@@ -1736,7 +1736,7 @@ fn parse_probe_terminates_at_next_recipe() {
 
 #[test]
 fn parse_probe_shell_block_default() {
-    let src = "probe cards\n    ingredients \"data/cards.json\"\n    produce { cat data/cards.json }\n";
+    let src = "probe cards\n    ingredients \"data/cards.json\"\n    { cat data/cards.json }\n";
     let cf = crate::parse(src).unwrap();
     let p = &cf.probes[0];
     assert!(matches!(&p.produce, crate::ast::ProbeProduce::Shell { typing: crate::ast::ShellProduceType::String, .. }));
@@ -1745,7 +1745,7 @@ fn parse_probe_shell_block_default() {
 #[test]
 fn parse_probe_lua_inline_long_string_with_brace() {
     // a `}` inside a [[..]] long string must NOT prematurely close the block
-    let src = "probe x\n    produce >{ return [[a}b]] }\n";
+    let src = "probe x\n    >{ return [[a}b]] }\n";
     let cf = crate::parse(src).unwrap();
     assert!(matches!(&cf.probes[0].produce,
         crate::ast::ProbeProduce::Lua(code) if code.contains("[[a}b]]")));
@@ -1753,7 +1753,7 @@ fn parse_probe_lua_inline_long_string_with_brace() {
 
 #[test]
 fn parse_probe_lua_inline_long_string_no_brace_still_works() {
-    let src = "probe x\n    produce >{ return cook.sh([[cat data]]) }\n";
+    let src = "probe x\n    >{ return cook.sh([[cat data]]) }\n";
     let cf = crate::parse(src).unwrap();
     assert!(matches!(&cf.probes[0].produce,
         crate::ast::ProbeProduce::Lua(code) if code.contains("cook.sh([[cat data]])")));
@@ -1767,75 +1767,73 @@ fn parse_err(src: &str) -> String {
 
 #[test]
 fn probe_missing_produce_rejected() {
-    // Real message: "probe '{name}' has no `produce` block"
+    // Real message: "probe '{name}' has no producer"
     let msg = parse_err("probe x\n    ingredients \"a\"\n");
-    assert!(msg.contains("no `produce`"), "got: {msg}");
+    assert!(msg.contains("no producer"), "got: {msg}");
 }
 
 #[test]
 fn probe_two_produce_rejected() {
-    // Real message: "probe: at most one `produce` per probe"
-    let msg = parse_err("probe x\n    produce >{ return 1 }\n    produce >{ return 2 }\n");
-    assert!(msg.contains("at most one `produce`"), "got: {msg}");
+    // Real message: "probe: at most one producer per probe"
+    let msg = parse_err("probe x\n    >{ return 1 }\n    >{ return 2 }\n");
+    assert!(msg.contains("at most one producer"), "got: {msg}");
 }
 
 #[test]
 fn probe_two_ingredients_rejected() {
     // Real message: "probe: at most one `ingredients` per probe"
     let msg = parse_err(
-        "probe x\n    ingredients \"a\"\n    ingredients \"b\"\n    produce >{ return 1 }\n",
+        "probe x\n    ingredients \"a\"\n    ingredients \"b\"\n    >{ return 1 }\n",
     );
     assert!(msg.contains("at most one `ingredients`"), "got: {msg}");
 }
 
 #[test]
 fn probe_ingredients_after_produce_rejected() {
-    // Real message: "probe: `ingredients` must appear before `produce`"
-    let msg = parse_err("probe x\n    produce >{ return 1 }\n    ingredients \"a\"\n");
-    assert!(msg.contains("must appear before `produce`"), "got: {msg}");
+    // Real message: "probe: `ingredients` must appear before the producer"
+    let msg = parse_err("probe x\n    >{ return 1 }\n    ingredients \"a\"\n");
+    assert!(msg.contains("must appear before the producer"), "got: {msg}");
 }
 
 #[test]
 fn probe_triple_colon_name_rejected_at_parse() {
     // MalformedProbeName from the lexer propagates through crate::parse.
-    assert!(crate::parse("probe a:b:c\n    produce >{ return 1 }\n").is_err());
+    assert!(crate::parse("probe a:b:c\n    >{ return 1 }\n").is_err());
 }
 
 #[test]
 fn probe_unexpected_step_rejected() {
-    // A `cook "out" { true }` content line inside a probe body hits the
-    // "expected `ingredients` or `produce`, found: …" branch.
-    let msg = parse_err("probe x\n    cook \"out\" { true }\n    produce >{ return 1 }\n");
+    // A `cook "out" { true }` content line inside a probe body is parsed as the
+    // producer; it is not a valid producer opener (`{`/`>{`/json/lines/...), so
+    // it is rejected by the body-payload dispatch.
+    let msg = parse_err("probe x\n    cook \"out\" { true }\n");
     assert!(
-        msg.contains("expected `ingredients` or `produce`, found"),
+        msg.contains("shell block"),
         "got: {msg}"
     );
 }
 
 #[test]
-fn probe_bare_lua_line_in_body_rejected() {
-    // A `>{` without the `produce` keyword tokenizes as LuaBlockOpen (the
-    // `_other` arm), triggering the "only `ingredients` and `produce`" message.
-    let msg = parse_err("probe x\n    >{ return 1 }\n");
-    assert!(
-        msg.contains("only `ingredients` and `produce` are allowed here"),
-        "got: {msg}"
-    );
+fn probe_bare_lua_block_is_producer() {
+    // COOK-174: a bare `>{ … }` line (no `produce` keyword) is the Lua producer.
+    let p = probe_of("probe x\n    >{ return 1 }\n");
+    assert!(matches!(&p.produce,
+        crate::ast::ProbeProduce::Lua(code) if code.contains("return 1")));
 }
 
 #[test]
 fn probe_dep_colon_vs_name_colon() {
     // `probe cards: cc:compiler` — name is "cards", dep is "cc:compiler".
-    let cf = crate::parse("probe cards: cc:compiler\n    produce >{ return 1 }\n").unwrap();
+    let cf = crate::parse("probe cards: cc:compiler\n    >{ return 1 }\n").unwrap();
     assert_eq!(cf.probes[0].name, "cards");
     assert_eq!(cf.probes[0].deps, vec!["cc:compiler"]);
 }
 
 #[test]
-fn probe_as_on_lua_block_rejected() {
-    // Real message: "produce: `as` is only valid on a shell-block produce; …"
-    let msg = parse_err("probe x\n    produce as json >{ return {} }\n");
-    assert!(msg.contains("shell-block"), "got: {msg}");
+fn probe_json_on_lua_block_rejected() {
+    // Real message: "probe: `json`/`lines` is only valid on a shell block; …"
+    let msg = parse_err("probe x\n    json >{ return {} }\n");
+    assert!(msg.contains("shell block"), "got: {msg}");
 }
 
 // ── COOK-88: ingredients <probe> member source ──────────────────────
@@ -2024,9 +2022,9 @@ fn cs0099_register_block_body_still_rejected() {
     assert!(msg.contains(">{"), "got: {}", msg);
 }
 
-// ── COOK-160: cook-step disposition (§8.4.3) ───────────────────────
+// ── COOK-171: cook-step disposition surface (§8.4.3) ───────────────
 
-/// Helper: extract the single cook step's disposition from a parsed recipe.
+/// Helper: extract the first cook step's disposition from a parsed recipe.
 #[cfg(test)]
 fn first_cook_disposition(cf: &Cookfile) -> &crate::ast::Disposition {
     for step in &cf.recipes[0].steps {
@@ -2038,9 +2036,8 @@ fn first_cook_disposition(cf: &Cookfile) -> &crate::ast::Disposition {
 }
 
 #[test]
-fn disp_seal_line_above_cook() {
-    let src = "recipe build\n    seal host\n    cook \"x.o\" { cc -c x.c }\n";
-    let cf = parse(src).unwrap();
+fn disp_recipe_seal_applies_to_cook() {
+    let cf = parse("recipe build\n    seal host\n    cook \"x.o\" { cc -c x.c }\n").unwrap();
     let d = first_cook_disposition(&cf);
     assert!(d.seal.contains("host"));
     assert_eq!(d.sharing, cook_contracts::Sharing::Shared);
@@ -2048,184 +2045,133 @@ fn disp_seal_line_above_cook() {
 }
 
 #[test]
-fn disp_seal_lines_stack_additively_with_record() {
-    let src = "recipe build\n    seal host\n    seal gpu driver\n    record\n    cook \"x.o\" { cc -c x.c }\n";
-    let cf = parse(src).unwrap();
-    let d = first_cook_disposition(&cf);
-    let got: Vec<&str> = d.seal.iter().map(|s| s.as_str()).collect();
+fn disp_recipe_seal_order_independent() {
+    // a recipe-level `seal` AFTER the cook still applies (declarative scope)
+    let cf = parse("recipe build\n    cook \"x.o\" { cc -c x.c }\n    seal host\n").unwrap();
+    assert!(first_cook_disposition(&cf).seal.contains("host"));
+}
+
+#[test]
+fn disp_recipe_seal_stacks_additively() {
+    let cf = parse("recipe build\n    seal host\n    seal gpu driver\n    cook \"x.o\" { cc }\n").unwrap();
+    let got: Vec<&str> = first_cook_disposition(&cf).seal.iter().map(|s| s.as_str()).collect();
     assert_eq!(got, vec!["driver", "gpu", "host"]); // sorted, deduped
+}
+
+#[test]
+fn disp_trailing_seal_unseal() {
+    // base {a,b} ∪ trailing {c} − trailing unseal {a} = {b,c}
+    let cf = parse("recipe build\n    seal a b\n    cook \"x.o\" { cc } unseal a seal c\n").unwrap();
+    let got: Vec<&str> = first_cook_disposition(&cf).seal.iter().map(|s| s.as_str()).collect();
+    assert_eq!(got, vec!["b", "c"]);
+}
+
+#[test]
+fn disp_trailing_local_pinned_nondet() {
+    assert_eq!(
+        first_cook_disposition(&parse("recipe r\n    cook \"x\" { c } local\n").unwrap()).sharing,
+        cook_contracts::Sharing::Local
+    );
+    assert_eq!(
+        first_cook_disposition(&parse("recipe r\n    cook \"x\" { c } pinned\n").unwrap()).sharing,
+        cook_contracts::Sharing::Pinned
+    );
+    assert!(first_cook_disposition(&parse("recipe r\n    cook \"x\" { c } nondet\n").unwrap()).record);
+}
+
+#[test]
+fn disp_trailing_seal_then_share_mod() {
+    let cf = parse("recipe r\n    cook \"x\" { c } seal rev local\n").unwrap();
+    let d = first_cook_disposition(&cf);
+    assert!(d.seal.contains("rev"));
+    assert_eq!(d.sharing, cook_contracts::Sharing::Local);
+}
+
+#[test]
+fn disp_declaration_only_cook_with_trailing_mod() {
+    let cf = parse("recipe r\n    cook \"x\" local\n").unwrap();
+    let d = first_cook_disposition(&cf);
+    assert_eq!(d.sharing, cook_contracts::Sharing::Local);
+}
+
+#[test]
+fn disp_multi_output_unit_one_disposition() {
+    // multiple outputs in one cook unit share the one trailing disposition
+    let cf = parse("recipe r\n    cook \"a\" \"b\" { c } nondet\n").unwrap();
+    let d = first_cook_disposition(&cf);
     assert!(d.record);
 }
 
 #[test]
-fn disp_local_line_above_cook() {
-    let src = "recipe build\n    local\n    cook \"x.o\" { cc -c x.c }\n";
-    let cf = parse(src).unwrap();
-    assert_eq!(first_cook_disposition(&cf).sharing, cook_contracts::Sharing::Local);
-}
-
-#[test]
-fn disp_pinned_line_above_cook() {
-    let src = "recipe build\n    pinned\n    cook \"x.o\" { cc -c x.c }\n";
-    let cf = parse(src).unwrap();
-    assert_eq!(first_cook_disposition(&cf).sharing, cook_contracts::Sharing::Pinned);
-}
-
-#[test]
-fn disp_seal_block_applies_to_all_enclosed_cooks() {
-    let src = "recipe build\n    seal host {\n        cook \"a.o\" { cc -c a.c }\n        cook \"b.o\" { cc -c b.c }\n    }\n";
-    let cf = parse(src).unwrap();
-    let mut n = 0;
-    for step in &cf.recipes[0].steps {
-        if let crate::ast::Step::Cook { step, .. } = step {
-            assert!(step.disposition.seal.contains("host"), "cook missing seal host");
-            n += 1;
-        }
-    }
-    assert_eq!(n, 2);
-}
-
-#[test]
-fn disp_local_block_inside_seal_overrides() {
-    // Block openers are multi-line: `local {` then the cook on its own line(s),
-    // then a closing `}` line (App. A.4 `disposition "{" NEWLINE …`).
-    let src = "recipe build\n    seal host {\n        local {\n            cook \"s.o\" { cc -c s.c }\n        }\n    }\n";
-    let cf = parse(src).unwrap();
-    let d = first_cook_disposition(&cf);
-    assert_eq!(d.sharing, cook_contracts::Sharing::Local);
-    assert!(d.seal.is_empty(), "local must drop inherited seal refs");
-}
-
-#[test]
-fn disp_nested_seal_blocks_union() {
-    let src = "recipe build\n    seal a {\n        seal b {\n            cook \"x.o\" { cc -c x.c }\n        }\n    }\n";
-    let cf = parse(src).unwrap();
-    let d = first_cook_disposition(&cf);
-    let got: Vec<&str> = d.seal.iter().map(|s| s.as_str()).collect();
-    assert_eq!(got, vec!["a", "b"]);
-}
-
-#[test]
-fn disp_decorator_line_inside_block_adds_to_inherited() {
-    let src = "recipe build\n    seal host {\n        seal gpu\n        cook \"x.o\" { cc -c x.c }\n    }\n";
-    let cf = parse(src).unwrap();
-    let d = first_cook_disposition(&cf);
-    let got: Vec<&str> = d.seal.iter().map(|s| s.as_str()).collect();
-    assert_eq!(got, vec!["gpu", "host"]);
-}
-
-#[test]
 fn disp_unannotated_cook_has_default_disposition() {
-    let src = "recipe build\n    cook \"x.o\" { cc -c x.c }\n";
-    let cf = parse(src).unwrap();
-    let d = first_cook_disposition(&cf);
-    assert_eq!(*d, crate::ast::Disposition::default());
+    let cf = parse("recipe build\n    cook \"x.o\" { cc -c x.c }\n").unwrap();
+    assert_eq!(*first_cook_disposition(&cf), crate::ast::Disposition::default());
 }
 
 // negative paths
 
 #[test]
-fn disp_dangling_decorator_without_cook_errors() {
-    let src = "recipe r\n    seal host\n    plate { echo hi }\n";
-    assert!(parse(src).is_err());
+fn disp_bare_recipe_seal_rejected() {
+    assert!(parse("recipe r\n    seal\n    cook \"x\" { c }\n").is_err());
 }
 
 #[test]
-fn disp_dangling_decorator_at_eof_errors() {
-    let src = "recipe r\n    seal host\n";
-    assert!(parse(src).is_err());
+fn disp_recipe_unseal_rejected() {
+    let e = parse("recipe r\n    unseal a\n    cook \"x\" { c }\n").unwrap_err();
+    assert!(format!("{e:?}").contains("trailing modifier"));
 }
 
 #[test]
-fn disp_local_and_pinned_mutually_exclusive_errors() {
-    let src = "recipe r\n    local\n    pinned\n    cook \"x.o\" { cc -c x.c }\n";
-    assert!(parse(src).is_err());
+fn disp_two_share_mods_rejected() {
+    assert!(parse("recipe r\n    cook \"x\" { c } local pinned\n").is_err());
+    assert!(parse("recipe r\n    cook \"x\" { c } nondet local\n").is_err());
 }
 
 #[test]
-fn disp_seal_quoted_ref_errors() {
-    let src = "recipe r\n    seal \"host\"\n    cook \"x.o\" { cc -c x.c }\n";
-    assert!(parse(src).is_err());
+fn disp_content_after_share_mod_rejected() {
+    assert!(parse("recipe r\n    cook \"x\" { c } local seal a\n").is_err());
 }
 
 #[test]
-fn disp_seal_triple_colon_ref_errors() {
-    let src = "recipe r\n    seal a:b:c\n    cook \"x.o\" { cc -c x.c }\n";
-    assert!(parse(src).is_err());
+fn disp_record_keyword_rejected_with_hint() {
+    let e = parse("recipe r\n    cook \"x\" { c } record\n").unwrap_err();
+    assert!(format!("{e:?}").contains("nondet"));
 }
 
 #[test]
-fn disp_unterminated_block_errors() {
-    let src = "recipe r\n    seal host {\n        cook \"a.o\" { cc -c a.c }\n";
-    assert!(parse(src).is_err());
+fn disp_bare_trailing_seal_rejected() {
+    assert!(parse("recipe r\n    cook \"x\" { c } seal\n").is_err());
+    assert!(parse("recipe r\n    cook \"x\" { c } unseal\n").is_err());
 }
 
 #[test]
-fn disp_empty_block_errors() {
-    let src = "recipe r\n    seal host {\n    }\n";
-    assert!(parse(src).is_err());
+fn disp_trailing_seal_quoted_ref_errors() {
+    assert!(parse("recipe r\n    cook \"x\" { c } seal \"host\"\n").is_err());
 }
 
 #[test]
-fn disp_block_with_non_cook_step_errors() {
-    let src = "recipe r\n    seal host {\n        echo nope\n    }\n";
-    assert!(parse(src).is_err());
+fn disp_trailing_seal_triple_colon_ref_errors() {
+    assert!(parse("recipe r\n    cook \"x\" { c } seal a:b:c\n").is_err());
 }
 
 #[test]
-fn disp_local_keyword_with_trailing_content_is_shell() {
-    // `local foo` is NOT a disposition line — falls through to shell_command.
-    let src = "recipe r\n    local foo\n";
-    let cf = parse(src).unwrap();
-    // it parsed as a shell step, not a disposition error
-    assert!(matches!(cf.recipes[0].steps[0], crate::ast::Step::Shell { .. }));
+fn disp_recipe_seal_quoted_ref_errors() {
+    assert!(parse("recipe r\n    seal \"host\"\n    cook \"x\" { c }\n").is_err());
 }
 
 #[test]
-fn disp_inline_single_line_block_is_rejected() {
-    // The block opener `{` must end its line (App. A.4 `disposition "{" NEWLINE`).
-    // A fully-inline `local { cook … }` is not admitted — the `{`-suffix check
-    // fails (line ends with `}`), so it is neither a block opener nor a bare
-    // decorator, and is rejected.
-    let src = "recipe r\n    seal host {\n        local { cook \"s.o\" { cc -c s.c } }\n    }\n";
-    assert!(parse(src).is_err());
+fn disp_bare_local_line_is_shell_command() {
+    // recipe-body `local` on its own line is NOT a disposition anymore → shell
+    // step (a non-reserved word). It starts the imperative region, so a `cook`
+    // after it would be a region-ordering violation; assert the classification
+    // on a recipe whose `cook` precedes it.
+    let cf = parse("recipe r\n    cook \"x\" { c }\n    local\n").unwrap();
+    let steps = &cf.recipes[0].steps;
+    assert!(matches!(steps[steps.len() - 1], crate::ast::Step::Shell { .. }));
 }
 
 #[test]
-fn disp_inline_block_at_recipe_top_level_is_shell() {
-    // §8.4.3 rule 13: at recipe-body top level (not inside a block), an inline
-    // `local { … }` line is non-reserved and falls through to shell_command —
-    // it is NOT a disposition and NOT an error.
-    let src = "recipe r\n    local { cook \"s.o\" { cc -c s.c } }\n";
-    let cf = parse(src).unwrap();
-    assert!(matches!(cf.recipes[0].steps[0], crate::ast::Step::Shell { .. }));
-}
-
-#[test]
-fn disp_decorator_line_override_inside_seal_block() {
-    // A `local` DECORATOR LINE (not an inner block) inside a `seal` block
-    // overrides the inherited seal on the following cook (§8.4.3 rule 10).
-    let src = "recipe build\n    seal host {\n        local\n        cook \"s.o\" { cc -c s.c }\n    }\n";
-    let cf = parse(src).unwrap();
-    let d = first_cook_disposition(&cf);
-    assert_eq!(d.sharing, cook_contracts::Sharing::Local);
-    assert!(d.seal.is_empty(), "decorator-line local must drop inherited seal");
-}
-
-#[test]
-fn disp_seal_block_with_multiline_cook_body() {
-    // The block's closing `}` is distinguishable from a multi-line cook body's
-    // own `}`: parse_cook_line consumes the body's brace, so the block `}` is a
-    // separate line. Pins the `}`-distinguishability path.
-    let src = "recipe build\n    seal host {\n        cook \"a.o\" {\n            cc -c a.c -o a.o\n        }\n    }\n";
-    let cf = parse(src).unwrap();
-    let d = first_cook_disposition(&cf);
-    assert!(d.seal.contains("host"));
-    // exactly one cook, with a multi-line shell body
-    let cooks: Vec<_> = cf.recipes[0]
-        .steps
-        .iter()
-        .filter(|s| matches!(s, crate::ast::Step::Cook { .. }))
-        .collect();
-    assert_eq!(cooks.len(), 1);
+fn disp_as_modifier_on_cook_rejected() {
+    let e = parse("recipe r\n    cook \"x\" { c } as 'name'\n").unwrap_err();
+    assert!(format!("{e:?}").contains("test"));
 }

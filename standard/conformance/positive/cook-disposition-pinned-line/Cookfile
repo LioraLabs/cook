@@ -1,3 +1,2 @@
 recipe build
-    pinned
-    cook "vendor.a" { ar rcs vendor.a obj.o }
+    cook "vendor.a" { ar rcs vendor.a obj.o } pinned

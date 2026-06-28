@@ -1,2 +1,2 @@
 probe sdk
-    produce as env { SDKROOT, CC }
+    envs { SDKROOT, CC }

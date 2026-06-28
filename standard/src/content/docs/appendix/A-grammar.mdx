@@ -65,8 +65,8 @@ dependency_list       ::= name+
 recipe_body           ::= declarative_region imperative_region?
 declarative_region    ::= declarative_item*
 declarative_item      ::= ingredients_step
+                       | seal_step
                        | cook_step
-                       | disposition_block
                        | plate_step
                        | test_step
                        | inline_lua_line
@@ -135,22 +135,22 @@ BARE_PROBE_KEY ::= IDENT (":" IDENT)?
 probe_dep_list ::= probe_ref (WS probe_ref)*
 probe_ref      ::= BARE_PROBE_KEY | STRING
 IDENT          ::= /[A-Za-z_][A-Za-z0-9_]*/
-probe_body     ::= ingredients_step? produce_step
-produce_step     ::= "produce" ( ("as" produce_type)? body | "as" source_list_kind name_list ) NEWLINE
-produce_type     ::= "json" | "lines"
-source_list_kind ::= "tools" | "env"
+probe_body       ::= ingredients_step? producer NEWLINE
+producer         ::= ("json" | "lines")? shell_block
+                   | ("tools" | "envs") name_list
+                   | exec_lua_block
 name_list        ::= "{" ( IDENT ((WS | ",") WS* IDENT)* )? "}"
 ```
 
-`ingredients_step` is defined in §{grammar-appendix.steps}; `body ::= exec_lua_block | shell_block` is also defined there (the body-dispatch tests `>{` before `{`).
+`ingredients_step` is defined in §{grammar-appendix.steps}; `shell_block` and `exec_lua_block` are also defined there (the body-dispatch tests `>{` before `{`).
 
-**Probe body (normative).** A `probe_body` comprises an optional `ingredients_step` followed by exactly one `produce_step`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The `as` `produce_type` modifier is valid ONLY when `body` is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) it MUST be rejected, since a Lua block already returns a structured value (§{cat.probes.decl}).
+**Probe body (normative).** A `probe_body` comprises an optional `ingredients_step` followed by exactly one `producer`; the semantics, region rule, and rejection diagnostics are specified in §{cat.probes.decl}. The producer KIND leads — there is no `produce` introducer keyword. The `json` and `lines` kinds are valid ONLY when the producer is a `shell_block`; applied to an `exec_lua_block` (`>{ … }`) they MUST be rejected, since a Lua block already returns a structured value (§{cat.probes.decl}). `json`, `lines`, `tools`, and `envs` are contextual keywords recognised only in this probe-producer position.
 
-**Source-list kinds (normative).** The `as tools` and `as env` forms take a
+**Source-list kinds (normative).** The `tools` and `envs` forms take a
 `name_list` — a brace-delimited, comma/whitespace-separated list of bare `IDENT`
-names — NOT a `body`. A conforming implementation MUST reject an empty
-`name_list`, a name that is not an `IDENT`, and a `body` (in particular a
-`>{ … }` `exec_lua_block`) supplied where a `name_list` is required
+names — NOT a `shell_block` or `exec_lua_block`. A conforming implementation MUST
+reject an empty `name_list`, a name that is not an `IDENT`, and a body (in
+particular a `>{ … }` `exec_lua_block`) supplied where a `name_list` is required
 (§{cat.probes.decl}). The `name_list` is written on a single physical line
 (unlike a multi-line `shell_block`).
 
@@ -177,25 +177,20 @@ ingredients_step      ::= "ingredients" ( ingredient+ | probe_ref ) NEWLINE
 ingredient            ::= STRING            /* include */
                        | "!" STRING          /* exclude */
 
-cook_step             ::= disposition_line* "cook" cook_output body? NEWLINE
+seal_step             ::= ("seal" | "unseal") probe_ref+ NEWLINE
+                          /* recipe-body step; a determinant input stream,
+                             sibling of ingredients_step. Recipe-level `unseal`
+                             is rejected (trailing-only) — see §8.4.3. */
+cook_step             ::= "cook" cook_output body? cook_mods NEWLINE
 cook_output           ::= STRING+ | "(" LUA_EXPR ")"
 exec_lua_block        ::= ">{" LUA_BLOCK_CONTENT "}"
 shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
-disposition_line      ::= ("seal" probe_ref+ | "local" | "pinned" | "record") NEWLINE
-                          /* a disposition_line MUST be immediately followed by a
-                             cook_step; skeleton — see §8.4.3 */
-disposition_block     ::= ("seal" probe_ref+ | "local" | "pinned" | "record") "{" cook_step+ "}"
-                          /* the brace block wraps one or more cook_step items
-                             (NOT shell text); skeleton — see §8.4.3 */
-
-disposition_line       ::= disposition NEWLINE
-disposition_block      ::= disposition "{" NEWLINE disposition_block_item+ "}" NEWLINE
-disposition_block_item ::= disposition_line* cook_step
-                        | disposition_block
-                        | comment
-                        | NEWLINE
-disposition            ::= "seal" seal_ref* | "local" | "pinned" | "record"
-seal_ref               ::= BARE_PROBE_KEY        /* NOT the STRING form */
+cook_mods             ::= ("seal" probe_ref+ | "unseal" probe_ref+)* share_mod?
+share_mod             ::= "local" | "pinned" | "nondet"
+                          /* a probe_ref in seal_step / cook_mods is a bare
+                             BARE_PROBE_KEY (NOT the STRING form), exactly as in
+                             §{grammar-appendix.probe}; the quoted form and a
+                             third `:IDENT` segment are rejected — see §8.4.3 */
 
 plate_step            ::= "plate" body NEWLINE
 test_step             ::= "test"  body test_modifiers NEWLINE
@@ -227,7 +222,7 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
                              alternative. See § 3.8. */
 ```
 
-**Multi-line patterns (CS-0078).** In both `ingredients_step` and `cook_step`, whitespace between successive `STRING` (or `ingredient`) tokens MAY include line breaks. A conforming implementation MUST accept continuation lines that begin with `"` (or `!"` in the case of `ingredients_step`) as part of the same declaration. Pattern collection terminates at the first non-quote token on the same physical line as a quoted pattern, which then resolves per the surrounding production (the body opener `{` / `>{` for `cook_step`, end-of-declaration for `ingredients_step`); a non-quote token on the same line as a quoted pattern that is not the legal terminator MUST produce a diagnostic naming the offending text. A continuation line whose first token after leading whitespace is not `"` (or `!"` for `ingredients_step`) terminates the declaration silently — the declaration is treated as complete, and the line is dispatched per §A.4's step-dispatch-priority order. The latter case is genuinely ambiguous between an intended-but-misspelled continuation and the start of a new step; the Standard chooses non-diagnosis to preserve the unambiguous declaration-only form of `cook_step` (App. A.4, "Declaration-only cook step") and the analogous "ingredients without trailing patterns" idiom.
+**Multi-line patterns (CS-0078).** In both `ingredients_step` and `cook_step`, whitespace between successive `STRING` (or `ingredient`) tokens MAY include line breaks. A conforming implementation MUST accept continuation lines that begin with `"` (or `!"` in the case of `ingredients_step`) as part of the same declaration. Pattern collection terminates at the first non-quote token on the same physical line as a quoted pattern, which then resolves per the surrounding production (the body opener `{` / `>{`, or — when no body follows — a trailing `cook_mods` token, for `cook_step`; end-of-declaration for `ingredients_step`); a non-quote token on the same line as a quoted pattern that is neither a legal terminator nor a valid `cook_mods` token MUST produce a diagnostic naming the offending text. A continuation line whose first token after leading whitespace is not `"` (or `!"` for `ingredients_step`) terminates the declaration silently — the declaration is treated as complete, and the line is dispatched per §A.4's step-dispatch-priority order. The latter case is genuinely ambiguous between an intended-but-misspelled continuation and the start of a new step; the Standard chooses non-diagnosis to preserve the unambiguous declaration-only form of `cook_step` (App. A.4, "Declaration-only cook step") and the analogous "ingredients without trailing patterns" idiom.
 
 ### Example A.4.1
 
@@ -272,17 +267,18 @@ ingredients "src/*.c"
 
 **Declaration-only cook step.** A `cook_step` whose body is absent is a declaration — it announces the output without providing a build command inline. Its build is assumed to be provided by preceding Lua registrations or a later amendment.
 
-**Cook-step disposition (normative).** A `cook_step` MAY be prefixed by one or more `disposition_line`s, and `cook_step`s MAY be wrapped in a `disposition_block`. A `disposition` is `seal seal_ref*`, `local`, `pinned`, or `record`. The full surface and its parse-time rules are normative in §{steps.cook-disposition}; in summary, a conforming implementation MUST enforce: a `disposition_line` run immediately precedes a `cook_step` (comments/blank lines excepted) or is rejected as a dangling decorator; `seal` is additive and stackable and its `seal_ref` set is sorted and de-duplicated; `local` and `pinned` are mutually exclusive; `local`/`pinned`/`record` admit no `seal_ref`; a `seal_ref` is a bare `BARE_PROBE_KEY` (the `STRING` form and a third `:IDENT` segment are rejected, as in §{grammar-appendix.probe}); a `disposition_block` inherits its `disposition` additively onto each enclosed `cook_step`, nests, requires at least one enclosed `cook_step`, admits only `cook_step`s / nested `disposition_block`s / decorator lines / comments / blank lines in its body (any other step kind is rejected), and is terminated by a `}` line; and a `local`/`pinned` disposition nested under a `seal` block overrides it (the step is unsealed). `seal`, `local`, `pinned`, and `record` are NOT reserved words.
+**Cook-step disposition (normative).** A unit's cache participation is declared by two crisp surfaces (COOK-171): `seal`/`unseal` **steps** (a recipe-body determinant input stream) and the trailing **`cook_mods`** on a `cook_step`. The full surface and its parse-time rules are normative in §{steps.cook-disposition}; in summary, a conforming implementation MUST enforce: a recipe-level `seal` step requires at least one `probe_ref` (bare `seal` rejected), is additive across the recipe, and contributes to a recipe-wide baseline applied to every cook regardless of position (order-independent); a recipe-level `unseal` is rejected (`unseal` is a trailing modifier only); a `cook_step`'s effective seal set is `(baseline ∪ trailing seals) − trailing unseals`, sorted and de-duplicated; the trailing `share_mod` is a single optional slot (`local`, `pinned`, or `nondet`) which MUST be last (at most one — `local`/`pinned`/`nondet` are mutually exclusive by construction); a `probe_ref` is a bare `BARE_PROBE_KEY` (the `STRING` form and a third `:IDENT` segment are rejected, as in §{grammar-appendix.probe}); and the removed `record` keyword (renamed `nondet`) is rejected with a migration diagnostic. `seal`, `unseal`, `local`, `pinned`, and `nondet` are NOT reserved words; `seal`/`unseal` are recognised as steps only at a recipe-body line position, and `local`/`pinned`/`nondet` only in the trailing `cook_mods` position.
 
 **Step-dispatch priority (normative).** A single `Content` line inside a recipe body is dispatched in this order, with the first match winning:
 
 1. Prefix `ingredients` + separator (space, tab, or end of token) → `ingredients_step`.
-2. Prefix `cook` + separator → `cook_step`.
-3. Prefix `plate` + separator → `plate_step`.
-4. Prefix `test` + separator → `test_step`.
-5. First token is `seal`, `local`, `pinned`, or `record` and the line is a well-formed `disposition` — either bare (a `disposition_line`, with only `seal_ref`s permitted after `seal`) or terminated by `{` (a `disposition_block` opener) → disposition (§{steps.cook-disposition}). A `local`/`pinned`/`record` keyword followed by other non-`{` content does NOT match and falls through to rule 7. (The disposition keywords are disjoint from the `ingredients`/`cook`/`plate`/`test` keywords of rules 1–4, so an implementation MAY test this alternative in any order relative to them without changing the dispatch result.)
-6. First character is `@` and the remainder is non-empty → `interactive_command`.
-7. Otherwise → `shell_command`.
+2. Prefix `seal` + separator → recipe-level `seal_step` (its `probe_ref`s contribute to the recipe seal baseline).
+3. Prefix `unseal` + separator → rejected as a recipe-level step (`unseal` is a trailing `cook_mods` modifier only; §{steps.cook-disposition}).
+4. Prefix `cook` + separator → `cook_step` (its trailing `cook_mods` are parsed after the body, or after the output patterns for a declaration-only cook).
+5. Prefix `plate` + separator → `plate_step`.
+6. Prefix `test` + separator → `test_step`.
+7. First character is `@` and the remainder is non-empty → `interactive_command`.
+8. Otherwise → `shell_command`. (A line whose first token is `local`, `pinned`, or `nondet` is NOT a disposition at this position — those keywords are recognised only in the trailing `cook_mods` of a `cook_step` — so such a line falls through to `shell_command`.)
 
 Note: CS-0072 removed the former rule 5 that classified a `Content` line matching `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` as `module_call` (register-phase Lua) from the recipe-body cascade. Top-level module_call dispatch is now governed by §{toplevel.module-call}; authors who want register-phase Lua inside a recipe body MUST use the `>>` or `>>{` prefix.
 

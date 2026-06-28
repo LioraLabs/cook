@@ -1,2 +1,2 @@
 probe toolchain
-    produce as tools { cc, ld }
+    tools { cc, ld }

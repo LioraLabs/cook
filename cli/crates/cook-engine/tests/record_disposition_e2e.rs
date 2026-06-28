@@ -82,11 +82,10 @@ fn record_warm_hit_does_not_rerun_producer() {
     fs::write(
         wd.join("Cookfile"),
         r#"recipe build
-    record
     cook "out.txt" {
         printf x >> counter.side
         date +%N > out.txt
-    }
+    } nondet
 "#,
     )
     .unwrap();
@@ -123,15 +122,14 @@ fn record_sealed_determinant_change_regenerates() {
         wd.join("Cookfile"),
         r#"probe knob
     ingredients "knob.txt"
-    produce { cat knob.txt }
+    { cat knob.txt }
 
 recipe build
-    record
     seal knob
     cook "out.txt" {
         printf x >> counter.side
         date +%N > out.txt
-    }
+    } nondet
 "#,
     )
     .unwrap();

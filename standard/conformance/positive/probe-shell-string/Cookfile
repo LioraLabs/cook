@@ -1,2 +1,2 @@
 probe p
-    produce { echo hi }
+    { echo hi }

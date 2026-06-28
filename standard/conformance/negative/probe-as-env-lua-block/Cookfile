@@ -1,2 +1,2 @@
 probe t
-    produce as env >{ return {} }
+    envs >{ return {} }

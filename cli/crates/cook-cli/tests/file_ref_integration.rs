@@ -226,7 +226,7 @@ fn fan_out_members_all_track_shared_file() {
     let cookfile = format!(
         r#"
 probe {probe_key}
-    produce as json {{ echo '[{{"id":"intro"}},{{"id":"outro"}}]' }}
+    json {{ echo '[{{"id":"intro"}},{{"id":"outro"}}]' }}
 
 recipe html
     ingredients {probe_key}

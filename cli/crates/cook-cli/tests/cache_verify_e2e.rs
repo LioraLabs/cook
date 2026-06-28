@@ -55,16 +55,16 @@ fn hidden_determinant_is_flagged_as_divergence() {
 
 #[test]
 fn record_step_is_byte_exempt() {
-    let dir = write_cookfile("recipe build\n    record\n    cook \"gen.txt\" { date +%s%N > gen.txt }\n");
+    let dir = write_cookfile("recipe build\n    cook \"gen.txt\" { date +%s%N > gen.txt } nondet\n");
     let out = run_verify(dir.path(), &[]);
     let combined = format!(
         "STDOUT:\n{}\nSTDERR:\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(out.status.success(), "record step must NOT fail verify.\n{combined}");
+    assert!(out.status.success(), "nondet step must NOT fail verify.\n{combined}");
     assert!(
-        combined.contains("record") || combined.contains("waived"),
-        "record exemption should be visible.\n{combined}"
+        combined.contains("nondet") || combined.contains("record") || combined.contains("waived"),
+        "nondet exemption should be visible.\n{combined}"
     );
 }

@@ -229,7 +229,7 @@ fn native_probe_for_each_as_lines_end_to_end() {
     let tmp = TempDir::new().unwrap();
     let cookfile = r#"
 probe names
-    produce as lines { printf 'alpha\nbeta\n' }
+    lines { printf 'alpha\nbeta\n' }
 
 recipe render
     ingredients names
@@ -248,7 +248,7 @@ fn native_probe_for_each_lua_records_end_to_end() {
     let tmp = TempDir::new().unwrap();
     let cookfile = r#"
 probe cards
-    produce >{ return { {id='a'}, {id='b'} } }
+    >{ return { {id='a'}, {id='b'} } }
 
 recipe render
     ingredients cards
@@ -270,7 +270,7 @@ fn native_probe_for_each_as_json_end_to_end() {
     let cookfile = r#"
 probe cards
     ingredients "cards.json"
-    produce as json { cat cards.json }
+    json { cat cards.json }
 
 recipe render
     ingredients cards
@@ -291,7 +291,7 @@ fn native_probe_ingredient_edit_reinvalidates() {
     let cookfile = r#"
 probe cards
     ingredients "cards.json"
-    produce as json { cat cards.json }
+    json { cat cards.json }
 
 recipe render
     ingredients cards
@@ -314,7 +314,7 @@ fn native_probe_and_api_duplicate_key_rejected() {
     let tmp = TempDir::new().unwrap();
     let cookfile = r#"
 probe dup
-    produce >{ return 1 }
+    >{ return 1 }
 register
     cook.probe("dup", { inputs = {}, produce = "return 2" })
 

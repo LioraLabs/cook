@@ -38,8 +38,8 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe) {
             .join(", ");
         out.push_str(&format!("    requires = {{{}}},\n", reqs));
     }
-    // COOK-164: `produce as tools|env` declares the named tools/env-vars as
-    // probe inputs so the fingerprint machinery (resolve_probe_inputs) folds
+    // COOK-164: `tools { … }` / `envs { … }` declares the named tools/env-vars
+    // as probe inputs so the fingerprint machinery (resolve_probe_inputs) folds
     // each tool's binary hash / each env value into the probe fingerprint. This
     // is what makes the hash/value the re-run trigger — the produce body only
     // computes the VALUE; the determinant lives in these declared inputs.
@@ -47,7 +47,7 @@ pub(crate) fn emit_probe(out: &mut String, probe: &Probe) {
         ProbeProduce::Tools(names) => {
             out.push_str(&format!("    tools = {{{}}},\n", quoted_list(names)));
         }
-        ProbeProduce::Env(names) => {
+        ProbeProduce::Envs(names) => {
             out.push_str(&format!("    env = {{{}}},\n", quoted_list(names)));
         }
         ProbeProduce::Lua(_) | ProbeProduce::Shell { .. } => {}
@@ -104,7 +104,7 @@ fn lower_produce(p: &ProbeProduce) -> String {
                     "do\n  local _p = ({resolve_sh}):gsub(\"\\n$\", \"\")\n"
                 ));
                 out.push_str(&format!(
-                    "  if _p == \"\" then error(\"produce as tools: '{name}' not found on PATH\") end\n"
+                    "  if _p == \"\" then error(\"tools probe: '{name}' not found on PATH\") end\n"
                 ));
                 // sha256sum '<path>' | cut -d' ' -f1. Escape any `'` in the
                 // resolved path for the single-quoted shell argument
@@ -127,7 +127,7 @@ fn lower_produce(p: &ProbeProduce) -> String {
             out.push_str("return _t");
             out
         }
-        ProbeProduce::Env(names) => {
+        ProbeProduce::Envs(names) => {
             // Read each env var via cook.env.<NAME> for the VALUE. The re-run
             // trigger is the declared `inputs.env` (see emit_probe). An unset
             // var assigns nil, which Lua never stores as a table key, so the

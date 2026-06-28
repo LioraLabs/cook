@@ -245,90 +245,87 @@ A conforming implementation rejecting the resolved output value MUST surface a r
 
 ### 8.4.3. Cook-step disposition [#steps.cook-disposition]
 
-A `cook_step` MAY carry a *disposition* that declares how its artifact participates in the cache. This section defines the disposition surface and its parse-time rules; the cache-key *effect* of each disposition is normative in §{exec.cache} (Cache-trust v3, COOK-160). A disposition is expressed as one or more **decorator lines** immediately above a `cook` step, or as a **disposition block** wrapping several `cook` steps. There is NO project-default (column-0) seal set and NO `seal only` narrowing form.
+**The `cook` step IS the cacheable unit.** One step → one content-addressed key → one disposition, however many output files it emits. The whole surface teaches a single mental model:
 
-There are four dispositions:
+> **Body = what it's made of. `cook` = one unit (≥1 output). Tail = what to do with that unit.**
 
-| disposition | shape | meaning (cache effect deferred to §{exec.cache}) |
-|---|---|---|
-| `seal` | `seal` `seal_ref`* | Asserts purity: the step's output is a pure function of its declared inputs, command, consulted env, and the named probe determinants. **Additive and stackable.** |
-| `local` | `local` | Opt out of sharing — local cache only; never published to or fetched from the shared store (normative effect: §{exec.cache.sharing}). |
-| `pinned` | `pinned` | Designated-producer / fetch-only — served from cache, never reproduced; a cold miss is a hard error (normative effect: §{exec.cache.sharing}). |
-| `record` | `record` | Marks an intrinsically non-reproducible artifact; byte-equivalence is waived at the cache decision (§{exec.cache.record}). |
+A unit's cache participation is declared by two surfaces — *inputs* and *output-facts* — which split along a seam that was already there: `seal`/`unseal` name a determinant **input**, and `local`/`pinned`/`nondet` state a **fact about the unit's output**. They are therefore the different kinds they are.
 
-A `seal_ref` is a bare `BARE_PROBE_KEY` — `IDENT (":" IDENT)?`, module-prefixable (e.g. `cc:toolchain`). The quoted `STRING` form of §{grammar-appendix.probe} is NOT admitted in a seal list, and a third contiguous `:IDENT` segment (`a:b:c`) MUST be rejected, exactly as for `probe_ref` in §{grammar-appendix.probe}.
+| Concept | Written as | Where | Scope |
+|---|---|---|---|
+| File inputs | `ingredients "…"` | body line | recipe-wide |
+| Probe inputs | `seal <probes>` | body line | recipe-wide |
+| The unit | `cook "out1" "out2" { … }` | body line | one key, ≥1 output |
+| Per-unit identity tweak | `… seal/unseal <probes>` | tail of the `cook` | that unit |
+| Disposition | `… local / pinned / nondet` | tail of the `cook` | that unit |
 
-#### Decorator lines [#steps.cook-disposition.lines]
+**One rule:** a body line names a recipe-wide input; a tail tunes one `cook` unit. The cache-key *effect* of each is normative in §{exec.cache} (Cache-trust v3); this section defines the surface and its parse-time rules.
+
+A `probe_ref` (used by `seal`/`unseal` everywhere) is a bare `BARE_PROBE_KEY` — `IDENT (":" IDENT)?`, module-prefixable (e.g. `cc:toolchain`). The quoted `STRING` form of §{grammar-appendix.probe} is NOT admitted, and a third contiguous `:IDENT` segment (`a:b:c`) MUST be rejected, exactly as for `probe_ref` in §{grammar-appendix.probe}. A `seal`/`unseal` ref is an *invalidate-only* determinant — it is never interpolated; there is no `$<seal:…>`. To *consume* a probe's members as data, use `ingredients <probe>` / `for_each` (§{steps.ingredients}), not `seal`.
+
+**A seal/unseal ref is ALWAYS a probe name.** There is no `env.X` / `tool.X` ambient-determinant ref form — neither a way to seal an environment variable inline nor a way to seal a tool by file path. `probe_ref` is therefore complete as written above; it needs no extension. The referenced probe MAY be any probe — a shell or Lua probe, a `tools` probe, or an `envs` probe (§{cat.probes.decl}) — but the surface is uniform: every seal ref is just a probe name. The two ambient-determinant paths fold through that one surface:
+
+- **Unconsumed environment.** An environment variable that no unit consumes (so §{exec.cache.lua-env-reads} does not auto-fold it) is folded by declaring an `envs` probe over the variable(s) and sealing that probe by name — `seal <envsprobe>`. The `envs` probe's value is a cached, shareable fingerprint over the named variables (§{cat.probes.decl}). Environment a unit *does* consume continues to auto-fold via §{exec.cache.lua-env-reads}, unchanged.
+- **Tool determinants.** A toolchain is folded by sealing a `tools` probe (§{cat.probes.decl}) by name. The asymmetry with environment is deliberate: tools want cached, shared fingerprinting — exactly what a probe provides — whereas an `env.X` inline ref would have provided neither grouping, naming, nor shareability. Both ambient kinds therefore resolve to the same uniform "seal a named probe" surface, with no `env.X` / `tool.X` special forms to parse.
+
+#### `seal` / `unseal` steps [#steps.cook-disposition.seal]
+
+`seal` and `unseal` are recipe-body **steps** — a second input stream, sibling of `ingredients`, declaring *determinant* probe inputs (probe values folded into the unit cache key) alongside `ingredients`' *file* inputs. A conforming implementation MUST enforce, at parse time:
+
+1. **Recipe-level `seal` is the baseline.** A `seal <probes>` step adds its `probe_ref`s to the recipe's determinant baseline, which applies to **every** `cook` unit in the recipe. Bare `seal` (zero refs) MUST be rejected — seal/unseal are always explicitly named.
+2. **Additive and order-independent.** Multiple recipe-level `seal` steps union their refs. The baseline applies to every cook regardless of textual position (it is *declarative*, not positional): `seal` after a `cook` still applies to it. The effective set is sorted and de-duplicated.
+3. **Recipe-level `unseal` is rejected.** `unseal` is a trailing modifier on a `cook` step only (rule 5). The recipe is the outermost seal scope; there is nothing inherited to release, so a recipe-level `unseal` would read as a no-op and MUST be rejected.
+
+**Recipe boundaries break seals implicitly.** The recipe is the outermost seal scope; nothing propagates across recipe dependency edges. A downstream recipe folds an upstream's determinants in transitively via the upstream's OUTPUT CONTENT hashes (consumed as `ingredients`), so re-sealing downstream would double-count. There are exactly two seal tiers — recipe baseline and per-unit tail — and no config-default inheritance tier.
+
+> **Note 8.4.3.1 — boundary of a future blanket seal (informative).** The seal surface is *named-only*: every determinant a unit keys on is an explicitly named probe ref. No absolute / blanket form (a hypothetical "seal everything visible") exists, and a bare `seal` is rejected (rule 1). This note fixes the boundary such a form would have to draw, so that introducing one later cannot silently change today's keys. A blanket seal would have to enumerate a *universe* comprising (a) the unit's *visible-but-unconsumed* probes — probes declared in the Cookfile that the unit neither consumes as `ingredients`/`for_each` data nor names in its effective seal set — plus (b) ambient determinants not modelled as probes at all (consulted environment beyond §{exec.cache.lua-env-reads}, host/machine identity, tool identity). The current surface declares no such universe: a unit keys on exactly the probes named in its effective seal set and nothing more (§{exec.cache.single-key}). Any future blanket form is a NEW determinant set, not a re-reading of the named-only one, and MUST be introduced under its own change ID with its own key-version bump.
+
+#### Trailing modifiers (`cook_mods`) [#steps.cook-disposition.tail]
 
 ```ebnf
-disposition_line ::= disposition NEWLINE
-disposition      ::= "seal" seal_ref* | "local" | "pinned" | "record"
+cook_mods ::= ("seal" probe_ref+ | "unseal" probe_ref+)* share_mod?
+share_mod ::= "local" | "pinned" | "nondet"
 ```
 
-A conforming implementation MUST enforce, at parse time:
+The tail of a `cook` step tunes that one unit. The `cook_mods` are line-final: they follow the body's closing `}` on the same physical line, or — for a declaration-only cook (no body) — the output pattern(s) on the `cook` line. Tokens on a subsequent line are not part of the `cook_mods` (a `}` on its own line followed by a `seal …` line dispatches the latter as a recipe-level `seal` step). A conforming implementation MUST enforce:
 
-1. **Decorator must precede a `cook`.** A run of one or more `disposition_line`s MUST be immediately followed by a `cook_step`. Comments and blank lines between the decorators and the `cook` are permitted and ignored. A decorator run terminated by any other step kind, or by the end of the recipe, MUST be rejected with a diagnostic naming the dangling decorator.
-2. **`seal` is additive and stackable.** Multiple `seal` decorator lines union their `seal_ref`s onto the following `cook` step.
-3. **Sorted and de-duplicated.** The effective `seal_ref` set MUST be sorted and de-duplicated before it is recorded; the set is order-insensitive.
-4. **`local`/`pinned` mutual exclusion.** `local` and `pinned` MUST NOT both apply to one `cook` step (in either order, whether by decorator line or by block); the combination MUST be rejected.
-5. **`local`/`pinned`/`record` take no refs.** A `seal_ref` after `local`, `pinned`, or `record` MUST be rejected. (A bare `local`/`pinned`/`record` keyword followed by a non-`{` token is therefore NOT a disposition line — see rule 7.)
-6. **Empty `seal` is legal.** Bare `seal` with zero `seal_ref`s asserts a pure step with no ambient determinants; it is distinct from an unannotated `cook_step`.
-7. **Non-reserved words.** `seal`, `local`, `pinned`, and `record` are NOT reserved words; they are recognised as dispositions only in this position (a recipe-body line whose first token is one of them, with a separator, immediately above a `cook` or as a block opener). A line whose first token is `local`/`pinned`/`record` followed by other non-`{` content is an ordinary `shell_command` (§{steps.shell}).
+4. **Per-unit seal/unseal adjust the baseline.** A unit's *effective seal set* is `(baseline ∪ trailing seals) − trailing unseals`, sorted and de-duplicated. Bare trailing `seal`/`unseal` (no refs) MUST be rejected.
+5. **`unseal` is trailing-only.** `unseal <probes>` removes refs from this unit's effective set; it is valid only here (not as a recipe-level step, rule 3).
+6. **`share_mod` is a single optional slot.** At most one of `local` / `pinned` / `nondet` MAY appear, and it MUST be the last token — nothing may follow it. The three are mutually exclusive by construction (a single slot). `local` opts out of sharing (§{exec.cache.sharing}); `pinned` is designated-producer / fetch-only (§{exec.cache.sharing}); `nondet` declares the output intrinsically non-reproducible, waiving byte-equivalence (§{exec.cache.record}).
+7. **`record` is renamed `nondet`.** The v3 `record` disposition is renamed `nondet` (it states a *fact* — the output is nondeterministic — rather than an imperative policy). The `record` keyword in `cook_mods` MUST be rejected with a migration diagnostic.
+8. **Non-reserved words.** `seal`, `unseal`, `local`, `pinned`, and `nondet` are NOT reserved words. `seal`/`unseal` are recognised as steps only at a recipe-body line position; `local`/`pinned`/`nondet` only in the trailing `cook_mods` position. A recipe-body line whose first token is `local`/`pinned`/`nondet` (followed by other content or alone) is an ordinary `shell_command` (§{steps.shell}).
 
-#### Disposition blocks [#steps.cook-disposition.block]
+### Example 8.4.3.1 — the whole surface once
 
-```ebnf
-disposition_block      ::= disposition "{" NEWLINE disposition_block_item+ "}" NEWLINE
-disposition_block_item ::= disposition_line* cook_step
-                        | disposition_block
-                        | comment
-                        | NEWLINE
-```
-
-A `disposition` followed by `{` opens a block whose enclosed `cook` steps each inherit the block's disposition **additively**. A conforming implementation MUST enforce:
-
-8. **Additive inheritance.** Each enclosed `cook` step's effective disposition is the additive union of every enclosing block's disposition and the step's own decorator lines: `seal` refs union, `record` propagates.
-9. **Blocks nest.** A `disposition_block` MAY contain further `disposition_block`s; inheritance composes through the nesting.
-10. **`local`/`pinned` override.** When a `local` or `pinned` disposition (a decorator line or an inner block) applies to a `cook` step nested under a `seal` block, the step is `local`/`pinned` and its inherited `seal` refs are dropped — it is no longer sealed/shared. `local` and `pinned` remain mutually exclusive (rule 4).
-11. **`cook`-only body.** A `disposition_block` body consists only of `cook` steps, nested `disposition_block`s, decorator lines (each immediately preceding a `cook`), comments, and blank lines. It MUST contain at least one `cook_step` (directly or via a nested block); an empty block, a block whose decorators dangle with no following `cook`, or a block containing any other step kind (`ingredients`, `plate`, `test`, a shell or Lua step) MUST be rejected. The other step kinds carry no disposition and belong in the recipe body, not inside a disposition block.
-12. **Termination.** A `disposition_block` is terminated by a recipe-body line that is exactly `}`. An unterminated block (end of recipe before the matching `}`) MUST be rejected with a diagnostic naming the opening line.
-13. **Opener is line-final.** The opening `{` MUST end its physical line (the block body begins on the following line, per `disposition "{" NEWLINE`). A fully-inline single-line form such as `local { cook "s.o" { … } }` is NOT a `disposition_block`. Where a `disposition_block` is grammatically expected — inside another `disposition_block`'s body (rule 11) — such a line MUST be rejected. Elsewhere (at recipe-body top level) the line is not a disposition at all: its first token `local`/`pinned`/`record`/`seal` is non-reserved (rule 7), so the line falls through to `shell_command` per the step-dispatch priority.
-
-### Example 8.4.3.1
-
-Decorator lines stack additively above a `cook`:
+The probes `toolchain`, `flags`, and `rev` are declared elsewhere (§{cat.probes}):
 
 ```cook
 recipe build
-    seal host
-    seal gpu driver
-    record
-    cook "x.o" { cc -c x.c -o x.o }
+    ingredients "src/*.c"          # ┐ recipe-wide inputs
+    seal toolchain flags           # ┘ → identity
+    cook "bin/app" "bin/app.map" { cc … -Wl,-Map=bin/app.map }  # one unit, two files, one key
+    cook "bin/app.dbg" { cc -g … } local                       # separate unit, kept local
+    cook "bin/plugin"  { cc … } seal rev                       # also keyed on the git rev
+    cook "gen/ver.h"   { … } nondet                            # non-reproducible → reuse stored copy
 ```
 
-The effective seal set of `x.o` is `{driver, gpu, host}` (sorted, de-duplicated) and its `record` flag is set.
+`bin/app`/`bin/app.map` form one unit (one key, two outputs) sealed on `toolchain` and `flags`; `bin/app.dbg` is the same baseline but kept `local`; `bin/plugin` additionally seals on `rev`; `gen/ver.h` is `nondet`. A multi-output *unit* carries one tail; several *separate* `cook` steps wanting the same disposition repeat the word (an accepted rough edge — split the recipe, or add a recipe-level default later without breaking the grammar).
 
-### Example 8.4.3.2
-
-A `seal` block wraps several cooks; an inner `local` block overrides:
+### Example 8.4.3.2 — per-unit unseal
 
 ```cook
 recipe build
-    seal host {
-        cook "a.o" { cc -c a.c -o a.o }
-        cook "b.o" { cc -c b.c -o b.o }
-
-        local { cook "scratch.o" { cc -c scratch.c -o scratch.o } }
-    }
+    seal a b
+    cook "x.o" { cc -c x.c -o x.o } unseal a seal c
 ```
 
-`a.o` and `b.o` are sealed on `host`; `scratch.o` is `local` and carries no seal refs.
+The effective seal set of `x.o` is `{b, c}`: baseline `{a, b}`, plus trailing `seal c`, minus trailing `unseal a`.
 
-### Note 8.4.3.1 — Conformance fixtures [#steps.cook-disposition.fixtures]
+### Note 8.4.3.2 — Conformance fixtures [#steps.cook-disposition.fixtures]
 
-Positive: `standard/conformance/positive/cook-disposition-seal-line`, `cook-disposition-seal-stacked`, `cook-disposition-local-line`, `cook-disposition-pinned-line`, `cook-disposition-seal-block`, `cook-disposition-local-overrides-seal-block`, `cook-disposition-nested-block`.
+Positive: `standard/conformance/positive/cook-disposition-seal-line`, `cook-disposition-seal-stacked`, `cook-disposition-local-line`, `cook-disposition-pinned-line`, `cook-disposition-nondet`, `cook-disposition-trailing-seal-unseal`, `cook-disposition-seal-order-independent`, `cook-disposition-seal-multi-cook-baseline`, `cook-disposition-unseal-one-unit-only`, `cook-disposition-seal-envs-probe`, `cook-disposition-seal-tools-probe`.
 
-Negative: `standard/conformance/negative/cook-disposition-dangling`, `cook-disposition-local-and-pinned`, `cook-disposition-seal-quoted-ref`, `cook-disposition-seal-triple-colon`, `cook-disposition-unterminated-block`.
+Negative: `standard/conformance/negative/cook-disposition-local-and-pinned`, `cook-disposition-double-share-mod`, `cook-disposition-bare-seal`, `cook-disposition-recipe-unseal`, `cook-disposition-record-renamed`, `cook-disposition-seal-quoted-ref`, `cook-disposition-seal-triple-colon`.
 
 ## 8.5. `cook` — multi-output form [#steps.cook-multi]
 A `cook_step` MAY declare two or more outputs by listing additional `STRING` patterns before the body:
@@ -647,7 +644,7 @@ Inside an `ingredients <probe>` fan-out body (§{steps.ingredients}), a placehol
 
 ```cook
 probe scenes
-    produce as json { echo '[{"id":"intro"},{"id":"outro"}]' }
+    json { echo '[{"id":"intro"},{"id":"outro"}]' }
 
 recipe render
     ingredients scenes

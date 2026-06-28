@@ -1,0 +1,4 @@
+recipe build
+    seal host
+    cook "a.o" { cc -c a.c -o a.o }
+    cook "b.o" { cc -c b.c -o b.o }

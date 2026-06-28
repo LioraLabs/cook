@@ -1,2 +1,2 @@
 probe t
-    produce as tools {  }
+    tools {  }

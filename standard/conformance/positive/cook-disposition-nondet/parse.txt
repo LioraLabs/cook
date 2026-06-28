@@ -3,12 +3,12 @@ Cookfile
   imports: []
   config_blocks: []
   recipes:
-    Recipe name="build" line=1
+    Recipe name="gen" line=1
       deps: []
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["a.o"] body=ShellBlock(["cc -c a.c -o a.o"]) disposition=[local=false pinned=false record=false seal=["host"]]
+        Cook outputs=["out.txt"] body=ShellBlock(["make-thing out.txt"]) disposition=[local=false pinned=false record=true seal=[]]
   chores:
   register_blocks: []
   top_level_module_calls: []

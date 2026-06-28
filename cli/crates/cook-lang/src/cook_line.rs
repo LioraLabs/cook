@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::ast::*;
 use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
@@ -403,13 +405,55 @@ fn scan_balanced_paren_expr<'a>(
     })
 }
 
+/// The trailing-modifier text after a body's closing `}` on the body's source
+/// line (COOK-171 `cook_mods`). `new_pos` is the token position returned by
+/// `parse_body_payload` (it points one past the body); the closing `}` lives on
+/// `tokens[new_pos - 1]`'s line.
+fn tail_after_body(
+    tokens: &[Located<Token>],
+    new_pos: usize,
+    fallback_line: usize,
+    source_lines: &[&str],
+) -> String {
+    let close_line = if new_pos > 0 {
+        tokens
+            .get(new_pos - 1)
+            .map(|t| t.line)
+            .unwrap_or(fallback_line)
+    } else {
+        fallback_line
+    };
+    let line_text = source_lines
+        .get(close_line.saturating_sub(1))
+        .copied()
+        .unwrap_or("");
+    match line_text.rfind('}') {
+        Some(i) => line_text[i + 1..].trim().to_string(),
+        None => String::new(),
+    }
+}
+
+/// Build the parsed disposition + per-unit unseal set from a modifier tail.
+fn cook_disposition_from_tail(
+    tail: &str,
+    line: usize,
+) -> Result<(Disposition, BTreeSet<String>), ParseError> {
+    let m = crate::disposition::parse_cook_modifiers(tail, line)?;
+    let disposition = Disposition {
+        seal: m.seal,
+        sharing: m.sharing,
+        record: m.record,
+    };
+    Ok((disposition, m.unseal))
+}
+
 pub(crate) fn parse_cook_line(
     rest: &str,
     line: usize,
     tokens: &[Located<Token>],
     current_pos: usize,
     source_lines: &[&str],
-) -> Result<(CookStep, usize), ParseError> {
+) -> Result<(CookStep, BTreeSet<String>, usize), ParseError> {
     let rest = rest.trim();
 
     // §8.4.2 Lua-expression form: `cook (EXPR) >{ ... }`. Detected by a
@@ -460,8 +504,11 @@ pub(crate) fn parse_cook_line(
             source_lines,
             "cook",
         )?;
+        let tail = tail_after_body(tokens, new_pos, line, source_lines);
+        let (disposition, unseal) = cook_disposition_from_tail(&tail, line)?;
         return Ok((
-            CookStep { outputs, body: Some(body), disposition: crate::ast::Disposition::default() },
+            CookStep { outputs, body: Some(body), disposition },
+            unseal,
             new_pos,
         ));
     }
@@ -482,11 +529,26 @@ pub(crate) fn parse_cook_line(
 
     let after_pattern = leftover.trim();
 
-    if after_pattern.is_empty() {
+    if after_pattern.starts_with("using") {
+        return Err(ParseError::Parse {
+            line,
+            message: "cook: the `using` keyword was removed in CS-0099; write the body directly after the output pattern: `cook \"out\" { … }` / `cook \"out\" >{ … }`".to_string(),
+        });
+    }
+
+    // A non-empty tail that does NOT open a body (`{` / `>{` / `>>{`) is a
+    // declaration-only cook step carrying trailing `cook_mods` (COOK-171), e.g.
+    // `cook "x" local` or `cook "x" seal rev`.
+    let opens_body = after_pattern.starts_with('{')
+        || after_pattern.starts_with(">{")
+        || after_pattern.starts_with(">>{");
+
+    if after_pattern.is_empty() || !opens_body {
         // Declaration-only cook step. Advance past every token on the line
         // where collection stopped (the line containing the last quoted
-        // pattern). Explicit walk instead of `pos + 1` so this stays correct
-        // if the lexer ever emits more than one token per source line.
+        // pattern, plus any trailing modifiers). Explicit walk instead of
+        // `pos + 1` so this stays correct if the lexer ever emits more than
+        // one token per source line.
         let stop_line = tokens
             .get(pos_after_patterns)
             .map(|t| t.line)
@@ -495,17 +557,12 @@ pub(crate) fn parse_cook_line(
         while pos < tokens.len() && tokens[pos].line <= stop_line {
             pos += 1;
         }
+        let (disposition, unseal) = cook_disposition_from_tail(after_pattern, line)?;
         return Ok((
-            CookStep { outputs, body: None, disposition: crate::ast::Disposition::default() },
+            CookStep { outputs, body: None, disposition },
+            unseal,
             pos,
         ));
-    }
-
-    if after_pattern.starts_with("using") {
-        return Err(ParseError::Parse {
-            line,
-            message: "cook: the `using` keyword was removed in CS-0099; write the body directly after the output pattern: `cook \"out\" { … }` / `cook \"out\" >{ … }`".to_string(),
-        });
     }
 
     // parse_body_payload needs the line that the body opener sits on.
@@ -516,8 +573,11 @@ pub(crate) fn parse_cook_line(
 
     let (body, new_pos) =
         parse_body_payload(after_pattern, body_line, tokens, pos_after_patterns, source_lines, "cook")?;
+    let tail = tail_after_body(tokens, new_pos, body_line, source_lines);
+    let (disposition, unseal) = cook_disposition_from_tail(&tail, line)?;
     Ok((
-        CookStep { outputs, body: Some(body), disposition: crate::ast::Disposition::default() },
+        CookStep { outputs, body: Some(body), disposition },
+        unseal,
         new_pos,
     ))
 }

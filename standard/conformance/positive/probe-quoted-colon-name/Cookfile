@@ -1,2 +1,2 @@
 probe "cc:zlib"
-    produce >{ return 1 }
+    >{ return 1 }

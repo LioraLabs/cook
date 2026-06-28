@@ -1,4 +1,2 @@
-COOK-160: cook-step disposition fixture.
-
-COOK-162: codegen emits `pinned = true` as a field in the generated `cook.add_unit` call
-(§22.1), so the register layer receives it and can enforce designated-producer semantics.
+COOK-171: the `pinned` disposition is a trailing `share_mod` on the cook step.
+Codegen emits `sharing = "pinned"` (§22.1) for designated-producer semantics.

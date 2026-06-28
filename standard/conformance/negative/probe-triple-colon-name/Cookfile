@@ -1,2 +1,2 @@
 probe a:b:c
-    produce >{ return 1 }
+    >{ return 1 }

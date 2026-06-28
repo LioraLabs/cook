@@ -1,7 +1,9 @@
+use std::collections::BTreeSet;
+
 use crate::ast::*;
 use crate::brace_scan::LuaScanner;
 use crate::cook_line::*;
-use crate::disposition::{classify_disposition_line, fold_decorator, DispLine};
+use crate::disposition::parse_seal_refs;
 use crate::lexer::*;
 use crate::lua_block::collect_lua_block;
 use crate::ParseError;
@@ -342,176 +344,33 @@ fn reject_as_modifier_on_non_test(
     Ok(())
 }
 
-/// §8.4.3 rule 1: a disposition decorator line must be immediately followed by
-/// a `cook` step. `line` is the first pending decorator's source line.
-fn dangling_decorator(line: usize) -> ParseError {
-    ParseError::Parse {
-        line,
-        message: "disposition line must be immediately followed by a `cook` step".to_string(),
-    }
-}
-
-/// §8.4.3: parse a disposition block (`seal … { … }`, `local { }`, `pinned { }`,
-/// `record { }`). `opener` is the classified block-opener line at `open_pos`
-/// (source line `open_line`); `inherited` is the disposition contributed by any
-/// enclosing block(s). Folds the opener onto a clone of `inherited` to form the
-/// block disposition, then parses enclosed items until the matching `}` line,
-/// applying that disposition (additively unioned with each cook's own decorator
-/// lines) onto every enclosed `cook` step. Recurses on nested openers. Returns
-/// the token-stream position just past the closing `}` line.
-fn parse_disposition_block(
-    opener: DispLine,
-    steps: &mut Vec<Step>,
-    open_line: usize,
-    tokens: &[Located<Token>],
-    open_pos: usize,
-    source_lines: &[&str],
-    inherited: Disposition,
-) -> Result<usize, ParseError> {
-    // Build this block's disposition by folding the opener onto `inherited`.
-    let mut block_disp = inherited;
-    match &opener {
-        DispLine::SealBlockOpen(refs) => {
-            fold_decorator(&mut block_disp, &DispLine::Seal(refs.clone()), open_line)?;
-        }
-        DispLine::LocalBlockOpen => {
-            fold_decorator(&mut block_disp, &DispLine::Local, open_line)?;
-        }
-        DispLine::PinnedBlockOpen => {
-            fold_decorator(&mut block_disp, &DispLine::Pinned, open_line)?;
-        }
-        DispLine::RecordBlockOpen => {
-            fold_decorator(&mut block_disp, &DispLine::Record, open_line)?;
-        }
-        _ => {
-            return Err(ParseError::Parse {
-                line: open_line,
-                message: "internal: parse_disposition_block called on a non-opener".to_string(),
-            });
-        }
-    }
-
-    let mut pos = open_pos + 1; // step past the opener line's token
-    let mut saw_cook = false;
-    // Decorator lines accumulated for the next cook inside this block.
-    let mut pending = block_disp.clone();
-    let mut pending_active = false;
-    let mut pending_line = 0usize;
-
-    while pos < tokens.len() {
-        let tok = &tokens[pos];
-        match &tok.value {
-            Token::Comment(_) | Token::Blank => {
-                pos += 1;
+/// COOK-171: fold the recipe-level `seal` baseline into each `cook` step's
+/// effective seal set, then apply each cook's per-unit trailing `unseal`.
+/// `effective(unit) = (base ∪ step_seals) − step_unseals`. Scope is declarative
+/// and order-independent — a recipe-level `seal` applies to every cook in the
+/// recipe regardless of textual position — so the fold runs once at recipe
+/// finalize, after the whole body has been parsed. `unseals` carries
+/// `(index-into-steps, that-cook's-unseal-set)` pairs.
+fn apply_base_seal(
+    steps: &mut [Step],
+    base: &BTreeSet<String>,
+    unseals: &[(usize, BTreeSet<String>)],
+) {
+    use std::collections::HashMap;
+    let unseal_by: HashMap<usize, &BTreeSet<String>> =
+        unseals.iter().map(|(i, s)| (*i, s)).collect();
+    for (i, step) in steps.iter_mut().enumerate() {
+        if let Step::Cook { step, .. } = step {
+            for r in base {
+                step.disposition.seal.insert(r.clone());
             }
-            Token::Content(text) => {
-                let trimmed = text.trim();
-                // Closing brace terminates the block.
-                if trimmed == "}" {
-                    if pending_active {
-                        return Err(dangling_decorator(pending_line));
-                    }
-                    if !saw_cook {
-                        return Err(ParseError::Parse {
-                            line: open_line,
-                            message: "disposition block must contain at least one `cook` step"
-                                .to_string(),
-                        });
-                    }
-                    return Ok(pos + 1);
+            if let Some(u) = unseal_by.get(&i) {
+                for r in u.iter() {
+                    step.disposition.seal.remove(r);
                 }
-
-                if let Some(disp) = classify_disposition_line(text) {
-                    match disp {
-                        DispLine::SealBlockOpen(_)
-                        | DispLine::LocalBlockOpen
-                        | DispLine::PinnedBlockOpen
-                        | DispLine::RecordBlockOpen => {
-                            if pending_active {
-                                return Err(dangling_decorator(pending_line));
-                            }
-                            // Nested block inherits THIS block's disposition.
-                            let new_pos = parse_disposition_block(
-                                disp,
-                                steps,
-                                tok.line,
-                                tokens,
-                                pos,
-                                source_lines,
-                                block_disp.clone(),
-                            )?;
-                            saw_cook = true; // rule 11 satisfied transitively
-                            pos = new_pos;
-                            continue;
-                        }
-                        decorator => {
-                            if !pending_active {
-                                pending_line = tok.line;
-                                pending_active = true;
-                            }
-                            fold_decorator(&mut pending, &decorator, tok.line)?;
-                            pos += 1;
-                            continue;
-                        }
-                    }
-                }
-
-                if let Some(rest) = strip_keyword(text, "cook") {
-                    let (mut cook_step, new_pos) =
-                        parse_cook_line(rest, tok.line, tokens, pos, source_lines)?;
-                    cook_step.disposition = pending.clone();
-                    // Reset the decorator accumulator to the block baseline.
-                    pending = block_disp.clone();
-                    pending_active = false;
-                    let close_line_text = if new_pos > 0 {
-                        match tokens.get(new_pos - 1) {
-                            Some(t) => source_lines
-                                .get(t.line.saturating_sub(1))
-                                .copied()
-                                .unwrap_or(""),
-                            None => "",
-                        }
-                    } else {
-                        source_lines
-                            .get(tok.line.saturating_sub(1))
-                            .copied()
-                            .unwrap_or("")
-                    };
-                    reject_as_modifier_on_non_test(close_line_text, "cook", tok.line)?;
-                    steps.push(Step::Cook {
-                        step: cook_step,
-                        line: tok.line,
-                    });
-                    saw_cook = true;
-                    pos = new_pos;
-                    continue;
-                }
-
-                // Rule 11: only cook steps / nested blocks / decorators are
-                // permitted inside a disposition block.
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: format!(
-                        "disposition block admits only `cook` steps and nested disposition blocks, found: {trimmed}"
-                    ),
-                });
-            }
-            // Any non-Content token (Lua lines/blocks, top-level headers) is
-            // not a permitted disposition-block item.
-            _ => {
-                return Err(ParseError::Parse {
-                    line: tok.line,
-                    message: "disposition block admits only `cook` steps and nested disposition blocks".to_string(),
-                });
             }
         }
     }
-
-    // Reached EOF without a closing `}`.
-    Err(ParseError::Parse {
-        line: open_line,
-        message: "unterminated disposition block (missing closing `}`)".to_string(),
-    })
 }
 
 pub(crate) fn parse_recipe(
@@ -545,13 +404,12 @@ pub(crate) fn parse_recipe(
         ),
     };
 
-    // §8.4.3: accumulated decorator-line disposition awaiting the next `cook`.
-    // `pending_active` is set the moment a decorator line is seen and cleared
-    // when a `cook` consumes it; a non-cook step (or recipe end) while active
-    // is a dangling-decorator error.
-    let mut pending = Disposition::default();
-    let mut pending_active = false;
-    let mut pending_line: usize = 0;
+    // COOK-171: recipe-level `seal` baseline (the determinant set applied to
+    // every cook in the recipe) and each cook's per-unit trailing `unseal`
+    // set. Both are folded into the cooks' effective seal sets at finalize
+    // (`apply_base_seal`), so recipe-level seals are order-independent.
+    let mut base_seal: BTreeSet<String> = BTreeSet::new();
+    let mut cook_unseals: Vec<(usize, BTreeSet<String>)> = Vec::new();
 
     while pos < tokens.len() {
         let tok = &tokens[pos];
@@ -566,9 +424,7 @@ pub(crate) fn parse_recipe(
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
             | Token::ProbeHeader { .. } => {
-                if pending_active {
-                    return Err(dangling_decorator(pending_line));
-                }
+                apply_base_seal(&mut steps, &base_seal, &cook_unseals);
                 return Ok((
                     Recipe {
                         name,
@@ -595,9 +451,7 @@ pub(crate) fn parse_recipe(
                         .copied()
                         .unwrap_or("");
                     if !raw.starts_with(|c: char| c.is_whitespace()) {
-                        if pending_active {
-                            return Err(dangling_decorator(pending_line));
-                        }
+                        apply_base_seal(&mut steps, &base_seal, &cook_unseals);
                         return Ok((
                             Recipe {
                                 name,
@@ -611,52 +465,39 @@ pub(crate) fn parse_recipe(
                         ));
                     }
                 }
-                // §8.4.3: disposition decorator lines and block openers. A
-                // decorator line accumulates onto `pending` for the next
-                // `cook`; a block opener recurses into `parse_disposition_block`.
-                if let Some(disp) = classify_disposition_line(text) {
+                // COOK-171: `seal` is a recipe-body step (a determinant input
+                // stream, sibling of `ingredients`). It contributes to the
+                // recipe-level baseline applied to every cook at finalize.
+                if let Some(rest) = strip_keyword(text, "seal") {
                     if let Some(started) = imperative_began {
-                        return Err(region_violation("disposition", tok.line, started));
+                        return Err(region_violation("seal", tok.line, started));
                     }
-                    match disp {
-                        DispLine::SealBlockOpen(_)
-                        | DispLine::LocalBlockOpen
-                        | DispLine::PinnedBlockOpen
-                        | DispLine::RecordBlockOpen => {
-                            if pending_active {
-                                // A decorator line directly above a block opener
-                                // has no `cook` to attach to.
-                                return Err(dangling_decorator(pending_line));
-                            }
-                            let new_pos = parse_disposition_block(
-                                disp,
-                                &mut steps,
-                                tok.line,
-                                tokens,
-                                pos,
-                                source_lines,
-                                Disposition::default(),
-                            )?;
-                            pos = new_pos;
-                            continue;
-                        }
-                        decorator => {
-                            if !pending_active {
-                                pending_line = tok.line;
-                                pending_active = true;
-                            }
-                            fold_decorator(&mut pending, &decorator, tok.line)?;
-                            pos += 1;
-                            continue;
-                        }
+                    let refs: Vec<String> =
+                        rest.split_whitespace().map(str::to_string).collect();
+                    if refs.is_empty() {
+                        return Err(ParseError::Parse {
+                            line: tok.line,
+                            message: "seal: a recipe-level `seal` step requires at least one probe ref"
+                                .to_string(),
+                        });
                     }
+                    for r in parse_seal_refs(&refs, tok.line)? {
+                        base_seal.insert(r);
+                    }
+                    pos += 1;
+                    continue;
                 }
-                // §8.4.3 rule 1: a pending decorator run must be immediately
-                // followed by a `cook`. Any other recipe-body Content line
-                // here (this token is not a disposition line) is a dangling
-                // decorator unless it is the `cook` keyword.
-                if pending_active && strip_keyword(text, "cook").is_none() {
-                    return Err(dangling_decorator(pending_line));
+                // COOK-171: recipe-level `unseal` is rejected — `unseal` is a
+                // trailing modifier on a `cook` step only. The recipe is the
+                // outermost seal scope, so there is nothing inherited to release.
+                if strip_keyword(text, "unseal").is_some() {
+                    return Err(ParseError::Parse {
+                        line: tok.line,
+                        message: "unseal is a trailing modifier on a `cook` step, not a \
+                                  recipe-level step (the recipe is the outermost seal scope; \
+                                  there is nothing to release)"
+                            .to_string(),
+                    });
                 }
                 if let Some(rest) = strip_keyword(text, "ingredients") {
                     if let Some(started) = imperative_began {
@@ -705,26 +546,21 @@ pub(crate) fn parse_recipe(
                     if let Some(started) = imperative_began {
                         return Err(region_violation("cook", tok.line, started));
                     }
-                    let (mut cook_step, new_pos) =
+                    // COOK-171: parse_cook_line resolves the trailing `cook_mods`
+                    // (per-unit seal/unseal + share_mod) onto the step's
+                    // disposition. The `as` modifier rejection (CS-0061) is folded
+                    // into the modifier parser. The recipe-level seal baseline is
+                    // applied later at finalize (`apply_base_seal`).
+                    let (cook_step, unseal, new_pos) =
                         parse_cook_line(rest, tok.line, tokens, pos, source_lines)?;
-                    // §8.4.3: fold any accumulated decorator-line disposition
-                    // onto this cook, then clear it.
-                    cook_step.disposition = std::mem::take(&mut pending);
-                    pending_active = false;
-                    // Reject `as` modifier on cook_step (CS-0061 §3.1.3).
-                    let close_line_text = if new_pos > 0 {
-                        match tokens.get(new_pos - 1) {
-                            Some(t) => source_lines.get(t.line.saturating_sub(1)).copied().unwrap_or(""),
-                            None => "",
-                        }
-                    } else {
-                        source_lines.get(tok.line.saturating_sub(1)).copied().unwrap_or("")
-                    };
-                    reject_as_modifier_on_non_test(close_line_text, "cook", tok.line)?;
+                    let idx = steps.len();
                     steps.push(Step::Cook {
                         step: cook_step,
                         line: tok.line,
                     });
+                    if !unseal.is_empty() {
+                        cook_unseals.push((idx, unseal));
+                    }
                     pos = new_pos;
                     continue;
                 } else if let Some(rest) = strip_keyword(text, "plate") {
@@ -828,9 +664,6 @@ pub(crate) fn parse_recipe(
                 pos += 1;
             }
             Token::LuaLine(code) => {
-                if pending_active {
-                    return Err(dangling_decorator(pending_line));
-                }
                 if imperative_began.is_none() {
                     imperative_began = Some(tok.line);
                 }
@@ -841,9 +674,6 @@ pub(crate) fn parse_recipe(
                 pos += 1;
             }
             Token::LuaBlockOpen => {
-                if pending_active {
-                    return Err(dangling_decorator(pending_line));
-                }
                 if imperative_began.is_none() {
                     imperative_began = Some(tok.line);
                 }
@@ -857,9 +687,6 @@ pub(crate) fn parse_recipe(
                 pos = new_pos;
             }
             Token::InlineLuaLine(code) => {
-                if pending_active {
-                    return Err(dangling_decorator(pending_line));
-                }
                 if let Some(started) = imperative_began {
                     return Err(region_violation("inline-lua (`>>`)", tok.line, started));
                 }
@@ -870,9 +697,6 @@ pub(crate) fn parse_recipe(
                 pos += 1;
             }
             Token::InlineLuaBlockOpen => {
-                if pending_active {
-                    return Err(dangling_decorator(pending_line));
-                }
                 if let Some(started) = imperative_began {
                     return Err(region_violation("inline-lua-block (`>>{`)", tok.line, started));
                 }
@@ -888,10 +712,8 @@ pub(crate) fn parse_recipe(
         }
     }
 
-    // §8.4.3 rule 1: a decorator run at end-of-recipe never reached a `cook`.
-    if pending_active {
-        return Err(dangling_decorator(pending_line));
-    }
+    // COOK-171: fold the recipe-level seal baseline into each cook at finalize.
+    apply_base_seal(&mut steps, &base_seal, &cook_unseals);
 
     // CS-0019: EOF terminates a body. No "missing end" error in v0.4.
     Ok((

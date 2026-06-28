@@ -1,5 +1,5 @@
 probe scenes
-    produce as json { echo '[{"id":"intro"},{"id":"outro"}]' }
+    json { echo '[{"id":"intro"},{"id":"outro"}]' }
 
 recipe html
     ingredients scenes

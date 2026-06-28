@@ -1,6 +1,0 @@
-recipe build
-    seal host {
-        cook "a.o" {
-            cc -c a.c -o a.o
-        }
-    }

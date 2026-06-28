@@ -470,8 +470,8 @@ The native `probe` declaration (§{cat.probes.decl}) is pure sugar over the reta
 |---|---|
 | `ingredients "glob" !"glob"` | `inputs.files = {"glob", "!glob"}` |
 | Header dep list `probe X: dep1 dep2` | `inputs.requires = {"dep1", "dep2"}` |
-| `produce as json { sh }` | `produce = [[ return cook.json_decode(cook.sh("sh")) ]]` |
-| `produce as lines { sh }` | `produce = [[ … cook.sh lines split … ]]` |
-| `produce >{ lua }` | `produce = [[ lua ]]` |
+| `json { sh }` | `produce = [[ return cook.json_decode(cook.sh("sh")) ]]` |
+| `lines { sh }` | `produce = [[ … cook.sh lines split … ]]` |
+| `>{ lua }` | `produce = [[ lua ]]` |
 
 The decision to ship native syntax as sugar rather than as a replacement reflects the Standard's general posture: the Lua API is the extension point; surface syntax is a readability layer over it. Authors who need capabilities the native form does not yet cover fall back to `cook.probe()` without ceremony.

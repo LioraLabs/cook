@@ -102,35 +102,34 @@ pub struct Probe {
     pub line: usize,
 }
 
-/// The value-producing body of a probe (§22.5). Reuses the `body ::= shell_block
-/// | using_lua_block` grammar of §8: `>{ … }` is a Lua block whose return is the
-/// probe value; `{ … }` is a shell block whose stdout is the value, typed by the
-/// `as` modifier.
+/// The value-producing body of a probe (§22.5). The producer KIND leads the
+/// brace body; there are no `produce`/`as` tokens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProbeProduce {
-    /// `produce >{ … }` — value is the block's `return`.
+    /// `>{ … }` — Lua block; value is the block's `return`.
     Lua(String),
-    /// `produce [as json|lines] { … }` — value is stdout, typed.
+    /// `{ … }` / `json { … }` / `lines { … }` — shell block (bare) or typed;
+    /// value is stdout, typed by the leading kind keyword.
     Shell { commands: Vec<String>, typing: ShellProduceType },
-    /// `produce as tools { cc, ld }` — the brace content is a LIST of bare tool
-    /// names (NOT a shell body). Each is PATH-resolved and its binary hashed;
-    /// the value is `{ NAME = { path, hash }, … }`. The hash is both the value
-    /// and the re-run trigger (COOK-164).
+    /// `tools { cc, ld }` — the brace content is a LIST of bare tool names
+    /// (NOT a shell body). Each is PATH-resolved and its binary hashed; the
+    /// value is `{ NAME = { path, hash }, … }`. The hash is both the value and
+    /// the re-run trigger (COOK-164).
     Tools(Vec<String>),
-    /// `produce as env { SDKROOT }` — the brace content is a LIST of bare env
-    /// var names (NOT a shell body). The value is `{ NAME = value_or_nil, … }`;
-    /// reading the env records the consulted-env determinant (COOK-164).
-    Env(Vec<String>),
+    /// `envs { CFLAGS, LDFLAGS }` — the brace content is a LIST of bare
+    /// env-var names (NOT a shell body). The value is `{ NAME = value_or_nil,
+    /// … }`; reading the env records the consulted-env determinant (COOK-164).
+    Envs(Vec<String>),
 }
 
-/// How a shell-block `produce`'s stdout becomes the probe value (§22.5).
+/// How a shell-block probe's stdout becomes the probe value (§22.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellProduceType {
-    /// Bare `produce { … }` — stdout as a string (one trailing newline trimmed).
+    /// Bare `{ … }` — stdout as a string (one trailing newline trimmed).
     String,
-    /// `produce as lines { … }` — stdout split on `\n` into an array.
+    /// `lines { … }` — stdout split on LF into an array.
     Lines,
-    /// `produce as json { … }` — stdout parsed as one JSON value.
+    /// `json { … }` — stdout parsed as one JSON value.
     Json,
 }
 

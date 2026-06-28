@@ -26,12 +26,19 @@ dynamic registration; the two register into the same probe table and share the
 duplicate-key diagnostic of §{cat.probes.api}.
 
 The `probe_body` (App. A) comprises an optional declarative `ingredients_step`
-(§{steps.ingredients}) followed by exactly one `produce` body. A conforming
-implementation MUST reject a probe body that: contains no `produce`; contains
-two or more `produce`; contains two or more `ingredients`; or contains an
-`ingredients` line after the `produce`. The header dependency list
+(§{steps.ingredients}) followed by exactly one **producer**. A conforming
+implementation MUST reject a probe body that: contains no producer; contains
+two or more producers; contains two or more `ingredients`; or contains an
+`ingredients` line after the producer. The header dependency list
 (`probe NAME: a b`) names upstream probe keys and is equivalent to
 `inputs.requires` (§{cat.probes.inputs}).
+
+A **producer** has no introducer keyword: the producer KIND leads, and the
+braces are that kind's body. There are six forms — a bare shell block `{ … }`, a
+`json`-typed shell block, a `lines`-typed shell block, a `tools` name list, an
+`envs` name list, and a `>{ … }` Lua block (specified below). The tokens `json`,
+`lines`, `tools`, and `envs` are **contextual keywords** recognised only in this
+probe-producer position; elsewhere they are ordinary identifiers.
 
 A probe's `ingredients` declares its **file-input fingerprint set** — NOT an
 iteration driver. A probe yields one value and never fans out; the
@@ -42,44 +49,49 @@ iteration driver. A probe yields one value and never fans out; the
 bodies at parse time with a diagnostic that identifies the probe by name and
 the offending line:
 
-- No `produce` block — a conforming implementation MUST reject the probe with a
-  diagnostic indicating that the `produce` block is absent.
-- Two or more `produce` blocks — a conforming implementation MUST reject the
-  second `produce` with a diagnostic indicating that at most one `produce` is
-  permitted per probe.
+- No producer — a conforming implementation MUST reject the probe with a
+  diagnostic indicating that the producer is absent.
+- Two or more producers — a conforming implementation MUST reject the second
+  producer with a diagnostic indicating that at most one producer is permitted
+  per probe.
 - Two or more `ingredients` blocks — a conforming implementation MUST reject the
   second `ingredients` with a diagnostic indicating that at most one `ingredients`
   is permitted per probe.
-- An `ingredients` block appearing after the `produce` block — a conforming
+- An `ingredients` block appearing after the producer — a conforming
   implementation MUST reject with a diagnostic indicating that `ingredients`
-  must precede `produce`.
-- A body step that is neither `ingredients` nor `produce` (e.g. a `cook`, `plate`,
-  `test`, or bare shell step) — a conforming implementation MUST reject with a
-  diagnostic indicating that only `ingredients` and `produce` are permitted in
-  a probe body.
+  must precede the producer.
+- A body step that is neither `ingredients` nor a producer (e.g. a `cook`,
+  `plate`, `test`, or other non-producer step) — a conforming implementation MUST
+  reject with a diagnostic indicating that only `ingredients` and a producer are
+  permitted in a probe body.
 - A probe name containing three or more colon-separated segments (e.g.
   `probe a:b:c`) — a conforming implementation MUST reject at the lexical level
   with a diagnostic indicating that a probe key is at most `IDENT:IDENT`.
-- An `as` modifier applied to a Lua-block `produce` (e.g. `produce as json >{ … }`)
-  — a conforming implementation MUST reject with a diagnostic indicating that `as`
-  is valid only on shell-block produce forms, since a Lua block already returns a
-  typed value.
-- A `produce as tools` / `produce as env` source list that is empty, contains a
-  non-`IDENT` name, or is given a `>{ … }` Lua block in place of a name list — a
-  conforming implementation MUST reject with a diagnostic identifying the probe
-  and the offending construct.
+- A `json` or `lines` kind applied to a `>{ … }` Lua block (e.g. `json >{ … }`)
+  — a conforming implementation MUST reject with a diagnostic indicating that
+  `json`/`lines` are valid only on a shell block, since a Lua block already
+  returns a structured value.
+- A `tools` / `envs` name list that is empty, contains a non-`IDENT` name, or is
+  given a `>{ … }` Lua block in place of a name list — a conforming
+  implementation MUST reject with a diagnostic identifying the probe and the
+  offending construct.
 
-The `produce` body reuses the `body ::= exec_lua_block | shell_block` grammar of
+A shell-block producer (`{ … }`, `json { … }`, `lines { … }`) and the Lua-block
+producer (`>{ … }`) reuse the `body ::= exec_lua_block | shell_block` grammar of
 §{steps.cook-single} (the body-dispatch: `>{` is tested before `{`). The probe
-value is determined by the body form:
+value is determined by the producer form:
 
-- `produce >{ … }` (Lua block): the probe value is what the block `return`s
+- `>{ … }` (Lua block): the probe value is what the block `return`s
   (§{cat.probes.values}).
-- `produce { … }` (shell block): the probe value is the block's standard output,
-  typed by the optional `as` modifier — bare → the stdout string (one trailing
-  newline trimmed); `as lines` → the stdout split on `LF` into an array of
-  strings; `as json` → the stdout parsed as one JSON value.
-- `produce as tools { NAME, … }` (source list): the brace content is a
+- `{ … }` (bare shell block): the probe value is the block's standard output as a
+  string (one trailing newline trimmed).
+- `lines { … }` (shell block): the probe value is the block's standard output
+  split on `LF` into an array of strings.
+- `json { … }` (shell block): the probe value is the block's standard output
+  parsed as one JSON value. Decoding is explicit and validating — a conforming
+  implementation MUST fail the probe (NOT silently fall back to a string) when
+  the output is not well-formed JSON.
+- `tools { NAME, … }` (name list): the brace content is a
   comma/whitespace-separated LIST of bare tool names (`IDENT`), NOT a shell or
   Lua body. A conforming implementation MUST PATH-resolve each name and
   content-hash the resolved binary; the probe value is a JSON object keyed by
@@ -90,27 +102,28 @@ value is determined by the body form:
   not resolve on PATH MUST fail the probe with a diagnostic naming the tool. A
   conforming implementation MUST reject an empty list (`{ }`) and a `>{ … }` Lua
   block (the brace content is a name list, not a body).
-- `produce as env { NAME, … }` (source list): the brace content is a
+- `envs { NAME, … }` (name list): the brace content is a
   comma/whitespace-separated LIST of bare environment-variable names (`IDENT`),
   NOT a shell or Lua body. The probe value is a JSON object keyed by variable
   name; an unset variable is OMITTED from the object. Reading each variable
   records it as a consulted-environment determinant (§{cat.probes.inputs}), so
-  the environment values fingerprint the probe. A conforming implementation MUST
-  reject an empty list (`{ }`) and a `>{ … }` Lua block.
+  the environment values fingerprint the probe — an `envs` probe is a named,
+  cached, shareable env-set fingerprint, the env-twin of `tools`. A conforming
+  implementation MUST reject an empty list (`{ }`) and a `>{ … }` Lua block.
 
-The `as json` and `as lines` modifiers are valid ONLY on the shell-block form; a
-conforming implementation MUST reject either applied to a `>{ … }` Lua-block
-produce with a register-phase diagnostic, since a Lua block already returns a
-structured value. The `as tools` and `as env` source-list kinds take a brace
-NAME LIST, not a body; a conforming implementation MUST reject a `>{ … }` Lua
-block (or any body form) supplied where a name list is required.
+The `json` and `lines` kinds are valid ONLY on the shell-block form; a conforming
+implementation MUST reject either applied to a `>{ … }` Lua-block producer with a
+register-phase diagnostic, since a Lua block already returns a structured value.
+The `tools` and `envs` kinds take a brace NAME LIST, not a body; a conforming
+implementation MUST reject a `>{ … }` Lua block (or any body form) supplied where
+a name list is required.
 
 **Coexistence.** The native `probe` declaration and the register-phase
 `cook.probe()` API register into one probe table within a register pass; a key
 declared by both MUST fire the duplicate-key diagnostic of §{cat.probes.api}.
 
-> **Note (informative).** A `probe` whose `produce` decodes JSON/YAML
-> (`as json`, or `cook.json_decode`/`cook.yaml_decode` in a `>{ … }` body) is
+> **Note (informative).** A `probe` whose producer decodes JSON/YAML
+> (`json { … }`, or `cook.json_decode`/`cook.yaml_decode` in a `>{ … }` body) is
 > evaluated with those codecs available when it feeds an `ingredients <probe>`
 > source (the register pre-pass, §{cat.probes.for-each}). Consumption of such a
 > probe through a demand-driven consumer unit currently requires the codecs on
@@ -121,14 +134,15 @@ declared by both MUST fire the duplicate-key diagnostic of §{cat.probes.api}.
 declaration to the equivalent `cook.probe(key, opts)` call (§{cat.probes.api}):
 the header dependency list becomes `inputs.requires`; `ingredients` (globs and
 `!` excludes) is resolved at register time to the concrete file set populating
-`inputs.files` (§{cat.probes.inputs}); and the `produce` body becomes the
-`opts.produce` Lua source string — a `>{ … }` block verbatim, a `{ … }` shell
-block wrapped as `cook.sh(...)` typed by the `as` modifier (bare → stdout string
-with one trailing newline trimmed; `as lines` → newline-split array; `as json`
-→ `cook.json_decode`). Because the fingerprint folds the `opts.produce` source
-string (§{cat.probes.inputs}), editing a shell command or changing the `as`
-typing changes the lowered string and therefore re-fingerprints; the fingerprint
-algorithm itself is unchanged.
+`inputs.files` (§{cat.probes.inputs}); and the producer becomes the
+`opts.produce` Lua source string — a `>{ … }` block verbatim, a shell block
+wrapped as `cook.sh(...)` typed by its leading kind (bare → stdout string with
+one trailing newline trimmed; `lines { … }` → newline-split array; `json { … }`
+→ `cook.json_decode`). The `tools`/`envs` name lists become `inputs.tools` /
+`inputs.env` determinant declarations. Because the fingerprint folds the
+`opts.produce` source string (§{cat.probes.inputs}), editing a shell command or
+changing the producer kind changes the lowered string and therefore
+re-fingerprints; the fingerprint algorithm itself is unchanged.
 
 ## 22.5.3. The `cook.probe` API [#cat.probes.api]
 

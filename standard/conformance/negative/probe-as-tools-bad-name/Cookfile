@@ -1,2 +1,2 @@
 probe t
-    produce as tools { cc --version }
+    tools { cc --version }

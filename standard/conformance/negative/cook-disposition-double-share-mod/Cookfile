@@ -1,0 +1,2 @@
+recipe r
+    cook "x.o" { cc -c x.c } nondet local

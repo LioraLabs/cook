@@ -65,6 +65,8 @@ The **local cache and the shared (cross-machine) store are addressed by this sam
 >
 > The recording mechanism is shared with the shell-side `$<KEY>` sigil capture: the keys flow into the unit's `consulted_env_keys` list and are looked up against `cook.env` at unit-registration time, exactly as shell-body sigils are.
 
+> **Note 17.1.2.1 — `envs`-seal vs. auto-fold (informative).** For an environment variable a unit *consumes*, this section's auto-fold already keys the unit on the variable's value. An author SHOULD NOT *additionally* seal an `envs` probe (§{cat.probes.decl}) that names the same consumed variable: the variable would then fold twice — once as a consulted-env value here, and once inside the sealed probe's value (§{exec.cache.single-key}). The two paths are for two different cases, and the author picks one: rely on auto-fold for a *consumed* variable, or declare an `envs` probe and `seal` it for an *unconsumed* one (§{steps.cook-disposition}). Double-folding is not a correctness bug — each fold is over the same value — but it is redundant surface and splits the variable's attribution across two determinants in `cook why` (§{exec.cache.why}).
+
 ### 17.1.3. Sharing and disposition effect [#exec.cache.sharing]
 
 Caching over the local index is always on. **Sharing** — publishing a unit's output artifacts to, and fetching them from, the shared content-addressed store — is also on by default for every cacheable unit, keyed by the same single key (§{exec.cache.single-key}). The local index and the shared store are addressed by that one key; a consumer reuses a shared artifact for a key K if and only if it recomputes K. A unit with no declared output (e.g. a `plate`, §{exec.cache.reconcile}) and any side-effecting step is never cached or shared.
@@ -95,19 +97,19 @@ client-side convenience for read-only consumers; *write-authorization* to a
 shared store is the backend's concern (e.g. credentialed access), not a property
 the client asserts. (CS-0111.)
 
-### 17.1.4. The `record` disposition [#exec.cache.record]
+### 17.1.4. The `nondet` disposition [#exec.cache.record]
 
-A `cook` step MAY carry the `record` disposition (§{steps.cook-disposition}). Its artifact is cached and shared and keyed by the single cache key (§{exec.cache.single-key}) EXACTLY as an unannotated step: `record` adds NO determinant and changes NO component of the key.
+A `cook` step MAY carry the `nondet` disposition (§{steps.cook-disposition}) — the renamed v3 `record` disposition (CS-0115). Its artifact is cached and shared and keyed by the single cache key (§{exec.cache.single-key}) EXACTLY as an unannotated step: `nondet` adds NO determinant and changes NO component of the key.
 
-A `record` step asserts that its output is intrinsically NON-reproducible — for example an LLM completion or a generative image — so that re-running it in an identical context is NOT guaranteed to produce a byte-equivalent artifact.
+A `nondet` step states a *fact* about its output: that it is intrinsically NON-reproducible — for example an LLM completion or a generative image — so that re-running it in an identical context is NOT guaranteed to produce a byte-equivalent artifact.
 
-Byte-equivalence is therefore WAIVED for a `record` step. When the cache holds an artifact for the step's key, an implementation MUST treat that stored artifact as authoritative and MUST NOT re-execute the producer to reconcile a content difference; a present (on-disk or restorable) output is served as-is. A cold miss — no stored artifact and none restorable — MUST execute the producer once and MAY record its output.
+Byte-equivalence is therefore WAIVED for a `nondet` step. When the cache holds an artifact for the step's key — the **recording** the `nondet` unit reuses — an implementation MUST treat that stored artifact as authoritative and MUST NOT re-execute the producer to reconcile a content difference; a present (on-disk or restorable) output is served as-is. A cold miss — no stored artifact and none restorable — MUST execute the producer once and MAY record its output.
 
-`record` composes with `seal`: a change to any sealed determinant changes the key (§{exec.cache.single-key}) and therefore re-generates the recording, exactly as for any unit. `record` composes with `local`/`pinned` (§{steps.cook-disposition}); that sharing/fetch policy is orthogonal to the byte-equivalence waiver.
+`nondet` composes with `seal`: a change to any sealed determinant changes the key (§{exec.cache.single-key}) and therefore re-generates the recording, exactly as for any unit. `nondet` occupies the single trailing `share_mod` slot (§{steps.cook-disposition}) and is therefore mutually exclusive with `local`/`pinned` at the surface — a unit is `local`, `pinned`, or `nondet`, not a combination. (The byte-equivalence waiver is conceptually independent of any sharing/fetch policy; the v3 surface that allowed combining them was collapsed to one slot in COOK-171, no change to the key model.)
 
-The divergence oracle (`cook cache verify`) MUST NOT classify a content difference on a `record` step as an under-keyed determinant: the author has declared the output non-reproducible and owns determinant completeness through the step's effective seal set.
+The divergence oracle (`cook cache verify`) MUST NOT classify a content difference on a `nondet` step as an under-keyed determinant: the author has declared the output non-reproducible and owns determinant completeness through the step's effective seal set.
 
-> **Note (informative).** The reference implementation realises the waiver as a `record` boolean carried on the unit's cache metadata; at the cache decision a `record` unit does not schedule a present-but-content-drifted output for restore or rebuild. The cache schema version is unchanged. (CS-0109.)
+> **Note (informative).** The reference implementation realises the waiver as a boolean carried on the unit's cache metadata (the internal field name is unchanged from v3); at the cache decision a `nondet` unit does not schedule a present-but-content-drifted output for restore or rebuild. The cache schema version is unchanged. (CS-0109, CS-0115.)
 
 ### 17.1.5. Producer determinant manifest [#exec.cache.determinant-manifest]
 
@@ -274,16 +276,16 @@ For each cacheable unit (§17.1.1) the cache holds an artifact for under its key
 K, the verifier re-executes the unit in the current context and compares the
 re-produced output bytes against the bytes the cache would serve for K:
 
-- If the unit is **not** a `record` unit (§17.1.4) and a re-produced output's
+- If the unit is **not** a `nondet` unit (§17.1.4) and a re-produced output's
   bytes differ from the cached bytes under the matching key K — or a recorded
   output is not re-produced at all — the verifier MUST report a **divergence**.
   A divergence is either an under-keyed determinant (a real determinant was not
   declared, so K failed to distinguish two contexts) or a non-reproducible
   producer. The command MUST exit non-zero when any divergence is reported.
-- If the unit **is** a `record` unit, the verifier MUST NOT perform the byte
-  comparison: byte-equivalence is waived for `record` (§17.1.4). It MAY apply a
+- If the unit **is** a `nondet` unit, the verifier MUST NOT perform the byte
+  comparison: byte-equivalence is waived for `nondet` (§17.1.4). It MAY apply a
   weaker check — that each recorded output is re-produced — and MUST NOT
-  classify a `record` content difference as a divergence.
+  classify a `nondet` content difference as a divergence.
 - A faithfully-keyed, reproducible unit re-produces byte-identical outputs and
   MUST be reported as passing.
 

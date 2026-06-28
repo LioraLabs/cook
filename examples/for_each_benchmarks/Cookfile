@@ -21,17 +21,17 @@
 # Array-shaped probe value: one record per card (§22.5.4, §22.5.9).
 probe cards
     ingredients "data/cards.json"
-    produce as json { cat data/cards.json }
+    json { cat data/cards.json }
 
 # Object whose `items` field is the array — consumed via `catalog:items`.
 probe catalog
     ingredients "data/catalog.json"
-    produce as json { cat data/catalog.json }
+    json { cat data/catalog.json }
 
 # Test-case records.
 probe cases
     ingredients "data/cases.json"
-    produce as json { cat data/cases.json }
+    json { cat data/cases.json }
 
 # ── Source form 1: probe key, cook consumer ───────────────────────────
 # One cook unit per card record; `$<in.id>` drives the output path,

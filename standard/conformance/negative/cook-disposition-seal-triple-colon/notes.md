@@ -1,1 +1,2 @@
-COOK-160: a third :IDENT segment in a seal ref is rejected (a:b:c).
+COOK-171: a `seal` ref admits at most one `:IDENT` segment (IDENT or IDENT:IDENT);
+a third segment (a:b:c) is rejected.

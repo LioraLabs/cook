@@ -11,4 +11,4 @@ Cookfile
       deps: []
       ingredients: []
       excludes: []
-      produce: Env names=["SDKROOT", "CC"]
+      produce: Envs names=["SDKROOT", "CC"]

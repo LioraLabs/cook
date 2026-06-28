@@ -201,11 +201,10 @@ fn local_unit_does_not_publish_to_shared_store() {
         cache.path(),
         r#"recipe make
     ingredients "src/in.txt"
-    local
     cook "out/art.txt" {
         cp src/in.txt out/art.txt
         echo ran >> out/art.runlog
-    }
+    } local
 "#,
     );
 
@@ -236,11 +235,10 @@ fn pinned_unit_cold_miss_is_hard_error() {
         cache.path(),
         r#"recipe make
     ingredients "src/in.txt"
-    pinned
     cook "out/art.txt" {
         cp src/in.txt out/art.txt
         echo ran >> out/art.runlog
-    }
+    } pinned
 "#,
     );
 

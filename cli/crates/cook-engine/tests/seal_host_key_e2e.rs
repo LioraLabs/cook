@@ -8,7 +8,7 @@
 //!   2. A `seal host` unit MISSES on the same host change — the sealed `host`
 //!      probe's value changed and folded into the unit's key.
 //!
-//! The host signal is a `produce as env { SIMHOST }` probe (CS-0106): changing
+//! The host signal is an `envs { SIMHOST }` probe (CS-0106): changing
 //! `SIMHOST` re-runs the probe and changes its value. Each unit appends a line
 //! to a per-unit runlog, so a re-run is observable as a line-count bump
 //! independent of any human-readable build summary wording.
@@ -45,7 +45,7 @@ fn write_fixture(wd: &Path, cache_dir: &Path) {
     fs::write(
         wd.join("Cookfile"),
         r#"probe host
-    produce as env { SIMHOST }
+    envs { SIMHOST }
 
 recipe shared
     ingredients "src/in.txt"

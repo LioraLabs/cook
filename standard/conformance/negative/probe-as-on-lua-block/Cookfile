@@ -1,2 +1,2 @@
 probe p
-    produce as json >{ return {} }
+    json >{ return {} }

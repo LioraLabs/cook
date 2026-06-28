@@ -1,0 +1,6 @@
+probe toolchain
+    tools { cc, ld }
+
+recipe build
+    seal toolchain
+    cook "x.o" { cc -c x.c -o x.o }

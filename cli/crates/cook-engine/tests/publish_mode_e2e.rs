@@ -301,7 +301,7 @@ fn publish_off_probe_build_succeeds_and_publishes_nothing() {
         cache.path(),
         &cloud_toml_publish_off(cache.path()),
         r#"probe tag
-    produce { echo PUBOFF }
+    { echo PUBOFF }
 
 recipe make
     ingredients "src/in.txt"

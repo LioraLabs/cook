@@ -1,1 +1,1 @@
-cook: expected `>{ Lua block }` or `{ shell block }`, found: garbage_line_here
+cook: unexpected modifier `garbage_line_here`

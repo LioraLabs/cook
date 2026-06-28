@@ -1,0 +1,6 @@
+probe flags
+    envs { CFLAGS, LDFLAGS }
+
+recipe build
+    seal flags
+    cook "x.o" { cc -c x.c -o x.o }

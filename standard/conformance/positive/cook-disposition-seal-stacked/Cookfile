@@ -1,5 +1,4 @@
 recipe build
     seal host
     seal gpu driver
-    record
-    cook "x.o" { cc -c x.c -o x.o }
+    cook "x.o" { cc -c x.c -o x.o } nondet

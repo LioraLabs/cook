@@ -30,14 +30,14 @@
 # so editing the manifest re-fingerprints this probe (and everything downstream).
 probe services_raw
     ingredients "data/services.json"
-    produce as json { cat data/services.json }
+    json { cat data/services.json }
 
 # Layer 2 — the ingredients <probe> source. Depends on `services_raw` via the
 # header dep list; reads the upstream value with cook.cache.get and derives a
 # `url` per record. The register pre-pass resolves `services_raw` first, then
 # this, then sizes the fan-out from the returned array.
 probe services: services_raw
-    produce >{
+    >{
         local out = {}
         for _, svc in ipairs(cook.cache.get("services_raw")) do
             table.insert(out, {

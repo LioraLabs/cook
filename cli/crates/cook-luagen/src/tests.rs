@@ -3477,7 +3477,7 @@ fn probe_tools_lowers_with_command_v_and_sha256() {
 
 #[test]
 fn probe_env_lowers_with_cook_env_reads() {
-    let cf = make_probe_cf(ProbeProduce::Env(vec!["SDKROOT".into(), "CC".into()]));
+    let cf = make_probe_cf(ProbeProduce::Envs(vec!["SDKROOT".into(), "CC".into()]));
     let lua = generate(&cf);
     assert!(lua.contains("cook.env.SDKROOT"), "lua:\n{lua}");
     assert!(lua.contains("cook.env.CC"), "lua:\n{lua}");
@@ -3631,7 +3631,7 @@ end
 #[test]
 fn file_ref_in_fan_out_hoisted_once_outside_member_loop() {
     let src = r#"probe scenes
-    produce as json { echo '[{"id":"intro"},{"id":"outro"}]' }
+    json { echo '[{"id":"intro"},{"id":"outro"}]' }
 
 recipe html
     ingredients scenes
@@ -3678,7 +3678,7 @@ fn unsealed_step_emits_no_seal_field() {
 
 #[test]
 fn local_disposition_emits_local_field() {
-    let src = "recipe build\n    local\n    cook \"scratch.o\" { cc -c scratch.c -o scratch.o }\n";
+    let src = "recipe build\n    cook \"scratch.o\" { cc -c scratch.c -o scratch.o } local\n";
     let lua = generate_lua_for_test(src);
     // I3: sharing is a plain string field (no reserved-keyword bracket-quote).
     assert!(lua.contains("sharing = \"local\""), "local disposition must emit 'sharing = \"local\"' in cook.add_unit:\n{lua}");
@@ -3686,7 +3686,7 @@ fn local_disposition_emits_local_field() {
 
 #[test]
 fn pinned_disposition_emits_pinned_field() {
-    let src = "recipe build\n    pinned\n    cook \"vendor.a\" { ar rcs vendor.a obj.o }\n";
+    let src = "recipe build\n    cook \"vendor.a\" { ar rcs vendor.a obj.o } pinned\n";
     let lua = generate_lua_for_test(src);
     assert!(lua.contains("sharing = \"pinned\""), "pinned disposition must emit 'sharing = \"pinned\"' in cook.add_unit:\n{lua}");
 }
@@ -3700,11 +3700,13 @@ fn plain_step_emits_neither_local_nor_pinned() {
 
 #[test]
 fn record_disposition_emits_record_field() {
-    let src = "recipe build\n    record\n    cook \"out.png\" { gen-image }\n";
+    // COOK-171: the surface keyword is `nondet`; codegen still emits the
+    // unchanged internal `record = true` wire field.
+    let src = "recipe build\n    cook \"out.png\" { gen-image } nondet\n";
     let lua = generate_lua_for_test(src);
     assert!(
         lua.contains("record = true"),
-        "record-annotated cook step must emit record = true, got:\n{lua}"
+        "nondet-annotated cook step must emit record = true, got:\n{lua}"
     );
 }
 

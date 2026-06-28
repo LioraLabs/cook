@@ -1,2 +1,2 @@
 probe p
-    produce >{ return {} }
+    >{ return {} }

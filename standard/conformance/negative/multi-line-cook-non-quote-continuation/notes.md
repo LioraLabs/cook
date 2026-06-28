@@ -1,7 +1,8 @@
-Pins the negative case for multi-line `cook` outputs: any non-quote, non-body-opener
-content trailing a quoted output pattern (including on a continuation line)
-must produce a clear diagnostic. The parser collects quoted patterns across
-continuation lines, then requires the leftover token to be either empty
-(declaration-only cook) or a body opener `{` / `>{` (cook with body).
+Pins the negative case for multi-line `cook` outputs: after collecting quoted
+output patterns across continuation lines, a non-quote token that is not a body
+opener (`{` / `>{`) is parsed as a trailing `cook_mods` token (COOK-171). An
+unrecognised token there (`garbage_line_here`) is rejected as an unexpected
+modifier. (Trailing modifiers follow the body; a token before the body opener is
+not a valid modifier and not a body.)
 
-Exercises App. A.4 (cook_step production, multi-line whitespace rule).
+Exercises App. A.4 (cook_step production, multi-line whitespace rule, cook_mods).
