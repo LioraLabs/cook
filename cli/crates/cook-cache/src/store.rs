@@ -173,8 +173,8 @@ mod tests {
     }
 
     #[test]
-    fn version_is_five() {
-        assert_eq!(CACHE_VERSION, 5);
+    fn version_is_six() {
+        assert_eq!(CACHE_VERSION, 6);
     }
 
     #[test]
@@ -221,7 +221,7 @@ mod tests {
         make_populated_cache().save(dir.path(), "my_recipe").expect("save");
         let path = dir.path().join("my_recipe.toml");
         let text = std::fs::read_to_string(&path).expect("read");
-        assert!(text.contains("schema_version = 5"), "got: {text}");
+        assert!(text.contains("schema_version = 6"), "got: {text}");
         assert!(text.contains(r#"command_hash = "0102030405060708""#), "got: {text}");
         assert!(text.contains(r#"hash = "1234567890abcdef""#), "got: {text}");
         assert!(!dir.path().join("my_recipe.toml.tmp").exists(), "tmp renamed away");

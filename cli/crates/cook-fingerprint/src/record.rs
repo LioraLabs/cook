@@ -34,8 +34,11 @@ pub mod hex_u64 {
 /// `FileRecord` / cache key composition. v4 (COOK-92): recipe index is TOML
 /// (`<recipe>.toml`) with u64 hash fields as lowercase hex strings. v5
 /// (COOK-161): the single content-addressed key folds the unit's effective
-/// seal set's probe values via `StepEntry.seal_contribution` (CS-0107).
-pub const CACHE_VERSION: u32 = 5;
+/// seal set's probe values via `StepEntry.seal_contribution` (CS-0107). v6
+/// (COOK-180): per-output `mode` / symlink / empty-dir fidelity recorded in
+/// `ArtifactMeta`; a discovered-inputs manifest (keyed by the declared-only
+/// key) enables cold fetch-by-key sharing for depfile (cc) units.
+pub const CACHE_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StepEntry {
@@ -137,8 +140,8 @@ env_contribution = "00"
     }
 
     #[test]
-    fn cache_version_is_5() {
-        assert_eq!(CACHE_VERSION, 5);
+    fn cache_version_is_6() {
+        assert_eq!(CACHE_VERSION, 6);
     }
 
     #[test]
