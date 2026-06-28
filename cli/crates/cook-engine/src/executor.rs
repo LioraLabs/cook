@@ -2592,10 +2592,38 @@ fn publish_completion(
     // CS-0085: iterate the resolved (glob-expanded) list.
     for (out_idx, output_path) in resolved_output_paths.iter().enumerate() {
         let abs_output = working_dir.join(output_path);
-        let bytes = match std::fs::read(&abs_output) {
-            Ok(b) => b,
+        // COOK-180: classify each output via symlink_metadata (does NOT follow
+        // links) so per-file fidelity round-trips: a regular file stores its real
+        // bytes + mode; a symlink stores no content, just kind+target; a dir
+        // stores an empty marker. The restore side (restore_one) dispatches on
+        // `kind`, so the empty body for symlink/dir kinds is intentional.
+        let lstat = match std::fs::symlink_metadata(&abs_output) {
+            Ok(m) => m,
             Err(_) => continue,
         };
+        let ft = lstat.file_type();
+        #[cfg(unix)]
+        let mode = std::os::unix::fs::PermissionsExt::mode(&lstat.permissions());
+        #[cfg(not(unix))]
+        let mode = 0o644u32;
+        let (body, kind, target): (Vec<u8>, Option<String>, Option<String>) =
+            if ft.is_symlink() {
+                let t = std::fs::read_link(&abs_output)
+                    .ok()
+                    .and_then(|p| p.to_str().map(String::from));
+                // A symlink whose target isn't valid UTF-8 can't be recorded — skip it.
+                match t {
+                    Some(t) => (Vec::new(), Some("symlink".to_string()), Some(t)),
+                    None => continue,
+                }
+            } else if ft.is_dir() {
+                (Vec::new(), Some("dir".to_string()), None)
+            } else {
+                match std::fs::read(&abs_output) {
+                    Ok(b) => (b, None, None),
+                    Err(_) => continue,
+                }
+            };
         let artifact_k = artifact_key(&cloud_k, out_idx as u32, output_path);
         let mut artifact_meta = ArtifactMeta {
             recipe_namespace: recipe_namespace.clone(),
@@ -2603,22 +2631,22 @@ fn publish_completion(
             env_contribution: meta.env_contribution,
             seal_contribution: seal_contrib,
             schema_version: CACHE_VERSION,
-            size_bytes: bytes.len() as u64,
+            size_bytes: body.len() as u64,
             tags: std::collections::BTreeSet::new(),
             consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
             output_index: out_idx as u32,
             output_path: output_path.clone(),
             // CS-0054: stamped by the backend on put.
             content_hash: ArtifactMeta::zero_content_hash(),
-            kind: None,
-            mode: ArtifactMeta::default_mode(),
-            target: None,
+            kind,
+            mode,
+            target,
         };
         if publish_to_backend {
             if let Err(e) = cook_cache::backend::put_bytes(
                 cache_ctx.backend.as_ref(),
                 &artifact_k,
-                &bytes,
+                &body,
                 &mut artifact_meta,
             ) {
                 tracing::warn!("cache backend put failed for {}: {}", output_path, e);
@@ -2674,6 +2702,87 @@ fn publish_completion(
                 );
             }
         }
+    }
+
+    // COOK-180: record empty directories declared by `dir/` outputs so a cache
+    // hit is byte-identical to a miss. resolve_output_paths only yields FILES
+    // (glob expansion drops dirs), so genuinely-empty subdirectories under a
+    // directory output would otherwise be lost.
+    //
+    // INDEX BOOKKEEPING: these dir records CANNOT go through record_completion —
+    // its collect_records hashes file bytes and errors (UnreadableFile) on a
+    // directory, which would abort the whole unit's record/publish. So we append
+    // the dir FileRecords to step_entry.outputs directly (AFTER the file outputs
+    // and the implicit depfile output that record_completion already appended)
+    // and publish their artifacts at the matching trailing indices. The depfile
+    // index is therefore unchanged. Restore alignment holds because a `dir/`
+    // output makes the unit a terminal-output unit, and the cache-hit path
+    // derives current_outputs straight from the persisted StepEntry.outputs — so
+    // these appended (index, path) pairs are exactly what try_restore fetches.
+    let mut empty_dir_paths: Vec<String> = Vec::new();
+    for entry in &meta.output_paths {
+        if let Some(root) = entry.strip_suffix('/') {
+            for ed in cook_fingerprint::empty_dirs_under(working_dir, root) {
+                empty_dir_paths.push(ed);
+            }
+        }
+    }
+    empty_dir_paths.sort();
+    empty_dir_paths.dedup();
+    if !empty_dir_paths.is_empty() {
+        let mut next_idx = step_entry.outputs.len() as u32;
+        for ed in &empty_dir_paths {
+            let abs_ed = working_dir.join(ed);
+            #[cfg(unix)]
+            let mode = std::fs::symlink_metadata(&abs_ed)
+                .ok()
+                .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
+                .unwrap_or(0o755);
+            #[cfg(not(unix))]
+            let mode = 0o755u32;
+            // Persist the dir as an implicit output so the cache-hit path (which
+            // derives current_outputs from StepEntry.outputs for terminal-output
+            // units) fetches it at this exact index. The hash is irrelevant for a
+            // dir: restore_one's "dir" branch ignores the body/hash, and the
+            // cloud_key keys on INPUT hashes only.
+            step_entry.outputs.push(cook_fingerprint::FileRecord {
+                path: ed.clone(),
+                mtime: cook_fingerprint::stat_mtime(&abs_ed).unwrap_or(0),
+                hash: 0,
+            });
+            let artifact_k = artifact_key(&cloud_k, next_idx, ed);
+            let mut artifact_meta = ArtifactMeta {
+                recipe_namespace: recipe_namespace.clone(),
+                command_hash: meta.command_hash,
+                env_contribution: meta.env_contribution,
+                seal_contribution: seal_contrib,
+                schema_version: CACHE_VERSION,
+                size_bytes: 0,
+                tags: std::collections::BTreeSet::new(),
+                consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                output_index: next_idx,
+                output_path: ed.clone(),
+                // CS-0054: stamped by the backend on put.
+                content_hash: ArtifactMeta::zero_content_hash(),
+                kind: Some("dir".to_string()),
+                mode,
+                target: None,
+            };
+            if publish_to_backend {
+                if let Err(e) = cook_cache::backend::put_bytes(
+                    cache_ctx.backend.as_ref(),
+                    &artifact_k,
+                    b"",
+                    &mut artifact_meta,
+                ) {
+                    tracing::warn!("cache backend put failed for empty dir {}: {}", ed, e);
+                }
+            }
+            next_idx += 1;
+        }
+        // Persist the augmented outputs so the restore path knows to fetch the
+        // empty dirs at these indices.
+        cm.update_step(&meta.recipe_name, &meta.cache_key, step_entry.clone());
     }
 
     // COOK-166: persist the producer determinant manifest alongside the shared

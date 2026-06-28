@@ -164,6 +164,51 @@ pub fn reconcile_dir_output(working_dir: &Path, root: &str, kept: &BTreeSet<Stri
     prune_empty_dirs(&working_dir.join(root));
 }
 
+/// Workspace-relative paths of every EMPTY directory at or under `root`
+/// (which is itself workspace-relative, no trailing slash). Returns paths with
+/// forward slashes, relative to `working_dir`. An empty `root` dir is itself
+/// reported. Used so directory outputs round-trip empty subdirs through the
+/// cache. Returns an empty vec if `root` doesn't exist or isn't a dir.
+pub fn empty_dirs_under(working_dir: &Path, root: &str) -> Vec<String> {
+    let base = working_dir.join(root);
+    let mut out = Vec::new();
+    fn walk(dir: &Path, working_dir: &Path, out: &mut Vec<String>) {
+        let entries: Vec<_> = match std::fs::read_dir(dir) {
+            Ok(rd) => rd.filter_map(Result::ok).collect(),
+            Err(_) => return,
+        };
+        let mut has_child = false;
+        for e in &entries {
+            let p = e.path();
+            // Use symlink_metadata so a symlink-to-dir is NOT recursed (it's a
+            // symlink output, not a dir to walk).
+            match std::fs::symlink_metadata(&p) {
+                Ok(m) if m.file_type().is_dir() => {
+                    has_child = true;
+                    walk(&p, working_dir, out);
+                }
+                Ok(_) => {
+                    has_child = true;
+                }
+                Err(_) => {}
+            }
+        }
+        if !has_child {
+            if let Ok(rel) = dir.strip_prefix(working_dir) {
+                // forward-slash normalize
+                let s = rel.to_string_lossy().replace('\\', "/");
+                if !s.is_empty() {
+                    out.push(s);
+                }
+            }
+        }
+    }
+    if base.is_dir() {
+        walk(&base, working_dir, &mut out);
+    }
+    out
+}
+
 /// Recursively remove empty subdirectories of `dir`. Returns true if `dir` is
 /// empty after the sweep. `dir` itself is not removed by this call (its parent
 /// decides), so the directory-output root is preserved. Symbolic links are
@@ -222,6 +267,18 @@ pub fn resolve_glob(root: &Path, pattern: &str) -> BTreeSet<String> {
 mod tests {
     use super::*;
     use cook_contracts::WorkPayload;
+
+    #[test]
+    fn empty_dirs_under_reports_only_empty_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wd = tmp.path();
+        std::fs::create_dir_all(wd.join("out/empty")).unwrap();
+        std::fs::create_dir_all(wd.join("out/full")).unwrap();
+        std::fs::write(wd.join("out/full/f"), b"x").unwrap();
+        let mut got = empty_dirs_under(wd, "out");
+        got.sort();
+        assert_eq!(got, vec!["out/empty".to_string()]);
+    }
 
     #[test]
     fn test_hash_str_deterministic() {
