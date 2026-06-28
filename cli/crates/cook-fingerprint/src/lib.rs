@@ -161,7 +161,7 @@ pub fn reconcile_dir_output(working_dir: &Path, root: &str, kept: &BTreeSet<Stri
             let _ = std::fs::remove_file(working_dir.join(rel));
         }
     }
-    prune_empty_dirs(&working_dir.join(root));
+    prune_empty_dirs_keeping(&working_dir.join(root), working_dir, kept);
 }
 
 /// Workspace-relative paths of every EMPTY directory at or under `root`
@@ -209,12 +209,17 @@ pub fn empty_dirs_under(working_dir: &Path, root: &str) -> Vec<String> {
     out
 }
 
-/// Recursively remove empty subdirectories of `dir`. Returns true if `dir` is
-/// empty after the sweep. `dir` itself is not removed by this call (its parent
-/// decides), so the directory-output root is preserved. Symbolic links are
-/// never followed (`symlink_metadata`): a symlinked directory is treated as a
-/// leaf entry, so reconciliation cannot recurse outside the subtree (COOK-109).
-fn prune_empty_dirs(dir: &Path) -> bool {
+/// Recursively remove empty subdirectories of `dir`, but never remove a
+/// directory whose workspace-relative (forward-slash) path is in `kept` — these
+/// are recorded empty-dir outputs (CS-0119) restored on a cache hit, so pruning
+/// them on the same hit would defeat the round-trip (COOK-180). A kept child
+/// also marks its parent non-empty so the parent survives too. Returns true if
+/// `dir` is empty after the sweep. `dir` itself is not removed by this call (its
+/// parent decides), so the directory-output root is preserved. Symbolic links
+/// are never followed (`symlink_metadata`): a symlinked directory is treated as
+/// a leaf entry, so reconciliation cannot recurse outside the subtree
+/// (COOK-109).
+fn prune_empty_dirs_keeping(dir: &Path, working_dir: &Path, kept: &BTreeSet<String>) -> bool {
     let mut empty = true;
     if let Ok(entries) = std::fs::read_dir(dir) {
         for e in entries.filter_map(Result::ok) {
@@ -222,7 +227,13 @@ fn prune_empty_dirs(dir: &Path) -> bool {
             // symlink_metadata: do NOT follow links when classifying.
             let is_real_dir = matches!(std::fs::symlink_metadata(&p), Ok(m) if m.is_dir());
             if is_real_dir {
-                if prune_empty_dirs(&p) {
+                let child_empty = prune_empty_dirs_keeping(&p, working_dir, kept);
+                let rel = p
+                    .strip_prefix(working_dir)
+                    .ok()
+                    .map(|r| r.to_string_lossy().replace('\\', "/"));
+                let is_kept = rel.as_deref().map(|r| kept.contains(r)).unwrap_or(false);
+                if child_empty && !is_kept {
                     let _ = std::fs::remove_dir(&p);
                 } else {
                     empty = false;
@@ -484,6 +495,25 @@ mod tests {
         assert!(!wd.join("pkg/sub/old.wasm").exists());
         assert!(!wd.join("pkg/sub").exists());   // pruned empty dir
         assert!(wd.join("pkg").exists());        // root dir preserved
+    }
+
+    #[test]
+    fn reconcile_preserves_kept_empty_dir_prunes_unkept() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wd = tmp.path();
+        std::fs::create_dir_all(wd.join("out/keep")).unwrap(); // recorded empty dir
+        std::fs::create_dir_all(wd.join("out/stray")).unwrap(); // not recorded
+        std::fs::write(wd.join("out/f"), b"x").unwrap();
+        let mut kept = std::collections::BTreeSet::new();
+        kept.insert("out/f".to_string());
+        kept.insert("out/keep".to_string());
+        reconcile_dir_output(wd, "out", &kept);
+        assert!(wd.join("out/keep").is_dir(), "kept empty dir must survive");
+        assert!(
+            !wd.join("out/stray").exists(),
+            "unrecorded empty dir must be pruned"
+        );
+        assert!(wd.join("out/f").is_file());
     }
 
     #[test]
