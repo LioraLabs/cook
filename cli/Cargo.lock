@@ -470,6 +470,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "toml",
+ "tracing",
  "which",
  "xxhash-rust",
 ]

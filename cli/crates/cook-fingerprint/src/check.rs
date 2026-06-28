@@ -355,13 +355,82 @@ fn set_mode(abs: &Path, mode: u32) -> bool {
     true
 }
 
-/// Create a symlink at `link` pointing to `target`. `anchor` is the restore
-/// boundary used by the path-traversal hardening — currently unused; the four
-/// traversal checks are wired in the next task. Returns false on failure.
-// hardening added in next task
+/// Fold `.` and `..` components lexically WITHOUT touching the filesystem.
+/// `..` pops the last normal component (or is dropped at the root).
+fn normalize_lexical(p: &Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::ParentDir => { out.pop(); }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Walk up `p`'s ancestors and return the longest one that exists on disk.
+fn longest_existing_prefix(p: &Path) -> Option<std::path::PathBuf> {
+    let mut cur = Some(p);
+    while let Some(c) = cur {
+        if c.exists() { return Some(c.to_path_buf()); }
+        cur = c.parent();
+    }
+    None
+}
+
+/// Create a symlink at `link` pointing to `target`, only if `target` cannot
+/// escape `anchor`. Ports Turborepo's four restore_symlink checks:
+///   (1) reject absolute targets;
+///   (2) lexically resolve `target` against the link's parent and require the
+///       result stays within `anchor`;
+///   (3) realpath the longest existing prefix of the resolved target and
+///       require it stays within the real anchor (defends symlink-then-write
+///       escapes);
+///   (4) only then create the link.
+/// Returns false on any rejection or OS error.
 #[cfg(unix)]
 fn restore_symlink_checked(anchor: &Path, link: &Path, target: &str) -> bool {
-    let _ = anchor;
+    let t = Path::new(target);
+    // (1) Reject absolute targets.
+    if t.is_absolute() {
+        tracing::warn!(
+            "cache restore: symlink target {:?} escapes output anchor (absolute path); treating as miss",
+            target
+        );
+        return false;
+    }
+    let parent = match link.parent() {
+        Some(p) => p,
+        None => return false,
+    };
+    // (2) Lexically resolve target against link's parent directory and verify
+    // the result stays within the anchor.
+    let lexical = normalize_lexical(&parent.join(t));
+    let real_anchor = anchor.canonicalize().unwrap_or_else(|_| normalize_lexical(anchor));
+    let lexical_anchor = normalize_lexical(anchor);
+    if !(lexical.starts_with(&real_anchor) || lexical.starts_with(&lexical_anchor)) {
+        tracing::warn!(
+            "cache restore: symlink target {:?} escapes output anchor (lexical escape); treating as miss",
+            target
+        );
+        return false;
+    }
+    // (3) Realpath the longest existing prefix of the resolved target.
+    if let Some(existing) = longest_existing_prefix(&lexical) {
+        match existing.canonicalize() {
+            Ok(real) if real.starts_with(&real_anchor) => {}
+            _ => {
+                tracing::warn!(
+                    "cache restore: symlink target {:?} escapes output anchor (realpath escape); treating as miss",
+                    target
+                );
+                return false;
+            }
+        }
+    }
+    // (4) Create the link.
     std::os::unix::fs::symlink(target, link).is_ok()
 }
 
@@ -1317,6 +1386,41 @@ mod tests {
                 .file_type()
                 .is_symlink());
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Task 5 (COOK-180): symlink restore-time path hardening
+    // -------------------------------------------------------------------------
+
+    #[test]
+    #[cfg(unix)]
+    fn symlink_hardening_rejects_escapes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let anchor = tmp.path();
+        let link = anchor.join("sub/link");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        // absolute target rejected
+        assert!(!restore_symlink_checked(anchor, &link, "/etc/passwd"));
+        assert!(!link.exists());
+        // parent-escape rejected
+        assert!(!restore_symlink_checked(anchor, &link, "../../etc/passwd"));
+        assert!(!std::fs::symlink_metadata(&link).map(|m| m.file_type().is_symlink()).unwrap_or(false));
+        // sibling within anchor accepted
+        assert!(restore_symlink_checked(anchor, &link, "sib"));
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn symlink_hardening_allows_reentrant_within_anchor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let anchor = tmp.path();
+        let link = anchor.join("sub/link");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(anchor.join("sub2")).unwrap();
+        // target `../sub2/x` from link-parent `sub/` resolves to `sub2/x` under anchor
+        assert!(restore_symlink_checked(anchor, &link, "../sub2/x"));
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
     }
 
     fn install_real_parser_once() {
