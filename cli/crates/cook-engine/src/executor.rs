@@ -748,6 +748,7 @@ pub fn execute_dag(
             &input_hashes,
             &current_outputs,
             &work_node.working_dir,
+            meta.discovered_inputs.as_ref(),
         ) {
             CacheDecision::Hit
         } else if meta.sharing.is_pinned() {

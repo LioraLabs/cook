@@ -9,6 +9,7 @@ cook-contracts = { path = "../cook-contracts" }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 glob = "0.3"
 sha2 = "0.10"
 which = "7"
@@ -16,5 +17,4 @@ which = "7"
 [dev-dependencies]
 tempfile = "3"
 cook-cache = { path = "../cook-cache" }
-serde_json = "1"
 toml = "0.8"
