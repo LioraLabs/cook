@@ -331,6 +331,9 @@ fn put_headers(req: ureq::Request, auth: &str, meta: &ArtifactMeta) -> ureq::Req
         .set("X-Cook-Recipe-Namespace", &meta.recipe_namespace)
         .set("X-Cook-Output-Index", &meta.output_index.to_string())
         .set("X-Cook-Output-Path", &meta.output_path)
+        .set("X-Cook-Mode", &meta.mode.to_string())
+        .set("X-Cook-Kind", meta.kind.as_deref().unwrap_or(""))
+        .set("X-Cook-Symlink-Target", meta.target.as_deref().unwrap_or(""))
 }
 
 /// Parse `X-Cook-Content-Hash` from a response. The header is REQUIRED on
@@ -350,6 +353,76 @@ fn parse_content_hash(response: &ureq::Response) -> BackendResult<[u8; 32]> {
         ))
     })?;
     Ok(out)
+}
+
+/// Reconstruct an `ArtifactMeta` from the `X-Cook-*` response headers in a
+/// single round-trip. Called by `get_with_meta` before the body is consumed.
+///
+/// `content_hash` is REQUIRED (via `parse_content_hash`). All other fields
+/// default gracefully: `mode` → `ArtifactMeta::default_mode()` (0o644),
+/// `kind`/`target` → `None`, numeric fields → 0, string fields → "".
+/// Fields not transmitted as headers (`command_hash`, `env_contribution`,
+/// `seal_contribution`, `tags`, `consulted_env_keys`) use zero / empty-set
+/// defaults — they are diagnostic and not needed for restore.
+fn parse_meta(response: &ureq::Response) -> BackendResult<ArtifactMeta> {
+    let content_hash = parse_content_hash(response)?;
+
+    let mode = response
+        .header("X-Cook-Mode")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or_else(ArtifactMeta::default_mode);
+
+    let kind = response
+        .header("X-Cook-Kind")
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let target = response
+        .header("X-Cook-Symlink-Target")
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let recipe_namespace = response
+        .header("X-Cook-Recipe-Namespace")
+        .unwrap_or("")
+        .to_string();
+
+    let size_bytes = response
+        .header("X-Cook-Size-Bytes")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+
+    let schema_version = response
+        .header("X-Cook-Schema-Version")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    let output_index = response
+        .header("X-Cook-Output-Index")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    let output_path = response
+        .header("X-Cook-Output-Path")
+        .unwrap_or("")
+        .to_string();
+
+    Ok(ArtifactMeta {
+        recipe_namespace,
+        command_hash: 0,
+        env_contribution: 0,
+        seal_contribution: 0,
+        schema_version,
+        size_bytes,
+        tags: BTreeSet::new(),
+        consulted_env_keys: BTreeSet::new(),
+        output_index,
+        output_path,
+        content_hash,
+        kind,
+        mode,
+        target,
+    })
 }
 
 // ─── trait impl ───────────────────────────────────────────────────────────
@@ -391,20 +464,30 @@ impl CacheBackend for CloudBackend {
     }
 
     fn get(&self, key: &CloudKey) -> BackendResult<Option<Box<dyn Read + Send>>> {
+        Ok(self.get_with_meta(key)?.map(|(r, _)| r))
+    }
+
+    fn get_with_meta(
+        &self,
+        key: &CloudKey,
+    ) -> BackendResult<Option<(Box<dyn Read + Send>, ArtifactMeta)>> {
         let url = self.artifact_url(key);
         let auth = self.auth_header();
         retry_loop(&self.config, || {
             let req = self.client.get(&url).set("Authorization", &auth);
             match req.call() {
                 Ok(response) => {
-                    let expected = parse_content_hash(&response)?;
+                    // parse_meta borrows &response (headers), then into_reader
+                    // consumes it — both happen sequentially so the borrow ends
+                    // before the move. This is the single-round-trip design: meta
+                    // rides the same GET response headers as the body.
+                    let meta = parse_meta(&response)?;
                     let body = response.into_reader();
-                    // Wrap in VerifyingReader — same fail-closed semantics
-                    // as LocalBackend::get. Box<dyn Read + Send> is the
-                    // trait return; the reader is Send because both inner
-                    // (ureq's reader) and Sha256 are Send.
-                    Ok(Some(Box::new(VerifyingReader::new(body, expected))
-                        as Box<dyn Read + Send>))
+                    Ok(Some((
+                        Box::new(VerifyingReader::new(body, meta.content_hash))
+                            as Box<dyn Read + Send>,
+                        meta,
+                    )))
                 }
                 Err(ureq::Error::Status(404, _)) => Ok(None),
                 Err(e) => Err(map_ureq_error(e, "get")),
@@ -1026,6 +1109,76 @@ mod tests {
             Err(other) => panic!("expected BackendError::Other, got {other:?}"),
             Ok(_) => panic!("expected error, got success"),
         }
+    }
+
+    #[test]
+    fn put_headers_carry_mode_kind_target() {
+        let mut meta = sample_meta();
+        meta.mode = 0o755;
+        meta.kind = Some("symlink".into());
+        meta.target = Some("../sib".into());
+        let req = ureq::agent().put("http://x/");
+        let req = put_headers(req, "tok", &meta);
+        assert_eq!(req.header("X-Cook-Mode"), Some("493")); // 0o755 == 493 decimal
+        assert_eq!(req.header("X-Cook-Kind"), Some("symlink"));
+        assert_eq!(req.header("X-Cook-Symlink-Target"), Some("../sib"));
+    }
+
+    #[test]
+    fn get_with_meta_round_trips_mode_kind_target() {
+        let mut server = mockito::Server::new();
+        let bytes = b"";
+        let hash: [u8; 32] = <Sha256 as Digest>::digest(bytes).into();
+        let k = key(0x70);
+        let url_path = format!("/v1/artifacts/{}", hex::encode(k));
+
+        let m = server
+            .mock("GET", url_path.as_str())
+            .with_status(200)
+            .with_header("X-Cook-Content-Hash", &hex::encode(hash))
+            .with_header("X-Cook-Size-Bytes", "0")
+            .with_header("X-Cook-Schema-Version", "3")
+            .with_header("X-Cook-Recipe-Namespace", "cook/Cookfile::build")
+            .with_header("X-Cook-Output-Index", "0")
+            .with_header("X-Cook-Output-Path", "build/foo.o")
+            .with_header("X-Cook-Mode", "493")
+            .with_header("X-Cook-Kind", "symlink")
+            .with_header("X-Cook-Symlink-Target", "../sib")
+            .with_body(bytes)
+            .create();
+
+        let backend = make_backend(&server.url(), 0);
+        let (mut reader, meta) = backend.get_with_meta(&k).expect("get_with_meta ok").expect("present");
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).expect("read body");
+        assert_eq!(meta.mode, 0o755);
+        assert_eq!(meta.kind.as_deref(), Some("symlink"));
+        assert_eq!(meta.target.as_deref(), Some("../sib"));
+        assert_eq!(meta.schema_version, 3);
+        assert_eq!(meta.output_path, "build/foo.o");
+        m.assert();
+    }
+
+    #[test]
+    fn get_with_meta_defaults_mode_when_header_absent() {
+        let mut server = mockito::Server::new();
+        let bytes = b"hello";
+        let hash: [u8; 32] = <Sha256 as Digest>::digest(bytes).into();
+        let k = key(0x71);
+        let url_path = format!("/v1/artifacts/{}", hex::encode(k));
+
+        let _m = server
+            .mock("GET", url_path.as_str())
+            .with_status(200)
+            .with_header("X-Cook-Content-Hash", &hex::encode(hash))
+            .with_body(bytes)
+            .create();
+
+        let backend = make_backend(&server.url(), 0);
+        let (_reader, meta) = backend.get_with_meta(&k).expect("ok").expect("present");
+        assert_eq!(meta.mode, ArtifactMeta::default_mode()); // 0o644
+        assert!(meta.kind.is_none());
+        assert!(meta.target.is_none());
     }
 
     #[test]
