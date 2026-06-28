@@ -126,9 +126,19 @@ pub struct ArtifactMeta {
     /// Disambiguates the artifact body kind. `None` (or the default) is the
     /// legacy "file artifact" case. `Some("probe_value")` is the
     /// canonical-JSON probe-output artifact (CS-0074, encoding revised by
-    /// CS-0102).
+    /// CS-0102). `Some("symlink")` — target carried in `target`, no body.
+    /// `Some("dir")` — empty directory, no body. `Some("discovered_inputs")`
+    /// — manifest artifact whose body is a JSON path list (a later task).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// Unix file mode of the stored output (e.g. `0o755`). Defaults to
+    /// `0o644` for legacy sidecars and on Windows (mode-0755 parity handled
+    /// at restore). Applies to `File` and `Dir` kinds.
+    #[serde(default = "ArtifactMeta::default_mode")]
+    pub mode: u32,
+    /// Symlink target (workspace-relative), set only when `kind == "symlink"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 impl ArtifactMeta {
@@ -137,6 +147,11 @@ impl ArtifactMeta {
     /// pre-CS-0054 sidecars that lack the field.
     pub fn zero_content_hash() -> [u8; 32] {
         [0u8; 32]
+    }
+
+    /// Serde default for `mode`: regular-file 0644.
+    pub fn default_mode() -> u32 {
+        0o644
     }
 
     /// Convenience: construct a probe-value artifact meta with `kind = Some("probe_value")`.
@@ -580,6 +595,8 @@ mod tests {
             output_path: "probe.bin".into(),
             content_hash: ArtifactMeta::zero_content_hash(),
             kind: None,
+            mode: ArtifactMeta::default_mode(),
+            target: None,
         }
         .as_probe_value();
         assert_eq!(meta.kind.as_deref(), Some("probe_value"));
@@ -600,12 +617,40 @@ mod tests {
             output_path: "a.o".into(),
             content_hash: ArtifactMeta::zero_content_hash(),
             kind: None,
+            mode: ArtifactMeta::default_mode(),
+            target: None,
         };
         let s = serde_json::to_string(&meta).unwrap();
         assert!(!s.contains("kind"), "kind: None MUST be omitted from JSON: {s}");
     }
 
     // ---- end CS-0074 ----
+
+    // ---- COOK-180: mode + target fidelity tests ----
+
+    #[test]
+    fn artifact_meta_mode_and_symlink_target_round_trip() {
+        let json = minimal_meta_json(
+            r#", "mode": 493, "kind": "symlink", "target": "../sib""#,
+        );
+        let meta: ArtifactMeta = serde_json::from_str(&json).expect("parse");
+        assert_eq!(meta.mode, 0o755);
+        assert_eq!(meta.kind.as_deref(), Some("symlink"));
+        assert_eq!(meta.target.as_deref(), Some("../sib"));
+        let s = serde_json::to_string(&meta).expect("serialize");
+        let back: ArtifactMeta = serde_json::from_str(&s).expect("reparse");
+        assert_eq!(meta, back);
+    }
+
+    #[test]
+    fn artifact_meta_legacy_sidecar_defaults_mode_and_target() {
+        // A pre-fidelity sidecar lacks mode/target entirely.
+        let meta: ArtifactMeta = serde_json::from_str(&minimal_meta_json("")).expect("parse");
+        assert_eq!(meta.mode, 0o644);
+        assert!(meta.target.is_none());
+    }
+
+    // ---- end COOK-180 ----
 
     #[test]
     fn determinant_manifest_serializes_deterministically() {

@@ -2107,6 +2107,8 @@ pub fn execute_dag(
                         output_path: format!("probe:{}", probe_out.key),
                         content_hash: ArtifactMeta::zero_content_hash(),
                         kind: None,
+                        mode: ArtifactMeta::default_mode(),
+                        target: None,
                     }
                     .as_probe_value();
                     // COOK-168: publish-off / read-only client mode suppresses
@@ -2609,6 +2611,8 @@ fn publish_completion(
             // CS-0054: stamped by the backend on put.
             content_hash: ArtifactMeta::zero_content_hash(),
             kind: None,
+            mode: ArtifactMeta::default_mode(),
+            target: None,
         };
         if publish_to_backend {
             if let Err(e) = cook_cache::backend::put_bytes(
@@ -2646,6 +2650,8 @@ fn publish_completion(
                     // CS-0054: stamped by the backend on put.
                     content_hash: ArtifactMeta::zero_content_hash(),
                     kind: None,
+                    mode: ArtifactMeta::default_mode(),
+                    target: None,
                 };
                 if publish_to_backend {
                     if let Err(e) = cook_cache::backend::put_bytes(
@@ -3876,6 +3882,8 @@ mod tests {
             content_hash: cook_fingerprint::ArtifactMeta::zero_content_hash(),
             kind: None,
             seal_contribution: 0,
+            mode: cook_fingerprint::ArtifactMeta::default_mode(),
+            target: None,
         }
         .as_probe_value();
         cook_cache::backend::put_bytes(backend, fp, bytes, &mut meta)

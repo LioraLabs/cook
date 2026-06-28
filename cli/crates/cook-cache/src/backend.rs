@@ -500,6 +500,8 @@ mod tests {
             output_path: "build/foo.o".into(),
             content_hash: ArtifactMeta::zero_content_hash(),
             kind: None,
+            mode: ArtifactMeta::default_mode(),
+            target: None,
         }
     }
 

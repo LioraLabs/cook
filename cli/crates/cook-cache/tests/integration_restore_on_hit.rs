@@ -77,6 +77,8 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         output_path: "out.o".into(),
         content_hash: ArtifactMeta::zero_content_hash(),
         kind: None,
+        mode: ArtifactMeta::default_mode(),
+        target: None,
     };
     put_bytes(backend.as_ref(), &artifact_k, b"correct-bytes", &mut meta)
         .expect("seed put");
@@ -237,6 +239,8 @@ fn restore_rejects_tampered_backend_bytes() {
         output_path: "out.o".into(),
         content_hash: ArtifactMeta::zero_content_hash(),
         kind: None,
+        mode: ArtifactMeta::default_mode(),
+        target: None,
     };
     put_bytes(backend.as_ref(), &artifact_k, tampered, &mut meta)
         .expect("seed put with tampered bytes");

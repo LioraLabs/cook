@@ -1290,6 +1290,8 @@ fn evaluate_prepass_probe(
                         output_path: format!("probe:{key}"),
                         content_hash: cook_fingerprint::ArtifactMeta::zero_content_hash(),
                         kind: None,
+                        mode: cook_fingerprint::ArtifactMeta::default_mode(),
+                        target: None,
                     }
                     .as_probe_value();
                     // A cache PUT failure is non-fatal — the value is already in
