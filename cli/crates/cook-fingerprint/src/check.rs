@@ -339,6 +339,108 @@ pub fn needs_rebuild_cook(
     (RebuildResult::Skip, Some(updated))
 }
 
+/// Apply a Unix file `mode` to `abs`. On non-Unix this is a no-op that
+/// reports success (Windows mode parity — the rest of the codebase treats
+/// mode as advisory there). Returns false only on a real set-permissions
+/// failure.
+#[cfg(unix)]
+fn set_mode(abs: &Path, mode: u32) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(abs, std::fs::Permissions::from_mode(mode)).is_ok()
+}
+
+#[cfg(not(unix))]
+fn set_mode(abs: &Path, mode: u32) -> bool {
+    let _ = (abs, mode);
+    true
+}
+
+/// Create a symlink at `link` pointing to `target`. `anchor` is the restore
+/// boundary used by the path-traversal hardening — currently unused; the four
+/// traversal checks are wired in the next task. Returns false on failure.
+// hardening added in next task
+#[cfg(unix)]
+fn restore_symlink_checked(anchor: &Path, link: &Path, target: &str) -> bool {
+    let _ = anchor;
+    std::os::unix::fs::symlink(target, link).is_ok()
+}
+
+#[cfg(not(unix))]
+fn restore_symlink_checked(anchor: &Path, link: &Path, target: &str) -> bool {
+    let _ = (anchor, link, target);
+    false
+}
+
+/// Materialise one cached artifact at `abs`, faithful to its recorded kind +
+/// mode. `anchor` is the restore boundary for symlink hardening (wired in the
+/// next task). `expected_content_hash`, when `Some`, pins the restored *file*
+/// bytes to the locally-trusted `StepEntry` content hash (xxh3) BEFORE they
+/// touch the workspace — this is the warm-path defence against a shared backend
+/// that rewrites BOTH the artifact bytes and its sidecar (the both-rewritten
+/// case the sidecar `VerifyingReader` deliberately leaves out of scope, see
+/// `ArtifactMeta::content_hash` / CS-0054 §2; cf. spec §8.6 cache integrity).
+/// The cold `fetch_by_key` path has no local record to pin against and passes
+/// `None`, relying solely on `get_with_meta`'s `VerifyingReader` — unchanged
+/// from prior behaviour. Returns false on any miss/error (caller falls back to
+/// rebuild).
+fn restore_one(
+    backend: &dyn crate::backend::CacheBackend,
+    artifact_k: &crate::backend::CloudKey,
+    abs: &Path,
+    anchor: &Path,
+    expected_content_hash: Option<u64>,
+) -> bool {
+    // `get_with_meta` returns a `VerifyingReader`: draining it surfaces any
+    // bytes-vs-sidecar tampering as an `io::Error` at EOF (treated as a miss).
+    let (mut reader, meta) = match backend.get_with_meta(artifact_k) {
+        Ok(Some(t)) => t,
+        _ => return false,
+    };
+    if let Some(parent) = abs.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return false;
+        }
+    }
+    match meta.kind.as_deref() {
+        Some("dir") => {
+            if std::fs::create_dir_all(abs).is_err() {
+                return false;
+            }
+            set_mode(abs, meta.mode)
+        }
+        Some("symlink") => {
+            let target = match meta.target.as_deref() {
+                Some(t) => t,
+                None => return false,
+            };
+            restore_symlink_checked(anchor, abs, target)
+        }
+        _ => {
+            let mut bytes = Vec::new();
+            if std::io::Read::read_to_end(&mut reader, &mut bytes).is_err() {
+                return false;
+            }
+            // Warm-path integrity anchor (see fn docs): verify against the
+            // locally-trusted record BEFORE the atomic write so tampered
+            // bytes never reach the workspace, even transiently.
+            if let Some(expected) = expected_content_hash {
+                if xxhash_rust::xxh3::xxh3_64(&bytes) != expected {
+                    return false;
+                }
+            }
+            // Atomic write via tmp + rename.
+            let tmp = abs.with_extension("cook.tmp");
+            if std::fs::write(&tmp, &bytes).is_err() {
+                return false;
+            }
+            if std::fs::rename(&tmp, abs).is_err() {
+                return false;
+            }
+            set_mode(abs, meta.mode)
+        }
+    }
+}
+
 /// Attempt to restore output bytes from the backend. Returns true if every
 /// index in `needs_restore` was fetched and written to disk; any miss aborts
 /// the attempt and the caller falls back to rebuild.
@@ -362,44 +464,38 @@ fn try_restore(
     };
     let cloud_k = crate::backend::cloud_key(&key_inputs);
 
+    // Two-pass restore (symlink-last). Pass 1 attempts every needed index;
+    // misses are retried in pass 2 so a symlink whose target was materialised
+    // earlier in pass 1 now resolves. Integrity for each restored file is
+    // pinned to the locally-trusted `StepEntry` hash via `restore_one`'s
+    // `expected_content_hash` (spec §8.6) — the warm-path defence the cold
+    // `fetch_by_key` path cannot provide.
+    let mut pending: Vec<usize> = Vec::new();
     for &idx in needs_restore {
         let path = current_outputs[idx];
         let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
-        let mut reader = match ctx.backend.get(&artifact_k) {
-            Ok(Some(r)) => r,
-            _ => return false,
-        };
-        // Drain the streaming reader. The CS-0054 / CS-0056 streaming
-        // verifier raises `io::Error(InvalidData)` at EOF on hash
-        // mismatch; we treat any read failure (including the verifier's
-        // mismatch) as a miss and fall through to rebuild.
-        let mut bytes = Vec::new();
-        if std::io::Read::read_to_end(&mut reader, &mut bytes).is_err() {
-            return false;
-        }
-        // Spec §8.6 cache integrity: a restore MUST verify backend bytes
-        // against the recorded fingerprint and treat any mismatch as a
-        // miss. Without this, a remote / shared backend could feed
-        // attacker-controlled bytes into the workspace under a cache hit.
-        // For LocalBackend the check is redundant; for any networked
-        // backend (Cook Cloud, CI artifact stores, etc.) it is the only
-        // line of defence between `cook` and a supply-chain compromise.
-        let bytes_hash = xxhash_rust::xxh3::xxh3_64(&bytes);
-        if bytes_hash != entry.outputs[idx].hash {
-            return false;
-        }
         let abs = working_dir.join(path);
-        if let Some(parent) = abs.parent() {
-            if std::fs::create_dir_all(parent).is_err() {
-                return false;
-            }
+        if !restore_one(
+            ctx.backend,
+            &artifact_k,
+            &abs,
+            working_dir,
+            Some(entry.outputs[idx].hash),
+        ) {
+            pending.push(idx);
         }
-        // Atomic write via tmp + rename.
-        let tmp = abs.with_extension("cook.tmp");
-        if std::fs::write(&tmp, &bytes).is_err() {
-            return false;
-        }
-        if std::fs::rename(&tmp, &abs).is_err() {
+    }
+    for idx in pending {
+        let path = current_outputs[idx];
+        let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
+        let abs = working_dir.join(path);
+        if !restore_one(
+            ctx.backend,
+            &artifact_k,
+            &abs,
+            working_dir,
+            Some(entry.outputs[idx].hash),
+        ) {
             return false;
         }
     }
@@ -448,32 +544,23 @@ pub fn fetch_by_key(
         sorted_input_content_hashes,
     };
     let cloud_k = crate::backend::cloud_key(&key_inputs);
+    // Two-pass restore (symlink-last), mirroring `try_restore`. The cold path
+    // has no local `StepEntry` to pin against, so `expected_content_hash` is
+    // `None`: integrity rests solely on `get_with_meta`'s `VerifyingReader`
+    // (CS-0054 verify-on-restore) — unchanged from the prior behaviour.
+    let mut pending: Vec<usize> = Vec::new();
     for (idx, path) in output_paths.iter().enumerate() {
         let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
-        let mut reader = match ctx.backend.get(&artifact_k) {
-            Ok(Some(r)) => r,
-            _ => return false,
-        };
-        // Drain the streaming reader (CS-0054 verify-on-restore): the streaming
-        // verifier raises io::Error(InvalidData) at EOF on hash mismatch; treat
-        // any read failure as a miss.
-        let mut bytes = Vec::new();
-        if std::io::Read::read_to_end(&mut reader, &mut bytes).is_err() {
-            return false;
-        }
         let abs = working_dir.join(path);
-        if let Some(parent) = abs.parent() {
-            if std::fs::create_dir_all(parent).is_err() {
-                return false;
-            }
+        if !restore_one(ctx.backend, &artifact_k, &abs, working_dir, None) {
+            pending.push(idx);
         }
-        // Atomic write via tmp + rename (mirrors try_restore): never expose a
-        // torn output to a concurrent reader.
-        let tmp = abs.with_extension("cook.tmp");
-        if std::fs::write(&tmp, &bytes).is_err() {
-            return false;
-        }
-        if std::fs::rename(&tmp, &abs).is_err() {
+    }
+    for idx in pending {
+        let path = output_paths[idx];
+        let artifact_k = crate::backend::artifact_key(&cloud_k, idx as u32, path);
+        let abs = working_dir.join(path);
+        if !restore_one(ctx.backend, &artifact_k, &abs, working_dir, None) {
             return false;
         }
     }
@@ -1076,6 +1163,160 @@ mod tests {
 
         // Augmentation no-ops; current=[src.c] vs entry=[src.c, hdr.h] → InputSetChanged.
         assert!(matches!(result, RebuildResult::Rebuild(RebuildReason::InputSetChanged)));
+    }
+
+    // -------------------------------------------------------------------------
+    // COOK-180: restore_one kind-dispatch + symlink-last ordering
+    // -------------------------------------------------------------------------
+
+    /// In-crate fake `CacheBackend` for unit-testing `restore_one`. A real
+    /// `LocalBackend` lives in `cook-cache`, but cook-cache dev-depends on
+    /// cook-fingerprint which produces two distinct crate instances in the
+    /// test dependency graph — so `cook_cache::LocalBackend` implements a
+    /// *different* `CacheBackend` trait than `crate::backend::CacheBackend`.
+    /// This minimal in-memory fake speaks the in-crate trait. Integrity
+    /// (VerifyingReader) is exercised end-to-end by cook-cache's integration
+    /// restore tests; here we only need faithful kind/mode/target dispatch.
+    #[derive(Default)]
+    struct FakeBackend {
+        store: std::sync::Mutex<
+            std::collections::HashMap<crate::backend::CloudKey, (Vec<u8>, crate::backend::ArtifactMeta)>,
+        >,
+    }
+
+    impl FakeBackend {
+        fn insert(&self, key: crate::backend::CloudKey, bytes: Vec<u8>, meta: crate::backend::ArtifactMeta) {
+            self.store.lock().unwrap().insert(key, (bytes, meta));
+        }
+    }
+
+    impl crate::backend::CacheBackend for FakeBackend {
+        fn batch_query(
+            &self,
+            keys: &[crate::backend::CloudKey],
+        ) -> crate::backend::BackendResult<std::collections::BTreeSet<crate::backend::CloudKey>> {
+            let store = self.store.lock().unwrap();
+            Ok(keys.iter().filter(|k| store.contains_key(*k)).copied().collect())
+        }
+        fn get(
+            &self,
+            key: &crate::backend::CloudKey,
+        ) -> crate::backend::BackendResult<Option<Box<dyn std::io::Read + Send>>> {
+            Ok(self.get_with_meta(key)?.map(|(r, _)| r))
+        }
+        fn get_with_meta(
+            &self,
+            key: &crate::backend::CloudKey,
+        ) -> crate::backend::BackendResult<Option<(Box<dyn std::io::Read + Send>, crate::backend::ArtifactMeta)>>
+        {
+            Ok(self
+                .store
+                .lock()
+                .unwrap()
+                .get(key)
+                .map(|(b, m)| {
+                    let r: Box<dyn std::io::Read + Send> = Box::new(std::io::Cursor::new(b.clone()));
+                    (r, m.clone())
+                }))
+        }
+        fn put(
+            &self,
+            _key: &crate::backend::CloudKey,
+            _reader: &mut dyn std::io::Read,
+            _meta: &mut crate::backend::ArtifactMeta,
+        ) -> crate::backend::BackendResult<()> {
+            Ok(())
+        }
+        fn delete(&self, _key: &crate::backend::CloudKey) -> crate::backend::BackendResult<()> {
+            Ok(())
+        }
+        fn health(&self) -> crate::backend::BackendResult<()> {
+            Ok(())
+        }
+        fn put_manifest(
+            &self,
+            _key: &crate::backend::CloudKey,
+            _manifest: &crate::backend::DeterminantManifest,
+        ) -> crate::backend::BackendResult<()> {
+            Ok(())
+        }
+        fn get_manifest(
+            &self,
+            _key: &crate::backend::CloudKey,
+        ) -> crate::backend::BackendResult<Option<crate::backend::DeterminantManifest>> {
+            Ok(None)
+        }
+    }
+
+    fn fake_meta(
+        kind: Option<String>,
+        mode: u32,
+        target: Option<String>,
+        bytes: &[u8],
+    ) -> crate::backend::ArtifactMeta {
+        use crate::backend::ArtifactMeta;
+        use std::collections::BTreeSet;
+        let content_hash = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(bytes);
+            h.finalize().into()
+        };
+        ArtifactMeta {
+            recipe_namespace: "t".into(),
+            command_hash: 0,
+            env_contribution: 0,
+            seal_contribution: 0,
+            schema_version: CACHE_VERSION,
+            size_bytes: bytes.len() as u64,
+            tags: BTreeSet::new(),
+            consulted_env_keys: BTreeSet::new(),
+            output_index: 0,
+            output_path: String::new(),
+            content_hash,
+            kind,
+            mode,
+            target,
+        }
+    }
+
+    #[test]
+    fn restore_one_materialises_file_and_symlink() {
+        use crate::backend::ArtifactMeta;
+
+        let backend = FakeBackend::default();
+
+        let file_key: crate::backend::CloudKey = [1u8; 32];
+        let symlink_key: crate::backend::CloudKey = [2u8; 32];
+
+        let body = b"#!/bin/sh\n";
+        backend.insert(file_key, body.to_vec(), fake_meta(None, 0o755, None, body));
+        backend.insert(
+            symlink_key,
+            Vec::new(),
+            fake_meta(Some("symlink".into()), ArtifactMeta::default_mode(), Some("run".into()), b""),
+        );
+
+        let tmp = tempfile::tempdir().unwrap();
+        let wd = tmp.path().join("wd");
+        std::fs::create_dir_all(&wd).unwrap();
+
+        assert!(restore_one(&backend, &file_key, &wd.join("bin/run"), &wd, None));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let m = std::fs::metadata(wd.join("bin/run")).unwrap();
+            assert_eq!(m.permissions().mode() & 0o777, 0o755);
+        }
+
+        #[cfg(unix)]
+        {
+            assert!(restore_one(&backend, &symlink_key, &wd.join("bin/run-link"), &wd, None));
+            assert!(std::fs::symlink_metadata(wd.join("bin/run-link"))
+                .unwrap()
+                .file_type()
+                .is_symlink());
+        }
     }
 
     fn install_real_parser_once() {
