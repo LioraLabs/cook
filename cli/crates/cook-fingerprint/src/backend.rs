@@ -259,6 +259,17 @@ pub trait CacheBackend: Send + Sync {
     /// shared store.
     fn get(&self, key: &CloudKey) -> BackendResult<Option<Box<dyn Read + Send>>>;
 
+    /// Like `get`, but also returns the artifact's `ArtifactMeta`. Restore
+    /// needs the `kind`/`mode`/`target` BEFORE deciding how to materialise the
+    /// output (a symlink/dir has no usable body). Default impl is unsupported;
+    /// concrete backends override.
+    fn get_with_meta(
+        &self,
+        _key: &CloudKey,
+    ) -> BackendResult<Option<(Box<dyn Read + Send>, ArtifactMeta)>> {
+        Err(BackendError::Other("get_with_meta unsupported".into()))
+    }
+
     /// Upload artifact bytes with metadata, streaming from `reader`.
     ///
     /// Implementations MUST stream the bytes from `reader` to a temporary

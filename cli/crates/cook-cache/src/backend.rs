@@ -182,6 +182,13 @@ impl CacheBackend for LocalBackend {
     }
 
     fn get(&self, key: &CloudKey) -> BackendResult<Option<Box<dyn Read + Send>>> {
+        Ok(self.get_with_meta(key)?.map(|(r, _)| r))
+    }
+
+    fn get_with_meta(
+        &self,
+        key: &CloudKey,
+    ) -> BackendResult<Option<(Box<dyn Read + Send>, ArtifactMeta)>> {
         let path = self.path_for(key);
 
         // Read the sidecar first — without a recorded `content_hash` we
@@ -247,7 +254,7 @@ impl CacheBackend for LocalBackend {
             }
             Err(e) => return Err(BackendError::Other(format!("open {}: {e}", path.display()))),
         };
-        Ok(Some(Box::new(VerifyingReader::new(file, meta.content_hash))))
+        Ok(Some((Box::new(VerifyingReader::new(file, meta.content_hash)), meta)))
     }
 
     fn put(
@@ -1167,5 +1174,27 @@ mod tests {
         backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
         let prov = backend.path_for(&k).with_extension("provenance.json");
         assert!(prov.exists(), "manifest sidecar must exist at {}", prov.display());
+    }
+
+    // ─── COOK-180: get_with_meta seam ───────────────────────────────────────
+
+    #[test]
+    fn local_get_with_meta_returns_mode_and_kind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let be = LocalBackend::new(tmp.path().to_path_buf());
+        let k = [7u8; 32];
+        let mut meta = sample_meta();
+        meta.mode = 0o755;
+        meta.kind = Some("symlink".into());
+        meta.target = Some("../sib".into());
+        put_bytes(&be, &k, b"", &mut meta).unwrap();
+
+        let (mut reader, got) = be.get_with_meta(&k).unwrap().expect("hit");
+        assert_eq!(got.mode, 0o755);
+        assert_eq!(got.kind.as_deref(), Some("symlink"));
+        assert_eq!(got.target.as_deref(), Some("../sib"));
+        let mut body = Vec::new();
+        std::io::Read::read_to_end(&mut reader, &mut body).unwrap();
+        assert!(body.is_empty());
     }
 }
