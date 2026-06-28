@@ -370,7 +370,7 @@ fn local_step_hit(
     // them to needs_rebuild_cook would trip OutputMissing → spurious miss. Mirror
     // check_node_cache (executor.rs:654-664) by substituting the StepEntry's
     // recorded concrete output paths when any declared output is a glob.
-    let any_glob = meta.output_paths.iter().any(|s| cook_fingerprint::has_glob_meta(s));
+    let any_glob = meta.output_paths.iter().any(|s| cook_fingerprint::is_terminal_output(s));
     let current_outputs_storage: Vec<String> = if any_glob {
         entry.outputs.iter().map(|f| f.path.clone()).collect()
     } else {

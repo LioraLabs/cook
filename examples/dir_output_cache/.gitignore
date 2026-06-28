@@ -1,0 +1,3 @@
+# Runtime-only artifacts produced by verify.sh
+/out/
+/.cook/

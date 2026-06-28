@@ -1,6 +1,7 @@
 //! CS-0085 §22.1.2 terminal-output rule: a recipe whose outputs[] contains
-//! a glob pattern MUST NOT have any of those patterns syntactically match a
-//! literal inputs[] entry declared by any other recipe in the same workspace.
+//! a glob pattern OR a directory output (trailing `/`) MUST NOT have any of
+//! those patterns syntactically match a literal inputs[] entry declared by any
+//! other recipe in the same workspace.
 //! Detection is purely syntactic at register time (no filesystem access).
 
 use std::fs;
@@ -39,6 +40,34 @@ recipe b
             inputs  = { "build/foo.o" },
             outputs = { "downstream.bin" },
             command = "cat build/foo.o > downstream.bin",
+        })
+    }
+"#,
+    )
+    .unwrap();
+    fs::write(wd.join("src.c"), b"x").unwrap();
+}
+
+/// Cookfile where recipe `a` has a directory output `pkg/` and recipe `b`
+/// lists `pkg/ppu_core.js` as a literal input. This MUST fail at register time.
+fn write_cookfile_dir_then_file_input(wd: &std::path::Path) {
+    fs::write(
+        wd.join("Cookfile"),
+        r#"recipe a
+    >>{
+        cook.add_unit({
+            inputs  = { "src.c" },
+            outputs = { "pkg/" },
+            command = "mkdir -p pkg && cp src.c pkg/ppu_core.js",
+        })
+    }
+
+recipe b
+    >>{
+        cook.add_unit({
+            inputs  = { "pkg/ppu_core.js" },
+            outputs = { "downstream.bin" },
+            command = "cat pkg/ppu_core.js > downstream.bin",
         })
     }
 "#,
@@ -146,5 +175,52 @@ fn cross_recipe_requires_edge_to_globbed_output_is_allowed() {
         out.status.success(),
         "a requires-only edge to a globbed-output recipe MUST be allowed; stderr:\n{}",
         String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn literal_input_inside_directory_output_is_rejected() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let wd = tmp.path();
+    write_cookfile_dir_then_file_input(wd);
+    isolate_cache(wd);
+
+    let out = std::process::Command::new(cook_binary())
+        .arg("+b")
+        .current_dir(wd)
+        .output()
+        .expect("cook invocation");
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let combined = format!("{stdout}{stderr}");
+
+    assert!(
+        !out.status.success(),
+        "register-time error MUST fail the run; stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    // The diagnostic must be the register-time terminal-output cross-recipe
+    // edge error, NOT a runtime file-not-found failure.  The engine renders
+    // GlobbedOutputCrossRecipeEdge with the phrase "file-level cross-recipe
+    // edges to globbed outputs are not supported".
+    assert!(
+        combined.contains("file-level cross-recipe edges"),
+        "must emit the register-time terminal-output diagnostic, not a runtime error: {combined}"
+    );
+    assert!(
+        combined.contains("recipe 'a'") || combined.contains("upstream") || combined.contains("'a'"),
+        "diagnostic must name upstream recipe 'a': {combined}"
+    );
+    assert!(
+        combined.contains("recipe 'b'") || combined.contains("downstream") || combined.contains("'b'"),
+        "diagnostic must name downstream recipe 'b': {combined}"
+    );
+    assert!(
+        combined.contains("pkg/ppu_core.js"),
+        "diagnostic must name the offending input path 'pkg/ppu_core.js': {combined}"
+    );
+    assert!(
+        combined.contains("pkg/"),
+        "diagnostic must name the matching pattern 'pkg/': {combined}"
     );
 }

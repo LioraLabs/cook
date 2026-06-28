@@ -164,17 +164,11 @@ pub fn rerun_outputs_in_sandbox(
     }
 
     let mut out = BTreeMap::new();
-    for decl in declared_outputs {
-        let resolved: Vec<String> = if cook_fingerprint::has_glob_meta(decl) {
-            cook_fingerprint::resolve_glob(sandbox.path(), decl).into_iter().collect()
-        } else {
-            vec![decl.clone()]
-        };
-        for rel in resolved {
-            let abs = sandbox.path().join(&rel);
-            if let Some(h) = cook_fingerprint::hash_file(&abs) {
-                out.insert(rel, h);
-            }
+    let resolved = crate::executor::resolve_output_paths(declared_outputs, sandbox.path());
+    for rel in resolved {
+        let abs = sandbox.path().join(&rel);
+        if let Some(h) = cook_fingerprint::hash_file(&abs) {
+            out.insert(rel, h);
         }
     }
     Ok(out)

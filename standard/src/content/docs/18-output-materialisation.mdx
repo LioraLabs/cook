@@ -20,3 +20,7 @@ This rule turns the common `mkdir -p $<out.dir>` boilerplate into a no-op; autho
 ### Note 18.1.2
 
 The pre-step directory creation is the engine acting on a path that the register phase has already declared as an output of the unit. It is not a Cook Lua API call and is therefore independent of the `fs.*` sandbox in §{lua.fs-helpers} (CS-0045). Out-of-project output paths are governed by the cache contract in §{exec.cache} and the path-resolution rules in §{exec.ws.determination}; this rule does not relax them.
+
+### Note 18.1.3
+
+For a directory output (an `outputs[]` entry ending in `/`, §{exec.cache.output-globs}), the parent-directory-creation rule applies by treating `dir` itself as the path whose parent is ensured; the directory output's own root (`dir/`) is created by the producing command, not by this rule.

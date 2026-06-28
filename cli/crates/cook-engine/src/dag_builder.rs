@@ -557,15 +557,18 @@ pub(crate) fn check_globbed_output_cross_recipe_edges(
 ) -> Result<(), EngineError> {
     use globset::Glob;
 
-    // Collect globbed output patterns per recipe name. Use BTreeMap for
-    // deterministic iteration order so the first error emitted is stable.
+    // Collect terminal output patterns per recipe name. Terminal outputs are
+    // glob patterns (has_glob_meta) AND directory outputs (trailing `/`); both
+    // are "build-owned" and must not be referenced as literal file inputs by
+    // other recipes.  Use BTreeMap for deterministic iteration order so the
+    // first error emitted is stable.
     let mut globbed_outputs_by_recipe: std::collections::BTreeMap<&str, Vec<&str>> =
         std::collections::BTreeMap::new();
     for r in recipes {
         for unit in &r.units {
             if let Some(meta) = &unit.cache_meta {
                 for entry in &meta.output_paths {
-                    if cook_fingerprint::has_glob_meta(entry) {
+                    if cook_fingerprint::is_terminal_output(entry) {
                         globbed_outputs_by_recipe
                             .entry(r.recipe_name.as_str())
                             .or_default()
@@ -594,12 +597,26 @@ pub(crate) fn check_globbed_output_cross_recipe_edges(
     // applies before passing patterns to `glob` 0.3. Do not add
     // `normalize_glob_pattern` here — it would either be a no-op or weaken
     // matching against legitimate paths.
+    //
+    // Directory-output normalisation: a trailing-`/` entry such as `"pkg/"`
+    // has no glob metacharacter, so `Glob::new("pkg/")` would only match the
+    // literal path `"pkg/"` — not files inside the directory. Expand it to
+    // `"pkg/**"` so that any literal path under the subtree is matched.  The
+    // raw entry string (`"pkg/"`) is kept for the diagnostic message so the
+    // user sees the pattern they actually wrote in their Cookfile.
     let matchers: Vec<(&str, Vec<(&str, globset::GlobMatcher)>)> = globbed_outputs_by_recipe
         .iter()
         .map(|(name, patterns)| {
             let built: Vec<(&str, globset::GlobMatcher)> = patterns
                 .iter()
-                .filter_map(|p| Glob::new(p).ok().map(|g| (*p, g.compile_matcher())))
+                .filter_map(|p| {
+                    let pat = if p.ends_with('/') {
+                        format!("{p}**")
+                    } else {
+                        (*p).to_string()
+                    };
+                    Glob::new(&pat).ok().map(|g| (*p, g.compile_matcher()))
+                })
                 .collect();
             (*name, built)
         })

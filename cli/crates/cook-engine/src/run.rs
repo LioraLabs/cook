@@ -167,8 +167,9 @@ fn collect_test_file_inputs(
             continue;
         };
         for out in &meta.output_paths {
-            if cook_fingerprint::has_glob_meta(out) {
-                if let Ok(g) = globset::Glob::new(out) {
+            if cook_fingerprint::is_terminal_output(out) {
+                let pat = if out.ends_with('/') { format!("{out}**") } else { out.clone() };
+                if let Ok(g) = globset::Glob::new(&pat) {
                     glob_outputs.push((node.working_dir.clone(), g.compile_matcher()));
                 }
             } else {

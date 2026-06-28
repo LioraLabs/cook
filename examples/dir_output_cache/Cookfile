@@ -1,0 +1,5 @@
+recipe gen
+    ingredients "gen.sh" "src/**/*"
+    cook "out/" {
+        sh gen.sh v1
+    }

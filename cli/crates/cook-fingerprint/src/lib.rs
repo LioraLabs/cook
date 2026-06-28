@@ -135,6 +135,61 @@ pub fn has_glob_meta(s: &str) -> bool {
     s.bytes().any(|b| matches!(b, b'*' | b'?' | b'['))
 }
 
+/// A directory output (CS-0119): a trailing slash declares that Cook owns the
+/// entire subtree rooted here. Its concrete file set is known only after the
+/// command runs, so it is a terminal output like a glob.
+pub fn is_dir_output(s: &str) -> bool {
+    s.ends_with('/')
+}
+
+/// A non-literal output entry whose concrete file set is resolved only after the
+/// command runs: a glob pattern (CS-0085) or a directory output (CS-0119).
+pub fn is_terminal_output(s: &str) -> bool {
+    has_glob_meta(s) || is_dir_output(s)
+}
+
+/// Reconcile a build-owned directory output (CS-0119) so the subtree rooted at
+/// `working_dir/root` contains exactly `kept` (paths relative to `working_dir`,
+/// in the same form `resolve_glob` returns). Deletes every regular file under the
+/// subtree not in `kept`, then prunes directories left empty. Deletion is bounded
+/// strictly to the subtree; the root directory itself is preserved.
+pub fn reconcile_dir_output(working_dir: &Path, root: &str, kept: &BTreeSet<String>) {
+    let root = root.trim_end_matches('/');
+    let present = resolve_glob(working_dir, &format!("{root}/**/*"));
+    for rel in &present {
+        if !kept.contains(rel) {
+            let _ = std::fs::remove_file(working_dir.join(rel));
+        }
+    }
+    prune_empty_dirs(&working_dir.join(root));
+}
+
+/// Recursively remove empty subdirectories of `dir`. Returns true if `dir` is
+/// empty after the sweep. `dir` itself is not removed by this call (its parent
+/// decides), so the directory-output root is preserved. Symbolic links are
+/// never followed (`symlink_metadata`): a symlinked directory is treated as a
+/// leaf entry, so reconciliation cannot recurse outside the subtree (COOK-109).
+fn prune_empty_dirs(dir: &Path) -> bool {
+    let mut empty = true;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.filter_map(Result::ok) {
+            let p = e.path();
+            // symlink_metadata: do NOT follow links when classifying.
+            let is_real_dir = matches!(std::fs::symlink_metadata(&p), Ok(m) if m.is_dir());
+            if is_real_dir {
+                if prune_empty_dirs(&p) {
+                    let _ = std::fs::remove_dir(&p);
+                } else {
+                    empty = false;
+                }
+            } else {
+                empty = false;
+            }
+        }
+    }
+    empty
+}
+
 /// Helper to resolve a glob pattern into a set of files.
 ///
 /// Sub-directory matches are dropped (CS-0064): every consumer of this
@@ -352,5 +407,61 @@ mod tests {
             compute_test_fingerprint(&payload, &inputs_b),
             "cook_outputs insertion order must not affect fingerprint"
         );
+    }
+
+    #[test]
+    fn reconcile_dir_output_deletes_strays_keeps_set_prunes_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wd = tmp.path();
+        std::fs::create_dir_all(wd.join("pkg/sub")).unwrap();
+        std::fs::write(wd.join("pkg/a.js"), b"a").unwrap();        // kept
+        std::fs::write(wd.join("pkg/STRAY.txt"), b"x").unwrap();   // delete
+        std::fs::write(wd.join("pkg/sub/old.wasm"), b"o").unwrap();// delete -> sub becomes empty
+
+        let kept: std::collections::BTreeSet<String> =
+            ["pkg/a.js".to_string()].into_iter().collect();
+        reconcile_dir_output(wd, "pkg", &kept);
+
+        assert!(wd.join("pkg/a.js").exists());
+        assert!(!wd.join("pkg/STRAY.txt").exists());
+        assert!(!wd.join("pkg/sub/old.wasm").exists());
+        assert!(!wd.join("pkg/sub").exists());   // pruned empty dir
+        assert!(wd.join("pkg").exists());        // root dir preserved
+    }
+
+    #[test]
+    fn reconcile_dir_output_trailing_slash_root_works_identically() {
+        // A caller that passes "pkg/" (with trailing slash) must behave
+        // identically to "pkg" — stray deleted, kept file preserved, empty
+        // subdirectory pruned.
+        let tmp = tempfile::tempdir().unwrap();
+        let wd = tmp.path();
+        std::fs::create_dir_all(wd.join("pkg/sub")).unwrap();
+        std::fs::write(wd.join("pkg/a.js"), b"a").unwrap();        // kept
+        std::fs::write(wd.join("pkg/STRAY.txt"), b"x").unwrap();   // delete
+        std::fs::write(wd.join("pkg/sub/old.wasm"), b"o").unwrap();// delete -> sub becomes empty
+
+        let kept: std::collections::BTreeSet<String> =
+            ["pkg/a.js".to_string()].into_iter().collect();
+        // Pass root with trailing slash — must behave the same as "pkg".
+        reconcile_dir_output(wd, "pkg/", &kept);
+
+        assert!(wd.join("pkg/a.js").exists());
+        assert!(!wd.join("pkg/STRAY.txt").exists());
+        assert!(!wd.join("pkg/sub/old.wasm").exists());
+        assert!(!wd.join("pkg/sub").exists());   // pruned empty dir
+        assert!(wd.join("pkg").exists());        // root dir preserved
+    }
+
+    #[test]
+    fn terminal_output_covers_globs_and_dir_outputs() {
+        assert!(is_dir_output("pkg/"));
+        assert!(!is_dir_output("pkg"));
+        assert!(!is_dir_output("pkg/file.js"));
+
+        assert!(is_terminal_output("pkg/"));        // directory output (CS-0119)
+        assert!(is_terminal_output("out/*.o"));     // glob (CS-0085)
+        assert!(is_terminal_output("a/**"));        // glob
+        assert!(!is_terminal_output("build/app"));  // literal
     }
 }

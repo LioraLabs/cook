@@ -1,0 +1,4 @@
+recipe wasm
+    cook "web/src/wasm/pkg/" {
+        wasm-pack build crates/ppu-core --target web --out-dir ../../web/src/wasm/pkg
+    }

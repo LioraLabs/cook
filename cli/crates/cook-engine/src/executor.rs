@@ -204,6 +204,9 @@ fn normalize_glob_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {
         std::borrow::Cow::Borrowed("**/*")
     } else if let Some(prefix) = pattern.strip_suffix("/**") {
         std::borrow::Cow::Owned(format!("{prefix}/**/*"))
+    } else if let Some(prefix) = pattern.strip_suffix('/') {
+        // CS-0119: a directory output `dir/` owns the whole subtree.
+        std::borrow::Cow::Owned(format!("{prefix}/**/*"))
     } else {
         std::borrow::Cow::Borrowed(pattern)
     }
@@ -229,7 +232,7 @@ pub(crate) fn resolve_output_paths(
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::with_capacity(declared.len());
     for entry in declared {
-        if cook_fingerprint::has_glob_meta(entry) {
+        if cook_fingerprint::is_terminal_output(entry) {
             let normalized = normalize_glob_pattern(entry);
             for resolved in cook_fingerprint::resolve_glob(working_dir, normalized.as_ref()) {
                 if seen.insert(resolved.clone()) {
@@ -657,7 +660,7 @@ pub fn execute_dag(
         // paths rather than the raw pattern strings.  Pattern strings don't
         // exist on disk, so passing them directly to needs_rebuild_cook would
         // trigger OutputMissing and force an unnecessary rebuild on every run.
-        let any_glob = meta.output_paths.iter().any(|s| cook_fingerprint::has_glob_meta(s));
+        let any_glob = meta.output_paths.iter().any(|s| cook_fingerprint::is_terminal_output(s));
         let current_outputs_storage: Vec<String> = if any_glob && entry.is_some() {
             entry
                 .unwrap()
@@ -696,6 +699,22 @@ pub fn execute_dag(
             meta.record,
         );
         if matches!(result, RebuildResult::Skip) {
+            // CS-0119: on a cache hit, reconcile directory outputs to exactly
+            // the recorded set so a hit is byte-identical to a fresh build
+            // (strays dropped into the dir between runs are swept out).
+            if let Some(ref e) = updated {
+                let kept: std::collections::BTreeSet<String> =
+                    e.outputs.iter().map(|r| r.path.clone()).collect();
+                for entry in &meta.output_paths {
+                    if let Some(root) = entry.strip_suffix('/') {
+                        cook_fingerprint::reconcile_dir_output(
+                            &work_node.working_dir,
+                            root,
+                            &kept,
+                        );
+                    }
+                }
+            }
             if let Some(updated_entry) = updated {
                 cm.update_step(&meta.recipe_name, &meta.cache_key, updated_entry);
             }
@@ -1414,6 +1433,28 @@ pub fn execute_dag(
                         cancel_subtree(dag, dep_id, cancelled, event_tx, trackers, &payload.display_name(), blocked_results);
                     }
                     return 0;
+                }
+
+                // CS-0119: build-owned pre-clean — before the command runs,
+                // empty any declared directory outputs so the post-execution
+                // resolve_output_paths sees only what THIS invocation produced.
+                // Without this, files from a previous build that the new command
+                // no longer writes would survive as orphans.
+                if let Some(meta) = &work_node.cache_meta {
+                    for entry in &meta.output_paths {
+                        if let Some(root) = entry.strip_suffix('/') {
+                            let dir = work_node.working_dir.join(root);
+                            if dir.is_dir() {
+                                let empty: std::collections::BTreeSet<String> =
+                                    std::collections::BTreeSet::new();
+                                cook_fingerprint::reconcile_dir_output(
+                                    &work_node.working_dir,
+                                    root,
+                                    &empty,
+                                );
+                            }
+                        }
+                    }
                 }
 
                 // Convert BTreeMap env_vars to HashMap for WorkItem
@@ -2461,6 +2502,12 @@ fn publish_completion(
     // CS-0085 §17.6: expand any glob patterns in output_paths against the
     // unit's working directory before recording.
     let resolved_output_paths = resolve_output_paths(&meta.output_paths, working_dir);
+    // CS-0119: directory-output orphans are handled by the build-owned pre-clean
+    // that empties each declared `dir/` subtree immediately before the command
+    // runs (see `execute_dag`), so by this point `resolved_output_paths` already
+    // describes exactly what this invocation produced — no post-execute sweep is
+    // needed here. Cache-hit reconciliation lives on the `RebuildResult::Skip`
+    // path, which never reaches this publish function.
     let mut meta_for_record = meta.clone();
     meta_for_record.output_paths = resolved_output_paths.clone();
     // COOK-161: fold the effective seal set's probe values into the persisted
@@ -4277,5 +4324,20 @@ mod tests {
         );
         assert_eq!(resolved, vec!["main.o".to_string()],
             "duplicate literal entries must dedupe to a single entry per §17.6 item 1");
+    }
+
+    #[test]
+    fn resolve_output_paths_expands_directory_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("pkg/sub")).unwrap();
+        std::fs::write(root.join("pkg/a.js"), b"a").unwrap();
+        std::fs::write(root.join("pkg/sub/b.wasm"), b"b").unwrap();
+
+        let resolved = super::resolve_output_paths(&["pkg/".to_string()], root);
+        let set: std::collections::BTreeSet<&str> = resolved.iter().map(|s| s.as_str()).collect();
+        assert!(set.contains("pkg/a.js"));
+        assert!(set.contains("pkg/sub/b.wasm"));
+        assert_eq!(set.len(), 2); // files only (CS-0064), directory entries dropped
     }
 }

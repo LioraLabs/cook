@@ -354,6 +354,12 @@ pub fn register_unit_api(
             }
         }
         for out in &output_paths {
+            if cook_fingerprint::is_dir_output(out) {
+                // CS-0119: a trailing slash declares a build-owned directory
+                // output; it is intentionally a directory and MUST NOT be
+                // rejected by the file-path check below.
+                continue;
+            }
             if let Err(msg) = validate_output_not_directory(&wd_for_add_unit, out) {
                 return Err(LuaError::RuntimeError(msg));
             }
@@ -2079,6 +2085,69 @@ mod tests {
             !cm.record,
             "record must be false on CacheMeta when opts.record is absent; got: {}",
             cm.record
+        );
+    }
+
+    /// CS-0119: a trailing-slash output `"pkg/"` declares a directory output.
+    /// On the SECOND build `pkg/` already exists as a directory on disk; the
+    /// register-time directory-rejection check MUST NOT fire for trailing-slash
+    /// entries — they are intentionally directories, not a mistake.
+    #[test]
+    fn add_unit_accepts_directory_output_trailing_slash() {
+        use std::sync::{Arc, Mutex};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Simulate the "second build": pkg/ already exists on disk.
+        let pkg_dir = tmp.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).expect("mkdir pkg");
+
+        let lua = Lua::new();
+        lua.globals()
+            .set("cook", lua.create_table().unwrap())
+            .unwrap();
+        let capture_state: SharedBodySlot = Rc::new(RefCell::new(Some(BodyCaptureState::new())));
+        let terminal_outputs: SharedTerminalOutputs =
+            Arc::new(Mutex::new(BTreeMap::new()));
+        register_unit_api(
+            &lua,
+            capture_state.clone(),
+            "build",
+            terminal_outputs,
+            tmp.path().to_path_buf(),
+        )
+        .unwrap();
+
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value(
+            "__cook_cookfile_path",
+            "Cookfile".to_string(),
+        )
+        .expect("set");
+
+        // pkg/ already exists as a directory; the trailing slash signals
+        // CS-0119 directory-output semantics — must be accepted, not rejected.
+        let result = lua
+            .load(
+                r#"
+                cook.add_unit({
+                    command = "npm pack --pack-destination pkg/",
+                    inputs = { "package.json" },
+                    outputs = { "pkg/" },
+                })
+            "#,
+            )
+            .exec();
+
+        assert!(
+            result.is_ok(),
+            "directory output with trailing slash must be accepted even when the \
+             directory already exists on disk (CS-0119); got: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            body_ref(&capture_state).units.len(),
+            1,
+            "unit must be recorded"
         );
     }
 }

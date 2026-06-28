@@ -1,0 +1,1 @@
+seed input for dir_output_cache example
