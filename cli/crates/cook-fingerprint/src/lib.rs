@@ -23,7 +23,8 @@ use sha2::{Digest, Sha256};
 
 pub use backend::{
     artifact_key, cloud_key, recipe_namespace, ArtifactMeta, BackendError, BackendResult,
-    CacheBackend, CloudKey, CloudKeyInputs,
+    CacheBackend, CloudKey, CloudKeyInputs, DISCOVERED_INPUTS_MANIFEST_INDEX,
+    DISCOVERED_INPUTS_MANIFEST_PATH,
 };
 pub use check::{
     fetch_by_key, hash_env, hash_file, hash_input_paths, install_depfile_parser,

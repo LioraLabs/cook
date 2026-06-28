@@ -381,6 +381,13 @@ pub fn recipe_namespace(project_id: &str, cookfile_path: &str, recipe: &str) -> 
     format!("{project_id}/{cookfile_path}::{recipe}")
 }
 
+/// Reserved output index for the COOK-177 discovered-inputs manifest, keyed
+/// under a unit's DECLARED-inputs-only cloud key. `u32::MAX` cannot collide
+/// with a real output index (no unit declares u32::MAX outputs).
+pub const DISCOVERED_INPUTS_MANIFEST_INDEX: u32 = u32::MAX;
+/// Reserved output path for the discovered-inputs manifest artifact.
+pub const DISCOVERED_INPUTS_MANIFEST_PATH: &str = "__cook_discovered_inputs__";
+
 /// Derive an output-scoped artifact key from a cache entry's cloud_key.
 ///
 /// One logical cache entry can produce multiple output artifacts. Each
@@ -455,6 +462,18 @@ mod tests {
         let a = artifact_key(&key(0x01), 0, "build/foo.o");
         let b = artifact_key(&key(0x02), 0, "build/foo.o");
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn discovered_inputs_manifest_key_is_distinct() {
+        let base = [3u8; 32];
+        let manifest = artifact_key(
+            &base,
+            DISCOVERED_INPUTS_MANIFEST_INDEX,
+            DISCOVERED_INPUTS_MANIFEST_PATH,
+        );
+        let out0 = artifact_key(&base, 0, "out");
+        assert_ne!(manifest, out0);
     }
 
     // ─── cloud_key composition tests ────────────────────────────────────────

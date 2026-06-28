@@ -2702,6 +2702,72 @@ fn publish_completion(
                 );
             }
         }
+
+        // COOK-177: publish the discovered-input PATH LIST under a DECLARED-inputs-only
+        // key so a cold consumer can recover the full key without having a depfile.
+        // SOUND: every listed path's content is folded into the full key, so a stale
+        // manifest can only cause a safe miss, never a wrong hit. This artifact is NOT
+        // recorded in step_entry.outputs — it is fetched out-of-band on the cold path.
+        if publish_to_backend {
+            let declared_refs: Vec<&str> =
+                meta.input_paths.iter().map(|s| s.as_str()).collect();
+            if let Some(declared_hashes) =
+                cook_fingerprint::hash_input_paths(&declared_refs, working_dir)
+            {
+                let declared_key = cloud_key(&CloudKeyInputs {
+                    schema_version: CACHE_VERSION,
+                    recipe_namespace: &recipe_namespace,
+                    command_hash: meta.command_hash,
+                    env_contribution: meta.env_contribution,
+                    seal_contribution: seal_contrib,
+                    sorted_input_content_hashes: &declared_hashes,
+                });
+                // Parse the discovered relative paths the SAME way the warm path does.
+                let source_for_skip =
+                    meta.input_paths.first().map(String::as_str).unwrap_or("");
+                let discovered_paths: Vec<String> = cook_cache::parse_make_depfile(
+                    &working_dir.join(&di.from),
+                    source_for_skip,
+                    working_dir,
+                )
+                .unwrap_or_default();
+                let json = serde_json::to_vec(&discovered_paths).unwrap_or_default();
+                let manifest_k = artifact_key(
+                    &declared_key,
+                    cook_fingerprint::DISCOVERED_INPUTS_MANIFEST_INDEX,
+                    cook_fingerprint::DISCOVERED_INPUTS_MANIFEST_PATH,
+                );
+                let mut manifest_meta = ArtifactMeta {
+                    recipe_namespace: recipe_namespace.clone(),
+                    command_hash: meta.command_hash,
+                    env_contribution: meta.env_contribution,
+                    seal_contribution: seal_contrib,
+                    schema_version: CACHE_VERSION,
+                    size_bytes: json.len() as u64,
+                    tags: std::collections::BTreeSet::new(),
+                    consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                    output_index: cook_fingerprint::DISCOVERED_INPUTS_MANIFEST_INDEX,
+                    output_path: cook_fingerprint::DISCOVERED_INPUTS_MANIFEST_PATH
+                        .to_string(),
+                    // CS-0054: stamped by the backend on put.
+                    content_hash: ArtifactMeta::zero_content_hash(),
+                    kind: Some("discovered_inputs".to_string()),
+                    mode: 0o644,
+                    target: None,
+                };
+                if let Err(e) = cook_cache::backend::put_bytes(
+                    cache_ctx.backend.as_ref(),
+                    &manifest_k,
+                    &json,
+                    &mut manifest_meta,
+                ) {
+                    tracing::warn!(
+                        "cache backend put failed for discovered-inputs manifest: {}",
+                        e
+                    );
+                }
+            }
+        }
     }
 
     // COOK-180: record empty directories declared by `dir/` outputs so a cache
