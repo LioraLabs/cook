@@ -441,8 +441,8 @@ fn restore_symlink_checked(anchor: &Path, link: &Path, target: &str) -> bool {
 }
 
 /// Materialise one cached artifact at `abs`, faithful to its recorded kind +
-/// mode. `anchor` is the restore boundary for symlink hardening (wired in the
-/// next task). `expected_content_hash`, when `Some`, pins the restored *file*
+/// mode. `anchor` is the restore boundary for symlink hardening (enforced by
+/// `restore_symlink_checked`). `expected_content_hash`, when `Some`, pins the restored *file*
 /// bytes to the locally-trusted `StepEntry` content hash (xxh3) BEFORE they
 /// touch the workspace — this is the warm-path defence against a shared backend
 /// that rewrites BOTH the artifact bytes and its sidecar (the both-rewritten

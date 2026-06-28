@@ -128,7 +128,8 @@ pub struct ArtifactMeta {
     /// canonical-JSON probe-output artifact (CS-0074, encoding revised by
     /// CS-0102). `Some("symlink")` — target carried in `target`, no body.
     /// `Some("dir")` — empty directory, no body. `Some("discovered_inputs")`
-    /// — manifest artifact whose body is a JSON path list (a later task).
+    /// — discovered-inputs manifest artifact whose body is a JSON path list,
+    /// keyed by the unit's declared-inputs-only cloud key (cold cc sharing).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     /// Unix file mode of the stored output (e.g. `0o755`). Defaults to
