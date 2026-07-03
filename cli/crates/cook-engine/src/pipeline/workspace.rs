@@ -10,7 +10,7 @@
 //! Cycles are rejected at load time; the same canonical target reached via two
 //! aliases is deduplicated.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use cook_lang::ast::Cookfile;
@@ -98,7 +98,7 @@ impl Workspace {
             namespace_map,
             workspace_root,
         };
-        regenerate_lua_sources_with_unions(&mut workspace)?;
+        regenerate_lua_sources(&mut workspace, &BTreeMap::new())?;
         Ok(workspace)
     }
 
@@ -260,11 +260,15 @@ impl Workspace {
 
 }
 
-/// Per §7.3, regenerate the lua_source for every Cookfile in the workspace
-/// using the union recipe-name set (local names + `alias.recipe` names from
-/// direct imports).  This is a second pass after `load_imports` completes so
-/// that every Cookfile's imported recipe list is already present.
-fn regenerate_lua_sources_with_unions(workspace: &mut Workspace) -> Result<(), PipelineError> {
+/// Per §7.3 (+ §10.2 step 2 when `extra` is non-empty), regenerate the
+/// lua_source for every Cookfile in the workspace using the union
+/// recipe-name set: local static names, `alias.recipe` names from direct
+/// imports, plus any `extra` register-phase-discovered names (CS-0094)
+/// keyed by canonical Cookfile dir.
+pub(crate) fn regenerate_lua_sources(
+    workspace: &mut Workspace,
+    extra: &BTreeMap<PathBuf, BTreeSet<String>>,
+) -> Result<(), PipelineError> {
     // Build a snapshot of canonical-path → Cookfile for cross-reference.
     let root_canon = std::fs::canonicalize(&workspace.root.dir)
         .unwrap_or_else(|_| workspace.root.dir.clone());
@@ -285,6 +289,7 @@ fn regenerate_lua_sources_with_unions(workspace: &mut Workspace) -> Result<(), P
         let cookfile_dir_canon = std::fs::canonicalize(cookfile_dir)
             .unwrap_or_else(|_| cookfile_dir.to_path_buf());
         let mut imports_by_alias: BTreeMap<String, &Cookfile> = BTreeMap::new();
+        let mut imp_canon_by_alias: BTreeMap<String, PathBuf> = BTreeMap::new();
         for imp_decl in &cookfile.imports {
             let imp_dir = match &imp_decl.path {
                 cook_lang::ast::ImportPath::Tree(p) => cookfile_dir_canon.join(p),
@@ -294,11 +299,24 @@ fn regenerate_lua_sources_with_unions(workspace: &mut Workspace) -> Result<(), P
             if let Some(c) = canon_to_cookfile.get(&imp_canon) {
                 imports_by_alias.insert(imp_decl.name.clone(), c);
             }
+            imp_canon_by_alias.insert(imp_decl.name.clone(), imp_canon);
         }
-        let union = cook_luagen::dep_ref::extract_recipe_names_with_imports(
+        let mut union = cook_luagen::dep_ref::extract_recipe_names_with_imports(
             cookfile,
             &imports_by_alias,
         );
+        // (a) This member's own register-phase-discovered names.
+        if let Some(names) = extra.get(&cookfile_dir_canon) {
+            union.extend(names.iter().cloned());
+        }
+        // (b) Each direct import's discovered names, qualified as `alias.name`.
+        for (alias, imp_canon) in &imp_canon_by_alias {
+            if let Some(names) = extra.get(imp_canon) {
+                for name in names {
+                    union.insert(format!("{alias}.{name}"));
+                }
+            }
+        }
         cook_luagen::generate_with_names_checked(cookfile, &union)
             .map_err(|e| PipelineError::Codegen(e.to_string()))
     };

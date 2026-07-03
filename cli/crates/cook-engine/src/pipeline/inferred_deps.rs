@@ -8,8 +8,10 @@
 //! Unlike explicit deps (which create wave boundaries), inferred deps
 //! cause same-wave merging in the wave-grouper. Every CLI command path
 //! that invokes `run::run` MUST pass an inferred-deps map produced by
-//! one of the two helpers below — passing an empty map silently drops
-//! the §{xref.dep-implications} contract.
+//! [`compute_workspace_inferred_deps`] — passing an empty map silently
+//! drops the §{xref.dep-implications} contract. A single-Cookfile project
+//! (no imports) is a workspace of one: the same workspace helpers apply,
+//! with the root registering under the empty qualified prefix.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,29 +19,6 @@ use cook_lang::ast::Cookfile;
 
 use super::recipe_info::find_full_prefix;
 use super::workspace::Workspace;
-
-/// Compute inferred dependencies from `{NAME}` body refs in a single Cookfile.
-///
-/// Returns a `BTreeMap` keyed by recipe name, valued by a sorted-deduplicated
-/// vector of dep recipe names (no namespace prefixes — this is the single-file
-/// case).
-pub fn compute_single_inferred_deps(cookfile: &Cookfile) -> BTreeMap<String, Vec<String>> {
-    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(cookfile);
-    let mut inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for recipe in &cookfile.recipes {
-        let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
-        let dep_names: Vec<String> = refs
-            .iter()
-            .map(|r| r.recipe_name.clone())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        if !dep_names.is_empty() {
-            inferred.insert(recipe.name.clone(), dep_names);
-        }
-    }
-    inferred
-}
 
 /// Compute inferred dependencies from `{alias.recipe}` body refs across the
 /// entire workspace (§7.3 union).
@@ -143,29 +122,6 @@ pub fn compute_workspace_inferred_deps(workspace: &Workspace) -> BTreeMap<String
     }
 
     out
-}
-
-/// Detect "explicit + inferred dep on the same name" conflicts in a single
-/// Cookfile and return them as warning strings (one per offending pair).
-///
-/// Returning strings (rather than printing to stderr) keeps the engine free
-/// of human-output formatting decisions; the CLI prints them with its
-/// preferred prefix.
-pub fn single_dep_conflicts(cookfile: &Cookfile) -> Vec<String> {
-    let recipe_names = cook_luagen::dep_ref::extract_recipe_names(cookfile);
-    let mut warnings = Vec::new();
-    for recipe in &cookfile.recipes {
-        let refs = cook_luagen::dep_ref::extract_dep_refs(recipe, &recipe_names);
-        for dep_ref in &refs {
-            if recipe.deps.contains(&dep_ref.recipe_name) {
-                warnings.push(format!(
-                    "recipe '{}' has both explicit ': {}' and inferred '$<{}>' dependency — conflicting scheduling intent",
-                    recipe.name, dep_ref.recipe_name, dep_ref.recipe_name
-                ));
-            }
-        }
-    }
-    warnings
 }
 
 /// Detect "explicit + inferred dep on the same name" conflicts across an
@@ -310,51 +266,20 @@ mod tests {
         );
     }
 
-    /// Single-Cookfile case: a recipe whose body references `{prepare}` should
-    /// produce `{"verify" -> ["prepare"]}`.
+    /// Diagnostic text guard (ported from the deleted single-path test):
+    /// the explicit+inferred conflict warning must spell the inferred form
+    /// with the `$<...>` sigil syntax, not legacy `{...}`.
     #[test]
-    fn single_inferred_deps_body_ref_produces_edge() {
-        let src = "recipe prepare\n    cook \"prepare.out\" { echo $<out> }\nrecipe verify\n    test { echo $<prepare> }\n";
-        let cf = cook_lang::parse(src).unwrap();
-        let deps = compute_single_inferred_deps(&cf);
-        assert_eq!(
-            deps.get("verify"),
-            Some(&vec!["prepare".to_string()]),
-            "expected verify -> [prepare], got: {deps:?}"
+    fn workspace_dep_conflict_uses_sigil_placeholder_syntax() {
+        let (_dir, ws) = make_workspace(
+            "recipe compile\n    cook \"compile.out\" { echo hi > $<out> }\nrecipe link: compile\n    cook \"link.out\" { echo $<compile> > $<out> }\n",
+            &[],
         );
-        assert!(deps.get("prepare").is_none());
-    }
-
-    /// Empty case: a single Cookfile with no body refs returns an empty map.
-    #[test]
-    fn single_inferred_deps_empty_when_no_body_refs() {
-        let cf = cook_lang::parse("recipe a\n    echo hi\nrecipe b\n    echo bye\n").unwrap();
-        let deps = compute_single_inferred_deps(&cf);
-        assert!(deps.is_empty(), "expected empty, got: {deps:?}");
-    }
-
-    /// Diagnostic text guard: when a recipe declares both an explicit `: dep`
-    /// and an inferred `$<dep>` body reference for the same name, the warning
-    /// must spell the inferred form using the current `$<...>` sigil syntax,
-    /// not the legacy `{...}` curly-brace form. The book and Standard teach
-    /// `$<...>`; the diagnostic must match.
-    #[test]
-    fn single_dep_conflict_uses_sigil_placeholder_syntax() {
-        let src = "recipe compile\n    cook \"compile.out\" { echo hi > $<out> }\nrecipe link: compile\n    cook \"link.out\" { echo $<compile> > $<out> }\n";
-        let cf = cook_lang::parse(src).unwrap();
-        let warnings = single_dep_conflicts(&cf);
+        let inferred = compute_workspace_inferred_deps(&ws);
+        let warnings = workspace_dep_conflicts(&ws, &inferred);
         assert_eq!(warnings.len(), 1, "expected exactly one warning, got: {warnings:?}");
-        let w = &warnings[0];
-        assert!(
-            w.contains("inferred '$<compile>'"),
-            "warning must spell the inferred ref with $<...> sigil syntax, got: {w}"
-        );
-        assert!(
-            !w.contains("'{compile}'"),
-            "warning must not use the legacy {{NAME}} placeholder form, got: {w}"
-        );
         assert_eq!(
-            w,
+            warnings[0],
             "recipe 'link' has both explicit ': compile' and inferred '$<compile>' dependency — conflicting scheduling intent"
         );
     }
