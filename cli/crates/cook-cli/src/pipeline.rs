@@ -65,16 +65,16 @@ fn pipeline_error_to_cook_error(e: PipelineError) -> CookError {
     }
 }
 
-/// Parse the Cookfile and print any codegen warnings to stderr.
+/// Parse the entry Cookfile (AST + Lua + warnings), mapping errors onto
+/// `CookError`.
 ///
-/// Thin convenience wrapper: the engine returns warnings as data; the CLI
-/// is responsible for surfacing them in the human-output channel.
+/// §5.5 codegen warnings are NOT printed here — every workspace-loading
+/// command surfaces them via [`load_workspace`] (the one load each command
+/// performs), so a command that both parses and loads prints them exactly
+/// once. `cmd_emit_lua`, which never loads a workspace, prints
+/// `parsed.warnings` itself.
 fn read_and_parse(globals: &Globals) -> Result<ParsedCookfile, CookError> {
-    let parsed = pipeline::read_and_parse(&globals.file).map_err(pipeline_error_to_cook_error)?;
-    for w in &parsed.warnings {
-        eprintln!("cook: warning: {w}");
-    }
-    Ok(parsed)
+    pipeline::read_and_parse(&globals.file).map_err(pipeline_error_to_cook_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -580,8 +580,15 @@ fn resolve_num_jobs(globals: &Globals) -> usize {
 fn load_workspace(globals: &Globals) -> Result<Workspace, CookError> {
     let workspace_root = pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
         .map_err(pipeline_error_to_cook_error)?;
-    Workspace::load(&globals.file, &workspace_root, &globals.set)
-        .map_err(pipeline_error_to_cook_error)
+    let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
+        .map_err(pipeline_error_to_cook_error)?;
+    // §5.5 codegen warnings for the entry Cookfile — printed here, the one
+    // workspace load every command performs, so they appear exactly once per
+    // invocation (including under upward entry discovery).
+    for w in &workspace.warnings {
+        eprintln!("cook: warning: {w}");
+    }
+    Ok(workspace)
 }
 
 /// Root-anchored project root (§20.2.3 / CS-0120): every command that
@@ -758,6 +765,11 @@ pub fn cmd_run(
 
 pub fn cmd_emit_lua(globals: &Globals) -> Result<(), CookError> {
     let parsed = read_and_parse(globals)?;
+    // emit-lua never loads a workspace, so it surfaces the §5.5 warnings
+    // itself (every other command prints them via `load_workspace`).
+    for w in &parsed.warnings {
+        eprintln!("cook: warning: {w}");
+    }
     println!("{}", parsed.lua_source);
     Ok(())
 }
@@ -820,8 +832,6 @@ pub fn cmd_test(
     // every Cookfile (root + imports), then derive recipe_infos. This sees
     // Lua-registered recipes (cook_cc.bin, dynamic chores, …) under their
     // qualified names with `RecipeUnits` and `dep_edges` already wired.
-    // parse for §5.5 codegen warnings on stderr; registration re-loads via the workspace path
-    let _parsed = read_and_parse(globals)?;
     let (_, registered) = build_registered_workspace(globals, None, RegisterMode::Enumerate)?;
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 
@@ -1126,9 +1136,6 @@ fn collect_workspace_recipe_names(
 /// only saw `parsed.cookfile.recipes` / `parsed.cookfile.chores`, missing
 /// every dynamically-registered recipe.
 pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
-    // parse for §5.5 codegen warnings on stderr; listing re-loads via the workspace path
-    let _parsed = read_and_parse(globals)?;
-
     let workspace = load_workspace(globals)?;
     let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
@@ -1169,9 +1176,6 @@ pub fn cmd_list(globals: &Globals, args: &crate::cli::ListArgs) -> Result<(), Co
             "--recipes-only and --chores-only are mutually exclusive".to_string(),
         ));
     }
-
-    // parse for §5.5 codegen warnings on stderr; listing re-loads via the workspace path
-    let _parsed = read_and_parse(globals)?;
 
     let want_recipes = !args.chores_only;
     let want_chores = !args.recipes_only;
@@ -1731,8 +1735,6 @@ pub fn cmd_affected(
     })?;
     let project_root = resolve_project_root(globals)?;
 
-    // parse for §5.5 codegen warnings on stderr; registration re-loads via the workspace path
-    let _parsed = read_and_parse(globals)?;
     let (_, registered) = build_registered_workspace(globals, None, RegisterMode::Introspect)?;
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 

@@ -504,6 +504,7 @@ mod tests {
             imports: BTreeMap::new(),
             namespace_map: Vec::new(),
             workspace_root: dir.to_path_buf(),
+            warnings: Vec::new(),
         }
     }
 

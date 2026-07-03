@@ -34,6 +34,12 @@ pub struct Workspace {
     pub namespace_map: Vec<(PathBuf, String, PathBuf)>,
     /// Resolved workspace root (anchors sigil imports).
     pub workspace_root: PathBuf,
+    /// Non-fatal §5.5 codegen warnings for the ENTRY Cookfile (the root
+    /// member), collected at load time exactly as `pipeline::read_and_parse`
+    /// collects them. The CLI prints these to stderr once per invocation;
+    /// import members' warnings are not collected (matching the historical
+    /// entry-only warning surface).
+    pub warnings: Vec<String>,
 }
 
 impl Workspace {
@@ -71,6 +77,11 @@ impl Workspace {
         let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&cookfile);
         let lua_source = cook_luagen::generate_with_names_checked(&cookfile, &recipe_names)
             .map_err(|e| PipelineError::Codegen(e.to_string()))?;
+        // §5.5 — register-time warnings for references whose referent has an
+        // empty output list, computed against the entry Cookfile's static
+        // name set (identical to `pipeline::read_and_parse`).
+        let (_, warnings) =
+            cook_luagen::generate_with_names_and_warnings(&cookfile, &recipe_names);
 
         let mut imports = BTreeMap::new();
         let mut namespace_map = Vec::new();
@@ -97,6 +108,7 @@ impl Workspace {
             imports,
             namespace_map,
             workspace_root,
+            warnings,
         };
         regenerate_lua_sources(&mut workspace, &BTreeMap::new())?;
         Ok(workspace)
