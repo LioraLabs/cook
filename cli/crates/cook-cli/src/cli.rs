@@ -162,6 +162,43 @@ pub enum Cmd {
     Recipe(Vec<String>),
 }
 
+impl Cmd {
+    /// The user-supplied CLI target (recipe name / test scope) for
+    /// subcommands that accept one, or `None` where no target was given or
+    /// the subcommand has no target-typed field.
+    ///
+    /// This is the single chokepoint the dispatcher validates for the
+    /// reserved `//<name>` root-anchored syntax (§20.2.4 / CS-0120) — a new
+    /// target-typed field must be wired in here to inherit the rejection.
+    /// The `external_subcommand` `Recipe` arm is the one exception: its
+    /// recipe name needs the `+` escape stripped first, so `dispatch_recipe`
+    /// keeps its own validation call.
+    ///
+    /// Note this stays a post-parse check (not a clap value_parser): the
+    /// rejection must exit 1 with the exact `cook: '<target>': ...`
+    /// diagnostic, while clap's error path exits 2 and wraps messages in its
+    /// own `error: invalid value ...` formatting.
+    pub fn reserved_target(&self) -> Option<&str> {
+        match self {
+            Cmd::Test(a) => a.scope.as_deref(),
+            Cmd::Dag(a) => a.recipe.as_deref(),
+            Cmd::Cache(c) => match &c.cmd {
+                CacheCmd::Verify(v) => v.recipe.as_deref(),
+            },
+            Cmd::Serve(a) => a.recipe.as_deref(),
+            Cmd::Affected(a) => a.recipe.as_deref(),
+            Cmd::Why(a) => a.recipe.as_deref(),
+            Cmd::Init
+            | Cmd::Menu
+            | Cmd::List(_)
+            | Cmd::Modules(_)
+            | Cmd::Logs(_)
+            | Cmd::EmitLua
+            | Cmd::Recipe(_) => None,
+        }
+    }
+}
+
 #[derive(clap::Args, Debug, Clone)]
 pub struct ListArgs {
     /// Restrict output to recipes only (mutually exclusive with --chores-only).
@@ -557,6 +594,34 @@ mod tests {
             }
             other => panic!("expected Cmd::Cache verify, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn reserved_target_covers_every_target_typed_arm() {
+        // The dispatcher's single `//`-rejection chokepoint reads
+        // Cmd::reserved_target; pin that every target-typed subcommand
+        // surfaces its user-supplied target through it.
+        for argv in [
+            &["test", "//x"][..],
+            &["dag", "//x"],
+            &["cache", "verify", "//x"],
+            &["serve", "//x"],
+            &["affected", "--since=main", "--recipe=//x"],
+            &["why", "//x"],
+        ] {
+            let cli = parse(argv);
+            let cmd = cli.cmd.expect("subcommand parses");
+            assert_eq!(
+                cmd.reserved_target(),
+                Some("//x"),
+                "target-typed arm must surface its target: {argv:?}"
+            );
+        }
+        // No user-supplied target -> nothing to validate.
+        assert_eq!(parse(&["test"]).cmd.unwrap().reserved_target(), None);
+        assert_eq!(parse(&["menu"]).cmd.unwrap().reserved_target(), None);
+        // The external_subcommand arm validates in dispatch_recipe instead.
+        assert_eq!(parse(&["//x"]).cmd.unwrap().reserved_target(), None);
     }
 
     #[test]

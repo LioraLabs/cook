@@ -71,24 +71,21 @@ fn apply_entry_discovery(cli: &mut Cli, file_explicit: bool) -> Result<(), CookE
 
 fn dispatch(cli: Cli) -> Result<(), CookError> {
     let Cli { globals, cmd } = cli;
+    // Single chokepoint for the reserved `//<name>` root-anchored target
+    // syntax (§20.2.4 / CS-0120): every target-typed subcommand field routes
+    // through `Cmd::reserved_target`. The external_subcommand `Recipe` arm
+    // validates in `dispatch_recipe` after stripping the `+` escape.
+    if let Some(target) = cmd.as_ref().and_then(|c| c.reserved_target()) {
+        reject_reserved_root_target(target)?;
+    }
     match cmd {
         None => cmd_run(&globals, "build", &[], None),
         Some(Cmd::Init) => cmd_init(),
         Some(Cmd::Menu) => cmd_menu(&globals),
         Some(Cmd::List(args)) => cmd_list(&globals, &args),
         Some(Cmd::Modules(args)) => std::process::exit(modules::run(args)),
-        Some(Cmd::Test(args)) => {
-            if let Some(s) = &args.scope {
-                reject_reserved_root_target(s)?;
-            }
-            cmd_test(&globals, &args)
-        }
-        Some(Cmd::Dag(args)) => {
-            if let Some(r) = &args.recipe {
-                reject_reserved_root_target(r)?;
-            }
-            cmd_dag(&globals, &args)
-        }
+        Some(Cmd::Test(args)) => cmd_test(&globals, &args),
+        Some(Cmd::Dag(args)) => cmd_dag(&globals, &args),
         Some(Cmd::Logs(args)) => {
             let selector = if args.last_failed {
                 cook_logs::BuildSelector::LastFailed
@@ -104,28 +101,16 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
                 .map_err(|e| CookError::Other(e.to_string()))
         }
         Some(Cmd::Cache(args)) => match args.cmd {
-            crate::cli::CacheCmd::Verify(v) => {
-                if let Some(r) = &v.recipe {
-                    reject_reserved_root_target(r)?;
-                }
-                cmd_cache_verify(&globals, &v)
-            }
+            crate::cli::CacheCmd::Verify(v) => cmd_cache_verify(&globals, &v),
         },
         Some(Cmd::Serve(args)) => {
             let recipe = args.recipe.as_deref().unwrap_or("build");
-            reject_reserved_root_target(recipe)?;
             cmd_serve(&globals, recipe, args.config.as_deref())
         }
         Some(Cmd::EmitLua) => cmd_emit_lua(&globals),
-        Some(Cmd::Affected(args)) => {
-            if let Some(r) = &args.recipe {
-                reject_reserved_root_target(r)?;
-            }
-            cmd_affected(&globals, &args)
-        }
+        Some(Cmd::Affected(args)) => cmd_affected(&globals, &args),
         Some(Cmd::Why(args)) => {
             let recipe = args.recipe.as_deref().unwrap_or("build");
-            reject_reserved_root_target(recipe)?;
             cmd_why(&globals, recipe, args.config.as_deref(), args.json)
         }
         Some(Cmd::Recipe(parts)) => dispatch_recipe(&globals, &parts),
