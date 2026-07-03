@@ -3719,3 +3719,51 @@ fn unannotated_cook_emits_no_record_field() {
         "unannotated cook step must not emit record, got:\n{lua}"
     );
 }
+
+#[test]
+fn test_compile_chore_infers_requires_from_body_dep_ref() {
+    // COOK-74: a `$<recipe>` reference in a chore body MUST contribute an
+    // inferred `requires` edge so the referent joins the build closure,
+    // mirroring recipe behaviour (§10.6). Resolving the path alone (CS-0094)
+    // is not enough — without the edge the chore runs against a missing
+    // artifact.
+    let chore = make_chore(
+        "run",
+        vec![], // NO explicit dep — the body reference alone must create the edge
+        vec![Step::Shell {
+            command: "$<app>".to_string(),
+            line: 2,
+            interactive: true,
+        }],
+    );
+    let mut names = std::collections::BTreeSet::new();
+    names.insert("app".to_string());
+    let lua = compile_chore(&chore, &[], &names);
+    assert!(
+        lua.contains(r#"requires = {"app"}"#),
+        "chore body $<app> must contribute an inferred requires edge, got:\n{lua}"
+    );
+}
+
+#[test]
+fn test_compile_chore_merges_explicit_and_inferred_requires() {
+    // Explicit deps come first; inferred body refs append (deduplicated),
+    // matching recipe_metadata_fields ordering.
+    let chore = make_chore(
+        "run",
+        vec!["setup"],
+        vec![Step::Shell {
+            command: "$<app> && $<setup>".to_string(),
+            line: 2,
+            interactive: true,
+        }],
+    );
+    let mut names = std::collections::BTreeSet::new();
+    names.insert("app".to_string());
+    names.insert("setup".to_string());
+    let lua = compile_chore(&chore, &[], &names);
+    assert!(
+        lua.contains(r#"requires = {"setup", "app"}"#),
+        "explicit-first, inferred-appended, deduped requires expected, got:\n{lua}"
+    );
+}

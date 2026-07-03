@@ -1137,7 +1137,7 @@ pub fn compile_chore(
     // registration with `RecipeKind::Chore` so collision detection and
     // CLI dispatch can distinguish chores from recipes. Chores have no
     // ingredients/excludes (parser-enforced), only `requires`.
-    let mut fields = chore_metadata_fields(chore);
+    let mut fields = chore_metadata_fields(chore, recipe_names);
     fields.push(format!("__line = {}", chore.line));
 
     // COOK-36 Task 3: emit __params metadata when the chore declares parameters.
@@ -1423,42 +1423,58 @@ fn recipe_metadata_fields(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> V
     // Build the unified requires set: explicit `recipe.deps` ∪ inferred
     // cross-recipe refs from `$<NAME>` body tokens. Preserves declared order
     // (explicit first, then inferred in alphabetical order via BTreeSet).
+    if let Some(field) = unified_requires_field(&recipe.deps, &recipe.steps, recipe_names) {
+        fields.push(field);
+    }
+    fields
+}
+
+/// Build the `requires = {...}` metadata field shared by recipes and chores
+/// (CS-0121): explicit deps first (declared order), then `$<NAME>` body refs
+/// inferred by `dep_ref::extract_dep_refs_from_steps` (alphabetical via
+/// BTreeSet), de-duplicated. `None` when the merged set is empty.
+fn unified_requires_field(
+    explicit_deps: &[String],
+    steps: &[Step],
+    recipe_names: &BTreeSet<String>,
+) -> Option<String> {
     let mut requires: Vec<String> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    for d in &recipe.deps {
+    for d in explicit_deps {
         if seen.insert(d.clone()) {
             requires.push(d.clone());
         }
     }
-    let inferred = crate::dep_ref::extract_dep_refs(recipe, recipe_names);
+    let inferred = crate::dep_ref::extract_dep_refs_from_steps(steps, recipe_names);
     for r in inferred {
         if seen.insert(r.recipe_name.clone()) {
             requires.push(r.recipe_name);
         }
     }
-    if !requires.is_empty() {
-        let items: Vec<String> = requires
-            .iter()
-            .map(|s| format!("\"{}\"", escape_lua_string(s)))
-            .collect();
-        fields.push(format!("requires = {{{}}}", items.join(", ")));
+    if requires.is_empty() {
+        return None;
     }
-    fields
+    let items: Vec<String> = requires
+        .iter()
+        .map(|s| format!("\"{}\"", escape_lua_string(s)))
+        .collect();
+    Some(format!("requires = {{{}}}", items.join(", ")))
 }
 
 /// Build chore metadata fields. Chores have no ingredients/excludes,
 /// only `requires` (chore `deps`). Used by `compile_chore` to assemble
 /// the surface-shape (with `__line`) metadata table for
 /// `cook.__register_surface_chore(...)`.
-fn chore_metadata_fields(chore: &Chore) -> Vec<String> {
+///
+/// `requires` merges the explicit `: dep` list with cross-recipe `$<NAME>`
+/// body references, exactly as `recipe_metadata_fields` does — per §10.6 a
+/// name reference in any step establishes the dependency edge, so a chore
+/// body's `$<app>` pulls `app` into the build closure without an explicit
+/// `: app` (COOK-74).
+fn chore_metadata_fields(chore: &Chore, recipe_names: &BTreeSet<String>) -> Vec<String> {
     let mut fields = Vec::new();
-    if !chore.deps.is_empty() {
-        let items: Vec<String> = chore
-            .deps
-            .iter()
-            .map(|s| format!("\"{}\"", escape_lua_string(s)))
-            .collect();
-        fields.push(format!("requires = {{{}}}", items.join(", ")));
+    if let Some(field) = unified_requires_field(&chore.deps, &chore.steps, recipe_names) {
+        fields.push(field);
     }
     fields
 }
