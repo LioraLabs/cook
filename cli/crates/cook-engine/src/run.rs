@@ -1,4 +1,4 @@
-//! Unified engine entry point for both single-Cookfile and workspace builds.
+//! Unified engine entry point for every build — a workspace of one or many.
 //!
 //! [`run`] takes a fully-built [`RegisteredWorkspace`] along with the
 //! recipe-level dependency edges for the reachable target closure, then
@@ -7,10 +7,10 @@
 //! Cross-recipe edges live directly on the unified DAG; there is no per-wave
 //! register / DAG / execute loop (SHI-222 Phase 4).
 //!
-//! Callers build the [`RegisteredWorkspace`] via `pipeline::register_workspace`
-//! (or `register_single_cookfile` for single-Cookfile inputs), which runs
-//! `cook_register::register_cookfile` once per Cookfile and merges per-import
-//! results.
+//! Callers build the [`RegisteredWorkspace`] via `pipeline::register_workspace`,
+//! which runs `cook_register::register_cookfile` once per Cookfile and merges
+//! per-import results. A single-Cookfile project (no imports) is a workspace
+//! of one member — `register_workspace` is the only entry point.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -637,7 +637,11 @@ where
 /// its captured units carry in their [`cook_contracts::CacheMeta`] (which the
 /// executor uses as the manager's per-recipe key), falling back to the
 /// recipe's own name for unit-less meta-targets.
-pub(crate) fn recipe_cache_index_name(ru: &RecipeUnits, fallback: &str) -> String {
+///
+/// `pub` because `cook-dag-viewer` performs the same lookup when it loads
+/// per-recipe cache indexes for import members (workspace key "rust.build",
+/// Cookfile-local index name "build").
+pub fn recipe_cache_index_name(ru: &RecipeUnits, fallback: &str) -> String {
     ru.units
         .iter()
         .find_map(|u| u.cache_meta.as_ref().map(|m| m.recipe_name.clone()))

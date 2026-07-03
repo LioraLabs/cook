@@ -1,0 +1,11 @@
+import theme ./theme
+
+# The web member. Note it has its *own* import (theme) — when you stand
+# inside apps/web/, bare `build` is THIS recipe and `theme.build` still
+# resolves, even though the enclosing workspace knows this Cookfile as `web`.
+recipe build: theme.build
+    ingredients "src/index.html"
+    cook "build/site.txt" {
+        mkdir -p build
+        cat $<theme.build> src/index.html > $<out>
+    }
