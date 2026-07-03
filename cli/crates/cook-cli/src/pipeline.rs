@@ -573,70 +573,53 @@ fn resolve_num_jobs(globals: &Globals) -> usize {
 // build_registered_workspace helper
 // ---------------------------------------------------------------------------
 
-/// Register every Cookfile in the workspace (root + imports) and return the
-/// resulting `RegisteredWorkspace`.
+/// Resolve the workspace root and load the workspace — root + every
+/// transitive import. A Cookfile with no imports loads as a workspace of
+/// one member with prefix "" (workspace-of-one); there is no separate
+/// single-Cookfile path.
+fn load_workspace(globals: &Globals) -> Result<Workspace, CookError> {
+    let workspace_root = pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
+        .map_err(pipeline_error_to_cook_error)?;
+    Workspace::load(&globals.file, &workspace_root, &globals.set)
+        .map_err(pipeline_error_to_cook_error)
+}
+
+/// Register every Cookfile in the workspace and return the resulting
+/// `RegisteredWorkspace`. The sole registration path for every command.
 ///
-/// Shared between `cmd_run` and `cmd_affected` so the registration logic is
-/// not duplicated. For introspection callers that do not intend to execute a
-/// recipe, pass `""` for `recipe_name` and `&[]` for `argv`; the register
-/// phase runs but no recipe bodies are executed.
+/// `target`: `Some((recipe_name, argv))` binds argv to the dispatch target
+/// (cmd_run; introspection callers pass `Some(("", &[]))` to keep their
+/// historical Some-target register semantics). `None` registers with no
+/// dispatch target at all — chore bodies are then invoked normally for
+/// enumeration, which is a different register-time behavior than
+/// `Some("")`; do not conflate the two.
 fn build_registered_workspace(
     globals: &Globals,
-    parsed: &ParsedCookfile,
     config: Option<&str>,
-    recipe_name: &str,
-    argv: &[String],
+    target: Option<(&str, &[String])>,
 ) -> Result<RegisteredWorkspace, CookError> {
-    if !parsed.cookfile.imports.is_empty() {
-        let workspace_root = pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
-            .map_err(pipeline_error_to_cook_error)?;
-        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
-            .map_err(pipeline_error_to_cook_error)?;
-        pipeline::register_workspace_with_argv(
+    let mut workspace = load_workspace(globals)?;
+    // §10.2 step 2: re-classify $<NAME> against the full register-phase
+    // recipe set before the register pass runs bodies.
+    pipeline::codegen_with_module_recipes(&mut workspace, config, &globals.set)
+        .map_err(pipeline_error_to_cook_error)?;
+    match target {
+        Some((recipe_name, argv)) => pipeline::register_workspace_with_argv(
             &workspace,
             config,
             &globals.set,
             recipe_name,
             argv,
             /*cache_ctx*/ None,
-        )
-        .map_err(pipeline_error_to_cook_error)
-    } else {
-        let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
-        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
-            std::path::Path::new(".")
-        } else {
-            cookfile_dir
-        };
-        let dotenv_vars = pipeline::load_env(cookfile_dir);
-        let env_vars = pipeline::resolve_env(config, dotenv_vars, &globals.set)
-            .map_err(pipeline_error_to_cook_error)?;
-        // §10.2 step 2: re-classify `$<NAME>` placeholders against the full
-        // register-phase recipe set so references to recipes registered by
-        // top-level module calls (e.g. `cook_cc.bin`) resolve to dep_output
-        // instead of mis-lowering to require_env. `read_and_parse`'s codegen
-        // only saw the statically parsed `recipe` blocks.
-        let lua_source = pipeline::codegen_with_module_recipes_single(
-            cookfile_dir,
-            &parsed.cookfile,
-            parsed.lua_source.clone(),
-            env_vars.clone(),
-            &globals.set,
+        ),
+        None => pipeline::register_workspace(
+            &workspace,
             config,
-        )
-        .map_err(pipeline_error_to_cook_error)?;
-        pipeline::register_single_cookfile_with_argv(
-            cookfile_dir,
-            env_vars,
             &globals.set,
-            lua_source,
-            config,
-            recipe_name,
-            argv,
             /*cache_ctx*/ None,
-        )
-        .map_err(pipeline_error_to_cook_error)
+        ),
     }
+    .map_err(pipeline_error_to_cook_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -655,7 +638,7 @@ pub fn cmd_cache_verify(
     let num_jobs = resolve_num_jobs(globals);
     let targets = vec![recipe_name.to_string()];
 
-    let registered = build_registered_workspace(globals, &parsed, config, recipe_name, &[])?;
+    let registered = build_registered_workspace(globals, config, Some((recipe_name, &[])))?;
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 
     let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets)
@@ -749,7 +732,7 @@ pub fn cmd_run(
     // `dep_edges` already wired. Phase 5 Task 5.3: this replaces the prior
     // per-wave register loop. `cache_ctx` lifting is deferred to a follow-up;
     // for now register sees `None` and the executor builds its own.
-    let registered = build_registered_workspace(globals, &parsed, config, recipe_name, argv)?;
+    let registered = build_registered_workspace(globals, config, Some((recipe_name, argv)))?;
 
     // `inferred_deps` / `*_dep_conflicts` are obsolete in the unified-DAG
     // model: cross-recipe edges come from `RecipeUnits.dep_edges` (recorded
@@ -1843,8 +1826,9 @@ pub fn cmd_affected(
     let project_root =
         std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
 
-    let parsed = read_and_parse(globals)?;
-    let registered = build_registered_workspace(globals, &parsed, None, "", &[])?;
+    // parse for §5.5 codegen warnings on stderr; registration re-loads via the workspace path
+    let _parsed = read_and_parse(globals)?;
+    let registered = build_registered_workspace(globals, None, Some(("", &[])))?;
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 
     // All recipe names in the workspace, or only those matching --recipe.
@@ -1950,7 +1934,7 @@ pub fn cmd_why(
     let parsed = read_and_parse(globals)?;
     pipeline::validate_selected_config(&parsed.cookfile, config)
         .map_err(pipeline_error_to_cook_error)?;
-    let registered = build_registered_workspace(globals, &parsed, config, recipe_name, &[])?;
+    let registered = build_registered_workspace(globals, config, Some((recipe_name, &[])))?;
 
     let (edges, reachable) = resolve_reachable_closure(&registered, recipe_name)?;
 
