@@ -16,7 +16,7 @@ use cli::{Cli, Cmd};
 use error::CookError;
 use pipeline::{
     cmd_affected, cmd_cache_verify, cmd_dag, cmd_emit_lua, cmd_init, cmd_list, cmd_menu, cmd_run,
-    cmd_serve, cmd_test, cmd_why,
+    cmd_serve, cmd_test, cmd_why, resolve_project_root,
 };
 
 fn main() {
@@ -99,7 +99,7 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
             } else {
                 cook_logs::BuildSelector::Latest
             };
-            let project_root = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
+            let project_root = resolve_project_root(&globals)?;
             cook_logs::cmd_logs(&project_root, selector, cook_logs::Theme::default())
                 .map_err(|e| CookError::Other(e.to_string()))
         }

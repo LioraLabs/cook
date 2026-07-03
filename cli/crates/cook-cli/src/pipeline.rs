@@ -476,7 +476,7 @@ fn run_with_progress(
     registered_workspace: &RegisteredWorkspace,
     num_jobs: usize,
 ) -> Result<cook_engine::run::RunResult, CookError> {
-    let project_root = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
+    let project_root = resolve_project_root(globals)?;
 
     // Recipe-level dependency edges across the reachable closure. The engine
     // toposorts internally; we just need a complete edge map keyed by every
@@ -584,6 +584,16 @@ fn load_workspace(globals: &Globals) -> Result<Workspace, CookError> {
         .map_err(pipeline_error_to_cook_error)
 }
 
+/// Root-anchored project root (§20.2.3 / CS-0120): every command that
+/// anchors cache state (`.cook/cloud.toml`, probe store, logs, test state)
+/// or git-diff scope resolves the SAME workspace root the sigil/import
+/// machinery uses — never the invocation cwd. cwd only selects the entry
+/// Cookfile (via upward discovery in main.rs).
+pub(crate) fn resolve_project_root(globals: &Globals) -> Result<std::path::PathBuf, CookError> {
+    pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
+        .map_err(pipeline_error_to_cook_error)
+}
+
 /// Register every Cookfile in the workspace and return the resulting
 /// `RegisteredWorkspace`. The sole registration path for every command.
 ///
@@ -653,8 +663,7 @@ pub fn cmd_cache_verify(
         })?;
     let reachable: std::collections::BTreeSet<String> = edges.keys().cloned().collect();
 
-    let project_root =
-        std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
+    let project_root = resolve_project_root(globals)?;
 
     let report = cook_engine::verify::verify_cache(
         &project_root, &registered, &edges, &reachable, num_jobs,
@@ -765,8 +774,7 @@ pub fn cmd_test(
     use cook_engine::TestScope;
     use std::sync::{Arc, Mutex};
 
-    let project_root = std::env::current_dir()
-        .map_err(|e| crate::error::CookError::Other(e.to_string()))?;
+    let project_root = resolve_project_root(globals)?;
 
     // Determine scope from positional `scope` argument.
     //
@@ -1686,8 +1694,7 @@ pub fn cmd_affected(
     let since = globals.since.as_deref().ok_or_else(|| {
         CookError::Other("cook affected requires --since=<git-ref>".to_string())
     })?;
-    let project_root =
-        std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
+    let project_root = resolve_project_root(globals)?;
 
     // parse for §5.5 codegen warnings on stderr; registration re-loads via the workspace path
     let _parsed = read_and_parse(globals)?;
@@ -1803,13 +1810,11 @@ pub fn cmd_why(
 
     // `cook why` MUST recompute the same cache key K as `cook run` would, so it
     // MUST anchor the cache context at the SAME project_root the executor uses.
-    // `run_with_progress` passes `std::env::current_dir()` straight into
-    // `cook_engine::run::run` (it becomes `CacheContext::project_root`, which
-    // drives the `project_id` folded into K and the `.cook/probes` anchor).
-    // Using `resolve_workspace_root` here instead would diverge under a
-    // symlinked cwd or a `.cookroot` marker above cwd, silently making `why`
-    // explain a different K than `run` builds — defeating the whole point.
-    let project_root = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
+    // Both sides now resolve it via `resolve_project_root` (the workspace root,
+    // §20.2.3 / CS-0120), so `why` and `run` cannot diverge regardless of which
+    // directory inside the workspace the user invoked from (supersedes the
+    // earlier cwd-parity rule that anchored both at current_dir()).
+    let project_root = resolve_project_root(globals)?;
     let cache_ctx = cook_engine::build_cache_ctx_for_cli(&project_root, globals.no_publish)
         .map_err(engine_error_to_cook_error)?;
     let cache_managers = cook_engine::cache_managers_for_cli(&registered, &reachable);
