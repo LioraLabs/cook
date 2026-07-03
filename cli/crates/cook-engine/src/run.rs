@@ -637,7 +637,11 @@ where
 /// its captured units carry in their [`cook_contracts::CacheMeta`] (which the
 /// executor uses as the manager's per-recipe key), falling back to the
 /// recipe's own name for unit-less meta-targets.
-pub(crate) fn recipe_cache_index_name(ru: &RecipeUnits, fallback: &str) -> String {
+///
+/// `pub` because `cook-dag-viewer` performs the same lookup when it loads
+/// per-recipe cache indexes for import members (workspace key "rust.build",
+/// Cookfile-local index name "build").
+pub fn recipe_cache_index_name(ru: &RecipeUnits, fallback: &str) -> String {
     ru.units
         .iter()
         .find_map(|u| u.cache_meta.as_ref().map(|m| m.recipe_name.clone()))
