@@ -100,6 +100,25 @@ fn cookfile_registration_order(workspace: &Workspace) -> Vec<PathBuf> {
     order
 }
 
+/// Workspace-root-relative, forward-slashed label of a member's Cookfile
+/// (§20.2.3): the same member yields the same label whether it registers as
+/// the entry Cookfile or as an import, so cache identity cannot depend on
+/// the invocation directory. Falls back to the bare "Cookfile" when the
+/// member does not sit under the workspace root (defensive; workspace load
+/// enforces containment).
+fn root_anchored_cookfile_label(workspace_root: &Path, member_dir: &Path) -> String {
+    // `Workspace::load` canonicalizes `workspace_root`, but manually
+    // constructed workspaces (tests) may pass a non-canonical root —
+    // canonicalize both sides so strip_prefix compares like with like.
+    let root = std::fs::canonicalize(workspace_root)
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let canon = std::fs::canonicalize(member_dir).unwrap_or_else(|_| member_dir.to_path_buf());
+    match canon.join("Cookfile").strip_prefix(&root) {
+        Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+        Err(_) => "Cookfile".to_string(),
+    }
+}
+
 /// Run the register pass once per Cookfile in `workspace` (root + every
 /// import in `Workspace::imports`) and merge the per-import results.
 ///
@@ -161,7 +180,11 @@ pub fn register_workspace(
                     .with_shared_member_outputs(shared_member_outputs.clone())
                     .with_qualified_prefix(String::new())
                     .with_alias_dirs(root_alias_dirs.clone())
-                    .with_alias_qualified_prefixes(root_alias_qp.clone());
+                    .with_alias_qualified_prefixes(root_alias_qp.clone())
+                    .with_cookfile_label(root_anchored_cookfile_label(
+                        &workspace.workspace_root,
+                        &workspace.root.dir,
+                    ));
             let root_registered = register_cookfile(
                 root_builder,
                 &workspace.root.lua_source,
@@ -189,7 +212,11 @@ pub fn register_workspace(
                 .with_shared_member_outputs(shared_member_outputs.clone())
                 .with_qualified_prefix(prefix.clone())
                 .with_alias_dirs(alias_dirs.clone())
-                .with_alias_qualified_prefixes(alias_qp.clone());
+                .with_alias_qualified_prefixes(alias_qp.clone())
+                .with_cookfile_label(root_anchored_cookfile_label(
+                    &workspace.workspace_root,
+                    &loaded.dir,
+                ));
             let import_registered = register_cookfile(
                 builder,
                 &loaded.lua_source,
@@ -258,6 +285,10 @@ pub fn register_workspace_with_argv(
                     .with_qualified_prefix(String::new())
                     .with_alias_dirs(root_alias_dirs.clone())
                     .with_alias_qualified_prefixes(root_alias_qp.clone())
+                    .with_cookfile_label(root_anchored_cookfile_label(
+                        &workspace.workspace_root,
+                        &workspace.root.dir,
+                    ))
                     .with_target_argv(target.to_string(), argv.to_vec());
             let root_registered = register_cookfile(
                 root_builder,
@@ -283,7 +314,11 @@ pub fn register_workspace_with_argv(
                 .with_shared_member_outputs(shared_member_outputs.clone())
                 .with_qualified_prefix(prefix.clone())
                 .with_alias_dirs(alias_dirs.clone())
-                .with_alias_qualified_prefixes(alias_qp.clone());
+                .with_alias_qualified_prefixes(alias_qp.clone())
+                .with_cookfile_label(root_anchored_cookfile_label(
+                    &workspace.workspace_root,
+                    &loaded.dir,
+                ));
             let import_registered = register_cookfile(
                 builder,
                 &loaded.lua_source,
@@ -469,8 +504,19 @@ fn merge_into(
             .collect();
         ws.names.push(qn);
     }
-    for (name, units) in rc.units_by_recipe {
-        ws.units_by_recipe.insert(qualify(&name), units);
+    for (name, mut units) in rc.units_by_recipe {
+        let qualified = qualify(&name);
+        // Restamp the value's `recipe_name` with the workspace-qualified key
+        // so the two never disagree. Everything downstream of the merged map
+        // — `WorkNode.recipe_name`, the executor's / `cook why`'s per-recipe
+        // cache-manager lookup, recipe trackers, `dag_builder`'s
+        // `recipe_leaves` wiring against qualified `deps` / `dep_edges` —
+        // keys by the qualified name. Cache identity is unaffected: the
+        // local StepEntry index name and the shared-cache namespace derive
+        // from `CacheMeta.recipe_name`, which stays Cookfile-local
+        // (§20.2.3).
+        units.recipe_name = qualified.clone();
+        ws.units_by_recipe.insert(qualified, units);
     }
     for (key, probe) in rc.probes {
         ws.probes.insert(
@@ -660,6 +706,77 @@ mod tests {
             "expected $<lib.gen> re-lowered to dep_output, got:\n{}",
             ws.root.lua_source
         );
+    }
+
+    /// §20.2.3 cache-identity invariance: the same member Cookfile must
+    /// register its units with IDENTICAL `CacheMeta.cookfile_path` and
+    /// `CacheMeta.recipe_name` whether it is reached as an import of the
+    /// enclosing workspace root (entry = root/Cookfile, registered under
+    /// prefix "rust") or as the entry Cookfile itself (workspace-of-one
+    /// root, prefix ""). The invocation directory must not influence the
+    /// cache namespace.
+    #[test]
+    fn cache_meta_is_invocation_independent_across_entry_points() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("Cookfile"),
+            "import rust apps/rust\n\nrecipe check\n    echo hi\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("apps/rust")).unwrap();
+        std::fs::write(
+            dir.path().join("apps/rust/Cookfile"),
+            concat!(
+                "recipe build\n",
+                "    >>{\n",
+                "        cook.add_unit({\n",
+                "            inputs  = { },\n",
+                "            outputs = { \"build/out.txt\" },\n",
+                "            command = \"mkdir -p build && echo hi > build/out.txt\",\n",
+                "        })\n",
+                "    }\n",
+            ),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(".cookroot"), "").unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+
+        // (i) Entry = the workspace root Cookfile; member registers as an
+        //     import under prefix "rust".
+        let ws_root = Workspace::load(&root.join("Cookfile"), &root, &[]).unwrap();
+        let reg_root = register_workspace(&ws_root, None, &[], None).unwrap();
+
+        // (ii) Entry = the member Cookfile itself (invoked inside apps/rust);
+        //      it registers as the workspace-of-one root under prefix "".
+        let ws_member =
+            Workspace::load(&root.join("apps/rust/Cookfile"), &root, &[]).unwrap();
+        let reg_member = register_workspace(&ws_member, None, &[], None).unwrap();
+
+        let meta_of = |reg: &RegisteredWorkspace, key: &str| {
+            reg.units_by_recipe
+                .get(key)
+                .unwrap_or_else(|| panic!("recipe '{key}' registered"))
+                .units
+                .first()
+                .unwrap_or_else(|| panic!("recipe '{key}' has a unit"))
+                .cache_meta
+                .clone()
+                .unwrap_or_else(|| panic!("recipe '{key}' unit has cache_meta"))
+        };
+
+        let meta_i = meta_of(&reg_root, "rust.build");
+        let meta_ii = meta_of(&reg_member, "build");
+
+        assert_eq!(
+            meta_i.cookfile_path, meta_ii.cookfile_path,
+            "cookfile_path must not depend on the entry point"
+        );
+        assert_eq!(
+            meta_i.recipe_name, meta_ii.recipe_name,
+            "recipe_name must not depend on the entry point"
+        );
+        assert_eq!(meta_i.cookfile_path, "apps/rust/Cookfile");
+        assert_eq!(meta_i.recipe_name, "build");
     }
 
     /// Nested-import discovery: extras must be qualified with the LOCAL

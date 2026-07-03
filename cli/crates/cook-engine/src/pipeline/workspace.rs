@@ -481,6 +481,59 @@ fn first_reachable_sigil_import(
     Ok(None)
 }
 
+/// Entry-point selection (§20.2 / CS-0120): walk upward from `start_dir` to
+/// the nearest directory containing a `Cookfile` and return that Cookfile's
+/// canonicalised path.
+///
+/// The walk is bounded at the workspace boundary: a directory containing a
+/// `.cookroot` marker is the last directory examined (it is itself still
+/// checked for a `Cookfile`), as is `stop_at` (the `--root` override). The
+/// filesystem root bounds the walk unconditionally. The walk never selects a
+/// Cookfile above the boundary — it must not escape into an unrelated
+/// enclosing project.
+pub fn discover_entry_cookfile(
+    start_dir: &Path,
+    stop_at: Option<&Path>,
+) -> Result<PathBuf, PipelineError> {
+    let start = std::fs::canonicalize(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
+    let stop_canon =
+        stop_at.map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()));
+    if let Some(stop) = &stop_canon {
+        if !start.starts_with(stop) {
+            return Err(PipelineError::Workspace(format!(
+                "invocation directory {} is not at or below --root {}",
+                start.display(),
+                stop.display()
+            )));
+        }
+    }
+    let mut cur = start.clone();
+    loop {
+        let candidate = cur.join("Cookfile");
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        let at_boundary =
+            cur.join(".cookroot").exists() || stop_canon.as_deref() == Some(cur.as_path());
+        if at_boundary {
+            return Err(PipelineError::Workspace(format!(
+                "no Cookfile found from {} up to the workspace boundary {}",
+                start.display(),
+                cur.display()
+            )));
+        }
+        match cur.parent() {
+            Some(p) => cur = p.to_path_buf(),
+            None => {
+                return Err(PipelineError::Workspace(format!(
+                    "no Cookfile found from {} up to the filesystem root",
+                    start.display()
+                )));
+            }
+        }
+    }
+}
+
 /// Resolve the workspace root for an invocation per §7.6.
 pub fn resolve_workspace_root(
     invoked_cookfile: &Path,
@@ -978,5 +1031,90 @@ mod tests {
             msg.to_lowercase().contains("cycle") || msg.to_lowercase().contains("circular"),
             "expected cycle diagnostic, got: {msg}"
         );
+    }
+
+    #[test]
+    fn test_discover_entry_nearest_cookfile_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Cookfile"), "recipe build\n    echo root\n").unwrap();
+        fs::create_dir_all(dir.path().join("apps/rust/src")).unwrap();
+        fs::write(dir.path().join("apps/rust/Cookfile"), "recipe build\n    echo member\n").unwrap();
+        let found = discover_entry_cookfile(&dir.path().join("apps/rust/src"), None).unwrap();
+        assert_eq!(
+            found,
+            std::fs::canonicalize(dir.path().join("apps/rust/Cookfile")).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_discover_entry_falls_through_to_root_cookfile() {
+        // cwd deep in a dir with no Cookfile until the root — root is the entry.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Cookfile"), "recipe build\n    echo root\n").unwrap();
+        fs::create_dir_all(dir.path().join("tools/scripts")).unwrap();
+        let found = discover_entry_cookfile(&dir.path().join("tools/scripts"), None).unwrap();
+        assert_eq!(found, std::fs::canonicalize(dir.path().join("Cookfile")).unwrap());
+    }
+
+    #[test]
+    fn test_discover_entry_stops_at_cookroot_boundary() {
+        // A decoy Cookfile ABOVE the .cookroot boundary must not be selected.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Cookfile"), "recipe build\n    echo decoy\n").unwrap();
+        fs::create_dir_all(dir.path().join("proj/sub")).unwrap();
+        fs::write(dir.path().join("proj/.cookroot"), "").unwrap();
+        let err = discover_entry_cookfile(&dir.path().join("proj/sub"), None).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no Cookfile found"), "msg: {msg}");
+    }
+
+    #[test]
+    fn test_discover_entry_boundary_dir_itself_is_checked() {
+        // .cookroot dir with a Cookfile at the same level: found, not an error.
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("proj/sub")).unwrap();
+        fs::write(dir.path().join("proj/.cookroot"), "").unwrap();
+        fs::write(dir.path().join("proj/Cookfile"), "recipe build\n    echo x\n").unwrap();
+        let found = discover_entry_cookfile(&dir.path().join("proj/sub"), None).unwrap();
+        assert_eq!(found, std::fs::canonicalize(dir.path().join("proj/Cookfile")).unwrap());
+    }
+
+    #[test]
+    fn test_discover_entry_stop_at_explicit_root() {
+        // --root bounds the walk like .cookroot does.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Cookfile"), "recipe build\n    echo decoy\n").unwrap();
+        fs::create_dir_all(dir.path().join("proj/sub")).unwrap();
+        let err =
+            discover_entry_cookfile(&dir.path().join("proj/sub"), Some(&dir.path().join("proj")))
+                .unwrap_err();
+        assert!(err.to_string().contains("no Cookfile found"));
+    }
+
+    #[test]
+    fn test_discover_entry_non_ancestor_stop_at_errors_instead_of_unbounding() {
+        // --root that is NOT an ancestor of the start dir must not silently
+        // unbound the walk (and select a Cookfile above the intended boundary).
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Cookfile"), "recipe build\n    echo decoy\n").unwrap();
+        fs::create_dir_all(dir.path().join("proj/sub")).unwrap();
+        fs::create_dir_all(dir.path().join("elsewhere")).unwrap();
+        let err = discover_entry_cookfile(
+            &dir.path().join("proj/sub"),
+            Some(&dir.path().join("elsewhere")),
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not at or below"), "msg: {msg}");
+    }
+
+    #[test]
+    fn test_discover_entry_skips_directory_named_cookfile() {
+        // A DIRECTORY named "Cookfile" is not a Cookfile; the walk continues up.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Cookfile"), "recipe build\n    echo root\n").unwrap();
+        fs::create_dir_all(dir.path().join("sub/Cookfile")).unwrap();
+        let found = discover_entry_cookfile(&dir.path().join("sub"), None).unwrap();
+        assert_eq!(found, std::fs::canonicalize(dir.path().join("Cookfile")).unwrap());
     }
 }

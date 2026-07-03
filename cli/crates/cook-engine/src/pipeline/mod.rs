@@ -48,4 +48,4 @@ pub use registers::{
     codegen_with_module_recipes, list_workspace_names, register_workspace,
     register_workspace_with_argv,
 };
-pub use workspace::{resolve_workspace_root, LoadedCookfile, Workspace};
+pub use workspace::{discover_entry_cookfile, resolve_workspace_root, LoadedCookfile, Workspace};
