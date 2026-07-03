@@ -22,6 +22,7 @@
 //! | Concern | Owner |
 //! |---|---|
 //! | Cookfile parsing & codegen | `pipeline::parse` |
+//! | Entry-point / workspace-root anchoring | `pipeline::entry` |
 //! | Workspace import resolution | `pipeline::workspace` |
 //! | `.env` + `--set` env layering | `pipeline::env` |
 //! | `RecipeInfo` map assembly | `pipeline::recipe_info` |
@@ -32,6 +33,7 @@
 //! Errors at this layer surface as `PipelineError`; the CLI maps it onto
 //! its `CookError` for display + exit-code mapping.
 
+pub mod entry;
 pub mod env;
 pub mod error;
 pub mod inferred_deps;
@@ -48,4 +50,5 @@ pub use recipe_info::{build_recipe_infos_from_registered, find_full_prefix};
 pub use registers::{
     codegen_with_module_recipes, list_workspace_names, register_workspace, RegisterMode,
 };
-pub use workspace::{discover_entry_cookfile, resolve_workspace_root, LoadedCookfile, Workspace};
+pub use entry::{discover_entry_cookfile, resolve_workspace_root};
+pub use workspace::{LoadedCookfile, Workspace};
