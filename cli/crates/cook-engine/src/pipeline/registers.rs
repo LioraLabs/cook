@@ -679,9 +679,12 @@ mod tests {
             "import b ./b\nrecipe mid\n    cook \"mid.o\" { cat $<b.gen> > $<out> }\n",
         )
         .unwrap();
+        // Root ALSO references `$<b.gen>` — but root does not import b
+        // directly, so its reference must STAY mis-lowered (require_env)
+        // after discovery: extras reach direct importers only.
         std::fs::write(
             dir.path().join("Cookfile"),
-            "import a ./a\nrecipe top\n    cook \"top.o\" { cat $<a.mid> > $<out> }\n",
+            "import a ./a\nrecipe top\n    cook \"top.o\" { cat $<a.mid> $<b.gen> > $<out> }\n",
         )
         .unwrap();
         std::fs::write(dir.path().join(".cookroot"), "").unwrap();
@@ -702,8 +705,14 @@ mod tests {
             "a's $<b.gen> must re-lower via its LOCAL alias, got:\n{a_lua}"
         );
         assert!(
-            !ws.root.lua_source.contains("b.gen"),
-            "root must not gain b.gen (it does not import b directly), got:\n{}",
+            ws.root.lua_source.contains("cook.require_env(\"b.gen\")"),
+            "root's $<b.gen> must stay mis-lowered (root does not import b \
+             directly, so b's extras must not reach its union), got:\n{}",
+            ws.root.lua_source
+        );
+        assert!(
+            !ws.root.lua_source.contains("cook.dep_output(\"b.gen\")"),
+            "root must not gain a dep_output for b.gen, got:\n{}",
             ws.root.lua_source
         );
     }

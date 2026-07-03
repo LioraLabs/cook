@@ -1,4 +1,4 @@
-//! Unified engine entry point for both single-Cookfile and workspace builds.
+//! Unified engine entry point for every build — a workspace of one or many.
 //!
 //! [`run`] takes a fully-built [`RegisteredWorkspace`] along with the
 //! recipe-level dependency edges for the reachable target closure, then
