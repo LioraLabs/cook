@@ -56,7 +56,7 @@ fn apply_entry_discovery(cli: &mut Cli, file_explicit: bool) -> Result<(), CookE
     if file_explicit || matches!(cli.cmd, Some(Cmd::Init) | Some(Cmd::Modules(_))) {
         return Ok(());
     }
-    if cli.globals.file.exists() {
+    if cli.globals.file.is_file() {
         return Ok(()); // nearest Cookfile is cwd — identical to today
     }
     let cwd = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
