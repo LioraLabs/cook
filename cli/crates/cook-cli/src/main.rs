@@ -77,8 +77,18 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
         Some(Cmd::Menu) => cmd_menu(&globals),
         Some(Cmd::List(args)) => cmd_list(&globals, &args),
         Some(Cmd::Modules(args)) => std::process::exit(modules::run(args)),
-        Some(Cmd::Test(args)) => cmd_test(&globals, &args),
-        Some(Cmd::Dag(args)) => cmd_dag(&globals, &args),
+        Some(Cmd::Test(args)) => {
+            if let Some(s) = &args.scope {
+                reject_reserved_root_target(s)?;
+            }
+            cmd_test(&globals, &args)
+        }
+        Some(Cmd::Dag(args)) => {
+            if let Some(r) = &args.recipe {
+                reject_reserved_root_target(r)?;
+            }
+            cmd_dag(&globals, &args)
+        }
         Some(Cmd::Logs(args)) => {
             let selector = if args.last_failed {
                 cook_logs::BuildSelector::LastFailed
@@ -94,21 +104,25 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
                 .map_err(|e| CookError::Other(e.to_string()))
         }
         Some(Cmd::Cache(args)) => match args.cmd {
-            crate::cli::CacheCmd::Verify(v) => cmd_cache_verify(&globals, &v),
+            crate::cli::CacheCmd::Verify(v) => {
+                if let Some(r) = &v.recipe {
+                    reject_reserved_root_target(r)?;
+                }
+                cmd_cache_verify(&globals, &v)
+            }
         },
-        Some(Cmd::Serve(args)) => cmd_serve(
-            &globals,
-            args.recipe.as_deref().unwrap_or("build"),
-            args.config.as_deref(),
-        ),
+        Some(Cmd::Serve(args)) => {
+            let recipe = args.recipe.as_deref().unwrap_or("build");
+            reject_reserved_root_target(recipe)?;
+            cmd_serve(&globals, recipe, args.config.as_deref())
+        }
         Some(Cmd::EmitLua) => cmd_emit_lua(&globals),
         Some(Cmd::Affected(args)) => cmd_affected(&globals, &args),
-        Some(Cmd::Why(args)) => cmd_why(
-            &globals,
-            args.recipe.as_deref().unwrap_or("build"),
-            args.config.as_deref(),
-            args.json,
-        ),
+        Some(Cmd::Why(args)) => {
+            let recipe = args.recipe.as_deref().unwrap_or("build");
+            reject_reserved_root_target(recipe)?;
+            cmd_why(&globals, recipe, args.config.as_deref(), args.json)
+        }
         Some(Cmd::Recipe(parts)) => dispatch_recipe(&globals, &parts),
     }
 }
@@ -131,6 +145,7 @@ fn dispatch_recipe(globals: &cli::Globals, parts: &[String]) -> Result<(), CookE
         .expect("external_subcommand variant always carries ≥1 element");
 
     let recipe = first.strip_prefix('+').unwrap_or(first).to_string();
+    reject_reserved_root_target(&recipe)?;
     let partitioned = partition_argv(rest, &recipe)?;
 
     // Merge post-recipe `--affected`/`--since` flags into globals so that
@@ -247,6 +262,20 @@ fn is_preset_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
 }
 
+/// §20.2.4 / CS-0120 reserved syntax: a `//`-prefixed CLI target names a
+/// workspace-root-anchored target. v1 reserves the syntax without
+/// implementing resolution — reject with a clear diagnostic instead of
+/// misparsing the name as a recipe literal.
+fn reject_reserved_root_target(target: &str) -> Result<(), CookError> {
+    if let Some(rest) = target.strip_prefix("//") {
+        return Err(CookError::Other(format!(
+            "'//{rest}': root-anchored targets ('//<name>') are reserved syntax and not yet supported; \
+             run `cook {rest}` from the workspace root instead"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod entry_discovery_tests {
     use super::*;
@@ -282,5 +311,27 @@ mod entry_discovery_tests {
         assert!(cookfile_flag_was_explicit(&matches_for(&[
             "test", "-f", "sub/Cookfile"
         ])));
+    }
+}
+
+#[cfg(test)]
+mod reserved_target_tests {
+    use super::*;
+
+    #[test]
+    fn double_slash_target_is_rejected() {
+        let err = reject_reserved_root_target("//check").unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("reserved"), "msg: {msg}");
+        assert!(msg.contains("not yet supported"), "msg: {msg}");
+        assert!(msg.contains("check"), "msg: {msg}");
+    }
+
+    #[test]
+    fn normal_and_qualified_targets_pass() {
+        assert!(reject_reserved_root_target("build").is_ok());
+        assert!(reject_reserved_root_target("rust.build").is_ok());
+        // single slash is not the reserved syntax
+        assert!(reject_reserved_root_target("/x").is_ok());
     }
 }
