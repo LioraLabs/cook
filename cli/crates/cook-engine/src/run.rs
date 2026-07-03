@@ -7,10 +7,10 @@
 //! Cross-recipe edges live directly on the unified DAG; there is no per-wave
 //! register / DAG / execute loop (SHI-222 Phase 4).
 //!
-//! Callers build the [`RegisteredWorkspace`] via `pipeline::register_workspace`
-//! (or `register_single_cookfile` for single-Cookfile inputs), which runs
-//! `cook_register::register_cookfile` once per Cookfile and merges per-import
-//! results.
+//! Callers build the [`RegisteredWorkspace`] via `pipeline::register_workspace`,
+//! which runs `cook_register::register_cookfile` once per Cookfile and merges
+//! per-import results. A single-Cookfile project (no imports) is a workspace
+//! of one member — `register_workspace` is the only entry point.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
