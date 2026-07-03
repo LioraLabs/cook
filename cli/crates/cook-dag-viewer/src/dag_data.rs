@@ -245,16 +245,12 @@ fn build_wave(
         //
         // The on-disk index is written under the units' Cookfile-local
         // `CacheMeta.recipe_name`, not the (possibly import-qualified)
-        // workspace key `recipe_name` — mirrors
-        // `cook_engine::run::recipe_cache_index_name`. For import recipes
-        // (e.g. workspace key "rust.build", cache_meta name "build") loading
-        // under the qualified key would silently miss the index and render
-        // every node as never-cached.
-        let cache_index_name = ru
-            .units
-            .iter()
-            .find_map(|u| u.cache_meta.as_ref().map(|m| m.recipe_name.clone()))
-            .unwrap_or_else(|| recipe_name.clone());
+        // workspace key `recipe_name`. For import recipes (e.g. workspace
+        // key "rust.build", cache_meta name "build") loading under the
+        // qualified key would silently miss the index and render every node
+        // as never-cached.
+        let cache_index_name =
+            cook_engine::run::recipe_cache_index_name(ru, recipe_name);
         let recipe_cache = cm.as_ref().map(|mgr| mgr.get_or_load(&cache_index_name));
 
         // Probe key → unit id index. Used to wire probe→consumer edges from
