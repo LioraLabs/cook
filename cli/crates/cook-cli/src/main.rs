@@ -27,10 +27,10 @@ fn main() {
     )));
     let cli_command = <Cli as CommandFactory>::command().version(version_string);
     let matches = cli_command.get_matches();
-    let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)
+    let mut cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)
         .expect("clap derive guarantees this conversion");
-
-    let result = dispatch(cli);
+    let file_explicit = cookfile_flag_was_explicit(&matches);
+    let result = apply_entry_discovery(&mut cli, file_explicit).and_then(|()| dispatch(cli));
 
     if let Err(e) = result {
         // TestFailure: the summary line already conveys the failure count;
@@ -40,6 +40,33 @@ fn main() {
         }
         std::process::exit(e.exit_code());
     }
+}
+
+/// True when `-f/--file` was given on the command line (any position —
+/// clap propagates `global = true` args to the top-level matches).
+fn cookfile_flag_was_explicit(matches: &clap::ArgMatches) -> bool {
+    matches.value_source("file") == Some(clap::parser::ValueSource::CommandLine)
+}
+
+/// Upward Cookfile discovery (§20.2 / CS-0120): when no `-f/--file` was
+/// given and the default `Cookfile` is absent in cwd, walk up to the nearest
+/// Cookfile and make it the entry point. `cook init` (creates a Cookfile
+/// here) and `cook modules` (cwd-scoped cook.toml management) are exempt.
+fn apply_entry_discovery(cli: &mut Cli, file_explicit: bool) -> Result<(), CookError> {
+    if file_explicit || matches!(cli.cmd, Some(Cmd::Init) | Some(Cmd::Modules(_))) {
+        return Ok(());
+    }
+    if cli.globals.file.exists() {
+        return Ok(()); // nearest Cookfile is cwd — identical to today
+    }
+    let cwd = std::env::current_dir().map_err(|e| CookError::Other(e.to_string()))?;
+    let found = cook_engine::pipeline::discover_entry_cookfile(
+        &cwd,
+        cli.globals.root.as_deref(),
+    )
+    .map_err(|e| CookError::Other(e.to_string()))?;
+    cli.globals.file = found;
+    Ok(())
 }
 
 fn dispatch(cli: Cli) -> Result<(), CookError> {
@@ -218,4 +245,42 @@ fn partition_argv(rest: &[String], recipe: &str) -> Result<PartitionedArgv, Cook
 
 fn is_preset_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
+}
+
+#[cfg(test)]
+mod entry_discovery_tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    fn matches_for(argv: &[&str]) -> clap::ArgMatches {
+        let mut full = vec!["cook"];
+        full.extend_from_slice(argv);
+        <cli::Cli as CommandFactory>::command()
+            .try_get_matches_from(full)
+            .expect("parse")
+    }
+
+    #[test]
+    fn default_file_is_not_explicit() {
+        assert!(!cookfile_flag_was_explicit(&matches_for(&["build"])));
+        assert!(!cookfile_flag_was_explicit(&matches_for(&["menu"])));
+        assert!(!cookfile_flag_was_explicit(&matches_for(&[])));
+    }
+
+    #[test]
+    fn pre_subcommand_flag_is_explicit() {
+        assert!(cookfile_flag_was_explicit(&matches_for(&[
+            "-f", "sub/Cookfile", "build"
+        ])));
+    }
+
+    #[test]
+    fn post_subcommand_global_flag_is_explicit() {
+        // global=true args given after a named subcommand propagate up to the
+        // top-level matches (pinned by cli.rs::globals_apply_after_subcommand);
+        // value_source must see them as CommandLine too.
+        assert!(cookfile_flag_was_explicit(&matches_for(&[
+            "test", "-f", "sub/Cookfile"
+        ])));
+    }
 }
