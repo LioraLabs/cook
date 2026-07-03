@@ -498,6 +498,61 @@ pub fn codegen_with_module_recipes_single(
         .map_err(|e| PipelineError::Codegen(e.to_string()))
 }
 
+/// Re-run codegen for every Cookfile in the workspace against the *full*
+/// register-phase recipe set (§10.2 step 2, CS-0094), generalising
+/// the former single-Cookfile-only pass to every workspace member.
+///
+/// The load-time codegen passes classify `$<NAME>` placeholders using only
+/// statically parsed `recipe` blocks plus the §7.3 alias union. A `$<NAME>`
+/// naming a recipe registered at register-phase by a top-level module call
+/// (e.g. `cook_cc.bin("x")`) is invisible to those passes and mis-lowers to
+/// `cook.require_env(...)`, hard-erroring when the body runs during the
+/// register pass. This runs the cheap body-free [`cook_register::list_names`]
+/// pass per member (same env policy as [`list_workspace_names`]), unions the
+/// discovered names with the static set — locally, and as `alias.name` on
+/// each importer — and regenerates every member's Lua in place. Feeding the
+/// static-name Lua to `list_names` is safe: it never invokes a recipe body,
+/// so the latent mis-lowering is never reached during discovery.
+pub fn codegen_with_module_recipes(
+    workspace: &mut Workspace,
+    config: Option<&str>,
+    env_overrides: &[String],
+) -> Result<(), PipelineError> {
+    let cli_overrides = parse_cli_overrides(env_overrides)?;
+    let mut discovered: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
+
+    // Root: .env layering applies (mirror list_workspace_names).
+    let root_canon = std::fs::canonicalize(&workspace.root.dir)
+        .unwrap_or_else(|_| workspace.root.dir.clone());
+    let dotenv_vars = load_env(&workspace.root.dir);
+    let root_env = resolve_env(config, dotenv_vars, env_overrides)?;
+    let root_builder = RegisterSessionBuilder::new(workspace.root.dir.clone(), root_env)
+        .with_cli_overrides(cli_overrides.clone())
+        .with_selected_config(config.map(|s| s.to_string()));
+    let root_names = cook_register::list_names(root_builder, &workspace.root.lua_source)
+        .map_err(map_register_error)?;
+    discovered.insert(root_canon, root_names.into_iter().map(|n| n.name).collect());
+
+    // Imports: fresh env baseline — no root .env layering (mirror
+    // list_workspace_names / register_workspace policy).
+    for (canonical_path, loaded) in &workspace.imports {
+        let prefix = find_full_prefix(workspace, canonical_path);
+        let import_env = resolve_env(config, HashMap::new(), env_overrides)?;
+        let builder = RegisterSessionBuilder::new(loaded.dir.clone(), import_env)
+            .with_cli_overrides(cli_overrides.clone())
+            .with_selected_config(config.map(|s| s.to_string()))
+            .with_qualified_prefix(prefix);
+        let names = cook_register::list_names(builder, &loaded.lua_source)
+            .map_err(map_register_error)?;
+        discovered.insert(
+            canonical_path.clone(),
+            names.into_iter().map(|n| n.name).collect(),
+        );
+    }
+
+    super::workspace::regenerate_lua_sources(workspace, &discovered)
+}
+
 /// Merge a per-Cookfile [`cook_register::RegisteredCookfile`] into the
 /// workspace-level [`RegisteredWorkspace`], qualifying every recipe name,
 /// unit key, probe key, and intra-Cookfile `requires` entry with `prefix`
@@ -685,5 +740,71 @@ mod tests {
             Err(PipelineError::Other(_)) => {}
             Err(other) => panic!("expected PipelineError::Other, got {other:?}"),
         }
+    }
+
+    /// Workspace-of-one discovery — a recipe registered at
+    /// register-phase (invisible to static codegen) must be folded into the
+    /// $<NAME> classification set when the workspace path re-codegens.
+    #[test]
+    fn codegen_with_module_recipes_discovers_dynamic_recipe_workspace_of_one() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("Cookfile"),
+            "recipe consume\n    cook \"build/out\" { cat $<gen> > $<out> }\n",
+        )
+        .unwrap();
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let mut ws = Workspace::load(&entry, &root, &[]).unwrap();
+        // Static codegen cannot see `gen` → mis-lowers to require_env.
+        assert!(ws.root.lua_source.contains("cook.require_env(\"gen\")"));
+        // Simulate a module-registered recipe: append a dynamic registration
+        // to the discovery Lua (list_names sees it; bodies never run).
+        ws.root.lua_source.push_str(
+            "\ncook.recipe(\"gen\", {requires = {}}, function() end)\n",
+        );
+        codegen_with_module_recipes(&mut ws, None, &[]).unwrap();
+        assert!(
+            ws.root.lua_source.contains("cook.dep_output(\"gen\")"),
+            "expected $<gen> re-lowered to dep_output, got:\n{}",
+            ws.root.lua_source
+        );
+    }
+
+    /// The discovery pass must also cover IMPORTED members —
+    /// an importer's `$<alias.recipe>` where `recipe` is module-registered in
+    /// the importee must re-lower to dep_output on the workspace path.
+    #[test]
+    fn codegen_with_module_recipes_discovers_dynamic_recipe_in_importee() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+        std::fs::write(
+            dir.path().join("lib/Cookfile"),
+            "recipe lib_static\n    cook \"lib.o\" { echo $<out> }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("Cookfile"),
+            "import lib ./lib\nrecipe top\n    cook \"build/top\" { cat $<lib.gen> > $<out> }\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(".cookroot"), "").unwrap();
+        let entry = dir.path().join("Cookfile");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let mut ws = Workspace::load(&entry, &root, &[]).unwrap();
+        assert!(ws.root.lua_source.contains("cook.require_env(\"lib.gen\")"));
+        // Simulate a module-registered recipe in the importee.
+        let lib_canon = std::fs::canonicalize(dir.path().join("lib")).unwrap();
+        ws.imports
+            .get_mut(&lib_canon)
+            .unwrap()
+            .lua_source
+            .push_str("\ncook.recipe(\"gen\", {requires = {}}, function() end)\n");
+        codegen_with_module_recipes(&mut ws, None, &[]).unwrap();
+        assert!(
+            ws.root.lua_source.contains("cook.dep_output(\"lib.gen\")"),
+            "expected $<lib.gen> re-lowered to dep_output, got:\n{}",
+            ws.root.lua_source
+        );
     }
 }
