@@ -117,7 +117,12 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
             cmd_serve(&globals, recipe, args.config.as_deref())
         }
         Some(Cmd::EmitLua) => cmd_emit_lua(&globals),
-        Some(Cmd::Affected(args)) => cmd_affected(&globals, &args),
+        Some(Cmd::Affected(args)) => {
+            if let Some(r) = &args.recipe {
+                reject_reserved_root_target(r)?;
+            }
+            cmd_affected(&globals, &args)
+        }
         Some(Cmd::Why(args)) => {
             let recipe = args.recipe.as_deref().unwrap_or("build");
             reject_reserved_root_target(recipe)?;

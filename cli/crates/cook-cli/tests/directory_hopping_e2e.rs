@@ -190,3 +190,17 @@ fn explicit_file_flag_disables_discovery() {
     let out = run_cook(&root.join("tools"), &["-f", "Cookfile", "check"]);
     assert!(!out.status.success(), "explicit -f Cookfile in a bare dir must error");
 }
+
+/// §20.2.2 negative: the enclosing workspace's alias namespace does not
+/// leak into an invocation made inside the member — `rust.build` is not a
+/// name the member knows.
+#[test]
+fn enclosing_alias_does_not_leak_into_member() {
+    let (tmp, _cache) = workspace_fixture();
+    let member = tmp.path().join("apps/rust");
+    let out = run_cook(&member, &["rust.build"]);
+    assert!(
+        !out.status.success(),
+        "rust.build must not resolve from inside the member"
+    );
+}

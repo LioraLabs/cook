@@ -242,7 +242,20 @@ fn build_wave(
         let cm = cache_managers.get(recipe_name);
 
         // Issue 4: Load cache once per recipe, outside the unit loop.
-        let recipe_cache = cm.as_ref().map(|mgr| mgr.get_or_load(recipe_name));
+        //
+        // The on-disk index is written under the units' Cookfile-local
+        // `CacheMeta.recipe_name`, not the (possibly import-qualified)
+        // workspace key `recipe_name` — mirrors
+        // `cook_engine::run::recipe_cache_index_name`. For import recipes
+        // (e.g. workspace key "rust.build", cache_meta name "build") loading
+        // under the qualified key would silently miss the index and render
+        // every node as never-cached.
+        let cache_index_name = ru
+            .units
+            .iter()
+            .find_map(|u| u.cache_meta.as_ref().map(|m| m.recipe_name.clone()))
+            .unwrap_or_else(|| recipe_name.clone());
+        let recipe_cache = cm.as_ref().map(|mgr| mgr.get_or_load(&cache_index_name));
 
         // Probe key → unit id index. Used to wire probe→consumer edges from
         // each unit's `probes` field (mirrored from `inputs.requires` /
@@ -1091,5 +1104,107 @@ mod tests {
                 "a.o is a unit output and must not be emitted as a file node",
             );
         }
+    }
+
+    /// The on-disk cache index is written under the unit's Cookfile-local
+    /// `CacheMeta.recipe_name` ("build"), not the (import-qualified)
+    /// workspace key the recipe is registered under ("rust.build"). If the
+    /// viewer loads the index under the qualified key it finds nothing and
+    /// every node renders as never-cached, even when a fresh, matching cache
+    /// entry exists. This pins that the index lookup follows cache_meta.
+    #[test]
+    fn cache_lookup_uses_cache_meta_recipe_name_not_qualified_key() {
+        let tmp = TempDir::new().unwrap();
+        let wd = tmp.path().to_path_buf();
+        touch(&wd, &["source.cpp", "output.o"]);
+
+        let source_record = cook_fingerprint::FileRecord {
+            path: "source.cpp".into(),
+            mtime: stat_mtime(&wd.join("source.cpp")).unwrap(),
+            hash: hash_file(&wd.join("source.cpp")).unwrap(),
+        };
+        let output_record = cook_fingerprint::FileRecord {
+            path: "output.o".into(),
+            mtime: stat_mtime(&wd.join("output.o")).unwrap(),
+            hash: hash_file(&wd.join("output.o")).unwrap(),
+        };
+
+        let cache_meta = cook_contracts::CacheMeta {
+            // Cookfile-local name: differs from the qualified workspace key
+            // ("rust.build") the recipe is registered under below.
+            recipe_name: "build".into(),
+            project_id: "p".into(),
+            cookfile_path: "Cookfile".into(),
+            cache_key: "k1".into(),
+            input_paths: vec!["source.cpp".into()],
+            output_paths: vec!["output.o".into()],
+            command_hash: 0,
+            env_contribution: 0,
+            consulted_env: BTreeMap::new(),
+            discovered_inputs: None,
+            seal_keys: Default::default(),
+            sharing: Default::default(),
+            record: false,
+        };
+        let unit = CapturedUnit {
+            payload: WorkPayload::Shell {
+                cmd: "clang++ -c source.cpp -o output.o".into(),
+                line: 1,
+            },
+            cache_meta: Some(cache_meta),
+            dep_kind: DepKind::Sequential,
+            probes: vec![],
+            unit_env_vars: Default::default(),
+            member: None,
+            output_paths: Vec::new(),
+        };
+        let ru = RecipeUnits {
+            // Qualified workspace key (import-aliased), used both as the
+            // map key below and as `target`.
+            recipe_name: "rust.build".into(),
+            deps: vec![],
+            units: vec![unit],
+            step_groups: vec![],
+            working_dir: wd,
+            env_vars: BTreeMap::new(),
+            terminal_outputs: vec!["output.o".into()],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+
+        let mgr = cook_cache::ThreadSafeCacheManager::new(tmp.path().join(".cook/cache"));
+        // Populate the in-memory cache under the *local* name only — mirrors
+        // what the executor writes on disk (`recipe_cache_index_name`).
+        mgr.update_step(
+            "build",
+            "k1",
+            cook_fingerprint::StepEntry {
+                inputs: vec![source_record],
+                outputs: vec![output_record],
+                command_hash: 0,
+                env_contribution: 0,
+                seal_contribution: 0,
+            },
+        );
+
+        let all_units = vec![("rust.build".into(), ru)];
+        let explicit: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let inferred: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut cms: BTreeMap<String, Arc<cook_cache::ThreadSafeCacheManager>> = BTreeMap::new();
+        cms.insert("rust.build".into(), Arc::new(mgr));
+
+        let g = build_wave_dag_data("rust.build", &all_units, &explicit, &inferred, &cms);
+
+        let node = g.waves[0]
+            .nodes
+            .iter()
+            .find(|n| n.id == "unit:rust.build:0")
+            .expect("unit node missing");
+        assert_eq!(
+            node.cached,
+            Some(true),
+            "cache index must be looked up under cache_meta.recipe_name (\"build\"), \
+             not the qualified workspace key (\"rust.build\")",
+        );
     }
 }
