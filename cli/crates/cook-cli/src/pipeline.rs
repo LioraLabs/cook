@@ -1480,27 +1480,16 @@ pub fn cmd_serve(
 
     // Resolve execution order via engine analyzer for glob collection. The
     // analyzer's `recipe_infos` map now comes from the unified register
-    // pass: we register the single root Cookfile (cmd_serve doesn't support
-    // workspace imports for glob collection — imports only contribute file
-    // paths to watch below) and derive `RecipeInfo` from it.
-    let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
-    let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
-        std::path::Path::new(".")
-    } else {
-        cookfile_dir
-    };
-    let serve_dotenv = pipeline::load_env(cookfile_dir);
-    let serve_env = pipeline::resolve_env(config, serve_dotenv, &globals.set)
+    // pass over the full workspace (root + every transitive import), so a
+    // root recipe with a cross-Cookfile dependency resolves correctly here
+    // too. Glob collection below still walks only the root AST
+    // (`parsed.cookfile`) — imports only contribute file paths to watch.
+    let mut workspace = load_workspace(globals)?;
+    pipeline::codegen_with_module_recipes(&mut workspace, config, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
-    let serve_registered = pipeline::register_single_cookfile(
-        cookfile_dir,
-        serve_env,
-        &globals.set,
-        parsed.lua_source.clone(),
-        config,
-        /*cache_ctx*/ None,
-    )
-    .map_err(pipeline_error_to_cook_error)?;
+    let serve_registered =
+        pipeline::register_workspace(&workspace, config, &globals.set, /*cache_ctx*/ None)
+            .map_err(pipeline_error_to_cook_error)?;
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&serve_registered);
     let order =
         cook_engine::analyzer::topological_sort(&recipe_infos, recipe_name).map_err(|e| match e {
@@ -1526,18 +1515,12 @@ pub fn cmd_serve(
 
     let mut cookfile_paths = vec![cookfile_path];
 
-    // If imports exist, collect all imported Cookfile paths for watching
-    if !parsed.cookfile.imports.is_empty() {
-        let workspace_root =
-            pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
-                .map_err(pipeline_error_to_cook_error)?;
-        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
-            .map_err(pipeline_error_to_cook_error)?;
-        for (_canonical_path, loaded) in &workspace.imports {
-            let import_cookfile = loaded.dir.join("Cookfile");
-            if let Ok(canonical) = std::fs::canonicalize(&import_cookfile) {
-                cookfile_paths.push(canonical);
-            }
+    // Collect all imported Cookfile paths for watching (a Cookfile with no
+    // imports has an empty `workspace.imports`, so this loop is a no-op).
+    for (_canonical_path, loaded) in &workspace.imports {
+        let import_cookfile = loaded.dir.join("Cookfile");
+        if let Ok(canonical) = std::fs::canonicalize(&import_cookfile) {
+            cookfile_paths.push(canonical);
         }
     }
 
@@ -1601,34 +1584,7 @@ pub fn cmd_dag(globals: &Globals, args: &crate::cli::DagArgs) -> Result<(), Cook
     // `explicit_edges` is the recipe-level edge map; `inferred_deps` is empty
     // in the unified-DAG world (cross-recipe edges now live on `dep_edges`
     // inside each `RecipeUnits`, not on a separate inferred-dep map).
-    let registered = if !parsed.cookfile.imports.is_empty() {
-        let workspace_root =
-            pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
-                .map_err(pipeline_error_to_cook_error)?;
-        let workspace = Workspace::load(&globals.file, &workspace_root, &globals.set)
-            .map_err(pipeline_error_to_cook_error)?;
-        pipeline::register_workspace(&workspace, config, &globals.set, /*cache_ctx*/ None)
-            .map_err(pipeline_error_to_cook_error)?
-    } else {
-        let cookfile_dir = globals.file.parent().unwrap_or(std::path::Path::new("."));
-        let cookfile_dir = if cookfile_dir.as_os_str().is_empty() {
-            std::path::Path::new(".")
-        } else {
-            cookfile_dir
-        };
-        let dotenv_vars = pipeline::load_env(cookfile_dir);
-        let env_vars = pipeline::resolve_env(config, dotenv_vars, &globals.set)
-            .map_err(pipeline_error_to_cook_error)?;
-        pipeline::register_single_cookfile(
-            cookfile_dir,
-            env_vars,
-            &globals.set,
-            parsed.lua_source,
-            config,
-            /*cache_ctx*/ None,
-        )
-        .map_err(pipeline_error_to_cook_error)?
-    };
+    let registered = build_registered_workspace(globals, config, None)?;
 
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
     let edges = cook_engine::analyzer::dependency_edges_multi(&recipe_infos, &targets).map_err(
