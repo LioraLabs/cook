@@ -1460,6 +1460,23 @@ mod resolve_test_scope_tests {
 // cmd_serve
 // ---------------------------------------------------------------------------
 
+/// Join relative watch-glob patterns onto `dir` (the entry Cookfile's
+/// directory), leaving absolute patterns untouched. Under upward discovery
+/// (§20.2) cwd may be a subdirectory of the entry dir, and the watcher
+/// matches patterns against absolute notify event paths.
+fn anchor_globs(globs: Vec<String>, dir: &std::path::Path) -> Vec<String> {
+    globs
+        .into_iter()
+        .map(|g| {
+            if std::path::Path::new(&g).is_absolute() {
+                g
+            } else {
+                dir.join(&g).to_string_lossy().into_owned()
+            }
+        })
+        .collect()
+}
+
 pub fn cmd_serve(
     globals: &Globals,
     recipe_name: &str,
@@ -1521,6 +1538,12 @@ pub fn cmd_serve(
     let cookfile_path = std::fs::canonicalize(&globals.file)
         .map_err(|e| CookError::Other(format!("cannot resolve Cookfile path: {e}")))?;
 
+    let entry_dir = cookfile_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let globs = anchor_globs(globs, &entry_dir);
+
     let mut cookfile_paths = vec![cookfile_path];
 
     // Collect all imported Cookfile paths for watching (a Cookfile with no
@@ -1549,6 +1572,21 @@ pub fn cmd_serve(
         .map_err(|e| CookError::Other(e.to_string()))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod serve_glob_tests {
+    use super::*;
+
+    #[test]
+    fn anchor_globs_joins_relative_and_keeps_absolute() {
+        let dir = std::path::Path::new("/ws/apps/rust");
+        let got = anchor_globs(
+            vec!["src/*.c".to_string(), "/abs/x/*.h".to_string()],
+            dir,
+        );
+        assert_eq!(got, vec!["/ws/apps/rust/src/*.c".to_string(), "/abs/x/*.h".to_string()]);
+    }
 }
 
 // ---------------------------------------------------------------------------
