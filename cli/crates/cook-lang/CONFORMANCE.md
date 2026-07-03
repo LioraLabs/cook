@@ -4,7 +4,7 @@ This crate is the current reference implementation of the [Cook Standard](../../
 
 ## Claim
 
-`cook-lang` claims **Cook Standard v0.13**.
+`cook-lang` claims **Cook Standard v0.14**.
 
 The claim is the constant `COOK_STANDARD_VERSION` in `src/lib.rs`. The constant is the single source of truth; the README and `cook --version` mirror it.
 
