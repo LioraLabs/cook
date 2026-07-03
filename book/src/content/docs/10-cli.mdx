@@ -23,13 +23,21 @@ cook +menu       # run the recipe named "menu"
 cook menu        # the subcommand
 ```
 
+### Running from a subdirectory
+
+You don't have to stand next to a Cookfile. Run `cook` from anywhere inside a project and it walks up to the nearest `Cookfile` and behaves exactly as if you'd run it there: bare recipe names are that Cookfile's recipes, and its imports stay addressable under their local aliases. In a workspace, `cook build` inside `apps/rust/` runs that member's own `build` — never `rust.build`; the enclosing workspace's alias never leaks in.
+
+The walk stops at the workspace boundary (a `.cookroot` marker, `--root`, or the filesystem root) — cook never wanders into an unrelated parent project. And no matter where you invoke from, cache state is anchored at the workspace root: the same build gets the same cache key from the root, the member dir, or six directories deep, so hopping around never splits your cache. (`cook logs`, `cook why`, and friends follow the same rule.)
+
+Target names starting with `//` (e.g. `cook //check`) are reserved for root-anchored invocation — resolving from the workspace root's Cookfile no matter where you stand. That's not implemented yet; today cook rejects it with a clear error instead of guessing.
+
 ### Global options
 
 Worth memorising:
 
 | Flag                | What it does                                           |
 |---------------------|--------------------------------------------------------|
-| `-f, --file FILE`   | Use a different Cookfile (default: `Cookfile`).        |
+| `-f, --file FILE`   | Use a specific Cookfile (default: discover the nearest `Cookfile` upward from cwd). |
 | `--root DIR`        | Override workspace-root resolution.                    |
 | `-q, --quiet`       | Suppress Cook's own output (still see command output). |
 | `-v, --verbose`     | Stream per-unit output inline with `[recipe/node]` prefix. |
