@@ -40,6 +40,14 @@ pub struct RegisterSessionBuilder {
     /// every importer's local alias must resolve to that same canonical
     /// prefix at lookup time.
     alias_qualified_prefixes: BTreeMap<String, String>,
+    /// Root-anchored Cookfile label (workspace-root-relative path of this
+    /// member's Cookfile, forward-slashed). Folded into each unit's
+    /// `CacheMeta.cookfile_path` so cache identity is invocation-independent
+    /// (§20.2.3): the same member gets the same label whether it registers
+    /// as the entry (workspace-of-one root) or as an import of an enclosing
+    /// workspace. `None` falls back to the cache_ctx-derived relative path,
+    /// then the bare "Cookfile" constant.
+    cookfile_label: Option<String>,
     /// Frozen keyset of env-var names declared via config blocks.
     /// Shared between the Lua-env-construction call and the config-block
     /// evaluation call so both sides see the same Rc-backed set.
@@ -72,6 +80,7 @@ impl RegisterSessionBuilder {
             qualified_prefix: String::new(),
             alias_dirs: BTreeMap::new(),
             alias_qualified_prefixes: BTreeMap::new(),
+            cookfile_label: None,
             env_keyset: EnvKeyset::new(),
             shadow_warnings_emitted: Rc::new(RefCell::new(std::collections::BTreeSet::new())),
             target_recipe: None,
@@ -117,6 +126,17 @@ impl RegisterSessionBuilder {
         alias_qualified_prefixes: BTreeMap<String, String>,
     ) -> Self {
         self.alias_qualified_prefixes = alias_qualified_prefixes;
+        self
+    }
+
+    /// Root-anchored Cookfile label (workspace-root-relative path of this
+    /// member's Cookfile, forward-slashed). Folded into each unit's
+    /// `CacheMeta.cookfile_path` so cache identity is invocation-independent
+    /// (§20.2.3): the same member gets the same label whether it registers
+    /// as the entry (workspace-of-one root) or as an import of an enclosing
+    /// workspace.
+    pub fn with_cookfile_label(mut self, label: String) -> Self {
+        self.cookfile_label = Some(label);
         self
     }
 
@@ -191,6 +211,17 @@ pub fn register_cookfile(
         let cookfile_rel =
             cookfile_path_relative_to(&ctx.project_root, &builder.working_dir.join("Cookfile"));
         lua.set_named_registry_value("__cook_cookfile_path", cookfile_rel)
+            .map_err(RegisterError::Lua)?;
+    }
+
+    // 2b. An explicit root-anchored label from the builder wins over the
+    //     cache_ctx-derived path (§20.2.3): the workspace register pass
+    //     computes the same workspace-root-relative label for a member
+    //     whether it registers as the entry Cookfile or as an import, so
+    //     `CacheMeta.cookfile_path` — and thus cache identity — cannot
+    //     depend on the invocation directory.
+    if let Some(ref label) = builder.cookfile_label {
+        lua.set_named_registry_value("__cook_cookfile_path", label.clone())
             .map_err(RegisterError::Lua)?;
     }
 
@@ -641,13 +672,19 @@ pub fn register_cookfile(
         // register_unit_api / install_cook_api capture an empty recipe_name
         // at install time (since register_cookfile has no single recipe at
         // API-install — see comments above the install_cook_api call).
-        // Per-body attribution happens here at drain time using the
-        // qualified name we already know. Downstream engine cache keying
-        // depends on cache_meta.recipe_name being the actual recipe name,
-        // not "".
+        // Per-body attribution happens here at drain time using the LOCAL
+        // registered name (§20.2.3): the qualified prefix is assigned by the
+        // importer, so folding it into cache identity would key the same
+        // recipe differently depending on which Cookfile served as the entry
+        // point. Every StepEntry-index read/write path derives the index name
+        // from `meta.recipe_name` itself, so local naming propagates
+        // consistently; per-Cookfile `.cook/cache` anchoring (working_dir)
+        // prevents cross-Cookfile collisions of the index file. Downstream
+        // engine cache keying depends on cache_meta.recipe_name being the
+        // actual recipe name, not "".
         for unit in &mut body.units {
             if let Some(meta) = unit.cache_meta.as_mut() {
-                meta.recipe_name = qualified_name.clone();
+                meta.recipe_name = name.clone();
             }
         }
 

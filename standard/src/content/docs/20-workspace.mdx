@@ -54,6 +54,8 @@ When the selected Cookfile is itself imported by an enclosing workspace, the enc
 
 The workspace root — resolved from the selected entry Cookfile per §{exec.ws.determination} — anchors all project-scoped cache state for the invocation: project identity, the shared-cache namespace, the probe value store, and build logs. The invocation directory MUST NOT influence cache identity: performing the same work on the same tree MUST produce identical cache keys regardless of the directory within the workspace from which the invocation was made.
 
+The per-unit cache namespace MUST derive from invocation-independent identifiers: the owning Cookfile's path relative to the workspace root, and the recipe's Cookfile-local name. An importer-assigned alias qualification (§{comp.import}) MUST NOT participate in cache identity — the same recipe would otherwise key differently depending on which Cookfile served as the entry point.
+
 ### 20.2.4. Reserved root-anchored target syntax [#exec.ws.entry.reserved]
 
 A command-line target beginning with `//` designates a target resolved from the workspace-root Cookfile (symmetric with sigil-anchored import paths, §{comp.import}). This syntax is **reserved**. An implementation MAY defer support for root-anchored resolution, but it MUST NOT interpret a `//`-prefixed target as a literal recipe name; if unsupported, it MUST reject the invocation with a diagnostic identifying the syntax as reserved and not yet supported.
