@@ -1982,12 +1982,12 @@ An `outputs[]` entry written with a trailing slash (`dir/`) declares a **directo
 
 Motivation: dogfooding (ppu-toys) surfaced a silent partial-restore footgun — a recipe writing files it did not enumerate produced a cache hit that differed from a fresh build. Subsumes COOK-72 for the directory case.
 
+**Backward compatibility:** `outputs[]` entries without a trailing slash behave bit-for-bit identically; `CACHE_VERSION` does not bump (the cache-record shape is unchanged — directory outputs record the same concrete `FileRecord` set glob outputs already record).
+
 ## CS-0120 — Entry-point selection: upward discovery, cwd-scoped bare names, root-anchored cache identity, reserved `//` targets [#changes.cs-0120]
 
 **Date:** 2026-07-03
 **Version:** v0.15
 **Sections affected:** §20 (new §20.2 + chapter callout).
 **Summary:** Invocations made from a directory without a `Cookfile` now select their entry Cookfile by walking upward to the nearest `Cookfile`, bounded by the workspace boundary (`.cookroot`, `--root`, or the filesystem root) — never escaping into an unrelated enclosing project. The selected Cookfile behaves exactly as if invoked from its own directory: bare names resolve against it and no enclosing-workspace alias qualification is applied (alias namespaces are declaring-Cookfile-scoped and a directory may be imported under multiple aliases, so an "own" namespace is not well-defined from inside). Cache identity is anchored at the workspace root resolved from the selected entry: the invocation directory MUST NOT influence cache keys, so the same work yields the same key from anywhere in the workspace. CLI targets beginning with `//` are reserved for workspace-root-anchored resolution; implementations MAY defer support but MUST reject rather than misparse.
-**Reference:** the commit that introduces this entry.
-
-**Backward compatibility:** `outputs[]` entries without a trailing slash behave bit-for-bit identically; `CACHE_VERSION` does not bump (the cache-record shape is unchanged — directory outputs record the same concrete `FileRecord` set glob outputs already record).
+**Reference implementation.** `cook_engine::pipeline::discover_entry_cookfile` (the bounded upward walk, `cli/crates/cook-engine/src/pipeline/workspace.rs`) with CLI wiring and the reserved-`//` rejection in `cook-cli/src/main.rs`; unit tests alongside each.
