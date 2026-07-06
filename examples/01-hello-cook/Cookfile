@@ -1,0 +1,16 @@
+# 01 — hello, cook.
+#
+# One recipe. It turns every markdown note in notes/ into an HTML fragment.
+# The interesting part is the second run: cook fingerprints each input, so
+# rebuilding costs nothing until a note actually changes — and then only
+# that note is rebuilt.
+#
+# Try:
+#   cook              # builds both notes
+#   cook              # everything cached — 0 work
+#   echo "- more" >> notes/monday.md
+#   cook              # exactly one node rebuilds
+
+recipe build
+    ingredients "notes/*.md"
+    cook "out/$<in.stem>.html" { sed -e 's|^# \(.*\)|<h1>\1</h1>|' -e 's|^- \(.*\)|<li>\1</li>|' $<in> > $<out> }

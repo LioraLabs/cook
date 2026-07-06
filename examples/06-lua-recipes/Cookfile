@@ -1,0 +1,50 @@
+# 06 — Lua where shell runs out.
+#
+# Cookfiles lower to Lua, and you can drop into it at two distinct times:
+#
+#   >{ ... }   EXECUTE-time: the step's action is Lua instead of shell.
+#              Runs sandboxed per unit, cached like any other step.
+#   >>{ ... }  REGISTER-time: runs once while the DAG is being built —
+#              the escape hatch to cook's low-level API (cook.add_unit).
+#
+# And output paths themselves can be computed: `cook (LUA_EXPR)` evaluates
+# a Lua expression per input to name the output — handy when the mapping
+# is a rewrite, not a template.
+#
+# Try:
+#   cook rot13               # lua-expr outputs + execute-Lua bodies
+#   cook rot13               # cached — Lua steps key like shell steps
+#   cook stamp               # a unit registered via the low-level API
+
+# Output path computed per input: docs/en/... -> out/... , .txt -> .rot
+# The >{ } body sees `input` and `output` for the current unit.
+recipe rot13
+    ingredients "docs/en/*.txt"
+    cook (input:gsub("^docs/en/", "out/"):gsub("%.txt$", ".rot")) >{
+        local f = assert(io.open(input, "r"))
+        local text = f:read("*a")
+        f:close()
+        local rot = text:gsub("%a", function(c)
+            local base = c:lower() == c and string.byte("a") or string.byte("A")
+            return string.char((string.byte(c) - base + 13) % 26 + base)
+        end)
+        local o = assert(io.open(output, "w"))
+        o:write(rot)
+        o:close()
+    }
+
+# Register-time Lua: build a unit by hand with the same fields the surface
+# syntax fills in for you. Use this when the surface can't express a shape;
+# prefer the surface everywhere else.
+recipe stamp
+    >>{
+        cook.add_unit({
+            name    = "stamp",
+            inputs  = {},
+            outputs = {"out/stamp.txt"},
+            command = "printf 'made by the low-level API\\n' > out/stamp.txt",
+        })
+    }
+
+chore clean
+    rm -rf out

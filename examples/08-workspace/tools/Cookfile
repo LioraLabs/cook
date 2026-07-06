@@ -1,0 +1,6 @@
+recipe build
+    ingredients "main.sh"
+    cook "build/tool.bin" {
+        mkdir -p build
+        sed 's/^/[tool] /' main.sh > $<out>
+    }

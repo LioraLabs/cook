@@ -1,0 +1,29 @@
+# 07 — tests are steps.
+#
+# A `test` step declares a check. Tests run with the build, get cached
+# like build steps (an unchanged, passing test does not re-run), and have
+# their own runner UX under `cook test`.
+#
+# Modifiers (canonical order: as -> timeout -> should_fail):
+#   as 'name'      display name
+#   timeout N      seconds before the test is killed
+#   should_fail    the check is EXPECTED to fail (pins error behavior)
+#
+# Try:
+#   cook check               # build the artifact, run its checks
+#   cook check               # everything cached, tests included
+#   cook test                # the dedicated runner (per-test output,
+#                            #   failures listed, exit code honest)
+#   cook test --rerun-failed # after a red run: only the failures
+
+recipe app
+    ingredients "src/greeting.txt"
+    cook "out/app.txt" { tr 'a-z' 'A-Z' < $<all> > $<out> }
+
+recipe check: app
+    test { grep -q HELLO $<app> } as 'greeting is shouted'
+    test { test -s $<app> } as 'artifact not empty' timeout 5
+    test { grep -q lowercase $<app> } as 'no lowercase leaked' should_fail
+
+chore clean
+    rm -rf out

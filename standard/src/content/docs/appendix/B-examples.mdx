@@ -7,7 +7,7 @@ sidebar:
 
 > **Informative.** This appendix presents worked Cookfile examples, each annotated with the sections of the Standard it exercises. Examples are non-binding; they illustrate the normative rules defined in chapters 2–7 and Appendix A.
 
-## B.1. Multi-output cook step (from `examples/multi-output/Cookfile`) [#examples.multi-output-cook]
+## B.1. Multi-output cook step (from `cli/e2e-fixtures/multi-output/Cookfile`) [#examples.multi-output-cook]
 ```cook
 recipe generate
     ingredients "src/*.rs"
@@ -21,7 +21,7 @@ recipe generate
 
 Exercises: §{recipes.header-forms} (explicit header), §{steps.ingredients} (ingredients), §{steps.cook-multi} (multi-output cook with `{ ... }` shell block), App. A.3, App. A.4.
 
-## B.2. Recipe with cross-recipe dependency (from `examples/cross-recipe-deps/Cookfile`) [#examples.cross-recipe-dep]
+## B.2. Recipe with cross-recipe dependency (from `cli/e2e-fixtures/cross-recipe-deps/Cookfile`) [#examples.cross-recipe-dep]
 ```cook
 recipe tools: colorize wordcount reverse
 
@@ -34,7 +34,7 @@ recipe play: tools
 
 Exercises: §{recipes.header-forms} (explicit header with deps), §{recipes.dep-list} (dependency list), §{steps.shell} (interactive `@` shell commands), App. A.3, App. A.4.
 
-## B.3. Module use and call (from `examples/fzf-picker/Cookfile`) [#examples.module-use-call]
+## B.3. Module use and call (from `examples/modules/fzf-picker/Cookfile`) [#examples.module-use-call]
 ```cook
 use cpp
 
@@ -49,7 +49,7 @@ recipe colorize
 
 Exercises: §{decl.use} (`use` declaration), §{decl.config} (config block with Lua body), §{steps.dispatch} (step dispatch), §{toplevel.module-call} (module-call step), App. A.2, App. A.4.
 
-## B.4. Using-block Lua with multiple outputs (from `examples/multi-output/Cookfile`) [#examples.lua-multi-output]
+## B.4. Using-block Lua with multiple outputs (from `cli/e2e-fixtures/multi-output/Cookfile`) [#examples.lua-multi-output]
 ```cook
 recipe build_lua
     ingredients "src/*.rs"

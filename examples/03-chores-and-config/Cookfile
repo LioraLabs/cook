@@ -1,0 +1,39 @@
+# 03 — chores and config.
+#
+# Recipes BUILD things and are cached. Chores DO things — they run every
+# time, take parameters, and may be interactive. Config blocks hold the
+# knobs: only `env.*` declarations are visible to $<...> placeholders, and
+# every one a step consults becomes part of that step's cache key.
+#
+# Try:
+#   cook menu                    # what's here
+#   cook                         # builds in debug (the base config)
+#   cook build @release          # named preset overlay -> rebuilds
+#   cook                         # back to debug: SERVED FROM CACHE —
+#                                # each MODE value owns its own key
+#   cook --set MODE=tiny build   # one-off override
+#   MODE=big cook                # the environment works too
+#   cook greet                   # chore with a defaulted parameter
+#   cook greet ada               # positional override
+#   cook clean
+
+# The unnamed block is the base config. `env.MODE` reads the caller's
+# environment with a fallback.
+config
+    env.MODE = os.getenv("MODE") or "debug"
+
+# A named overlay: `cook build @release` applies it on top of the base.
+config release
+    env.MODE = "release"
+
+recipe build
+    ingredients "src/hello.c.in"
+    cook "out/hello.c" { sed "s/@MODE@/$<MODE>/" $<all> > $<out> }
+
+# Chores: uncached, parameterized, run-every-time.
+# `who="world"` is a default; `cook greet ada` overrides it positionally.
+chore greet who="world"
+    echo "hello, $<who>"
+
+chore clean
+    rm -rf out
