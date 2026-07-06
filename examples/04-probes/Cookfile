@@ -1,0 +1,48 @@
+# 04 — probes: computed values the cache can see.
+#
+# A probe is a named, memoized value producer that runs at register time.
+# Probe values are determinants: anything built from a probe re-keys when
+# the probe's value changes — and stays cached when it doesn't.
+#
+# Producer kinds shown here:
+#   { shell }        one string value
+#   lines { shell }  a list, one member per line
+#   json  { shell }  structured data (arrays fan out; see 05 for records)
+#   >{ lua }         computed in Lua, may read upstream probes
+#
+# A probe can declare `ingredients` (file inputs that re-fingerprint it)
+# and depend on other probes (`probe b: a`) — cook resolves the chain in
+# dependency order before anything runs.
+#
+# Try:
+#   cook targets             # fan out over a probe's members
+#   cook targets             # cached
+#   echo "qa" >> data/targets.txt
+#   cook targets             # ONE new unit runs; existing members cached
+#   cook emit-lua            # see what the probe DSL lowers to
+
+# One string from a shell command.
+probe greeting
+    { echo "hello from cook" }
+
+# A list: one member per line of data/targets.txt. The `ingredients` line
+# makes the file itself a fingerprint input — edit it and the probe
+# (and everything downstream) re-keys.
+probe target_list
+    ingredients "data/targets.txt"
+    lines { cat data/targets.txt }
+
+# A probe depending on a probe: Lua body reads the upstream value with
+# cook.cache.get and derives a new value. Chains re-resolve in order.
+probe target_count: target_list
+    >{
+        return tostring(#cook.cache.get("target_list"))
+    }
+
+# Consume a probe as an iteration source: one unit per member.
+recipe targets
+    ingredients target_list
+    cook "out/$<in>.cfg" { printf 'target = %s\n' "$<in>" > $<out> }
+
+chore clean
+    rm -rf out

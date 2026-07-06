@@ -1,0 +1,32 @@
+# 09 — plate: the ship-it step.
+#
+# `cook` steps PRODUCE artifacts and must be reproducible — they run
+# sandboxed and cached. `plate` steps PUSH artifacts somewhere: they are
+# side effects, deliberately NOT sandboxed (they may touch $HOME, a
+# server, a device) and they re-run when their upstream changes.
+#
+# Here the "device" is a local directory. In real Cookfiles the body is
+# the same shape with a real transport:
+#     plate { scp $<site> deploy@host:/var/www/ }
+#     plate { adb push $<apk> /data/local/tmp/ }
+#     plate { aws s3 sync build/site "s3://my-bucket" }
+#
+# Try:
+#   cook release             # build once, then push
+#   cook release             # site cached; the push re-runs (it's a side
+#                            # effect — cook can't know the device state)
+#   cook menu
+
+recipe site
+    ingredients "pages/*.md"
+    cook "build/$<in.stem>.html" { sed 's|^# \(.*\)|<h1>\1</h1>|' $<in> > $<out> }
+
+recipe release: site
+    plate {
+        mkdir -p ./device
+        cp $<site> ./device/
+        echo "released $(ls device | wc -l) page(s) to ./device"
+    }
+
+chore clean
+    rm -rf build device

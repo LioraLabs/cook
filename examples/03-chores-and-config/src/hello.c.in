@@ -1,0 +1,2 @@
+/* compiled in @MODE@ mode */
+int main(void) { return 0; }

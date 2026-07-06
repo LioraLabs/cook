@@ -34,22 +34,26 @@ The Standard is organised so you can read it the way you'd read a language refer
 
 ## C.2. Examples in the cook repo
 
-The cook source tree ships a directory of small example projects:
+The cook source tree ships ten numbered example projects, in learning order:
 
 ```
 cook/examples/
-├── lua-build/            # build Lua from source
-├── multi-output/         # one command, multiple outputs
-├── monorepo/             # cross-Cookfile imports
-├── monorepo_codegen/     # codegen across boundaries
-├── cross-recipe-deps/    # driver iteration patterns
-└── ...
+├── 01-hello-cook/        # a recipe, ingredients, the free second run
+├── 02-pipeline/          # fan-out → many-to-one → multi-output
+├── 03-chores-and-config/ # uncached verbs; env vars as cache keys
+├── 04-probes/            # computed values the cache can see
+├── 05-data-fanout/       # the build's shape from a JSON manifest
+├── 06-lua-recipes/       # Lua bodies and computed output paths
+├── 07-testing/           # tests as cached steps
+├── 08-workspace/         # many Cookfiles, run cook from anywhere
+├── 09-deploy/            # plate: the ship-it step
+├── 10-cache-trust/       # seal/local/pinned/nondet; cook why
+└── modules/              # examples that need installed modules (cook_cc, pnpm)
 ```
 
-Every example has a runnable `Cookfile` you can read and execute. Particularly worth your time:
-
-- **multi-output** — for when one command produces several files at once.
-- **monorepo** — the canonical "many Cookfiles, one umbrella" shape.
+Every example has a runnable `Cookfile` and a README with a "watch the
+cache work" moment; `examples/README.md` is the index. Start at 01 and
+run each one twice.
 
 ## C.3. The DAG viewer
 

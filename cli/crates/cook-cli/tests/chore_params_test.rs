@@ -738,7 +738,7 @@ fn sibling_chore_required_param_does_not_block_unrelated_target() {
 }
 
 /// COOK-61 regression: the original repro from the fixture. `cook greet alice`
-/// must succeed in `examples/chore_param_benchmarks/`-shaped Cookfiles where
+/// must succeed in `cli/e2e-fixtures/chore_param_benchmarks/`-shaped Cookfiles where
 /// a sibling chore (`demo`) declares a required param. Stand-in fixture, not
 /// the canonical one.
 #[test]

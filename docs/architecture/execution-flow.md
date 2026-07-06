@@ -143,13 +143,13 @@ pub struct RecipeInfo {
 **Data in:** parsed AST(s), env vars, named-config name, `--set` overrides
 **Data out:** `BTreeMap<String, RegistryEntry>` plus `BTreeMap<String, RecipeInfo>`
 
-### 4.3 Inferred deps — `cli/crates/cook-engine/src/pipeline/inferred_deps.rs:26` / `:50`
+### 4.3 Inferred deps — `cli/crates/cook-engine/src/pipeline/inferred_deps.rs:29`
 
-`compute_single_inferred_deps` / `compute_workspace_inferred_deps` walk every recipe body looking for `{NAME}` body references (Cook Standard § 5.3 / App. E.10), resolving them through any import aliases. The output is a `BTreeMap<String, Vec<String>>` from consumer recipe → referenced recipes.
+`compute_workspace_inferred_deps` walks every recipe body looking for `{NAME}` body references (Cook Standard § 5.3 / App. E.10), resolving them through any import aliases. The output is a `BTreeMap<String, Vec<String>>` from consumer recipe → referenced recipes. There is no separate single-Cookfile helper: a Cookfile with no imports loads as a workspace of one member (prefix `""`), so the workspace walk covers it (the former `compute_single_inferred_deps` twin is deleted).
 
 These are **codegen-time** dependencies. Unlike explicit `requires` (which become wave boundaries), inferred deps cause **same-wave merging** in the wave grouper: a recipe and any recipe it body-references end up in the same wave so the referencing recipe sees the referent's outputs when it registers.
 
-`pipeline::single_dep_conflicts` / `workspace_dep_conflicts` (called via `print_dep_conflicts` in `cook-cli/src/pipeline.rs:57`) print warnings when a `{NAME}` reference conflicts with an explicit dep declaration.
+`pipeline::workspace_dep_conflicts` reports the cases where a `{NAME}` reference conflicts with an explicit dep declaration (its former `single_dep_conflicts` twin is deleted with the single-Cookfile path).
 
 **Data in:** Cookfile AST(s)
 **Data out:** `BTreeMap<String, Vec<String>>` inferred edges, plus diagnostic warnings

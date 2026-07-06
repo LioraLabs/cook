@@ -47,9 +47,19 @@ pub fn extract_recipe_names_with_imports(
 /// Extract all $<dep> and $<dep.accessor> references from a recipe's steps,
 /// given the set of known recipe names.
 pub fn extract_dep_refs(recipe: &Recipe, recipe_names: &BTreeSet<String>) -> BTreeSet<DepRef> {
+    extract_dep_refs_from_steps(&recipe.steps, recipe_names)
+}
+
+/// Step-level worker for `extract_dep_refs`, shared with the chore path:
+/// per §10.6 a name reference in any step establishes a cross-recipe edge,
+/// and chores carry the same `Step` list as recipes.
+pub fn extract_dep_refs_from_steps(
+    steps: &[Step],
+    recipe_names: &BTreeSet<String>,
+) -> BTreeSet<DepRef> {
     let mut refs = BTreeSet::new();
 
-    for step in &recipe.steps {
+    for step in steps {
         let tokens = match step {
             Step::Cook { step: cook_step, .. } => {
                 let mut t: Vec<String> = Vec::new();

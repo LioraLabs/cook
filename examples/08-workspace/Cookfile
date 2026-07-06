@@ -1,0 +1,10 @@
+import web ./apps/web
+import tools ./tools
+
+# Workspace root (pinned by the .cookroot marker next to this file).
+# Root `build` stitches both members' artifacts into one bundle.
+recipe build: web.build tools.build
+    cook "build/bundle.txt" {
+        mkdir -p build
+        cat $<web.build> $<tools.build> > $<out>
+    }

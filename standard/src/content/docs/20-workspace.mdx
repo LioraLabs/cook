@@ -4,7 +4,7 @@ sidebar:
   order: 20
 ---
 # 20. Workspace root [#exec.ws]
-> **Normative.** This chapter defines the workspace-root determination algorithm. The workspace root anchors sigil-anchored (`//`) imports per §{comp.import} and bounds the project-root sandbox per §{lua.fs}.
+> **Normative.** This chapter defines the workspace-root determination algorithm. The workspace root anchors sigil-anchored (`//`) imports per §{comp.import} and bounds the project-root sandbox per §{lua.fs}. It also defines entry-point selection for invocations made from a directory without a `Cookfile` (§{exec.ws.entry}).
 
 ## 20.1. Workspace root determination [#exec.ws.determination]
 
@@ -31,3 +31,35 @@ The procedure terminates because each step walks to a strict parent directory; t
 ### Definition: transitively imports
 
 Cookfile *X* **directly imports** directory *D* when *X* has an `import <name> <path>` declaration whose canonicalised resolved directory equals *D*. *X* **transitively imports** *D* when there is a chain *X = X₀ → X₁ → … → Xₙ = D* where each *Xᵢ → Xᵢ₊₁* is a direct import. For workspace-root inference (rule 3.1 above), each link in the chain MUST be tree-relative; sigil-anchored imports are ineligible at that stage because their resolution presupposes a workspace root.
+
+## 20.2. Entry-point selection [#exec.ws.entry]
+
+This section governs which Cookfile an invocation operates on (the **entry Cookfile**) when the invocation does not name one explicitly, and how that selection interacts with name resolution and cache identity. The governing principle: the nearest Cookfile owns bare names; `//` owns root-anchored names; the workspace root owns the cache.
+
+### 20.2.1. Upward discovery [#exec.ws.entry.discovery]
+
+When an invocation does not explicitly name a Cookfile (e.g. no `-f`/`--file` flag), a conforming implementation MUST select the entry Cookfile by walking upward from the invocation directory: the invocation directory is examined first, then each parent in turn; the first directory containing a file named `Cookfile` supplies the entry Cookfile. Invocations that do not operate on an existing Cookfile (e.g. project initialisation) are out of scope for this section and MAY skip discovery.
+
+The walk MUST NOT continue past the workspace boundary. A directory containing a `.cookroot` marker (§{exec.ws.determination} rule 2) is the last directory examined — it is itself checked for a `Cookfile`, and the walk stops there. When an explicit-root flag (`--root <path>`) was supplied, `<path>` bounds the walk the same way. The filesystem root bounds the walk unconditionally. If no `Cookfile` is found before the boundary, the invocation MUST fail with a diagnostic naming the starting directory and the boundary reached; the implementation MUST NOT select a Cookfile above the boundary (in an unrelated enclosing project).
+
+When the invocation names a Cookfile explicitly, no discovery is performed: the named file is the entry Cookfile and its absence is an error, as before.
+
+### 20.2.2. Entry semantics [#exec.ws.entry.semantics]
+
+The selected Cookfile becomes the entry point exactly as if the invocation had been made from its own directory. In particular: bare recipe names on the command line resolve against the selected Cookfile's own recipes, and the selected Cookfile's imports remain addressable under their locally declared aliases (§{comp.import}).
+
+When the selected Cookfile is itself imported by an enclosing workspace, the enclosing workspace's alias namespaces MUST NOT qualify the invocation's bare names. Alias namespaces are scoped to the declaring Cookfile (§{comp.import}), and the same directory MAY be imported under different aliases by different importers, so a Cookfile has no canonical "own" qualified namespace to project onto an invocation made from inside it.
+
+### 20.2.3. Cache anchoring [#exec.ws.entry.cache]
+
+The workspace root — resolved from the selected entry Cookfile per §{exec.ws.determination} — anchors all project-scoped cache state for the invocation: project identity, the shared-cache namespace, the probe value store, and build logs. The invocation directory MUST NOT influence cache identity: performing the same work on the same tree MUST produce identical cache keys regardless of the directory within the workspace from which the invocation was made.
+
+The per-unit cache namespace MUST derive from invocation-independent identifiers: the owning Cookfile's path relative to the workspace root, and the recipe's Cookfile-local name. An importer-assigned alias qualification (§{comp.import}) MUST NOT participate in cache identity — the same recipe would otherwise key differently depending on which Cookfile served as the entry point.
+
+### 20.2.4. Reserved root-anchored target syntax [#exec.ws.entry.reserved]
+
+A command-line target beginning with `//` designates a target resolved from the workspace-root Cookfile (symmetric with sigil-anchored import paths, §{comp.import}). This syntax is **reserved**. An implementation MAY defer support for root-anchored resolution, but it MUST NOT interpret a `//`-prefixed target as a literal recipe name; if unsupported, it MUST reject the invocation with a diagnostic identifying the syntax as reserved and not yet supported.
+
+### Note 20.2.1
+
+The upward walk selects the **entry**; it does not select the workspace root. Root resolution (§{exec.ws.determination}) still runs from the selected entry Cookfile, so a member selected from deep inside a workspace still anchors sigil imports and cache state at the enclosing root, while a true standalone Cookfile self-roots as before.
