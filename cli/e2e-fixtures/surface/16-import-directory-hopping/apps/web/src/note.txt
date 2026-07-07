@@ -1,0 +1,2 @@
+placeholder — apps/web/src has no Cookfile; exists so a run can start here
+and exercise upward discovery to apps/web/Cookfile.
