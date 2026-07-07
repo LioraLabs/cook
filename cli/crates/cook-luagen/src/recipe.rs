@@ -83,7 +83,34 @@ pub fn generate_with_names_checked(
     recipe_names: &BTreeSet<String>,
 ) -> Result<String, CodegenError> {
     validate_accessor_placement(cookfile, recipe_names)?;
-    generate_with_names(cookfile, recipe_names)
+    let generated = generate_with_names(cookfile, recipe_names)?;
+    scan_for_sigil_errors(&generated).map_err(|message| CodegenError::PlaceholderViolation {
+        recipe: "(unknown)".to_string(),
+        message,
+        line: 0,
+    })?;
+    Ok(generated)
+}
+
+/// Post-lowering safety net (COOK-191/CS-0126): a SIGIL_ERROR sentinel in
+/// checked output means a placeholder failed to lower — surface it as a
+/// codegen error instead of letting the marker flow into a command at
+/// runtime. Every `"[[SIGIL_ERROR: <message>]]"` emission site (template.rs,
+/// cook_step.rs, recipe.rs, plate_step.rs, test_step.rs) funnels through
+/// `generate_with_names`, so scanning the fully-generated string here catches
+/// any of them in one place, regardless of which validator (if any) upstream
+/// missed the shape. There is no recipe/line context left at this point —
+/// the generated string is flat text — so `generate_with_names_checked`
+/// reports `line: 0` / `recipe: "(unknown)"`, matching the `step_line`
+/// fallback convention above for step kinds with no known line.
+pub(crate) fn scan_for_sigil_errors(generated: &str) -> Result<(), String> {
+    const MARK: &str = "[[SIGIL_ERROR: ";
+    if let Some(start) = generated.find(MARK) {
+        let rest = &generated[start + MARK.len()..];
+        let msg = rest.split("]]").next().unwrap_or(rest);
+        return Err(msg.to_string());
+    }
+    Ok(())
 }
 
 /// Detect references whose referent has an empty output list and return one

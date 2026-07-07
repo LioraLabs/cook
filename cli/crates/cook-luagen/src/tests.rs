@@ -3853,3 +3853,53 @@ fn test_compile_chore_merges_explicit_and_inferred_requires() {
         "explicit-first, inferred-appended, deduped requires expected, got:\n{lua}"
     );
 }
+
+// ─── COOK-191/CS-0126: SIGIL_ERROR chokepoint — checked codegen scans and
+// hard-errors on any sentinel that survives lowering ───────────────────────
+
+#[test]
+fn test_scan_for_sigil_errors_extracts_inner_message_verbatim() {
+    let generated = "x = \"[[SIGIL_ERROR: placeholder $<file:../evil>: file reference paths must be relative]]\"";
+    let result = crate::recipe::scan_for_sigil_errors(generated);
+    assert_eq!(
+        result.unwrap_err(),
+        "placeholder $<file:../evil>: file reference paths must be relative",
+        "helper must extract the inner text with no SIGIL_ERROR marker and no [[ / ]] delimiters"
+    );
+}
+
+#[test]
+fn test_scan_for_sigil_errors_ok_when_no_sentinel_present() {
+    let generated = "cook.add_unit({command = \"echo hi\"})\n";
+    assert!(
+        crate::recipe::scan_for_sigil_errors(generated).is_ok(),
+        "generated Lua with no sentinel must not be flagged"
+    );
+}
+
+#[test]
+fn test_bad_file_ref_path_in_plate_body_is_checked_codegen_error() {
+    // CS-0101: `validate_sigil_token` in template.rs accepts any `$<file:...>`
+    // ident in a plate/test body without validating the path itself (the
+    // path-validity check lives in `match_file_ref`, consulted only when the
+    // body is actually expanded). A `..`-escaping path therefore reaches
+    // `expand_plate_test_body` and lowers to a literal SIGIL_ERROR sentinel
+    // with nothing upstream rejecting it first — this is the reachable
+    // integration case the checked-codegen scan exists to catch.
+    let src = "recipe r\n    plate { echo $<file:../evil> }\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let err = result.expect_err(
+        "a $<file:../evil> path escape in a plate body must be a checked-codegen error, not a silently-emitted sentinel",
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("file reference paths must be relative"),
+        "error must surface the underlying file-ref diagnostic verbatim, got: {msg}"
+    );
+    assert!(
+        !msg.contains("SIGIL_ERROR"),
+        "error must not leak the internal sentinel marker, got: {msg}"
+    );
+}
