@@ -6,3 +6,10 @@ equals = { "out/app.txt" = "HELLO COOK\n" }
 [[run]]
 args = ["check"]
 exit = 0
+
+# The dedicated runner is the surface where test-outcome semantics are hard:
+# a should_fail violation (or any failing test) makes `cook test` exit 1,
+# so exit 0 here pins the inversion contract, not just syntax.
+[[run]]
+args = ["test", "check"]
+exit = 0
