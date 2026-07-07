@@ -1291,12 +1291,34 @@ pub fn cmd_init() -> Result<(), CookError> {
     // shell command and the build fails with exit 127.
     std::fs::write(
         cookfile_path,
-        r#"recipe build
-    echo "Hello from Cook!"
+        r#"# Your first Cook build. `cook` fingerprints every input, so the second
+# run does zero work until an input actually changes.
+#
+#   cook            # builds one node per note
+#   cook            # everything cached — 0 work
+#   echo "- hi" >> notes/two.md && cook   # ONLY two rebuilds
+
+recipe build
+    ingredients "notes/*.md"
+    cook "out/$<in.stem>.html" { sed 's|^# \(.*\)|<h1>\1</h1>|' $<in> > $<out> }
 "#,
     )
     .map_err(|e| CookError::Other(format!("failed to write Cookfile: {e}")))?;
     println!("Created Cookfile");
+
+    // cook init runs in an empty dir, but the starter Cookfile's ingredients
+    // glob needs something to fan out over — seed sample notes so the first
+    // `cook` run has real inputs to build. Never clobber a pre-existing
+    // notes/ dir (e.g. re-running init after adding files by hand).
+    let notes = std::path::Path::new("notes");
+    if !notes.exists() {
+        std::fs::create_dir_all(notes)
+            .map_err(|e| CookError::Other(format!("failed to create notes/: {e}")))?;
+        std::fs::write(notes.join("one.md"), "# One\n- alpha\n")
+            .map_err(|e| CookError::Other(format!("failed to write notes/one.md: {e}")))?;
+        std::fs::write(notes.join("two.md"), "# Two\n- beta\n")
+            .map_err(|e| CookError::Other(format!("failed to write notes/two.md: {e}")))?;
+    }
 
     let gitignore_path = std::path::Path::new(".gitignore");
     let existing = match std::fs::read_to_string(gitignore_path) {
