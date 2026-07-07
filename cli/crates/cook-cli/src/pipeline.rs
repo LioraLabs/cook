@@ -755,7 +755,35 @@ pub fn cmd_run(
     // pass), and recipe-level coarse deps come from `RegisteredRecipePub.requires`.
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 
-    run_with_progress(globals, &recipe_infos, &targets, &registered, num_jobs)?;
+    let run_result = run_with_progress(globals, &recipe_infos, &targets, &registered, num_jobs)?;
+
+    // §19.2 (CS-0124): a failing test step fails the run. The engine records
+    // test failures as "soft" results (executor.rs — dependents are not
+    // cancelled so `cook test` can run the whole suite); the runner still
+    // must exit non-zero. Blocked cannot occur on the Ok path today (blocked
+    // rows ride EngineError::TaskFailures), but match it for parity with
+    // cmd_test's any_failed check.
+    let failed_tests = run_result
+        .test_results
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.outcome,
+                cook_engine::TestOutcome::Failed
+                    | cook_engine::TestOutcome::Blocked
+                    | cook_engine::TestOutcome::TimedOut
+            )
+        })
+        .count();
+    if failed_tests > 0 {
+        // main.rs suppresses TestFailure's Display (§3.4) — the per-node
+        // FAILED lines are already on screen; print the one-line summary
+        // here, after the renderer has released the terminal.
+        eprintln!("cook: {failed_tests} failing test step(s)");
+        return Err(CookError::TestFailure(format!(
+            "{failed_tests} failing test step(s)"
+        )));
+    }
     Ok(())
 }
 
