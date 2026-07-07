@@ -1,0 +1,18 @@
+[[run]]
+args = ["build"]
+[run.assert]
+exists = ["out/alpha.up", "out/beta.up"]
+contains = { "out/alpha.up" = "HI", "out/beta.up" = "YO", "out/stamp.txt" = "files=2" }
+
+[[run]]
+args = ["build"]
+[run.assert]
+unchanged = ["out/alpha.up", "out/beta.up", "out/stamp.txt"]
+
+[[run]]
+args = ["build"]
+write = { "src/alpha.txt" = "hi again\n" }
+[run.assert]
+changed = ["out/alpha.up", "out/stamp.txt"]
+unchanged = ["out/beta.up"]
+contains = { "out/alpha.up" = "HI AGAIN" }
