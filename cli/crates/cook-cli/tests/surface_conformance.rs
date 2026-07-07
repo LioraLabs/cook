@@ -133,18 +133,27 @@ fn run_fixture(manifest: &Manifest, fixture: &Path) -> Result<(), String> {
             fs::create_dir_all(p.parent().unwrap()).expect("mkdir for write");
             fs::write(&p, content).expect("pre-run write");
         }
-        let out = Command::new(env!("CARGO_BIN_EXE_cook"))
+        let out = match Command::new(env!("CARGO_BIN_EXE_cook"))
             .args(&run.args)
             .current_dir(proj.join(run.cwd.as_deref().unwrap_or(".")))
             .env("NO_COLOR", "1")
             .env("NO_PROGRESS", "1")
             .env("CI", "1")
+            // Defense-in-depth: if a run's workspace-root resolution ever
+            // misses the harness cloud.toml (e.g. a nested Cookfile run via
+            // `cwd` with no .cookroot above it), the dirs::cache_dir()
+            // fallback must still land in the tempdir, never the user's
+            // real ~/.cache/cook/cloud.
+            .env("XDG_CACHE_HOME", tmp.path().join("xdg"))
             .env_remove("COOK_NO_PRUNE")
             .env_remove("COOK_NO_PUBLISH")
             .env_remove("COOK_CLOUD_API_KEY")
             .envs(&run.env)
             .output()
-            .expect("spawn cook");
+        {
+            Ok(out) => out,
+            Err(e) => return Err(format!("{label}: failed to spawn cook: {e}")),
+        };
         let combined = format!(
             "{}\n{}",
             String::from_utf8_lossy(&out.stdout),
@@ -167,7 +176,9 @@ fn run_fixture(manifest: &Manifest, fixture: &Path) -> Result<(), String> {
         }
         for p in &a.absent {
             if proj.join(p).exists() {
-                return Err(format!("{label}: expected path absent, but exists: {p}"));
+                return Err(format!(
+                    "{label}: expected path absent, but exists: {p}\n--- output ---\n{combined}"
+                ));
             }
         }
         for (p, want) in &a.equals {
@@ -202,9 +213,15 @@ fn run_fixture(manifest: &Manifest, fixture: &Path) -> Result<(), String> {
                 .get(p)
                 .ok_or_else(|| format!("{label}: `unchanged` needs a prior run tracking {p}"))?;
             let now = fs::read(proj.join(p)).ok();
+            if prev.is_none() || now.is_none() {
+                return Err(format!(
+                    "{label}: `unchanged` path never produced: {p} ({})\n--- output ---\n{combined}",
+                    if prev.is_none() { "prev missing" } else { "now missing" }
+                ));
+            }
             if prev != &now {
                 return Err(format!(
-                    "{label}: {p} changed across runs, expected byte-identical (cache hit)"
+                    "{label}: {p} changed across runs, expected byte-identical (cache hit)\n--- output ---\n{combined}"
                 ));
             }
         }
@@ -213,9 +230,15 @@ fn run_fixture(manifest: &Manifest, fixture: &Path) -> Result<(), String> {
                 .get(p)
                 .ok_or_else(|| format!("{label}: `changed` needs a prior run tracking {p}"))?;
             let now = fs::read(proj.join(p)).ok();
+            if prev.is_none() || now.is_none() {
+                return Err(format!(
+                    "{label}: `changed` path never produced: {p} ({})\n--- output ---\n{combined}",
+                    if prev.is_none() { "prev missing" } else { "now missing" }
+                ));
+            }
             if prev == &now {
                 return Err(format!(
-                    "{label}: {p} byte-identical across runs, expected re-execution to change it"
+                    "{label}: {p} byte-identical across runs, expected re-execution to change it\n--- output ---\n{combined}"
                 ));
             }
         }
@@ -245,12 +268,14 @@ fn surface_conformance_corpus() {
 
     let mut failures = Vec::new();
     let mut xfailed = Vec::new();
+    let mut executed = 0usize;
     for name in &names {
         if let Some(f) = &filter {
             if !name.contains(f.as_str()) {
                 continue;
             }
         }
+        executed += 1;
         let dir = root.join(name);
         let manifest: Manifest = toml::from_str(
             &fs::read_to_string(dir.join("expect.toml"))
@@ -268,6 +293,13 @@ fn surface_conformance_corpus() {
                 "[{name}] XPASS: {key} appears fixed - remove `xfail = \"{key}\"` from expect.toml"
             )),
         }
+    }
+    if let Some(f) = &filter {
+        assert!(
+            executed > 0,
+            "COOK_SURFACE_FIXTURE={f:?} matched no fixture under {}",
+            root.display()
+        );
     }
     for x in &xfailed {
         eprintln!("xfail: {x}");
