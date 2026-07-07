@@ -1,0 +1,3 @@
+[[run]]
+args = ["test"]
+exit = 1

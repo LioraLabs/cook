@@ -1,0 +1,8 @@
+[[run]]
+args = ["check"]
+[run.assert]
+equals = { "out/app.txt" = "HELLO COOK\n" }
+
+[[run]]
+args = ["check"]
+exit = 0
