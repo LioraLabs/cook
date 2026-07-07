@@ -3605,7 +3605,7 @@ end
         "file-ref hoist (at {hoist_pos}) must precede cook.add_unit (at {add_unit_pos}), lua:\n{lua}"
     );
     assert!(
-        lua.contains("_cook_fr_s0_1"),
+        lua[add_unit_pos..].contains("_cook_fr_s0_1"),
         "expected the add_unit command concatenation to reference the hoisted local, lua:\n{lua}"
     );
     assert!(

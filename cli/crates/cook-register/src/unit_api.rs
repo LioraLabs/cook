@@ -266,7 +266,23 @@ pub fn register_unit_api(
     // contains stat-able paths from the importer's working directory.
     let _ = terminal_outputs;
     let add_unit_fn = lua.create_function(move |lua, tbl: LuaTable| {
-        let command: String = tbl.get::<String>("command").unwrap_or_default();
+        // CS-0122: `command` must be a string (or absent for lua_code
+        // units). The old `.unwrap_or_default()` coerced ANY non-string — most
+        // damagingly the probe-deferred `function() ... end` closure old codegen
+        // emitted — to "" and the empty command "succeeded" silently.
+        let command: String = match tbl.get::<LuaValue>("command") {
+            Ok(LuaValue::Nil) | Err(_) => String::new(),
+            Ok(LuaValue::String(s)) => s.to_string_lossy().to_string(),
+            Ok(other) => {
+                return Err(LuaError::runtime(format!(
+                    "cook.add_unit: `command` must be a string, got {}; \
+                     function-valued (deferred) commands are not supported — \
+                     probe values belong in the command string as $<key:field> \
+                     placeholders (Standard \u{00a7}22.5.7, CS-0122)",
+                    other.type_name()
+                )));
+            }
+        };
         let lua_code: Option<String> = tbl.get::<String>("lua_code").ok();
         let interactive: bool = tbl.get::<Option<bool>>("interactive").unwrap_or(None).unwrap_or(false);
         let line: usize = tbl.get::<Option<usize>>("line").unwrap_or(None).unwrap_or(0);
@@ -970,6 +986,35 @@ mod tests {
         assert_eq!(meta.command_hash, hash_str("gcc -o main main.c"));
 
         assert!(matches!(unit.dep_kind, DepKind::Sequential));
+    }
+
+    #[test]
+    fn test_add_unit_rejects_function_valued_command() {
+        // A function-valued command used to coerce to "" and silently
+        // no-op. It must now be a loud register-phase error.
+        let (lua, _capture_state) = make_lua_with_unit_api("my_recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+        let err = lua.load(r#"
+            cook.add_unit({
+                command = function() return "echo hi" end,
+                inputs = {},
+                output = "out/x.txt",
+            })
+        "#).exec().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("`command` must be a string"), "got: {msg}");
+        assert!(msg.contains("function"), "error must name the received type; got: {msg}");
+    }
+
+    #[test]
+    fn test_add_unit_rejects_numeric_command() {
+        let (lua, _capture_state) = make_lua_with_unit_api("my_recipe");
+        lua.set_app_data(fake_cache_ctx());
+        lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+        let err = lua.load(r#"cook.add_unit({ command = 42, output = "out/x.txt" })"#)
+            .exec().unwrap_err();
+        assert!(err.to_string().contains("`command` must be a string"), "got: {err}");
     }
 
     #[test]

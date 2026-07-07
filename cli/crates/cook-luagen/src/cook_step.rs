@@ -652,11 +652,10 @@ pub(crate) fn generate_for_each_cook_step(
             // COOK-187 / CS-0122: probe refs stay literal sigil text in the
             // command string — never a deferred function (see
             // expand_command_template's doc comment for the rationale).
-            let cmd_expr = cmd_concat;
             let probes_lua = probe_keys_to_lua_table(&probe_keys);
             format!(
                 "        cook.add_unit({{inputs = {{}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}, member = cook.member_to_string(item){}}})\n",
-                cmd_expr, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), disposition_field(&cook_step.disposition)
+                cmd_concat, probes_lua, consulted.to_lua_table(), file_refs_field(&file_refs), disposition_field(&cook_step.disposition)
             )
         }
         Some(Body::LuaBlock(code)) => {
