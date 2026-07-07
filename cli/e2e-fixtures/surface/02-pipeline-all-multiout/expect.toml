@@ -1,0 +1,4 @@
+[[run]]
+args = ["report"]
+[run.assert]
+equals = { "build/counts/one.count" = "2\n", "build/counts/two.count" = "3\n", "build/total.txt" = "5\n", "build/report.txt" = "total words: 5\n", "build/report.csv" = "metric,value\ntotal,5\n" }

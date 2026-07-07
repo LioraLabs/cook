@@ -1,0 +1,9 @@
+[[run]]
+args = ["build"]
+[run.assert]
+exists = ["build/probed.txt"]
+
+[[run]]
+args = ["build"]
+[run.assert]
+unchanged = ["build/probed.txt"]

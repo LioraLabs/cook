@@ -1,0 +1,8 @@
+recipe report
+    ingredients "chapters/*.txt"
+    cook "build/counts/$<in.stem>.count" { wc -w < $<in> | tr -d ' ' > $<out> }
+    cook "build/total.txt" { cat $<all> | paste -sd+ - | bc > $<out> }
+    cook "build/report.txt" "build/report.csv" {
+        printf 'total words: %s\n' "$(cat $<all>)" > $<out_1>
+        printf 'metric,value\ntotal,%s\n' "$(cat $<all>)" > $<out_2>
+    }

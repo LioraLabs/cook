@@ -1,0 +1,4 @@
+[[run]]
+args = ["app"]
+[run.assert]
+equals = { "build/app.txt" = "libdata\napp\n" }
