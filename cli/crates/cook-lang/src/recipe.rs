@@ -411,7 +411,7 @@ fn reject_as_modifier_on_non_test(
         return Err(ParseError::Parse {
             line,
             message: format!(
-                "{}: modifier `as` is only valid on test_step (CS-0061 §3.1.3)",
+                "{}: modifier `as` is only valid on test steps",
                 step_keyword
             ),
         });

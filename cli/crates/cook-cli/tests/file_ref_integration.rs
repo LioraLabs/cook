@@ -193,10 +193,7 @@ recipe "html"
         err.contains("missing.css"),
         "diagnostic must name the missing file; got: {err}"
     );
-    assert!(
-        err.contains("CS-0101"),
-        "diagnostic must cite CS-0101; got: {err}"
-    );
+    assert!(err.contains("file not found"), "diagnostic must name the file-ref failure; got: {err}");
     assert!(
         !tmp.path().join("build").exists(),
         "registration failure must not produce build/ outputs"

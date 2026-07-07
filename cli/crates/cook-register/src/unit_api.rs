@@ -114,7 +114,7 @@ fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<Strin
     if let Some(span) = spans.iter().find(|s| s.ident.starts_with("file:")) {
         return Err(format!(
             "$<{}>: $<file:PATH> is not supported in raw cook.add_unit command strings; \
-             write the step in a Cookfile recipe body instead (CS-0101)",
+             write the step in a Cookfile recipe body instead",
             span.ident
         ));
     }
@@ -2032,9 +2032,8 @@ mod tests {
 
         assert!(
             err.contains("not supported in raw cook.add_unit command strings"),
-            "expected the CS-0101 raw-command rejection; got: {err}"
+            "expected the raw-command file-ref rejection; got: {err}"
         );
-        assert!(err.contains("CS-0101"), "error must cite CS-0101; got: {err}");
     }
 
     /// COOK-96 Task 5: add_unit must record `member` and `output_paths` on the

@@ -586,7 +586,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "exec",
-        "cook.exec: register-only API called from execute-phase Lua (Standard §6.3.2). \
+        "cook.exec: register-only API called from execute-phase Lua. \
          Use cook.sh(cmd) to shell out from a lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
          top-level `register` block.",
@@ -595,7 +595,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "interactive",
-        "cook.interactive: register-only API called from execute-phase Lua (Standard §6.3.2). \
+        "cook.interactive: register-only API called from execute-phase Lua. \
          Interactive steps must be recorded during the register phase; they cannot be \
          scheduled from a lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
@@ -605,7 +605,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "add_unit",
-        "cook.add_unit: register-only API called from execute-phase Lua (Standard §6.3.2). \
+        "cook.add_unit: register-only API called from execute-phase Lua. \
          Work units are recorded during the register phase; the DAG is closed before \
          execute-phase Lua runs. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
@@ -615,7 +615,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "step_group",
-        "cook.step_group: register-only API called from execute-phase Lua (Standard §6.3.2). \
+        "cook.step_group: register-only API called from execute-phase Lua. \
          Step groups are recorded during the register phase; they cannot be opened from a \
          lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
@@ -625,7 +625,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "recipe",
-        "cook.recipe: register-only API called from execute-phase Lua (Standard §6.3.2). \
+        "cook.recipe: register-only API called from execute-phase Lua. \
          Recipes are registered during the register phase; they cannot be declared from a \
          lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
@@ -635,7 +635,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "probe",
-        "cook.probe: register-only API called from execute-phase Lua (Standard §22.5.2). \
+        "cook.probe: register-only API called from execute-phase Lua. \
          Probe units are declared during the register phase; they cannot be created from a \
          lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
@@ -1964,10 +1964,6 @@ mod tests {
             "diagnostic must name the function `{needle_fn}`; got: {err}"
         );
         assert!(
-            err.contains("Standard §6.3.2"),
-            "diagnostic must cite Standard §6.3.2; got: {err}"
-        );
-        assert!(
             err.contains("execute-phase Lua"),
             "diagnostic must identify the calling step kind as execute-phase Lua; got: {err}"
         );
@@ -2020,10 +2016,7 @@ mod tests {
             err.contains("cook.probe: register-only API"),
             "diagnostic must start with 'cook.probe: register-only API'; got: {err}"
         );
-        assert!(
-            err.contains("§22.5.2"),
-            "diagnostic must cite §22.5.2; got: {err}"
-        );
+        assert!(err.contains("execute-phase Lua"), "got: {err}");
     }
 
     /// SHI-216 / CS-0072: every register-only guard message MUST include
@@ -2041,10 +2034,6 @@ mod tests {
         assert!(
             err.contains(">>"),
             "diagnostic must include `>>` migration hint; got: {err}"
-        );
-        assert!(
-            err.contains("§6.3.2"),
-            "diagnostic must retain §6.3.2 citation; got: {err}"
         );
         assert!(
             err.contains("register"),

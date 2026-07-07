@@ -778,7 +778,7 @@ pub enum PlateTestPlaceholderError {
     OutForbidden { token: String },
     #[error("bare path-accessor `$<{accessor}>` is no longer valid; use `$<in.{accessor}>`")]
     BareAccessor { accessor: String },
-    #[error("`$<{name}.{accessor}>` is not valid in a plate or test body (the §5.4 firewall applies — plate/test have no output pattern)")]
+    #[error("`$<{name}.{accessor}>` is not valid in a plate or test body; plate/test steps have no output pattern")]
     LibAccessor { name: String, accessor: String },
 }
 
@@ -971,7 +971,7 @@ pub(crate) fn validate_placeholders(
     for span in sigil::scan(body_text) {
         let resolved = crate::resolver::resolve(&span.ident, &rctx);
         if let Resolved::Error(e) = resolved {
-            return Err(format!("CS-0022: {}", e));
+            return Err(e.to_string());
         }
         // CS-0101: a well-formed `$<file:PATH>` is accepted in any cook-step
         // body mode; skip the accessor shape check below (a `file:` ident can
@@ -986,7 +986,7 @@ pub(crate) fn validate_placeholders(
             let suffix = &span.ident[dot + 1..];
             if ACCESSORS.contains(&suffix) && ctx.recipe_names.contains(prefix) {
                 return Err(format!(
-                    "CS-0022: $<{}.{}> is rejected inside a cook-step body; \
+                    "$<{}.{}> is rejected inside a cook-step body; \
                      use $<in.{}> if `{}` is the driver, or reach for Lua otherwise",
                     prefix, suffix, suffix, prefix
                 ));

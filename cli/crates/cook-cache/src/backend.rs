@@ -231,7 +231,7 @@ impl CacheBackend for LocalBackend {
         // proof. Fail closed, treat as miss, force rebuild.
         if meta.content_hash == ArtifactMeta::zero_content_hash() {
             tracing::warn!(
-                "cache integrity: pre-CS-0054 zero-sentinel content_hash at {}; treating as miss",
+                    "cache integrity: legacy zero-sentinel content_hash at {}; treating as miss",
                 meta_path.display()
             );
             return Ok(None);
@@ -348,7 +348,7 @@ impl CacheBackend for LocalBackend {
                             // as "no recorded hash" and write through.
                             if existing.content_hash == zero {
                                 tracing::warn!(
-                                    "cache idempotency: pre-CS-0054 sentinel content_hash at {}; treating as no prior artifact",
+                                    "cache idempotency: legacy sentinel content_hash at {}; treating as no prior artifact",
                                     meta_path.display(),
                                 );
                             } else if existing.content_hash == computed {
@@ -473,7 +473,7 @@ impl CacheBackend for LocalBackend {
                 Ok(m) => Ok(Some(m)),
                 Err(e) => {
                     tracing::warn!(
-                        "determinant manifest: malformed sidecar at {} ({e}); treating as absent",
+                        "cache manifest: malformed sidecar at {} ({e}); treating as absent",
                         path.display()
                     );
                     Ok(None)

@@ -903,7 +903,7 @@ fn test_multi_output_string_form_rejected() {
     let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"a.js\" \"b.wasm\" using \"cmd\"\n";
     let err = crate::parse(source).expect_err("should reject");
     let msg = format!("{}", err);
-    assert!(msg.contains("CS-0099"), "expected CS-0099 migration diagnostic, got: {}", msg);
+    assert!(msg.contains("using") && msg.contains("not supported"), "expected using-keyword diagnostic, got: {}", msg);
 }
 
 #[test]
@@ -911,11 +911,11 @@ fn test_using_string_form_rejected_with_migration_diagnostic() {
     let src = r#"recipe build
     cook "out" using "echo hi"
 "#;
-    let err = parse(src).expect_err("CS-0099: the using keyword must be rejected");
+    let err = parse(src).expect_err("the using keyword must be rejected");
     match err {
         ParseError::Parse { message, .. } => {
-            assert!(message.contains("CS-0099"), "diagnostic should name CS-0099, got: {message}");
-            assert!(message.contains("removed"), "diagnostic should say the keyword was removed, got: {message}");
+            assert!(message.contains("using"), "diagnostic should name the keyword, got: {message}");
+            assert!(message.contains("not supported"), "diagnostic should reject the keyword, got: {message}");
         }
         e => panic!("expected ParseError::Parse, got {:?}", e),
     }
@@ -980,7 +980,7 @@ fn test_plate_string_form_rejected() {
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
     assert!(
-        msg.contains("plate") && msg.contains("CS-0024") && msg.contains("{ cmd }"),
+        msg.contains("plate") && msg.contains("not supported") && msg.contains("{ cmd }"),
         "expected migration diagnostic for plate string form, got: {}",
         msg
     );
@@ -992,7 +992,7 @@ fn test_test_string_form_rejected() {
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
     assert!(
-        msg.contains("test") && msg.contains("CS-0024") && msg.contains("{ cmd }"),
+        msg.contains("test") && msg.contains("not supported") && msg.contains("{ cmd }"),
         "expected migration diagnostic for test string form, got: {}",
         msg
     );
@@ -1991,26 +1991,26 @@ fn cs0099_cook_declaration_only_still_parses() {
 #[test]
 fn cs0099_using_keyword_rejected_with_migration_diagnostic() {
     let src = "recipe r\n    cook \"out\" using { echo hi }\n";
-    let err = parse(src).expect_err("CS-0099: the using keyword must be rejected");
+    let err = parse(src).expect_err("the using keyword must be rejected");
     let msg = err.to_string();
-    assert!(msg.contains("removed"), "got: {}", msg);
-    assert!(msg.contains("CS-0099"), "got: {}", msg);
+    assert!(msg.contains("not supported"), "got: {}", msg);
+    assert!(msg.contains("using"), "got: {}", msg);
 }
 
 #[test]
 fn cs0099_using_lua_form_rejected_with_migration_diagnostic() {
     let src = "recipe r\n    cook \"out\" using >{ return 1 }\n";
-    let err = parse(src).expect_err("CS-0099: the using keyword must be rejected");
+    let err = parse(src).expect_err("the using keyword must be rejected");
     let msg = err.to_string();
-    assert!(msg.contains("removed"), "got: {}", msg);
+    assert!(msg.contains("not supported"), "got: {}", msg);
 }
 
 #[test]
 fn cs0099_lua_expr_using_rejected_with_migration_diagnostic() {
     let src = "recipe r\n    cook (\"x\" .. \"y\") using >{ return 1 }\n";
-    let err = parse(src).expect_err("CS-0099: the using keyword must be rejected");
+    let err = parse(src).expect_err("the using keyword must be rejected");
     let msg = err.to_string();
-    assert!(msg.contains("removed"), "got: {}", msg);
+    assert!(msg.contains("not supported"), "got: {}", msg);
 }
 
 #[test]

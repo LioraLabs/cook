@@ -32,7 +32,7 @@ pub enum LexError {
     MissingRecipeName { line: usize },
     #[error("line {line}: '{segment}' is a reserved word and cannot be used in this position in a dotted recipe name")]
     ReservedRecipeName { line: usize, segment: String },
-    #[error("line {line}: a run of three or more `>` characters at line start is reserved (§{{lexical.line-prefixes}})")]
+    #[error("line {line}: a run of three or more `>` characters at line start is reserved")]
     ReservedTripleArrow { line: usize },
     #[error("line {line}: 'use' name '{name}' is not a valid Lua identifier (must match /^[A-Za-z_][A-Za-z0-9_]*$/; '-' and '.' are not permitted)")]
     InvalidUseName { name: String, line: usize },
@@ -50,7 +50,7 @@ pub enum LexError {
     BadChoreParamDefault { line: usize, chore: String, name: String },
     #[error("line {line}: chore '{chore}': unclosed default for parameter '{name}' (expected closing '\"' or ')')")]
     UnclosedChoreParamDefault { line: usize, chore: String, name: String },
-    #[error("line {line}: recipe '{name}': recipes don't take parameters; use a 'chore' (§7) or a config preset (§5)")]
+    #[error("line {line}: recipe '{name}': recipes don't take parameters; use a 'chore' or a config preset")]
     RecipeWithParams { line: usize, name: String },
     #[error("line {line}: expected a probe name after `probe`")]
     MissingProbeName { line: usize },
@@ -64,7 +64,7 @@ pub enum LexError {
     MultipleVariadics { line: usize, chore: String, first: String, second: String },
     #[error("line {line}: chore '{chore}': variadic parameter '{name}' cannot have a default; use '*{name}' for an optional variadic")]
     VariadicWithDefault { line: usize, chore: String, name: String },
-    #[error("line {line}: chore '{chore}': parameter name '{name}' contains '.'; parameter names MUST NOT contain '.' (§7.1.1)")]
+    #[error("line {line}: chore '{chore}': parameter name '{name}' contains '.'; parameter names must not contain '.'")]
     DottedChoreParam { line: usize, chore: String, name: String },
 }
 

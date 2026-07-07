@@ -86,9 +86,9 @@ pub enum ResolveError {
     MalformedOutIndex { ident: String },
     #[error("placeholder $<{ident}>: a recipe-member ref `$<recipe[]>` is only valid inside an `ingredients <probe>` fan-out body")]
     RecipeMemberOutsideFanout { ident: String },
-    #[error("placeholder $<{ident}>: file reference paths must be relative and must not contain '..' segments (CS-0101)")]
+    #[error("placeholder $<{ident}>: file reference paths must be relative and must not contain '..' segments")]
     FileRefBadPath { ident: String },
-    #[error("placeholder $<{ident}>: $<file:PATH> is an input reference and is not valid in a cook output pattern (CS-0101)")]
+    #[error("placeholder $<{ident}>: $<file:PATH> is an input reference and is not valid in a cook output pattern")]
     FileRefInOutputPattern { ident: String },
 }
 

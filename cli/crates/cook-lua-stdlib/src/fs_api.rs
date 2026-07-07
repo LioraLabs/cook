@@ -512,7 +512,7 @@ mod tests {
             .exec()
             .unwrap_err()
             .to_string();
-        assert!(err.contains("CS-0045"), "diagnostic missing CS-0045 tag: {err}");
+        assert!(err.contains("escapes project root"), "diagnostic missing escape text: {err}");
         assert!(err.contains("/etc/passwd"), "diagnostic missing path: {err}");
     }
 
@@ -531,7 +531,7 @@ mod tests {
             .exec()
             .unwrap_err()
             .to_string();
-        assert!(err.contains("CS-0045"), "got: {err}");
+        assert!(err.contains("escapes project root"), "got: {err}");
     }
 
     /// A confined `fs.write` to a path inside the project root MUST
@@ -557,7 +557,7 @@ mod tests {
             .exec()
             .unwrap_err()
             .to_string();
-        assert!(err.contains("CS-0045"), "got: {err}");
+        assert!(err.contains("escapes project root"), "got: {err}");
     }
 
     /// CS-0017: a confined fs.* call from an imported Cookfile sees a
@@ -748,6 +748,6 @@ mod tests {
             .exec()
             .unwrap_err()
             .to_string();
-        assert!(err.contains("CS-0045"), "got: {err}");
+        assert!(err.contains("escapes project root"), "got: {err}");
     }
 }

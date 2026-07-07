@@ -164,7 +164,7 @@ fn check_multi_output_coherence(
         let kind = output_pattern_kind_with_recipes(out.as_str(), recipe_names);
         if !drivers_match(&first, &kind) {
             return Err(format!(
-                "CS-0022: cook step's output #1 ({:?}) and output #{} ({:?}) declare \
+                "cook step's output #1 ({:?}) and output #{} ({:?}) declare \
                  different iteration drivers; all output patterns must share a driver",
                 step.outputs[0].as_str(),
                 idx + 1,
@@ -216,7 +216,7 @@ fn check_output_pattern_no_bare_accessors(
             };
             return Err(CodegenError::PlaceholderViolation {
                 recipe: recipe.to_string(),
-                message: format!("CS-0101: {}", e),
+                message: e.to_string(),
                 line,
             });
         }
@@ -226,7 +226,7 @@ fn check_output_pattern_no_bare_accessors(
                 return Err(CodegenError::PlaceholderViolation {
                     recipe: recipe.to_string(),
                     message: format!(
-                        "CS-0022: bare $<{inner}> in output pattern was removed; \
+                        "bare $<{inner}> in output pattern is not supported; \
                          use $<in.{inner}> (or $<dep.{inner}> for a dep-driven pattern)"
                     ),
                     line,
@@ -1591,4 +1591,3 @@ fn chore_metadata_fields(chore: &Chore, recipe_names: &BTreeSet<String>) -> Vec<
     }
     fields
 }
-
