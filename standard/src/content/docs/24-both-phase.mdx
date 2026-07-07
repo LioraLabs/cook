@@ -177,3 +177,20 @@ recipe app
 ```
 
 The `cook.dep_output_list("libs")` call returns `{ "build/lib/libfoo.a", "build/lib/libbar.a" }`. An equivalent shell-body recipe would use `$<libs>` per §{xref.string-substitution}.
+
+## 24.8. `cook.json_decode` and `cook.yaml_decode` [#lua.cook-codecs]
+**Phase.** Both.
+
+### 24.8.1. `cook.json_decode` [#lua.cook-json-decode]
+**Signature.** `cook.json_decode(text: string) -> table | string | number | boolean | nil`
+
+Parses `text` as JSON and returns the corresponding Lua value: objects and arrays become tables (arrays 1-indexed), strings/numbers/booleans map to their Lua counterparts, and JSON `null` becomes `nil` (as an object member value, the key is absent). Malformed JSON is a Lua runtime error tagged `json error`.
+
+### 24.8.2. `cook.yaml_decode` [#lua.cook-yaml-decode]
+**Signature.** `cook.yaml_decode(text: string) -> table | string | number | boolean | nil`
+
+Parses `text` as YAML under the same value mapping as `cook.json_decode`. Malformed YAML is a Lua runtime error tagged `yaml error`.
+
+### Note 24.8.1
+
+The codecs are pure functions of their argument; they perform no I/O and consult no phase state. A conforming implementation MUST install both on the register-phase VM and on every execute-phase worker VM, so a probe `produce` body (§{cat.probes.api}) behaves identically whether it is evaluated by the `ingredients <probe>` register pre-pass or by a demand-driven worker (CS-0123).
