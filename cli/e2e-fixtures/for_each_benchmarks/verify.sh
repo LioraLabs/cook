@@ -10,7 +10,7 @@
 set -uo pipefail
 
 cd "$(dirname "$0")"
-COOK="${COOK:-../../cli/target/debug/cook}"
+COOK="${COOK:-../../target/debug/cook}"
 COOK="$(cd "$(dirname "$COOK")" && pwd)/$(basename "$COOK")"
 
 if [ ! -x "$COOK" ]; then

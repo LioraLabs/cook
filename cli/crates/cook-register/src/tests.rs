@@ -1647,6 +1647,32 @@ recipe stamps
 }
 
 #[test]
+fn for_each_two_segment_key_with_field_selector_fans_out() {
+    let dir = TempDir::new().unwrap();
+    // §22.5.10 three-segment form: two-segment probe key `ns:cards` + one
+    // trailing `:items` field selector. The pre-pass resolves via the final
+    // colon (no probe `ns:cards:items` is declared) and stashes the selected
+    // array under the verbatim ref.
+    let cookfile = r#"
+register
+    cook.probe("ns:cards", {
+        inputs = {},
+        produce = [[ return { items = { {id="a"}, {id="b"} } } ]],
+    })
+
+recipe build_cards
+    ingredients ns:cards:items
+    cook "out/$<in.id>.json" {
+        mkdir -p out
+        printf '%s' '$<in>' > $<out>
+    }
+"#;
+    let registered = register_surface(dir.path(), cookfile).expect("register");
+    let units = registered.units_by_recipe.get("build_cards").unwrap();
+    assert_eq!(units.units.len(), 2, "two items via the ns:cards:items selector");
+}
+
+#[test]
 fn for_each_exact_probe_key_wins_over_field_selector_split() {
     let dir = TempDir::new().unwrap();
     // Both `cards` (an object with a `list` field) and `cards:list` (an

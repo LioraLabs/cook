@@ -337,6 +337,8 @@ pub(crate) fn parse_ingredients_probe_source(
     // error. Which colon is key vs selector is resolved against the probe
     // registry in the register pre-pass, not here.
     let segments: Vec<&str> = key.split(':').collect();
+    // Only the first char needs checking: the scan above already restricts
+    // every char to [A-Za-z0-9_:].
     let seg_ok = |s: &&str| {
         s.chars()
             .next()

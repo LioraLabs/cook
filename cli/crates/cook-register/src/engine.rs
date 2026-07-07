@@ -1479,6 +1479,7 @@ fn check_for_each_static_inputs(
             continue; // unresolvable ref already rejected by the pre-pass
         };
         let Some(reg) = probe_registry.probes.get(key) else {
+            // unreachable in practice: resolve_probe_ref just proved the key is declared
             continue;
         };
         for file in &reg.probe.inputs.files {
