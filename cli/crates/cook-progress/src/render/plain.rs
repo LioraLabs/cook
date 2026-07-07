@@ -265,4 +265,43 @@ mod tests {
         assert!(s.contains("(stderr)"), "got: {s}");
         assert!(s.contains("warning: unused"), "got: {s}");
     }
+
+    #[test]
+    fn cache_hit_line_uses_artifact_basename_not_raw_command() {
+        // The dominant second-run all-cached case must show the clean output
+        // basename, not the raw shell command that produced it (item 1).
+        let mut state = BuildState::new();
+        state.apply(&ProgressEvent::BuildStarted {
+            recipes: topo(&[(0, "build", 1)]), total_nodes: 1,
+        });
+        state.apply(&ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "wc -w < a.txt > build/counts/alpha.count".into(),
+            artifact: Some(std::path::PathBuf::from("build/counts/alpha.count")),
+            fallback_label: "wc -w < a.txt > build/counts/alpha.count".into(),
+            kind: crate::event::NodeKind::Cooked,
+        });
+        let ev = ProgressEvent::NodeCacheHit {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "wc -w < a.txt > build/counts/alpha.count".into(),
+            artifact: Some(std::path::PathBuf::from("build/counts/alpha.count")),
+        };
+        state.apply(&ev);
+        let mut buf = Vec::new();
+        {
+            let mut r = PlainRenderer::new(&mut buf);
+            r.handle(&state, &ev).unwrap();
+        }
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("build/alpha.count"), "got: {s}");
+        assert!(s.contains("cached"), "got: {s}");
+        assert!(!s.contains("wc -w"), "raw command leaked into label: {s}");
+    }
+
+    #[test]
+    fn interactive_label_drops_internal_line_tag() {
+        // `@N` is an internal source-line tag; never expose it in frames.
+        assert_eq!(interactive_label("greet", "@23"), "greet");
+        assert_eq!(interactive_label("greet", "shell"), "greet/shell");
+    }
 }

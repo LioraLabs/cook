@@ -185,7 +185,11 @@ impl WorkPayload {
                     .lines()
                     .map(str::trim)
                     .find(|l| !l.is_empty() && *l != "set -e")
-                    .unwrap_or("");
+                    // Degenerate body (empty, or nothing but the `set -e`
+                    // preamble): fall back to the first non-empty line so
+                    // callers surfacing this label never get a blank string.
+                    .or_else(|| cmd.lines().map(str::trim).find(|l| !l.is_empty()))
+                    .unwrap_or("sh");
                 if body.len() <= 60 {
                     body.to_string()
                 } else {
@@ -385,6 +389,16 @@ mod tests {
         assert!(!d.contains("set -e"), "got: {d}");
         assert!(!d.contains('\n'), "got: {d}");
         assert!(d.starts_with("wc"), "got: {d}");
+    }
+
+    #[test]
+    fn shell_display_name_degenerate_body_is_never_blank() {
+        // A body that is nothing but the `set -e` preamble must still yield a
+        // non-blank label (inline renderer surfaces this string directly).
+        let p = WorkPayload::Shell { cmd: "set -e".into(), line: 1 };
+        assert!(!p.display_name().is_empty(), "blank label for set -e-only body");
+        let empty = WorkPayload::Shell { cmd: String::new(), line: 1 };
+        assert!(!empty.display_name().is_empty(), "blank label for empty body");
     }
 
     #[test]
