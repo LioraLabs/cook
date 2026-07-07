@@ -1,0 +1,6 @@
+probe cards:list
+    lines { printf "alpha\nbeta\ngamma\n" }
+
+recipe stamps
+    ingredients cards:list
+    cook "out/$<in>.stamp" { echo "member: $<in>" > $<out> }

@@ -1,0 +1,6 @@
+xfail = "COOK-187"
+
+[[run]]
+args = ["withprobe"]
+[run.assert]
+equals = { "out/b.txt" = "Linux\n" }
