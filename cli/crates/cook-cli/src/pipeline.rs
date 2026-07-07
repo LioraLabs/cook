@@ -357,6 +357,11 @@ fn bridge_engine_to_progress_events(
     })
 }
 
+/// Reported commands carry codegen's `set -e` prelude; strip it for display.
+fn strip_set_e(cmd: &str) -> &str {
+    cmd.strip_prefix("set -e\n").unwrap_or(cmd)
+}
+
 /// Map cook-engine errors to CookError.
 fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
     match e {
@@ -371,7 +376,7 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
                         .collect();
                     let line = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0usize);
                     let code = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1i32);
-                    let command = parts.get(2).unwrap_or(&"unknown").to_string();
+                    let command = strip_set_e(parts.get(2).copied().unwrap_or("unknown"));
                     if line == 0 {
                         CookError::CommandFailed(format!(
                             "command failed (exit {code}): {command}"
@@ -413,6 +418,38 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
              supported. either narrow '{upstream}' outputs[] to the specific file, or depend on \
              '{upstream}' via a requires edge (recipe {downstream}: {upstream})."
         )),
+    }
+}
+
+#[cfg(test)]
+mod engine_error_to_cook_error_tests {
+    use super::*;
+
+    #[test]
+    fn strip_set_e_removes_exact_prefix() {
+        assert_eq!(strip_set_e("set -e\nmkdir -p build"), "mkdir -p build");
+    }
+
+    #[test]
+    fn strip_set_e_leaves_unprefixed_command_unchanged() {
+        assert_eq!(strip_set_e("mkdir -p build"), "mkdir -p build");
+    }
+
+    #[test]
+    fn command_failed_render_strips_set_e_prelude() {
+        let e = cook_engine::EngineError::TaskFailures {
+            count: 1,
+            failures: vec![(
+                0,
+                "build".to_string(),
+                "COOK_CMD_FAILED:3:1:set -e\nfalse".to_string(),
+            )],
+            partial_test_results: vec![],
+        };
+        let err = engine_error_to_cook_error(e);
+        let msg = err.to_string();
+        assert!(!msg.contains("set -e"), "{msg}");
+        assert!(msg.contains("false"), "{msg}");
     }
 }
 
