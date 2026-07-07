@@ -634,21 +634,25 @@ pub(crate) fn generate_for_each_cook_step(
         &ctx,
         &mut consulted,
         &mut file_refs,
+        crate::template::ProbeLowering::CacheGet,
     )
     .unwrap_or_else(sigil_err);
 
     let add_unit_line = match &cook_step.body {
         Some(Body::ShellBlock(lines)) => {
             let combined = build_shell_block_command(lines, recipe_names);
-            let (cmd_concat, probe_keys) =
-                crate::template::expand_for_each_template(&combined, &ctx, &mut consulted, &mut file_refs)
-                    .unwrap_or_else(sigil_err);
-            // Probe refs resolve at execute time, so defer them in a function.
-            let cmd_expr = if probe_keys.is_empty() {
-                cmd_concat
-            } else {
-                format!("function() return {} end", cmd_concat)
-            };
+            let (cmd_concat, probe_keys) = crate::template::expand_for_each_template(
+                &combined,
+                &ctx,
+                &mut consulted,
+                &mut file_refs,
+                crate::template::ProbeLowering::LiteralSigil,
+            )
+            .unwrap_or_else(sigil_err);
+            // COOK-187 / CS-0122: probe refs stay literal sigil text in the
+            // command string — never a deferred function (see
+            // expand_command_template's doc comment for the rationale).
+            let cmd_expr = cmd_concat;
             let probes_lua = probe_keys_to_lua_table(&probe_keys);
             format!(
                 "        cook.add_unit({{inputs = {{}}, output = _cook_out, command = {}, probes = {}, consulted_env_keys = {}{}, member = cook.member_to_string(item){}}})\n",

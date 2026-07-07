@@ -3579,10 +3579,13 @@ end
 }
 
 #[test]
-fn file_ref_with_probe_ref_keeps_hoist_outside_deferred_fn() {
-    // Probe refs defer the command into a `function() return ... end` closure;
-    // the file-ref local must be hoisted BEFORE it (captured as an upvalue) so
-    // the substitution value is still computed at register time.
+fn file_ref_with_probe_ref_hoists_before_add_unit() {
+    // COOK-187 / CS-0122: a probe ref no longer defers the command into a
+    // `function() return ... end` closure — it stays literal `$<key:...>`
+    // sigil text inside the command STRING for cook.add_unit's register-time
+    // capture to rewrite. The file-ref local must still be hoisted before the
+    // add_unit call (register-time substitution), and the emitted command
+    // concatenation must reference it.
     let src = r#"recipe "obj"
     ingredients "src/*.c"
     cook "build/$<in.stem>.o" {
@@ -3594,12 +3597,24 @@ end
     let hoist_pos = lua
         .find("local _cook_fr_s0_1 = cook.file_ref(\"t.css\")")
         .unwrap_or_else(|| panic!("expected hoisted file-ref local, lua:\n{lua}"));
-    let deferred_pos = lua
-        .find("function() return")
-        .unwrap_or_else(|| panic!("expected probe-deferred command closure, lua:\n{lua}"));
+    let add_unit_pos = lua
+        .find("cook.add_unit(")
+        .unwrap_or_else(|| panic!("expected cook.add_unit call, lua:\n{lua}"));
     assert!(
-        hoist_pos < deferred_pos,
-        "file-ref hoist (at {hoist_pos}) must precede the deferred closure (at {deferred_pos}), lua:\n{lua}"
+        hoist_pos < add_unit_pos,
+        "file-ref hoist (at {hoist_pos}) must precede cook.add_unit (at {add_unit_pos}), lua:\n{lua}"
+    );
+    assert!(
+        lua.contains("_cook_fr_s0_1"),
+        "expected the add_unit command concatenation to reference the hoisted local, lua:\n{lua}"
+    );
+    assert!(
+        lua.contains("$<cc:zlib.cflags>"),
+        "expected the literal probe sigil text in the command string, lua:\n{lua}"
+    );
+    assert!(
+        !lua.contains("function() return"),
+        "a native cook-step command must never be a deferred function (COOK-187), lua:\n{lua}"
     );
 }
 

@@ -1,0 +1,5 @@
+probe sys:os
+    { uname -s }
+
+recipe withprobe
+    cook "out/b.txt" { echo "$<sys:os>" > $<out> }
