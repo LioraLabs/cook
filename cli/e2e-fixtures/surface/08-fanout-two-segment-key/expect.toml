@@ -1,4 +1,3 @@
-xfail = "COOK-190"
 
 [[run]]
 args = ["stamps"]

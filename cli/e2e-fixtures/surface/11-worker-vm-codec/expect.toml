@@ -1,4 +1,3 @@
-xfail = "COOK-70"
 
 [[run]]
 args = ["build"]

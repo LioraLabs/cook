@@ -1,4 +1,3 @@
-xfail = "COOK-187"
 
 [[run]]
 args = ["withprobe"]
