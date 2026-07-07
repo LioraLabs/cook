@@ -83,6 +83,62 @@ pub(crate) fn collect_module_call(
     Ok((code, new_pos))
 }
 
+/// Lua reserved words (Lua 5.4 §3.1) — used to rule out shapes like
+/// `local x = 1` or `if true then ... end` when detecting a bare
+/// `NAME "value"` config statement (CS-0126).
+const LUA_KEYWORDS: &[&str] = &[
+    "and", "break", "do", "else", "elseif", "end", "false", "for", "function",
+    "goto", "if", "in", "local", "nil", "not", "or", "repeat", "return",
+    "then", "true", "until", "while",
+];
+
+/// Detects the make-refugee `NAME "value"` / `NAME value` statement shape
+/// on a config-block body line (CS-0126). This is the pre-CS-0011 VarDecl
+/// shape: a bare identifier followed by whitespace and a value, which is
+/// *not* valid Lua (it parses as two separate statements/an ambiguous
+/// function call) and previously only failed at register time with a
+/// confusing "attempt to call a nil value" error deep in the Lua VM.
+///
+/// Returns `(name, suggested_value)` where `suggested_value` is always a
+/// valid Lua expression string (bare unquoted words get wrapped in quotes).
+///
+/// Deliberately also flags paren-less Lua call statements (`print "x"`)
+/// inside config blocks, since they share the exact same lexical shape as
+/// the VarDecl antipattern; write the parenthesized form (`print("x")`).
+fn detect_bare_config_value(line: &str) -> Option<(String, String)> {
+    let t = line.trim();
+    if t.is_empty() || t.starts_with('#') || t.starts_with("--") {
+        return None;
+    }
+    let first = t.chars().next().unwrap();
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return None;
+    }
+    let ident_end = t.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))?;
+    let (ident, rest) = t.split_at(ident_end);
+    if LUA_KEYWORDS.contains(&ident) {
+        return None;
+    }
+    if !rest.starts_with(|c: char| c.is_whitespace()) {
+        return None; // rules out env.X, f(x), t[k], x=1, obj:m
+    }
+    let mut rest = rest.trim_start();
+    if let Some(i) = rest.find(" --") {
+        rest = rest[..i].trim_end(); // drop trailing Lua comment from the suggestion
+    }
+    if rest.starts_with('"') || rest.starts_with('\'') {
+        return Some((ident.to_string(), rest.to_string()));
+    }
+    if !rest.is_empty()
+        && rest.chars().next().unwrap().is_ascii_alphanumeric()
+        && !rest.contains('=')
+        && !rest.contains('(')
+    {
+        return Some((ident.to_string(), format!("\"{rest}\"")));
+    }
+    None
+}
+
 pub(crate) fn parse_config_block_lua(
     tokens: &[Located<Token>],
     start: usize,
@@ -135,6 +191,25 @@ pub(crate) fn parse_config_block_lua(
         let trimmed_end = lines.iter().rposition(|l| !l.trim().is_empty())
             .map(|i| i + 1)
             .unwrap_or(0);
+
+        // CS-0126: parse-time did-you-mean for the bare `NAME "value"` /
+        // `NAME value` statement shape (the pre-CS-0011 VarDecl antipattern
+        // every make/just refugee types). Checked here, before the body is
+        // handed off as opaque Lua source, so the diagnostic is source-mapped
+        // and never reaches the Lua VM.
+        for (i, raw) in lines.iter().enumerate() {
+            if let Some((name, value)) = detect_bare_config_value(raw) {
+                let abs_line = start_idx + i + 1;
+                return Err(ParseError::Parse {
+                    line: abs_line,
+                    message: format!(
+                        "config values are Lua assignments — did you mean {} = {}?",
+                        name, value
+                    ),
+                });
+            }
+        }
+
         lines[..trimmed_end].join("\n")
     } else {
         String::new()
@@ -336,7 +411,7 @@ fn reject_as_modifier_on_non_test(
         return Err(ParseError::Parse {
             line,
             message: format!(
-                "{}: modifier `as` is only valid on test_step (CS-0061 §3.1.3)",
+                "{}: modifier `as` is only valid on test steps",
                 step_keyword
             ),
         });

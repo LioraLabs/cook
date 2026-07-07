@@ -108,7 +108,7 @@ impl std::fmt::Display for SandboxError {
                 project_root,
             } => write!(
                 f,
-                "{api}: path {path:?} escapes project root {} (CS-0045: \
+                "{api}: path {path:?} escapes project root {}. \
                  cook/test/chore step Lua bodies are confined to the \
                  project root; use a `plate` step to ship outside)",
                 project_root.display()
@@ -116,7 +116,7 @@ impl std::fmt::Display for SandboxError {
             SandboxError::ShellDisabled { api } => write!(
                 f,
                 "{api}: Lua-side shell escape hatch is disabled in \
-                 cook/test/chore step bodies (CS-0045); use cook.sh \
+                 cook/test/chore step bodies; use cook.sh \
                  (which runs with the recipe's working_dir) or move \
                  the call to a `plate` step"
             ),

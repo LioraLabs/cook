@@ -157,7 +157,7 @@ fn table_to_json(
     }
     if !int_keys.is_empty() && !str_keys.is_empty() {
         return Err(format!(
-            "non-serialisable value at .{} (mixed string/integer keys not allowed; §22.5.5)",
+            "non-serialisable value at .{} (mixed string/integer keys not allowed)",
             render_path(path)
         ));
     }

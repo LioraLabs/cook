@@ -95,7 +95,11 @@ impl CookWatcher {
                     if relevant {
                         last_trigger = Instant::now();
                         if let Err(e) = on_change(cookfile_changed) {
-                            eprintln!("cook serve: rebuild failed: {e}");
+                            let msg = cook_cli::diagnostics::sanitize_error(
+                                &e.to_string(),
+                                cook_cli::diagnostics::backtrace_enabled(),
+                            );
+                            eprintln!("cook serve: rebuild failed: {msg}");
                         }
                     }
                 }

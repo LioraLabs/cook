@@ -83,7 +83,34 @@ pub fn generate_with_names_checked(
     recipe_names: &BTreeSet<String>,
 ) -> Result<String, CodegenError> {
     validate_accessor_placement(cookfile, recipe_names)?;
-    generate_with_names(cookfile, recipe_names)
+    let generated = generate_with_names(cookfile, recipe_names)?;
+    scan_for_sigil_errors(&generated).map_err(|message| CodegenError::PlaceholderViolation {
+        recipe: "(unknown)".to_string(),
+        message,
+        line: 0,
+    })?;
+    Ok(generated)
+}
+
+/// Post-lowering safety net (COOK-191/CS-0126): a SIGIL_ERROR sentinel in
+/// checked output means a placeholder failed to lower — surface it as a
+/// codegen error instead of letting the marker flow into a command at
+/// runtime. Every `"[[SIGIL_ERROR: <message>]]"` emission site (template.rs,
+/// cook_step.rs, recipe.rs, plate_step.rs, test_step.rs) funnels through
+/// `generate_with_names`, so scanning the fully-generated string here catches
+/// any of them in one place, regardless of which validator (if any) upstream
+/// missed the shape. There is no recipe/line context left at this point —
+/// the generated string is flat text — so `generate_with_names_checked`
+/// reports `line: 0` / `recipe: "(unknown)"`, matching the `step_line`
+/// fallback convention above for step kinds with no known line.
+pub(crate) fn scan_for_sigil_errors(generated: &str) -> Result<(), String> {
+    const MARK: &str = "[[SIGIL_ERROR: ";
+    if let Some(start) = generated.find(MARK) {
+        let rest = &generated[start + MARK.len()..];
+        let msg = rest.split("]]").next().unwrap_or(rest);
+        return Err(msg.to_string());
+    }
+    Ok(())
 }
 
 /// Detect references whose referent has an empty output list and return one
@@ -137,7 +164,7 @@ fn check_multi_output_coherence(
         let kind = output_pattern_kind_with_recipes(out.as_str(), recipe_names);
         if !drivers_match(&first, &kind) {
             return Err(format!(
-                "CS-0022: cook step's output #1 ({:?}) and output #{} ({:?}) declare \
+                "cook step's output #1 ({:?}) and output #{} ({:?}) declare \
                  different iteration drivers; all output patterns must share a driver",
                 step.outputs[0].as_str(),
                 idx + 1,
@@ -189,7 +216,7 @@ fn check_output_pattern_no_bare_accessors(
             };
             return Err(CodegenError::PlaceholderViolation {
                 recipe: recipe.to_string(),
-                message: format!("CS-0101: {}", e),
+                message: e.to_string(),
                 line,
             });
         }
@@ -199,7 +226,7 @@ fn check_output_pattern_no_bare_accessors(
                 return Err(CodegenError::PlaceholderViolation {
                     recipe: recipe.to_string(),
                     message: format!(
-                        "CS-0022: bare $<{inner}> in output pattern was removed; \
+                        "bare $<{inner}> in output pattern is not supported; \
                          use $<in.{inner}> (or $<dep.{inner}> for a dep-driven pattern)"
                     ),
                     line,
@@ -371,6 +398,31 @@ fn is_bundleable(step: &Step) -> bool {
     )
 }
 
+/// The Cookfile line of a step's own code text, for diagnostics
+/// (COOK-191/CS-0126). `Step` is `#[non_exhaustive]`, so a future variant
+/// with no known line falls back to `0` (unknown — pool.rs applies no
+/// padding for that case).
+///
+/// `LuaBlock`/`InlineLuaBlock`'s `line` field is the line of the opening
+/// `>{` token itself — `cook_lang::lua_block::collect_lua_block` starts
+/// reading the block's code on the *next* physical line — so +1 here to
+/// point at the code's real first line, matching `Lua`'s `line` (which
+/// already is the code's own line, since a `>` line has no separate
+/// opener).
+fn step_line(step: &Step) -> usize {
+    match step {
+        Step::LuaBlock { line, .. } | Step::InlineLuaBlock { line, .. } => *line + 1,
+        Step::Shell { line, .. }
+        | Step::Lua { line, .. }
+        | Step::InlineLua { line, .. }
+        | Step::Cook { line, .. }
+        | Step::Plate { line, .. }
+        | Step::Test { line, .. }
+        | Step::ForEach { line, .. } => *line,
+        _ => 0,
+    }
+}
+
 /// One contiguous piece of an execute-phase body unit's `lua_code` chunk.
 ///
 /// `Static` pieces are raw Lua source text that the worker VM evaluates
@@ -525,12 +577,23 @@ fn emit_body_unit_with_names(
     if !file_refs.is_empty() {
         out.push_str(&file_refs.hoist_lines("    "));
     }
+    // COOK-191/CS-0126: report the bundle's first step's Cookfile line, so
+    // pool.rs can newline-pad the chunk and make an execute-phase error
+    // read `Cookfile:LINE:`. The `use`-statement preamble above adds
+    // `uses.len()` lines ahead of the first step's own code within this
+    // same chunk, so that count is subtracted here to compensate — known
+    // imprecision: a bundle spanning more than one original step (e.g. two
+    // adjacent `>` lines with no blank line between them) only gets an
+    // exact line for the first step; later steps in the same bundle may
+    // report a nearby-but-not-exact line. This is a follow-up concern, not
+    // in scope here.
+    let line = bundle.first().map(step_line).unwrap_or(0).saturating_sub(uses.len());
     // cache = false: consulted_env_keys is a cache-keying hint, omitted for
     // units that are never cached. The cacheable cook-step path in
     // cook_step.rs is the only emission site that includes it.
     out.push_str(&format!(
-        "    cook.add_unit({{lua_code = {}, cache = false}})\n",
-        lua_code_expr
+        "    cook.add_unit({{lua_code = {}, cache = false, line = {}}})\n",
+        lua_code_expr, line
     ));
 }
 
@@ -656,67 +719,112 @@ impl<'a> TopLevelItem<'a> {
     }
 }
 
+/// Pads `out` with newlines so the NEXT line written lands at 1-indexed
+/// `target` in the generated chunk. No-op if already past it (best-effort).
+fn pad_to_line(out: &mut String, target: usize) {
+    let next = out.matches('\n').count() + 1;
+    for _ in next..target {
+        out.push('\n');
+    }
+}
+
+/// Emit a config-block body into `out`, one generated line per source line,
+/// each prefixed with `indent`. A `#`-comment line (Cookfile source syntax,
+/// not valid Lua) becomes an EMPTY generated line rather than being
+/// skipped, so the line count — and therefore alignment with later body
+/// lines — is preserved.
+fn emit_config_body(out: &mut String, body: &str, indent: &str) {
+    for line in body.lines() {
+        if line.trim_start().starts_with('#') {
+            out.push('\n');
+        } else {
+            out.push_str(indent);
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+}
+
 pub fn generate_with_names(
     cookfile: &Cookfile,
     recipe_names: &BTreeSet<String>,
 ) -> Result<String, CodegenError> {
-    let mut out = String::from("-- Generated by Cook\n");
+    let mut out = String::new();
 
-    // Emit module loading for use statements
-    for use_stmt in &cookfile.uses {
-        let lua_name = use_stmt.module_name.replace('-', "_");
-        out.push_str(&format!(
-            "local {} = cook.load_module(\"{}\")\n",
-            lua_name,
-            escape_lua_string(&use_stmt.module_name),
-        ));
-    }
-    if !cookfile.uses.is_empty() {
+    if cookfile.config_blocks.is_empty() {
+        // No config blocks: nothing to line-align, so emission stays
+        // byte-identical to the pre-alignment shape.
+        out.push_str("-- Generated by Cook\n");
+
+        // Emit module loading for use statements
+        for use_stmt in &cookfile.uses {
+            let lua_name = use_stmt.module_name.replace('-', "_");
+            out.push_str(&format!(
+                "local {} = cook.load_module(\"{}\")\n",
+                lua_name,
+                escape_lua_string(&use_stmt.module_name),
+            ));
+        }
+        if !cookfile.uses.is_empty() {
+            out.push('\n');
+        }
+    } else {
+        // Config blocks are present: best-effort line-align each config
+        // body line to its own Cookfile source line in the generated chunk
+        // (CS-0126), so a runtime error inside a config body reports the
+        // exact source line. The standalone "-- Generated by Cook" header
+        // line is folded onto the end of the FIRST emitted line instead of
+        // its own line, so it doesn't consume a generated line number a
+        // body line needs.
+
+        // Emit module loading for use statements, one per line.
+        for (i, use_stmt) in cookfile.uses.iter().enumerate() {
+            let lua_name = use_stmt.module_name.replace('-', "_");
+            let mut line = format!(
+                "local {} = cook.load_module(\"{}\")",
+                lua_name,
+                escape_lua_string(&use_stmt.module_name),
+            );
+            if i == 0 {
+                line.push_str(" -- Generated by Cook");
+            }
+            out.push_str(&line);
+            out.push('\n');
+        }
+
+        // config_blocks is non-empty (checked above), so this is populated
+        // in source-encounter order.
+        let first_block = &cookfile.config_blocks[0];
+        pad_to_line(&mut out, first_block.line);
+        let mut fn_line = String::from("function __cook_run_config_blocks(selected_name)");
+        if cookfile.uses.is_empty() {
+            fn_line.push_str(" -- Generated by Cook");
+        }
+        out.push_str(&fn_line);
         out.push('\n');
-    }
 
-    // Config-block dispatcher
-    if !cookfile.config_blocks.is_empty() {
-        out.push_str("function __cook_run_config_blocks(selected_name)\n");
-
-        // Unnamed (base) block — always runs.
-        // Comment lines (starting with '#') are skipped; they are Cookfile
-        // source comments and are not valid Lua syntax.
+        // Unnamed (base) blocks — always run, in source order.
         for block in &cookfile.config_blocks {
             if block.name.is_none() {
-                for line in block.body.lines() {
-                    if line.trim_start().starts_with('#') {
-                        continue;
-                    }
-                    out.push_str("    ");
-                    out.push_str(line);
-                    out.push('\n');
-                }
+                pad_to_line(&mut out, block.line + 1);
+                emit_config_body(&mut out, &block.body, "    ");
             }
         }
 
-        // Named blocks — run if selected_name matches
-        let has_named = cookfile.config_blocks.iter().any(|b| b.name.is_some());
-        if has_named {
-            out.push_str("    if selected_name ~= nil then\n");
-            for block in &cookfile.config_blocks {
-                if let Some(name) = &block.name {
-                    out.push_str(&format!(
-                        "        if selected_name == \"{}\" then\n",
-                        escape_lua_string(name)
-                    ));
-                    for line in block.body.lines() {
-                        if line.trim_start().starts_with('#') {
-                            continue;
-                        }
-                        out.push_str("            ");
-                        out.push_str(line);
-                        out.push('\n');
-                    }
-                    out.push_str("        end\n");
-                }
+        // Named blocks — each runs only when selected_name matches. The
+        // per-block `==` guard makes the previous outer
+        // `selected_name ~= nil` wrapper redundant.
+        for block in &cookfile.config_blocks {
+            if let Some(name) = &block.name {
+                pad_to_line(&mut out, block.line);
+                out.push_str(&format!(
+                    "    if selected_name == \"{}\" then\n",
+                    escape_lua_string(name)
+                ));
+                pad_to_line(&mut out, block.line + 1);
+                emit_config_body(&mut out, &block.body, "        ");
+                out.push_str("    end\n");
             }
-            out.push_str("    end\n");
         }
 
         out.push_str("end\n\n");
@@ -1338,9 +1446,14 @@ fn emit_chore_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]
     }
 
     let wrapped = wrap_lua_string(&chunk);
+    // COOK-191/CS-0126: same first-step-line-minus-uses-preamble accounting
+    // as `emit_body_unit_with_names`; unit_api.rs additionally subtracts
+    // the chore-param-binding prelude's line count for chore units, since
+    // that prelude is prepended to `code` after this point.
+    let line = bundle.first().map(step_line).unwrap_or(0).saturating_sub(uses.len());
     out.push_str(&format!(
-        "    cook.add_unit({{lua_code = {}, interactive = true, cache = false}})\n",
-        wrapped
+        "    cook.add_unit({{lua_code = {}, interactive = true, cache = false, line = {}}})\n",
+        wrapped, line
     ));
 }
 
@@ -1474,4 +1587,3 @@ fn chore_metadata_fields(chore: &Chore, recipe_names: &BTreeSet<String>) -> Vec<
     }
     fields
 }
-

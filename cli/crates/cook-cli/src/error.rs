@@ -23,6 +23,17 @@ pub enum CookError {
 }
 
 impl CookError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            CookError::ParseError(_) => "parse-error",
+            CookError::RecipeNotFound(_) => "recipe-not-found",
+            CookError::RecipeCollision(_) => "recipe-collision",
+            CookError::CommandFailed(_) => "command-failed",
+            CookError::TestFailure(_) => "test-failure",
+            CookError::Other(_) => "error",
+        }
+    }
+
     pub fn exit_code(&self) -> i32 {
         match self {
             CookError::CommandFailed(_) => 1,

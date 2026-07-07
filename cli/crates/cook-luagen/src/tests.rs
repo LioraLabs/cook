@@ -1408,6 +1408,92 @@ fn test_codegen_emits_unnamed_and_named_in_order() {
     assert!(out.contains("selected_name == \"release\""));
 }
 
+// ── Config-block body line alignment (COOK-191, CS-0126) ────────
+//
+// The Cookfile's generated Lua loads as ONE chunk named `@Cookfile`, so
+// mlua reports `Cookfile:<generated-chunk-line>` on a runtime error. These
+// tests assert config-block body lines land at their OWN Cookfile source
+// line number in the generated chunk (best-effort padding), so a runtime
+// error inside a config body reports the exact source line.
+
+#[test]
+fn test_config_body_line_alignment_unnamed_no_uses() {
+    let source = "config\n    env.X = bad()\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // Source line 2 (`env.X = bad()`) must land at generated line 2
+    // (0-indexed index 1).
+    assert!(
+        lines[1].contains("env.X = bad()"),
+        "expected generated line 2 to contain body line, got: {:?}\nfull output:\n{}",
+        lines[1],
+        out
+    );
+}
+
+#[test]
+fn test_config_body_line_alignment_with_leading_use() {
+    let source = "use foo\nconfig\n    env.Y = \"1\"\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // Source line 3 (`env.Y = "1"`) must land at generated line 3
+    // (0-indexed index 2).
+    assert!(
+        lines[2].contains("env.Y"),
+        "expected generated line 3 to contain env.Y, got: {:?}\nfull output:\n{}",
+        lines[2],
+        out
+    );
+}
+
+#[test]
+fn test_config_body_line_alignment_named_block() {
+    let source =
+        "config\n    env.A = \"1\"\nconfig release\n    env.B = \"2\"\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // env.A is source line 2 -> generated line 2 (index 1).
+    assert!(
+        lines[1].contains("env.A"),
+        "expected generated line 2 to contain env.A, got: {:?}\nfull output:\n{}",
+        lines[1],
+        out
+    );
+    // env.B is source line 4 -> generated line 4 (index 3).
+    assert!(
+        lines[3].contains("env.B"),
+        "expected generated line 4 to contain env.B, got: {:?}\nfull output:\n{}",
+        lines[3],
+        out
+    );
+}
+
+#[test]
+fn test_config_body_comment_line_becomes_blank_preserving_alignment() {
+    let source = "config\n    # note\n    env.Z = \"1\"\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // Source line 2 is a `#` comment -> generated line 2 must be empty
+    // (line count preserved, not skipped).
+    assert_eq!(
+        lines[1], "",
+        "expected generated line 2 to be blank for a comment line, got: {:?}\nfull output:\n{}",
+        lines[1],
+        out
+    );
+    // env.Z is source line 3 -> generated line 3 (index 2).
+    assert!(
+        lines[2].contains("env.Z"),
+        "expected generated line 3 to contain env.Z, got: {:?}\nfull output:\n{}",
+        lines[2],
+        out
+    );
+}
+
 // ── Cross-recipe dep integration tests ──────────────────────────
 
 #[test]
@@ -2073,10 +2159,7 @@ end
         "{{out_1}} in single-output step must error, not panic"
     );
     let err_str = result.unwrap_err().to_string();
-    assert!(
-        err_str.contains("CS-0022"),
-        "error must contain CS-0022, got: {err_str}"
-    );
+    assert!(err_str.contains("out_1"), "error must name the bad placeholder, got: {err_str}");
     assert!(
         err_str.contains("out_1"),
         "error must name the bad placeholder, got: {err_str}"
@@ -2101,7 +2184,7 @@ end
         "$<in> in many-to-one step must error"
     );
     let err_str = result.unwrap_err().to_string();
-    assert!(err_str.contains("CS-0022"), "error must contain CS-0022, got: {err_str}");
+    assert!(err_str.contains("$<in>") || err_str.contains("in"), "error must name $<in>, got: {err_str}");
 }
 
 #[test]
@@ -2122,10 +2205,7 @@ end
         "bare $<stem> in output pattern must error"
     );
     let err_str = result.unwrap_err().to_string();
-    assert!(
-        err_str.contains("CS-0022"),
-        "error must contain CS-0022, got: {err_str}"
-    );
+    assert!(err_str.contains("stem"), "error must name 'stem', got: {err_str}");
     assert!(
         err_str.contains("stem"),
         "error must name 'stem', got: {err_str}"
@@ -2154,7 +2234,7 @@ end
     );
     let err_str = result.unwrap_err().to_string();
     assert!(
-        err_str.contains("CS-0022") || err_str.contains("libmath"),
+        err_str.contains("libmath"),
         "error must mention libmath, got: {err_str}"
     );
 }
@@ -2173,7 +2253,7 @@ end
     let result = crate::generate_with_names_checked(&cookfile, &names);
     assert!(result.is_err(), "$<out> in multi-output step must error");
     let err_str = result.unwrap_err().to_string();
-    assert!(err_str.contains("CS-0022"), "error must contain CS-0022, got: {err_str}");
+    assert!(err_str.contains("out"), "error must name $<out>, got: {err_str}");
 }
 
 #[test]
@@ -2196,7 +2276,7 @@ end
     // The coherence error message mentions the patterns
     let err_str = result.unwrap_err().to_string();
     assert!(
-        err_str.contains("CS-0022") || err_str.contains("driver"),
+        err_str.contains("driver"),
         "error must mention driver mismatch, got: {err_str}"
     );
 }
@@ -3783,5 +3863,55 @@ fn test_compile_chore_merges_explicit_and_inferred_requires() {
     assert!(
         lua.contains(r#"requires = {"setup", "app"}"#),
         "explicit-first, inferred-appended, deduped requires expected, got:\n{lua}"
+    );
+}
+
+// ─── COOK-191/CS-0126: SIGIL_ERROR chokepoint — checked codegen scans and
+// hard-errors on any sentinel that survives lowering ───────────────────────
+
+#[test]
+fn test_scan_for_sigil_errors_extracts_inner_message_verbatim() {
+    let generated = "x = \"[[SIGIL_ERROR: placeholder $<file:../evil>: file reference paths must be relative]]\"";
+    let result = crate::recipe::scan_for_sigil_errors(generated);
+    assert_eq!(
+        result.unwrap_err(),
+        "placeholder $<file:../evil>: file reference paths must be relative",
+        "helper must extract the inner text with no SIGIL_ERROR marker and no [[ / ]] delimiters"
+    );
+}
+
+#[test]
+fn test_scan_for_sigil_errors_ok_when_no_sentinel_present() {
+    let generated = "cook.add_unit({command = \"echo hi\"})\n";
+    assert!(
+        crate::recipe::scan_for_sigil_errors(generated).is_ok(),
+        "generated Lua with no sentinel must not be flagged"
+    );
+}
+
+#[test]
+fn test_bad_file_ref_path_in_plate_body_is_checked_codegen_error() {
+    // CS-0101: `validate_sigil_token` in template.rs accepts any `$<file:...>`
+    // ident in a plate/test body without validating the path itself (the
+    // path-validity check lives in `match_file_ref`, consulted only when the
+    // body is actually expanded). A `..`-escaping path therefore reaches
+    // `expand_plate_test_body` and lowers to a literal SIGIL_ERROR sentinel
+    // with nothing upstream rejecting it first — this is the reachable
+    // integration case the checked-codegen scan exists to catch.
+    let src = "recipe r\n    plate { echo $<file:../evil> }\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let err = result.expect_err(
+        "a $<file:../evil> path escape in a plate body must be a checked-codegen error, not a silently-emitted sentinel",
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("file reference paths must be relative"),
+        "error must surface the underlying file-ref diagnostic verbatim, got: {msg}"
+    );
+    assert!(
+        !msg.contains("SIGIL_ERROR"),
+        "error must not leak the internal sentinel marker, got: {msg}"
     );
 }

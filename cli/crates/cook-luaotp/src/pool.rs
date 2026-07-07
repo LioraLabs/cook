@@ -586,7 +586,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "exec",
-        "cook.exec: register-only API called from execute-phase Lua (Standard §6.3.2). \
+        "cook.exec: register-only API called from execute-phase Lua. \
          Use cook.sh(cmd) to shell out from a lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
          top-level `register` block.",
@@ -595,7 +595,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "interactive",
-        "cook.interactive: register-only API called from execute-phase Lua (Standard §6.3.2). \
+        "cook.interactive: register-only API called from execute-phase Lua. \
          Interactive steps must be recorded during the register phase; they cannot be \
          scheduled from a lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
@@ -605,7 +605,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "add_unit",
-        "cook.add_unit: register-only API called from execute-phase Lua (Standard §6.3.2). \
+        "cook.add_unit: register-only API called from execute-phase Lua. \
          Work units are recorded during the register phase; the DAG is closed before \
          execute-phase Lua runs. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
@@ -615,7 +615,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "step_group",
-        "cook.step_group: register-only API called from execute-phase Lua (Standard §6.3.2). \
+        "cook.step_group: register-only API called from execute-phase Lua. \
          Step groups are recorded during the register phase; they cannot be opened from a \
          lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
@@ -625,7 +625,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "recipe",
-        "cook.recipe: register-only API called from execute-phase Lua (Standard §6.3.2). \
+        "cook.recipe: register-only API called from execute-phase Lua. \
          Recipes are registered during the register phase; they cannot be declared from a \
          lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
@@ -635,7 +635,7 @@ fn register_worker_cook_table(
         lua,
         &cook,
         "probe",
-        "cook.probe: register-only API called from execute-phase Lua (Standard §22.5.2). \
+        "cook.probe: register-only API called from execute-phase Lua. \
          Probe units are declared during the register phase; they cannot be created from a \
          lua_line / lua_block / cook-body >{ … } payload. \
          Use `>>` instead of `>` to record this at register phase, or move the call to a \
@@ -888,6 +888,23 @@ fn truncate_captured_stream(stream: &[u8]) -> String {
     head
 }
 
+/// Twin of cook-cli/src/diagnostics.rs::sanitize_error — keep in sync.
+/// Cuts the mlua traceback (unless COOK_BACKTRACE=1) and drops the
+/// "lua error: " / "runtime error: " wrapper prefixes.
+fn sanitize_lua_error(msg: &str) -> String {
+    let keep_traceback = std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false);
+    let mut m = msg.to_string();
+    if !keep_traceback {
+        if let Some(pos) = m.find("\nstack traceback:") {
+            m.truncate(pos);
+        }
+    }
+    let rest = m.as_str();
+    let rest = rest.strip_prefix("lua error: ").unwrap_or(rest);
+    let rest = rest.strip_prefix("runtime error: ").unwrap_or(rest);
+    rest.to_string()
+}
+
 /// Build the canonical COOK_CMD_FAILED error string with captured streams
 /// appended on subsequent lines. The first line keeps the pre-existing
 /// `COOK_CMD_FAILED:<line>:<code>:<cmd>` shape so the parser at
@@ -987,7 +1004,8 @@ fn execute_work_item(
             step_kind: _,
             // is_chore is consumed by the engine's chore-window dispatch
             // before the item ever reaches the worker pool.
-            ..
+            is_chore: _,
+            line,
         } => execute_lua_chunk(
             lua,
             work.id,
@@ -997,6 +1015,7 @@ fn execute_work_item(
             ingredient_groups,
             &work.recipe_name,
             node_name,
+            *line,
         ),
         WorkPayload::Interactive { .. } => {
             WorkResult {
@@ -1136,7 +1155,11 @@ fn execute_probe(
             return WorkResult {
                 id,
                 success: false,
-                error: Some(format!("probe '{}' produce raised: {}", key, e)),
+                error: Some(format!(
+                    "probe '{}' produce raised: {}",
+                    key,
+                    sanitize_lua_error(&e.to_string())
+                )),
                 test_output: None,
                 node_name,
                 output_lines: Vec::new(),
@@ -1185,6 +1208,7 @@ fn execute_lua_chunk(
     ingredient_groups: &[Vec<String>],
     recipe_name: &str,
     node_name: String,
+    line: usize,
 ) -> WorkResult {
     let setup = || -> mlua::Result<()> {
         let globals = lua.globals();
@@ -1213,7 +1237,32 @@ fn execute_lua_chunk(
             globals.set(format!("input_{}", i + 1), table)?;
         }
 
-        lua.load(code).exec()?;
+        // COOK-191/CS-0126: newline-pad the chunk so line 1 of `code` lands
+        // at the originating step's Cookfile line, then name the chunk
+        // `@Cookfile` so mlua treats it as a file source. Together these
+        // make an execute-phase Lua error read `Cookfile:LINE: msg`
+        // instead of the opaque `[string "..."]:1: msg` produced by an
+        // unnamed/unpadded `load`. A multi-line `>{ }` block's internal
+        // lines resolve correctly too, since `code` is spliced in verbatim
+        // after the padding — line k of the block reports as line+k-1.
+        //
+        // Known imprecision: in a multi-Cookfile workspace the worker has
+        // no way to know which imported Cookfile a step came from, so
+        // `@Cookfile` is only exactly right for the entry file. This is a
+        // follow-up concern, not addressed here.
+        let padded;
+        let src: &str = if line > 1 {
+            let mut s = String::with_capacity(code.len() + line);
+            for _ in 1..line {
+                s.push('\n');
+            }
+            s.push_str(code);
+            padded = s;
+            &padded
+        } else {
+            code
+        };
+        lua.load(src).set_name("@Cookfile").exec()?;
         Ok(())
     };
 
@@ -1230,7 +1279,7 @@ fn execute_lua_chunk(
         Err(e) => WorkResult {
             id,
             success: false,
-            error: Some(format!("[{recipe_name}] lua error: {e}")),
+            error: Some(format!("[{recipe_name}] {}", sanitize_lua_error(&e.to_string()))),
             test_output: None,
             node_name,
             output_lines: Vec::new(),
@@ -1537,6 +1586,7 @@ mod tests {
                 ingredient_groups: vec![vec!["src.rs".to_string()]],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "multi".to_string(),
             working_dir: dir.path().to_path_buf(),
@@ -1554,6 +1604,49 @@ mod tests {
         assert_eq!(fs::read_to_string(dir.path().join("b.txt")).unwrap(), "b");
 
         pool.shutdown();
+    }
+
+    // COOK-191: execute-phase Lua errors must be sanitized at the source —
+    // no raw mlua traceback and no "lua error: " / "runtime error: "
+    // wrapper noise in `WorkResult.error`, unless the user opted in via
+    // `COOK_BACKTRACE=1` (mirrored by `-v` in cook-cli/src/main.rs).
+    //
+    // COOK_BACKTRACE is a process-global env var and cargo test runs run in
+    // parallel threads, so both the "clean by default" and "opt-in keeps
+    // traceback" assertions live in a single test function: the var is set
+    // and removed within this one test, and the default-off assertion runs
+    // first (before the var is ever touched) so it can never observe a
+    // sibling test's opt-in state.
+    #[test]
+    fn test_pool_lua_chunk_error_is_sanitized_by_default_and_keeps_traceback_with_cook_backtrace() {
+        let result = run_lua_chunk_in_worker(r#"error("kaboom")"#);
+        assert!(!result.success, "expected error() to fail the chunk");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(err.contains("kaboom"), "error must retain the message; got: {err}");
+        assert!(
+            !err.contains("stack traceback"),
+            "error must not contain a raw Lua traceback by default; got: {err}"
+        );
+        assert!(
+            !err.contains("lua error: runtime error:"),
+            "error must not contain the raw mlua wrapper prefixes; got: {err}"
+        );
+
+        // SAFETY (test-only): COOK_BACKTRACE is read by `sanitize_lua_error`
+        // at error-construction time inside the worker thread spawned by
+        // `run_lua_chunk_in_worker`, which we join on before removing the
+        // var below, so there is no cross-thread race within this test.
+        std::env::set_var("COOK_BACKTRACE", "1");
+        let result = run_lua_chunk_in_worker(r#"error("kaboom")"#);
+        std::env::remove_var("COOK_BACKTRACE");
+
+        assert!(!result.success, "expected error() to fail the chunk");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(err.contains("kaboom"), "error must retain the message; got: {err}");
+        assert!(
+            err.contains("stack traceback"),
+            "COOK_BACKTRACE=1 must preserve the traceback; got: {err}"
+        );
     }
 
     #[test]
@@ -1578,6 +1671,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "r".to_string(),
             working_dir: dir.path().to_path_buf(),
@@ -1655,6 +1749,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "r".to_string(),
             working_dir: dir1.path().to_path_buf(),
@@ -1674,6 +1769,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "r".to_string(),
             working_dir: dir2.path().to_path_buf(),
@@ -1844,6 +1940,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "rec".to_string(),
             working_dir: dir.path().to_path_buf(),
@@ -1865,10 +1962,6 @@ mod tests {
         assert!(
             err.contains(&needle_fn),
             "diagnostic must name the function `{needle_fn}`; got: {err}"
-        );
-        assert!(
-            err.contains("Standard §6.3.2"),
-            "diagnostic must cite Standard §6.3.2; got: {err}"
         );
         assert!(
             err.contains("execute-phase Lua"),
@@ -1923,10 +2016,7 @@ mod tests {
             err.contains("cook.probe: register-only API"),
             "diagnostic must start with 'cook.probe: register-only API'; got: {err}"
         );
-        assert!(
-            err.contains("§22.5.2"),
-            "diagnostic must cite §22.5.2; got: {err}"
-        );
+        assert!(err.contains("execute-phase Lua"), "got: {err}");
     }
 
     /// SHI-216 / CS-0072: every register-only guard message MUST include
@@ -1944,10 +2034,6 @@ mod tests {
         assert!(
             err.contains(">>"),
             "diagnostic must include `>>` migration hint; got: {err}"
-        );
-        assert!(
-            err.contains("§6.3.2"),
-            "diagnostic must retain §6.3.2 citation; got: {err}"
         );
         assert!(
             err.contains("register"),
@@ -1988,6 +2074,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "rec".to_string(),
             working_dir: cwd.to_path_buf(),
@@ -2140,6 +2227,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "rec".to_string(),
             working_dir: dir.path().to_path_buf(),
@@ -2202,6 +2290,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "rec".to_string(),
             working_dir: dir.path().to_path_buf(),

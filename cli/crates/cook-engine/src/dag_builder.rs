@@ -2063,6 +2063,7 @@ mod test_slice_tests {
                 ingredient_groups: vec![],
                 step_kind: StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,

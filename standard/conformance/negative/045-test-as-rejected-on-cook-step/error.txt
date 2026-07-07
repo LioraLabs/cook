@@ -1,1 +1,1 @@
-modifier `as` is only valid on test_step
+modifier `as` is only valid on test steps

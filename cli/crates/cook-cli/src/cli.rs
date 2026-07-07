@@ -78,7 +78,7 @@ pub struct Globals {
     #[arg(long = "since", global = true)]
     pub since: Option<String>,
 
-    /// Disable stale-output reconciliation (§17.7): keep orphaned outputs
+    /// Keep stale outputs instead of sweeping files no longer declared by a recipe.
     /// instead of sweeping them. Also settable via `COOK_NO_PRUNE=1`.
     #[arg(long = "no-prune", global = true)]
     pub no_prune: bool,
@@ -133,7 +133,7 @@ pub enum Cmd {
     Logs(LogsArgs),
 
     /// Cache fidelity tooling. `cook cache verify` re-runs cached steps and
-    /// reports byte-divergence under a matching key (CI fidelity tool, §17.8).
+    /// reports byte-divergence under a matching key.
     Cache(CacheArgs),
 
     /// Watch ingredients and re-run on change.
@@ -149,9 +149,9 @@ pub enum Cmd {
     /// Requires `--since=<ref>`.
     Affected(AffectedArgs),
 
-    /// Explain the cache key per unit: every determinant attributed to its
-    /// source, hit/miss status, and — on a shared miss — the diff against the
-    /// cached artifact's producer determinant manifest. Read-only; runs nothing.
+    /// Explain the cache key per unit: every input that shapes the key,
+    /// attributed to its source, with hit/miss status — and on a shared miss,
+    /// the diff against what the cached artifact was built from. Read-only; runs nothing.
     Why(WhyArgs),
 
     /// Run a recipe by name. Captured for any first positional that does not
@@ -292,7 +292,7 @@ pub struct CacheArgs {
 pub enum CacheCmd {
     /// Re-run cached steps and report byte-divergence under a matching key.
     /// Opt-in CI fidelity tool: exits non-zero on any divergence. `record`
-    /// steps are byte-exempt (§17.1.4). NOT a trust gate.
+    /// record steps are byte-exempt. NOT a trust gate.
     Verify(CacheVerifyArgs),
 }
 

@@ -1004,7 +1004,7 @@ pub fn execute_dag(
                     CacheDecision::PinnedColdMiss => {
                         ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                         let msg = format!(
-                            "pinned unit '{}' has no cached artifact for its key and MUST NOT be rebuilt (designated-producer / fetch-only; Standard §17 sharing)",
+                            "pinned unit '{}' has no cached artifact for its key; pinned units are fetch-only and are never rebuilt",
                             payload.display_name()
                         );
                         emit(
@@ -1342,7 +1342,7 @@ pub fn execute_dag(
                     CacheDecision::PinnedColdMiss => {
                         ensure_recipe_started(trackers, &work_node.recipe_name, event_tx);
                         let msg = format!(
-                            "pinned unit '{}' has no cached artifact for its key and MUST NOT be rebuilt (designated-producer / fetch-only; Standard §17 sharing)",
+                            "pinned unit '{}' has no cached artifact for its key; pinned units are fetch-only and are never rebuilt",
                             payload.display_name()
                         );
                         emit(
@@ -2870,7 +2870,7 @@ fn publish_completion(
             probe_store,
         );
         if let Err(e) = cache_ctx.backend.as_ref().put_manifest(&cloud_k, &manifest) {
-            tracing::warn!("determinant manifest put failed for {recipe_namespace}: {e}");
+            tracing::warn!("cache manifest put failed for {recipe_namespace}: {e}");
         }
     }
 }
@@ -3357,7 +3357,7 @@ mod tests {
                 assert_eq!(failures.len(), 1, "exactly one failure expected");
                 assert_eq!(failures[0].1, "pin");
                 assert!(
-                    failures[0].2.contains("pinned") && failures[0].2.contains("MUST NOT be rebuilt"),
+                    failures[0].2.contains("pinned") && failures[0].2.contains("fetch-only"),
                     "diagnostic should explain the fetch-only contract; got: {}",
                     failures[0].2
                 );
@@ -3661,6 +3661,7 @@ mod tests {
                     ingredient_groups: vec![],
                     step_kind: cook_contracts::StepKind::Chore,
                     is_chore: true,
+                    line: 0,
                 },
                 "shell1", wd.clone()),
             &[a]).unwrap();
@@ -3709,6 +3710,7 @@ mod tests {
                     ingredient_groups: vec![],
                     step_kind: cook_contracts::StepKind::Chore,
                     is_chore: true,
+                    line: 0,
                 },
                 "lua_chore", wd.clone()),
             &[]).unwrap();
@@ -3721,6 +3723,7 @@ mod tests {
                     ingredient_groups: vec![],
                     step_kind: cook_contracts::StepKind::Chore,
                     is_chore: true,
+                    line: 0,
                 },
                 "lua_chore", wd),
             &[a]).unwrap();
@@ -3762,6 +3765,7 @@ mod tests {
                     ingredient_groups: vec![],
                     step_kind: cook_contracts::StepKind::Cook,
                     is_chore: false,
+                    line: 0,
                 },
                 "regular_lua", wd),
             &[]).unwrap();

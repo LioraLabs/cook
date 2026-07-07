@@ -104,9 +104,13 @@ pub(crate) fn generate_plate_step(
                 "    for _, _plate_in in ipairs({}) do\n",
                 source_expr
             ));
+            // COOK-191/CS-0126: the "local input = ..." header adds exactly
+            // one line ahead of `code` in the same chunk, so subtract 1 from
+            // the reported line to compensate (see unit_api.rs's analogous
+            // chore-prelude handling).
             out.push_str(&format!(
-                "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (\"local input = \" .. string.format(\"%q\", _plate_in) .. \"\\n\") .. {}, consulted_env_keys = \"*\"}})\n",
-                lua_chunk_literal(code)
+                "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (\"local input = \" .. string.format(\"%q\", _plate_in) .. \"\\n\") .. {}, consulted_env_keys = \"*\", line = {}}})\n",
+                lua_chunk_literal(code), line.saturating_sub(1)
             ));
             out.push_str("    end\n");
         }
@@ -116,16 +120,19 @@ pub(crate) fn generate_plate_step(
         // `inputs`.  We serialise the table at register time using a small Lua
         // helper that quotes each element, producing a self-contained chunk.
         (Body::LuaBlock(code), PlateTestMode::ManyToOne) => {
+            // COOK-191/CS-0126: the generated "local inputs = {...}\n"
+            // header adds exactly one line ahead of `code`, so subtract 1
+            // from the reported line (see the OneToOne arm above).
             out.push_str(&format!(
-                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), consulted_env_keys = \"*\"}})\n",
-                source_expr, lua_chunk_literal(code)
+                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), consulted_env_keys = \"*\", line = {}}})\n",
+                source_expr, lua_chunk_literal(code), line.saturating_sub(1)
             ));
         }
         // (6) Lua, OneShot — one unit, no source binding.
         (Body::LuaBlock(code), PlateTestMode::OneShot) => {
             out.push_str(&format!(
-                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\"}})\n",
-                lua_chunk_literal(code)
+                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\", line = {}}})\n",
+                lua_chunk_literal(code), line
             ));
         }
     }
@@ -204,8 +211,8 @@ pub(crate) fn generate_for_each_plate_step(
             // binding of `item` is wired by the COOK-64 runtime slice.
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(&format!(
-                "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\", member = cook.member_to_string(item)}})\n",
-                lua_chunk_literal(code)
+                "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\", member = cook.member_to_string(item), line = {}}})\n",
+                lua_chunk_literal(code), line
             ));
             out.push_str("    end\n");
         }

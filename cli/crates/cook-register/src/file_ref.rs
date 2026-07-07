@@ -29,21 +29,21 @@ use crate::RegisterError;
 pub fn resolve_file_ref(working_dir: &Path, pattern: &str) -> Result<Vec<String>, String> {
     if pattern.starts_with('/') || pattern.split('/').any(|s| s == "..") {
         return Err(format!(
-            "$<file:{pattern}>: file reference paths must be relative and must not contain '..' (CS-0101)"
+            "$<file:{pattern}>: file reference paths must be relative and must not contain '..'"
         ));
     }
     if has_glob_meta(pattern) {
         let matches = resolve_glob(working_dir, pattern);
         if matches.is_empty() {
             return Err(format!(
-                "$<file:{pattern}>: glob matched no files (CS-0101)"
+                "$<file:{pattern}>: glob matched no files"
             ));
         }
         Ok(matches.into_iter().collect()) // BTreeSet → sorted
     } else if working_dir.join(pattern).is_file() {
         Ok(vec![pattern.to_string()])
     } else {
-        Err(format!("$<file:{pattern}>: file not found (CS-0101)"))
+        Err(format!("$<file:{pattern}>: file not found"))
     }
 }
 

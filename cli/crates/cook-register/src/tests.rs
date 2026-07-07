@@ -2171,8 +2171,5 @@ fn add_unit_file_refs_missing_file_is_register_error() {
         err.contains("missing.css"),
         "error must name the missing file; got: {err}"
     );
-    assert!(
-        err.contains("CS-0101"),
-        "error must cite CS-0101; got: {err}"
-    );
+    assert!(err.contains("file not found"), "error must name the file-ref failure; got: {err}");
 }

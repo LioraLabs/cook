@@ -157,7 +157,7 @@ pub(crate) fn parse_body_payload(
         return Err(ParseError::Parse {
             line,
             message: format!(
-                "{}: the bare-string form `\"cmd\"` was removed in CS-0024; rewrite as `{{ cmd }}` (one-line shell block)",
+                "{}: the bare-string form `\"cmd\"` is not supported; write a one-line shell block: `{{ cmd }}`",
                 kw_for_diag
             ),
         });
@@ -494,7 +494,7 @@ pub(crate) fn parse_cook_line(
             return Err(ParseError::Parse {
                 line,
                 message:
-                    "cook (LUA_EXPR) form requires exactly one output (Cook Standard §8.4.2)"
+                    "cook (LUA_EXPR) form requires exactly one output"
                         .to_string(),
             });
         }
@@ -515,7 +515,7 @@ pub(crate) fn parse_cook_line(
         if leftover.starts_with("using") {
             return Err(ParseError::Parse {
                 line,
-                message: "cook (LUA_EXPR): the `using` keyword was removed in CS-0099; write the body directly after the expression: `cook (EXPR) >{ … }`"
+                message: "cook (LUA_EXPR): the `using` keyword is not supported; write the body directly after the expression: `cook (EXPR) >{ … }`"
                     .to_string(),
             });
         }
@@ -556,7 +556,7 @@ pub(crate) fn parse_cook_line(
     if after_pattern.starts_with("using") {
         return Err(ParseError::Parse {
             line,
-            message: "cook: the `using` keyword was removed in CS-0099; write the body directly after the output pattern: `cook \"out\" { … }` / `cook \"out\" >{ … }`".to_string(),
+            message: "cook: the `using` keyword is not supported; write the body directly after the output pattern: `cook \"out\" { … }` / `cook \"out\" >{ … }`".to_string(),
         });
     }
 

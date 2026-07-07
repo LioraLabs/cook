@@ -55,12 +55,40 @@ impl EnvKeyset {
     }
 }
 
+/// Case-insensitive Levenshtein distance.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<u8> = a.to_ascii_uppercase().into_bytes();
+    let b: Vec<u8> = b.to_ascii_uppercase().into_bytes();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = Vec::with_capacity(b.len() + 1);
+        cur.push(i + 1);
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur.push((prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// The `n` declared names closest to `name` by edit distance (ties broken
+/// lexicographically for determinism).
+fn closest_declared(name: &str, declared: &[String], n: usize) -> Vec<String> {
+    let mut scored: Vec<(usize, &String)> =
+        declared.iter().map(|d| (edit_distance(name, d), d)).collect();
+    scored.sort_by(|x, y| x.0.cmp(&y.0).then_with(|| x.1.cmp(y.1)));
+    scored.into_iter().take(n).map(|(_, d)| d.clone()).collect()
+}
+
 /// Install `cook.require_env(name)` on the given `cook` table.
 ///
 /// The function checks `name` against the frozen keyset. If `name` is in the
 /// set, it returns `cook.env[name]` (possibly the empty string). If `name` is
-/// not in the set, it raises a `RuntimeError` with a diagnostic that lists the
-/// declared keys and the recommended declaration form.
+/// not in the set, it raises a `RuntimeError` with a diagnostic that suggests
+/// the closest declared names by edit distance (never the full declared/host
+/// set — that can include the entire host environment) and the recommended
+/// declaration form.
 pub fn install_require_env(
     lua: &Lua,
     cook_table: &LuaTable,
@@ -79,12 +107,13 @@ pub fn install_require_env(
                     name, name, name, name
                 )
             } else {
+                let closest = closest_declared(&name, &declared, 3);
                 format!(
-                    "placeholder $<{}>: env var '{}' was not declared. Declared env vars: {}. \
+                    "placeholder $<{}>: env var '{}' was not declared. Closest declared names: {}. \
                      Add `env.{} = ...` to a config block.",
                     name,
                     name,
-                    declared.join(", "),
+                    closest.join(", "),
                     name
                 )
             };
@@ -151,6 +180,67 @@ mod tests {
         assert!(msg.contains("HOEM"), "expected HOEM in: {msg}");
         assert!(msg.contains("declared"), "expected 'declared' in: {msg}");
         assert!(msg.contains("HOME"), "expected HOME in: {msg}");
+    }
+
+    #[test]
+    fn errors_for_undeclared_key_suggests_closest_matches_only() {
+        let (lua, cook, ks) = setup();
+        let env: LuaTable = cook.get("env").unwrap();
+        for name in [
+            "HOMEDIR", "HOME", "PATH", "CC", "CXX", "LANG", "SHELL", "TERM", "USER", "PWD",
+        ] {
+            env.set(name, "x").unwrap();
+        }
+        ks.freeze(&env).unwrap();
+        let res: mlua::Result<String> =
+            lua.load(r#"return cook.require_env("HOMDIR")"#).eval();
+        assert!(res.is_err());
+        let msg = format!("{}", res.unwrap_err());
+        assert!(msg.contains("HOMEDIR"), "expected HOMEDIR in: {msg}");
+        assert!(
+            msg.contains("env.HOMDIR = "),
+            "expected 'env.HOMDIR = ' in: {msg}"
+        );
+        assert!(
+            !msg.contains("PATH"),
+            "PATH is far from HOMDIR and should not appear in: {msg}"
+        );
+        assert!(
+            !msg.contains("Declared env vars:"),
+            "must not dump the full declared/host env set: {msg}"
+        );
+    }
+
+    #[test]
+    fn edit_distance_is_symmetric_and_case_insensitive() {
+        assert_eq!(edit_distance("HOME", "HOME"), 0);
+        assert_eq!(edit_distance("HOME", "home"), 0);
+        assert_eq!(edit_distance("HOMDIR", "HOMEDIR"), 1);
+        assert_eq!(
+            edit_distance("HOMDIR", "HOMEDIR"),
+            edit_distance("HOMEDIR", "HOMDIR")
+        );
+        assert_eq!(edit_distance("abc", "xyz"), edit_distance("xyz", "abc"));
+    }
+
+    #[test]
+    fn closest_declared_picks_top_n_by_distance() {
+        let declared: Vec<String> = [
+            "HOMEDIR", "HOME", "PATH", "CC", "CXX", "LANG", "SHELL", "TERM", "USER", "PWD",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let closest = closest_declared("HOMDIR", &declared, 3);
+        assert_eq!(closest.len(), 3);
+        assert!(
+            closest.contains(&"HOMEDIR".to_string()),
+            "expected HOMEDIR among closest: {closest:?}"
+        );
+        assert!(
+            !closest.contains(&"PATH".to_string()),
+            "PATH should not be among closest: {closest:?}"
+        );
     }
 
     #[test]

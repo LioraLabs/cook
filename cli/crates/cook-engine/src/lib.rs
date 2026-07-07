@@ -417,6 +417,11 @@ pub enum EngineError {
     },
 }
 
+/// Reported commands carry codegen's `set -e` prelude; strip it for display.
+fn strip_set_e(cmd: &str) -> &str {
+    cmd.strip_prefix("set -e\n").unwrap_or(cmd)
+}
+
 // Map `cook_register::RegisterError` onto `EngineError` so callers that
 // drive the register-phase via this crate can propagate failures with `?`
 // without reaching into `cook-register` directly.
@@ -466,12 +471,15 @@ impl From<cook_register::RegisterError> for EngineError {
                 command,
                 line,
                 code,
-            } => EngineError::RegistrationFailed {
-                recipe: String::new(),
-                message: format!(
-                    "Cookfile:{line}: command failed (exit {code}): {command}"
-                ),
-            },
+            } => {
+                let command = strip_set_e(&command);
+                EngineError::RegistrationFailed {
+                    recipe: String::new(),
+                    message: format!(
+                        "Cookfile:{line}: command failed (exit {code}): {command}"
+                    ),
+                }
+            }
             cook_register::RegisterError::RecipeNotFound(name) => {
                 EngineError::UnknownRecipe(name)
             }
@@ -551,6 +559,38 @@ impl From<cook_register::RegisterError> for EngineError {
                     message: e.to_string(),
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod strip_set_e_tests {
+    use super::*;
+
+    #[test]
+    fn strip_set_e_removes_exact_prefix() {
+        assert_eq!(strip_set_e("set -e\nmkdir -p build"), "mkdir -p build");
+    }
+
+    #[test]
+    fn strip_set_e_leaves_unprefixed_command_unchanged() {
+        assert_eq!(strip_set_e("mkdir -p build"), "mkdir -p build");
+    }
+
+    #[test]
+    fn registration_command_failed_render_strips_set_e_prelude() {
+        let e: EngineError = cook_register::RegisterError::CommandFailed {
+            command: "set -e\nfalse".to_string(),
+            line: 3,
+            code: 1,
+        }
+        .into();
+        match e {
+            EngineError::RegistrationFailed { message, .. } => {
+                assert!(!message.contains("set -e"), "{message}");
+                assert!(message.contains("false"), "{message}");
+            }
+            other => panic!("expected RegistrationFailed, got {other:?}"),
         }
     }
 }
