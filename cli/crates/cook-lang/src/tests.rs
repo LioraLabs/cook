@@ -2175,3 +2175,36 @@ fn disp_as_modifier_on_cook_rejected() {
     let e = parse("recipe r\n    cook \"x\" { c } as 'name'\n").unwrap_err();
     assert!(format!("{e:?}").contains("test"));
 }
+
+// ── COOK-191 Task 3: config-block bare `NAME "value"` did-you-mean (CS-0126) ──
+
+#[test]
+fn test_config_bare_value_quoted_gets_did_you_mean() {
+    let src = "config\n    OUTDIR \"build\"\n\nrecipe hello\n    echo hi\n";
+    let err = parse(src).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("line 2"), "got: {msg}");
+    assert!(msg.contains("config values are Lua assignments"), "got: {msg}");
+    assert!(msg.contains("OUTDIR = \"build\""), "got: {msg}");
+}
+
+#[test]
+fn test_config_bare_value_unquoted_gets_did_you_mean() {
+    let src = "config\n    CC gcc\n\nrecipe hello\n    echo hi\n";
+    let err = parse(src).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("did you mean CC = \"gcc\""), "got: {msg}");
+}
+
+#[test]
+fn test_config_valid_lua_still_parses() {
+    for body in [
+        "    env.CC = os.getenv(\"CC\") or \"cc\"",
+        "    local x = 1",
+        "    OUTDIR = \"build\"",
+        "    if true then env.A = \"1\" end",
+    ] {
+        let src = format!("config\n{body}\n\nrecipe hello\n    echo hi\n");
+        assert!(parse(&src).is_ok(), "should parse: {body}");
+    }
+}
