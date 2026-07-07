@@ -1,6 +1,6 @@
 use mlua::prelude::*;
 use std::path::{Path, PathBuf};
-use cook_contracts::{CacheMeta, CapturedUnit, DepKind, StepKind, WorkPayload};
+use cook_contracts::{CacheMeta, CapturedUnit, DepKind, WorkPayload};
 
 use crate::dep_output_api::SharedTerminalOutputs;
 use crate::{hash_str, SharedBodySlot};
@@ -842,6 +842,16 @@ pub fn register_unit_api(
             // If found, rewrite as a LuaChunk that resolves the values at
             // execute time via cook.cache.get and calls cook.sh. Also
             // auto-add the detected probe keys to probes.
+            //
+            // CS-0127: the rewritten LuaChunk carries the ALREADY-PARSED
+            // `step_kind` local (see above) rather than a hardcoded
+            // `StepKind::Cook`. `command` fields containing probe sigils are
+            // not exclusive to native `cook` bodies — a `plate` body inside
+            // a `for_each` recipe (unsandboxed by design, Standard §8.6)
+            // lowers its command the same literal-sigil way (COOK-187 /
+            // CS-0122) and passes `step_kind = "plate"`. Hardcoding `Cook`
+            // here would silently flip a plate command's sandbox policy the
+            // moment it referenced a probe value.
             match try_expand_probe_templates(&command) {
                 Ok(Some((lua_code, detected_keys))) => {
                     for k in detected_keys {
@@ -854,7 +864,7 @@ pub fn register_unit_api(
                         inputs: inputs.clone(),
                         outputs: output_paths.clone(),
                         ingredient_groups: vec![],
-                        step_kind: StepKind::Cook,
+                        step_kind,
                         is_chore,
                     }
                 }

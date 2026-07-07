@@ -165,14 +165,22 @@ pub(crate) fn generate_for_each_plate_step(
 
     match &plate_step.body {
         Body::ShellBlock(lines) => {
+            // COOK-187 / CS-0122 / CS-0127: a plate command, like every other
+            // shell-command body, must reach register-time unit capture as
+            // literal `$<key:...>` sigil text inside the `command` STRING —
+            // never a deferred `function() return ... end` closure. `plate`
+            // keeps its own unsandboxed policy (Standard §8.6) via the
+            // explicit `step_kind = "plate"` field below, which
+            // `try_expand_probe_templates`'s register-side rewrite (CS-0127)
+            // now carries through instead of hardcoding `StepKind::Cook`.
             let combined = build_shell_block_command(lines);
             let mut consulted = ConsultedEnv::new();
-            let (cmd_concat, probe_keys) = expand_for_each_template(
+            let (cmd_expr, _probe_keys) = expand_for_each_template(
                 &combined,
                 &ctx,
                 &mut consulted,
                 &mut file_refs,
-                crate::template::ProbeLowering::CacheGet,
+                crate::template::ProbeLowering::LiteralSigil,
             )
             .unwrap_or_else(|e| {
                 (
@@ -183,17 +191,12 @@ pub(crate) fn generate_for_each_plate_step(
                     BTreeSet::new(),
                 )
             });
-            let cmd_expr = if probe_keys.is_empty() {
-                cmd_concat
-            } else {
-                format!("function() return {} end", cmd_concat)
-            };
             if !file_refs.is_empty() {
                 out.push_str(&file_refs.hoist_lines("    "));
             }
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(&format!(
-                "        cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
+                "        cook.add_unit({{command = {}, cache = false, step_kind = \"plate\", consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
                 cmd_expr,
                 consulted.to_lua_table()
             ));

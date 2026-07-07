@@ -3401,6 +3401,36 @@ fn for_each_unit_folds_member_into_fingerprint() {
         "ingredients-probe cook unit should carry member, got:\n{lua}");
 }
 
+#[test]
+fn for_each_plate_probe_ref_lowers_as_literal_sigil() {
+    // COOK-187 / CS-0122 / CS-0127: a `plate` shell body inside a `for_each`
+    // recipe that references a probe value must lower the same way every
+    // other shell-command body does — literal `$<key:...>` sigil text inside
+    // a plain `command = "..."` string, never a deferred
+    // `function() return ... end` closure (which cook.add_unit hard-rejects
+    // as a non-string command). The unit must also carry
+    // `step_kind = "plate"` so register-time capture preserves the plate's
+    // unsandboxed policy instead of defaulting to the `cook` sandbox.
+    let src = "recipe art\n    ingredients cards\n    plate {\n        $<tools:fmt.bin> --check\n    }\n";
+    let lua = generate(&cook_lang::parse(src).expect("parse"));
+    assert!(
+        lua.contains("$<tools:fmt.bin>"),
+        "expected literal probe sigil text in the plate command, got:\n{lua}"
+    );
+    assert!(
+        !lua.contains("command = function()"),
+        "a plate command must never be a deferred function, got:\n{lua}"
+    );
+    assert!(
+        lua.contains(r#"step_kind = "plate""#),
+        "expected step_kind = \"plate\" on the for_each plate unit, got:\n{lua}"
+    );
+    assert!(
+        lua.contains("cook.add_unit({command = "),
+        "expected a plain command = string field on the for_each plate unit, got:\n{lua}"
+    );
+}
+
 // ── §22.5.2 — native probe lowering (COOK-68) ──────────────────────────────
 
 fn make_probe_cf(produce: ProbeProduce) -> Cookfile {
