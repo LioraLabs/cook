@@ -184,7 +184,7 @@ A single CS entry can close all three cases:
 
 ## D.11. CLI exit-code taxonomy [#pre-v1.cli-exit-codes]
 
-**Status.** Closed in v0.15 by [CS-0124](E-changes#changes-cs-0124): the taxonomy graduated to the normative §{exec.exit-status}, which is now authoritative; the CS-0041 table below is retained as the historical v0.7-track snapshot. CS-0124 also fixed the runner-path regression this item's wording had gone stale on: a failing `test` step body under `cook RECIPE_NAME` was reported as FAILED but exited `0`; it now fails the run with exit `1` via `TestFailure`.
+**Status.** Closed in v0.15 by [CS-0124](E-changes#changes-cs-0124): the taxonomy graduated to the normative §{exec.exit-status}, which is now the authoritative statement; the table below mirrors the reference implementation's current mapping (introduced by CS-0041, updated by CS-0124). CS-0124 also fixed the runner-path regression this item's wording had gone stale on: a failing `test` step body under `cook RECIPE_NAME` was reported as FAILED but exited `0`; it now fails the run with exit `1` via `TestFailure`.
 
 **Symptom.** The Cook Standard described language semantics but did not say what numeric exit code the `cook` CLI should produce on each failure mode. Users wiring `cook` into CI scripts had to read `cli/crates/cook-cli/src/error.rs` to know what to expect, and a regression that flipped an exit code (e.g., the v0.7-track `cook --test` runner returning 0 on test failure — see CS-0041; the runner itself was removed by [CS-0046](E-changes#changes-cs-0046)) had no spec hook to catch it.
 
@@ -193,7 +193,7 @@ A single CS entry can close all three cases:
 | Exit code | Variant            | Meaning                                                                       |
 |-----------|--------------------|-------------------------------------------------------------------------------|
 | `0`       | _no error_         | All requested recipes built and any test bodies passed.                       |
-| `1`       | `CommandFailed`    | A recipe step's shell command (or `test` body) exited non-zero.               |
+| `1`       | `CommandFailed`    | A recipe step's shell command exited non-zero.                                |
 | `1`       | `TestFailure(n)`   | One or more executed `test` steps failed, timed out, or were blocked — emitted by both `cook test` and `cook RECIPE` as of CS-0124. |
 | `1`       | `Other`            | Generic failure (I/O, codegen, registration, etc.).                           |
 | `2`       | `ParseError`       | The Cookfile failed lexical or syntactic validation.                          |
@@ -203,7 +203,7 @@ The runtime pin lives in `cli/e2e-fixtures/cli_audit_exit_codes/walkthrough.sh`.
 
 **Resolution.** Pre-1.0, `TestFailure` deliberately shares exit status `1` with other execution failures (see Note 19.2.1 in §{exec.exit-status}). Whether `TestFailure` should retain a distinct exit code (e.g., `4`) so CI scripts can distinguish "build failed" from "tests failed" without scraping stderr moves to the v1.0 test-execution surface redesign (TBD); it is not resolved by CS-0124.
 
-**Workaround pre-1.0.** Treat exit `1` as "something failed; see stderr for the variant tag." The taxonomy is stable enough for CI conditioning on `0` vs non-zero, and the table above is the authoritative reference for the reference implementation's specific mapping.
+**Workaround pre-1.0.** Treat exit `1` as "something failed; see stderr for the variant tag." The taxonomy is stable enough for CI conditioning on `0` vs non-zero; §{exec.exit-status} is the authoritative reference for the mapping.
 
 ## D.12. `events.jsonl` wire format has no normative section [#pre-v1.events-jsonl-not-normative]
 
