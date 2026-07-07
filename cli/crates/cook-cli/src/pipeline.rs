@@ -1720,9 +1720,11 @@ mod serve_glob_tests {
 #[cfg(not(feature = "viewer"))]
 pub fn cmd_dag(_globals: &Globals, _args: &crate::cli::DagArgs) -> Result<(), CookError> {
     Err(CookError::Other(
-        "the `cook dag` viewer is not built into this binary; rebuild with \
-         `cargo build --features viewer` (or pass `--features viewer` when \
-         running `cargo install`)"
+        "`cook dag` is an optional ratatui terminal viewer, left out of the \
+         default binary to keep it slim; rebuild with `cargo build --features \
+         viewer` (or install with `--features viewer`) to enable it. When \
+         built in, the viewer automatically falls back to a plain wave \
+         listing if run headless (no TTY)."
             .to_string(),
     ))
 }
