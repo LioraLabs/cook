@@ -472,69 +472,38 @@ pub fn install_cook_api(
     })?;
     cook.set("member_to_string", member_fn)?;
 
-    // cook.__expand_chore_sigils(raw_command, params_table) — runtime helper
-    // for chore shell steps. Replaces every `$<NAME>` in `raw_command` with
-    // the corresponding value from `params_table`, applying POSIX-shell
-    // single-quote escaping. Variadic values (Lua sequences) join with
-    // spaces, individually quoted. Unknown names raise a Lua error.
-    let expand_chore_sigils_fn = lua.create_function(
-        move |_lua, (raw, params): (String, mlua::Table)| -> mlua::Result<String> {
-            let mut out = String::new();
-            let mut chars = raw.char_indices().peekable();
-            while let Some((i, ch)) = chars.next() {
-                if ch == '$' {
-                    // Check for `<`
-                    if let Some(&(_, '<')) = chars.peek() {
-                        chars.next(); // consume '<'
-                        // Read name until '>'
-                        let mut name = String::new();
-                        let mut closed = false;
-                        while let Some((_, nc)) = chars.next() {
-                            if nc == '>' {
-                                closed = true;
-                                break;
-                            }
-                            name.push(nc);
-                        }
-                        if !closed {
-                            return Err(mlua::Error::runtime(format!(
-                                "unterminated '$<' placeholder in chore shell command at byte {i}"
-                            )));
-                        }
-                        let value: mlua::Value = params.get(name.as_str())?;
-                        match value {
-                            mlua::Value::String(s) => {
-                                out.push_str(&shell_quote(&s.to_str()?));
-                            }
-                            mlua::Value::Table(t) => {
-                                // Variadic — iterate sequence
-                                let mut parts: Vec<String> = Vec::new();
-                                for v in t.sequence_values::<String>() {
-                                    parts.push(shell_quote(&v?));
-                                }
-                                out.push_str(&parts.join(" "));
-                            }
-                            mlua::Value::Nil => {
-                                return Err(mlua::Error::runtime(format!(
-                                    "unknown placeholder '$<{name}>' in chore shell command (no such parameter)"
-                                )));
-                            }
+    // cook.__quote_param(value, name) — runtime helper for chore parameter
+    // placeholders. Luagen's normal sigil resolver decides which `$<NAME>`
+    // tokens are params; this helper only quotes the already-bound value.
+    let quote_param_fn =
+        lua.create_function(move |_, (value, name): (mlua::Value, String)| -> mlua::Result<String> {
+            match value {
+                mlua::Value::String(s) => Ok(shell_quote(&s.to_str()?)),
+                mlua::Value::Table(t) => {
+                    let mut parts: Vec<String> = Vec::new();
+                    for value in t.sequence_values::<mlua::Value>() {
+                        match value? {
+                            mlua::Value::String(s) => parts.push(shell_quote(&s.to_str()?)),
                             other => {
                                 return Err(mlua::Error::runtime(format!(
-                                    "placeholder '$<{name}>' has unexpected type {}",
+                                    "chore parameter '$<{name}>' contains non-string element of type {}",
                                     other.type_name()
                                 )));
                             }
                         }
-                        continue;
                     }
+                    Ok(parts.join(" "))
                 }
-                out.push(ch);
+                mlua::Value::Nil => Err(mlua::Error::runtime(format!(
+                    "chore parameter '$<{name}>' is not bound (BUG: codegen emitted a param ref for an undeclared name)"
+                ))),
+                other => Err(mlua::Error::runtime(format!(
+                    "chore parameter '$<{name}>' has unexpected type {}",
+                    other.type_name()
+                ))),
             }
-            Ok(out)
-        }
-    )?;
-    cook.set("__expand_chore_sigils", expand_chore_sigils_fn)?;
+        })?;
+    cook.set("__quote_param", quote_param_fn)?;
 
     lua.globals().set("cook", cook)?;
     Ok(recipes)

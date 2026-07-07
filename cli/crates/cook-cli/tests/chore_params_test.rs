@@ -32,6 +32,15 @@ fn run_cook_raw(dir: &Path, args: &[&str]) -> std::process::Output {
         .expect("failed to spawn cook binary")
 }
 
+fn run_cook_raw_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> std::process::Output {
+    let mut cmd = Command::new(cook_binary());
+    cmd.args(args).current_dir(dir);
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    cmd.output().expect("failed to spawn cook binary")
+}
+
 /// `cook greet world` where `chore greet msg` uses `msg` in the body.
 /// The body runs `print("hello " .. msg)` and we assert stdout contains
 /// "hello world".
@@ -191,6 +200,50 @@ fn chore_variadic_star_with_zero_argv_binds_empty_table() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(stdout.contains("count=0"), "stdout: {stdout}");
+}
+
+#[test]
+fn parametric_chore_env_placeholder_resolves() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "config\n    env.MODE = os.getenv(\"MODE\") or \"dev\"\n\nchore greet who=\"world\"\n    @echo hello $<who>, mode=$<MODE>\n",
+    )
+    .unwrap();
+
+    let out = run_cook_raw_env(tmp.path(), &["greet", "alex"], &[("MODE", "prod")]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "parametric chore env placeholder failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("hello alex, mode=prod"),
+        "expected param + env placeholders in output\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn parametric_chore_recipe_placeholder_creates_edge() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "recipe build\n    cook \"out/tool.txt\" { mkdir -p out && printf tool > $<out> }\n\nchore show what=\"x\"\n    @cat $<build>\n",
+    )
+    .unwrap();
+
+    let out = run_cook_raw(tmp.path(), &["show"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "parametric chore recipe placeholder failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("tool"),
+        "expected chore to build and cat recipe output\nstdout: {stdout}\nstderr: {stderr}"
+    );
 }
 
 /// `cook lint` (no argv) where `chore lint +files` declares a one-or-more
@@ -555,7 +608,8 @@ fn comprehensive_chore_params_smoke_defaults_fire() {
 
     // Inline-Lua (`>>`) sees the register-phase locals.
     assert!(stdout.contains("register: target=production"), "stdout: {stdout}");
-    // Shell placeholders resolve via cook.__expand_chore_sigils.
+    // Shell placeholders resolve through the unified sigil path; declared
+    // params are quoted via cook.__quote_param.
     assert!(stdout.contains("shell-sub: 'production' 'prod' 'v0' "), "stdout: {stdout}");
     // Env-vars: defaults fire when argv is exhausted.
     assert!(stdout.contains("env: production/prod/v0/"), "stdout: {stdout}");

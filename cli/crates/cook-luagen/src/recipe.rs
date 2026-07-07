@@ -1088,44 +1088,33 @@ fn expand_shell_command_sigil(
 
 /// Expand a chore shell-step command for use in `compile_chore`.
 ///
-/// When the chore declares params (`has_params = true`) and the command
-/// contains `$<...>` placeholders, defers expansion to the runtime helper
-/// `cook.__expand_chore_sigils` so it can resolve placeholder names against
-/// the bound `__cook_params` table. This is necessary because the param
-/// values are only known at register time (when the chore body closure runs),
-/// not at code-generation time.
-///
-/// When the chore declares no params (`has_params = false`), the old
-/// `expand_shell_command_sigil` path is used instead, preserving the
-/// existing `$<env_var>` → `cook.require_env(...)` behavior for
-/// parameterless chores.
+/// Chore params are an innermost binding layer. If a `$<NAME>` token names a
+/// declared param, it lowers to a register-time `cook.__quote_param(...)`
+/// expression. Otherwise the ordinary resolver handles `$<ENV>` and
+/// `$<recipe>` the same way recipe-body shell steps do.
 fn expand_chore_shell_command(
     command: &str,
-    has_params: bool,
     recipe_names: &BTreeSet<String>,
     file_refs: &mut crate::template::FileRefs,
+    chore_params: &BTreeSet<String>,
 ) -> Result<String, crate::resolver::ResolveError> {
     let has_sigils = !crate::sigil::scan(command).is_empty();
-    // Use the runtime-helper path only when the chore declares params AND the
-    // command has sigils. Parameterless chores fall through to the existing
-    // require_env-based expansion so that $<ENV_VAR> continues to work.
-    //
-    // NOTE: the parametric path resolves sigils against the bound params at
-    // runtime and does not consult `recipe_names`, so a `$<recipe>` cross-recipe
-    // reference in a *parametric* chore is not yet supported (rare; tracked
-    // alongside COOK-73). The common parameterless path below resolves
-    // `$<recipe>` to `cook.dep_output` per §10.2 step 2.
-    if has_params && has_sigils {
-        return Ok(format!(
-            "cook.__expand_chore_sigils({}, __cook_params)",
-            wrap_lua_string(command)
-        ));
+    if !has_sigils {
+        return Ok(wrap_lua_string(command));
     }
-    // No params or no sigils: standard sigil expansion. Pass the in-scope
-    // recipe names so a `$<recipe>` reference (e.g. launching a just-built
-    // binary via `$<dhewm3>`) resolves to that recipe's output and creates the
-    // cross-recipe edge — not just `$<ENV_VAR>` → require_env.
-    expand_shell_command_sigil(command, recipe_names, file_refs)
+    let ctx = ResolveCtx {
+        mode: IterMode::OneShot,
+        outputs: OutputShape::None,
+        recipes_in_scope: recipe_names,
+    };
+    let mut consulted = ConsultedEnv::new();
+    crate::template::expand_sigil_template_with_chore_params(
+        command,
+        &ctx,
+        &mut consulted,
+        file_refs,
+        Some(chore_params),
+    )
 }
 
 /// Compile a `Chore` to register-phase Lua.
@@ -1256,6 +1245,11 @@ fn compile_chore_checked(
     // Emit steps. All shell steps are interactive (parser guarantees this).
     // Consecutive Lua steps may still coalesce into a body unit, but shell
     // steps always stand alone (interactive = true => not bundleable).
+    let chore_param_names: BTreeSet<String> = chore
+        .params
+        .iter()
+        .map(|param| param.name().to_string())
+        .collect();
     let mut i = 0;
     while i < chore.steps.len() {
         match &chore.steps[i] {
@@ -1267,9 +1261,9 @@ fn compile_chore_checked(
                 let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
                 let cmd_expr = expand_chore_shell_command(
                     command,
-                    !chore.params.is_empty(),
                     recipe_names,
                     &mut file_refs,
+                    &chore_param_names,
                 )
                 .map_err(|e| CodegenError::SigilResolve {
                     recipe: chore.name.clone(),
@@ -1304,9 +1298,9 @@ fn compile_chore_checked(
                     let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
                     let cmd_expr = expand_chore_shell_command(
                         command,
-                        !chore.params.is_empty(),
                         recipe_names,
                         &mut file_refs,
+                        &chore_param_names,
                     )
                     .map_err(|e| CodegenError::SigilResolve {
                         recipe: chore.name.clone(),
