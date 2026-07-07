@@ -1,0 +1,4 @@
+[[run]]
+args = ["summary"]
+[run.assert]
+equals = { "build/summary/auth.txt" = "== auth ==\nconf for auth\n", "build/summary/billing.txt" = "== billing ==\nconf for billing\n" }

@@ -1,0 +1,8 @@
+recipe lib
+    cook "build/lib.txt" { echo libdata > $<out> }
+
+recipe app: lib
+    cook "build/app.txt" {
+        cat $<lib> > $<out>
+        echo app >> $<out>
+    }

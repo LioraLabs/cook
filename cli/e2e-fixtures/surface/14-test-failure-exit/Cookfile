@@ -1,0 +1,2 @@
+recipe check
+    test { false } as 'always fails'

@@ -1,0 +1,8 @@
+recipe app
+    ingredients "src/greeting.txt"
+    cook "out/app.txt" { tr 'a-z' 'A-Z' < $<all> > $<out> }
+
+recipe check: app
+    test { grep -q HELLO $<app> } as 'greeting is shouted'
+    test { test -s $<app> } as 'artifact not empty' timeout 5
+    test { grep -q lowercase $<app> } as 'no lowercase leaked' should_fail

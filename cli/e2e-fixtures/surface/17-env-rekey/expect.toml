@@ -1,0 +1,15 @@
+[[run]]
+args = ["--set", "MODE=dev", "build"]
+[run.assert]
+contains = { "out/mode.txt" = "mode=dev" }
+
+[[run]]
+args = ["--set", "MODE=dev", "build"]
+[run.assert]
+unchanged = ["out/mode.txt"]
+
+[[run]]
+args = ["--set", "MODE=prod", "build"]
+[run.assert]
+changed = ["out/mode.txt"]
+contains = { "out/mode.txt" = "mode=prod" }

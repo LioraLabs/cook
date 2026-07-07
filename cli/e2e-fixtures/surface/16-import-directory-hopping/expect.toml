@@ -1,0 +1,15 @@
+[[run]]
+args = ["build"]
+[run.assert]
+exists = ["build/bundle.txt", "tools/build/tools.txt", "apps/web/theme/build/theme.txt"]
+contains = { "build/bundle.txt" = "theme", "apps/web/build/site.txt" = "web nonce=" }
+
+[[run]]
+args = ["build"]
+cwd = "apps/web/src"
+[run.assert]
+unchanged = ["apps/web/build/site.txt"]
+# Pins nearest-Cookfile upward discovery: this run must resolve to
+# apps/web/Cookfile (whose dep is theme.build); a regression to root
+# discovery would mention web.build/tools.build instead.
+output_contains = ["theme.build"]

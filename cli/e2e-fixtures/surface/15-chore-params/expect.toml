@@ -1,0 +1,9 @@
+[[run]]
+args = ["greet"]
+[run.assert]
+equals = { "out/greet.txt" = "hello, world\n" }
+
+[[run]]
+args = ["greet", "ada"]
+[run.assert]
+equals = { "out/greet.txt" = "hello, ada\n" }
