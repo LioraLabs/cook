@@ -167,16 +167,22 @@ pub(crate) fn generate_for_each_plate_step(
         Body::ShellBlock(lines) => {
             let combined = build_shell_block_command(lines);
             let mut consulted = ConsultedEnv::new();
-            let (cmd_concat, probe_keys) =
-                expand_for_each_template(&combined, &ctx, &mut consulted, &mut file_refs).unwrap_or_else(|e| {
-                    (
-                        format!(
-                            "\"[[SIGIL_ERROR: {}]]\"",
-                            crate::lua_string::escape_lua_string(&e.to_string())
-                        ),
-                        BTreeSet::new(),
-                    )
-                });
+            let (cmd_concat, probe_keys) = expand_for_each_template(
+                &combined,
+                &ctx,
+                &mut consulted,
+                &mut file_refs,
+                crate::template::ProbeLowering::CacheGet,
+            )
+            .unwrap_or_else(|e| {
+                (
+                    format!(
+                        "\"[[SIGIL_ERROR: {}]]\"",
+                        crate::lua_string::escape_lua_string(&e.to_string())
+                    ),
+                    BTreeSet::new(),
+                )
+            });
             let cmd_expr = if probe_keys.is_empty() {
                 cmd_concat
             } else {

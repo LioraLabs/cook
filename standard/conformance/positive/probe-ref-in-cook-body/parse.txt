@@ -1,0 +1,20 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="withprobe" line=4
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Cook outputs=["out/b.txt"] body=ShellBlock(["echo \"$<sys:os>\" > $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="sys:os" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Shell typing=String commands=["uname -s"]

@@ -199,8 +199,14 @@ pub(crate) fn generate_for_each_test_step(
     let name_field = match test_step.as_name.as_deref() {
         Some(n) => {
             let mut _ignored = ConsultedEnv::new();
-            let (expr, _) =
-                expand_for_each_template(n, &ctx, &mut _ignored, &mut file_refs).unwrap_or_else(sigil_err);
+            let (expr, _) = expand_for_each_template(
+                n,
+                &ctx,
+                &mut _ignored,
+                &mut file_refs,
+                crate::template::ProbeLowering::CacheGet,
+            )
+            .unwrap_or_else(sigil_err);
             format!("name = {}, ", expr)
         }
         None => String::new(),
@@ -210,9 +216,14 @@ pub(crate) fn generate_for_each_test_step(
         Body::ShellBlock(lines) => {
             let combined = build_shell_block_command(lines);
             let mut consulted = ConsultedEnv::new();
-            let (cmd_concat, probe_keys) =
-                expand_for_each_template(&combined, &ctx, &mut consulted, &mut file_refs)
-                    .unwrap_or_else(sigil_err);
+            let (cmd_concat, probe_keys) = expand_for_each_template(
+                &combined,
+                &ctx,
+                &mut consulted,
+                &mut file_refs,
+                crate::template::ProbeLowering::CacheGet,
+            )
+            .unwrap_or_else(sigil_err);
             let cmd_expr = if probe_keys.is_empty() {
                 cmd_concat
             } else {
