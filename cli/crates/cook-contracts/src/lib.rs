@@ -181,10 +181,15 @@ impl WorkPayload {
     pub fn display_name(&self) -> String {
         match self {
             Self::Shell { cmd, .. } => {
-                if cmd.len() <= 60 {
-                    cmd.clone()
+                let body = cmd
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty() && *l != "set -e")
+                    .unwrap_or("");
+                if body.len() <= 60 {
+                    body.to_string()
                 } else {
-                    format!("{}...", &cmd[..57])
+                    format!("{}...", body.chars().take(57).collect::<String>())
                 }
             }
             Self::LuaChunk { .. } => "lua".to_string(),
@@ -371,6 +376,15 @@ mod tests {
             }
             _ => panic!("expected Shell variant"),
         }
+    }
+
+    #[test]
+    fn shell_display_name_strips_set_e_and_is_single_line() {
+        let p = WorkPayload::Shell { cmd: "set -e\nwc -w < a.txt > b.count".into(), line: 1 };
+        let d = p.display_name();
+        assert!(!d.contains("set -e"), "got: {d}");
+        assert!(!d.contains('\n'), "got: {d}");
+        assert!(d.starts_with("wc"), "got: {d}");
     }
 
     #[test]

@@ -102,6 +102,31 @@ mod tests {
     }
 
     #[test]
+    fn display_uses_artifact_basename_nested_path() {
+        let n = NodeState::new(
+            NodeId::new(3),
+            "alpha".into(),
+            Some("build/counts/alpha.count".into()),
+            "wc -w < a.txt > alpha.count".into(),
+        );
+        assert_eq!(n.display(), "alpha.count");
+    }
+
+    #[test]
+    fn display_falls_back_to_clean_nonempty_label_without_artifact() {
+        let n = NodeState::new(
+            NodeId::new(4),
+            "count".into(),
+            None,
+            "wc -w < a.txt > b.count".into(),
+        );
+        let d = n.display();
+        assert!(!d.is_empty());
+        assert!(!d.contains("set -e"));
+        assert!(!d.starts_with('@'));
+    }
+
+    #[test]
     fn label_returns_raw_name() {
         let n = NodeState::new(
             NodeId::new(0),

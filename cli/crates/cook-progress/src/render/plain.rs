@@ -17,6 +17,29 @@ impl<W: Write + Send> PlainRenderer<W> {
     fn name(&self, state: &BuildState, recipe: RecipeId) -> String {
         state.recipes.get(&recipe).map(|r| r.name.clone()).unwrap_or_else(|| format!("recipe#{}", recipe.raw()))
     }
+
+    /// Clean, never-empty label for a node: the node's `display()` (artifact
+    /// basename, or a cleaned command token — never raw `set -e`-prefixed
+    /// multi-line command text) when the node is present in state; a
+    /// recipe-qualified placeholder on a lookup miss, so the label is never
+    /// blank (the `report/` bug).
+    fn node_display(&self, state: &BuildState, recipe: &RecipeId, node: &crate::event::NodeId) -> String {
+        state.recipes.get(recipe)
+            .and_then(|r| r.nodes.get(node))
+            .map(|n| n.display())
+            .unwrap_or_else(|| "?".to_string())
+    }
+}
+
+/// Interactive-frame label: drops the internal `@N` source-line tag rather
+/// than exposing it in user-facing output (mirrors event_writer.rs's inline
+/// renderer, which already strips it).
+fn interactive_label(rname: &str, name: &str) -> String {
+    if name.starts_with('@') {
+        rname.to_string()
+    } else {
+        format!("{rname}/{name}")
+    }
 }
 
 fn fmt_secs(d: Duration) -> String {
@@ -59,18 +82,12 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
             ProgressEvent::NodeStarted { .. } => {}
             ProgressEvent::NodeCompleted { recipe, node, elapsed, kind: _ } => {
                 let rname = self.name(state, *recipe);
-                let nname = state.recipes.get(recipe)
-                    .and_then(|r| r.nodes.get(node))
-                    .map(|n| n.name.clone())
-                    .unwrap_or_default();
+                let nname = self.node_display(state, recipe, node);
                 writeln!(self.out, "  {}/{:40}{}", rname, nname, fmt_secs(*elapsed))?;
             }
             ProgressEvent::NodeFailed { recipe, node, elapsed, error } => {
                 let rname = self.name(state, *recipe);
-                let nname = state.recipes.get(recipe)
-                    .and_then(|r| r.nodes.get(node))
-                    .map(|n| n.name.clone())
-                    .unwrap_or_default();
+                let nname = self.node_display(state, recipe, node);
                 writeln!(self.out, "  {}/{:40}FAILED {}", rname, nname, fmt_secs(*elapsed))?;
                 for line in error.lines() {
                     writeln!(self.out, "  [{rname}/{nname}] {line}")?;
@@ -103,12 +120,14 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
             }
             ProgressEvent::InteractiveStart { recipe, name, .. } => {
                 let rname = self.name(state, *recipe);
-                writeln!(self.out, "─── {rname}/{name} ───")?;
+                let label = interactive_label(&rname, name);
+                writeln!(self.out, "─── {label} ───")?;
             }
             ProgressEvent::InteractiveEnd { recipe, name, elapsed, success, .. } => {
                 let rname = self.name(state, *recipe);
+                let label = interactive_label(&rname, name);
                 let ok = if *success { "ok" } else { "failed" };
-                writeln!(self.out, "─── {rname}/{name} resumed ({ok}, {}) ───", fmt_secs(*elapsed))?;
+                writeln!(self.out, "─── {label} resumed ({ok}, {}) ───", fmt_secs(*elapsed))?;
             }
             ProgressEvent::Finished { .. } => {}
         }
