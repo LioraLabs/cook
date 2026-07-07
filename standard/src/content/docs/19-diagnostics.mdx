@@ -1,10 +1,10 @@
 ---
-title: "§{exec.diag} — Diagnostic ordering"
+title: "§{exec.diag} — Diagnostics and exit status"
 sidebar:
   order: 19
 ---
-# 19. Diagnostic ordering [#exec.diag]
-> **Normative.** This chapter defines the ordering relation between syntactic, semantic, and execute-time diagnostics that a conforming implementation MUST observe.
+# 19. Diagnostics and exit status [#exec.diag]
+> **Normative.** This chapter defines the ordering relation between syntactic, semantic, and execute-time diagnostics that a conforming implementation MUST observe, and the process exit status a conforming implementation MUST produce.
 
 ## 19.1. Diagnostic ordering [#exec.diagnostic-ordering]
 An implementation MUST report syntactic errors (those detectable by the rules of §{lexical} and App. A) before it reports semantic errors (those detectable only in the register or execute phase). On encountering a syntactic error, the implementation MUST halt parsing at the first such error and MUST NOT proceed to register-phase evaluation. Consequently, a Cookfile with both a syntactic error and a semantic error MUST produce only the syntactic diagnostic on a given run.
@@ -26,3 +26,25 @@ The unterminated output-path string in the `cook` step (`"app` has no closing `"
 ### Note 19.1.1
 
 The first-error halt in the syntactic layer means that a single run will not enumerate every syntactic problem in the file. A Cookfile author that wants batch syntax checking can re-run after each fix. Implementations MAY elect to attempt error recovery for better editor integration, but the Standard does not require it and does not relax the ordering rule: recovered-from errors MUST still be reported before any semantic diagnostic.
+
+## 19.2. Process exit status [#exec.exit-status]
+
+The process exit status is the machine-readable summary of an invocation: continuous-integration systems condition on it. A conforming implementation MUST exit with status `0` if and only if the invocation completed successfully. In particular:
+
+- An invocation that executes recipe work MUST exit non-zero when any executed work unit fails — including when that failure causes downstream units to be skipped.
+- A failing `test` step fails the run: an invocation that executes one or more `test` steps — under the test runner or under a recipe run — MUST exit non-zero when any executed `test` step fails, times out, or is blocked by an upstream failure. There is no mode in which a test failure is reported but the process exits `0`.
+- `cook cache verify` MUST exit non-zero when it reports any divergence or verification error (§{exec.cache.verify}).
+- An invocation that cannot reach execution — a lexical or syntactic error, a register-phase error, an unknown recipe — MUST exit non-zero.
+
+The specific non-zero values are implementation-defined. The reference implementation's taxonomy (`cli/crates/cook-cli/src/error.rs`, `CookError::exit_code`) is the RECOMMENDED mapping:
+
+| Exit status | Class | Meaning |
+|---|---|---|
+| `0` | success | All requested work completed; every executed `test` step passed. |
+| `1` | execution failure | A step's command exited non-zero; a `test` step failed, timed out, or was blocked; `cook cache verify` reported a divergence or error; or a generic failure (I/O, codegen, registration) occurred. |
+| `2` | parse error | The entry Cookfile (or an imported Cookfile) failed lexical or syntactic validation (§{lexical}, App. A). |
+| `3` | recipe not found | The requested recipe surface is not in a runnable state: not declared, or declared more than once (registration collision). |
+
+### Note 19.2.1
+
+Pre-1.0, "tests failed" and "build failed" share exit status `1`; whether the v1.0 test-execution surface assigns a distinct status (e.g. `4`) is part of that redesign (App. D.11's history). CI distinguishes the cases today via `cook test`'s report sidecars or stderr. The runtime pin for this table is `cli/e2e-fixtures/cli_audit_exit_codes/walkthrough.sh`.
