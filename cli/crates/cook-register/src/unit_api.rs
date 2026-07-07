@@ -1,6 +1,6 @@
 use mlua::prelude::*;
 use std::path::{Path, PathBuf};
-use cook_contracts::{CacheMeta, CapturedUnit, DepKind, StepKind, WorkPayload};
+use cook_contracts::{CacheMeta, CapturedUnit, DepKind, WorkPayload};
 
 use crate::dep_output_api::SharedTerminalOutputs;
 use crate::{hash_str, SharedBodySlot};
@@ -74,6 +74,37 @@ fn validate_output_not_directory(working_dir: &Path, path: &str) -> Result<(), S
         ));
     }
     Ok(())
+}
+
+/// Uniform register-phase type error for a `cook.add_unit` field (CS-0127):
+/// a wrong-typed field is a hard error naming the field, the expected type,
+/// and the received Lua type — never silently coerced to its default. This
+/// is the shared message-shape for every field-typing check in `add_unit`
+/// (mirrors the `command` precedent landed under CS-0122).
+fn type_err(field: &str, expected: &str, got: &str) -> LuaError {
+    LuaError::runtime(format!(
+        "cook.add_unit: `{field}` must be {expected}, got {got} (Standard \u{00a7}22.1, CS-0127)"
+    ))
+}
+
+/// Strictly collect a Lua sequence table into `Vec<String>` for a
+/// `cook.add_unit` field, erroring (naming `field`) on the first non-string
+/// element rather than silently dropping it. Replaces the old
+/// `sequence_values::<String>().filter_map(Result::ok)` pattern, which both
+/// silently dropped non-string elements and — via mlua's implicit
+/// number-to-string coercion in its `String: FromLua` impl — would have
+/// silently coerced numeric elements into strings had they not been dropped
+/// by a prior `Result` error (CS-0127).
+fn collect_string_list(t: &LuaTable, field: &str) -> Result<Vec<String>, LuaError> {
+    let mut out = Vec::new();
+    for v in t.sequence_values::<LuaValue>() {
+        let v = v.map_err(|e| LuaError::runtime(format!("cook.add_unit: `{field}`: {e}")))?;
+        match v {
+            LuaValue::String(s) => out.push(s.to_string_lossy().to_string()),
+            other => return Err(type_err(field, "a table of strings", other.type_name())),
+        }
+    }
+    Ok(out)
 }
 
 /// Escape a string for embedding in a Lua double-quoted string literal.
@@ -283,26 +314,58 @@ pub fn register_unit_api(
                 )));
             }
         };
-        let lua_code: Option<String> = tbl.get::<String>("lua_code").ok();
-        let interactive: bool = tbl.get::<Option<bool>>("interactive").unwrap_or(None).unwrap_or(false);
-        let line: usize = tbl.get::<Option<usize>>("line").unwrap_or(None).unwrap_or(0);
-        let cache_enabled: bool = tbl.get::<Option<bool>>("cache").unwrap_or(None).unwrap_or(true);
-        // CS-0045: the originating step kind drives the execute-phase
-        // sandbox policy on the resulting LuaChunk. Codegen passes
-        // `step_kind = "plate"` for plate-step bodies (which are
+        // CS-0127: `lua_code`, if present, must be a string — never coerced.
+        let lua_code: Option<String> = match tbl.get::<LuaValue>("lua_code") {
+            Ok(LuaValue::Nil) | Err(_) => None,
+            Ok(LuaValue::String(s)) => Some(s.to_string_lossy().to_string()),
+            Ok(other) => return Err(type_err("lua_code", "a string", other.type_name())),
+        };
+        // CS-0127: `interactive` must be a boolean — never coerced.
+        let interactive: bool = match tbl.get::<LuaValue>("interactive") {
+            Ok(LuaValue::Nil) | Err(_) => false,
+            Ok(LuaValue::Boolean(b)) => b,
+            Ok(other) => return Err(type_err("interactive", "a boolean", other.type_name())),
+        };
+        // CS-0127: `line` must be a non-negative integer — never coerced.
+        let line: usize = match tbl.get::<LuaValue>("line") {
+            Ok(LuaValue::Nil) | Err(_) => 0,
+            Ok(LuaValue::Integer(n)) if n >= 0 => n as usize,
+            Ok(other) => return Err(type_err("line", "a non-negative integer", other.type_name())),
+        };
+        // CS-0127: `cache` must be a boolean — never coerced.
+        let cache_enabled: bool = match tbl.get::<LuaValue>("cache") {
+            Ok(LuaValue::Nil) | Err(_) => true,
+            Ok(LuaValue::Boolean(b)) => b,
+            Ok(other) => return Err(type_err("cache", "a boolean", other.type_name())),
+        };
+        // CS-0045 / CS-0127: the originating step kind drives the
+        // execute-phase sandbox policy on the resulting LuaChunk. Codegen
+        // passes `step_kind = "plate"` for plate-step bodies (which are
         // unsandboxed by design) and omits the field for cook/test/
         // chore bodies. The captured-unit default is `cook` because
         // that is the strictest policy: a misclassified plate body
-        // becomes a Lua runtime error rather than a silent escape.
-        let step_kind: cook_contracts::StepKind = match tbl
-            .get::<String>("step_kind")
-            .ok()
-            .as_deref()
-        {
-            Some("plate") => cook_contracts::StepKind::Plate,
-            Some("test") => cook_contracts::StepKind::Test,
-            Some("chore") => cook_contracts::StepKind::Chore,
-            _ => cook_contracts::StepKind::Cook,
+        // becomes a Lua runtime error rather than a silent escape. An
+        // unrecognised string, or any non-string value, is a hard error
+        // rather than a silent fall-through to the default.
+        let step_kind: cook_contracts::StepKind = match tbl.get::<LuaValue>("step_kind") {
+            Ok(LuaValue::Nil) | Err(_) => cook_contracts::StepKind::Cook,
+            Ok(LuaValue::String(s)) => {
+                let sv = s.to_string_lossy().to_string();
+                match sv.as_str() {
+                    "plate" => cook_contracts::StepKind::Plate,
+                    "test" => cook_contracts::StepKind::Test,
+                    "chore" => cook_contracts::StepKind::Chore,
+                    "cook" => cook_contracts::StepKind::Cook,
+                    _ => {
+                        return Err(type_err(
+                            "step_kind",
+                            "one of \"cook\", \"plate\", \"test\", \"chore\"",
+                            &format!("{sv:?}"),
+                        ))
+                    }
+                }
+            }
+            Ok(other) => return Err(type_err("step_kind", "a string", other.type_name())),
         };
 
         // §{chores.no-caching}: cache = true is not permitted inside a chore body.
@@ -319,31 +382,57 @@ pub fn register_unit_api(
                 ));
             }
         }
-        let inputs: Vec<String> = match tbl.get::<LuaTable>("inputs") {
-            Ok(t) => t.sequence_values::<String>().filter_map(Result::ok).collect(),
-            Err(_) => vec![],
+        // CS-0127: `inputs` must be a table of strings — never coerced
+        // (including mlua's implicit number-to-string coercion on elements).
+        let inputs: Vec<String> = match tbl.get::<LuaValue>("inputs") {
+            Ok(LuaValue::Nil) | Err(_) => vec![],
+            Ok(LuaValue::Table(t)) => collect_string_list(&t, "inputs")?,
+            Ok(other) => return Err(type_err("inputs", "a table of strings", other.type_name())),
         };
-        let output: Option<String> = tbl.get::<String>("output").ok();
-        let outputs: Option<Vec<String>> = match tbl.get::<LuaTable>("outputs") {
-            Ok(t) => Some(
-                t.sequence_values::<String>()
-                    .filter_map(Result::ok)
-                    .collect(),
-            ),
-            Err(_) => None,
+        // CS-0127: `output` must be a string — never coerced.
+        let output: Option<String> = match tbl.get::<LuaValue>("output") {
+            Ok(LuaValue::Nil) | Err(_) => None,
+            Ok(LuaValue::String(s)) => Some(s.to_string_lossy().to_string()),
+            Ok(other) => return Err(type_err("output", "a string", other.type_name())),
         };
-        let ingredient_groups: Vec<Vec<String>> = match tbl.get::<LuaTable>("ingredient_groups") {
-            Ok(outer) => outer
-                .sequence_values::<LuaTable>()
-                .filter_map(Result::ok)
-                .map(|inner| {
-                    inner
-                        .sequence_values::<String>()
-                        .filter_map(Result::ok)
-                        .collect()
-                })
-                .collect(),
-            Err(_) => Vec::new(),
+        // CS-0127: `outputs` must be a table of strings — never coerced.
+        let outputs: Option<Vec<String>> = match tbl.get::<LuaValue>("outputs") {
+            Ok(LuaValue::Nil) | Err(_) => None,
+            Ok(LuaValue::Table(t)) => Some(collect_string_list(&t, "outputs")?),
+            Ok(other) => return Err(type_err("outputs", "a table of strings", other.type_name())),
+        };
+        // CS-0127: `ingredient_groups` must be a table of tables of
+        // strings — strict at both levels, never coerced.
+        let ingredient_groups: Vec<Vec<String>> = match tbl.get::<LuaValue>("ingredient_groups") {
+            Ok(LuaValue::Nil) | Err(_) => Vec::new(),
+            Ok(LuaValue::Table(outer)) => {
+                let mut groups = Vec::new();
+                for v in outer.sequence_values::<LuaValue>() {
+                    let v = v.map_err(|e| {
+                        LuaError::runtime(format!("cook.add_unit: `ingredient_groups`: {e}"))
+                    })?;
+                    match v {
+                        LuaValue::Table(inner) => {
+                            groups.push(collect_string_list(&inner, "ingredient_groups")?);
+                        }
+                        other => {
+                            return Err(type_err(
+                                "ingredient_groups",
+                                "a table of tables of strings",
+                                other.type_name(),
+                            ))
+                        }
+                    }
+                }
+                groups
+            }
+            Ok(other) => {
+                return Err(type_err(
+                    "ingredient_groups",
+                    "a table of tables of strings",
+                    other.type_name(),
+                ))
+            }
         };
         if output.is_some() && outputs.is_some() {
             return Err(LuaError::RuntimeError(
@@ -416,9 +505,11 @@ pub fn register_unit_api(
         // failures are load-time diagnostics (missing literal / empty glob).
         // Paths go into cache_meta.input_paths ONLY — never WorkPayload
         // inputs, which drive _cook_in iteration.
+        // CS-0127: `file_refs` must be a table of strings — never coerced.
         let file_ref_patterns: Vec<String> = match tbl.get::<LuaValue>("file_refs") {
-            Ok(LuaValue::Table(t)) => t.sequence_values::<String>().filter_map(Result::ok).collect(),
-            _ => Vec::new(),
+            Ok(LuaValue::Nil) | Err(_) => Vec::new(),
+            Ok(LuaValue::Table(t)) => collect_string_list(&t, "file_refs")?,
+            Ok(other) => return Err(type_err("file_refs", "a table of strings", other.type_name())),
         };
         let mut file_ref_paths: Vec<String> = Vec::new();
         for pat in &file_ref_patterns {
@@ -449,10 +540,15 @@ pub fn register_unit_api(
             .get::<LuaTable>("cook")
             .and_then(|c| c.get::<LuaTable>("env"))
             .ok();
+        // CS-0127: `consulted_env_keys` must be a table of strings, or the
+        // literal string "*" — never coerced, and element collection is
+        // strict (a non-string element is a hard error, not a silent drop).
         match tbl.get::<LuaValue>("consulted_env_keys") {
+            Ok(LuaValue::Nil) | Err(_) => {}
             Ok(LuaValue::Table(list)) => {
+                let keys = collect_string_list(&list, "consulted_env_keys")?;
                 if let Some(env) = &env_table {
-                    for v in list.sequence_values::<String>().flatten() {
+                    for v in keys {
                         if let Ok(val) = env.get::<String>(v.clone()) {
                             consulted_env.insert(v, val);
                         }
@@ -468,7 +564,20 @@ pub fn register_unit_api(
                     }
                 }
             }
-            _ => {}
+            Ok(LuaValue::String(s)) => {
+                return Err(type_err(
+                    "consulted_env_keys",
+                    "a table of strings or the string \"*\"",
+                    &format!("the string {:?}", s.to_string_lossy()),
+                ))
+            }
+            Ok(other) => {
+                return Err(type_err(
+                    "consulted_env_keys",
+                    "a table of strings or the string \"*\"",
+                    other.type_name(),
+                ))
+            }
         }
 
         // COOK-64 §8.3/§17.1: a `for_each` fan-out unit carries its data member
@@ -479,7 +588,12 @@ pub fn register_unit_api(
         // Shell bodies already bake the member into the command text; this
         // additionally covers Lua-block bodies whose `item` reads are opaque to
         // the command string. `None` (non-`for_each` units) hashes as before.
-        let member: Option<String> = tbl.get::<Option<String>>("member").unwrap_or(None);
+        // CS-0127: `member` must be a string — never coerced.
+        let member: Option<String> = match tbl.get::<LuaValue>("member") {
+            Ok(LuaValue::Nil) | Err(_) => None,
+            Ok(LuaValue::String(s)) => Some(s.to_string_lossy().to_string()),
+            Ok(other) => return Err(type_err("member", "a string", other.type_name())),
+        };
         let hash_base: &str = lua_code.as_deref().unwrap_or(&command);
         let command_hash = match &member {
             Some(m) => hash_str(&format!("{hash_base}\u{0}member\u{0}{m}")),
@@ -579,12 +693,28 @@ pub fn register_unit_api(
         };
 
         // COOK-162 / I3: sharing disposition emitted by codegen as a string
-        // field `sharing = "local"|"pinned"`, omitted for the shared default.
+        // field `sharing = "local"|"pinned"`, omitted for the shared
+        // default. CS-0127: validate the string against the known set
+        // BEFORE handing it to `Sharing::from_wire_str` (whose own
+        // catch-all is relied on elsewhere to map absence/unknown to
+        // `Shared` on the wire-decode path) — an unrecognised string or a
+        // non-string value here is a hard error, not a silent default.
         let sharing = match tbl.get::<LuaValue>("sharing") {
+            Ok(LuaValue::Nil) | Err(_) => cook_contracts::Sharing::Shared,
             Ok(LuaValue::String(s)) => {
-                cook_contracts::Sharing::from_wire_str(&s.to_string_lossy())
+                let sv = s.to_string_lossy().to_string();
+                match sv.as_str() {
+                    "local" | "pinned" | "shared" => cook_contracts::Sharing::from_wire_str(&sv),
+                    _ => {
+                        return Err(type_err(
+                            "sharing",
+                            "one of \"local\", \"pinned\", \"shared\"",
+                            &format!("{sv:?}"),
+                        ))
+                    }
+                }
             }
-            _ => cook_contracts::Sharing::Shared,
+            Ok(other) => return Err(type_err("sharing", "a string", other.type_name())),
         };
         // COOK-163: opts.record — the `record` disposition. Marks an
         // intrinsically non-reproducible artifact; byte-equivalence is waived
@@ -737,6 +867,16 @@ pub fn register_unit_api(
             // If found, rewrite as a LuaChunk that resolves the values at
             // execute time via cook.cache.get and calls cook.sh. Also
             // auto-add the detected probe keys to probes.
+            //
+            // CS-0127: the rewritten LuaChunk carries the ALREADY-PARSED
+            // `step_kind` local (see above) rather than a hardcoded
+            // `StepKind::Cook`. `command` fields containing probe sigils are
+            // not exclusive to native `cook` bodies — a `plate` body inside
+            // a `for_each` recipe (unsandboxed by design, Standard §8.6)
+            // lowers its command the same literal-sigil way (COOK-187 /
+            // CS-0122) and passes `step_kind = "plate"`. Hardcoding `Cook`
+            // here would silently flip a plate command's sandbox policy the
+            // moment it referenced a probe value.
             match try_expand_probe_templates(&command) {
                 Ok(Some((lua_code, detected_keys))) => {
                     for k in detected_keys {
@@ -749,7 +889,7 @@ pub fn register_unit_api(
                         inputs: inputs.clone(),
                         outputs: output_paths.clone(),
                         ingredient_groups: vec![],
-                        step_kind: StepKind::Cook,
+                        step_kind,
                         is_chore,
                         line,
                     }
@@ -765,13 +905,55 @@ pub fn register_unit_api(
 
         // Read optional per-unit env table (used by chore shell units to export
         // bound param values as env vars — COOK-36 §7.1.2).
+        // CS-0127: `env` must be a table of string keys to string values —
+        // never coerced; a bad pair is a hard error, not a silent drop.
         let unit_env_vars: std::collections::BTreeMap<String, String> =
             match tbl.get::<LuaValue>("env") {
-                Ok(LuaValue::Table(t)) => t
-                    .pairs::<String, String>()
-                    .filter_map(Result::ok)
-                    .collect(),
-                _ => std::collections::BTreeMap::new(),
+                Ok(LuaValue::Nil) | Err(_) => std::collections::BTreeMap::new(),
+                Ok(LuaValue::Table(t)) => {
+                    // Iterate as LuaValue pairs so mlua's `String: FromLua`
+                    // number-coercion cannot silently turn `env = { N = 1 }`
+                    // into `"1"`; both key and value MUST already be strings.
+                    let mut out = std::collections::BTreeMap::new();
+                    for pair in t.pairs::<LuaValue, LuaValue>() {
+                        let (k, v) = pair.map_err(|e| {
+                            type_err(
+                                "env",
+                                "a table of string keys to string values",
+                                &e.to_string(),
+                            )
+                        })?;
+                        let key = match k {
+                            LuaValue::String(s) => s.to_string_lossy().to_string(),
+                            other => {
+                                return Err(type_err(
+                                    "env",
+                                    "a table with string keys",
+                                    other.type_name(),
+                                ))
+                            }
+                        };
+                        let val = match v {
+                            LuaValue::String(s) => s.to_string_lossy().to_string(),
+                            other => {
+                                return Err(type_err(
+                                    "env",
+                                    "a table with string values",
+                                    other.type_name(),
+                                ))
+                            }
+                        };
+                        out.insert(key, val);
+                    }
+                    out
+                }
+                Ok(other) => {
+                    return Err(type_err(
+                        "env",
+                        "a table of string keys to string values",
+                        other.type_name(),
+                    ))
+                }
             };
 
         let mut slot = body_slot_add.borrow_mut();

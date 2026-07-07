@@ -48,6 +48,29 @@ pub enum CodegenError {
     /// CS-0024 plate/test mode or placeholder validation failure.
     #[error("{0}")]
     PlateTest(#[from] crate::plate_step::CodegenError),
+    /// CS-0033/CS-0127: a `$<...>` sigil in a shell command resolved to an
+    /// error (e.g. malformed `out_N`, a builtin used in the wrong mode)
+    /// instead of a valid substitution. Previously `expand_shell_command_sigil`
+    /// swallowed this into a `[[SIGIL_ERROR: ...]]` string literal embedded in
+    /// the emitted command, so the recipe "compiled" and failed cryptically
+    /// only at execute time. Propagated instead (COOK-188).
+    #[error("line {line}: recipe '{recipe}': {source}")]
+    SigilResolve {
+        recipe: String,
+        line: usize,
+        #[source]
+        source: crate::resolver::ResolveError,
+    },
+    #[error(
+        "codegen: unhandled step kind {kind} at step index {index} in recipe '{recipe}' — \
+         a Step variant was added without a codegen arm; refusing to emit a recipe that \
+         silently drops steps (COOK-188)"
+    )]
+    UnknownStep {
+        kind: String,
+        index: usize,
+        recipe: String,
+    },
 }
 
 pub fn generate(cookfile: &Cookfile) -> String {
@@ -471,7 +494,8 @@ fn emit_body_unit_with_names(
     bundle_pos: usize,
     uses: &[UseStatement],
     recipe_names: &BTreeSet<String>,
-) {
+    recipe_name: &str,
+) -> Result<(), CodegenError> {
     // CS-0101: bare shell steps are cache = false — `$<file:PATH>` is pure
     // substitution (hoisted locals, no `file_refs` unit field). Tagged by the
     // bundle's starting step position for uniqueness within the recipe chunk.
@@ -517,7 +541,7 @@ fn emit_body_unit_with_names(
 
     for step in bundle {
         match step {
-            Step::Shell { command, interactive: false, .. } => {
+            Step::Shell { command, interactive: false, line } => {
                 let has_sigils = !crate::sigil::scan(command).is_empty();
                 if has_sigils {
                     // Flush any accumulated raw lines (into static_buf) so they
@@ -533,10 +557,21 @@ fn emit_body_unit_with_names(
                         recipes_in_scope: recipe_names,
                     };
                     let mut consulted = ConsultedEnv::new();
-                    let lua_expr = match crate::template::expand_sigil_template(command, &ctx, &mut consulted, &mut file_refs) {
-                        Ok(e) => e,
-                        Err(e) => format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string())),
-                    };
+                    // COOK-188: propagate instead of embedding a
+                    // `[[SIGIL_ERROR: ...]]` sentinel — an unresolvable
+                    // placeholder here previously "compiled" and failed only
+                    // at execute time.
+                    let lua_expr = crate::template::expand_sigil_template(
+                        command,
+                        &ctx,
+                        &mut consulted,
+                        &mut file_refs,
+                    )
+                    .map_err(|e| CodegenError::SigilResolve {
+                        recipe: recipe_name.to_string(),
+                        line: *line,
+                        source: e,
+                    })?;
                     // Prepend "set -e\n" so per-line halt-on-failure semantics
                     // match raw-shell flushes.
                     let with_set_e = format!("\"set -e\\n\" .. ({})", lua_expr);
@@ -568,7 +603,7 @@ fn emit_body_unit_with_names(
     flush_static(&mut pieces, &mut static_buf);
 
     if pieces.is_empty() {
-        return;
+        return Ok(());
     }
 
     let lua_code_expr = render_chunk_pieces(&pieces);
@@ -595,6 +630,7 @@ fn emit_body_unit_with_names(
         "    cook.add_unit({{lua_code = {}, cache = false, line = {}}})\n",
         lua_code_expr, line
     ));
+    Ok(())
 }
 
 /// Render a sequence of `ChunkPiece`s into a single Lua expression suitable
@@ -977,7 +1013,7 @@ pub fn generate_with_names(
                         } => {
                             out.push_str("    cook.step_group(function()\n");
                             if is_for_each {
-                                generate_for_each_plate_step(&mut out, plate_step, *line, recipe_names);
+                                generate_for_each_plate_step(&mut out, plate_step, *line, recipe_names)?;
                             } else {
                                 generate_plate_step(
                                     &mut out,
@@ -1002,7 +1038,7 @@ pub fn generate_with_names(
                                     test_step_val,
                                     *line,
                                     recipe_names,
-                                );
+                                )?;
                             } else {
                                 test_step::generate_test_step(
                                     &mut out,
@@ -1025,8 +1061,16 @@ pub fn generate_with_names(
                             // hoisted file-ref locals, no file_refs field.
                             let mut file_refs =
                                 crate::template::FileRefs::new(format!("l{}", line));
-                            let cmd_expr =
-                                expand_shell_command_sigil(command, recipe_names, &mut file_refs);
+                            let cmd_expr = expand_shell_command_sigil(
+                                command,
+                                recipe_names,
+                                &mut file_refs,
+                            )
+                            .map_err(|e| CodegenError::SigilResolve {
+                                recipe: recipe.name.clone(),
+                                line: *line,
+                                source: e,
+                            })?;
                             if !file_refs.is_empty() {
                                 out.push_str(&file_refs.hoist_lines("    "));
                             }
@@ -1054,7 +1098,8 @@ pub fn generate_with_names(
                                 bundle_start,
                                 &cookfile.uses,
                                 recipe_names,
-                            );
+                                &recipe.name,
+                            )?;
                         }
                         // COOK-63 §8.3: the `for_each` driver was already
                         // consumed above into `local _items`; it emits no step
@@ -1062,13 +1107,14 @@ pub fn generate_with_names(
                         Step::ForEach { .. } => {
                             i += 1;
                         }
-                        // `Step` is `#[non_exhaustive]`. Future step kinds added by the
-                        // reference implementation that this codegen has not yet learned
-                        // about are skipped — the validator pass above already accepts
-                        // them silently and runtime never sees them in a generated
-                        // recipe.
+                        // `Step` is `#[non_exhaustive]`. Future step kinds added by
+                        // cook-lang must not be silently dropped by old codegen.
                         _ => {
-                            i += 1;
+                            return Err(CodegenError::UnknownStep {
+                                kind: step_kind_name(&recipe.steps[i]),
+                                index: i,
+                                recipe: recipe.name.clone(),
+                            });
                         }
                     }
                 }
@@ -1076,7 +1122,7 @@ pub fn generate_with_names(
                 out.push_str("end)\n\n");
             }
             TopLevelItem::Chore(chore) => {
-                out.push_str(&compile_chore(chore, &cookfile.uses, recipe_names));
+                out.push_str(&compile_chore_checked(chore, &cookfile.uses, recipe_names)?);
             }
             TopLevelItem::Probe(p) => {
                 crate::probe::emit_probe(&mut out, p);
@@ -1114,17 +1160,30 @@ fn emit_for_each_items(out: &mut String, fe: &ForEachStep) {
     }
 }
 
+fn step_kind_name(step: &Step) -> String {
+    let debug = format!("{:?}", step);
+    debug
+        .split(['{', '(', ' '])
+        .next()
+        .unwrap_or("?")
+        .to_string()
+}
+
 /// Expand a single shell command through sigil substitution (CS-0033).
 /// Returns a Lua expression suitable for the `command =` field of `cook.add_unit`.
 /// Commands with no sigil placeholders are emitted as Lua long-string literals.
+///
+/// Returns `Err` if any placeholder fails to resolve (COOK-188) — callers must
+/// propagate this into the `Result`-returning compile path rather than
+/// embedding a `[[SIGIL_ERROR: ...]]` sentinel into the emitted command.
 fn expand_shell_command_sigil(
     command: &str,
     recipe_names: &BTreeSet<String>,
     file_refs: &mut crate::template::FileRefs,
-) -> String {
+) -> Result<String, crate::resolver::ResolveError> {
     let has_sigils = !crate::sigil::scan(command).is_empty();
     if !has_sigils {
-        return wrap_lua_string(command);
+        return Ok(wrap_lua_string(command));
     }
     let ctx = ResolveCtx {
         mode: IterMode::OneShot,
@@ -1132,52 +1191,38 @@ fn expand_shell_command_sigil(
         recipes_in_scope: recipe_names,
     };
     let mut consulted = ConsultedEnv::new();
-    match crate::template::expand_sigil_template(command, &ctx, &mut consulted, file_refs) {
-        Ok(e) => e,
-        Err(e) => format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string())),
-    }
+    crate::template::expand_sigil_template(command, &ctx, &mut consulted, file_refs)
 }
 
 /// Expand a chore shell-step command for use in `compile_chore`.
 ///
-/// When the chore declares params (`has_params = true`) and the command
-/// contains `$<...>` placeholders, defers expansion to the runtime helper
-/// `cook.__expand_chore_sigils` so it can resolve placeholder names against
-/// the bound `__cook_params` table. This is necessary because the param
-/// values are only known at register time (when the chore body closure runs),
-/// not at code-generation time.
-///
-/// When the chore declares no params (`has_params = false`), the old
-/// `expand_shell_command_sigil` path is used instead, preserving the
-/// existing `$<env_var>` → `cook.require_env(...)` behavior for
-/// parameterless chores.
+/// Chore params are an innermost binding layer. If a `$<NAME>` token names a
+/// declared param, it lowers to a register-time `cook.__quote_param(...)`
+/// expression. Otherwise the ordinary resolver handles `$<ENV>` and
+/// `$<recipe>` the same way recipe-body shell steps do.
 fn expand_chore_shell_command(
     command: &str,
-    has_params: bool,
     recipe_names: &BTreeSet<String>,
     file_refs: &mut crate::template::FileRefs,
-) -> String {
+    chore_params: &BTreeSet<String>,
+) -> Result<String, crate::resolver::ResolveError> {
     let has_sigils = !crate::sigil::scan(command).is_empty();
-    // Use the runtime-helper path only when the chore declares params AND the
-    // command has sigils. Parameterless chores fall through to the existing
-    // require_env-based expansion so that $<ENV_VAR> continues to work.
-    //
-    // NOTE: the parametric path resolves sigils against the bound params at
-    // runtime and does not consult `recipe_names`, so a `$<recipe>` cross-recipe
-    // reference in a *parametric* chore is not yet supported (rare; tracked
-    // alongside COOK-73). The common parameterless path below resolves
-    // `$<recipe>` to `cook.dep_output` per §10.2 step 2.
-    if has_params && has_sigils {
-        return format!(
-            "cook.__expand_chore_sigils({}, __cook_params)",
-            wrap_lua_string(command)
-        );
+    if !has_sigils {
+        return Ok(wrap_lua_string(command));
     }
-    // No params or no sigils: standard sigil expansion. Pass the in-scope
-    // recipe names so a `$<recipe>` reference (e.g. launching a just-built
-    // binary via `$<dhewm3>`) resolves to that recipe's output and creates the
-    // cross-recipe edge — not just `$<ENV_VAR>` → require_env.
-    expand_shell_command_sigil(command, recipe_names, file_refs)
+    let ctx = ResolveCtx {
+        mode: IterMode::OneShot,
+        outputs: OutputShape::None,
+        recipes_in_scope: recipe_names,
+    };
+    let mut consulted = ConsultedEnv::new();
+    crate::template::expand_sigil_template_with_chore_params(
+        command,
+        &ctx,
+        &mut consulted,
+        file_refs,
+        Some(chore_params),
+    )
 }
 
 /// Compile a `Chore` to register-phase Lua.
@@ -1236,6 +1281,15 @@ pub fn compile_chore(
     uses: &[UseStatement],
     recipe_names: &BTreeSet<String>,
 ) -> String {
+    compile_chore_checked(chore, uses, recipe_names)
+        .expect("compile_chore: unexpected codegen error (use generate_with_names_checked for validated codegen)")
+}
+
+fn compile_chore_checked(
+    chore: &Chore,
+    uses: &[UseStatement],
+    recipe_names: &BTreeSet<String>,
+) -> Result<String, CodegenError> {
     let mut out = String::new();
 
     // SHI-222 Phase 3 Task 3.1: surface `chore NAME` blocks lower to the
@@ -1299,6 +1353,11 @@ pub fn compile_chore(
     // Emit steps. All shell steps are interactive (parser guarantees this).
     // Consecutive Lua steps may still coalesce into a body unit, but shell
     // steps always stand alone (interactive = true => not bundleable).
+    let chore_param_names: BTreeSet<String> = chore
+        .params
+        .iter()
+        .map(|param| param.name().to_string())
+        .collect();
     let mut i = 0;
     while i < chore.steps.len() {
         match &chore.steps[i] {
@@ -1308,7 +1367,17 @@ pub fn compile_chore(
                 // CS-0101: chore units are cache = false — hoisted file-ref
                 // locals, no file_refs field.
                 let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
-                let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty(), recipe_names, &mut file_refs);
+                let cmd_expr = expand_chore_shell_command(
+                    command,
+                    recipe_names,
+                    &mut file_refs,
+                    &chore_param_names,
+                )
+                .map_err(|e| CodegenError::SigilResolve {
+                    recipe: chore.name.clone(),
+                    line: *line,
+                    source: e,
+                })?;
                 if !file_refs.is_empty() {
                     out.push_str(&file_refs.hoist_lines("    "));
                 }
@@ -1335,7 +1404,17 @@ pub fn compile_chore(
                 if let Step::Shell { command, line, .. } = &chore.steps[i] {
                     // CS-0101: same hoist-only handling as the interactive arm.
                     let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
-                    let cmd_expr = expand_chore_shell_command(command, !chore.params.is_empty(), recipe_names, &mut file_refs);
+                    let cmd_expr = expand_chore_shell_command(
+                        command,
+                        recipe_names,
+                        &mut file_refs,
+                        &chore_param_names,
+                    )
+                    .map_err(|e| CodegenError::SigilResolve {
+                        recipe: chore.name.clone(),
+                        line: *line,
+                        source: e,
+                    })?;
                     if !file_refs.is_empty() {
                         out.push_str(&file_refs.hoist_lines("    "));
                     }
@@ -1384,7 +1463,7 @@ pub fn compile_chore(
     out.push_str("    cook._exit_chore()\n");
 
     out.push_str("end)\n\n");
-    out
+    Ok(out)
 }
 
 /// Emit a body unit for a bundle of execute-phase Lua steps within a chore.

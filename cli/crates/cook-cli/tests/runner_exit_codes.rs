@@ -75,3 +75,27 @@ fn should_fail_test_that_fails_as_expected_exits_zero() {
         "satisfied should_fail test must exit 0.\n{c}"
     );
 }
+
+#[test]
+fn skipped_upstream_recipe_reports_skipped() {
+    let dir = write_cookfile(
+        "recipe counts\n    cook \"counts.txt\" { false }\n\nrecipe report\n    cook \"report.txt\" { cat $<counts> > $<out> }\n",
+    );
+    let out = run_recipe(dir.path(), "report");
+    let c = combined(&out);
+    assert_eq!(out.status.code(), Some(1), "upstream failure must exit 1.\n{c}");
+    assert!(c.contains("counts"), "failed upstream recipe should be shown.\n{c}");
+    assert!(c.contains("FAILED"), "failed upstream recipe should render FAILED.\n{c}");
+    assert!(
+        c.contains("report") && c.contains("skipped"),
+        "dependent recipe should render skipped.\n{c}"
+    );
+    assert!(
+        !c.lines().any(|line| line.contains("report") && line.contains("done")),
+        "dependent recipe must not render done.\n{c}"
+    );
+    assert!(
+        c.contains("skipped (upstream-failed)"),
+        "node-level upstream skip should still render.\n{c}"
+    );
+}

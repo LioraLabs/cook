@@ -103,6 +103,15 @@ pub(crate) fn event_to_value(state: &BuildState, event: &ProgressEvent) -> Value
             "completed": completed,
             "total": total,
         }),
+        ProgressEvent::RecipeSkipped { recipe, elapsed, skipped, completed, total } => json!({
+            "type": "recipe-skipped",
+            "recipe": recipe_name(state, *recipe),
+            "elapsed_ms": duration_ms(*elapsed),
+            "skipped": skipped,
+            "completed": completed,
+            "total": total,
+            "reason": "upstream-failed",
+        }),
         ProgressEvent::NodeStarted { recipe, node, name: _, artifact, fallback_label, kind } => json!({
             "type": "node-started",
             "recipe": recipe_name(state, *recipe),

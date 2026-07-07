@@ -3481,6 +3481,102 @@ fn for_each_unit_folds_member_into_fingerprint() {
         "ingredients-probe cook unit should carry member, got:\n{lua}");
 }
 
+#[test]
+fn for_each_plate_probe_ref_lowers_as_literal_sigil() {
+    // COOK-187 / CS-0122 / CS-0127: a `plate` shell body inside a `for_each`
+    // recipe that references a probe value must lower the same way every
+    // other shell-command body does — literal `$<key:...>` sigil text inside
+    // a plain `command = "..."` string, never a deferred
+    // `function() return ... end` closure (which cook.add_unit hard-rejects
+    // as a non-string command). The unit must also carry
+    // `step_kind = "plate"` so register-time capture preserves the plate's
+    // unsandboxed policy instead of defaulting to the `cook` sandbox.
+    let src = "recipe art\n    ingredients cards\n    plate {\n        $<tools:fmt.bin> --check\n    }\n";
+    let lua = generate(&cook_lang::parse(src).expect("parse"));
+    assert!(
+        lua.contains("$<tools:fmt.bin>"),
+        "expected literal probe sigil text in the plate command, got:\n{lua}"
+    );
+    assert!(
+        !lua.contains("command = function()"),
+        "a plate command must never be a deferred function, got:\n{lua}"
+    );
+    assert!(
+        lua.contains(r#"step_kind = "plate""#),
+        "expected step_kind = \"plate\" on the for_each plate unit, got:\n{lua}"
+    );
+    assert!(
+        lua.contains("cook.add_unit({command = "),
+        "expected a plain command = string field on the for_each plate unit, got:\n{lua}"
+    );
+}
+
+#[test]
+fn for_each_test_probe_ref_in_shell_command_is_codegen_error() {
+    // CS-0127: unlike `plate`/`cook` command bodies, `WorkPayload::Test` runs
+    // `cmd` verbatim via `/bin/sh` with no probe-substitution machinery. The
+    // old codegen wrapped a probe-bearing test command in a deferred
+    // `function() return ... end` closure, but `cook.add_test`'s strict
+    // `command` typing (this same commit) now hard-rejects that closure at
+    // register time instead of degrading silently. Codegen must fail loudly
+    // instead, naming the probe key and the offending line.
+    let src = "recipe eval\n    ingredients cards\n    test {\n        $<foo:bar>\n    }\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let err = crate::generate_with_names(&cookfile, &std::collections::BTreeSet::new())
+        .expect_err("expected a codegen error for a probe ref in a for_each test shell command");
+    let msg = err.to_string();
+    assert!(msg.contains("foo:bar"), "error should name the probe key, got: {msg}");
+    assert!(msg.contains("line 3"), "error should name the offending line, got: {msg}");
+}
+
+#[test]
+fn malformed_shell_sigil_is_codegen_error_not_emitted_sentinel() {
+    let src = "recipe bad\n    echo $<out_0>\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let err = crate::generate_with_names_checked(&cookfile, &names)
+        .expect_err("malformed $<out_0> must fail checked codegen");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("out_0") && msg.contains("malformed"),
+        "diagnostic should name the bad placeholder, got: {msg}"
+    );
+
+    let unchecked_err = crate::generate_with_names(&cookfile, &names)
+        .expect_err("unchecked codegen should error instead of emitting a sentinel");
+    assert!(
+        !unchecked_err.to_string().contains("[[SIGIL_ERROR:"),
+        "unchecked codegen must not embed SIGIL_ERROR sentinels either: {unchecked_err}"
+    );
+}
+
+#[test]
+fn checked_codegen_covers_every_current_step_kind() {
+    let src = r#"recipe everything
+    ingredients cards
+    >> local register_line = true
+    >>{
+        local register_block = true
+    }
+    cook "out/$<in.id>.txt" { printf '%s\n' "$<in.id>" > $<out> }
+    plate {
+        cat $<in>
+    }
+    test >{
+        assert(item.id ~= nil)
+    }
+    @ echo interactive
+    > local execute_line = true
+    >{
+        local execute_block = true
+    }
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    crate::generate_with_names_checked(&cookfile, &names)
+        .expect("all current Step variants should have codegen arms");
+}
+
 // ── §22.5.2 — native probe lowering (COOK-68) ──────────────────────────────
 
 fn make_probe_cf(produce: ProbeProduce) -> Cookfile {

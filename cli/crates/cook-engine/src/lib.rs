@@ -171,6 +171,14 @@ pub enum EngineEvent {
         total_nodes: usize,
         kind: RecipeKind,
     },
+    /// A recipe did not complete because one or more nodes were skipped.
+    RecipeSkipped {
+        name: String,
+        elapsed: Duration,
+        skipped_nodes: usize,
+        completed_nodes: usize,
+        total_nodes: usize,
+    },
     /// A recipe failed due to one or more node failures.
     RecipeFailed {
         name: String,

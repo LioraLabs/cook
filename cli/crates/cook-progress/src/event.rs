@@ -119,6 +119,13 @@ pub enum ProgressEvent {
         #[serde(default)]
         kind: RecipeKind,
     },
+    RecipeSkipped {
+        recipe: RecipeId,
+        elapsed: Duration,
+        skipped: usize,
+        completed: usize,
+        total: usize,
+    },
     RecipeFailed {
         recipe: RecipeId,
         elapsed: Duration,

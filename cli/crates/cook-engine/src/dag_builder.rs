@@ -534,7 +534,13 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
 fn is_presatisfied(unit: &CapturedUnit) -> bool {
     match &unit.payload {
         WorkPayload::Shell { cmd, .. } => cmd.is_empty() && unit.cache_meta.is_none(),
-        WorkPayload::Test { cmd, .. } => cmd.is_empty() && unit.cache_meta.is_none(),
+        // CS-0127 §22.4: a lua-body test (`lua_code` populated) always has an
+        // empty `cmd` by construction — that must NOT be mistaken for the
+        // legacy empty-shell-command no-op. Only a genuinely empty test (no
+        // `cmd` AND no `lua_code`) is presatisfied.
+        WorkPayload::Test { cmd, lua_code, .. } => {
+            cmd.is_empty() && lua_code.is_none() && unit.cache_meta.is_none()
+        }
         _ => false,
     }
 }
@@ -2084,6 +2090,7 @@ mod test_slice_tests {
                 suite_name: "r".into(),
                 test_name: "t".into(),
                 iteration_item: None,
+                lua_code: None,
                 input_paths: vec![],
             },
             cache_meta: None,

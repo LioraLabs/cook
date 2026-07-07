@@ -48,6 +48,7 @@ struct RecipeTracker {
     total_nodes: usize,
     completed_nodes: usize,
     cached_nodes: usize,
+    skipped_nodes: usize,
     has_failure: bool,
     /// True once `RecipeStarted` has been emitted for this recipe.
     started: bool,
@@ -447,6 +448,7 @@ pub fn execute_dag(
                 total_nodes: count,
                 completed_nodes: 0,
                 cached_nodes: 0,
+                skipped_nodes: 0,
                 has_failure: false,
                 started: false,
                 is_chore: false,
@@ -483,10 +485,24 @@ pub fn execute_dag(
         is_failure: bool,
         event_tx: &Option<mpsc::Sender<EngineEvent>>,
     ) {
+        finish_recipe_node_inner(trackers, recipe_name, is_cached, is_failure, false, event_tx);
+    }
+
+    fn finish_recipe_node_inner(
+        trackers: &mut BTreeMap<String, RecipeTracker>,
+        recipe_name: &str,
+        is_cached: bool,
+        is_failure: bool,
+        is_skipped: bool,
+        event_tx: &Option<mpsc::Sender<EngineEvent>>,
+    ) {
         if let Some(tracker) = trackers.get_mut(recipe_name) {
             tracker.completed_nodes += 1;
             if is_cached {
                 tracker.cached_nodes += 1;
+            }
+            if is_skipped {
+                tracker.skipped_nodes += 1;
             }
             if is_failure {
                 tracker.has_failure = true;
@@ -501,6 +517,17 @@ pub fn execute_dag(
                             name: recipe_name.to_string(),
                             elapsed,
                             completed_nodes: tracker.completed_nodes - 1,
+                            total_nodes: tracker.total_nodes,
+                        },
+                    );
+                } else if tracker.skipped_nodes > 0 {
+                    emit(
+                        event_tx,
+                        EngineEvent::RecipeSkipped {
+                            name: recipe_name.to_string(),
+                            elapsed,
+                            skipped_nodes: tracker.skipped_nodes,
+                            completed_nodes: tracker.completed_nodes - tracker.skipped_nodes,
                             total_nodes: tracker.total_nodes,
                         },
                     );
@@ -597,11 +624,12 @@ pub fn execute_dag(
                 exit_code: None,
             });
         }
-        finish_recipe_node(
+        finish_recipe_node_inner(
             trackers,
             &work_node.recipe_name,
             false,
             false,
+            true,
             event_tx,
         );
         for &dep_id in dag.node(node_id).dependents() {
@@ -3804,6 +3832,7 @@ mod tests {
                     suite_name: "blocked_by_build".to_string(),
                     test_name: "my_test".to_string(),
                     iteration_item: None,
+                    lua_code: None,
                     input_paths: vec![],
                 },
                 "blocked_by_build",
@@ -3859,6 +3888,7 @@ mod tests {
                     suite_name: "my_recipe".to_string(),
                     test_name: "my_test".to_string(),
                     iteration_item: None,
+                    lua_code: None,
                     input_paths: vec![],
                 },
                 "my_recipe",
@@ -3917,6 +3947,7 @@ mod tests {
                     suite_name: "my_recipe".to_string(),
                     test_name: "my_test".to_string(),
                     iteration_item: Some("a.cpp".into()),
+                    lua_code: None,
                     input_paths: vec![],
                 },
                 "my_recipe",

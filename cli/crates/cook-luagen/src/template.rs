@@ -284,6 +284,16 @@ pub(crate) fn expand_sigil_template(
     consulted_env: &mut ConsultedEnv,
     file_refs: &mut FileRefs,
 ) -> Result<String, ResolveError> {
+    expand_sigil_template_with_chore_params(template, ctx, consulted_env, file_refs, None)
+}
+
+pub(crate) fn expand_sigil_template_with_chore_params(
+    template: &str,
+    ctx: &ResolveCtx<'_>,
+    consulted_env: &mut ConsultedEnv,
+    file_refs: &mut FileRefs,
+    chore_params: Option<&BTreeSet<String>>,
+) -> Result<String, ResolveError> {
     let spans = sigil::scan(template);
     if spans.is_empty() {
         // No placeholders — entire string is literal.
@@ -300,9 +310,20 @@ pub(crate) fn expand_sigil_template(
             parts.push(format!("\"{}\"", escape_lua_string(literal)));
         }
 
-        // Resolve the placeholder.
-        let resolved = crate::resolver::resolve(&span.ident, ctx);
-        let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?;
+        // Chore parameters are an innermost binding layer for chore shell
+        // steps. Anything not declared as a parameter falls through to the
+        // ordinary closed-set resolver, so env and recipe refs behave exactly
+        // as they do in recipe bodies.
+        let lua_expr = if chore_params.is_some_and(|params| params.contains(&span.ident)) {
+            format!(
+                "cook.__quote_param(__cook_params[\"{}\"], \"{}\")",
+                escape_lua_string(&span.ident),
+                escape_lua_string(&span.ident)
+            )
+        } else {
+            let resolved = crate::resolver::resolve(&span.ident, ctx);
+            resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?
+        };
         parts.push(lua_expr);
 
         last_end = span.range.end;
