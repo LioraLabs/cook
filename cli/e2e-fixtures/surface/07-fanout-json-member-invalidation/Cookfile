@@ -1,0 +1,18 @@
+probe services_raw
+    ingredients "data/services.json"
+    json { cat data/services.json }
+
+probe services: services_raw
+    >{
+        local out = {}
+        for _, svc in ipairs(cook.cache.get("services_raw")) do
+            table.insert(out, { name = svc.name, port = svc.port })
+        end
+        return out
+    }
+
+recipe render
+    ingredients services
+    cook "build/$<in.name>.conf" {
+        printf 'name=%s port=%s nonce=%s\n' "$<in.name>" "$<in.port>" "$(date +%s%N)" > $<out>
+    }

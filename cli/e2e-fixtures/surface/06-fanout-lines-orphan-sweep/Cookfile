@@ -1,0 +1,7 @@
+probe target_list
+    ingredients "data/targets.txt"
+    lines { cat data/targets.txt }
+
+recipe targets
+    ingredients target_list
+    cook "out/$<in>.cfg" { printf 'target=%s nonce=%s\n' "$<in>" "$(date +%s%N)" > $<out> }

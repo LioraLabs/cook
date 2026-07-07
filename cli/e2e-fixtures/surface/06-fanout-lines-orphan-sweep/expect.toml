@@ -1,0 +1,18 @@
+[[run]]
+args = ["targets"]
+[run.assert]
+exists = ["out/dev.cfg", "out/staging.cfg", "out/prod.cfg"]
+contains = { "out/dev.cfg" = "target=dev" }
+
+[[run]]
+args = ["targets"]
+[run.assert]
+unchanged = ["out/dev.cfg", "out/staging.cfg", "out/prod.cfg"]
+
+[[run]]
+args = ["targets"]
+write = { "data/targets.txt" = "dev\nstaging\n" }
+[run.assert]
+absent = ["out/prod.cfg"]
+unchanged = ["out/dev.cfg", "out/staging.cfg"]
+output_contains = ["swept orphaned output"]
