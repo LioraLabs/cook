@@ -123,12 +123,10 @@ a name list is required.
 declared by both MUST fire the duplicate-key diagnostic of §{cat.probes.api}.
 
 > **Note (informative).** A `probe` whose producer decodes JSON/YAML
-> (`json { … }`, or `cook.json_decode`/`cook.yaml_decode` in a `>{ … }` body) is
-> evaluated with those codecs available when it feeds an `ingredients <probe>`
-> source (the register pre-pass, §{cat.probes.for-each}). Consumption of such a
-> probe through a demand-driven consumer unit currently requires the codecs on
-> the worker VM (reference-implementation gap, tracked separately); the
-> `ingredients <probe>` path is unaffected.
+> (`json { … }`, or `cook.json_decode`/`cook.yaml_decode` in a `>{ … }` body)
+> MAY be consumed through either path: the codecs are both-phase API
+> (§{lua.cook-codecs}, CS-0123), installed on the register pre-pass VM and on
+> every execute-phase worker VM alike.
 
 **Lowering (informative).** The reference implementation lowers a `probe`
 declaration to the equivalent `cook.probe(key, opts)` call (§{cat.probes.api}):

@@ -505,6 +505,8 @@ version = "0.1.0"
 dependencies = [
  "glob",
  "mlua",
+ "serde_json",
+ "serde_yml",
  "tempfile",
 ]
 

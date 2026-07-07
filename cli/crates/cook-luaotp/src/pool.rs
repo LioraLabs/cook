@@ -401,6 +401,11 @@ fn register_worker_cook_table(
     // register-phase ones (CS-0044).
     cook_lua_stdlib::register_platform_api(lua, &cook)?;
 
+    // CS-0123: cook.json_decode / cook.yaml_decode are both-phase (§24.8).
+    // Same shared implementation as the register VM so a probe produce
+    // body behaves identically on the pre-pass and demand-driven paths.
+    cook_lua_stdlib::register_codec_api(lua, &cook)?;
+
     // cook.load_module(name) — execute-phase counterpart of the register-phase
     // resolver in cook-register/src/module_loader.rs (CS-0017, CS-0035,
     // §{lua.cook-load-module}). Lookup uses the unit's current_working_dir,
@@ -2393,6 +2398,40 @@ mod tests {
             cook_contracts::probe_value::encode_canonical_json(&decoded),
             "ProbeOutput.bytes must be the canonical JSON rendering"
         );
+    }
+
+    /// CS-0123: the worker VM MUST expose cook.json_decode /
+    /// cook.yaml_decode (§24.8) so a demand-driven probe produce body can
+    /// decode structured output — parity with the register pre-pass VM.
+    #[test]
+    fn probe_produce_can_call_codecs_on_worker_vm() {
+        let dir = TempDir::new().unwrap();
+        let (pool, rx) = WorkerPool::spawn(1);
+
+        pool.submit(WorkItem {
+            id: 0,
+            payload: WorkPayload::Probe {
+                key: "test:codecs".into(),
+                produce: r#"
+                    local j = cook.json_decode('{"name":"foo","items":[1,2]}')
+                    local y = cook.yaml_decode("word: hello\n")
+                    return { name = j.name, second = j.items[2], word = y.word }
+                "#.into(),
+                line: 1,
+            },
+            recipe_name: "probe_recipe".to_string(),
+            working_dir: dir.path().to_path_buf(),
+            env_vars: HashMap::new(),
+            project_root: dir.path().to_path_buf(),
+        });
+
+        let result = rx.recv().unwrap();
+        pool.shutdown();
+
+        assert!(result.success, "codec probe must succeed; got: {:?}", result.error);
+        let decoded = cook_contracts::probe_value::decode_json(&result.probe_output.unwrap().bytes)
+            .expect("must decode");
+        assert_eq!(decoded, serde_json::json!({"name": "foo", "second": 2, "word": "hello"}));
     }
 
     /// G1: a probe whose `produce` source raises a Lua error MUST fail the
