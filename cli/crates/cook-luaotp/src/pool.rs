@@ -1004,7 +1004,8 @@ fn execute_work_item(
             step_kind: _,
             // is_chore is consumed by the engine's chore-window dispatch
             // before the item ever reaches the worker pool.
-            ..
+            is_chore: _,
+            line,
         } => execute_lua_chunk(
             lua,
             work.id,
@@ -1014,6 +1015,7 @@ fn execute_work_item(
             ingredient_groups,
             &work.recipe_name,
             node_name,
+            *line,
         ),
         WorkPayload::Interactive { .. } => {
             WorkResult {
@@ -1206,6 +1208,7 @@ fn execute_lua_chunk(
     ingredient_groups: &[Vec<String>],
     recipe_name: &str,
     node_name: String,
+    line: usize,
 ) -> WorkResult {
     let setup = || -> mlua::Result<()> {
         let globals = lua.globals();
@@ -1234,7 +1237,32 @@ fn execute_lua_chunk(
             globals.set(format!("input_{}", i + 1), table)?;
         }
 
-        lua.load(code).exec()?;
+        // COOK-191/CS-0126: newline-pad the chunk so line 1 of `code` lands
+        // at the originating step's Cookfile line, then name the chunk
+        // `@Cookfile` so mlua treats it as a file source. Together these
+        // make an execute-phase Lua error read `Cookfile:LINE: msg`
+        // instead of the opaque `[string "..."]:1: msg` produced by an
+        // unnamed/unpadded `load`. A multi-line `>{ }` block's internal
+        // lines resolve correctly too, since `code` is spliced in verbatim
+        // after the padding — line k of the block reports as line+k-1.
+        //
+        // Known imprecision: in a multi-Cookfile workspace the worker has
+        // no way to know which imported Cookfile a step came from, so
+        // `@Cookfile` is only exactly right for the entry file. This is a
+        // follow-up concern, not addressed here.
+        let padded;
+        let src: &str = if line > 1 {
+            let mut s = String::with_capacity(code.len() + line);
+            for _ in 1..line {
+                s.push('\n');
+            }
+            s.push_str(code);
+            padded = s;
+            &padded
+        } else {
+            code
+        };
+        lua.load(src).set_name("@Cookfile").exec()?;
         Ok(())
     };
 
@@ -1558,6 +1586,7 @@ mod tests {
                 ingredient_groups: vec![vec!["src.rs".to_string()]],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "multi".to_string(),
             working_dir: dir.path().to_path_buf(),
@@ -1642,6 +1671,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "r".to_string(),
             working_dir: dir.path().to_path_buf(),
@@ -1719,6 +1749,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "r".to_string(),
             working_dir: dir1.path().to_path_buf(),
@@ -1738,6 +1769,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "r".to_string(),
             working_dir: dir2.path().to_path_buf(),
@@ -1908,6 +1940,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "rec".to_string(),
             working_dir: dir.path().to_path_buf(),
@@ -2052,6 +2085,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "rec".to_string(),
             working_dir: cwd.to_path_buf(),
@@ -2204,6 +2238,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "rec".to_string(),
             working_dir: dir.path().to_path_buf(),
@@ -2266,6 +2301,7 @@ mod tests {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             recipe_name: "rec".to_string(),
             working_dir: dir.path().to_path_buf(),

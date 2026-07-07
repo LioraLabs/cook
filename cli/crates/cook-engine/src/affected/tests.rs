@@ -70,6 +70,7 @@ fn workspace_with(recipes: &[(&str, &[&str])]) -> RegisteredWorkspace {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,

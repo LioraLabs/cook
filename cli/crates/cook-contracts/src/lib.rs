@@ -131,6 +131,15 @@ pub enum WorkPayload {
         /// Set by `_enter_chore`/`_exit_chore`; routes the unit to the
         /// chore-window drain in cook-engine instead of the worker pool.
         is_chore: bool,
+        /// 1-indexed Cookfile line of the originating step; 0 = unknown.
+        /// Purely a diagnostics aid (COOK-191/CS-0126): the execute-phase
+        /// worker (cook-luaotp/src/pool.rs) newline-pads `code` so that a
+        /// Lua error inside the chunk reports `Cookfile:LINE:` instead of
+        /// the opaque `[string "..."]:1:` chunk name. This field MUST NOT
+        /// be folded into any cache fingerprint — unit identity is hashed
+        /// from `code`/`command` text directly (cook-register/src/unit_api.rs
+        /// `command_hash`), never by serialising the whole `WorkPayload`.
+        line: usize,
     },
     Test {
         cmd: String,
@@ -388,9 +397,10 @@ mod tests {
             ingredient_groups: vec![vec!["a".into(), "b".into()]],
             step_kind: StepKind::Cook,
             is_chore: false,
+            line: 1,
         };
         match &p {
-            WorkPayload::LuaChunk { code, inputs, outputs, ingredient_groups, step_kind, is_chore } => {
+            WorkPayload::LuaChunk { code, inputs, outputs, ingredient_groups, step_kind, is_chore, line: _ } => {
                 assert_eq!(*step_kind, StepKind::Cook);
                 assert_eq!(code, "print('hi')");
                 assert_eq!(inputs, &vec!["in.txt".to_string()]);
@@ -412,6 +422,7 @@ mod tests {
             ingredient_groups: vec![],
             step_kind: StepKind::Chore,
             is_chore: true,
+            line: 1,
         };
         assert!(matches!(chore_unit, WorkPayload::LuaChunk { is_chore: true, .. }));
     }

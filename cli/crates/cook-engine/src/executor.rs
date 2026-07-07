@@ -3661,6 +3661,7 @@ mod tests {
                     ingredient_groups: vec![],
                     step_kind: cook_contracts::StepKind::Chore,
                     is_chore: true,
+                    line: 0,
                 },
                 "shell1", wd.clone()),
             &[a]).unwrap();
@@ -3709,6 +3710,7 @@ mod tests {
                     ingredient_groups: vec![],
                     step_kind: cook_contracts::StepKind::Chore,
                     is_chore: true,
+                    line: 0,
                 },
                 "lua_chore", wd.clone()),
             &[]).unwrap();
@@ -3721,6 +3723,7 @@ mod tests {
                     ingredient_groups: vec![],
                     step_kind: cook_contracts::StepKind::Chore,
                     is_chore: true,
+                    line: 0,
                 },
                 "lua_chore", wd),
             &[a]).unwrap();
@@ -3762,6 +3765,7 @@ mod tests {
                     ingredient_groups: vec![],
                     step_kind: cook_contracts::StepKind::Cook,
                     is_chore: false,
+                    line: 0,
                 },
                 "regular_lua", wd),
             &[]).unwrap();

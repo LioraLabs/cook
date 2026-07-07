@@ -196,7 +196,7 @@ fn record_field(record: bool) -> String {
 pub(crate) fn generate_cook_step(
     out: &mut String,
     cook_step: &CookStep,
-    _line: usize,
+    line: usize,
     index: usize,
     step_pos: usize,
     prev_cook_index: Option<usize>,
@@ -283,8 +283,8 @@ pub(crate) fn generate_cook_step(
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}}})\n",
-                        code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}, line = {}}})\n",
+                        code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition), line
                     )
                 }
                 None => {
@@ -366,8 +366,8 @@ pub(crate) fn generate_cook_step(
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}}})\n",
-                        code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}, line = {}}})\n",
+                        code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition), line
                     )
                 }
                 None => {
@@ -437,8 +437,8 @@ pub(crate) fn generate_cook_step(
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = {}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}}})\n",
-                        input_source, code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition)
+                        "    cook.add_unit({{inputs = {}, output = _cook_out, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}, line = {}}})\n",
+                        input_source, code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition), line
                     ));
                 }
                 None => unreachable!("ManyToOne mode requires a using-clause"),
@@ -496,8 +496,8 @@ pub(crate) fn generate_cook_step(
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     format!(
-                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}}})\n",
-                        code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition)
+                        "        cook.add_unit({{inputs = {{_cook_in}}, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}, line = {}}})\n",
+                        code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition), line
                     )
                 }
                 None => unreachable!("OneToMany mode requires a using-clause"),
@@ -572,8 +572,8 @@ pub(crate) fn generate_cook_step(
                     let ing_groups = format_ingredient_groups(ingredients.len());
                     let env_keys = lua_body_consulted_env_keys(code);
                     out.push_str(&format!(
-                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}}})\n",
-                        code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition)
+                        "    cook.add_unit({{inputs = _cook_ins, outputs = _cook_outs, lua_code = {}, ingredient_groups = {}, consulted_env_keys = {}{}, line = {}}})\n",
+                        code_literal, ing_groups, env_keys, disposition_field(&cook_step.disposition), line
                     ));
                 }
                 _ => unreachable!("BlockStep mode requires ShellBlock or LuaBlock using-clause"),

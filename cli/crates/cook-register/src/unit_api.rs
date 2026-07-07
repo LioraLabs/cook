@@ -676,10 +676,34 @@ pub fn register_unit_api(
             }
         };
         let payload = if let Some(code) = lua_code {
-            let final_code = if !chore_param_prelude.is_empty() && is_chore {
-                format!("{chore_param_prelude}{code}")
+            let (final_code, chunk_line) = if !chore_param_prelude.is_empty() && is_chore {
+                // The prelude is normally one `local NAME = "VALUE"\n` line
+                // per bound chore param. Left as-is, N params would shift
+                // the step's own code down by N lines within this same
+                // `code` string — and pool.rs's padding can only ADD lines
+                // ahead of `code`, never remove them, so once N reaches the
+                // step's own (small) Cookfile line number there is no
+                // non-negative padding that recovers the right answer
+                // (verified empirically: a 2-param chore with its body on
+                // Cookfile line 2 cannot be fixed by subtracting 2 from an
+                // already-small line). Collapse the whole prelude onto a
+                // SINGLE line (`; `-joined statements, one trailing
+                // newline) so it always costs exactly one line regardless
+                // of param count — then subtracting exactly 1 always lines
+                // the step's own first line back up with its real Cookfile
+                // line. The trailing newline (rather than gluing prelude
+                // and code onto one shared line) also keeps this safe if
+                // the step's code happens to start with a `--` comment.
+                let prelude_single_line = format!(
+                    "{}\n",
+                    chore_param_prelude.trim_end_matches('\n').replace('\n', "; ")
+                );
+                (
+                    format!("{prelude_single_line}{code}"),
+                    line.saturating_sub(1),
+                )
             } else {
-                code
+                (code, line)
             };
             WorkPayload::LuaChunk {
                 code: final_code,
@@ -688,6 +712,7 @@ pub fn register_unit_api(
                 ingredient_groups,
                 step_kind,
                 is_chore,
+                line: chunk_line,
             }
         } else if interactive {
             WorkPayload::Interactive { cmd: command, line, is_chore }
@@ -710,6 +735,7 @@ pub fn register_unit_api(
                         ingredient_groups: vec![],
                         step_kind: StepKind::Cook,
                         is_chore,
+                        line,
                     }
                 }
                 Ok(None) => WorkPayload::Shell { cmd: command, line: 0 },
@@ -1181,6 +1207,7 @@ mod tests {
                 ingredient_groups,
                 step_kind: _,
                 is_chore: _,
+                line: _,
             } => {
                 assert_eq!(code, "print('hi')");
                 assert_eq!(inputs, &vec!["main.c".to_string()]);
@@ -1222,6 +1249,7 @@ mod tests {
                 ingredient_groups,
                 step_kind: _,
                 is_chore: _,
+                line: _,
             } => {
                 assert_eq!(code, "os.execute('wasm-pack build')");
                 assert_eq!(inputs, &vec!["src.rs".to_string()]);

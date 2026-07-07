@@ -371,6 +371,31 @@ fn is_bundleable(step: &Step) -> bool {
     )
 }
 
+/// The Cookfile line of a step's own code text, for diagnostics
+/// (COOK-191/CS-0126). `Step` is `#[non_exhaustive]`, so a future variant
+/// with no known line falls back to `0` (unknown — pool.rs applies no
+/// padding for that case).
+///
+/// `LuaBlock`/`InlineLuaBlock`'s `line` field is the line of the opening
+/// `>{` token itself — `cook_lang::lua_block::collect_lua_block` starts
+/// reading the block's code on the *next* physical line — so +1 here to
+/// point at the code's real first line, matching `Lua`'s `line` (which
+/// already is the code's own line, since a `>` line has no separate
+/// opener).
+fn step_line(step: &Step) -> usize {
+    match step {
+        Step::LuaBlock { line, .. } | Step::InlineLuaBlock { line, .. } => *line + 1,
+        Step::Shell { line, .. }
+        | Step::Lua { line, .. }
+        | Step::InlineLua { line, .. }
+        | Step::Cook { line, .. }
+        | Step::Plate { line, .. }
+        | Step::Test { line, .. }
+        | Step::ForEach { line, .. } => *line,
+        _ => 0,
+    }
+}
+
 /// One contiguous piece of an execute-phase body unit's `lua_code` chunk.
 ///
 /// `Static` pieces are raw Lua source text that the worker VM evaluates
@@ -525,12 +550,23 @@ fn emit_body_unit_with_names(
     if !file_refs.is_empty() {
         out.push_str(&file_refs.hoist_lines("    "));
     }
+    // COOK-191/CS-0126: report the bundle's first step's Cookfile line, so
+    // pool.rs can newline-pad the chunk and make an execute-phase error
+    // read `Cookfile:LINE:`. The `use`-statement preamble above adds
+    // `uses.len()` lines ahead of the first step's own code within this
+    // same chunk, so that count is subtracted here to compensate — known
+    // imprecision: a bundle spanning more than one original step (e.g. two
+    // adjacent `>` lines with no blank line between them) only gets an
+    // exact line for the first step; later steps in the same bundle may
+    // report a nearby-but-not-exact line. This is a follow-up concern, not
+    // in scope here.
+    let line = bundle.first().map(step_line).unwrap_or(0).saturating_sub(uses.len());
     // cache = false: consulted_env_keys is a cache-keying hint, omitted for
     // units that are never cached. The cacheable cook-step path in
     // cook_step.rs is the only emission site that includes it.
     out.push_str(&format!(
-        "    cook.add_unit({{lua_code = {}, cache = false}})\n",
-        lua_code_expr
+        "    cook.add_unit({{lua_code = {}, cache = false, line = {}}})\n",
+        lua_code_expr, line
     ));
 }
 
@@ -1384,9 +1420,14 @@ fn emit_chore_body_unit(out: &mut String, bundle: &[Step], uses: &[UseStatement]
     }
 
     let wrapped = wrap_lua_string(&chunk);
+    // COOK-191/CS-0126: same first-step-line-minus-uses-preamble accounting
+    // as `emit_body_unit_with_names`; unit_api.rs additionally subtracts
+    // the chore-param-binding prelude's line count for chore units, since
+    // that prelude is prepended to `code` after this point.
+    let line = bundle.first().map(step_line).unwrap_or(0).saturating_sub(uses.len());
     out.push_str(&format!(
-        "    cook.add_unit({{lua_code = {}, interactive = true, cache = false}})\n",
-        wrapped
+        "    cook.add_unit({{lua_code = {}, interactive = true, cache = false, line = {}}})\n",
+        wrapped, line
     ));
 }
 
