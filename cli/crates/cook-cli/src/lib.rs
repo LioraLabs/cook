@@ -2,4 +2,5 @@
 //! product; this lib exists so integration tests can drive subcommand
 //! dispatch without spawning a subprocess.
 
+pub mod diagnostics;
 pub mod modules;

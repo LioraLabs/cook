@@ -1,6 +1,7 @@
 //! cook — the user-facing binary for the Cook build system.
 
 mod cli;
+mod diagnostics;
 mod error;
 mod iso8601;
 mod pipeline;
@@ -29,6 +30,9 @@ fn main() {
     let matches = cli_command.get_matches();
     let mut cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)
         .expect("clap derive guarantees this conversion");
+    if cli.globals.verbose {
+        std::env::set_var("COOK_BACKTRACE", "1");
+    }
     let file_explicit = cookfile_flag_was_explicit(&matches);
     let result = apply_entry_discovery(&mut cli, file_explicit).and_then(|()| dispatch(cli));
 
@@ -36,7 +40,8 @@ fn main() {
         // TestFailure: the summary line already conveys the failure count;
         // printing the error message again would be noise (spec §3.4).
         if !matches!(e, CookError::TestFailure(_)) {
-            eprintln!("cook: {e}");
+            let msg = diagnostics::sanitize_error(&e.to_string(), diagnostics::backtrace_enabled());
+            eprintln!("cook: {msg}");
         }
         std::process::exit(e.exit_code());
     }
