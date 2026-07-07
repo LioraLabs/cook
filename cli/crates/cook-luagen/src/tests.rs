@@ -1408,6 +1408,92 @@ fn test_codegen_emits_unnamed_and_named_in_order() {
     assert!(out.contains("selected_name == \"release\""));
 }
 
+// ── Config-block body line alignment (COOK-191, CS-0126) ────────
+//
+// The Cookfile's generated Lua loads as ONE chunk named `@Cookfile`, so
+// mlua reports `Cookfile:<generated-chunk-line>` on a runtime error. These
+// tests assert config-block body lines land at their OWN Cookfile source
+// line number in the generated chunk (best-effort padding), so a runtime
+// error inside a config body reports the exact source line.
+
+#[test]
+fn test_config_body_line_alignment_unnamed_no_uses() {
+    let source = "config\n    env.X = bad()\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // Source line 2 (`env.X = bad()`) must land at generated line 2
+    // (0-indexed index 1).
+    assert!(
+        lines[1].contains("env.X = bad()"),
+        "expected generated line 2 to contain body line, got: {:?}\nfull output:\n{}",
+        lines[1],
+        out
+    );
+}
+
+#[test]
+fn test_config_body_line_alignment_with_leading_use() {
+    let source = "use foo\nconfig\n    env.Y = \"1\"\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // Source line 3 (`env.Y = "1"`) must land at generated line 3
+    // (0-indexed index 2).
+    assert!(
+        lines[2].contains("env.Y"),
+        "expected generated line 3 to contain env.Y, got: {:?}\nfull output:\n{}",
+        lines[2],
+        out
+    );
+}
+
+#[test]
+fn test_config_body_line_alignment_named_block() {
+    let source =
+        "config\n    env.A = \"1\"\nconfig release\n    env.B = \"2\"\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // env.A is source line 2 -> generated line 2 (index 1).
+    assert!(
+        lines[1].contains("env.A"),
+        "expected generated line 2 to contain env.A, got: {:?}\nfull output:\n{}",
+        lines[1],
+        out
+    );
+    // env.B is source line 4 -> generated line 4 (index 3).
+    assert!(
+        lines[3].contains("env.B"),
+        "expected generated line 4 to contain env.B, got: {:?}\nfull output:\n{}",
+        lines[3],
+        out
+    );
+}
+
+#[test]
+fn test_config_body_comment_line_becomes_blank_preserving_alignment() {
+    let source = "config\n    # note\n    env.Z = \"1\"\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // Source line 2 is a `#` comment -> generated line 2 must be empty
+    // (line count preserved, not skipped).
+    assert_eq!(
+        lines[1], "",
+        "expected generated line 2 to be blank for a comment line, got: {:?}\nfull output:\n{}",
+        lines[1],
+        out
+    );
+    // env.Z is source line 3 -> generated line 3 (index 2).
+    assert!(
+        lines[2].contains("env.Z"),
+        "expected generated line 3 to contain env.Z, got: {:?}\nfull output:\n{}",
+        lines[2],
+        out
+    );
+}
+
 // ── Cross-recipe dep integration tests ──────────────────────────
 
 #[test]
