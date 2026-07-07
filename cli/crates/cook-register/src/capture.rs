@@ -127,6 +127,20 @@ impl ChoreParamMeta {
             ChoreParamMeta::VariadicStar { name } => name,
         }
     }
+
+    /// Human-readable token for `cook menu` display, e.g. `caller`,
+    /// `who="world"`, `tail...`, `[rest...]`. Mirrors the `chore NAME …`
+    /// header syntax closely enough to be recognisable, without claiming
+    /// to be a re-parseable grammar.
+    pub fn display_token(&self) -> String {
+        match self {
+            ChoreParamMeta::Required { name } => name.clone(),
+            ChoreParamMeta::DefaultedString { name, default } => format!("{name}={default:?}"),
+            ChoreParamMeta::DefaultedLua { name, .. } => format!("{name}=<lua>"),
+            ChoreParamMeta::VariadicPlus { name } => format!("{name}..."),
+            ChoreParamMeta::VariadicStar { name } => format!("[{name}...]"),
+        }
+    }
 }
 
 #[derive(Debug)]

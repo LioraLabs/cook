@@ -77,6 +77,7 @@ mod tests {
             source: RegistrationSource::Static { line: 1 },
             kind: RecipeKind::Recipe,
             requires: requires.iter().map(|s| s.to_string()).collect(),
+            params: Vec::new(),
         }
     }
 

@@ -52,6 +52,8 @@ chore deploy target host="prod.example.com"
 
 `deploy` declares a required parameter `target` and a defaulted-string parameter `host`. Invoking `cook deploy production` binds `target="production"` and `host="prod.example.com"`.
 
+**Introspection (informative).** A declared `param_list` is part of a chore's observable interface. A conforming implementation's human-readable workspace listing (e.g. `cook menu`) SHOULD surface each chore's declared parameters alongside its name — rendering a required parameter as its bare name, a defaulted-string parameter as `NAME="default"`, and a variadic as `NAME...` — so the invocation shape is discoverable without opening the Cookfile. The machine-readable listing (`cook list`) remains bare names only. This is a presentation affordance, not a language-surface rule.
+
 ## 7.1.2. Parameter binding inside the body [#chores.param-binding]
 
 When a chore body is executed, every declared parameter binds as a **Lua local** in the body's scope, visible to inline-Lua (`>>`, `>>{}`), execute-Lua (`>`, `>{}`), and lua_block forms. The local's value is a Lua string for required and defaulted parameters; for variadics (§7.1.3) it is a Lua sequence (list-style table) of strings.

@@ -302,8 +302,19 @@ pub fn list_workspace_names(
     workspace: &Workspace,
     config: Option<&str>,
     env_overrides: &[String],
-) -> Result<Vec<(String, cook_register::RecipeKind)>, PipelineError> {
-    let mut out: Vec<(String, cook_register::RecipeKind)> = Vec::new();
+) -> Result<
+    Vec<(
+        String,
+        cook_register::RecipeKind,
+        Vec<cook_register::capture::ChoreParamMeta>,
+    )>,
+    PipelineError,
+> {
+    let mut out: Vec<(
+        String,
+        cook_register::RecipeKind,
+        Vec<cook_register::capture::ChoreParamMeta>,
+    )> = Vec::new();
     for (member, _canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?;
         let names = cook_register::list_names(builder, &member.lua_source)
@@ -314,7 +325,7 @@ pub fn list_workspace_names(
             } else {
                 format!("{prefix}.{}", n.name)
             };
-            out.push((qualified, n.kind));
+            out.push((qualified, n.kind, n.params));
         }
     }
     Ok(out)

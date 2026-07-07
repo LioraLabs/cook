@@ -1199,8 +1199,8 @@ fn collect_workspace_recipe_names(
     Some(
         names
             .into_iter()
-            .filter(|(_, kind)| matches!(kind, cook_engine::cook_register::RecipeKind::Recipe))
-            .map(|(name, _)| name)
+            .filter(|(_, kind, _)| matches!(kind, cook_engine::cook_register::RecipeKind::Recipe))
+            .map(|(name, _, _)| name)
             .collect(),
     )
 }
@@ -1222,10 +1222,22 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
 
-    for (name, kind) in &names {
+    for (name, kind, params) in &names {
+        let suffix = if params.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " {}",
+                params
+                    .iter()
+                    .map(|p| p.display_token())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
         match kind {
-            cook_engine::cook_register::RecipeKind::Recipe => println!("  recipe {name}"),
-            cook_engine::cook_register::RecipeKind::Chore => println!("  chore  {name}"),
+            cook_engine::cook_register::RecipeKind::Recipe => println!("  recipe {name}{suffix}"),
+            cook_engine::cook_register::RecipeKind::Chore => println!("  chore  {name}{suffix}"),
         }
     }
 
@@ -1266,7 +1278,7 @@ pub fn cmd_list(globals: &Globals, args: &crate::cli::ListArgs) -> Result<(), Co
     let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
 
-    for (name, kind) in names {
+    for (name, kind, _params) in names {
         let is_chore = matches!(kind, cook_engine::cook_register::RecipeKind::Chore);
         if (is_chore && want_chores) || (!is_chore && want_recipes) {
             println!("{name}");
