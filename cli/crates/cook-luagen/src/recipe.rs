@@ -985,24 +985,23 @@ pub fn generate_with_names(
 ///
 /// Member-materialisation is structurally correct here; the demand-driven
 /// probe pre-pass (§22.5.10) and the per-member fingerprint fold (§17) are the
-/// COOK-64 runtime slice. A `ProbeKey` reads the probe value via
-/// `cook.cache.get`; a `ProbeKey` carrying a `:field` selector indexes the
-/// named array field. The `$(cmd)` and `(LUA_EXPR)` sources were removed in
-/// COOK-97 — only `ProbeKey` remains.
+/// COOK-64 runtime slice. The `$(cmd)` and `(LUA_EXPR)` sources were removed
+/// in COOK-97 — only `ProbeKey` remains.
+///
+/// COOK-190: the ref passes through verbatim. Probe keys are canonically
+/// two-segment (`ns:name`, §22.5.2), so `a:b` is ambiguous between a
+/// two-segment key and a `key:field` selector — resolvable only against the
+/// probe registry, which exists at register time, not codegen time. The
+/// register pre-pass (§22.5.10) resolves the ref (exact key match wins, else
+/// the trailing segment is a field selector) and stores the member array
+/// under the verbatim ref, where this lookup finds it.
 fn emit_for_each_items(out: &mut String, fe: &ForEachStep) {
     match &fe.source {
         ForEachSource::ProbeKey(k) => {
-            // §8.x grammar `probe_ref ::= IDENT (":" IDENT)?`; §22.5.10:
-            // `key:field` iterates the array at the named field.
-            let (key, field) = match k.split_once(':') {
-                Some((key, field)) => (key, Some(field)),
-                None => (k.as_str(), None),
-            };
-            let mut expr = format!("cook.cache.get(\"{}\")", escape_lua_string(key));
-            if let Some(field) = field {
-                expr.push_str(&format!("[\"{}\"]", escape_lua_string(field)));
-            }
-            out.push_str(&format!("    local _items = {}\n", expr));
+            out.push_str(&format!(
+                "    local _items = cook.cache.get(\"{}\")\n",
+                escape_lua_string(k)
+            ));
         }
     }
 }
@@ -1377,14 +1376,11 @@ fn for_each_meta_field(recipe: &Recipe) -> Option<String> {
         _ => None,
     })?;
     let body = match &step.source {
-        ForEachSource::ProbeKey(k) => match k.split_once(':') {
-            Some((key, field)) => format!(
-                "kind = \"probe\", key = \"{}\", field = \"{}\"",
-                escape_lua_string(key),
-                escape_lua_string(field),
-            ),
-            None => format!("kind = \"probe\", key = \"{}\"", escape_lua_string(k)),
-        },
+        // COOK-190: verbatim ref; key-vs-field resolution happens in the
+        // register pre-pass against the probe registry.
+        ForEachSource::ProbeKey(k) => {
+            format!("kind = \"probe\", ref = \"{}\"", escape_lua_string(k))
+        }
     };
     Some(format!("__for_each = {{{}}}", body))
 }

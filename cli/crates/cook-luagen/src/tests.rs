@@ -3355,11 +3355,14 @@ fn for_each_probe_cook_fans_out_per_member() {
 }
 
 #[test]
-fn for_each_probe_field_indexes_array() {
+fn for_each_probe_ref_passes_through_verbatim() {
+    // COOK-190: no codegen-side `:` split — the register pre-pass resolves
+    // key-vs-field against the probe registry and stores the member array
+    // under the verbatim ref.
     let src = "recipe a\n    ingredients cards:items\n    cook \"o/$<in.id>\" { build $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
-    assert!(lua.contains("local _items = cook.cache.get(\"cards\")[\"items\"]"),
-        "key:field should index the named field, got:\n{lua}");
+    assert!(lua.contains("local _items = cook.cache.get(\"cards:items\")"),
+        "ref must pass through unsplit, got:\n{lua}");
 }
 
 #[test]
@@ -3378,14 +3381,14 @@ fn for_each_surface_carries_source_metadata() {
     let probe = generate(&cook_lang::parse(
         "recipe a\n    ingredients cards\n    cook \"o/$<in.id>\" { x $<out> }\n",
     ).unwrap());
-    assert!(probe.contains(r#"__for_each = {kind = "probe", key = "cards"}"#),
+    assert!(probe.contains(r#"__for_each = {kind = "probe", ref = "cards"}"#),
         "probe source metadata missing, got:\n{probe}");
 
     let field = generate(&cook_lang::parse(
         "recipe a\n    ingredients cards:items\n    cook \"o/$<in.id>\" { x $<out> }\n",
     ).unwrap());
-    assert!(field.contains(r#"__for_each = {kind = "probe", key = "cards", field = "items"}"#),
-        "key:field metadata missing, got:\n{field}");
+    assert!(field.contains(r#"__for_each = {kind = "probe", ref = "cards:items"}"#),
+        "verbatim ref metadata missing, got:\n{field}");
 }
 
 #[test]

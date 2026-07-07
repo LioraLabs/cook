@@ -56,15 +56,17 @@ pub struct RegisteredRecipe {
 /// surface-AST `ForEachSource` but lives in the register crate so the
 /// pre-pass can dispatch without a parser dependency.
 ///
-/// - `Probe { key, field }` — `ingredients <probe_key>` / `<probe_key:field>`;
-///   the pre-pass evaluates probe `key` and the body reads it via
-///   `cook.cache.get(key)` (indexing `[field]` when present).
+/// - `Probe { source_ref }` — `ingredients <ref>`, the ref verbatim (`key`
+///   or `key:field`; a probe key may itself be two-segment `ns:name`).
+///   Resolution against the probe registry happens in the register
+///   pre-pass (COOK-190); the body reads the resolved member array via
+///   `cook.cache.get(<verbatim ref>)`.
 ///
 /// The `Shell { cmd, as_lines }` and `Lua` variants have been removed in
 /// COOK-97 — only `Probe` remains.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForEachDescriptor {
-    Probe { key: String, field: Option<String> },
+    Probe { source_ref: String },
 }
 
 /// Parse the `__for_each` descriptor off a register surface meta table.
@@ -75,10 +77,7 @@ fn parse_for_each_meta(meta: &LuaTable) -> LuaResult<Option<ForEachDescriptor>> 
     };
     let kind: String = t.get("kind")?;
     Ok(Some(match kind.as_str() {
-        "probe" => ForEachDescriptor::Probe {
-            key: t.get("key")?,
-            field: t.get::<Option<String>>("field")?,
-        },
+        "probe" => ForEachDescriptor::Probe { source_ref: t.get("ref")? },
         other => {
             return Err(mlua::Error::runtime(format!(
                 "cook.__register_surface: unknown __for_each kind '{other}'"
