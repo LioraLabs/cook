@@ -329,6 +329,30 @@ pub(crate) fn parse_ingredients_probe_source(
         });
     }
     let key = rest[..end].to_string();
+    // COOK-190 / §22.5.10: the source ref is `probe_ref (":" IDENT)?` — a
+    // probe key of at most two `:`-separated segments (§22.5.2), plus one
+    // optional trailing `:field` selector. Validate the shape here so a
+    // malformed ref (empty segment, non-ident start, 4+ segments) fails at
+    // parse time instead of surfacing as a bogus "no such probe" register
+    // error. Which colon is key vs selector is resolved against the probe
+    // registry in the register pre-pass, not here.
+    let segments: Vec<&str> = key.split(':').collect();
+    // Only the first char needs checking: the scan above already restricts
+    // every char to [A-Za-z0-9_:].
+    let seg_ok = |s: &&str| {
+        s.chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+    };
+    if segments.len() > 3 || !segments.iter().all(seg_ok) {
+        return Err(ParseError::Parse {
+            line,
+            message: format!(
+                "ingredients: malformed probe ref '{key}' (expected NAME, NS:NAME, \
+                 or an optional trailing :FIELD selector)"
+            ),
+        });
+    }
     let leftover = rest[end..].trim();
     if !leftover.is_empty() {
         return Err(ParseError::Parse {

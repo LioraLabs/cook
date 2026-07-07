@@ -1622,6 +1622,102 @@ recipe build_catalog
 }
 
 #[test]
+fn for_each_two_segment_probe_key_fans_out() {
+    let dir = TempDir::new().unwrap();
+    // COOK-190: `ns:name` is the canonical probe naming; a two-segment key
+    // in ingredients position must resolve to the declared probe, not
+    // truncate to probe `cards` + field selector `list`.
+    let cookfile = r#"
+register
+    cook.probe("cards:list", {
+        inputs = {},
+        produce = [[ return { "alpha", "beta", "gamma" } ]],
+    })
+
+recipe stamps
+    ingredients cards:list
+    cook "out/$<in>.stamp" {
+        mkdir -p out
+        printf '%s' "$<in>" > $<out>
+    }
+"#;
+    let registered = register_surface(dir.path(), cookfile).expect("register");
+    let units = registered.units_by_recipe.get("stamps").expect("stamps registered");
+    assert_eq!(units.units.len(), 3, "one unit per member of probe 'cards:list'");
+}
+
+#[test]
+fn for_each_two_segment_key_with_field_selector_fans_out() {
+    let dir = TempDir::new().unwrap();
+    // §22.5.10 three-segment form: two-segment probe key `ns:cards` + one
+    // trailing `:items` field selector. The pre-pass resolves via the final
+    // colon (no probe `ns:cards:items` is declared) and stashes the selected
+    // array under the verbatim ref.
+    let cookfile = r#"
+register
+    cook.probe("ns:cards", {
+        inputs = {},
+        produce = [[ return { items = { {id="a"}, {id="b"} } } ]],
+    })
+
+recipe build_cards
+    ingredients ns:cards:items
+    cook "out/$<in.id>.json" {
+        mkdir -p out
+        printf '%s' '$<in>' > $<out>
+    }
+"#;
+    let registered = register_surface(dir.path(), cookfile).expect("register");
+    let units = registered.units_by_recipe.get("build_cards").unwrap();
+    assert_eq!(units.units.len(), 2, "two items via the ns:cards:items selector");
+}
+
+#[test]
+fn for_each_exact_probe_key_wins_over_field_selector_split() {
+    let dir = TempDir::new().unwrap();
+    // Both `cards` (an object with a `list` field) and `cards:list` (an
+    // array) are declared. §22.5.10 resolution: the exact key match wins.
+    let cookfile = r#"
+register
+    cook.probe("cards", {
+        inputs = {},
+        produce = [[ return { list = { "x" } } ]],
+    })
+    cook.probe("cards:list", {
+        inputs = {},
+        produce = [[ return { "a", "b" } ]],
+    })
+
+recipe stamps
+    ingredients cards:list
+    cook "out/$<in>.stamp" {
+        mkdir -p out
+        printf '%s' "$<in>" > $<out>
+    }
+"#;
+    let registered = register_surface(dir.path(), cookfile).expect("register");
+    let units = registered.units_by_recipe.get("stamps").unwrap();
+    assert_eq!(units.units.len(), 2, "exact key 'cards:list' wins over cards[list]");
+}
+
+#[test]
+fn for_each_undeclared_two_segment_ref_error_names_full_ref() {
+    let dir = TempDir::new().unwrap();
+    let cookfile = r#"
+recipe stamps
+    ingredients nope:list
+    cook "out/$<in>.stamp" {
+        printf '%s' "$<in>" > $<out>
+    }
+"#;
+    let err = register_surface(dir.path(), cookfile).expect_err("must reject");
+    assert!(
+        matches!(err, RegisterError::ForEachProbeUndeclared { ref key, .. } if key == "nope:list"),
+        "error must name the full source ref, got {err:?}"
+    );
+}
+
+#[test]
 fn for_each_undeclared_probe_rejected() {
     let dir = TempDir::new().unwrap();
     // `ingredients nope` names a probe that was never declared.

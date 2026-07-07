@@ -1,0 +1,3 @@
+recipe stamps
+    ingredients a:b:c:d
+    cook "out/$<in>.stamp" { echo "$<in>" > $<out> }

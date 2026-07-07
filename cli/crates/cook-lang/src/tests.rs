@@ -1858,6 +1858,47 @@ fn ingredients_probe_field_selector_parses() {
 }
 
 #[test]
+fn ingredients_two_segment_probe_key_parses_whole_ref() {
+    // COOK-190: `ns:name` is the canonical probe naming; the ref must land
+    // in the AST verbatim, not truncated at the colon.
+    let source = "recipe stamps\n    ingredients cards:list\n    cook \"out/$<in>.stamp\" { echo \"$<in>\" > $<out> }\n";
+    let c = parse(source).unwrap();
+    assert_eq!(
+        first_for_each(&c).source,
+        ForEachSource::ProbeKey("cards:list".to_string())
+    );
+}
+
+#[test]
+fn ingredients_three_segment_ref_parses_whole_ref() {
+    // Two-segment key + one `:field` selector = three segments, the maximum.
+    let source = "recipe r\n    ingredients ns:name:items\n    cook \"$<in.id>\" { x }\n";
+    let c = parse(source).unwrap();
+    assert_eq!(
+        first_for_each(&c).source,
+        ForEachSource::ProbeKey("ns:name:items".to_string())
+    );
+}
+
+#[test]
+fn ingredients_four_segment_ref_rejected() {
+    let msg = parse_err("recipe r\n    ingredients a:b:c:d\n    cook \"x\" { y }\n");
+    assert!(msg.contains("malformed probe ref"), "got: {msg}");
+}
+
+#[test]
+fn ingredients_trailing_colon_ref_rejected() {
+    let msg = parse_err("recipe r\n    ingredients cards:\n    cook \"x\" { y }\n");
+    assert!(msg.contains("malformed probe ref"), "got: {msg}");
+}
+
+#[test]
+fn ingredients_leading_colon_ref_rejected() {
+    let msg = parse_err("recipe r\n    ingredients :cards\n    cook \"x\" { y }\n");
+    assert!(msg.contains("malformed probe ref"), "got: {msg}");
+}
+
+#[test]
 fn ingredients_mixing_glob_then_probe_is_rejected() {
     let source = "recipe r\n    ingredients \"a.json\"\n    ingredients cardprobe\n    cook \"x\" { y }\n";
     let err = parse(source).unwrap_err();
