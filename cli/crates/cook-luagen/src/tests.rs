@@ -3449,6 +3449,54 @@ fn for_each_test_probe_ref_in_shell_command_is_codegen_error() {
     assert!(msg.contains("line 3"), "error should name the offending line, got: {msg}");
 }
 
+#[test]
+fn malformed_shell_sigil_is_codegen_error_not_emitted_sentinel() {
+    let src = "recipe bad\n    echo $<out_0>\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let err = crate::generate_with_names_checked(&cookfile, &names)
+        .expect_err("malformed $<out_0> must fail checked codegen");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("out_0") && msg.contains("malformed"),
+        "diagnostic should name the bad placeholder, got: {msg}"
+    );
+
+    let unchecked_err = crate::generate_with_names(&cookfile, &names)
+        .expect_err("unchecked codegen should error instead of emitting a sentinel");
+    assert!(
+        !unchecked_err.to_string().contains("[[SIGIL_ERROR:"),
+        "unchecked codegen must not embed SIGIL_ERROR sentinels either: {unchecked_err}"
+    );
+}
+
+#[test]
+fn checked_codegen_covers_every_current_step_kind() {
+    let src = r#"recipe everything
+    ingredients cards
+    >> local register_line = true
+    >>{
+        local register_block = true
+    }
+    cook "out/$<in.id>.txt" { printf '%s\n' "$<in.id>" > $<out> }
+    plate {
+        cat $<in>
+    }
+    test >{
+        assert(item.id ~= nil)
+    }
+    @ echo interactive
+    > local execute_line = true
+    >{
+        local execute_block = true
+    }
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    crate::generate_with_names_checked(&cookfile, &names)
+        .expect("all current Step variants should have codegen arms");
+}
+
 // ── §22.5.2 — native probe lowering (COOK-68) ──────────────────────────────
 
 fn make_probe_cf(produce: ProbeProduce) -> Cookfile {

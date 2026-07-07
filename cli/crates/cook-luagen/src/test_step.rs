@@ -184,15 +184,6 @@ pub(crate) fn generate_for_each_test_step(
     let should_fail = if test_step.should_fail { "true" } else { "false" };
     // CS-0101: substitution only (cache = false) — hoists, no file_refs field.
     let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
-    let sigil_err = |e: crate::resolver::ResolveError| {
-        (
-            format!(
-                "\"[[SIGIL_ERROR: {}]]\"",
-                crate::lua_string::escape_lua_string(&e.to_string())
-            ),
-            BTreeSet::new(),
-        )
-    };
 
     // `as` name is member-aware too; it is evaluated per-iteration (it may
     // reference `item`).
@@ -206,7 +197,7 @@ pub(crate) fn generate_for_each_test_step(
                 &mut file_refs,
                 crate::template::ProbeLowering::CacheGet,
             )
-            .unwrap_or_else(sigil_err);
+            .map_err(|source| CodegenError::SigilResolve { line, source })?;
             format!("name = {}, ", expr)
         }
         None => String::new(),
@@ -223,7 +214,7 @@ pub(crate) fn generate_for_each_test_step(
                 &mut file_refs,
                 crate::template::ProbeLowering::CacheGet,
             )
-            .unwrap_or_else(sigil_err);
+            .map_err(|source| CodegenError::SigilResolve { line, source })?;
             // CS-0127: `WorkPayload::Test` runs `cmd` verbatim via `/bin/sh`
             // — there is no execute-phase probe-substitution machinery for
             // test commands the way `cook.add_unit` rewrites a probe-bearing
@@ -284,4 +275,3 @@ fn build_shell_block_command(lines: &[String]) -> String {
     }
     s
 }
-

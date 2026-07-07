@@ -153,7 +153,7 @@ pub(crate) fn generate_for_each_plate_step(
     plate_step: &PlateStep,
     line: usize,
     recipe_names: &BTreeSet<String>,
-) {
+) -> Result<(), CodegenError> {
     use crate::resolver::{IterMode, OutputShape};
     use crate::template::{cook_step_ctx, expand_for_each_template};
 
@@ -182,15 +182,7 @@ pub(crate) fn generate_for_each_plate_step(
                 &mut file_refs,
                 crate::template::ProbeLowering::LiteralSigil,
             )
-            .unwrap_or_else(|e| {
-                (
-                    format!(
-                        "\"[[SIGIL_ERROR: {}]]\"",
-                        crate::lua_string::escape_lua_string(&e.to_string())
-                    ),
-                    BTreeSet::new(),
-                )
-            });
+            .map_err(|source| CodegenError::SigilResolve { line, source })?;
             if !file_refs.is_empty() {
                 out.push_str(&file_refs.hoist_lines("    "));
             }
@@ -213,6 +205,7 @@ pub(crate) fn generate_for_each_plate_step(
             out.push_str("    end\n");
         }
     }
+    Ok(())
 }
 
 fn build_shell_block_command(lines: &[String]) -> String {
@@ -244,4 +237,9 @@ pub enum CodegenError {
     EmptySource { line: usize },
     #[error("probe-value reference(s) {keys:?} in a `test` shell command inside a `for_each` recipe at line {line} are not supported — read the probe value in a Lua test body (`test >{{ ... }}`) instead (CS-0127)")]
     ProbeRefInTestCommand { line: usize, keys: Vec<String> },
+    #[error("plate/test placeholder error at line {line}: {source}")]
+    SigilResolve {
+        line: usize,
+        source: crate::resolver::ResolveError,
+    },
 }
