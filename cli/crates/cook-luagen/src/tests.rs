@@ -3431,6 +3431,24 @@ fn for_each_plate_probe_ref_lowers_as_literal_sigil() {
     );
 }
 
+#[test]
+fn for_each_test_probe_ref_in_shell_command_is_codegen_error() {
+    // CS-0127: unlike `plate`/`cook` command bodies, `WorkPayload::Test` runs
+    // `cmd` verbatim via `/bin/sh` with no probe-substitution machinery. The
+    // old codegen wrapped a probe-bearing test command in a deferred
+    // `function() return ... end` closure, but `cook.add_test`'s strict
+    // `command` typing (this same commit) now hard-rejects that closure at
+    // register time instead of degrading silently. Codegen must fail loudly
+    // instead, naming the probe key and the offending line.
+    let src = "recipe eval\n    ingredients cards\n    test {\n        $<foo:bar>\n    }\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let err = crate::generate_with_names(&cookfile, &std::collections::BTreeSet::new())
+        .expect_err("expected a codegen error for a probe ref in a for_each test shell command");
+    let msg = err.to_string();
+    assert!(msg.contains("foo:bar"), "error should name the probe key, got: {msg}");
+    assert!(msg.contains("line 3"), "error should name the offending line, got: {msg}");
+}
+
 // ── §22.5.2 — native probe lowering (COOK-68) ──────────────────────────────
 
 fn make_probe_cf(produce: ProbeProduce) -> Cookfile {

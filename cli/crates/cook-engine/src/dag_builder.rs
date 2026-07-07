@@ -2083,6 +2083,7 @@ mod test_slice_tests {
                 suite_name: "r".into(),
                 test_name: "t".into(),
                 iteration_item: None,
+                lua_code: None,
                 input_paths: vec![],
             },
             cache_meta: None,

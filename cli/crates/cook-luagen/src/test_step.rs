@@ -175,7 +175,7 @@ pub(crate) fn generate_for_each_test_step(
     test_step: &TestStep,
     line: usize,
     recipe_names: &BTreeSet<String>,
-) {
+) -> Result<(), CodegenError> {
     use crate::resolver::{IterMode, OutputShape};
     use crate::template::{cook_step_ctx, expand_for_each_template};
 
@@ -224,11 +224,21 @@ pub(crate) fn generate_for_each_test_step(
                 crate::template::ProbeLowering::CacheGet,
             )
             .unwrap_or_else(sigil_err);
-            let cmd_expr = if probe_keys.is_empty() {
-                cmd_concat
-            } else {
-                format!("function() return {} end", cmd_concat)
-            };
+            // CS-0127: `WorkPayload::Test` runs `cmd` verbatim via `/bin/sh`
+            // — there is no execute-phase probe-substitution machinery for
+            // test commands the way `cook.add_unit` rewrites a probe-bearing
+            // command into a LuaChunk (unit_api.rs's
+            // `try_expand_probe_templates`). The old codegen wrapped the
+            // command in `function() return ... end`, but that closure now
+            // hard-errors at `cook.add_test` register time (CS-0127's
+            // strict `command` typing) instead of silently degrading. Fail
+            // loudly at codegen time instead, with an actionable fix.
+            if !probe_keys.is_empty() {
+                // BTreeSet already yields keys in sorted order.
+                let keys: Vec<String> = probe_keys.into_iter().collect();
+                return Err(CodegenError::ProbeRefInTestCommand { line, keys });
+            }
+            let cmd_expr = cmd_concat;
             if !file_refs.is_empty() {
                 out.push_str(&file_refs.hoist_lines("    "));
             }
@@ -254,6 +264,7 @@ pub(crate) fn generate_for_each_test_step(
             out.push_str("    end\n");
         }
     }
+    Ok(())
 }
 
 /// Format the `name = <expr>, ` fragment for cook.add_test tables.

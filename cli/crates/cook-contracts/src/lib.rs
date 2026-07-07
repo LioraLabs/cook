@@ -140,6 +140,14 @@ pub enum WorkPayload {
         suite_name: String,
         test_name: String,
         iteration_item: Option<String>,
+        /// CS-0127 §22.4: exactly one of `cmd` / `lua_code` is populated —
+        /// `cmd` is a shell command run via `/bin/sh`, `lua_code` is a Lua
+        /// chunk executed on an execute-phase worker VM under the `test`
+        /// step-kind sandbox policy (identical to `Cook`, see [`StepKind`]).
+        /// When `lua_code` is `Some`, `cmd` MUST be empty; pass/fail is the
+        /// chunk completing without error / raising a Lua error, mirroring
+        /// `should_fail`'s existing exit-code inversion semantics.
+        lua_code: Option<String>,
         /// COOK-84: working-dir-relative paths of the files this test
         /// consumes — the recipe's resolved ingredients ∪ the step group's
         /// dep-output paths (mirrors `cache_input_paths` in
@@ -426,6 +434,7 @@ mod tests {
             suite_name: "unit".into(),
             test_name: "test_foo".into(),
             iteration_item: None,
+            lua_code: None,
             input_paths: vec![],
         };
         assert!(matches!(p, WorkPayload::Test { timeout: 30, should_fail: false, .. }));

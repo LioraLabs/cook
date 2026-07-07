@@ -1187,6 +1187,7 @@ mod tests {
                 suite_name: "s".into(),
                 test_name: "t".into(),
                 iteration_item: None,
+                lua_code: None,
                 input_paths: input_paths.iter().map(|s| s.to_string()).collect(),
             }),
             recipe_name: "s".into(),

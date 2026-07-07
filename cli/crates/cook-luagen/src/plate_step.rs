@@ -242,4 +242,6 @@ pub enum CodegenError {
          step (CS-0024 §3.5)"
     )]
     EmptySource { line: usize },
+    #[error("probe-value reference(s) {keys:?} in a `test` shell command inside a `for_each` recipe at line {line} are not supported — read the probe value in a Lua test body (`test >{{ ... }}`) instead (CS-0127)")]
+    ProbeRefInTestCommand { line: usize, keys: Vec<String> },
 }

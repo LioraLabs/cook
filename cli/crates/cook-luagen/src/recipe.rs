@@ -894,7 +894,7 @@ pub fn generate_with_names(
                                     test_step_val,
                                     *line,
                                     recipe_names,
-                                );
+                                )?;
                             } else {
                                 test_step::generate_test_step(
                                     &mut out,
