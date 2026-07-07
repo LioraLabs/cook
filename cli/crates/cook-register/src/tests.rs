@@ -367,6 +367,156 @@ end)
     assert!(err.contains("timeout"), "error should mention 'timeout', got: {err}");
 }
 
+// -----------------------------------------------------------------------
+// CS-0127: cook.add_unit typed-field sweep — every wrong-typed field is a
+// register-phase hard error naming the field, never a silent coercion to
+// its default. Mirrors the CS-0122 `command` precedent (unit_api.rs).
+// -----------------------------------------------------------------------
+
+/// Small helper shared by the CS-0127 field-typing tests below: register a
+/// single-recipe Cookfile whose body is exactly one `cook.add_unit(spec)`
+/// call, and return the register-time error string. Panics if registration
+/// unexpectedly succeeds.
+fn add_unit_reject(spec_body: &str) -> String {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = format!(
+        r#"
+cook.recipe("r", {{}}, function()
+    cook.add_unit({{ {spec_body} }})
+end)
+"#
+    );
+    let result = register_cookfile(rt, &lua_src, None);
+    assert!(
+        result.is_err(),
+        "expected register_cookfile to reject spec `{{ {spec_body} }}`, but it succeeded"
+    );
+    result.err().unwrap().to_string()
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_lua_code() {
+    let err = add_unit_reject(r#"lua_code = 42"#);
+    assert!(err.contains("lua_code"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_boolean_interactive() {
+    let err = add_unit_reject(r#"command = "true", interactive = "yes""#);
+    assert!(err.contains("interactive"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_integer_line() {
+    let err = add_unit_reject(r#"command = "true", line = "7""#);
+    assert!(err.contains("line"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_boolean_cache() {
+    let err = add_unit_reject(r#"command = "true", cache = "no""#);
+    assert!(err.contains("cache"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_inputs() {
+    let err = add_unit_reject(r#"command = "true", inputs = "src/a.c""#);
+    assert!(err.contains("inputs"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_element_inputs() {
+    let err = add_unit_reject(r#"command = "true", inputs = {1, 2}"#);
+    assert!(err.contains("inputs"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_output() {
+    let err = add_unit_reject(r#"command = "true", output = {}"#);
+    assert!(err.contains("output"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_outputs() {
+    let err = add_unit_reject(r#"command = "true", outputs = "x""#);
+    assert!(err.contains("outputs"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_element_outputs() {
+    let err = add_unit_reject(r#"command = "true", outputs = {true}"#);
+    assert!(err.contains("outputs"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_ingredient_groups() {
+    let err = add_unit_reject(r#"command = "true", ingredient_groups = "x""#);
+    assert!(err.contains("ingredient_groups"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_element_ingredient_groups() {
+    let err = add_unit_reject(r#"command = "true", ingredient_groups = {{1}}"#);
+    assert!(err.contains("ingredient_groups"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_unknown_step_kind_value() {
+    let err = add_unit_reject(r#"command = "true", step_kind = "banana""#);
+    assert!(err.contains("step_kind"), "got: {err}");
+    assert!(err.contains("banana"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_step_kind() {
+    let err = add_unit_reject(r#"command = "true", step_kind = 3"#);
+    assert!(err.contains("step_kind"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_member() {
+    let err = add_unit_reject(r#"command = "true", member = {}"#);
+    assert!(err.contains("member"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_unknown_sharing_value() {
+    let err = add_unit_reject(r#"command = "true", sharing = "wide""#);
+    assert!(err.contains("sharing"), "got: {err}");
+    assert!(err.contains("wide"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_sharing() {
+    let err = add_unit_reject(r#"command = "true", sharing = 1"#);
+    assert!(err.contains("sharing"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_env() {
+    let err = add_unit_reject(r#"command = "true", env = "FOO=1""#);
+    assert!(err.contains("env"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_file_refs() {
+    let err = add_unit_reject(r#"command = "true", file_refs = "src/*.c""#);
+    assert!(err.contains("file_refs"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_consulted_env_keys() {
+    let err = add_unit_reject(r#"command = "true", consulted_env_keys = 42"#);
+    assert!(err.contains("consulted_env_keys"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_unknown_string_consulted_env_keys() {
+    let err = add_unit_reject(r#"command = "true", consulted_env_keys = "FOO""#);
+    assert!(err.contains("consulted_env_keys"), "got: {err}");
+}
+
 #[test]
 fn test_resolve_ingredients_api() {
     use std::fs;
