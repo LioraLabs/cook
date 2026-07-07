@@ -33,14 +33,17 @@ fn main() {
     if cli.globals.verbose {
         std::env::set_var("COOK_BACKTRACE", "1");
     }
+    let output_json = cli.globals.output == "json";
     let file_explicit = cookfile_flag_was_explicit(&matches);
     let result = apply_entry_discovery(&mut cli, file_explicit).and_then(|()| dispatch(cli));
 
     if let Err(e) = result {
-        // TestFailure: the summary line already conveys the failure count;
-        // printing the error message again would be noise (spec §3.4).
-        if !matches!(e, CookError::TestFailure(_)) {
-            let msg = diagnostics::sanitize_error(&e.to_string(), diagnostics::backtrace_enabled());
+        let msg = diagnostics::sanitize_error(&e.to_string(), diagnostics::backtrace_enabled());
+        if output_json {
+            eprintln!("{}", diagnostics::json_diagnostic(e.code(), &msg));
+        } else if !matches!(e, CookError::TestFailure(_)) {
+            // TestFailure: the summary line already conveys the failure count;
+            // printing the error message again would be noise.
             eprintln!("cook: {msg}");
         }
         std::process::exit(e.exit_code());
