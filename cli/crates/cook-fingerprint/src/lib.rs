@@ -93,13 +93,14 @@ pub fn compute_test_fingerprint(
     payload: &cook_contracts::WorkPayload,
     inputs: &FingerprintInputs,
 ) -> String {
-    let (cmd, timeout, should_fail) = match payload {
+    let (cmd, timeout, should_fail, lua_code) = match payload {
         cook_contracts::WorkPayload::Test {
             cmd,
             timeout,
             should_fail,
+            lua_code,
             ..
-        } => (cmd.as_str(), *timeout, *should_fail),
+        } => (cmd.as_str(), *timeout, *should_fail, lua_code.as_deref()),
         _ => panic!("compute_test_fingerprint: not a Test payload"),
     };
 
@@ -107,6 +108,14 @@ pub fn compute_test_fingerprint(
 
     // 1. cmd
     h.update(cmd.as_bytes());
+    h.update(b"\0");
+
+    // 1b. lua_code (CS-0127 §22.4): a lua-body test has an empty `cmd` by
+    // construction, so its content is carried entirely by `lua_code`. Fold
+    // it into the hash so two lua tests with different bodies get distinct
+    // fingerprints, and editing a lua test's body busts its cache key
+    // instead of colliding on the shared empty-`cmd` hash.
+    h.update(lua_code.unwrap_or("").as_bytes());
     h.update(b"\0");
 
     // 2. timeout (big-endian u64)

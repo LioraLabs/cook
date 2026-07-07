@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -1009,8 +1010,20 @@ fn execute_work_item(
                 probe_output: None,
             }
         }
-        WorkPayload::Test { cmd, line, timeout, should_fail, suite_name, test_name, .. } => {
-            execute_test(work.id, cmd, *line, *timeout, *should_fail, suite_name, test_name, working_dir, env_vars, node_name)
+        WorkPayload::Test { cmd, line, timeout, should_fail, suite_name, test_name, lua_code, .. } => {
+            match lua_code {
+                Some(code) => execute_lua_test(
+                    lua,
+                    work.id,
+                    code,
+                    *timeout,
+                    *should_fail,
+                    suite_name,
+                    test_name,
+                    node_name,
+                ),
+                None => execute_test(work.id, cmd, *line, *timeout, *should_fail, suite_name, test_name, working_dir, env_vars, node_name),
+            }
         }
         WorkPayload::Probe { key, produce, line } => {
             execute_probe(lua, work.id, key, produce, *line, node_name)
@@ -1236,6 +1249,98 @@ fn execute_lua_chunk(
             output_lines: Vec::new(),
             probe_output: None,
         },
+    }
+}
+
+/// Execute a `WorkPayload::Test` unit whose body is a Lua chunk (`lua_code`,
+/// CS-0127 §22.4) on the worker Lua VM — the sibling of `execute_test` for
+/// the shell-command path. Pass/fail is whether the chunk completes without
+/// raising a Lua error; `should_fail` inverts the result exactly as it does
+/// for shell tests (mirrors `execute_test`'s `success` computation).
+///
+/// Timeout is enforced best-effort via an instruction-count VM hook: every
+/// 100_000 executed instructions, the hook checks wall-clock elapsed time
+/// against `timeout_secs` and raises a Lua runtime error once exceeded. This
+/// only interrupts *Lua bytecode* execution — a blocking `cook.sh` (or other
+/// long-running foreign call) invoked from the test body runs to completion
+/// unobserved by the hook, since the hook fires between VM instructions and
+/// cannot preempt a call already in flight. A test body that shells out to
+/// something that hangs can therefore exceed `timeout_secs` before this
+/// function returns.
+fn execute_lua_test(
+    lua: &mlua::Lua,
+    id: usize,
+    code: &str,
+    timeout_secs: u64,
+    should_fail: bool,
+    suite_name: &str,
+    test_name: &str,
+    node_name: String,
+) -> WorkResult {
+    let start = std::time::Instant::now();
+    let timeout_dur = std::time::Duration::from_secs(timeout_secs);
+    let timed_out_flag = Arc::new(AtomicBool::new(false));
+
+    let hook_timed_out = Arc::clone(&timed_out_flag);
+    let hook_test_name = test_name.to_string();
+    lua.set_hook(
+        mlua::HookTriggers::new().every_nth_instruction(100_000),
+        move |_lua, _debug| {
+            if start.elapsed() > timeout_dur {
+                hook_timed_out.store(true, Ordering::Relaxed);
+                return Err(mlua::Error::runtime(format!(
+                    "test '{hook_test_name}' exceeded timeout of {timeout_secs}s"
+                )));
+            }
+            Ok(mlua::VmState::Continue)
+        },
+    );
+
+    let chunk_name = format!("@test:{suite_name}:{test_name}");
+    let exec_result = lua.load(code).set_name(&chunk_name).exec();
+
+    // Always remove the hook before returning — it captures `start` and
+    // `timed_out_flag` by move and must not outlive this call; leaving it
+    // installed would fire on whatever the next work item's Lua does.
+    lua.remove_hook();
+
+    let duration = start.elapsed().as_secs_f64();
+    let chunk_ok = exec_result.is_ok();
+    let timed_out = timed_out_flag.load(Ordering::Relaxed);
+    let stderr = match &exec_result {
+        Ok(()) => String::new(),
+        Err(e) => e.to_string(),
+    };
+
+    let success = if should_fail { !chunk_ok } else { chunk_ok };
+
+    // Mirror execute_test's CS-0035 stream-tagged output_lines so a failing
+    // lua test's error text reaches the runner's live output the same way a
+    // failing shell test's stderr does — otherwise only the terse
+    // "test failed: <name>" summary would ever reach the terminal.
+    let mut output_lines: Vec<(OutputStream, String)> = Vec::new();
+    for line in stderr.lines() {
+        output_lines.push((OutputStream::Stderr, line.to_string()));
+    }
+
+    WorkResult {
+        id,
+        success,
+        error: if success { None } else { Some(format!("test failed: {test_name}")) },
+        test_output: Some(TestOutput {
+            suite_name: suite_name.to_string(),
+            test_name: test_name.to_string(),
+            stdout: String::new(),
+            stderr,
+            duration,
+            timed_out,
+            should_fail,
+            exit_success: chunk_ok,
+            exit_code: None,
+        }),
+        node_name,
+        output_lines,
+        probe_output: None,
     }
 }
 
