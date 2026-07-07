@@ -4,7 +4,6 @@
 //! (commands, inputs, outputs) without executing them.
 
 pub mod capture;
-pub mod codec_api;
 pub mod context;
 pub mod dep_output_api;
 pub mod engine;

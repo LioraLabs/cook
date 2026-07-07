@@ -1706,7 +1706,11 @@ fn install_remaining_apis(
     // CS-0101: cook.file_ref — register-phase resolution of `$<file:PATH>`
     // placeholders (hoisted locals emitted by cook-luagen).
     crate::file_ref::register_file_ref(lua, &builder.working_dir)?;
-    crate::codec_api::register_codec_api(lua)?;
+    // cook.json_decode / cook.yaml_decode are both-phase (§24.8, CS-0123);
+    // the shared implementation lives in cook-lua-stdlib so the worker VMs
+    // in cook-luaotp install byte-identical behaviour.
+    let cook_tbl: LuaTable = lua.globals().get("cook")?;
+    cook_lua_stdlib::register_codec_api(lua, &cook_tbl)?;
     Ok(module_state)
 }
 

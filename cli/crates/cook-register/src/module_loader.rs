@@ -12,34 +12,12 @@ use crate::module_cache::ModuleCache;
 // JSON <-> Lua conversion helpers
 // ---------------------------------------------------------------------------
 
-pub fn json_to_lua_value(lua: &Lua, val: serde_json::Value) -> LuaResult<LuaValue> {
-    match val {
-        serde_json::Value::Null => Ok(LuaValue::Nil),
-        serde_json::Value::Bool(b) => Ok(LuaValue::Boolean(b)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(LuaValue::Integer(i))
-            } else {
-                Ok(LuaValue::Number(n.as_f64().unwrap_or(0.0)))
-            }
-        }
-        serde_json::Value::String(s) => Ok(LuaValue::String(lua.create_string(&s)?)),
-        serde_json::Value::Array(arr) => {
-            let tbl = lua.create_table()?;
-            for (i, v) in arr.into_iter().enumerate() {
-                tbl.set(i + 1, json_to_lua_value(lua, v)?)?;
-            }
-            Ok(LuaValue::Table(tbl))
-        }
-        serde_json::Value::Object(map) => {
-            let tbl = lua.create_table()?;
-            for (k, v) in map {
-                tbl.set(k, json_to_lua_value(lua, v)?)?;
-            }
-            Ok(LuaValue::Table(tbl))
-        }
-    }
-}
+// `json_to_lua_value` moved to `cook-lua-stdlib` alongside the codecs that
+// depend on it (CS-0123), so the register VM and every execute-phase worker
+// VM share one implementation. Re-exported here so the historical
+// `crate::module_loader::json_to_lua_value` path (used by `export_api.rs`)
+// keeps working.
+pub use cook_lua_stdlib::json_to_lua_value;
 
 pub fn lua_value_to_json(val: LuaValue) -> serde_json::Value {
     match val {

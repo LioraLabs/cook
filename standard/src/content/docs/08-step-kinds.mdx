@@ -215,7 +215,7 @@ A conforming implementation MUST accept the Lua-expression form under the follow
 recipe translate-fr
     ingredients "docs/en/**/*.md"
     cook (input:gsub("/en/", "/fr/")) >{
-        fs.write_file(output, transform(fs.read_file(input)))
+        fs.write(output, transform(fs.read(input)))
     }
 ```
 
