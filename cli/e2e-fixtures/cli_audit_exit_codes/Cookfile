@@ -1,12 +1,16 @@
 # CLI-audit fixture: exit-code taxonomy.
 #
 # Cook's CLI uses an explicit exit-code table (see cli/crates/cook-cli/src/error.rs
-# CookError::exit_code and the spec's Exit Codes appendix entry). This Cookfile
-# exists so the walkthrough can exercise:
+# CookError::exit_code and the Standard's §19.2 / CS-0124 normative exit-code
+# table). This Cookfile exists so the walkthrough can exercise:
 #   - exit 0  : a normal recipe build
 #   - exit 1  : a failing shell command (CommandFailed)
 #   - exit 3  : an unknown recipe (RecipeNotFound)
-# Parse-error (exit 2) is exercised against a one-shot bad Cookfile in the
+#   - exit 1  : a failing test step under the recipe runner (TestFailure)
+#   - exit 0  : a passing test step under the recipe runner
+#   - exit 1  : an upstream failure that skips a downstream recipe
+# Parse-error (exit 2), cache-verify (exit 0/1), and cook-serve register-phase
+# error (exit 1) scenarios are exercised against one-shot Cookfiles in the
 # walkthrough itself.
 
 recipe build
@@ -14,3 +18,17 @@ recipe build
 
 recipe boom
     false
+
+recipe failing_test
+    cook "out/c.txt" { echo hi > $<out> }
+    test { false } as 'always fails'
+
+recipe passing_test
+    cook "out/p.txt" { echo hi > $<out> }
+    test { true } as 'always passes'
+
+recipe upstream_boom
+    cook "a.txt" { false }
+
+recipe downstream: upstream_boom
+    cook "b.txt" { echo ok > $<out> }
