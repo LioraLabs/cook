@@ -144,48 +144,52 @@ fn dispatch_recipe(globals: &cli::Globals, parts: &[String]) -> Result<(), CookE
 
     let recipe = first.strip_prefix('+').unwrap_or(first).to_string();
     reject_reserved_root_target(&recipe)?;
-    let partitioned = partition_argv(rest, &recipe)?;
 
-    // Merge post-recipe `--affected`/`--since` flags into globals so that
-    // `cook build --affected --since=main` (Turborepo-style, flag after the
-    // recipe name) is honoured the same as `cook --affected --since=main build`.
-    // clap's external_subcommand captures post-recipe flags into the Vec
-    // verbatim; partition_argv pulls --affected/--since back out.
+    // clap's external_subcommand captures every post-recipe token into the
+    // Vec verbatim (it can't know which are global flags vs. chore params);
+    // partition_argv re-extracts the global flags and applies them onto
+    // `merged` in place so that `cook build -v` / `cook build --affected
+    // --since=main` (Turborepo-style, flags after the recipe name) are
+    // honoured the same as `cook -v build` / `cook --affected --since=main build`.
     let mut merged = globals.clone();
-    if partitioned.affected {
-        merged.affected = true;
-    }
-    if merged.since.is_none() {
-        merged.since = partitioned.since;
-    }
+    let partitioned = partition_argv(rest, &recipe, &mut merged)?;
 
     cmd_run(&merged, &recipe, &partitioned.argv, partitioned.preset.as_deref())
 }
 
 /// Result of partitioning a recipe's positional argv into the runtime-meaningful
-/// pieces. `argv` is the user-facing remainder (chore params etc.); the other
-/// fields are flags clap couldn't intercept because they appeared after the
-/// `external_subcommand` catch-all.
+/// pieces. `argv` is the user-facing remainder (chore params etc.); `preset`
+/// is the config preset pulled from `@TOKEN` / `--config` forms. Every other
+/// `Globals` flag that clap couldn't intercept (because it appeared after the
+/// `external_subcommand` catch-all) is applied directly onto the caller's
+/// `Globals` in place — see `partition_argv`.
 struct PartitionedArgv {
     argv: Vec<String>,
     preset: Option<String>,
-    affected: bool,
-    since: Option<String>,
 }
 
-/// COOK-36 Task 9 + COOK-58: partition the positionals after the recipe name
-/// into argv, preset, and the `--affected`/`--since=<ref>` pair.
+/// COOK-36 Task 9 + COOK-58 + COOK-193 Task 1: partition the positionals
+/// after the recipe name into argv and preset, applying every trailing
+/// global flag (`--affected`, `--since`, `-v`, `-q`, `-j`, `--color`,
+/// `--output`, `--set`, `-f`, `--root`, `--no-prune`, `--no-publish`) onto
+/// `globals` in place.
 ///
 /// Preset can come from `@TOKEN` sigil or `--config NAME` / `-c NAME` /
-/// `--config=NAME` flag forms. `--affected` is a bool. `--since=<ref>` and
-/// `--since <ref>` both accepted. The `--` end-of-options separator switches
-/// off sigil/flag interpretation for the rest of the line. At most one preset
-/// is permitted across all forms.
-fn partition_argv(rest: &[String], recipe: &str) -> Result<PartitionedArgv, CookError> {
+/// `--config=NAME` flag forms. `--since=<ref>` and `--since <ref>` both
+/// accepted. The `--` end-of-options separator switches off sigil/flag
+/// interpretation for the rest of the line (everything after it is a literal
+/// chore param). At most one preset is permitted across all forms.
+///
+/// This peel is safe because chore params are always `key=value` or bare
+/// words — never `-`/`--`-shaped — so any `-flag` token appearing after the
+/// recipe name unambiguously belongs to `Globals`, not to the recipe.
+fn partition_argv(
+    rest: &[String],
+    recipe: &str,
+    globals: &mut cli::Globals,
+) -> Result<PartitionedArgv, CookError> {
     let mut argv: Vec<String> = Vec::new();
     let mut preset: Option<String> = None;
-    let mut affected = false;
-    let mut since: Option<String> = None;
     let mut end_of_options = false;
     let mut iter = rest.iter();
     while let Some(tok) = iter.next() {
@@ -233,27 +237,117 @@ fn partition_argv(rest: &[String], recipe: &str) -> Result<PartitionedArgv, Cook
             preset = Some(name.to_string());
             continue;
         }
-        // --affected (bool, no value)
-        if tok == "--affected" {
-            affected = true;
-            continue;
-        }
-        // --since <ref> (two-token form)
-        if tok == "--since" {
-            let next = iter.next().ok_or_else(|| {
-                CookError::Other("'--since' requires a git ref".to_string())
-            })?;
-            since = Some(next.clone());
-            continue;
-        }
-        // --since=<ref> (single-token form)
-        if let Some(value) = tok.strip_prefix("--since=") {
-            since = Some(value.to_string());
-            continue;
+        match tok.as_str() {
+            "-v" | "--verbose" => {
+                globals.verbose = true;
+                continue;
+            }
+            "-q" | "--quiet" => {
+                globals.quiet = true;
+                continue;
+            }
+            "--no-prune" => {
+                globals.no_prune = true;
+                continue;
+            }
+            "--no-publish" => {
+                globals.no_publish = true;
+                continue;
+            }
+            "--affected" => {
+                globals.affected = true;
+                continue;
+            }
+            "-j" | "--jobs" => {
+                let n = iter
+                    .next()
+                    .ok_or_else(|| CookError::Other(format!("'{tok}' requires a number")))?;
+                globals.jobs = Some(n.parse().map_err(|_| {
+                    CookError::Other(format!("'{tok}' expects an integer, got '{n}'"))
+                })?);
+                continue;
+            }
+            "--color" => {
+                globals.color = iter
+                    .next()
+                    .ok_or_else(|| CookError::Other("'--color' requires a value".into()))?
+                    .clone();
+                continue;
+            }
+            "--output" => {
+                globals.output = iter
+                    .next()
+                    .ok_or_else(|| CookError::Other("'--output' requires a value".into()))?
+                    .clone();
+                continue;
+            }
+            "-f" | "--file" => {
+                globals.file = iter
+                    .next()
+                    .ok_or_else(|| CookError::Other(format!("'{tok}' requires a path")))?
+                    .into();
+                continue;
+            }
+            "--root" => {
+                globals.root = Some(
+                    iter.next()
+                        .ok_or_else(|| CookError::Other("'--root' requires a path".into()))?
+                        .into(),
+                );
+                continue;
+            }
+            "--set" => {
+                globals.set.push(
+                    iter.next()
+                        .ok_or_else(|| CookError::Other("'--set' requires KEY=VALUE".into()))?
+                        .clone(),
+                );
+                continue;
+            }
+            "--since" => {
+                globals.since = Some(
+                    iter.next()
+                        .ok_or_else(|| CookError::Other("'--since' requires a git ref".into()))?
+                        .clone(),
+                );
+                continue;
+            }
+            other => {
+                if let Some(v) = other.strip_prefix("--jobs=") {
+                    globals.jobs = Some(v.parse().map_err(|_| {
+                        CookError::Other(format!("'--jobs' expects an integer, got '{v}'"))
+                    })?);
+                    continue;
+                }
+                if let Some(v) = other.strip_prefix("--color=") {
+                    globals.color = v.to_string();
+                    continue;
+                }
+                if let Some(v) = other.strip_prefix("--output=") {
+                    globals.output = v.to_string();
+                    continue;
+                }
+                if let Some(v) = other.strip_prefix("--file=") {
+                    globals.file = v.into();
+                    continue;
+                }
+                if let Some(v) = other.strip_prefix("--root=") {
+                    globals.root = Some(v.into());
+                    continue;
+                }
+                if let Some(v) = other.strip_prefix("--set=") {
+                    globals.set.push(v.to_string());
+                    continue;
+                }
+                if let Some(v) = other.strip_prefix("--since=") {
+                    globals.since = Some(v.to_string());
+                    continue;
+                }
+            }
         }
         argv.push(tok.clone());
     }
-    Ok(PartitionedArgv { argv, preset, affected, since })
+    Ok(PartitionedArgv { argv, preset })
 }
 
 fn is_preset_char(c: char) -> bool {
@@ -309,6 +403,45 @@ mod entry_discovery_tests {
         assert!(cookfile_flag_was_explicit(&matches_for(&[
             "test", "-f", "sub/Cookfile"
         ])));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partition_peels_trailing_global_bool_flag() {
+        let mut g = crate::cli::Globals::default();
+        let p = partition_argv(&["-v".to_string()], "report", &mut g).unwrap();
+        assert!(p.argv.is_empty());
+        assert!(g.verbose);
+    }
+
+    #[test]
+    fn partition_peels_trailing_global_value_flag() {
+        let mut g = crate::cli::Globals::default();
+        let p = partition_argv(
+            &[
+                "--output".to_string(),
+                "plain".to_string(),
+                "-j".to_string(),
+                "4".to_string(),
+            ],
+            "report",
+            &mut g,
+        )
+        .unwrap();
+        assert!(p.argv.is_empty());
+        assert_eq!(g.output, "plain");
+        assert_eq!(g.jobs, Some(4));
+    }
+
+    #[test]
+    fn partition_keeps_chore_params_as_argv() {
+        let mut g = crate::cli::Globals::default();
+        let p = partition_argv(&["who=world".to_string()], "greet", &mut g).unwrap();
+        assert_eq!(p.argv, vec!["who=world".to_string()]);
     }
 }
 
