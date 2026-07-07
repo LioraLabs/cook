@@ -41,6 +41,22 @@ fn run_cook_raw_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> std::pr
     cmd.output().expect("failed to spawn cook binary")
 }
 
+/// Isolate the persistent artifact/probe cache into `dir` and run the chore
+/// with `COOK_NO_PUBLISH=1`, so a test that RUNS a chore never touches the
+/// user's shared ~/.cache/cook/cloud. Mirrors `surface_conformance.rs`.
+fn run_cook_isolated(dir: &Path, args: &[&str]) -> std::process::Output {
+    fs::create_dir_all(dir.join(".cook")).expect("mkdir .cook");
+    fs::write(
+        dir.join(".cook/cloud.toml"),
+        format!(
+            "[cache]\ncache_dir = \"{}\"\n",
+            dir.join("cache").display()
+        ),
+    )
+    .expect("write cloud.toml");
+    run_cook_raw_env(dir, args, &[("COOK_NO_PUBLISH", "1")])
+}
+
 /// `cook greet world` where `chore greet msg` uses `msg` in the body.
 /// The body runs `print("hello " .. msg)` and we assert stdout contains
 /// "hello world".
@@ -417,6 +433,65 @@ fn shell_step_with_unknown_sigil_in_chore_errors() {
     assert!(stderr.contains("unknown") || stderr.contains("placeholder"), "stderr: {stderr}");
 }
 
+// ── CS-0128: context-aware sigil interpolation quoting ───────────────────────
+
+/// `cook greet who=world` where `chore greet who="world"` uses `$<who>` INSIDE
+/// a double-quoted shell region: `echo "hello $<who>"`. Per CS-0128, a sigil in
+/// a double-quote context expands to the escaped bare value, so the output is
+/// `hello world` — NOT the leaked `hello 'world'` the old always-single-quote
+/// lowering produced.
+#[test]
+fn dquote_context_param_does_not_leak_single_quotes() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore greet who=\"world\"\n    echo \"hello $<who>\"\n",
+    )
+    .unwrap();
+    let out = run_cook_isolated(tmp.path(), &["greet", "world"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook greet world failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert_eq!(
+        stdout.trim(),
+        "hello world",
+        "double-quote context must yield 'hello world', not 'hello \\'world\\''\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        !stdout.contains("hello 'world'"),
+        "single-quotes leaked into double-quote context\nstdout: {stdout}"
+    );
+}
+
+/// Word-safety guard for the UNQUOTED (bare) context. `chore greet who="a b"`
+/// with body `printf '[%s]\n' $<who>` and value `a b` must stay a SINGLE
+/// printf argument — proving the bare context still single-quotes for
+/// word-safety (output `[a b]`, not `[a]` + `[b]`).
+#[test]
+fn bare_context_param_stays_single_word() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore greet who=\"a b\"\n    printf '[%s]\\n' $<who>\n",
+    )
+    .unwrap();
+    let out = run_cook_isolated(tmp.path(), &["greet", "a b"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook greet 'a b' failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert_eq!(
+        stdout.trim(),
+        "[a b]",
+        "bare context must keep the spaced value as one word\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
 // ── COOK-36 Task 8: chore params exported as env vars to shell children ───────
 
 /// `cook say production` where `chore say target` uses `$target` in a shell step
@@ -609,8 +684,10 @@ fn comprehensive_chore_params_smoke_defaults_fire() {
     // Inline-Lua (`>>`) sees the register-phase locals.
     assert!(stdout.contains("register: target=production"), "stdout: {stdout}");
     // Shell placeholders resolve through the unified sigil path; declared
-    // params are quoted via cook.__quote_param.
-    assert!(stdout.contains("shell-sub: 'production' 'prod' 'v0' "), "stdout: {stdout}");
+    // params are quoted via cook.__quote_param. CS-0128: these sigils sit
+    // inside a double-quoted region, so they expand to the bare (escaped)
+    // value — no leaked single quotes.
+    assert!(stdout.contains("shell-sub: production prod v0 "), "stdout: {stdout}");
     // Env-vars: defaults fire when argv is exhausted.
     assert!(stdout.contains("env: production/prod/v0/"), "stdout: {stdout}");
     // Execute-phase Lua sees the prelude-injected locals.
@@ -638,9 +715,11 @@ fn comprehensive_chore_params_smoke_argv_overrides_defaults() {
     assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
 
     assert!(stdout.contains("register: target=production"), "stdout: {stdout}");
-    // Variadic placeholder is shell-quoted per element.
+    // Variadic placeholder expands per element; CS-0128: inside the
+    // double-quoted region each element is emitted bare (escaped), joined by
+    // single spaces.
     assert!(
-        stdout.contains("shell-sub: 'production' 'myhost' 'v1.2.3' 'a.lua' 'b.lua'"),
+        stdout.contains("shell-sub: production myhost v1.2.3 a.lua b.lua"),
         "stdout: {stdout}"
     );
     // Variadic env-var is space-joined.

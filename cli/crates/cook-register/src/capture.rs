@@ -486,18 +486,21 @@ pub fn install_cook_api(
     })?;
     cook.set("member_to_string", member_fn)?;
 
-    // cook.__quote_param(value, name) — runtime helper for chore parameter
+    // cook.__quote_param(value, name, ctx) — runtime helper for chore parameter
     // placeholders. Luagen's normal sigil resolver decides which `$<NAME>`
     // tokens are params; this helper only quotes the already-bound value.
+    // `ctx` (CS-0128) is the shell quoting context Luagen scanned for the sigil
+    // span ("bare" | "dquote" | "squote"); it defaults to "bare".
     let quote_param_fn =
-        lua.create_function(move |_, (value, name): (mlua::Value, String)| -> mlua::Result<String> {
+        lua.create_function(move |_, (value, name, ctx): (mlua::Value, String, Option<String>)| -> mlua::Result<String> {
+            let ctx = ctx.as_deref().unwrap_or("bare");
             match value {
-                mlua::Value::String(s) => Ok(shell_quote(&s.to_str()?)),
+                mlua::Value::String(s) => Ok(quote_for_ctx(&s.to_str()?, ctx)),
                 mlua::Value::Table(t) => {
                     let mut parts: Vec<String> = Vec::new();
                     for value in t.sequence_values::<mlua::Value>() {
                         match value? {
-                            mlua::Value::String(s) => parts.push(shell_quote(&s.to_str()?)),
+                            mlua::Value::String(s) => parts.push(quote_for_ctx(&s.to_str()?, ctx)),
                             other => {
                                 return Err(mlua::Error::runtime(format!(
                                     "chore parameter '$<{name}>' contains non-string element of type {}",
@@ -521,6 +524,35 @@ pub fn install_cook_api(
 
     lua.globals().set("cook", cook)?;
     Ok(recipes)
+}
+
+/// CS-0128: quote `s` for the shell context `ctx` that a `$<param>` sigil
+/// occupies in the step text.
+///
+/// * `"bare"` (default) — single-quote the whole value for word-safety
+///   (the existing `shell_quote` behaviour).
+/// * `"dquote"` — the sigil sits inside an author-supplied double-quoted
+///   region, so emit the value with double-quote-context escaping
+///   (backslash-escape `\`, `"`, `$`, and backtick); the surrounding `"..."`
+///   already provides the quoting.
+/// * `"squote"` — the sigil sits inside an author-supplied single-quoted
+///   region, so emit the raw value verbatim; a value containing `'` is the
+///   author's responsibility (documented edge).
+fn quote_for_ctx(s: &str, ctx: &str) -> String {
+    match ctx {
+        "dquote" => {
+            let mut o = String::with_capacity(s.len());
+            for ch in s.chars() {
+                if matches!(ch, '\\' | '"' | '$' | '`') {
+                    o.push('\\');
+                }
+                o.push(ch);
+            }
+            o
+        }
+        "squote" => s.to_string(),
+        _ => shell_quote(s),
+    }
 }
 
 /// POSIX-safe single-quote escaping for shell arguments.
