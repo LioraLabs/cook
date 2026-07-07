@@ -1279,7 +1279,16 @@ fn execute_lua_chunk(
         Ok(())
     };
 
-    match setup() {
+    let result = setup();
+
+    // Flush this worker VM's stdout so recipe output (io.write/print) reaches
+    // fd 1 now, before the completion event. Otherwise libc block-buffers it
+    // when stdout isn't a TTY and it prints AFTER the `cook done` summary.
+    // Runs on both the success and chunk-error paths so partial output isn't
+    // stranded in the C stdio buffer.
+    let _ = lua.load("io.stdout:flush()").exec();
+
+    match result {
         Ok(()) => WorkResult {
             id,
             success: true,

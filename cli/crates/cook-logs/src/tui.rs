@@ -8,6 +8,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use crossterm::tty::IsTty;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::Terminal;
@@ -21,6 +22,10 @@ use crate::state::{Focus, UiState};
 use crate::theme::Theme;
 
 pub fn run(view: BuildView, diag: LoadDiagnostics, theme: Theme) -> Result<(), ViewerError> {
+    if !std::io::stdout().is_tty() {
+        return print_logs_fallback(&view);
+    }
+
     enable_raw_mode().map_err(|e| ViewerError::TerminalInit(e.to_string()))?;
     let mut out = stdout();
     execute!(out, EnterAlternateScreen).map_err(|e| ViewerError::TerminalInit(e.to_string()))?;
@@ -32,6 +37,35 @@ pub fn run(view: BuildView, diag: LoadDiagnostics, theme: Theme) -> Result<(), V
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
     let _ = terminal.show_cursor();
     result
+}
+
+/// Plain-text rendering of a build's logs for headless (non-TTY) contexts,
+/// e.g. `cook logs | less` or output piped to a file in CI.
+fn print_logs_fallback(view: &BuildView) -> Result<(), ViewerError> {
+    let stdout = std::io::stdout();
+    write_logs_fallback(view, &mut stdout.lock())
+        .map_err(|e| ViewerError::TerminalInit(e.to_string()))
+}
+
+fn write_logs_fallback<W: std::io::Write>(
+    view: &BuildView,
+    out: &mut W,
+) -> std::io::Result<()> {
+    writeln!(out, "build {} (exit {:?})", view.build_id, view.exit_code)?;
+    for recipe in view.recipes.values() {
+        writeln!(out, "  {} [{:?}]", recipe.name, recipe.status)?;
+        for node in recipe.nodes.values() {
+            let elapsed = node
+                .elapsed_ms
+                .map(|ms| format!("{ms}ms"))
+                .unwrap_or_else(|| "-".to_string());
+            writeln!(out, "    {} [{:?}] {}", node.name, node.status, elapsed)?;
+            for line in &node.lines {
+                writeln!(out, "      {}", line.text)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn run_with_backend<B: Backend>(
@@ -211,6 +245,25 @@ mod tests {
         assert!(
             content.contains("2026-05-10-abc"),
             "header should show build id"
+        );
+    }
+
+    #[test]
+    fn print_logs_fallback_renders_build_recipe_node_and_lines() {
+        let view = one_failed_build();
+        let mut buf: Vec<u8> = Vec::new();
+        write_logs_fallback(&view, &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+
+        assert!(out.contains("2026-05-10-abc"), "should show build id");
+        assert!(out.contains("exit Some(1)"), "should show exit code");
+        assert!(out.contains("vm"), "should show recipe name");
+        assert!(out.contains("Failed"), "should show recipe/node status");
+        assert!(out.contains("lvm.c"), "should show node name");
+        assert!(out.contains("1100ms"), "should show node elapsed time");
+        assert!(
+            out.contains("error: undeclared 'foo'"),
+            "should show log line text"
         );
     }
 }

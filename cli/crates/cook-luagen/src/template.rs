@@ -287,6 +287,43 @@ pub(crate) fn expand_sigil_template(
     expand_sigil_template_with_chore_params(template, ctx, consulted_env, file_refs, None)
 }
 
+/// CS-0128: the shell quoting context a sigil span sits in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QCtx {
+    /// Outside any quote — the value must be single-quoted for word-safety.
+    Bare,
+    /// Inside a double-quoted region — the value is escaped for that context.
+    Double,
+    /// Inside a single-quoted region — the value is emitted verbatim.
+    Single,
+}
+
+/// Classify the shell quoting context at the end of `prefix` by scanning the
+/// command text left-to-right, tracking single/double quote state and
+/// backslash escapes (POSIX: backslash is inert inside single quotes).
+fn quote_context(prefix: &str) -> QCtx {
+    let (mut sq, mut dq, mut esc) = (false, false, false);
+    for c in prefix.chars() {
+        if esc {
+            esc = false;
+            continue;
+        }
+        match c {
+            '\\' if !sq => esc = true,
+            '\'' if !dq => sq = !sq,
+            '"' if !sq => dq = !dq,
+            _ => {}
+        }
+    }
+    if sq {
+        QCtx::Single
+    } else if dq {
+        QCtx::Double
+    } else {
+        QCtx::Bare
+    }
+}
+
 pub(crate) fn expand_sigil_template_with_chore_params(
     template: &str,
     ctx: &ResolveCtx<'_>,
@@ -315,10 +352,19 @@ pub(crate) fn expand_sigil_template_with_chore_params(
         // ordinary closed-set resolver, so env and recipe refs behave exactly
         // as they do in recipe bodies.
         let lua_expr = if chore_params.is_some_and(|params| params.contains(&span.ident)) {
+            // CS-0128: the sigil expands per its shell quoting context. Scan the
+            // command prefix up to this span to classify bare / double / single
+            // and thread it into the runtime quoter.
+            let ctx = match quote_context(&template[..span.range.start]) {
+                QCtx::Bare => "bare",
+                QCtx::Double => "dquote",
+                QCtx::Single => "squote",
+            };
             format!(
-                "cook.__quote_param(__cook_params[\"{}\"], \"{}\")",
+                "cook.__quote_param(__cook_params[\"{}\"], \"{}\", \"{}\")",
                 escape_lua_string(&span.ident),
-                escape_lua_string(&span.ident)
+                escape_lua_string(&span.ident),
+                ctx
             )
         } else {
             let resolved = crate::resolver::resolve(&span.ident, ctx);
@@ -1095,6 +1141,38 @@ mod tests {
             outputs: OutputShape::None,
             recipes_in_scope: recipes,
         }
+    }
+
+    // ─── quote_context tests (CS-0128) ───────────────────────────────────────
+
+    #[test]
+    fn quote_context_bare() {
+        assert_eq!(quote_context("echo "), QCtx::Bare);
+        assert_eq!(quote_context(""), QCtx::Bare);
+        // A closed double-quoted region returns to bare.
+        assert_eq!(quote_context("echo \"hi\" "), QCtx::Bare);
+    }
+
+    #[test]
+    fn quote_context_double() {
+        assert_eq!(quote_context("echo \"hi "), QCtx::Double);
+        // A single quote inside a double-quoted region is literal, not an open.
+        assert_eq!(quote_context("echo \"it's "), QCtx::Double);
+    }
+
+    #[test]
+    fn quote_context_single() {
+        assert_eq!(quote_context("echo 'hi "), QCtx::Single);
+        // A double quote inside a single-quoted region is literal.
+        assert_eq!(quote_context("echo 'say \"hi "), QCtx::Single);
+        // Backslash is inert inside single quotes (POSIX).
+        assert_eq!(quote_context("echo 'a\\"), QCtx::Single);
+    }
+
+    #[test]
+    fn quote_context_backslash_escape_outside_quotes() {
+        // An escaped double-quote does not open a double-quoted region.
+        assert_eq!(quote_context("echo \\\" "), QCtx::Bare);
     }
 
     #[test]

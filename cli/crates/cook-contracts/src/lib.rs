@@ -181,10 +181,19 @@ impl WorkPayload {
     pub fn display_name(&self) -> String {
         match self {
             Self::Shell { cmd, .. } => {
-                if cmd.len() <= 60 {
-                    cmd.clone()
+                let body = cmd
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty() && *l != "set -e")
+                    // Degenerate body (empty, or nothing but the `set -e`
+                    // preamble): fall back to the first non-empty line so
+                    // callers surfacing this label never get a blank string.
+                    .or_else(|| cmd.lines().map(str::trim).find(|l| !l.is_empty()))
+                    .unwrap_or("sh");
+                if body.len() <= 60 {
+                    body.to_string()
                 } else {
-                    format!("{}...", &cmd[..57])
+                    format!("{}...", body.chars().take(57).collect::<String>())
                 }
             }
             Self::LuaChunk { .. } => "lua".to_string(),
@@ -371,6 +380,25 @@ mod tests {
             }
             _ => panic!("expected Shell variant"),
         }
+    }
+
+    #[test]
+    fn shell_display_name_strips_set_e_and_is_single_line() {
+        let p = WorkPayload::Shell { cmd: "set -e\nwc -w < a.txt > b.count".into(), line: 1 };
+        let d = p.display_name();
+        assert!(!d.contains("set -e"), "got: {d}");
+        assert!(!d.contains('\n'), "got: {d}");
+        assert!(d.starts_with("wc"), "got: {d}");
+    }
+
+    #[test]
+    fn shell_display_name_degenerate_body_is_never_blank() {
+        // A body that is nothing but the `set -e` preamble must still yield a
+        // non-blank label (inline renderer surfaces this string directly).
+        let p = WorkPayload::Shell { cmd: "set -e".into(), line: 1 };
+        assert!(!p.display_name().is_empty(), "blank label for set -e-only body");
+        let empty = WorkPayload::Shell { cmd: String::new(), line: 1 };
+        assert!(!empty.display_name().is_empty(), "blank label for empty body");
     }
 
     #[test]

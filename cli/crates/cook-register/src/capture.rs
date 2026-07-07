@@ -127,6 +127,20 @@ impl ChoreParamMeta {
             ChoreParamMeta::VariadicStar { name } => name,
         }
     }
+
+    /// Human-readable token for `cook menu` display, e.g. `caller`,
+    /// `who="world"`, `tail...`, `[rest...]`. Mirrors the `chore NAME …`
+    /// header syntax closely enough to be recognisable, without claiming
+    /// to be a re-parseable grammar.
+    pub fn display_token(&self) -> String {
+        match self {
+            ChoreParamMeta::Required { name } => name.clone(),
+            ChoreParamMeta::DefaultedString { name, default } => format!("{name}={default:?}"),
+            ChoreParamMeta::DefaultedLua { name, .. } => format!("{name}=<lua>"),
+            ChoreParamMeta::VariadicPlus { name } => format!("{name}..."),
+            ChoreParamMeta::VariadicStar { name } => format!("[{name}...]"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -472,18 +486,21 @@ pub fn install_cook_api(
     })?;
     cook.set("member_to_string", member_fn)?;
 
-    // cook.__quote_param(value, name) — runtime helper for chore parameter
+    // cook.__quote_param(value, name, ctx) — runtime helper for chore parameter
     // placeholders. Luagen's normal sigil resolver decides which `$<NAME>`
     // tokens are params; this helper only quotes the already-bound value.
+    // `ctx` (CS-0128) is the shell quoting context Luagen scanned for the sigil
+    // span ("bare" | "dquote" | "squote"); it defaults to "bare".
     let quote_param_fn =
-        lua.create_function(move |_, (value, name): (mlua::Value, String)| -> mlua::Result<String> {
+        lua.create_function(move |_, (value, name, ctx): (mlua::Value, String, Option<String>)| -> mlua::Result<String> {
+            let ctx = ctx.as_deref().unwrap_or("bare");
             match value {
-                mlua::Value::String(s) => Ok(shell_quote(&s.to_str()?)),
+                mlua::Value::String(s) => Ok(quote_for_ctx(&s.to_str()?, ctx)),
                 mlua::Value::Table(t) => {
                     let mut parts: Vec<String> = Vec::new();
                     for value in t.sequence_values::<mlua::Value>() {
                         match value? {
-                            mlua::Value::String(s) => parts.push(shell_quote(&s.to_str()?)),
+                            mlua::Value::String(s) => parts.push(quote_for_ctx(&s.to_str()?, ctx)),
                             other => {
                                 return Err(mlua::Error::runtime(format!(
                                     "chore parameter '$<{name}>' contains non-string element of type {}",
@@ -507,6 +524,35 @@ pub fn install_cook_api(
 
     lua.globals().set("cook", cook)?;
     Ok(recipes)
+}
+
+/// CS-0128: quote `s` for the shell context `ctx` that a `$<param>` sigil
+/// occupies in the step text.
+///
+/// * `"bare"` (default) — single-quote the whole value for word-safety
+///   (the existing `shell_quote` behaviour).
+/// * `"dquote"` — the sigil sits inside an author-supplied double-quoted
+///   region, so emit the value with double-quote-context escaping
+///   (backslash-escape `\`, `"`, `$`, and backtick); the surrounding `"..."`
+///   already provides the quoting.
+/// * `"squote"` — the sigil sits inside an author-supplied single-quoted
+///   region, so emit the raw value verbatim; a value containing `'` is the
+///   author's responsibility (documented edge).
+fn quote_for_ctx(s: &str, ctx: &str) -> String {
+    match ctx {
+        "dquote" => {
+            let mut o = String::with_capacity(s.len());
+            for ch in s.chars() {
+                if matches!(ch, '\\' | '"' | '$' | '`') {
+                    o.push('\\');
+                }
+                o.push(ch);
+            }
+            o
+        }
+        "squote" => s.to_string(),
+        _ => shell_quote(s),
+    }
 }
 
 /// POSIX-safe single-quote escaping for shell arguments.
@@ -652,4 +698,54 @@ fn run_shell_command(
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     Ok(stdout)
+}
+
+#[cfg(test)]
+mod display_token_tests {
+    use super::*;
+
+    /// `cook menu` renders a required positional as its bare name.
+    #[test]
+    fn required_renders_as_bare_name() {
+        let meta = ChoreParamMeta::Required { name: "caller".to_string() };
+        assert_eq!(meta.display_token(), "caller");
+    }
+
+    /// A defaulted-string positional renders `name="default"` with the
+    /// default Debug-quoted (matches shell-quoting expectations closely
+    /// enough for a display token, without claiming to be re-parseable).
+    #[test]
+    fn defaulted_string_renders_name_equals_debug_quoted_default() {
+        let meta = ChoreParamMeta::DefaultedString {
+            name: "who".to_string(),
+            default: "world".to_string(),
+        };
+        assert_eq!(meta.display_token(), "who=\"world\"");
+    }
+
+    /// A Lua-expression default can't be rendered as a literal (it's a
+    /// closure evaluated at bind time), so the token is a placeholder.
+    #[test]
+    fn defaulted_lua_renders_placeholder() {
+        let meta = ChoreParamMeta::DefaultedLua {
+            name: "version".to_string(),
+            default_key_name: "__cook_chore_default:demo:version:0".to_string(),
+        };
+        assert_eq!(meta.display_token(), "version=<lua>");
+    }
+
+    /// A one-or-more variadic renders with a bare `...` suffix (no
+    /// brackets — at least one argv is required).
+    #[test]
+    fn variadic_plus_renders_with_trailing_ellipsis() {
+        let meta = ChoreParamMeta::VariadicPlus { name: "rest".to_string() };
+        assert_eq!(meta.display_token(), "rest...");
+    }
+
+    /// A zero-or-more variadic renders bracketed to signal optionality.
+    #[test]
+    fn variadic_star_renders_bracketed() {
+        let meta = ChoreParamMeta::VariadicStar { name: "rest".to_string() };
+        assert_eq!(meta.display_token(), "[rest...]");
+    }
 }

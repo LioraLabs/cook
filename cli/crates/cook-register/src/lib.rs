@@ -374,6 +374,10 @@ pub struct RegisteredRecipePub {
     pub source: RegistrationSource,
     pub kind: RecipeKind,
     pub requires: Vec<String>,
+    /// Declared chore parameters (empty for normal recipes), carried through
+    /// so `cook menu` can render `chore greet caller who="world"` instead of
+    /// a bare name.
+    pub params: Vec<crate::capture::ChoreParamMeta>,
 }
 
 /// Whether a registered name is a normal recipe or a chore.

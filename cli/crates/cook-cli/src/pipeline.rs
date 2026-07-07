@@ -1199,8 +1199,8 @@ fn collect_workspace_recipe_names(
     Some(
         names
             .into_iter()
-            .filter(|(_, kind)| matches!(kind, cook_engine::cook_register::RecipeKind::Recipe))
-            .map(|(name, _)| name)
+            .filter(|(_, kind, _)| matches!(kind, cook_engine::cook_register::RecipeKind::Recipe))
+            .map(|(name, _, _)| name)
             .collect(),
     )
 }
@@ -1222,10 +1222,22 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
 
-    for (name, kind) in &names {
+    for (name, kind, params) in &names {
+        let suffix = if params.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " {}",
+                params
+                    .iter()
+                    .map(|p| p.display_token())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
         match kind {
-            cook_engine::cook_register::RecipeKind::Recipe => println!("  recipe {name}"),
-            cook_engine::cook_register::RecipeKind::Chore => println!("  chore  {name}"),
+            cook_engine::cook_register::RecipeKind::Recipe => println!("  recipe {name}{suffix}"),
+            cook_engine::cook_register::RecipeKind::Chore => println!("  chore  {name}{suffix}"),
         }
     }
 
@@ -1266,7 +1278,7 @@ pub fn cmd_list(globals: &Globals, args: &crate::cli::ListArgs) -> Result<(), Co
     let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
 
-    for (name, kind) in names {
+    for (name, kind, _params) in names {
         let is_chore = matches!(kind, cook_engine::cook_register::RecipeKind::Chore);
         if (is_chore && want_chores) || (!is_chore && want_recipes) {
             println!("{name}");
@@ -1291,12 +1303,34 @@ pub fn cmd_init() -> Result<(), CookError> {
     // shell command and the build fails with exit 127.
     std::fs::write(
         cookfile_path,
-        r#"recipe build
-    echo "Hello from Cook!"
+        r#"# Your first Cook build. `cook` fingerprints every input, so the second
+# run does zero work until an input actually changes.
+#
+#   cook            # builds one node per note
+#   cook            # everything cached — 0 work
+#   echo "- hi" >> notes/two.md && cook   # ONLY two rebuilds
+
+recipe build
+    ingredients "notes/*.md"
+    cook "out/$<in.stem>.html" { sed 's|^# \(.*\)|<h1>\1</h1>|' $<in> > $<out> }
 "#,
     )
     .map_err(|e| CookError::Other(format!("failed to write Cookfile: {e}")))?;
     println!("Created Cookfile");
+
+    // cook init runs in an empty dir, but the starter Cookfile's ingredients
+    // glob needs something to fan out over — seed sample notes so the first
+    // `cook` run has real inputs to build. Never clobber a pre-existing
+    // notes/ dir (e.g. re-running init after adding files by hand).
+    let notes = std::path::Path::new("notes");
+    if !notes.exists() {
+        std::fs::create_dir_all(notes)
+            .map_err(|e| CookError::Other(format!("failed to create notes/: {e}")))?;
+        std::fs::write(notes.join("one.md"), "# One\n- alpha\n")
+            .map_err(|e| CookError::Other(format!("failed to write notes/one.md: {e}")))?;
+        std::fs::write(notes.join("two.md"), "# Two\n- beta\n")
+            .map_err(|e| CookError::Other(format!("failed to write notes/two.md: {e}")))?;
+    }
 
     let gitignore_path = std::path::Path::new(".gitignore");
     let existing = match std::fs::read_to_string(gitignore_path) {
@@ -1686,9 +1720,11 @@ mod serve_glob_tests {
 #[cfg(not(feature = "viewer"))]
 pub fn cmd_dag(_globals: &Globals, _args: &crate::cli::DagArgs) -> Result<(), CookError> {
     Err(CookError::Other(
-        "the `cook dag` viewer is not built into this binary; rebuild with \
-         `cargo build --features viewer` (or pass `--features viewer` when \
-         running `cargo install`)"
+        "`cook dag` is an optional ratatui terminal viewer, left out of the \
+         default binary to keep it slim; rebuild with `cargo build --features \
+         viewer` (or install with `--features viewer`) to enable it. When \
+         built in, the viewer automatically falls back to a plain wave \
+         listing if run headless (no TTY)."
             .to_string(),
     ))
 }

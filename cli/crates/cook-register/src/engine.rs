@@ -463,6 +463,7 @@ pub fn register_cookfile(
                 source,
                 kind,
                 requires: requires.clone(),
+                params: params_meta.clone(),
             });
             units_by_recipe.insert(
                 name.clone(),
@@ -582,6 +583,7 @@ pub fn register_cookfile(
                         source,
                         kind,
                         requires: requires.clone(),
+                        params: params_meta.clone(),
                     });
                     units_by_recipe.insert(
                         name.clone(),
@@ -621,6 +623,7 @@ pub fn register_cookfile(
                     source,
                     kind,
                     requires: requires.clone(),
+                    params: params_meta.clone(),
                 });
                 units_by_recipe.insert(
                     name.clone(),
@@ -775,6 +778,7 @@ pub fn register_cookfile(
             source,
             kind,
             requires,
+            params: params_meta.clone(),
         });
     }
 
@@ -1677,6 +1681,7 @@ pub fn list_names(
             source: r.source,
             kind: r.kind,
             requires: r.metadata.requires.clone(),
+            params: r.metadata.params.clone(),
         })
         .collect();
     Ok(out)
