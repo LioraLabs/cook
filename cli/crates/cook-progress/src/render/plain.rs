@@ -93,8 +93,9 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                     writeln!(self.out, "  [{rname}/{nname}] {line}")?;
                 }
             }
-            ProgressEvent::NodeCacheHit { recipe, name: nname, .. } => {
+            ProgressEvent::NodeCacheHit { recipe, node, .. } => {
                 let rname = self.name(state, *recipe);
+                let nname = self.node_display(state, recipe, node);
                 writeln!(self.out, "  {}/{:40}cached", rname, nname)?;
             }
             ProgressEvent::NodeSkipped { recipe, name: nname, reason, .. } => {
