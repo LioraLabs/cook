@@ -24,27 +24,29 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
     let body_slot_add = body_slot.clone();
     let add_test_fn = lua.create_function(move |_, tbl: LuaTable| {
         // CS-0127 §22.4: `command`, if present, must be a string — never
-        // coerced.
+        // coerced. An empty string is treated as absent (`None`) so the
+        // exactly-one check below reports it as missing, not as a supplied
+        // value, matching the historical empty-command diagnostic.
         let command: Option<String> = match tbl.get::<LuaValue>("command") {
             Ok(LuaValue::Nil) | Err(_) => None,
             Ok(LuaValue::String(s)) => Some(s.to_string_lossy().to_string()),
             Ok(other) => return Err(type_err("command", "a string", other.type_name())),
-        };
+        }
+        .filter(|s| !s.is_empty());
         // CS-0127 §22.4: `lua_code`, if present, must be a string — never
-        // coerced.
+        // coerced. Empty string treated as absent, as for `command`.
         let lua_code: Option<String> = match tbl.get::<LuaValue>("lua_code") {
             Ok(LuaValue::Nil) | Err(_) => None,
             Ok(LuaValue::String(s)) => Some(s.to_string_lossy().to_string()),
             Ok(other) => return Err(type_err("lua_code", "a string", other.type_name())),
-        };
+        }
+        .filter(|s| !s.is_empty());
         // CS-0127 §22.4: exactly one of `command` / `lua_code` MUST be
-        // provided, and it MUST be non-empty. An empty string on either side
-        // collapses into the "required" arm below so the message still names
-        // `command` (the historical field), preserving prior behaviour for
-        // the common case while `lua_code`-only specs now succeed.
+        // provided non-empty. Both empty/absent → the "required" arm (message
+        // names `command`, the historical field); both present → "got both".
         let (command, lua_code) = match (command, lua_code) {
-            (Some(c), None) if !c.is_empty() => (c, None),
-            (None, Some(l)) if !l.is_empty() => (String::new(), Some(l)),
+            (Some(c), None) => (c, None),
+            (None, Some(l)) => (String::new(), Some(l)),
             (Some(_), Some(_)) => {
                 return Err(mlua::Error::runtime(
                     "cook.add_test: exactly one of `command` or `lua_code` must be provided, got both (Standard \u{00a7}22.4, CS-0127)",
@@ -474,6 +476,31 @@ mod tests {
             WorkPayload::Test { cmd, lua_code, .. } => {
                 assert_eq!(lua_code.as_deref(), Some("assert(true)"));
                 assert_eq!(cmd, "");
+            }
+            _ => panic!("expected Test payload"),
+        }
+    }
+
+    #[test]
+    fn add_test_empty_lua_code_alongside_command_is_a_command_test() {
+        // An empty `lua_code` is treated as absent, so `command` alone is a
+        // valid command test — not a spurious "got both" rejection.
+        let (lua, capture_state) = make_lua_with_test_api();
+        capture_state
+            .borrow_mut()
+            .as_mut()
+            .expect("body slot populated for test")
+            .current_recipe = Some("r".to_string());
+
+        lua.load(r#"
+            cook.add_test({ command = "true", lua_code = "", suite = "s", name = "t" })
+        "#).exec().unwrap();
+
+        let state = body_ref(&capture_state);
+        match &state.units[0].payload {
+            WorkPayload::Test { cmd, lua_code, .. } => {
+                assert_eq!(cmd, "true");
+                assert_eq!(lua_code.as_deref(), None);
             }
             _ => panic!("expected Test payload"),
         }
