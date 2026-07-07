@@ -52,6 +52,10 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 let name = self.name(state, *recipe);
                 writeln!(self.out, "  {:24} FAILED   ({}/{} steps) {}", name, completed, total, fmt_secs(*elapsed))?;
             }
+            ProgressEvent::RecipeSkipped { recipe, elapsed, completed, total, .. } => {
+                let name = self.name(state, *recipe);
+                writeln!(self.out, "  {:24} skipped  ({}/{} ran, upstream-failed) {}", name, completed, total, fmt_secs(*elapsed))?;
+            }
             ProgressEvent::NodeStarted { .. } => {}
             ProgressEvent::NodeCompleted { recipe, node, elapsed, kind: _ } => {
                 let rname = self.name(state, *recipe);
@@ -185,6 +189,35 @@ mod tests {
         assert!(s.contains("deps"), "got: {s}");
         assert!(s.contains("done"), "got: {s}");
         assert!(s.contains("0.40s"), "got: {s}");
+    }
+
+    #[test]
+    fn recipe_skipped_writes_skipped_not_done_line() {
+        let mut state = BuildState::new();
+        state.apply(&ProgressEvent::BuildStarted {
+            recipes: topo(&[(0, "report", 1)]), total_nodes: 1,
+        });
+        state.apply(&ProgressEvent::RecipeStarted {
+            recipe: RecipeId::new(0),
+        });
+        let ev = ProgressEvent::RecipeSkipped {
+            recipe: RecipeId::new(0),
+            elapsed: Duration::from_millis(400),
+            skipped: 1,
+            completed: 0,
+            total: 1,
+        };
+        state.apply(&ev);
+        let mut buf = Vec::new();
+        {
+            let mut r = PlainRenderer::new(&mut buf);
+            r.handle(&state, &ev).unwrap();
+        }
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("report"), "got: {s}");
+        assert!(s.contains("skipped"), "got: {s}");
+        assert!(s.contains("0/1 ran"), "got: {s}");
+        assert!(!s.contains("done"), "got: {s}");
     }
 
     #[test]

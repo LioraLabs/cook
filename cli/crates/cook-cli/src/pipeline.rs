@@ -204,6 +204,22 @@ fn bridge_engine_to_progress_events(
                         total: total_nodes,
                     }
                 }
+                cook_engine::EngineEvent::RecipeSkipped {
+                    name,
+                    elapsed,
+                    skipped_nodes,
+                    completed_nodes,
+                    total_nodes,
+                } => {
+                    let id = intern_recipe(&name, &mut recipe_ids, &mut next_recipe);
+                    cook_progress::ProgressEvent::RecipeSkipped {
+                        recipe: id,
+                        elapsed,
+                        skipped: skipped_nodes,
+                        completed: completed_nodes,
+                        total: total_nodes,
+                    }
+                }
                 cook_engine::EngineEvent::NodeStarted {
                     recipe,
                     node_name,
