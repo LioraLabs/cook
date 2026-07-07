@@ -1,7 +1,6 @@
 //! cook — the user-facing binary for the Cook build system.
 
 mod cli;
-mod diagnostics;
 mod error;
 mod iso8601;
 mod pipeline;
@@ -11,6 +10,7 @@ mod test_state;
 mod watcher;
 
 use clap::CommandFactory;
+use cook_cli::diagnostics;
 use cook_cli::modules;
 
 use cli::{Cli, Cmd};
