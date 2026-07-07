@@ -888,6 +888,23 @@ fn truncate_captured_stream(stream: &[u8]) -> String {
     head
 }
 
+/// Twin of cook-cli/src/diagnostics.rs::sanitize_error — keep in sync.
+/// Cuts the mlua traceback (unless COOK_BACKTRACE=1) and drops the
+/// "lua error: " / "runtime error: " wrapper prefixes.
+fn sanitize_lua_error(msg: &str) -> String {
+    let keep_traceback = std::env::var("COOK_BACKTRACE").map(|v| v == "1").unwrap_or(false);
+    let mut m = msg.to_string();
+    if !keep_traceback {
+        if let Some(pos) = m.find("\nstack traceback:") {
+            m.truncate(pos);
+        }
+    }
+    let rest = m.as_str();
+    let rest = rest.strip_prefix("lua error: ").unwrap_or(rest);
+    let rest = rest.strip_prefix("runtime error: ").unwrap_or(rest);
+    rest.to_string()
+}
+
 /// Build the canonical COOK_CMD_FAILED error string with captured streams
 /// appended on subsequent lines. The first line keeps the pre-existing
 /// `COOK_CMD_FAILED:<line>:<code>:<cmd>` shape so the parser at
@@ -1136,7 +1153,11 @@ fn execute_probe(
             return WorkResult {
                 id,
                 success: false,
-                error: Some(format!("probe '{}' produce raised: {}", key, e)),
+                error: Some(format!(
+                    "probe '{}' produce raised: {}",
+                    key,
+                    sanitize_lua_error(&e.to_string())
+                )),
                 test_output: None,
                 node_name,
                 output_lines: Vec::new(),
@@ -1230,7 +1251,7 @@ fn execute_lua_chunk(
         Err(e) => WorkResult {
             id,
             success: false,
-            error: Some(format!("[{recipe_name}] lua error: {e}")),
+            error: Some(format!("[{recipe_name}] {}", sanitize_lua_error(&e.to_string()))),
             test_output: None,
             node_name,
             output_lines: Vec::new(),
@@ -1554,6 +1575,49 @@ mod tests {
         assert_eq!(fs::read_to_string(dir.path().join("b.txt")).unwrap(), "b");
 
         pool.shutdown();
+    }
+
+    // COOK-191: execute-phase Lua errors must be sanitized at the source —
+    // no raw mlua traceback and no "lua error: " / "runtime error: "
+    // wrapper noise in `WorkResult.error`, unless the user opted in via
+    // `COOK_BACKTRACE=1` (mirrored by `-v` in cook-cli/src/main.rs).
+    //
+    // COOK_BACKTRACE is a process-global env var and cargo test runs run in
+    // parallel threads, so both the "clean by default" and "opt-in keeps
+    // traceback" assertions live in a single test function: the var is set
+    // and removed within this one test, and the default-off assertion runs
+    // first (before the var is ever touched) so it can never observe a
+    // sibling test's opt-in state.
+    #[test]
+    fn test_pool_lua_chunk_error_is_sanitized_by_default_and_keeps_traceback_with_cook_backtrace() {
+        let result = run_lua_chunk_in_worker(r#"error("kaboom")"#);
+        assert!(!result.success, "expected error() to fail the chunk");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(err.contains("kaboom"), "error must retain the message; got: {err}");
+        assert!(
+            !err.contains("stack traceback"),
+            "error must not contain a raw Lua traceback by default; got: {err}"
+        );
+        assert!(
+            !err.contains("lua error: runtime error:"),
+            "error must not contain the raw mlua wrapper prefixes; got: {err}"
+        );
+
+        // SAFETY (test-only): COOK_BACKTRACE is read by `sanitize_lua_error`
+        // at error-construction time inside the worker thread spawned by
+        // `run_lua_chunk_in_worker`, which we join on before removing the
+        // var below, so there is no cross-thread race within this test.
+        std::env::set_var("COOK_BACKTRACE", "1");
+        let result = run_lua_chunk_in_worker(r#"error("kaboom")"#);
+        std::env::remove_var("COOK_BACKTRACE");
+
+        assert!(!result.success, "expected error() to fail the chunk");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(err.contains("kaboom"), "error must retain the message; got: {err}");
+        assert!(
+            err.contains("stack traceback"),
+            "COOK_BACKTRACE=1 must preserve the traceback; got: {err}"
+        );
     }
 
     #[test]
