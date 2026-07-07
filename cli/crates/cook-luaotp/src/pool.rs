@@ -2400,7 +2400,7 @@ mod tests {
         );
     }
 
-    /// CS-0123: the worker VM MUST expose cook.json_decode /
+    /// G1 (CS-0123): the worker VM MUST expose cook.json_decode /
     /// cook.yaml_decode (§24.8) so a demand-driven probe produce body can
     /// decode structured output — parity with the register pre-pass VM.
     #[test]

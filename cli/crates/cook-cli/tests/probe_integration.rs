@@ -489,3 +489,38 @@ recipe build
         "warm rerun must leave .cook/probes/<key>.json byte-identical"
     );
 }
+
+/// CS-0123: a probe whose produce decodes JSON is consumable
+/// through the demand-driven worker path (consumer unit's `probes` field),
+/// not just the `ingredients <probe>` pre-pass.
+#[test]
+fn probe_json_decode_produce_demand_driven_consumer() {
+    let tmp = TempDir::new().unwrap();
+    let uniq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let probe_key = format!("codec:info-{uniq}");
+    let cookfile = format!(
+        r#"
+recipe build
+    >>{{
+        cook.probe("{probe_key}", {{
+            inputs = {{}},
+            produce = "return cook.json_decode('{{\"word\":\"hello-json\"}}')",
+        }})
+        cook.add_unit({{
+            name = "echo",
+            inputs = {{}},
+            outputs = {{"done.marker"}},
+            probes = {{"{probe_key}"}},
+            command = "echo $<{probe_key}.word> > done.marker",
+        }})
+    }}
+"#
+    );
+    fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();
+    run_cook(tmp.path(), &["build"]).expect("run should succeed");
+    let marker = fs::read_to_string(tmp.path().join("done.marker")).unwrap();
+    assert!(marker.contains("hello-json"), "marker: {marker:?}");
+}
