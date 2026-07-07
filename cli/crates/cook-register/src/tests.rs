@@ -500,6 +500,14 @@ fn test_add_unit_rejects_non_table_env() {
 }
 
 #[test]
+fn test_add_unit_rejects_non_string_env_value() {
+    // A numeric value must NOT be silently coerced to "1" (mlua's
+    // String: FromLua would otherwise do so) — env is a string→string map.
+    let err = add_unit_reject(r#"command = "true", env = { FOO = 1 }"#);
+    assert!(err.contains("env"), "got: {err}");
+}
+
+#[test]
 fn test_add_unit_rejects_non_table_file_refs() {
     let err = add_unit_reject(r#"command = "true", file_refs = "src/*.c""#);
     assert!(err.contains("file_refs"), "got: {err}");

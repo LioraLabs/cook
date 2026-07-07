@@ -885,8 +885,11 @@ pub fn register_unit_api(
             match tbl.get::<LuaValue>("env") {
                 Ok(LuaValue::Nil) | Err(_) => std::collections::BTreeMap::new(),
                 Ok(LuaValue::Table(t)) => {
+                    // Iterate as LuaValue pairs so mlua's `String: FromLua`
+                    // number-coercion cannot silently turn `env = { N = 1 }`
+                    // into `"1"`; both key and value MUST already be strings.
                     let mut out = std::collections::BTreeMap::new();
-                    for pair in t.pairs::<String, String>() {
+                    for pair in t.pairs::<LuaValue, LuaValue>() {
                         let (k, v) = pair.map_err(|e| {
                             type_err(
                                 "env",
@@ -894,7 +897,27 @@ pub fn register_unit_api(
                                 &e.to_string(),
                             )
                         })?;
-                        out.insert(k, v);
+                        let key = match k {
+                            LuaValue::String(s) => s.to_string_lossy().to_string(),
+                            other => {
+                                return Err(type_err(
+                                    "env",
+                                    "a table with string keys",
+                                    other.type_name(),
+                                ))
+                            }
+                        };
+                        let val = match v {
+                            LuaValue::String(s) => s.to_string_lossy().to_string(),
+                            other => {
+                                return Err(type_err(
+                                    "env",
+                                    "a table with string values",
+                                    other.type_name(),
+                                ))
+                            }
+                        };
+                        out.insert(key, val);
                     }
                     out
                 }
