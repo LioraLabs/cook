@@ -776,7 +776,8 @@ pub fn cmd_run(
         })
         .count();
     if failed_tests > 0 {
-        // main.rs suppresses TestFailure's Display (§3.4) — the per-node
+        // main.rs suppresses TestFailure's Display (test-runner output
+        // design §3.4, see test_reporter/summary.rs) — the per-node
         // FAILED lines are already on screen; print the one-line summary
         // here, after the renderer has released the terminal.
         eprintln!("cook: {failed_tests} failing test step(s)");

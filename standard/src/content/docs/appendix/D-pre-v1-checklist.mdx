@@ -198,6 +198,7 @@ A single CS entry can close all three cases:
 | `1`       | `Other`            | Generic failure (I/O, codegen, registration, etc.).                           |
 | `2`       | `ParseError`       | The Cookfile failed lexical or syntactic validation.                          |
 | `3`       | `RecipeNotFound`   | The named recipe (or default `build`) is not declared in the Cookfile.        |
+| `3`       | `RecipeCollision`  | The named recipe is registered more than once (registration collision).       |
 
 The runtime pin lives in `cli/e2e-fixtures/cli_audit_exit_codes/walkthrough.sh`. The test-failure-specific runtime pin (`examples/cli_audit_test_exit_code/walkthrough.sh`) was deleted alongside the `cook --test` runner in [CS-0046](E-changes#changes-cs-0046); as of [CS-0124](E-changes#changes-cs-0124) a `test` step that fails, times out, or is blocked under `cook RECIPE_NAME` routes through `TestFailure` (exit `1`) rather than `CommandFailed`, and that case is covered by `cli/e2e-fixtures/cli_audit_exit_codes/`.
 

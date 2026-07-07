@@ -7,6 +7,7 @@
 #   TestFailure(_)    -> 1
 #   ParseError(_)     -> 2
 #   RecipeNotFound(_) -> 3
+#   RecipeCollision(_)-> 3
 #   Other(_)          -> 1
 #
 # This is the runtime pin for the Standard's exit-code table.
