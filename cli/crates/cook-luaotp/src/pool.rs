@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -11,6 +12,13 @@ use crate::store::ProbeValueStore;
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
+
+/// Read-only snapshot of the register session's terminal-outputs map
+/// (recipe qualified-name → terminal output paths), shared across all worker
+/// VMs so execute-phase `cook.dep_output` / `cook.dep_output_list` (§24.7)
+/// resolve without re-entering the register session. `Arc` because every
+/// worker thread's VM captures the same immutable map.
+pub type WorkerDepOutputs = Arc<BTreeMap<String, Vec<String>>>;
 
 pub struct WorkItem {
     pub id: usize,
@@ -94,10 +102,22 @@ struct SharedQueue {
 // ---------------------------------------------------------------------------
 
 impl WorkerPool {
-    /// Spawn `n` worker threads.  Each thread creates its own `mlua::Lua` VM
-    /// and pulls work items from the shared queue.  Results are sent back
-    /// through the returned `mpsc::Receiver`.
+    /// Spawn `n` worker threads with no dep-output snapshot (empty map).
+    /// Convenience wrapper preserved for the crate's unit tests, which never
+    /// exercise `cook.dep_output`.
     pub fn spawn(n: usize) -> (Self, mpsc::Receiver<WorkResult>) {
+        Self::spawn_with_dep_outputs(n, Arc::new(BTreeMap::new()))
+    }
+
+    /// Spawn `n` worker threads, threading a read-only terminal-outputs
+    /// snapshot into every worker VM so execute-phase `cook.dep_output` /
+    /// `cook.dep_output_list` (§24.7) resolve. Each thread creates its own
+    /// `mlua::Lua` VM and pulls work items from the shared queue.  Results
+    /// are sent back through the returned `mpsc::Receiver`.
+    pub fn spawn_with_dep_outputs(
+        n: usize,
+        dep_outputs: WorkerDepOutputs,
+    ) -> (Self, mpsc::Receiver<WorkResult>) {
         let shared = Arc::new(SharedQueue {
             queue: Mutex::new(VecDeque::new()),
             condvar: Condvar::new(),
@@ -115,9 +135,10 @@ impl WorkerPool {
             let q = Arc::clone(&shared);
             let tx = tx.clone();
             let store = probe_store.clone();
+            let deps = Arc::clone(&dep_outputs);
 
             let handle = std::thread::spawn(move || {
-                worker_loop(q, tx, store);
+                worker_loop(q, tx, store, deps);
             });
             threads.push(handle);
         }
@@ -185,6 +206,7 @@ fn worker_loop(
     queue: Arc<SharedQueue>,
     tx: mpsc::Sender<WorkResult>,
     probe_store: ProbeValueStore,
+    dep_outputs: WorkerDepOutputs,
 ) {
     // Each worker creates its own Lua VM.  The VM is `!Send` but never
     // leaves this thread, so this is safe.
@@ -209,7 +231,7 @@ fn worker_loop(
         Arc::new(Mutex::new(cook_lua_stdlib::SandboxPolicy::Off));
 
     // Register the `cook` table once with closures that capture shared state.
-    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_recipe, &probe_store)
+    register_worker_cook_table(&lua, &current_working_dir, &current_env_vars, &current_recipe, &probe_store, &dep_outputs)
         .expect("failed to register cook table");
 
     // Register the `fs` table once at startup with the Live cwd source
@@ -365,6 +387,7 @@ fn register_worker_cook_table(
     current_env_vars: &Arc<Mutex<HashMap<String, String>>>,
     current_recipe: &Arc<Mutex<String>>,
     probe_store: &ProbeValueStore,
+    dep_outputs: &WorkerDepOutputs,
 ) -> mlua::Result<()> {
     let cook = lua.create_table()?;
 
