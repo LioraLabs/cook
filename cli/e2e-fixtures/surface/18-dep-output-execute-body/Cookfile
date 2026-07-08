@@ -1,0 +1,12 @@
+recipe lib
+    cook "build/lib.txt" { mkdir -p build && echo LIB > $<out> }
+
+recipe app
+    cook "build/app.txt" >{
+        fs.write(output, "deps: " .. cook.dep_output("lib"))
+    }
+
+recipe bad
+    cook "build/bad.txt" >{
+        fs.write(output, cook.dep_output("nope"))
+    }

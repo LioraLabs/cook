@@ -36,4 +36,11 @@ pub struct RegisteredWorkspace {
     /// Per-Cookfile `alias_dirs` (for `cook.dep_output` rewriting), keyed by
     /// qualified prefix (`""` for root) and then by alias name.
     pub alias_dirs_by_prefix: BTreeMap<String, BTreeMap<String, PathBuf>>,
+    /// Snapshot of the register session's terminal-outputs map (recipe
+    /// qualified-name → terminal output paths), taken after every Cookfile
+    /// has registered. Threaded to the execute-phase worker VMs so
+    /// `cook.dep_output` / `cook.dep_output_list` (§24.7, "Both") resolve
+    /// there. The map is closed before execute phase starts, so a snapshot
+    /// taken at the end of `register_workspace` is sound.
+    pub terminal_outputs: BTreeMap<String, Vec<String>>,
 }

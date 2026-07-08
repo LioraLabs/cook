@@ -1,0 +1,12 @@
+# CS-0129: cook.dep_output resolves on the execute-phase worker VM (Standard §24.7).
+[[run]]
+args = ["app"]
+[run.assert]
+equals = { "build/app.txt" = "deps: build/lib.txt" }
+
+# Error model (§24.7): an unknown referent raises a Lua error -> nonzero exit.
+[[run]]
+args = ["bad"]
+exit = 1
+[run.assert]
+output_contains = ["recipe 'nope' has no terminal output"]

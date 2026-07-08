@@ -233,6 +233,7 @@ pub fn register_workspace(
         final_env_by_cookfile: BTreeMap::new(),
         working_dir_by_prefix: BTreeMap::new(),
         alias_dirs_by_prefix: BTreeMap::new(),
+        terminal_outputs: BTreeMap::new(),
     };
 
     // Register Cookfiles importees-first / root-last so every cross-Cookfile
@@ -287,6 +288,15 @@ pub fn register_workspace(
             .insert(prefix.clone(), member.dir.clone());
         ws.alias_dirs_by_prefix.insert(prefix, alias_dirs);
     }
+
+    // Snapshot the now-fully-populated terminal-outputs map so the
+    // execute-phase worker VMs can resolve cook.dep_output / dep_output_list
+    // (§24.7). Every producer's outputs are recorded during the register pass
+    // above; the map is not written again before execute phase.
+    ws.terminal_outputs = shared_outputs
+        .lock()
+        .expect("terminal_outputs mutex poisoned")
+        .clone();
 
     Ok(ws)
 }
