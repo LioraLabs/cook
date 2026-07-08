@@ -131,6 +131,15 @@ pub enum WorkPayload {
         /// Set by `_enter_chore`/`_exit_chore`; routes the unit to the
         /// chore-window drain in cook-engine instead of the worker pool.
         is_chore: bool,
+        /// 1-indexed Cookfile line of the originating step; 0 = unknown.
+        /// Purely a diagnostics aid (COOK-191/CS-0126): the execute-phase
+        /// worker (cook-luaotp/src/pool.rs) newline-pads `code` so that a
+        /// Lua error inside the chunk reports `Cookfile:LINE:` instead of
+        /// the opaque `[string "..."]:1:` chunk name. This field MUST NOT
+        /// be folded into any cache fingerprint — unit identity is hashed
+        /// from `code`/`command` text directly (cook-register/src/unit_api.rs
+        /// `command_hash`), never by serialising the whole `WorkPayload`.
+        line: usize,
     },
     Test {
         cmd: String,
@@ -140,6 +149,14 @@ pub enum WorkPayload {
         suite_name: String,
         test_name: String,
         iteration_item: Option<String>,
+        /// CS-0127 §22.4: exactly one of `cmd` / `lua_code` is populated —
+        /// `cmd` is a shell command run via `/bin/sh`, `lua_code` is a Lua
+        /// chunk executed on an execute-phase worker VM under the `test`
+        /// step-kind sandbox policy (identical to `Cook`, see [`StepKind`]).
+        /// When `lua_code` is `Some`, `cmd` MUST be empty; pass/fail is the
+        /// chunk completing without error / raising a Lua error, mirroring
+        /// `should_fail`'s existing exit-code inversion semantics.
+        lua_code: Option<String>,
         /// COOK-84: working-dir-relative paths of the files this test
         /// consumes — the recipe's resolved ingredients ∪ the step group's
         /// dep-output paths (mirrors `cache_input_paths` in
@@ -164,10 +181,19 @@ impl WorkPayload {
     pub fn display_name(&self) -> String {
         match self {
             Self::Shell { cmd, .. } => {
-                if cmd.len() <= 60 {
-                    cmd.clone()
+                let body = cmd
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty() && *l != "set -e")
+                    // Degenerate body (empty, or nothing but the `set -e`
+                    // preamble): fall back to the first non-empty line so
+                    // callers surfacing this label never get a blank string.
+                    .or_else(|| cmd.lines().map(str::trim).find(|l| !l.is_empty()))
+                    .unwrap_or("sh");
+                if body.len() <= 60 {
+                    body.to_string()
                 } else {
-                    format!("{}...", &cmd[..57])
+                    format!("{}...", body.chars().take(57).collect::<String>())
                 }
             }
             Self::LuaChunk { .. } => "lua".to_string(),
@@ -357,6 +383,25 @@ mod tests {
     }
 
     #[test]
+    fn shell_display_name_strips_set_e_and_is_single_line() {
+        let p = WorkPayload::Shell { cmd: "set -e\nwc -w < a.txt > b.count".into(), line: 1 };
+        let d = p.display_name();
+        assert!(!d.contains("set -e"), "got: {d}");
+        assert!(!d.contains('\n'), "got: {d}");
+        assert!(d.starts_with("wc"), "got: {d}");
+    }
+
+    #[test]
+    fn shell_display_name_degenerate_body_is_never_blank() {
+        // A body that is nothing but the `set -e` preamble must still yield a
+        // non-blank label (inline renderer surfaces this string directly).
+        let p = WorkPayload::Shell { cmd: "set -e".into(), line: 1 };
+        assert!(!p.display_name().is_empty(), "blank label for set -e-only body");
+        let empty = WorkPayload::Shell { cmd: String::new(), line: 1 };
+        assert!(!empty.display_name().is_empty(), "blank label for empty body");
+    }
+
+    #[test]
     fn work_payload_interactive_construction() {
         let p = WorkPayload::Interactive { cmd: "docker run -it ubuntu".into(), line: 5, is_chore: false };
         assert!(matches!(p, WorkPayload::Interactive { line: 5, .. }));
@@ -388,9 +433,10 @@ mod tests {
             ingredient_groups: vec![vec!["a".into(), "b".into()]],
             step_kind: StepKind::Cook,
             is_chore: false,
+            line: 1,
         };
         match &p {
-            WorkPayload::LuaChunk { code, inputs, outputs, ingredient_groups, step_kind, is_chore } => {
+            WorkPayload::LuaChunk { code, inputs, outputs, ingredient_groups, step_kind, is_chore, line: _ } => {
                 assert_eq!(*step_kind, StepKind::Cook);
                 assert_eq!(code, "print('hi')");
                 assert_eq!(inputs, &vec!["in.txt".to_string()]);
@@ -412,6 +458,7 @@ mod tests {
             ingredient_groups: vec![],
             step_kind: StepKind::Chore,
             is_chore: true,
+            line: 1,
         };
         assert!(matches!(chore_unit, WorkPayload::LuaChunk { is_chore: true, .. }));
     }
@@ -426,6 +473,7 @@ mod tests {
             suite_name: "unit".into(),
             test_name: "test_foo".into(),
             iteration_item: None,
+            lua_code: None,
             input_paths: vec![],
         };
         assert!(matches!(p, WorkPayload::Test { timeout: 30, should_fail: false, .. }));

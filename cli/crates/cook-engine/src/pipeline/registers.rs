@@ -233,6 +233,7 @@ pub fn register_workspace(
         final_env_by_cookfile: BTreeMap::new(),
         working_dir_by_prefix: BTreeMap::new(),
         alias_dirs_by_prefix: BTreeMap::new(),
+        terminal_outputs: BTreeMap::new(),
     };
 
     // Register Cookfiles importees-first / root-last so every cross-Cookfile
@@ -288,6 +289,15 @@ pub fn register_workspace(
         ws.alias_dirs_by_prefix.insert(prefix, alias_dirs);
     }
 
+    // Snapshot the now-fully-populated terminal-outputs map so the
+    // execute-phase worker VMs can resolve cook.dep_output / dep_output_list
+    // (§24.7). Every producer's outputs are recorded during the register pass
+    // above; the map is not written again before execute phase.
+    ws.terminal_outputs = shared_outputs
+        .lock()
+        .expect("terminal_outputs mutex poisoned")
+        .clone();
+
     Ok(ws)
 }
 
@@ -302,8 +312,19 @@ pub fn list_workspace_names(
     workspace: &Workspace,
     config: Option<&str>,
     env_overrides: &[String],
-) -> Result<Vec<(String, cook_register::RecipeKind)>, PipelineError> {
-    let mut out: Vec<(String, cook_register::RecipeKind)> = Vec::new();
+) -> Result<
+    Vec<(
+        String,
+        cook_register::RecipeKind,
+        Vec<cook_register::capture::ChoreParamMeta>,
+    )>,
+    PipelineError,
+> {
+    let mut out: Vec<(
+        String,
+        cook_register::RecipeKind,
+        Vec<cook_register::capture::ChoreParamMeta>,
+    )> = Vec::new();
     for (member, _canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?;
         let names = cook_register::list_names(builder, &member.lua_source)
@@ -314,7 +335,7 @@ pub fn list_workspace_names(
             } else {
                 format!("{prefix}.{}", n.name)
             };
-            out.push((qualified, n.kind));
+            out.push((qualified, n.kind, n.params));
         }
     }
     Ok(out)

@@ -1,1 +1,1 @@
-CS-0022: bare $<stem> in output pattern was removed
+bare $<stem> in output pattern is not supported

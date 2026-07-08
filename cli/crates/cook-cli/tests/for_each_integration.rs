@@ -154,3 +154,47 @@ recipe gen
         "the only re-executed member is bravo; got log:\n{log}"
     );
 }
+
+/// COOK-190: a two-segment probe key (`ns:name`) consumed in ingredients
+/// position — the issue's exact repro shape, native `probe` DSL. Must fan
+/// out one unit per member and stay per-member cached on a second run.
+#[test]
+fn for_each_two_segment_probe_key_end_to_end() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+
+    let uniq = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
+    let cookfile = format!(
+        r#"probe cards:list
+    lines {{ printf "alpha-{uniq}\nbeta-{uniq}\ngamma-{uniq}\n" }}
+
+recipe stamps
+    ingredients cards:list
+    cook "out/$<in>.stamp" {{
+        mkdir -p out
+        echo "$<in>" >> ran.log
+        echo "member: $<in>" > $<out>
+    }}
+"#
+    );
+    fs::write(dir.join("Cookfile"), cookfile).unwrap();
+
+    // First run: three members fan out, three units execute.
+    run_cook(dir, &["stamps"]);
+    assert!(dir.join(format!("out/alpha-{uniq}.stamp")).exists());
+    assert!(dir.join(format!("out/beta-{uniq}.stamp")).exists());
+    assert!(dir.join(format!("out/gamma-{uniq}.stamp")).exists());
+    assert_eq!(ran_lines(dir), 3, "three members must execute on the first run");
+
+    // Second run: per-member caching — nothing re-executes.
+    run_cook(dir, &["stamps"]);
+    assert_eq!(ran_lines(dir), 3, "second run must be all cache hits");
+}

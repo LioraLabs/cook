@@ -367,6 +367,164 @@ end)
     assert!(err.contains("timeout"), "error should mention 'timeout', got: {err}");
 }
 
+// -----------------------------------------------------------------------
+// CS-0127: cook.add_unit typed-field sweep — every wrong-typed field is a
+// register-phase hard error naming the field, never a silent coercion to
+// its default. Mirrors the CS-0122 `command` precedent (unit_api.rs).
+// -----------------------------------------------------------------------
+
+/// Small helper shared by the CS-0127 field-typing tests below: register a
+/// single-recipe Cookfile whose body is exactly one `cook.add_unit(spec)`
+/// call, and return the register-time error string. Panics if registration
+/// unexpectedly succeeds.
+fn add_unit_reject(spec_body: &str) -> String {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = format!(
+        r#"
+cook.recipe("r", {{}}, function()
+    cook.add_unit({{ {spec_body} }})
+end)
+"#
+    );
+    let result = register_cookfile(rt, &lua_src, None);
+    assert!(
+        result.is_err(),
+        "expected register_cookfile to reject spec `{{ {spec_body} }}`, but it succeeded"
+    );
+    result.err().unwrap().to_string()
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_lua_code() {
+    let err = add_unit_reject(r#"lua_code = 42"#);
+    assert!(err.contains("lua_code"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_boolean_interactive() {
+    let err = add_unit_reject(r#"command = "true", interactive = "yes""#);
+    assert!(err.contains("interactive"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_integer_line() {
+    let err = add_unit_reject(r#"command = "true", line = "7""#);
+    assert!(err.contains("line"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_boolean_cache() {
+    let err = add_unit_reject(r#"command = "true", cache = "no""#);
+    assert!(err.contains("cache"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_inputs() {
+    let err = add_unit_reject(r#"command = "true", inputs = "src/a.c""#);
+    assert!(err.contains("inputs"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_element_inputs() {
+    let err = add_unit_reject(r#"command = "true", inputs = {1, 2}"#);
+    assert!(err.contains("inputs"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_output() {
+    let err = add_unit_reject(r#"command = "true", output = {}"#);
+    assert!(err.contains("output"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_outputs() {
+    let err = add_unit_reject(r#"command = "true", outputs = "x""#);
+    assert!(err.contains("outputs"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_element_outputs() {
+    let err = add_unit_reject(r#"command = "true", outputs = {true}"#);
+    assert!(err.contains("outputs"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_ingredient_groups() {
+    let err = add_unit_reject(r#"command = "true", ingredient_groups = "x""#);
+    assert!(err.contains("ingredient_groups"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_element_ingredient_groups() {
+    let err = add_unit_reject(r#"command = "true", ingredient_groups = {{1}}"#);
+    assert!(err.contains("ingredient_groups"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_unknown_step_kind_value() {
+    let err = add_unit_reject(r#"command = "true", step_kind = "banana""#);
+    assert!(err.contains("step_kind"), "got: {err}");
+    assert!(err.contains("banana"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_step_kind() {
+    let err = add_unit_reject(r#"command = "true", step_kind = 3"#);
+    assert!(err.contains("step_kind"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_member() {
+    let err = add_unit_reject(r#"command = "true", member = {}"#);
+    assert!(err.contains("member"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_unknown_sharing_value() {
+    let err = add_unit_reject(r#"command = "true", sharing = "wide""#);
+    assert!(err.contains("sharing"), "got: {err}");
+    assert!(err.contains("wide"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_sharing() {
+    let err = add_unit_reject(r#"command = "true", sharing = 1"#);
+    assert!(err.contains("sharing"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_env() {
+    let err = add_unit_reject(r#"command = "true", env = "FOO=1""#);
+    assert!(err.contains("env"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_string_env_value() {
+    // A numeric value must NOT be silently coerced to "1" (mlua's
+    // String: FromLua would otherwise do so) — env is a string→string map.
+    let err = add_unit_reject(r#"command = "true", env = { FOO = 1 }"#);
+    assert!(err.contains("env"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_file_refs() {
+    let err = add_unit_reject(r#"command = "true", file_refs = "src/*.c""#);
+    assert!(err.contains("file_refs"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_non_table_consulted_env_keys() {
+    let err = add_unit_reject(r#"command = "true", consulted_env_keys = 42"#);
+    assert!(err.contains("consulted_env_keys"), "got: {err}");
+}
+
+#[test]
+fn test_add_unit_rejects_unknown_string_consulted_env_keys() {
+    let err = add_unit_reject(r#"command = "true", consulted_env_keys = "FOO""#);
+    assert!(err.contains("consulted_env_keys"), "got: {err}");
+}
+
 #[test]
 fn test_resolve_ingredients_api() {
     use std::fs;
@@ -1622,6 +1780,102 @@ recipe build_catalog
 }
 
 #[test]
+fn for_each_two_segment_probe_key_fans_out() {
+    let dir = TempDir::new().unwrap();
+    // COOK-190: `ns:name` is the canonical probe naming; a two-segment key
+    // in ingredients position must resolve to the declared probe, not
+    // truncate to probe `cards` + field selector `list`.
+    let cookfile = r#"
+register
+    cook.probe("cards:list", {
+        inputs = {},
+        produce = [[ return { "alpha", "beta", "gamma" } ]],
+    })
+
+recipe stamps
+    ingredients cards:list
+    cook "out/$<in>.stamp" {
+        mkdir -p out
+        printf '%s' "$<in>" > $<out>
+    }
+"#;
+    let registered = register_surface(dir.path(), cookfile).expect("register");
+    let units = registered.units_by_recipe.get("stamps").expect("stamps registered");
+    assert_eq!(units.units.len(), 3, "one unit per member of probe 'cards:list'");
+}
+
+#[test]
+fn for_each_two_segment_key_with_field_selector_fans_out() {
+    let dir = TempDir::new().unwrap();
+    // §22.5.10 three-segment form: two-segment probe key `ns:cards` + one
+    // trailing `:items` field selector. The pre-pass resolves via the final
+    // colon (no probe `ns:cards:items` is declared) and stashes the selected
+    // array under the verbatim ref.
+    let cookfile = r#"
+register
+    cook.probe("ns:cards", {
+        inputs = {},
+        produce = [[ return { items = { {id="a"}, {id="b"} } } ]],
+    })
+
+recipe build_cards
+    ingredients ns:cards:items
+    cook "out/$<in.id>.json" {
+        mkdir -p out
+        printf '%s' '$<in>' > $<out>
+    }
+"#;
+    let registered = register_surface(dir.path(), cookfile).expect("register");
+    let units = registered.units_by_recipe.get("build_cards").unwrap();
+    assert_eq!(units.units.len(), 2, "two items via the ns:cards:items selector");
+}
+
+#[test]
+fn for_each_exact_probe_key_wins_over_field_selector_split() {
+    let dir = TempDir::new().unwrap();
+    // Both `cards` (an object with a `list` field) and `cards:list` (an
+    // array) are declared. §22.5.10 resolution: the exact key match wins.
+    let cookfile = r#"
+register
+    cook.probe("cards", {
+        inputs = {},
+        produce = [[ return { list = { "x" } } ]],
+    })
+    cook.probe("cards:list", {
+        inputs = {},
+        produce = [[ return { "a", "b" } ]],
+    })
+
+recipe stamps
+    ingredients cards:list
+    cook "out/$<in>.stamp" {
+        mkdir -p out
+        printf '%s' "$<in>" > $<out>
+    }
+"#;
+    let registered = register_surface(dir.path(), cookfile).expect("register");
+    let units = registered.units_by_recipe.get("stamps").unwrap();
+    assert_eq!(units.units.len(), 2, "exact key 'cards:list' wins over cards[list]");
+}
+
+#[test]
+fn for_each_undeclared_two_segment_ref_error_names_full_ref() {
+    let dir = TempDir::new().unwrap();
+    let cookfile = r#"
+recipe stamps
+    ingredients nope:list
+    cook "out/$<in>.stamp" {
+        printf '%s' "$<in>" > $<out>
+    }
+"#;
+    let err = register_surface(dir.path(), cookfile).expect_err("must reject");
+    assert!(
+        matches!(err, RegisterError::ForEachProbeUndeclared { ref key, .. } if key == "nope:list"),
+        "error must name the full source ref, got {err:?}"
+    );
+}
+
+#[test]
 fn for_each_undeclared_probe_rejected() {
     let dir = TempDir::new().unwrap();
     // `ingredients nope` names a probe that was never declared.
@@ -2075,8 +2329,5 @@ fn add_unit_file_refs_missing_file_is_register_error() {
         err.contains("missing.css"),
         "error must name the missing file; got: {err}"
     );
-    assert!(
-        err.contains("CS-0101"),
-        "error must cite CS-0101; got: {err}"
-    );
+    assert!(err.contains("file not found"), "error must name the file-ref failure; got: {err}");
 }

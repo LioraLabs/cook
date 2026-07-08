@@ -76,6 +76,17 @@ impl BuildState {
                     }
                 }
             }
+            ProgressEvent::RecipeSkipped { recipe, elapsed, completed, total, .. } => {
+                if let Some(r) = self.recipes.get_mut(recipe) {
+                    let was_running = r.status == Status::Running;
+                    r.elapsed = Some(*elapsed);
+                    r.progress = (*completed, *total);
+                    r.status = Status::Skipped;
+                    if was_running {
+                        self.totals.running = self.totals.running.saturating_sub(1);
+                    }
+                }
+            }
             ProgressEvent::NodeStarted { recipe, node, name, artifact, fallback_label, kind } => {
                 if let Some(r) = self.recipes.get_mut(recipe) {
                     let mut ns = NodeState::new(*node, name.clone(), artifact.clone(), fallback_label.clone());

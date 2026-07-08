@@ -17,6 +17,29 @@ impl<W: Write + Send> PlainRenderer<W> {
     fn name(&self, state: &BuildState, recipe: RecipeId) -> String {
         state.recipes.get(&recipe).map(|r| r.name.clone()).unwrap_or_else(|| format!("recipe#{}", recipe.raw()))
     }
+
+    /// Clean, never-empty label for a node: the node's `display()` (artifact
+    /// basename, or a cleaned command token — never raw `set -e`-prefixed
+    /// multi-line command text) when the node is present in state; a
+    /// recipe-qualified placeholder on a lookup miss, so the label is never
+    /// blank (the `report/` bug).
+    fn node_display(&self, state: &BuildState, recipe: &RecipeId, node: &crate::event::NodeId) -> String {
+        state.recipes.get(recipe)
+            .and_then(|r| r.nodes.get(node))
+            .map(|n| n.display())
+            .unwrap_or_else(|| "?".to_string())
+    }
+}
+
+/// Interactive-frame label: drops the internal `@N` source-line tag rather
+/// than exposing it in user-facing output (mirrors event_writer.rs's inline
+/// renderer, which already strips it).
+fn interactive_label(rname: &str, name: &str) -> String {
+    if name.starts_with('@') {
+        rname.to_string()
+    } else {
+        format!("{rname}/{name}")
+    }
 }
 
 fn fmt_secs(d: Duration) -> String {
@@ -52,28 +75,27 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
                 let name = self.name(state, *recipe);
                 writeln!(self.out, "  {:24} FAILED   ({}/{} steps) {}", name, completed, total, fmt_secs(*elapsed))?;
             }
+            ProgressEvent::RecipeSkipped { recipe, elapsed, completed, total, .. } => {
+                let name = self.name(state, *recipe);
+                writeln!(self.out, "  {:24} skipped  ({}/{} ran, upstream-failed) {}", name, completed, total, fmt_secs(*elapsed))?;
+            }
             ProgressEvent::NodeStarted { .. } => {}
             ProgressEvent::NodeCompleted { recipe, node, elapsed, kind: _ } => {
                 let rname = self.name(state, *recipe);
-                let nname = state.recipes.get(recipe)
-                    .and_then(|r| r.nodes.get(node))
-                    .map(|n| n.name.clone())
-                    .unwrap_or_default();
+                let nname = self.node_display(state, recipe, node);
                 writeln!(self.out, "  {}/{:40}{}", rname, nname, fmt_secs(*elapsed))?;
             }
             ProgressEvent::NodeFailed { recipe, node, elapsed, error } => {
                 let rname = self.name(state, *recipe);
-                let nname = state.recipes.get(recipe)
-                    .and_then(|r| r.nodes.get(node))
-                    .map(|n| n.name.clone())
-                    .unwrap_or_default();
+                let nname = self.node_display(state, recipe, node);
                 writeln!(self.out, "  {}/{:40}FAILED {}", rname, nname, fmt_secs(*elapsed))?;
                 for line in error.lines() {
                     writeln!(self.out, "  [{rname}/{nname}] {line}")?;
                 }
             }
-            ProgressEvent::NodeCacheHit { recipe, name: nname, .. } => {
+            ProgressEvent::NodeCacheHit { recipe, node, .. } => {
                 let rname = self.name(state, *recipe);
+                let nname = self.node_display(state, recipe, node);
                 writeln!(self.out, "  {}/{:40}cached", rname, nname)?;
             }
             ProgressEvent::NodeSkipped { recipe, name: nname, reason, .. } => {
@@ -99,12 +121,14 @@ impl<W: Write + Send> Renderer for PlainRenderer<W> {
             }
             ProgressEvent::InteractiveStart { recipe, name, .. } => {
                 let rname = self.name(state, *recipe);
-                writeln!(self.out, "─── {rname}/{name} ───")?;
+                let label = interactive_label(&rname, name);
+                writeln!(self.out, "─── {label} ───")?;
             }
             ProgressEvent::InteractiveEnd { recipe, name, elapsed, success, .. } => {
                 let rname = self.name(state, *recipe);
+                let label = interactive_label(&rname, name);
                 let ok = if *success { "ok" } else { "failed" };
-                writeln!(self.out, "─── {rname}/{name} resumed ({ok}, {}) ───", fmt_secs(*elapsed))?;
+                writeln!(self.out, "─── {label} resumed ({ok}, {}) ───", fmt_secs(*elapsed))?;
             }
             ProgressEvent::Finished { .. } => {}
         }
@@ -188,6 +212,35 @@ mod tests {
     }
 
     #[test]
+    fn recipe_skipped_writes_skipped_not_done_line() {
+        let mut state = BuildState::new();
+        state.apply(&ProgressEvent::BuildStarted {
+            recipes: topo(&[(0, "report", 1)]), total_nodes: 1,
+        });
+        state.apply(&ProgressEvent::RecipeStarted {
+            recipe: RecipeId::new(0),
+        });
+        let ev = ProgressEvent::RecipeSkipped {
+            recipe: RecipeId::new(0),
+            elapsed: Duration::from_millis(400),
+            skipped: 1,
+            completed: 0,
+            total: 1,
+        };
+        state.apply(&ev);
+        let mut buf = Vec::new();
+        {
+            let mut r = PlainRenderer::new(&mut buf);
+            r.handle(&state, &ev).unwrap();
+        }
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("report"), "got: {s}");
+        assert!(s.contains("skipped"), "got: {s}");
+        assert!(s.contains("0/1 ran"), "got: {s}");
+        assert!(!s.contains("done"), "got: {s}");
+    }
+
+    #[test]
     fn node_output_prefix_includes_recipe_and_node() {
         let mut state = BuildState::new();
         state.apply(&ProgressEvent::BuildStarted {
@@ -211,5 +264,44 @@ mod tests {
         assert!(s.contains("[lib/lvm.c]"), "got: {s}");
         assert!(s.contains("(stderr)"), "got: {s}");
         assert!(s.contains("warning: unused"), "got: {s}");
+    }
+
+    #[test]
+    fn cache_hit_line_uses_artifact_basename_not_raw_command() {
+        // The dominant second-run all-cached case must show the clean output
+        // basename, not the raw shell command that produced it (item 1).
+        let mut state = BuildState::new();
+        state.apply(&ProgressEvent::BuildStarted {
+            recipes: topo(&[(0, "build", 1)]), total_nodes: 1,
+        });
+        state.apply(&ProgressEvent::NodeStarted {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "wc -w < a.txt > build/counts/alpha.count".into(),
+            artifact: Some(std::path::PathBuf::from("build/counts/alpha.count")),
+            fallback_label: "wc -w < a.txt > build/counts/alpha.count".into(),
+            kind: crate::event::NodeKind::Cooked,
+        });
+        let ev = ProgressEvent::NodeCacheHit {
+            recipe: RecipeId::new(0), node: NodeId::new(0),
+            name: "wc -w < a.txt > build/counts/alpha.count".into(),
+            artifact: Some(std::path::PathBuf::from("build/counts/alpha.count")),
+        };
+        state.apply(&ev);
+        let mut buf = Vec::new();
+        {
+            let mut r = PlainRenderer::new(&mut buf);
+            r.handle(&state, &ev).unwrap();
+        }
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("build/alpha.count"), "got: {s}");
+        assert!(s.contains("cached"), "got: {s}");
+        assert!(!s.contains("wc -w"), "raw command leaked into label: {s}");
+    }
+
+    #[test]
+    fn interactive_label_drops_internal_line_tag() {
+        // `@N` is an internal source-line tag; never expose it in frames.
+        assert_eq!(interactive_label("greet", "@23"), "greet");
+        assert_eq!(interactive_label("greet", "shell"), "greet/shell");
     }
 }

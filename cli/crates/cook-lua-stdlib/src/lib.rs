@@ -2,16 +2,18 @@
 //! the register-phase VM (`cook-register`) and the execute-phase worker
 //! VMs (`cook-luaotp`).
 //!
-//! Exposes three tables:
+//! Exposes:
 //!
 //! - `fs.*` — filesystem helpers, working-directory rooted (§6.5).
 //! - `path.*` — pure string path manipulation (§6.6).
 //! - `cook.platform.*` — host OS / architecture identifiers.
+//! - `cook.json_decode` / `cook.yaml_decode` — structured-data codecs
+//!   (§24.8, CS-0123).
 //!
-//! All three are specified by the Cook Standard (`standard/src/content/
-//! docs/06-cook-lua-api.mdx`) as **Phase: Both**. Sharing one
-//! implementation across both VMs is what realizes that spec contract —
-//! see CS-0044.
+//! All are specified by the Cook Standard (`standard/src/content/
+//! docs/06-cook-lua-api.mdx`, `standard/src/content/docs/24-both-phase.mdx`)
+//! as **Phase: Both**. Sharing one implementation across both VMs is what
+//! realizes that spec contract — see CS-0044, CS-0123.
 //!
 //! # Working-directory abstraction
 //!
@@ -27,6 +29,7 @@
 //! [`WorkingDirSource`] abstracts this so a single `fs_api`
 //! implementation handles both call patterns.
 
+pub mod codec_api;
 pub mod fs_api;
 pub mod path_api;
 pub mod platform_api;
@@ -36,6 +39,7 @@ pub mod shell_guard;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+pub use codec_api::{json_to_lua_value, register_codec_api};
 pub use fs_api::{register_fs_api, register_fs_api_with_sandbox};
 pub use path_api::register_path_api;
 pub use platform_api::register_platform_api;

@@ -38,10 +38,9 @@ sha2 = "0.10"
 
 [features]
 default = []
-# Embeds the browser-based DAG viewer used by `cook dag`. Pulls in the
-# `cook-dag-viewer` crate (which carries `tiny_http`, `open`, and the embedded
-# HTML asset). Off by default so vanilla `cook` builds stay slim and free of
-# an HTTP-server dependency. CS-0047 documents the rationale.
+# Embeds the ratatui-based DAG terminal viewer used by `cook dag`. Pulls in
+# the `cook-dag-viewer` crate (ratatui + crossterm). Off by default so
+# vanilla `cook` builds stay slim. CS-0047 documents the rationale.
 viewer = ["dep:cook-dag-viewer"]
 
 [dev-dependencies]

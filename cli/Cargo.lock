@@ -505,6 +505,8 @@ version = "0.1.0"
 dependencies = [
  "glob",
  "mlua",
+ "serde_json",
+ "serde_yml",
  "tempfile",
 ]
 
@@ -557,7 +559,6 @@ dependencies = [
  "mlua",
  "serde",
  "serde_json",
- "serde_yml",
  "tempfile",
  "thiserror 2.0.18",
  "xxhash-rust",

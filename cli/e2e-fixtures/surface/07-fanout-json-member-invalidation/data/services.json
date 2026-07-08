@@ -1,0 +1,4 @@
+[
+  { "name": "auth", "port": 7001 },
+  { "name": "billing", "port": 7002 }
+]

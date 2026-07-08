@@ -104,9 +104,13 @@ pub(crate) fn generate_plate_step(
                 "    for _, _plate_in in ipairs({}) do\n",
                 source_expr
             ));
+            // COOK-191/CS-0126: the "local input = ..." header adds exactly
+            // one line ahead of `code` in the same chunk, so subtract 1 from
+            // the reported line to compensate (see unit_api.rs's analogous
+            // chore-prelude handling).
             out.push_str(&format!(
-                "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (\"local input = \" .. string.format(\"%q\", _plate_in) .. \"\\n\") .. {}, consulted_env_keys = \"*\"}})\n",
-                lua_chunk_literal(code)
+                "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (\"local input = \" .. string.format(\"%q\", _plate_in) .. \"\\n\") .. {}, consulted_env_keys = \"*\", line = {}}})\n",
+                lua_chunk_literal(code), line.saturating_sub(1)
             ));
             out.push_str("    end\n");
         }
@@ -116,16 +120,19 @@ pub(crate) fn generate_plate_step(
         // `inputs`.  We serialise the table at register time using a small Lua
         // helper that quotes each element, producing a self-contained chunk.
         (Body::LuaBlock(code), PlateTestMode::ManyToOne) => {
+            // COOK-191/CS-0126: the generated "local inputs = {...}\n"
+            // header adds exactly one line ahead of `code`, so subtract 1
+            // from the reported line (see the OneToOne arm above).
             out.push_str(&format!(
-                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), consulted_env_keys = \"*\"}})\n",
-                source_expr, lua_chunk_literal(code)
+                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), consulted_env_keys = \"*\", line = {}}})\n",
+                source_expr, lua_chunk_literal(code), line.saturating_sub(1)
             ));
         }
         // (6) Lua, OneShot — one unit, no source binding.
         (Body::LuaBlock(code), PlateTestMode::OneShot) => {
             out.push_str(&format!(
-                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\"}})\n",
-                lua_chunk_literal(code)
+                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\", line = {}}})\n",
+                lua_chunk_literal(code), line
             ));
         }
     }
@@ -153,7 +160,7 @@ pub(crate) fn generate_for_each_plate_step(
     plate_step: &PlateStep,
     line: usize,
     recipe_names: &BTreeSet<String>,
-) {
+) -> Result<(), CodegenError> {
     use crate::resolver::{IterMode, OutputShape};
     use crate::template::{cook_step_ctx, expand_for_each_template};
 
@@ -165,29 +172,30 @@ pub(crate) fn generate_for_each_plate_step(
 
     match &plate_step.body {
         Body::ShellBlock(lines) => {
+            // COOK-187 / CS-0122 / CS-0127: a plate command, like every other
+            // shell-command body, must reach register-time unit capture as
+            // literal `$<key:...>` sigil text inside the `command` STRING —
+            // never a deferred `function() return ... end` closure. `plate`
+            // keeps its own unsandboxed policy (Standard §8.6) via the
+            // explicit `step_kind = "plate"` field below, which
+            // `try_expand_probe_templates`'s register-side rewrite (CS-0127)
+            // now carries through instead of hardcoding `StepKind::Cook`.
             let combined = build_shell_block_command(lines);
             let mut consulted = ConsultedEnv::new();
-            let (cmd_concat, probe_keys) =
-                expand_for_each_template(&combined, &ctx, &mut consulted, &mut file_refs).unwrap_or_else(|e| {
-                    (
-                        format!(
-                            "\"[[SIGIL_ERROR: {}]]\"",
-                            crate::lua_string::escape_lua_string(&e.to_string())
-                        ),
-                        BTreeSet::new(),
-                    )
-                });
-            let cmd_expr = if probe_keys.is_empty() {
-                cmd_concat
-            } else {
-                format!("function() return {} end", cmd_concat)
-            };
+            let (cmd_expr, _probe_keys) = expand_for_each_template(
+                &combined,
+                &ctx,
+                &mut consulted,
+                &mut file_refs,
+                crate::template::ProbeLowering::LiteralSigil,
+            )
+            .map_err(|source| CodegenError::SigilResolve { line, source })?;
             if !file_refs.is_empty() {
                 out.push_str(&file_refs.hoist_lines("    "));
             }
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(&format!(
-                "        cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
+                "        cook.add_unit({{command = {}, cache = false, step_kind = \"plate\", consulted_env_keys = {}, member = cook.member_to_string(item)}})\n",
                 cmd_expr,
                 consulted.to_lua_table()
             ));
@@ -198,12 +206,13 @@ pub(crate) fn generate_for_each_plate_step(
             // binding of `item` is wired by the COOK-64 runtime slice.
             out.push_str("    for _, item in ipairs(_items) do\n");
             out.push_str(&format!(
-                "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\", member = cook.member_to_string(item)}})\n",
-                lua_chunk_literal(code)
+                "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\", member = cook.member_to_string(item), line = {}}})\n",
+                lua_chunk_literal(code), line
             ));
             out.push_str("    end\n");
         }
     }
+    Ok(())
 }
 
 fn build_shell_block_command(lines: &[String]) -> String {
@@ -233,4 +242,11 @@ pub enum CodegenError {
          step (CS-0024 §3.5)"
     )]
     EmptySource { line: usize },
+    #[error("probe-value reference(s) {keys:?} in a `test` shell command inside a `for_each` recipe at line {line} are not supported — read the probe value in a Lua test body (`test >{{ ... }}`) instead (CS-0127)")]
+    ProbeRefInTestCommand { line: usize, keys: Vec<String> },
+    #[error("plate/test placeholder error at line {line}: {source}")]
+    SigilResolve {
+        line: usize,
+        source: crate::resolver::ResolveError,
+    },
 }

@@ -1,0 +1,5 @@
+
+[[run]]
+args = ["build"]
+[run.assert]
+equals = { "done.marker" = "hello-json\n" }

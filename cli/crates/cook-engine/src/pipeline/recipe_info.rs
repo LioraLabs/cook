@@ -77,6 +77,7 @@ mod tests {
             source: RegistrationSource::Static { line: 1 },
             kind: RecipeKind::Recipe,
             requires: requires.iter().map(|s| s.to_string()).collect(),
+            params: Vec::new(),
         }
     }
 
@@ -88,6 +89,7 @@ mod tests {
             final_env_by_cookfile: BTreeMap::new(),
             working_dir_by_prefix: BTreeMap::new(),
             alias_dirs_by_prefix: BTreeMap::new(),
+            terminal_outputs: BTreeMap::new(),
         }
     }
 

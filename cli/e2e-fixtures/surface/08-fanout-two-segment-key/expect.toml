@@ -1,0 +1,5 @@
+
+[[run]]
+args = ["stamps"]
+[run.assert]
+equals = { "out/alpha.stamp" = "member: alpha\n", "out/beta.stamp" = "member: beta\n", "out/gamma.stamp" = "member: gamma\n" }

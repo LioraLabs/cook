@@ -903,7 +903,7 @@ fn test_multi_output_string_form_rejected() {
     let source = "recipe \"x\"\n    ingredients \"src/*\"\n    cook \"a.js\" \"b.wasm\" using \"cmd\"\n";
     let err = crate::parse(source).expect_err("should reject");
     let msg = format!("{}", err);
-    assert!(msg.contains("CS-0099"), "expected CS-0099 migration diagnostic, got: {}", msg);
+    assert!(msg.contains("using") && msg.contains("not supported"), "expected using-keyword diagnostic, got: {}", msg);
 }
 
 #[test]
@@ -911,11 +911,11 @@ fn test_using_string_form_rejected_with_migration_diagnostic() {
     let src = r#"recipe build
     cook "out" using "echo hi"
 "#;
-    let err = parse(src).expect_err("CS-0099: the using keyword must be rejected");
+    let err = parse(src).expect_err("the using keyword must be rejected");
     match err {
         ParseError::Parse { message, .. } => {
-            assert!(message.contains("CS-0099"), "diagnostic should name CS-0099, got: {message}");
-            assert!(message.contains("removed"), "diagnostic should say the keyword was removed, got: {message}");
+            assert!(message.contains("using"), "diagnostic should name the keyword, got: {message}");
+            assert!(message.contains("not supported"), "diagnostic should reject the keyword, got: {message}");
         }
         e => panic!("expected ParseError::Parse, got {:?}", e),
     }
@@ -980,7 +980,7 @@ fn test_plate_string_form_rejected() {
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
     assert!(
-        msg.contains("plate") && msg.contains("CS-0024") && msg.contains("{ cmd }"),
+        msg.contains("plate") && msg.contains("not supported") && msg.contains("{ cmd }"),
         "expected migration diagnostic for plate string form, got: {}",
         msg
     );
@@ -992,7 +992,7 @@ fn test_test_string_form_rejected() {
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
     assert!(
-        msg.contains("test") && msg.contains("CS-0024") && msg.contains("{ cmd }"),
+        msg.contains("test") && msg.contains("not supported") && msg.contains("{ cmd }"),
         "expected migration diagnostic for test string form, got: {}",
         msg
     );
@@ -1858,6 +1858,47 @@ fn ingredients_probe_field_selector_parses() {
 }
 
 #[test]
+fn ingredients_two_segment_probe_key_parses_whole_ref() {
+    // COOK-190: `ns:name` is the canonical probe naming; the ref must land
+    // in the AST verbatim, not truncated at the colon.
+    let source = "recipe stamps\n    ingredients cards:list\n    cook \"out/$<in>.stamp\" { echo \"$<in>\" > $<out> }\n";
+    let c = parse(source).unwrap();
+    assert_eq!(
+        first_for_each(&c).source,
+        ForEachSource::ProbeKey("cards:list".to_string())
+    );
+}
+
+#[test]
+fn ingredients_three_segment_ref_parses_whole_ref() {
+    // Two-segment key + one `:field` selector = three segments, the maximum.
+    let source = "recipe r\n    ingredients ns:name:items\n    cook \"$<in.id>\" { x }\n";
+    let c = parse(source).unwrap();
+    assert_eq!(
+        first_for_each(&c).source,
+        ForEachSource::ProbeKey("ns:name:items".to_string())
+    );
+}
+
+#[test]
+fn ingredients_four_segment_ref_rejected() {
+    let msg = parse_err("recipe r\n    ingredients a:b:c:d\n    cook \"x\" { y }\n");
+    assert!(msg.contains("malformed probe ref"), "got: {msg}");
+}
+
+#[test]
+fn ingredients_trailing_colon_ref_rejected() {
+    let msg = parse_err("recipe r\n    ingredients cards:\n    cook \"x\" { y }\n");
+    assert!(msg.contains("malformed probe ref"), "got: {msg}");
+}
+
+#[test]
+fn ingredients_leading_colon_ref_rejected() {
+    let msg = parse_err("recipe r\n    ingredients :cards\n    cook \"x\" { y }\n");
+    assert!(msg.contains("malformed probe ref"), "got: {msg}");
+}
+
+#[test]
 fn ingredients_mixing_glob_then_probe_is_rejected() {
     let source = "recipe r\n    ingredients \"a.json\"\n    ingredients cardprobe\n    cook \"x\" { y }\n";
     let err = parse(source).unwrap_err();
@@ -1991,26 +2032,26 @@ fn cs0099_cook_declaration_only_still_parses() {
 #[test]
 fn cs0099_using_keyword_rejected_with_migration_diagnostic() {
     let src = "recipe r\n    cook \"out\" using { echo hi }\n";
-    let err = parse(src).expect_err("CS-0099: the using keyword must be rejected");
+    let err = parse(src).expect_err("the using keyword must be rejected");
     let msg = err.to_string();
-    assert!(msg.contains("removed"), "got: {}", msg);
-    assert!(msg.contains("CS-0099"), "got: {}", msg);
+    assert!(msg.contains("not supported"), "got: {}", msg);
+    assert!(msg.contains("using"), "got: {}", msg);
 }
 
 #[test]
 fn cs0099_using_lua_form_rejected_with_migration_diagnostic() {
     let src = "recipe r\n    cook \"out\" using >{ return 1 }\n";
-    let err = parse(src).expect_err("CS-0099: the using keyword must be rejected");
+    let err = parse(src).expect_err("the using keyword must be rejected");
     let msg = err.to_string();
-    assert!(msg.contains("removed"), "got: {}", msg);
+    assert!(msg.contains("not supported"), "got: {}", msg);
 }
 
 #[test]
 fn cs0099_lua_expr_using_rejected_with_migration_diagnostic() {
     let src = "recipe r\n    cook (\"x\" .. \"y\") using >{ return 1 }\n";
-    let err = parse(src).expect_err("CS-0099: the using keyword must be rejected");
+    let err = parse(src).expect_err("the using keyword must be rejected");
     let msg = err.to_string();
-    assert!(msg.contains("removed"), "got: {}", msg);
+    assert!(msg.contains("not supported"), "got: {}", msg);
 }
 
 #[test]
@@ -2174,4 +2215,37 @@ fn disp_bare_local_line_is_shell_command() {
 fn disp_as_modifier_on_cook_rejected() {
     let e = parse("recipe r\n    cook \"x\" { c } as 'name'\n").unwrap_err();
     assert!(format!("{e:?}").contains("test"));
+}
+
+// ── COOK-191 Task 3: config-block bare `NAME "value"` did-you-mean (CS-0126) ──
+
+#[test]
+fn test_config_bare_value_quoted_gets_did_you_mean() {
+    let src = "config\n    OUTDIR \"build\"\n\nrecipe hello\n    echo hi\n";
+    let err = parse(src).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("line 2"), "got: {msg}");
+    assert!(msg.contains("config values are Lua assignments"), "got: {msg}");
+    assert!(msg.contains("OUTDIR = \"build\""), "got: {msg}");
+}
+
+#[test]
+fn test_config_bare_value_unquoted_gets_did_you_mean() {
+    let src = "config\n    CC gcc\n\nrecipe hello\n    echo hi\n";
+    let err = parse(src).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("did you mean CC = \"gcc\""), "got: {msg}");
+}
+
+#[test]
+fn test_config_valid_lua_still_parses() {
+    for body in [
+        "    env.CC = os.getenv(\"CC\") or \"cc\"",
+        "    local x = 1",
+        "    OUTDIR = \"build\"",
+        "    if true then env.A = \"1\" end",
+    ] {
+        let src = format!("config\n{body}\n\nrecipe hello\n    echo hi\n");
+        assert!(parse(&src).is_ok(), "should parse: {body}");
+    }
 }

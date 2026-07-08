@@ -1,0 +1,3 @@
+chore greet who="world"
+    mkdir -p out
+    printf 'hello, %s\n' $<who> > out/greet.txt

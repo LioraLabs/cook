@@ -1,0 +1,21 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build_cards" line=4
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        ForEach source=ProbeKey("ns:cards:items")
+        Cook outputs=["out/$<in.id>.json"] body=ShellBlock(["render \"$<in>\" $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="ns:cards" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Shell typing=Json commands=["cat data/cards.json"]

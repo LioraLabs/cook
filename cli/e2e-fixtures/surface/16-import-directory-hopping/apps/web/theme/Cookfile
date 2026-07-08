@@ -1,0 +1,2 @@
+recipe build
+    cook "build/theme.txt" { echo theme > $<out> }

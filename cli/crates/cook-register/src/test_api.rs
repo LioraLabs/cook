@@ -4,6 +4,16 @@ use cook_contracts::{CapturedUnit, DepKind, WorkPayload};
 
 use crate::SharedBodySlot;
 
+/// Uniform register-phase type error for a `cook.add_test` field (CS-0127):
+/// a wrong-typed field is a hard error naming the field, the expected type,
+/// and the received Lua type — never silently coerced to its default. Mirrors
+/// `unit_api::type_err`.
+fn type_err(field: &str, expected: &str, got: &str) -> LuaError {
+    LuaError::runtime(format!(
+        "cook.add_test: `{field}` must be {expected}, got {got} (Standard \u{00a7}22.4, CS-0127)"
+    ))
+}
+
 /// Register `cook.add_test(table)` on the cook table.
 ///
 /// cook.add_test captures a test work unit with timeout/should_fail metadata.
@@ -13,49 +23,131 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
 
     let body_slot_add = body_slot.clone();
     let add_test_fn = lua.create_function(move |_, tbl: LuaTable| {
-        // CS-0061 §3.2: `command` is required and must be non-empty.
-        let command: String = tbl
-            .get::<Option<String>>("command")?
-            .ok_or_else(|| mlua::Error::external("cook.add_test: command field is required"))?;
-        if command.is_empty() {
-            return Err(mlua::Error::external(
-                "cook.add_test: command field is required and must be a non-empty string",
-            ));
+        // CS-0127 §22.4: `command`, if present, must be a string — never
+        // coerced. An empty string is treated as absent (`None`) so the
+        // exactly-one check below reports it as missing, not as a supplied
+        // value, matching the historical empty-command diagnostic.
+        let command: Option<String> = match tbl.get::<LuaValue>("command") {
+            Ok(LuaValue::Nil) | Err(_) => None,
+            Ok(LuaValue::String(s)) => Some(s.to_string_lossy().to_string()),
+            Ok(other) => return Err(type_err("command", "a string", other.type_name())),
         }
-
-        // CS-0061 §3.2: `timeout` must be a positive integer; default 300.
-        let timeout: u64 = tbl.get::<Option<u64>>("timeout")?.unwrap_or(300);
-        if timeout == 0 {
-            return Err(mlua::Error::external(
-                "cook.add_test: timeout must be a positive number, got 0",
-            ));
+        .filter(|s| !s.is_empty());
+        // CS-0127 §22.4: `lua_code`, if present, must be a string — never
+        // coerced. Empty string treated as absent, as for `command`.
+        let lua_code: Option<String> = match tbl.get::<LuaValue>("lua_code") {
+            Ok(LuaValue::Nil) | Err(_) => None,
+            Ok(LuaValue::String(s)) => Some(s.to_string_lossy().to_string()),
+            Ok(other) => return Err(type_err("lua_code", "a string", other.type_name())),
         }
-
-        // CS-0061 §3.2: `suite` defaults to the enclosing recipe's name.
-        let suite_name: String = match tbl.get::<Option<String>>("suite")? {
-            Some(s) if !s.is_empty() => s,
+        .filter(|s| !s.is_empty());
+        // CS-0127 §22.4: exactly one of `command` / `lua_code` MUST be
+        // provided non-empty. Both empty/absent → the "required" arm (message
+        // names `command`, the historical field); both present → "got both".
+        let (command, lua_code) = match (command, lua_code) {
+            (Some(c), None) => (c, None),
+            (None, Some(l)) => (String::new(), Some(l)),
+            (Some(_), Some(_)) => {
+                return Err(mlua::Error::runtime(
+                    "cook.add_test: exactly one of `command` or `lua_code` must be provided, got both (Standard \u{00a7}22.4, CS-0127)",
+                ))
+            }
             _ => {
+                return Err(mlua::Error::runtime(
+                    "cook.add_test: exactly one of `command` or `lua_code` is required and must be a non-empty string (Standard \u{00a7}22.4, CS-0127)",
+                ))
+            }
+        };
+
+        // CS-0127 §22.4: `timeout` must be a positive integer; default 300.
+        let timeout: u64 = match tbl.get::<LuaValue>("timeout") {
+            Ok(LuaValue::Nil) | Err(_) => 300,
+            Ok(LuaValue::Integer(n)) if n > 0 => n as u64,
+            Ok(LuaValue::Integer(n)) => {
+                return Err(mlua::Error::runtime(format!(
+                    "cook.add_test: timeout must be a positive number, got {n}"
+                )))
+            }
+            Ok(other) => return Err(type_err("timeout", "a positive integer", other.type_name())),
+        };
+
+        // CS-0127 §22.4: `suite` defaults to the enclosing recipe's name.
+        let suite_name: String = match tbl.get::<LuaValue>("suite") {
+            Ok(LuaValue::Nil) | Err(_) => {
                 let slot = body_slot_add.borrow();
                 let body = slot.as_ref().ok_or_else(|| {
                     mlua::Error::runtime("cook.add_test called outside a recipe body")
                 })?;
                 body.current_recipe.clone().unwrap_or_default()
             }
+            Ok(LuaValue::String(s)) => {
+                let sv = s.to_string_lossy().to_string();
+                if sv.is_empty() {
+                    let slot = body_slot_add.borrow();
+                    let body = slot.as_ref().ok_or_else(|| {
+                        mlua::Error::runtime("cook.add_test called outside a recipe body")
+                    })?;
+                    body.current_recipe.clone().unwrap_or_default()
+                } else {
+                    sv
+                }
+            }
+            Ok(other) => return Err(type_err("suite", "a string", other.type_name())),
         };
 
-        let test_name: String = tbl.get::<Option<String>>("name")?.unwrap_or_default();
-        let should_fail: bool = tbl.get::<Option<bool>>("should_fail")?.unwrap_or(false);
-        let line: usize = tbl.get::<Option<i64>>("line")?.unwrap_or(0).max(0) as usize;
-        let iteration_item: Option<String> = tbl.get::<Option<String>>("iteration_item")?
-            .filter(|s| !s.is_empty());
+        // CS-0127 §22.4: `name` must be a string — never coerced.
+        let test_name: String = match tbl.get::<LuaValue>("name") {
+            Ok(LuaValue::Nil) | Err(_) => String::new(),
+            Ok(LuaValue::String(s)) => s.to_string_lossy().to_string(),
+            Ok(other) => return Err(type_err("name", "a string", other.type_name())),
+        };
+        // CS-0127 §22.4: `should_fail` must be a boolean — never coerced.
+        let should_fail: bool = match tbl.get::<LuaValue>("should_fail") {
+            Ok(LuaValue::Nil) | Err(_) => false,
+            Ok(LuaValue::Boolean(b)) => b,
+            Ok(other) => return Err(type_err("should_fail", "a boolean", other.type_name())),
+        };
+        // CS-0127 §22.4: `line` must be a non-negative integer — never
+        // coerced.
+        let line: usize = match tbl.get::<LuaValue>("line") {
+            Ok(LuaValue::Nil) | Err(_) => 0,
+            Ok(LuaValue::Integer(n)) if n >= 0 => n as usize,
+            Ok(other) => return Err(type_err("line", "a non-negative integer", other.type_name())),
+        };
+        // CS-0127 §22.4: `iteration_item` must be a string — never coerced.
+        let iteration_item: Option<String> = match tbl.get::<LuaValue>("iteration_item") {
+            Ok(LuaValue::Nil) | Err(_) => None,
+            Ok(LuaValue::String(s)) => {
+                let sv = s.to_string_lossy().to_string();
+                if sv.is_empty() { None } else { Some(sv) }
+            }
+            Ok(other) => return Err(type_err("iteration_item", "a string", other.type_name())),
+        };
 
         // COOK-84: declared ingredient files for this test (codegen passes the
         // recipe's resolved `ingredients` local). Unioned below with the step
         // group's dep-output paths, mirroring cook.add_unit's cache_input_paths
-        // (unit_api.rs).
-        let inputs: Vec<String> = match tbl.get::<LuaTable>("inputs") {
-            Ok(t) => t.sequence_values::<String>().filter_map(Result::ok).collect(),
-            Err(_) => vec![],
+        // (unit_api.rs). CS-0127: `inputs` must be a table of strings —
+        // never coerced (including mlua's implicit number-to-string
+        // coercion on elements).
+        let inputs: Vec<String> = match tbl.get::<LuaValue>("inputs") {
+            Ok(LuaValue::Nil) | Err(_) => vec![],
+            Ok(LuaValue::Table(t)) => {
+                let mut out = Vec::new();
+                for v in t.sequence_values::<LuaValue>() {
+                    let v = v.map_err(|e| {
+                        LuaError::runtime(format!("cook.add_test: `inputs`: {e}"))
+                    })?;
+                    match v {
+                        LuaValue::String(s) => out.push(s.to_string_lossy().to_string()),
+                        other => {
+                            return Err(type_err("inputs", "a table of strings", other.type_name()))
+                        }
+                    }
+                }
+                out
+            }
+            Ok(other) => return Err(type_err("inputs", "a table of strings", other.type_name())),
         };
 
         let mut slot = body_slot_add.borrow_mut();
@@ -77,6 +169,7 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             suite_name,
             test_name,
             iteration_item,
+            lua_code,
             input_paths,
         };
         let dep_kind = if let Some(group_idx) = body.current_group {
@@ -358,6 +451,105 @@ mod tests {
             }
             _ => panic!("expected Test payload"),
         }
+    }
+
+    // -----------------------------------------------------------------
+    // CS-0127 §22.4: lua_code XOR command, strict field typing
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn add_test_accepts_lua_code_without_command() {
+        let (lua, capture_state) = make_lua_with_test_api();
+        capture_state
+            .borrow_mut()
+            .as_mut()
+            .expect("body slot populated for test")
+            .current_recipe = Some("r".to_string());
+
+        lua.load(r#"
+            cook.add_test({ lua_code = "assert(true)", suite = "s", name = "t" })
+        "#).exec().unwrap();
+
+        let state = body_ref(&capture_state);
+        assert_eq!(state.units.len(), 1);
+        match &state.units[0].payload {
+            WorkPayload::Test { cmd, lua_code, .. } => {
+                assert_eq!(lua_code.as_deref(), Some("assert(true)"));
+                assert_eq!(cmd, "");
+            }
+            _ => panic!("expected Test payload"),
+        }
+    }
+
+    #[test]
+    fn add_test_empty_lua_code_alongside_command_is_a_command_test() {
+        // An empty `lua_code` is treated as absent, so `command` alone is a
+        // valid command test — not a spurious "got both" rejection.
+        let (lua, capture_state) = make_lua_with_test_api();
+        capture_state
+            .borrow_mut()
+            .as_mut()
+            .expect("body slot populated for test")
+            .current_recipe = Some("r".to_string());
+
+        lua.load(r#"
+            cook.add_test({ command = "true", lua_code = "", suite = "s", name = "t" })
+        "#).exec().unwrap();
+
+        let state = body_ref(&capture_state);
+        match &state.units[0].payload {
+            WorkPayload::Test { cmd, lua_code, .. } => {
+                assert_eq!(cmd, "true");
+                assert_eq!(lua_code.as_deref(), None);
+            }
+            _ => panic!("expected Test payload"),
+        }
+    }
+
+    #[test]
+    fn add_test_rejects_both_command_and_lua_code() {
+        let (lua, _capture_state) = make_lua_with_test_api();
+        let res = lua.load(r#"
+            cook.add_test({ command = "true", lua_code = "assert(true)" })
+        "#).exec();
+
+        assert!(res.is_err(), "both command and lua_code must be rejected");
+        assert!(format!("{:?}", res).contains("exactly one"), "got: {:?}", res);
+    }
+
+    #[test]
+    fn add_test_rejects_non_string_command() {
+        let (lua, _capture_state) = make_lua_with_test_api();
+        let res = lua.load(r#"
+            cook.add_test({ command = function() end })
+        "#).exec();
+
+        let msg = format!("{:?}", res);
+        assert!(res.is_err(), "non-string command must be rejected");
+        assert!(msg.contains("command"), "got: {msg}");
+        assert!(msg.contains("function"), "got: {msg}");
+    }
+
+    #[test]
+    fn add_test_rejects_non_string_lua_code() {
+        let (lua, _capture_state) = make_lua_with_test_api();
+        let res = lua.load(r#"
+            cook.add_test({ lua_code = 42 })
+        "#).exec();
+
+        assert!(res.is_err(), "non-string lua_code must be rejected");
+        assert!(format!("{:?}", res).contains("lua_code"), "got: {:?}", res);
+    }
+
+    #[test]
+    fn add_test_rejects_non_integer_timeout() {
+        let (lua, _capture_state) = make_lua_with_test_api();
+        let res = lua.load(r#"
+            cook.add_test({ command = "true", timeout = "5" })
+        "#).exec();
+
+        assert!(res.is_err(), "non-integer timeout must be rejected");
+        assert!(format!("{:?}", res).contains("timeout"), "got: {:?}", res);
     }
 
     #[test]

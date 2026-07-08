@@ -1,0 +1,5 @@
+config
+    OUTDIR "build"
+
+recipe hello
+    echo hi

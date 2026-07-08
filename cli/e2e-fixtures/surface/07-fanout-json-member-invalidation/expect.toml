@@ -1,0 +1,23 @@
+[[run]]
+args = ["render"]
+[run.assert]
+contains = { "build/auth.conf" = "port=7001", "build/billing.conf" = "port=7002" }
+
+[[run]]
+args = ["render"]
+[run.assert]
+unchanged = ["build/auth.conf", "build/billing.conf"]
+
+[[run]]
+args = ["render"]
+[run.write]
+"data/services.json" = """
+[
+  { "name": "auth", "port": 7001 },
+  { "name": "billing", "port": 9999 }
+]
+"""
+[run.assert]
+changed = ["build/billing.conf"]
+unchanged = ["build/auth.conf"]
+contains = { "build/billing.conf" = "port=9999" }

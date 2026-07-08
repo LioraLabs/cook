@@ -1,0 +1,4 @@
+[[run]]
+args = ["build"]
+[run.assert]
+equals = { "out/alpha.up" = "HI\n", "out/beta.up" = "YO\n" }

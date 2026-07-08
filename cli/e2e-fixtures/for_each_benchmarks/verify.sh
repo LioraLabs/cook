@@ -10,7 +10,7 @@
 set -uo pipefail
 
 cd "$(dirname "$0")"
-COOK="${COOK:-../../cli/target/debug/cook}"
+COOK="${COOK:-../../target/debug/cook}"
 COOK="$(cd "$(dirname "$COOK")" && pwd)/$(basename "$COOK")"
 
 if [ ! -x "$COOK" ]; then
@@ -50,7 +50,7 @@ assert_contains "cards_cook: \$<in.id> output"        'tostring(item["id"])'
 assert_contains "cards_cook: \$<in.name> in command"  'tostring(item["name"])'
 
 # catalog_cook — probe key:field, bare $<in>.
-assert_contains "catalog_cook: key:field indexes array" 'cook.cache.get("catalog")["items"]'
+assert_contains "catalog_cook: verbatim ref passes through" 'cook.cache.get("catalog:items")'
 assert_contains "catalog_cook: bare \$<in> renders member" 'cook.member_to_string(item)'
 
 # eval — probe source, test fan-out.

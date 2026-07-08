@@ -202,6 +202,15 @@ impl EventWriter {
                 Ok(true)
             }
 
+            ProgressEvent::RecipeSkipped { recipe, elapsed, completed, total, .. } => {
+                self.flush_cached_suppression(out, *recipe)?;
+                let rname = recipe_name(state, *recipe);
+                let v = verb_for(LineKind::NodeSkipped, NodeKind::Cooked);
+                writeln!(out, "{} {rname} in {}   ({}/{} ran, upstream-failed)",
+                    format_verb(v, self.opts.colored), fmt_secs(*elapsed), completed, total)?;
+                Ok(true)
+            }
+
             ProgressEvent::InteractiveStart { recipe, name, chore_step_count, .. } => {
                 let rname = recipe_name(state, *recipe);
                 let v = verb_for(LineKind::InteractiveRunning, NodeKind::Cooked);

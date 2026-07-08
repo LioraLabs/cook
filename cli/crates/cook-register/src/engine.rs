@@ -463,6 +463,7 @@ pub fn register_cookfile(
                 source,
                 kind,
                 requires: requires.clone(),
+                params: params_meta.clone(),
             });
             units_by_recipe.insert(
                 name.clone(),
@@ -582,6 +583,7 @@ pub fn register_cookfile(
                         source,
                         kind,
                         requires: requires.clone(),
+                        params: params_meta.clone(),
                     });
                     units_by_recipe.insert(
                         name.clone(),
@@ -621,6 +623,7 @@ pub fn register_cookfile(
                     source,
                     kind,
                     requires: requires.clone(),
+                    params: params_meta.clone(),
                 });
                 units_by_recipe.insert(
                     name.clone(),
@@ -775,6 +778,7 @@ pub fn register_cookfile(
             source,
             kind,
             requires,
+            params: params_meta.clone(),
         });
     }
 
@@ -1118,18 +1122,24 @@ fn local_reachable_set(
 /// COOK-64 §22.5.9: the `for_each` register pre-pass.
 ///
 /// Every probe-sourced `for_each` driver opens its body with
-/// `local _items = cook.cache.get("<key>")`. That value does not exist until
-/// the feeding probe runs, and probes normally run as DAG nodes in the
-/// execute phase — far too late for register-time fan-out. So we evaluate
-/// every `for_each`-feeding probe (and its transitive probe `requires`) here,
-/// synchronously on the register VM, before any recipe body runs.
+/// `local _items = cook.cache.get("<ref>")`, `<ref>` being the verbatim
+/// `ingredients <ref>` source ref carried by codegen. That value does not
+/// exist until the feeding probe runs, and probes normally run as DAG nodes
+/// in the execute phase — far too late for register-time fan-out. So we
+/// evaluate every `for_each`-feeding probe (and its transitive probe
+/// `requires`) here, synchronously on the register VM, before any recipe
+/// body runs.
 ///
-/// The evaluation mirrors the execute-phase probe path (`executor.rs` G4/G5):
-/// resolve declared inputs → fingerprint → cache GET → on a miss run
-/// `produce` on the VM → cache PUT. The resolved value is stashed in
-/// `prepass_store` keyed by probe key, where the `cook.cache.get` binding
-/// reads it. When no `CacheContext` is wired (tests / `list_names`), `produce`
-/// runs uncached.
+/// COOK-190 / §22.5.10: a ref is resolved against the probe registry via
+/// `resolve_probe_ref` — an exact whole-ref key match wins, else the ref is
+/// a `key:field` selector. The evaluation mirrors the execute-phase probe
+/// path (`executor.rs` G4/G5): resolve declared inputs → fingerprint →
+/// cache GET → on a miss run `produce` on the VM → cache PUT. The resolved
+/// value is stashed in `prepass_store` keyed by probe key; for a
+/// field-selector ref, the selected array is additionally stashed under the
+/// verbatim ref (see below), which is what the `cook.cache.get` binding in
+/// the generated body actually reads. When no `CacheContext` is wired
+/// (tests / `list_names`), `produce` runs uncached.
 ///
 /// Only `ProbeKey` sources require a pre-pass; the `$(cmd)` and `(lua)` sources
 /// were removed in COOK-97.
@@ -1147,7 +1157,7 @@ fn run_for_each_prepass(
 ) -> Result<(), RegisterError> {
     use crate::capture::ForEachDescriptor;
 
-    // (recipe, probe key, optional `:field` selector) per probe-sourced driver.
+    // (recipe, verbatim source ref) per probe-sourced driver.
     //
     // §22.5.9 demand-driven rule: when a build target is set, only evaluate
     // probes for recipes reachable from it. When no target is set every recipe
@@ -1156,12 +1166,12 @@ fn run_for_each_prepass(
     // driver's body — which would call `cook.cache.get` on an unevaluated probe
     // — is skipped rather than erroring.
     let driver_reachable = |name: &str| !has_target || reachable_from_target.contains(name);
-    let drivers: Vec<(&str, &str, Option<&str>)> = recipes
+    let drivers: Vec<(&str, &str)> = recipes
         .iter()
         .filter(|r| driver_reachable(&r.name))
         .filter_map(|r| match &r.for_each {
-            Some(ForEachDescriptor::Probe { key, field }) => {
-                Some((r.name.as_str(), key.as_str(), field.as_deref()))
+            Some(ForEachDescriptor::Probe { source_ref }) => {
+                Some((r.name.as_str(), source_ref.as_str()))
             }
             _ => None,
         })
@@ -1170,13 +1180,19 @@ fn run_for_each_prepass(
         return Ok(());
     }
 
-    // Each driver's probe must be declared (§22.5.9).
-    for (recipe, key, _) in &drivers {
-        if !probe_registry.probes.contains_key(*key) {
-            return Err(RegisterError::ForEachProbeUndeclared {
-                recipe: (*recipe).to_string(),
-                key: (*key).to_string(),
-            });
+    // COOK-190: resolve each ref against the registry (exact key match wins,
+    // else trailing `:field` selector). A ref that names no declared probe
+    // under either interpretation is rejected, naming the full ref.
+    let mut resolved: Vec<(&str, &str, Option<&str>)> = Vec::new();
+    for (recipe, source_ref) in &drivers {
+        match resolve_probe_ref(source_ref, probe_registry) {
+            Some((key, field)) => resolved.push((source_ref, key, field)),
+            None => {
+                return Err(RegisterError::ForEachProbeUndeclared {
+                    recipe: (*recipe).to_string(),
+                    key: (*source_ref).to_string(),
+                })
+            }
         }
     }
 
@@ -1187,7 +1203,7 @@ fn run_for_each_prepass(
     // Evaluate each driver probe (and its transitive `requires`) in
     // dependency order. Probe cycles are already rejected (step 9 above), so
     // the recursion terminates; `in_progress` is a defensive belt-and-braces.
-    for (_, key, _) in &drivers {
+    for (_, key, _) in &resolved {
         evaluate_prepass_probe(
             key,
             lua,
@@ -1204,30 +1220,66 @@ fn run_for_each_prepass(
 
     // §22.5.9 non-array diagnostic: a driver's resolved source must be a
     // sequence. With a `:field` selector, the named field must be the array.
-    for (_, key, field) in &drivers {
+    for (source_ref, key, field) in &resolved {
         let store = prepass_store.borrow();
         let value = store.get(*key).expect("driver probe evaluated above");
-        let (resolved, selector): (&serde_json::Value, String) = match field {
+        let (resolved_value, selector): (&serde_json::Value, String) = match field {
             Some(f) => match json_map_get(value, f) {
-                Some(v) => (v, format!("{key}:{f}")),
+                Some(v) => (v, (*source_ref).to_string()),
                 None => {
                     return Err(RegisterError::ForEachNotArray {
-                        selector: format!("{key}:{f}"),
+                        selector: (*source_ref).to_string(),
                         shape: "nil (no such field)".to_string(),
                     })
                 }
             },
-            None => (value, (*key).to_string()),
+            None => (value, (*source_ref).to_string()),
         };
-        if !matches!(resolved, serde_json::Value::Array(_)) {
+        if !matches!(resolved_value, serde_json::Value::Array(_)) {
             return Err(RegisterError::ForEachNotArray {
                 selector,
-                shape: json_shape(resolved).to_string(),
+                shape: json_shape(resolved_value).to_string(),
             });
         }
     }
 
+    // COOK-190: the body reads `cook.cache.get("<verbatim ref>")`. For a
+    // `key:field` selector, stash the selected array under the verbatim ref
+    // (validated array-shaped by the diagnostic loop above).
+    for (source_ref, key, field) in &resolved {
+        let Some(f) = field else { continue };
+        let items = {
+            let store = prepass_store.borrow();
+            let value = store.get(*key).expect("driver probe evaluated above");
+            json_map_get(value, f).expect("validated above").clone()
+        };
+        prepass_store
+            .borrow_mut()
+            .insert((*source_ref).to_string(), items);
+    }
+
     Ok(())
+}
+
+/// COOK-190 / §22.5.10: resolve an `ingredients <probe>` source ref against
+/// the probe registry. Probe keys are canonically two-segment (`ns:name`),
+/// so a `:` in the ref is ambiguous between a two-segment key and a
+/// `key:field` selector. A declared probe whose key equals the entire ref
+/// wins; otherwise the segment after the final `:` is a field selector on
+/// the remaining (declared) key. `None` when neither interpretation names a
+/// declared probe.
+fn resolve_probe_ref<'a>(
+    source_ref: &'a str,
+    probe_registry: &ProbeRegistry,
+) -> Option<(&'a str, Option<&'a str>)> {
+    if probe_registry.probes.contains_key(source_ref) {
+        return Some((source_ref, None));
+    }
+    let (key, field) = source_ref.rsplit_once(':')?;
+    probe_registry
+        .probes
+        .contains_key(key)
+        .then_some((key, Some(field)))
 }
 
 /// Evaluate a single probe for the pre-pass, recursing through its declared
@@ -1424,16 +1476,20 @@ fn check_for_each_static_inputs(
     }
 
     for recipe in recipes {
-        let Some(ForEachDescriptor::Probe { key, .. }) = &recipe.for_each else {
+        let Some(ForEachDescriptor::Probe { source_ref }) = &recipe.for_each else {
             continue;
         };
+        let Some((key, _)) = resolve_probe_ref(source_ref, probe_registry) else {
+            continue; // unresolvable ref already rejected by the pre-pass
+        };
         let Some(reg) = probe_registry.probes.get(key) else {
-            continue; // undeclared probe already rejected by the pre-pass
+            // unreachable in practice: resolve_probe_ref just proved the key is declared
+            continue;
         };
         for file in &reg.probe.inputs.files {
             if outputs.contains(&normalise_rel(file)) {
                 return Err(RegisterError::ForEachProbeArtifactDep {
-                    key: key.clone(),
+                    key: key.to_string(),
                     path: file.clone(),
                 });
             }
@@ -1625,6 +1681,7 @@ pub fn list_names(
             source: r.source,
             kind: r.kind,
             requires: r.metadata.requires.clone(),
+            params: r.metadata.params.clone(),
         })
         .collect();
     Ok(out)
@@ -1706,7 +1763,11 @@ fn install_remaining_apis(
     // CS-0101: cook.file_ref — register-phase resolution of `$<file:PATH>`
     // placeholders (hoisted locals emitted by cook-luagen).
     crate::file_ref::register_file_ref(lua, &builder.working_dir)?;
-    crate::codec_api::register_codec_api(lua)?;
+    // cook.json_decode / cook.yaml_decode are both-phase (§24.8, CS-0123);
+    // the shared implementation lives in cook-lua-stdlib so the worker VMs
+    // in cook-luaotp install byte-identical behaviour.
+    let cook_tbl: LuaTable = lua.globals().get("cook")?;
+    cook_lua_stdlib::register_codec_api(lua, &cook_tbl)?;
     Ok(module_state)
 }
 

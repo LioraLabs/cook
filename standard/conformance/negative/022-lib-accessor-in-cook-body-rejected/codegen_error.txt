@@ -1,1 +1,1 @@
-CS-0022: $<libmath.dir> is rejected inside a cook-step body
+$<libmath.dir> is rejected inside a cook-step body

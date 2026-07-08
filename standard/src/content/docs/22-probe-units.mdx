@@ -123,12 +123,10 @@ a name list is required.
 declared by both MUST fire the duplicate-key diagnostic of §{cat.probes.api}.
 
 > **Note (informative).** A `probe` whose producer decodes JSON/YAML
-> (`json { … }`, or `cook.json_decode`/`cook.yaml_decode` in a `>{ … }` body) is
-> evaluated with those codecs available when it feeds an `ingredients <probe>`
-> source (the register pre-pass, §{cat.probes.for-each}). Consumption of such a
-> probe through a demand-driven consumer unit currently requires the codecs on
-> the worker VM (reference-implementation gap, tracked separately); the
-> `ingredients <probe>` path is unaffected.
+> (`json { … }`, or `cook.json_decode`/`cook.yaml_decode` in a `>{ … }` body)
+> MAY be consumed through either path: the codecs are both-phase API
+> (§{lua.cook-codecs}, CS-0123), installed on the register pre-pass VM and on
+> every execute-phase worker VM alike.
 
 **Lowering (informative).** The reference implementation lowers a `probe`
 declaration to the equivalent `cook.probe(key, opts)` call (§{cat.probes.api}):
@@ -250,6 +248,10 @@ Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` pl
 
 The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{phl.token}). A sigil whose IDENT contains a colon (`:`) **and does not begin with the reserved `file:` prefix (§{xref.file-namespace}, CS-0101)** is unambiguously a probe-value reference; the implementation MUST dispatch it to the cache-read path described here. A sigil whose IDENT contains no colon retains its existing register-time semantics (built-ins, recipe names, env vars).
 
+These rules apply uniformly to probe-value references written in native `cook`-step bodies (§{steps.cook-single} / §{steps.cook-multi}, including `for_each` bodies) and to raw `cook.add_unit` command strings. In both cases the reference MUST reach register-time unit capture as literal `$<...>` text inside the unit's `command` **string**; the capture layer performs the rewrite described above. An implementation MUST NOT lower a probe-value reference to a non-string `command` value (e.g. a deferred Lua function): `cook.add_unit` MUST reject a `command` that is not a string with a register-phase diagnostic naming the received type. (CS-0122; defect COOK-187 — the reference implementation previously emitted a function-valued `command` for probe-referencing native bodies, which was coerced to the empty string and silently succeeded.)
+
+The literal-text rule applies regardless of which step kind's body originated the command — including `plate` bodies in `for_each` recipes (§8.3, §8.6), which are unsandboxed by design and remain so even after a probe-value reference triggers this desugaring. The register-time rewrite described above turns the command into a Lua chunk; that chunk MUST run under the originating step kind's sandbox policy, not a default one. Concretely, a `plate` command rewritten this way MUST stay a plate-policy chunk (unsandboxed), never silently promoted to the `cook`-step (sandboxed) policy merely because it happened to reference a probe value. (CS-0127.)
+
 Substitution rules:
 
 - `$<key>` substitutes the entire probe value as a string. The value MUST be a string (or coercible via `tostring`).
@@ -332,6 +334,8 @@ The diagnostic MUST render the full cycle path. The order in which nodes are lis
 ## 22.5.10. Probe values as `ingredients <probe>` sources [#cat.probes.for-each]
 
 An **array-shaped** probe value (§{cat.probes.values}) MAY be consumed as the source of an `ingredients <probe>` declaration (§{steps.ingredients}): `ingredients <key>` registers one work unit per array element, and `ingredients <key>:<field>` iterates the array at the named field. This is a second probe consumption mode alongside the `$<key:field>` injection of §{cat.probes.templates}; the same `cook.probe` definition serves both.
+
+**Source-ref resolution.** A probe key is itself at most two `:`-separated segments (§{cat.probes.decl}; `ns:name` is the canonical naming), so a multi-segment source ref is lexically ambiguous between a probe key and a `<key>:<field>` selector. A conforming implementation MUST resolve the ref against the set of declared probes once registration-time declarations are known: a declared probe whose key equals the entire ref wins; otherwise the segment after the final `:` is a field selector and the remaining prefix MUST name a declared probe. A ref that names no declared probe under either interpretation MUST be rejected with a register-phase diagnostic naming the full ref. A source ref of four or more segments is malformed and MUST be rejected at parse time.
 
 An `ingredients <probe>` source is the canonical case where a recipe's declared output set *shrinks* between runs: removing a data member drops the unit (and the output) it drove, so the dropped member's artifact is swept by stale-output reconciliation (§{exec.cache.reconcile}) on the next run.
 

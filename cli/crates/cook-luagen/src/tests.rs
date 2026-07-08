@@ -1408,6 +1408,92 @@ fn test_codegen_emits_unnamed_and_named_in_order() {
     assert!(out.contains("selected_name == \"release\""));
 }
 
+// ── Config-block body line alignment (COOK-191, CS-0126) ────────
+//
+// The Cookfile's generated Lua loads as ONE chunk named `@Cookfile`, so
+// mlua reports `Cookfile:<generated-chunk-line>` on a runtime error. These
+// tests assert config-block body lines land at their OWN Cookfile source
+// line number in the generated chunk (best-effort padding), so a runtime
+// error inside a config body reports the exact source line.
+
+#[test]
+fn test_config_body_line_alignment_unnamed_no_uses() {
+    let source = "config\n    env.X = bad()\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // Source line 2 (`env.X = bad()`) must land at generated line 2
+    // (0-indexed index 1).
+    assert!(
+        lines[1].contains("env.X = bad()"),
+        "expected generated line 2 to contain body line, got: {:?}\nfull output:\n{}",
+        lines[1],
+        out
+    );
+}
+
+#[test]
+fn test_config_body_line_alignment_with_leading_use() {
+    let source = "use foo\nconfig\n    env.Y = \"1\"\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // Source line 3 (`env.Y = "1"`) must land at generated line 3
+    // (0-indexed index 2).
+    assert!(
+        lines[2].contains("env.Y"),
+        "expected generated line 3 to contain env.Y, got: {:?}\nfull output:\n{}",
+        lines[2],
+        out
+    );
+}
+
+#[test]
+fn test_config_body_line_alignment_named_block() {
+    let source =
+        "config\n    env.A = \"1\"\nconfig release\n    env.B = \"2\"\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // env.A is source line 2 -> generated line 2 (index 1).
+    assert!(
+        lines[1].contains("env.A"),
+        "expected generated line 2 to contain env.A, got: {:?}\nfull output:\n{}",
+        lines[1],
+        out
+    );
+    // env.B is source line 4 -> generated line 4 (index 3).
+    assert!(
+        lines[3].contains("env.B"),
+        "expected generated line 4 to contain env.B, got: {:?}\nfull output:\n{}",
+        lines[3],
+        out
+    );
+}
+
+#[test]
+fn test_config_body_comment_line_becomes_blank_preserving_alignment() {
+    let source = "config\n    # note\n    env.Z = \"1\"\n\nrecipe r\n    echo hi\n";
+    let cookfile = cook_lang::parse(source).expect("parse");
+    let out = crate::generate(&cookfile);
+    let lines: Vec<&str> = out.split('\n').collect();
+    // Source line 2 is a `#` comment -> generated line 2 must be empty
+    // (line count preserved, not skipped).
+    assert_eq!(
+        lines[1], "",
+        "expected generated line 2 to be blank for a comment line, got: {:?}\nfull output:\n{}",
+        lines[1],
+        out
+    );
+    // env.Z is source line 3 -> generated line 3 (index 2).
+    assert!(
+        lines[2].contains("env.Z"),
+        "expected generated line 3 to contain env.Z, got: {:?}\nfull output:\n{}",
+        lines[2],
+        out
+    );
+}
+
 // ── Cross-recipe dep integration tests ──────────────────────────
 
 #[test]
@@ -2073,10 +2159,7 @@ end
         "{{out_1}} in single-output step must error, not panic"
     );
     let err_str = result.unwrap_err().to_string();
-    assert!(
-        err_str.contains("CS-0022"),
-        "error must contain CS-0022, got: {err_str}"
-    );
+    assert!(err_str.contains("out_1"), "error must name the bad placeholder, got: {err_str}");
     assert!(
         err_str.contains("out_1"),
         "error must name the bad placeholder, got: {err_str}"
@@ -2101,7 +2184,7 @@ end
         "$<in> in many-to-one step must error"
     );
     let err_str = result.unwrap_err().to_string();
-    assert!(err_str.contains("CS-0022"), "error must contain CS-0022, got: {err_str}");
+    assert!(err_str.contains("$<in>") || err_str.contains("in"), "error must name $<in>, got: {err_str}");
 }
 
 #[test]
@@ -2122,10 +2205,7 @@ end
         "bare $<stem> in output pattern must error"
     );
     let err_str = result.unwrap_err().to_string();
-    assert!(
-        err_str.contains("CS-0022"),
-        "error must contain CS-0022, got: {err_str}"
-    );
+    assert!(err_str.contains("stem"), "error must name 'stem', got: {err_str}");
     assert!(
         err_str.contains("stem"),
         "error must name 'stem', got: {err_str}"
@@ -2154,7 +2234,7 @@ end
     );
     let err_str = result.unwrap_err().to_string();
     assert!(
-        err_str.contains("CS-0022") || err_str.contains("libmath"),
+        err_str.contains("libmath"),
         "error must mention libmath, got: {err_str}"
     );
 }
@@ -2173,7 +2253,7 @@ end
     let result = crate::generate_with_names_checked(&cookfile, &names);
     assert!(result.is_err(), "$<out> in multi-output step must error");
     let err_str = result.unwrap_err().to_string();
-    assert!(err_str.contains("CS-0022"), "error must contain CS-0022, got: {err_str}");
+    assert!(err_str.contains("out"), "error must name $<out>, got: {err_str}");
 }
 
 #[test]
@@ -2196,7 +2276,7 @@ end
     // The coherence error message mentions the patterns
     let err_str = result.unwrap_err().to_string();
     assert!(
-        err_str.contains("CS-0022") || err_str.contains("driver"),
+        err_str.contains("driver"),
         "error must mention driver mismatch, got: {err_str}"
     );
 }
@@ -3355,11 +3435,14 @@ fn for_each_probe_cook_fans_out_per_member() {
 }
 
 #[test]
-fn for_each_probe_field_indexes_array() {
+fn for_each_probe_ref_passes_through_verbatim() {
+    // COOK-190: no codegen-side `:` split — the register pre-pass resolves
+    // key-vs-field against the probe registry and stores the member array
+    // under the verbatim ref.
     let src = "recipe a\n    ingredients cards:items\n    cook \"o/$<in.id>\" { build $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
-    assert!(lua.contains("local _items = cook.cache.get(\"cards\")[\"items\"]"),
-        "key:field should index the named field, got:\n{lua}");
+    assert!(lua.contains("local _items = cook.cache.get(\"cards:items\")"),
+        "ref must pass through unsplit, got:\n{lua}");
 }
 
 #[test]
@@ -3378,14 +3461,14 @@ fn for_each_surface_carries_source_metadata() {
     let probe = generate(&cook_lang::parse(
         "recipe a\n    ingredients cards\n    cook \"o/$<in.id>\" { x $<out> }\n",
     ).unwrap());
-    assert!(probe.contains(r#"__for_each = {kind = "probe", key = "cards"}"#),
+    assert!(probe.contains(r#"__for_each = {kind = "probe", ref = "cards"}"#),
         "probe source metadata missing, got:\n{probe}");
 
     let field = generate(&cook_lang::parse(
         "recipe a\n    ingredients cards:items\n    cook \"o/$<in.id>\" { x $<out> }\n",
     ).unwrap());
-    assert!(field.contains(r#"__for_each = {kind = "probe", key = "cards", field = "items"}"#),
-        "key:field metadata missing, got:\n{field}");
+    assert!(field.contains(r#"__for_each = {kind = "probe", ref = "cards:items"}"#),
+        "verbatim ref metadata missing, got:\n{field}");
 }
 
 #[test]
@@ -3396,6 +3479,102 @@ fn for_each_unit_folds_member_into_fingerprint() {
     let lua = generate(&cook_lang::parse(src).unwrap());
     assert!(lua.contains("member = cook.member_to_string(item)"),
         "ingredients-probe cook unit should carry member, got:\n{lua}");
+}
+
+#[test]
+fn for_each_plate_probe_ref_lowers_as_literal_sigil() {
+    // COOK-187 / CS-0122 / CS-0127: a `plate` shell body inside a `for_each`
+    // recipe that references a probe value must lower the same way every
+    // other shell-command body does — literal `$<key:...>` sigil text inside
+    // a plain `command = "..."` string, never a deferred
+    // `function() return ... end` closure (which cook.add_unit hard-rejects
+    // as a non-string command). The unit must also carry
+    // `step_kind = "plate"` so register-time capture preserves the plate's
+    // unsandboxed policy instead of defaulting to the `cook` sandbox.
+    let src = "recipe art\n    ingredients cards\n    plate {\n        $<tools:fmt.bin> --check\n    }\n";
+    let lua = generate(&cook_lang::parse(src).expect("parse"));
+    assert!(
+        lua.contains("$<tools:fmt.bin>"),
+        "expected literal probe sigil text in the plate command, got:\n{lua}"
+    );
+    assert!(
+        !lua.contains("command = function()"),
+        "a plate command must never be a deferred function, got:\n{lua}"
+    );
+    assert!(
+        lua.contains(r#"step_kind = "plate""#),
+        "expected step_kind = \"plate\" on the for_each plate unit, got:\n{lua}"
+    );
+    assert!(
+        lua.contains("cook.add_unit({command = "),
+        "expected a plain command = string field on the for_each plate unit, got:\n{lua}"
+    );
+}
+
+#[test]
+fn for_each_test_probe_ref_in_shell_command_is_codegen_error() {
+    // CS-0127: unlike `plate`/`cook` command bodies, `WorkPayload::Test` runs
+    // `cmd` verbatim via `/bin/sh` with no probe-substitution machinery. The
+    // old codegen wrapped a probe-bearing test command in a deferred
+    // `function() return ... end` closure, but `cook.add_test`'s strict
+    // `command` typing (this same commit) now hard-rejects that closure at
+    // register time instead of degrading silently. Codegen must fail loudly
+    // instead, naming the probe key and the offending line.
+    let src = "recipe eval\n    ingredients cards\n    test {\n        $<foo:bar>\n    }\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let err = crate::generate_with_names(&cookfile, &std::collections::BTreeSet::new())
+        .expect_err("expected a codegen error for a probe ref in a for_each test shell command");
+    let msg = err.to_string();
+    assert!(msg.contains("foo:bar"), "error should name the probe key, got: {msg}");
+    assert!(msg.contains("line 3"), "error should name the offending line, got: {msg}");
+}
+
+#[test]
+fn malformed_shell_sigil_is_codegen_error_not_emitted_sentinel() {
+    let src = "recipe bad\n    echo $<out_0>\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let err = crate::generate_with_names_checked(&cookfile, &names)
+        .expect_err("malformed $<out_0> must fail checked codegen");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("out_0") && msg.contains("malformed"),
+        "diagnostic should name the bad placeholder, got: {msg}"
+    );
+
+    let unchecked_err = crate::generate_with_names(&cookfile, &names)
+        .expect_err("unchecked codegen should error instead of emitting a sentinel");
+    assert!(
+        !unchecked_err.to_string().contains("[[SIGIL_ERROR:"),
+        "unchecked codegen must not embed SIGIL_ERROR sentinels either: {unchecked_err}"
+    );
+}
+
+#[test]
+fn checked_codegen_covers_every_current_step_kind() {
+    let src = r#"recipe everything
+    ingredients cards
+    >> local register_line = true
+    >>{
+        local register_block = true
+    }
+    cook "out/$<in.id>.txt" { printf '%s\n' "$<in.id>" > $<out> }
+    plate {
+        cat $<in>
+    }
+    test >{
+        assert(item.id ~= nil)
+    }
+    @ echo interactive
+    > local execute_line = true
+    >{
+        local execute_block = true
+    }
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    crate::generate_with_names_checked(&cookfile, &names)
+        .expect("all current Step variants should have codegen arms");
 }
 
 // ── §22.5.2 — native probe lowering (COOK-68) ──────────────────────────────
@@ -3579,10 +3758,13 @@ end
 }
 
 #[test]
-fn file_ref_with_probe_ref_keeps_hoist_outside_deferred_fn() {
-    // Probe refs defer the command into a `function() return ... end` closure;
-    // the file-ref local must be hoisted BEFORE it (captured as an upvalue) so
-    // the substitution value is still computed at register time.
+fn file_ref_with_probe_ref_hoists_before_add_unit() {
+    // COOK-187 / CS-0122: a probe ref no longer defers the command into a
+    // `function() return ... end` closure — it stays literal `$<key:...>`
+    // sigil text inside the command STRING for cook.add_unit's register-time
+    // capture to rewrite. The file-ref local must still be hoisted before the
+    // add_unit call (register-time substitution), and the emitted command
+    // concatenation must reference it.
     let src = r#"recipe "obj"
     ingredients "src/*.c"
     cook "build/$<in.stem>.o" {
@@ -3594,12 +3776,24 @@ end
     let hoist_pos = lua
         .find("local _cook_fr_s0_1 = cook.file_ref(\"t.css\")")
         .unwrap_or_else(|| panic!("expected hoisted file-ref local, lua:\n{lua}"));
-    let deferred_pos = lua
-        .find("function() return")
-        .unwrap_or_else(|| panic!("expected probe-deferred command closure, lua:\n{lua}"));
+    let add_unit_pos = lua
+        .find("cook.add_unit(")
+        .unwrap_or_else(|| panic!("expected cook.add_unit call, lua:\n{lua}"));
     assert!(
-        hoist_pos < deferred_pos,
-        "file-ref hoist (at {hoist_pos}) must precede the deferred closure (at {deferred_pos}), lua:\n{lua}"
+        hoist_pos < add_unit_pos,
+        "file-ref hoist (at {hoist_pos}) must precede cook.add_unit (at {add_unit_pos}), lua:\n{lua}"
+    );
+    assert!(
+        lua[add_unit_pos..].contains("_cook_fr_s0_1"),
+        "expected the add_unit command concatenation to reference the hoisted local, lua:\n{lua}"
+    );
+    assert!(
+        lua.contains("$<cc:zlib.cflags>"),
+        "expected the literal probe sigil text in the command string, lua:\n{lua}"
+    );
+    assert!(
+        !lua.contains("function() return"),
+        "a native cook-step command must never be a deferred function (COOK-187), lua:\n{lua}"
     );
 }
 
@@ -3765,5 +3959,55 @@ fn test_compile_chore_merges_explicit_and_inferred_requires() {
     assert!(
         lua.contains(r#"requires = {"setup", "app"}"#),
         "explicit-first, inferred-appended, deduped requires expected, got:\n{lua}"
+    );
+}
+
+// ─── COOK-191/CS-0126: SIGIL_ERROR chokepoint — checked codegen scans and
+// hard-errors on any sentinel that survives lowering ───────────────────────
+
+#[test]
+fn test_scan_for_sigil_errors_extracts_inner_message_verbatim() {
+    let generated = "x = \"[[SIGIL_ERROR: placeholder $<file:../evil>: file reference paths must be relative]]\"";
+    let result = crate::recipe::scan_for_sigil_errors(generated);
+    assert_eq!(
+        result.unwrap_err(),
+        "placeholder $<file:../evil>: file reference paths must be relative",
+        "helper must extract the inner text with no SIGIL_ERROR marker and no [[ / ]] delimiters"
+    );
+}
+
+#[test]
+fn test_scan_for_sigil_errors_ok_when_no_sentinel_present() {
+    let generated = "cook.add_unit({command = \"echo hi\"})\n";
+    assert!(
+        crate::recipe::scan_for_sigil_errors(generated).is_ok(),
+        "generated Lua with no sentinel must not be flagged"
+    );
+}
+
+#[test]
+fn test_bad_file_ref_path_in_plate_body_is_checked_codegen_error() {
+    // CS-0101: `validate_sigil_token` in template.rs accepts any `$<file:...>`
+    // ident in a plate/test body without validating the path itself (the
+    // path-validity check lives in `match_file_ref`, consulted only when the
+    // body is actually expanded). A `..`-escaping path therefore reaches
+    // `expand_plate_test_body` and lowers to a literal SIGIL_ERROR sentinel
+    // with nothing upstream rejecting it first — this is the reachable
+    // integration case the checked-codegen scan exists to catch.
+    let src = "recipe r\n    plate { echo $<file:../evil> }\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    let err = result.expect_err(
+        "a $<file:../evil> path escape in a plate body must be a checked-codegen error, not a silently-emitted sentinel",
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("file reference paths must be relative"),
+        "error must surface the underlying file-ref diagnostic verbatim, got: {msg}"
+    );
+    assert!(
+        !msg.contains("SIGIL_ERROR"),
+        "error must not leak the internal sentinel marker, got: {msg}"
     );
 }

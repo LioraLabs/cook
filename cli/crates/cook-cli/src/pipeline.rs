@@ -204,6 +204,22 @@ fn bridge_engine_to_progress_events(
                         total: total_nodes,
                     }
                 }
+                cook_engine::EngineEvent::RecipeSkipped {
+                    name,
+                    elapsed,
+                    skipped_nodes,
+                    completed_nodes,
+                    total_nodes,
+                } => {
+                    let id = intern_recipe(&name, &mut recipe_ids, &mut next_recipe);
+                    cook_progress::ProgressEvent::RecipeSkipped {
+                        recipe: id,
+                        elapsed,
+                        skipped: skipped_nodes,
+                        completed: completed_nodes,
+                        total: total_nodes,
+                    }
+                }
                 cook_engine::EngineEvent::NodeStarted {
                     recipe,
                     node_name,
@@ -357,6 +373,11 @@ fn bridge_engine_to_progress_events(
     })
 }
 
+/// Reported commands carry codegen's `set -e` prelude; strip it for display.
+fn strip_set_e(cmd: &str) -> &str {
+    cmd.strip_prefix("set -e\n").unwrap_or(cmd)
+}
+
 /// Map cook-engine errors to CookError.
 fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
     match e {
@@ -371,7 +392,7 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
                         .collect();
                     let line = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0usize);
                     let code = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1i32);
-                    let command = parts.get(2).unwrap_or(&"unknown").to_string();
+                    let command = strip_set_e(parts.get(2).copied().unwrap_or("unknown"));
                     if line == 0 {
                         CookError::CommandFailed(format!(
                             "command failed (exit {code}): {command}"
@@ -413,6 +434,38 @@ fn engine_error_to_cook_error(e: cook_engine::EngineError) -> CookError {
              supported. either narrow '{upstream}' outputs[] to the specific file, or depend on \
              '{upstream}' via a requires edge (recipe {downstream}: {upstream})."
         )),
+    }
+}
+
+#[cfg(test)]
+mod engine_error_to_cook_error_tests {
+    use super::*;
+
+    #[test]
+    fn strip_set_e_removes_exact_prefix() {
+        assert_eq!(strip_set_e("set -e\nmkdir -p build"), "mkdir -p build");
+    }
+
+    #[test]
+    fn strip_set_e_leaves_unprefixed_command_unchanged() {
+        assert_eq!(strip_set_e("mkdir -p build"), "mkdir -p build");
+    }
+
+    #[test]
+    fn command_failed_render_strips_set_e_prelude() {
+        let e = cook_engine::EngineError::TaskFailures {
+            count: 1,
+            failures: vec![(
+                0,
+                "build".to_string(),
+                "COOK_CMD_FAILED:3:1:set -e\nfalse".to_string(),
+            )],
+            partial_test_results: vec![],
+        };
+        let err = engine_error_to_cook_error(e);
+        let msg = err.to_string();
+        assert!(!msg.contains("set -e"), "{msg}");
+        assert!(msg.contains("false"), "{msg}");
     }
 }
 
@@ -755,7 +808,36 @@ pub fn cmd_run(
     // pass), and recipe-level coarse deps come from `RegisteredRecipePub.requires`.
     let recipe_infos = pipeline::build_recipe_infos_from_registered(&registered);
 
-    run_with_progress(globals, &recipe_infos, &targets, &registered, num_jobs)?;
+    let run_result = run_with_progress(globals, &recipe_infos, &targets, &registered, num_jobs)?;
+
+    // §19.2 (CS-0124): a failing test step fails the run. The engine records
+    // test failures as "soft" results (executor.rs — dependents are not
+    // cancelled so `cook test` can run the whole suite); the runner still
+    // must exit non-zero. Blocked cannot occur on the Ok path today (blocked
+    // rows ride EngineError::TaskFailures), but match it for parity with
+    // cmd_test's any_failed check.
+    let failed_tests = run_result
+        .test_results
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.outcome,
+                cook_engine::TestOutcome::Failed
+                    | cook_engine::TestOutcome::Blocked
+                    | cook_engine::TestOutcome::TimedOut
+            )
+        })
+        .count();
+    if failed_tests > 0 {
+        // main.rs suppresses TestFailure's Display (test-runner output
+        // design §3.4, see test_reporter/summary.rs) — the per-node
+        // FAILED lines are already on screen; print the one-line summary
+        // here, after the renderer has released the terminal.
+        eprintln!("cook: {failed_tests} failing test step(s)");
+        return Err(CookError::TestFailure(format!(
+            "{failed_tests} failing test step(s)"
+        )));
+    }
     Ok(())
 }
 
@@ -1117,8 +1199,8 @@ fn collect_workspace_recipe_names(
     Some(
         names
             .into_iter()
-            .filter(|(_, kind)| matches!(kind, cook_engine::cook_register::RecipeKind::Recipe))
-            .map(|(name, _)| name)
+            .filter(|(_, kind, _)| matches!(kind, cook_engine::cook_register::RecipeKind::Recipe))
+            .map(|(name, _, _)| name)
             .collect(),
     )
 }
@@ -1140,10 +1222,22 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
 
-    for (name, kind) in &names {
+    for (name, kind, params) in &names {
+        let suffix = if params.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " {}",
+                params
+                    .iter()
+                    .map(|p| p.display_token())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
         match kind {
-            cook_engine::cook_register::RecipeKind::Recipe => println!("  recipe {name}"),
-            cook_engine::cook_register::RecipeKind::Chore => println!("  chore  {name}"),
+            cook_engine::cook_register::RecipeKind::Recipe => println!("  recipe {name}{suffix}"),
+            cook_engine::cook_register::RecipeKind::Chore => println!("  chore  {name}{suffix}"),
         }
     }
 
@@ -1184,7 +1278,7 @@ pub fn cmd_list(globals: &Globals, args: &crate::cli::ListArgs) -> Result<(), Co
     let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
 
-    for (name, kind) in names {
+    for (name, kind, _params) in names {
         let is_chore = matches!(kind, cook_engine::cook_register::RecipeKind::Chore);
         if (is_chore && want_chores) || (!is_chore && want_recipes) {
             println!("{name}");
@@ -1209,12 +1303,34 @@ pub fn cmd_init() -> Result<(), CookError> {
     // shell command and the build fails with exit 127.
     std::fs::write(
         cookfile_path,
-        r#"recipe build
-    echo "Hello from Cook!"
+        r#"# Your first Cook build. `cook` fingerprints every input, so the second
+# run does zero work until an input actually changes.
+#
+#   cook            # builds one node per note
+#   cook            # everything cached — 0 work
+#   echo "- hi" >> notes/two.md && cook   # ONLY two rebuilds
+
+recipe build
+    ingredients "notes/*.md"
+    cook "out/$<in.stem>.html" { sed 's|^# \(.*\)|<h1>\1</h1>|' $<in> > $<out> }
 "#,
     )
     .map_err(|e| CookError::Other(format!("failed to write Cookfile: {e}")))?;
     println!("Created Cookfile");
+
+    // cook init runs in an empty dir, but the starter Cookfile's ingredients
+    // glob needs something to fan out over — seed sample notes so the first
+    // `cook` run has real inputs to build. Never clobber a pre-existing
+    // notes/ dir (e.g. re-running init after adding files by hand).
+    let notes = std::path::Path::new("notes");
+    if !notes.exists() {
+        std::fs::create_dir_all(notes)
+            .map_err(|e| CookError::Other(format!("failed to create notes/: {e}")))?;
+        std::fs::write(notes.join("one.md"), "# One\n- alpha\n")
+            .map_err(|e| CookError::Other(format!("failed to write notes/one.md: {e}")))?;
+        std::fs::write(notes.join("two.md"), "# Two\n- beta\n")
+            .map_err(|e| CookError::Other(format!("failed to write notes/two.md: {e}")))?;
+    }
 
     let gitignore_path = std::path::Path::new(".gitignore");
     let existing = match std::fs::read_to_string(gitignore_path) {
@@ -1604,9 +1720,11 @@ mod serve_glob_tests {
 #[cfg(not(feature = "viewer"))]
 pub fn cmd_dag(_globals: &Globals, _args: &crate::cli::DagArgs) -> Result<(), CookError> {
     Err(CookError::Other(
-        "the `cook dag` viewer is not built into this binary; rebuild with \
-         `cargo build --features viewer` (or pass `--features viewer` when \
-         running `cargo install`)"
+        "`cook dag` is an optional ratatui terminal viewer, left out of the \
+         default binary to keep it slim; rebuild with `cargo build --features \
+         viewer` (or install with `--features viewer`) to enable it. When \
+         built in, the viewer automatically falls back to a plain wave \
+         listing if run headless (no TTY)."
             .to_string(),
     ))
 }

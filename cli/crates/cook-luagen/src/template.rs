@@ -12,18 +12,22 @@ use crate::sigil;
 
 /// Expand a command string using the unified `$<IDENT>` sigil pipeline.
 ///
-/// CS-0074: probe-value references (`$<key:field>` etc.) are now handled
-/// entirely by the sigil scanner + resolver — no separate `{{...}}` scanner.
-/// A sigil whose IDENT contains `:` is dispatched to `Resolved::ProbeRef`
-/// by the resolver; the emitted Lua expression is `tostring(cook.cache.get(...))`.
+/// CS-0074 / COOK-187 / CS-0122: probe-value references (`$<key:field>` etc.)
+/// are handled entirely by the sigil scanner + resolver — no separate
+/// `{{...}}` scanner. A sigil whose IDENT contains `:` is dispatched to
+/// `Resolved::ProbeRef` by the resolver.
 ///
 /// Returns `(lua_expr, probe_keys_referenced)`.
 ///
-/// - If the command has no probe refs, the expression is a plain Lua string
-///   literal or concatenation (backward compat).
-/// - When probe refs ARE present, the expression is wrapped in
-///   `function() return <expr> end` so `cook.cache.get` is called at execute
-///   time rather than register time.
+/// Command bodies are ALWAYS a plain Lua string literal or concatenation —
+/// never a deferred `function() ... end`. `cook.add_unit` requires a string
+/// `command`; a probe-value reference is left as literal `$<key:...>` sigil
+/// text inside that string. §22.5.7's register-time capture
+/// (`try_expand_probe_templates` in cook-register) detects the sigil text and
+/// rewrites the unit's command into an execute-time `cook.cache.get` chunk.
+/// Emitting a function-valued command here would silently no-op the unit
+/// once `cook.add_unit` coerces the non-string value to `""` — this is the
+/// COOK-187 defect; the fix is to never produce that shape.
 pub(crate) fn expand_command_template(
     cmd: &str,
     ctx: &ResolveCtx<'_>,
@@ -31,27 +35,7 @@ pub(crate) fn expand_command_template(
     file_refs: &mut FileRefs,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
     let spans = sigil::scan(cmd);
-
-    // Collect probe keys by walking sigil spans before doing full expansion,
-    // so we know whether to wrap in a deferred function. (A `file:` ident also
-    // contains `:` but resolves to FileRef, not ProbeRef — it never defers.)
     let mut probe_keys: BTreeSet<String> = BTreeSet::new();
-    for span in &spans {
-        if span.ident.contains(':') {
-            let resolved = crate::resolver::resolve(&span.ident, ctx);
-            if let Resolved::ProbeRef { key, .. } = &resolved {
-                probe_keys.insert(key.clone());
-            }
-        }
-    }
-
-    if probe_keys.is_empty() {
-        // No probe refs — use existing sigil expansion unchanged.
-        let lua = expand_sigil_template(cmd, ctx, consulted_env, file_refs)?;
-        return Ok((lua, probe_keys));
-    }
-
-    // Probe refs present — build the concatenation expression from sigil spans.
     let mut parts: Vec<String> = vec![];
     let mut cursor = 0usize;
 
@@ -60,28 +44,47 @@ pub(crate) fn expand_command_template(
             parts.push(format!("\"{}\"", escape_lua_string(&cmd[cursor..span.range.start])));
         }
         let resolved = crate::resolver::resolve(&span.ident, ctx);
-        let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?;
-        parts.push(lua_expr);
+        if let Resolved::ProbeRef { key, .. } = &resolved {
+            // COOK-187 / CS-0122: probe-value refs stay LITERAL `$<key:...>`
+            // text in the register-time command string. cook.add_unit's
+            // CS-0074 capture (§22.5.7) rewrites the string into an
+            // execute-time cook.cache.get chunk. Emitting a deferred
+            // `function() ... end` here is forbidden — cook.add_unit
+            // rejects non-string commands.
+            probe_keys.insert(key.clone());
+            parts.push(format!("\"{}\"", escape_lua_string(&cmd[span.range.clone()])));
+        } else {
+            let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?;
+            parts.push(lua_expr);
+        }
         cursor = span.range.end;
     }
-
     if cursor < cmd.len() {
         parts.push(format!("\"{}\"", escape_lua_string(&cmd[cursor..])));
     }
-
     if parts.is_empty() {
         parts.push("\"\"".to_string());
     }
-
     let concat_expr = if parts.len() == 1 {
         parts.into_iter().next().unwrap()
     } else {
         parts.join(" .. ")
     };
+    Ok((concat_expr, probe_keys))
+}
 
-    // Wrap in a deferred function so cook.cache.get resolves at execute time.
-    let lua_expr = format!("function() return {} end", concat_expr);
-    Ok((lua_expr, probe_keys))
+/// How a probe-value reference (`$<key:...>`) lowers during template
+/// expansion.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum ProbeLowering {
+    /// Leave the `$<key:...>` source text in the emitted string literal;
+    /// `cook.add_unit`'s register-time capture rewrites it (COOK-187/CS-0122).
+    /// Required for anything that feeds `command =`.
+    LiteralSigil,
+    /// Lower to `tostring(cook.cache.get(...))` evaluated where the
+    /// expression is evaluated (register time). Pre-existing behavior for
+    /// non-command positions (for_each output patterns, test as-names).
+    CacheGet,
 }
 
 /// Expand a `for_each` body template (§8.3): a cook output pattern, a cook
@@ -92,14 +95,22 @@ pub(crate) fn expand_command_template(
 /// ingredient-driven body. `$<in>` / `$<all>` are rejected when `ctx.mode` is
 /// `OneShot` (a `for_each` body has no path-input or batched-input source).
 ///
+/// `probe_lowering` selects how a probe-value reference lowers: `LiteralSigil`
+/// for anything that feeds a `command =` field (COOK-187/CS-0122 — the string
+/// must stay a plain string for `cook.add_unit`'s register-time capture to
+/// rewrite), `CacheGet` for non-command positions that resolve at register
+/// time (e.g. output patterns, `test` as-names).
+///
 /// Returns the concatenation expression (unwrapped — the caller decides whether
 /// to wrap a command in a deferred `function() return … end` when probe refs
-/// are present) together with the set of probe keys it referenced.
+/// are present, for the positions where that pre-existing behavior is kept)
+/// together with the set of probe keys it referenced.
 pub(crate) fn expand_for_each_template(
     template: &str,
     ctx: &ResolveCtx<'_>,
     consulted_env: &mut ConsultedEnv,
     file_refs: &mut FileRefs,
+    probe_lowering: ProbeLowering,
 ) -> Result<(String, BTreeSet<String>), ResolveError> {
     let spans = sigil::scan(template);
     let mut parts: Vec<String> = Vec::new();
@@ -125,7 +136,15 @@ pub(crate) fn expand_for_each_template(
             // COOK-96: $<recipe[]> inside a fan-out body lowers to a per-member
             // output lookup. `item` is the loop-local Lua variable bound by the
             // fan-out harness (BuiltinKind::Item → cook.member_to_string(item)).
-            if let Resolved::RecipeMember { ref name } = resolved {
+            if let Resolved::ProbeRef { .. } = &resolved {
+                if probe_lowering == ProbeLowering::LiteralSigil {
+                    // COOK-187 / CS-0122: literal sigil text for register-time
+                    // capture — see expand_command_template's doc comment.
+                    format!("\"{}\"", escape_lua_string(&template[span.range.clone()]))
+                } else {
+                    resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?
+                }
+            } else if let Resolved::RecipeMember { ref name } = resolved {
                 format!(
                     "cook.dep_output_member(\"{}\", cook.member_to_string(item))",
                     escape_lua_string(name)
@@ -189,7 +208,9 @@ impl ConsultedEnv {
 /// expansion. Patterns are kept in first-appearance order (deduped); each is
 /// lowered to a register-time hoisted local `_cook_fr_<tag>_<n>` so the
 /// substitution value is computed at register time even when the surrounding
-/// command is wrapped in a probe-deferred `function() return ... end`.
+/// command is wrapped in a probe-deferred `function() return ... end` (still
+/// true for `test`/`plate` bodies; a native `cook`-step command never wraps —
+/// see COOK-187/CS-0122 in `expand_command_template`'s doc comment).
 #[derive(Debug, Clone)]
 pub(crate) struct FileRefs {
     tag: String,
@@ -263,6 +284,53 @@ pub(crate) fn expand_sigil_template(
     consulted_env: &mut ConsultedEnv,
     file_refs: &mut FileRefs,
 ) -> Result<String, ResolveError> {
+    expand_sigil_template_with_chore_params(template, ctx, consulted_env, file_refs, None)
+}
+
+/// CS-0128: the shell quoting context a sigil span sits in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QCtx {
+    /// Outside any quote — the value must be single-quoted for word-safety.
+    Bare,
+    /// Inside a double-quoted region — the value is escaped for that context.
+    Double,
+    /// Inside a single-quoted region — the value is emitted verbatim.
+    Single,
+}
+
+/// Classify the shell quoting context at the end of `prefix` by scanning the
+/// command text left-to-right, tracking single/double quote state and
+/// backslash escapes (POSIX: backslash is inert inside single quotes).
+fn quote_context(prefix: &str) -> QCtx {
+    let (mut sq, mut dq, mut esc) = (false, false, false);
+    for c in prefix.chars() {
+        if esc {
+            esc = false;
+            continue;
+        }
+        match c {
+            '\\' if !sq => esc = true,
+            '\'' if !dq => sq = !sq,
+            '"' if !sq => dq = !dq,
+            _ => {}
+        }
+    }
+    if sq {
+        QCtx::Single
+    } else if dq {
+        QCtx::Double
+    } else {
+        QCtx::Bare
+    }
+}
+
+pub(crate) fn expand_sigil_template_with_chore_params(
+    template: &str,
+    ctx: &ResolveCtx<'_>,
+    consulted_env: &mut ConsultedEnv,
+    file_refs: &mut FileRefs,
+    chore_params: Option<&BTreeSet<String>>,
+) -> Result<String, ResolveError> {
     let spans = sigil::scan(template);
     if spans.is_empty() {
         // No placeholders — entire string is literal.
@@ -279,9 +347,29 @@ pub(crate) fn expand_sigil_template(
             parts.push(format!("\"{}\"", escape_lua_string(literal)));
         }
 
-        // Resolve the placeholder.
-        let resolved = crate::resolver::resolve(&span.ident, ctx);
-        let lua_expr = resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?;
+        // Chore parameters are an innermost binding layer for chore shell
+        // steps. Anything not declared as a parameter falls through to the
+        // ordinary closed-set resolver, so env and recipe refs behave exactly
+        // as they do in recipe bodies.
+        let lua_expr = if chore_params.is_some_and(|params| params.contains(&span.ident)) {
+            // CS-0128: the sigil expands per its shell quoting context. Scan the
+            // command prefix up to this span to classify bare / double / single
+            // and thread it into the runtime quoter.
+            let ctx = match quote_context(&template[..span.range.start]) {
+                QCtx::Bare => "bare",
+                QCtx::Double => "dquote",
+                QCtx::Single => "squote",
+            };
+            format!(
+                "cook.__quote_param(__cook_params[\"{}\"], \"{}\", \"{}\")",
+                escape_lua_string(&span.ident),
+                escape_lua_string(&span.ident),
+                ctx
+            )
+        } else {
+            let resolved = crate::resolver::resolve(&span.ident, ctx);
+            resolved_to_lua(resolved, &span.ident, consulted_env, file_refs)?
+        };
         parts.push(lua_expr);
 
         last_end = span.range.end;
@@ -778,7 +866,7 @@ pub enum PlateTestPlaceholderError {
     OutForbidden { token: String },
     #[error("bare path-accessor `$<{accessor}>` is no longer valid; use `$<in.{accessor}>`")]
     BareAccessor { accessor: String },
-    #[error("`$<{name}.{accessor}>` is not valid in a plate or test body (the §5.4 firewall applies — plate/test have no output pattern)")]
+    #[error("`$<{name}.{accessor}>` is not valid in a plate or test body; plate/test steps have no output pattern")]
     LibAccessor { name: String, accessor: String },
 }
 
@@ -971,7 +1059,7 @@ pub(crate) fn validate_placeholders(
     for span in sigil::scan(body_text) {
         let resolved = crate::resolver::resolve(&span.ident, &rctx);
         if let Resolved::Error(e) = resolved {
-            return Err(format!("CS-0022: {}", e));
+            return Err(e.to_string());
         }
         // CS-0101: a well-formed `$<file:PATH>` is accepted in any cook-step
         // body mode; skip the accessor shape check below (a `file:` ident can
@@ -986,7 +1074,7 @@ pub(crate) fn validate_placeholders(
             let suffix = &span.ident[dot + 1..];
             if ACCESSORS.contains(&suffix) && ctx.recipe_names.contains(prefix) {
                 return Err(format!(
-                    "CS-0022: $<{}.{}> is rejected inside a cook-step body; \
+                    "$<{}.{}> is rejected inside a cook-step body; \
                      use $<in.{}> if `{}` is the driver, or reach for Lua otherwise",
                     prefix, suffix, suffix, prefix
                 ));
@@ -1053,6 +1141,38 @@ mod tests {
             outputs: OutputShape::None,
             recipes_in_scope: recipes,
         }
+    }
+
+    // ─── quote_context tests (CS-0128) ───────────────────────────────────────
+
+    #[test]
+    fn quote_context_bare() {
+        assert_eq!(quote_context("echo "), QCtx::Bare);
+        assert_eq!(quote_context(""), QCtx::Bare);
+        // A closed double-quoted region returns to bare.
+        assert_eq!(quote_context("echo \"hi\" "), QCtx::Bare);
+    }
+
+    #[test]
+    fn quote_context_double() {
+        assert_eq!(quote_context("echo \"hi "), QCtx::Double);
+        // A single quote inside a double-quoted region is literal, not an open.
+        assert_eq!(quote_context("echo \"it's "), QCtx::Double);
+    }
+
+    #[test]
+    fn quote_context_single() {
+        assert_eq!(quote_context("echo 'hi "), QCtx::Single);
+        // A double quote inside a single-quoted region is literal.
+        assert_eq!(quote_context("echo 'say \"hi "), QCtx::Single);
+        // Backslash is inert inside single quotes (POSIX).
+        assert_eq!(quote_context("echo 'a\\"), QCtx::Single);
+    }
+
+    #[test]
+    fn quote_context_backslash_escape_outside_quotes() {
+        // An escaped double-quote does not open a double-quoted region.
+        assert_eq!(quote_context("echo \\\" "), QCtx::Bare);
     }
 
     #[test]
@@ -1184,8 +1304,14 @@ mod tests {
         recipes.insert("render".to_string());
         let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
         let mut env = ConsultedEnv::new();
-        let (lua, _) =
-            expand_for_each_template("bin/mux --video $<render[]>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+        let (lua, _) = expand_for_each_template(
+            "bin/mux --video $<render[]>",
+            &ctx,
+            &mut env,
+            &mut FileRefs::new("t"),
+            ProbeLowering::CacheGet,
+        )
+        .unwrap();
         assert_eq!(
             lua,
             "\"bin/mux --video \" .. cook.dep_output_member(\"render\", cook.member_to_string(item))"
@@ -1287,7 +1413,7 @@ mod probe_template_tests {
     }
 
     #[test]
-    fn expand_command_template_probe_only_yields_deferred_fn() {
+    fn expand_command_template_probe_only_keeps_literal_sigil() {
         let r = BTreeSet::new();
         let ctx = ResolveCtx {
             mode: IterMode::OneToOne,
@@ -1298,11 +1424,14 @@ mod probe_template_tests {
         // CS-0074: probe refs now use $<key:field> instead of {{key.field}}.
         let (lua, keys) =
             expand_command_template("$<cc:zlib.cflags> -c $<in>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
-        // Must be wrapped in a deferred function since probe refs are present.
-        assert!(lua.starts_with("function()"), "got: {}", lua);
-        assert!(lua.contains(r#"cook.cache.get("cc:zlib")"#), "got: {}", lua);
-        assert!(lua.contains(".cflags"), "got: {}", lua);
-        // Sigil $<in> should also appear.
+        // COOK-187 / CS-0122: probe refs must NOT be wrapped in a deferred
+        // function or lowered to a cache read at register time — the literal
+        // `$<key:...>` sigil text stays in the command string for
+        // cook.add_unit's register-time capture to rewrite.
+        assert!(!lua.contains("function()"), "got: {}", lua);
+        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(lua.contains("$<cc:zlib.cflags>"), "got: {}", lua);
+        // Sigil $<in> should still resolve normally.
         assert!(lua.contains("_cook_in"), "got: {}", lua);
         assert_eq!(keys.iter().next().map(String::as_str), Some("cc:zlib"));
     }
@@ -1319,8 +1448,9 @@ mod probe_template_tests {
         let mut env = ConsultedEnv::new();
         let (lua, keys) =
             expand_command_template("$<cc:compiler> -c foo.c", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
-        assert!(lua.starts_with("function()"), "got: {}", lua);
-        assert!(lua.contains(r#"cook.cache.get("cc:compiler")"#), "got: {}", lua);
+        assert!(!lua.contains("function()"), "got: {}", lua);
+        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(lua.contains("$<cc:compiler>"), "got: {}", lua);
         assert!(keys.contains("cc:compiler"), "expected cc:compiler in keys; got: {:?}", keys);
     }
 
@@ -1336,9 +1466,9 @@ mod probe_template_tests {
         let mut env = ConsultedEnv::new();
         let (lua, keys) =
             expand_command_template("$<cc:zlib.libs[2]>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
-        assert!(lua.starts_with("function()"), "got: {}", lua);
-        assert!(lua.contains(r#"cook.cache.get("cc:zlib")"#), "got: {}", lua);
-        assert!(lua.contains(".libs[2]"), "got: {}", lua);
+        assert!(!lua.contains("function()"), "got: {}", lua);
+        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(lua.contains("$<cc:zlib.libs[2]>"), "got: {}", lua);
         assert!(keys.contains("cc:zlib"));
     }
 
@@ -1353,7 +1483,10 @@ mod probe_template_tests {
         let mut env = ConsultedEnv::new();
         let (lua, keys) =
             expand_command_template("$<cc:compiler.path> -c foo.c $<cc:zlib.cflags>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
-        assert!(lua.starts_with("function()"), "got: {}", lua);
+        assert!(!lua.contains("function()"), "got: {}", lua);
+        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(lua.contains("$<cc:compiler.path>"), "got: {}", lua);
+        assert!(lua.contains("$<cc:zlib.cflags>"), "got: {}", lua);
         assert!(keys.contains("cc:compiler"), "keys: {:?}", keys);
         assert!(keys.contains("cc:zlib"), "keys: {:?}", keys);
     }

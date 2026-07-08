@@ -1,0 +1,6 @@
+probe ns:cards
+    json { cat data/cards.json }
+
+recipe build_cards
+    ingredients ns:cards:items
+    cook "out/$<in.id>.json" { render "$<in>" $<out> }

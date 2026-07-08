@@ -1,0 +1,21 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="stamps" line=4
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        ForEach source=ProbeKey("cards:list")
+        Cook outputs=["out/$<in>.stamp"] body=ShellBlock(["echo \"member: $<in>\" > $<out>"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []
+  probes:
+    Probe name="cards:list" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      produce: Shell typing=Lines commands=["printf \"alpha\\nbeta\\ngamma\\n\""]

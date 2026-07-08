@@ -131,7 +131,13 @@ fn format_stream(s: &str) -> String {
     }
 }
 
+/// Reported commands carry codegen's `set -e` prelude; strip it for display.
+fn strip_set_e(cmd: &str) -> &str {
+    cmd.strip_prefix("set -e\n").unwrap_or(cmd)
+}
+
 fn single_line(s: &str) -> String {
+    let s = strip_set_e(s);
     let trimmed = s.trim();
     match trimmed.find('\n') {
         Some(idx) => format!("{}…", &trimmed[..idx]),
@@ -219,7 +225,7 @@ mod tests {
         let s = Style::new(false);
         let r = mk_blocked("r:t", "set -e\nmkdir -p build\nfalse");
         let out = render(&[r], &|id| id.into(), &s);
-        assert!(out.contains("blocked by upstream cook step: `set -e…`"), "{out}");
+        assert!(out.contains("blocked by upstream cook step: `mkdir -p build…`"), "{out}");
         assert!(out.contains("\nblocked:\n    r:t\n"), "{out}");
     }
 

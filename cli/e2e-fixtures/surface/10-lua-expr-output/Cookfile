@@ -1,0 +1,10 @@
+recipe build
+    ingredients "docs/*.txt"
+    cook (input:gsub("^docs/", "out/"):gsub("%.txt$", ".up")) >{
+        local f = assert(io.open(input, "r"))
+        local text = f:read("*a")
+        f:close()
+        local o = assert(io.open(output, "w"))
+        o:write(text:upper())
+        o:close()
+    }

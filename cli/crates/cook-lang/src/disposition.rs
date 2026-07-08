@@ -114,7 +114,7 @@ pub(crate) fn parse_cook_modifiers(tail: &str, line: usize) -> Result<CookModifi
             "as" => {
                 return Err(ParseError::Parse {
                     line,
-                    message: "cook: modifier `as` is only valid on test_step (CS-0061 §3.1.3)"
+                    message: "cook: modifier `as` is only valid on test steps"
                         .to_string(),
                 });
             }

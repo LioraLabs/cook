@@ -54,6 +54,7 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         final_env_by_cookfile: BTreeMap::new(),
         working_dir_by_prefix: BTreeMap::new(),
         alias_dirs_by_prefix: BTreeMap::new(),
+        terminal_outputs: BTreeMap::new(),
     }
 }
 
@@ -70,6 +71,7 @@ fn workspace_with(recipes: &[(&str, &[&str])]) -> RegisteredWorkspace {
                 ingredient_groups: vec![],
                 step_kind: cook_contracts::StepKind::Cook,
                 is_chore: false,
+                line: 0,
             },
             cache_meta: None,
             dep_kind: DepKind::Sequential,
@@ -100,6 +102,7 @@ fn workspace_with(recipes: &[(&str, &[&str])]) -> RegisteredWorkspace {
         final_env_by_cookfile: BTreeMap::new(),
         working_dir_by_prefix: BTreeMap::new(),
         alias_dirs_by_prefix: BTreeMap::new(),
+        terminal_outputs: BTreeMap::new(),
     }
 }
 

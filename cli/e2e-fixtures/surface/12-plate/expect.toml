@@ -1,0 +1,11 @@
+[[run]]
+args = ["release"]
+[run.assert]
+equals = { "build/index.html" = "<h1>Home</h1>\n" }
+exists = ["device/index.html", "device/deployed.txt"]
+
+[[run]]
+args = ["release"]
+[run.assert]
+changed = ["device/deployed.txt"]
+unchanged = ["build/index.html"]

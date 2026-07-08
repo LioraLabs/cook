@@ -1,0 +1,8 @@
+import theme ./theme
+
+recipe build: theme.build
+    cook "build/site.txt" {
+        mkdir -p build
+        cat $<theme.build> > $<out>
+        echo "web nonce=$(date +%s%N)" >> $<out>
+    }

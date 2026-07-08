@@ -1,0 +1,8 @@
+import web ./apps/web
+import tools ./tools
+
+recipe build: web.build tools.build
+    cook "build/bundle.txt" {
+        mkdir -p build
+        cat $<web.build> $<tools.build> > $<out>
+    }

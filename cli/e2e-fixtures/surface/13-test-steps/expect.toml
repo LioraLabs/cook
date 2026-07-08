@@ -1,0 +1,19 @@
+[[run]]
+args = ["check"]
+[run.assert]
+equals = { "out/app.txt" = "HELLO COOK\n" }
+
+# Cached re-run of the test steps must still succeed (and not flip
+# should_fail on replay); the artifact stays byte-identical.
+[[run]]
+args = ["check"]
+exit = 0
+[run.assert]
+unchanged = ["out/app.txt"]
+
+# The dedicated runner is the surface where test-outcome semantics are hard:
+# a should_fail violation (or any failing test) makes `cook test` exit 1,
+# so exit 0 here pins the inversion contract, not just syntax.
+[[run]]
+args = ["test", "check"]
+exit = 0

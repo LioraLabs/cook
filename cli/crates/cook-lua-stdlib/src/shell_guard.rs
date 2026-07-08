@@ -43,7 +43,7 @@ pub fn install_shell_escape_guards(lua: &Lua, sandbox: SandboxSource) -> LuaResu
             if !policy.shell_escape_hatches_enabled() {
                 return Err(mlua::Error::runtime(
                     "os.execute: Lua-side shell escape hatch is \
-                     disabled in cook/test/chore step bodies (CS-0045); \
+                     disabled in cook/test/chore step bodies; \
                      use cook.sh (which runs with the recipe's \
                      working_dir and is recorded in the unit's \
                      command_hash) or move the call to a `plate` step",
@@ -77,7 +77,7 @@ pub fn install_shell_escape_guards(lua: &Lua, sandbox: SandboxSource) -> LuaResu
             if !policy.shell_escape_hatches_enabled() {
                 return Err(mlua::Error::runtime(
                     "io.popen: Lua-side shell escape hatch is disabled \
-                     in cook/test/chore step bodies (CS-0045); use \
+                     in cook/test/chore step bodies; use \
                      cook.sh (which runs with the recipe's working_dir \
                      and is recorded in the unit's command_hash) or \
                      move the call to a `plate` step",
@@ -117,7 +117,7 @@ mod tests {
             .exec()
             .unwrap_err()
             .to_string();
-        assert!(err.contains("CS-0045"), "missing CS-0045 tag: {err}");
+        assert!(err.contains("shell escape hatch is disabled"), "missing guard text: {err}");
         assert!(err.contains("os.execute"), "missing api name: {err}");
     }
 
@@ -148,7 +148,7 @@ mod tests {
             .exec()
             .unwrap_err()
             .to_string();
-        assert!(err.contains("CS-0045"), "missing CS-0045 tag: {err}");
+        assert!(err.contains("shell escape hatch is disabled"), "missing guard text: {err}");
         assert!(err.contains("io.popen"), "missing api name: {err}");
     }
 
@@ -168,7 +168,7 @@ mod tests {
             .exec()
             .unwrap_err()
             .to_string();
-        assert!(err.contains("CS-0045"));
+        assert!(err.contains("shell escape hatch is disabled"));
 
         // Flip to Off; same VM, same closure.
         *slot.lock().unwrap() = SandboxPolicy::Off;

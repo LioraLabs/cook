@@ -1,0 +1,5 @@
+
+[[run]]
+args = ["withprobe"]
+[run.assert]
+equals = { "out/b.txt" = "Linux\n" }
