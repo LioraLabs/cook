@@ -803,23 +803,28 @@ fn install_execute_phase_cook_export(
 /// Resolve a `cook.dep_output(name)` reference against the worker's
 /// terminal-outputs snapshot (§24.7). `self_fqn` is the consumer recipe's
 /// fully-qualified name; its Cookfile prefix (everything up to the last `.`)
-/// qualifies a bare `name`. Tries `<prefix>.<name>` then the bare `<name>`
-/// key. Returns `Some(paths)` on a hit (possibly empty), `None` when neither
-/// key exists. Cross-Cookfile `alias.recipe` refs are not resolved here — they
-/// fall through to `None` and raise a Lua error rather than mis-resolve.
+/// qualifies a bare `name`. Looks up the single deterministic key
+/// `<prefix>.<name>` (or bare `<name>` for a root consumer with empty prefix),
+/// mirroring the register-phase `resolve_global_key`
+/// (`cook-register/src/dep_output_api.rs`): a bare name resolves against the
+/// consumer's *own* Cookfile and nowhere else. Returns `Some(paths)` on a hit
+/// (possibly empty), `None` when the key is absent. A nested consumer's bare
+/// ref does NOT fall back to a same-named root recipe — an absent local key is
+/// an unknown referent, raising a Lua error rather than mis-resolving.
+/// Cross-Cookfile `alias.recipe` refs are likewise not resolved here (that
+/// needs the register session's alias-qualified-prefix map) — they miss and
+/// raise a Lua error rather than mis-resolve.
 fn resolve_worker_dep_output<'a>(
     dep_outputs: &'a BTreeMap<String, Vec<String>>,
     self_fqn: &str,
     name: &str,
 ) -> Option<&'a Vec<String>> {
     let self_prefix = self_fqn.rsplit_once('.').map(|(p, _)| p).unwrap_or("");
-    if !self_prefix.is_empty() {
-        let qualified = format!("{self_prefix}.{name}");
-        if let Some(v) = dep_outputs.get(&qualified) {
-            return Some(v);
-        }
+    if self_prefix.is_empty() {
+        dep_outputs.get(name)
+    } else {
+        dep_outputs.get(&format!("{self_prefix}.{name}"))
     }
-    dep_outputs.get(name)
 }
 
 /// Install read-only `cook.dep_output` / `cook.dep_output_list` on the
@@ -1695,6 +1700,23 @@ mod tests {
         lua.globals().set("cook", cook).unwrap();
         let s: String = lua.load(r#"return cook.dep_output("lib")"#).eval().unwrap();
         assert_eq!(s, "sub/build/lib.a");
+    }
+
+    #[test]
+    fn dep_output_nested_bare_ref_does_not_fall_back_to_root() {
+        // A nested consumer's bare ref resolves against its OWN Cookfile only.
+        // With no local `sub.lib` but a same-named root `lib`, this must be an
+        // unknown referent (Lua error), NOT a silent fall-through to root —
+        // matching the register-phase resolve_global_key semantics.
+        let lua = unsafe { mlua::Lua::unsafe_new() };
+        let cook = lua.create_table().unwrap();
+        let recipe = Arc::new(Mutex::new("sub.app".to_string()));
+        let mut map = BTreeMap::new();
+        map.insert("lib".to_string(), vec!["build/root_lib.a".to_string()]);
+        install_worker_dep_output_api(&lua, &cook, Arc::new(map), &recipe).unwrap();
+        lua.globals().set("cook", cook).unwrap();
+        let r = lua.load(r#"return cook.dep_output("lib")"#).eval::<String>();
+        assert!(r.is_err(), "nested bare ref must not fall back to root recipe");
     }
 
     #[test]
