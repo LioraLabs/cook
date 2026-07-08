@@ -583,6 +583,9 @@ where
     //
     //    Bridge on_event through an mpsc channel so executor can use its
     //    existing Option<Sender<EngineEvent>> interface.
+    let dep_outputs: cook_luaotp::WorkerDepOutputs =
+        std::sync::Arc::new(registered_workspace.terminal_outputs.clone());
+
     let (event_tx, event_rx) = mpsc::channel::<EngineEvent>();
     let exec_result = std::thread::scope(|s| {
         let on_event_ref = on_event;
@@ -602,6 +605,7 @@ where
             &fingerprint_by_node,
             rerun_patterns,
             &probe_units_by_node,
+            dep_outputs,
         );
 
         // execute_dag drops the sender end on return, so the bridge thread's
