@@ -586,6 +586,12 @@ fn register_worker_cook_table(
     // worker, so a per-worker scratch table satisfies CS-0071.
     install_execute_phase_cook_export(lua, &cook)?;
 
+    // cook.dep_output / cook.dep_output_list on the execute-phase VM
+    // (Standard §24.7, "Both"). Read-only resolution against the register
+    // session's terminal-outputs snapshot; no DAG-edge recording (the DAG is
+    // closed before execute phase).
+    install_worker_dep_output_api(lua, &cook, Arc::clone(dep_outputs), current_recipe)?;
+
     // Register-only API guards (Standard §6.3.2).
     //
     // `cook.exec`, `cook.interactive`, `cook.add_unit`, `cook.step_group`,
@@ -791,6 +797,85 @@ fn install_execute_phase_cook_export(
     })?;
     cook.set("import", import_fn)?;
 
+    Ok(())
+}
+
+/// Resolve a `cook.dep_output(name)` reference against the worker's
+/// terminal-outputs snapshot (§24.7). `self_fqn` is the consumer recipe's
+/// fully-qualified name; its Cookfile prefix (everything up to the last `.`)
+/// qualifies a bare `name`. Tries `<prefix>.<name>` then the bare `<name>`
+/// key. Returns `Some(paths)` on a hit (possibly empty), `None` when neither
+/// key exists. Cross-Cookfile `alias.recipe` refs are not resolved here — they
+/// fall through to `None` and raise a Lua error rather than mis-resolve.
+fn resolve_worker_dep_output<'a>(
+    dep_outputs: &'a BTreeMap<String, Vec<String>>,
+    self_fqn: &str,
+    name: &str,
+) -> Option<&'a Vec<String>> {
+    let self_prefix = self_fqn.rsplit_once('.').map(|(p, _)| p).unwrap_or("");
+    if !self_prefix.is_empty() {
+        let qualified = format!("{self_prefix}.{name}");
+        if let Some(v) = dep_outputs.get(&qualified) {
+            return Some(v);
+        }
+    }
+    dep_outputs.get(name)
+}
+
+/// Install read-only `cook.dep_output` / `cook.dep_output_list` on the
+/// execute-phase (worker) VM's `cook` table (Standard §24.7, "Both").
+/// Read-only: unlike the register-phase implementation
+/// (`cook-register/src/dep_output_api.rs`) it records no DAG edge — the DAG is
+/// closed before execute phase. Error model (§24.7): unknown name → Lua error;
+/// empty output list → empty string / empty table + a stderr warning.
+fn install_worker_dep_output_api(
+    lua: &mlua::Lua,
+    cook: &mlua::Table,
+    dep_outputs: WorkerDepOutputs,
+    current_recipe: &Arc<Mutex<String>>,
+) -> mlua::Result<()> {
+    let deps = Arc::clone(&dep_outputs);
+    let recipe = Arc::clone(current_recipe);
+    let f = lua.create_function(move |_, name: String| {
+        let fqn = recipe.lock().expect("recipe name lock").clone();
+        match resolve_worker_dep_output(&deps, &fqn, &name) {
+            Some(paths) if paths.is_empty() => {
+                eprintln!(
+                    "cook: warning: [{fqn}] cook.dep_output(\"{name}\"): referent has an empty output list"
+                );
+                Ok(String::new())
+            }
+            Some(paths) => Ok(paths.join(" ")),
+            None => Err(mlua::Error::RuntimeError(format!(
+                "recipe '{name}' has no terminal output (not registered or has no cook steps)"
+            ))),
+        }
+    })?;
+    cook.set("dep_output", f)?;
+
+    let deps2 = Arc::clone(&dep_outputs);
+    let recipe2 = Arc::clone(current_recipe);
+    let g = lua.create_function(move |lua, name: String| {
+        let fqn = recipe2.lock().expect("recipe name lock").clone();
+        match resolve_worker_dep_output(&deps2, &fqn, &name) {
+            Some(paths) => {
+                if paths.is_empty() {
+                    eprintln!(
+                        "cook: warning: [{fqn}] cook.dep_output_list(\"{name}\"): referent has an empty output list"
+                    );
+                }
+                let t = lua.create_table()?;
+                for (i, p) in paths.iter().enumerate() {
+                    t.set(i + 1, p.as_str())?;
+                }
+                Ok(t)
+            }
+            None => Err(mlua::Error::RuntimeError(format!(
+                "recipe '{name}' has no terminal output (not registered or has no cook steps)"
+            ))),
+        }
+    })?;
+    cook.set("dep_output_list", g)?;
     Ok(())
 }
 
@@ -1582,6 +1667,60 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let (pool, rx) = WorkerPool::spawn(n);
         (pool, rx, dir)
+    }
+
+    #[test]
+    fn dep_output_resolves_root_recipe() {
+        let lua = unsafe { mlua::Lua::unsafe_new() };
+        let cook = lua.create_table().unwrap();
+        let recipe = Arc::new(Mutex::new("app".to_string()));
+        let mut map = BTreeMap::new();
+        map.insert("lib".to_string(), vec!["build/lib.txt".to_string()]);
+        install_worker_dep_output_api(&lua, &cook, Arc::new(map), &recipe).unwrap();
+        lua.globals().set("cook", cook).unwrap();
+        let s: String = lua.load(r#"return cook.dep_output("lib")"#).eval().unwrap();
+        assert_eq!(s, "build/lib.txt");
+        let t: Vec<String> = lua.load(r#"return cook.dep_output_list("lib")"#).eval().unwrap();
+        assert_eq!(t, vec!["build/lib.txt".to_string()]);
+    }
+
+    #[test]
+    fn dep_output_resolves_same_cookfile_prefix() {
+        let lua = unsafe { mlua::Lua::unsafe_new() };
+        let cook = lua.create_table().unwrap();
+        let recipe = Arc::new(Mutex::new("sub.app".to_string()));
+        let mut map = BTreeMap::new();
+        map.insert("sub.lib".to_string(), vec!["sub/build/lib.a".to_string()]);
+        install_worker_dep_output_api(&lua, &cook, Arc::new(map), &recipe).unwrap();
+        lua.globals().set("cook", cook).unwrap();
+        let s: String = lua.load(r#"return cook.dep_output("lib")"#).eval().unwrap();
+        assert_eq!(s, "sub/build/lib.a");
+    }
+
+    #[test]
+    fn dep_output_unknown_recipe_errors() {
+        let lua = unsafe { mlua::Lua::unsafe_new() };
+        let cook = lua.create_table().unwrap();
+        let recipe = Arc::new(Mutex::new("app".to_string()));
+        install_worker_dep_output_api(&lua, &cook, Arc::new(BTreeMap::new()), &recipe).unwrap();
+        lua.globals().set("cook", cook).unwrap();
+        let r = lua.load(r#"return cook.dep_output("nope")"#).eval::<String>();
+        assert!(r.is_err(), "unknown recipe must raise a Lua error");
+    }
+
+    #[test]
+    fn dep_output_empty_list_is_empty_string() {
+        let lua = unsafe { mlua::Lua::unsafe_new() };
+        let cook = lua.create_table().unwrap();
+        let recipe = Arc::new(Mutex::new("app".to_string()));
+        let mut map = BTreeMap::new();
+        map.insert("lib".to_string(), Vec::<String>::new());
+        install_worker_dep_output_api(&lua, &cook, Arc::new(map), &recipe).unwrap();
+        lua.globals().set("cook", cook).unwrap();
+        let s: String = lua.load(r#"return cook.dep_output("lib")"#).eval().unwrap();
+        assert_eq!(s, "");
+        let t: Vec<String> = lua.load(r#"return cook.dep_output_list("lib")"#).eval().unwrap();
+        assert!(t.is_empty());
     }
 
     #[test]
