@@ -28,7 +28,7 @@ config release
 
 recipe build
     ingredients "src/hello.c.in"
-    cook "out/hello.c" { sed "s/@MODE@/$<MODE>/" $<all> > $<out> }
+    cook "out/hello.c" { sed "s/@MODE@/$<MODE>/" $<in> > $<out> }
 
 # Chores: uncached, parameterized, run-every-time.
 # `who="world"` is a default; `cook greet ada` overrides it positionally.

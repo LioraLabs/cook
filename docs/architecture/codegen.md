@@ -161,20 +161,20 @@ When the `using_clause` is a `LuaBlock` (`cook_step.rs:182-189`), the emitted un
 Single literal output, single invocation that consumes the whole input list.
 
 ```text
-cook "build/lib.a" { ar rcs $<out> $<all> }
+cook "build/lib.a" { ar rcs $<out> $<in> }
 ```
 
 ```lua
     local _cook_outputs_2 = {}
     cook.step_group(function()
-    local _cook_all = table.concat(_cook_outputs_1, " ")
+    local _cook_in = table.concat(_cook_outputs_1, " ")
     local _cook_out = "build/lib.a"
-    cook.add_unit({inputs = _cook_outputs_1, output = _cook_out, command = "set -e\nar rcs " .. _cook_out .. " " .. _cook_all, consulted_env_keys = {}})
+    cook.add_unit({inputs = _cook_outputs_1, output = _cook_out, command = "set -e\nar rcs " .. _cook_out .. " " .. _cook_in, consulted_env_keys = {}})
     table.insert(_cook_outputs_2, _cook_out)
     end)
 ```
 
-The full input list is passed as `inputs = <input_source>`. `_cook_all` is precomputed because `$<all>` lowers to it directly.
+The full input list is passed as `inputs = <input_source>`. `_cook_in` is precomputed because `$<in>` lowers to it directly — the same local `_cook_in` names in `OneToOne` (there it holds the single loop item; here it holds the space-joined full list). CS-0130 removed the old dedicated all-inputs placeholder; `$<in>` is unit-centric and covers both shapes.
 
 ### OneToMany
 
@@ -208,7 +208,7 @@ cook "out/parser.rs" "out/parser.h" { lalrpop src/grammar.lalrpop --out-dir out 
 ```lua
     local _cook_outs = {"out/parser.rs", "out/parser.h"};
     local _cook_ins = _cook_outputs_0;  -- or `ingredients`
-    local _cook_all = table.concat(_cook_outputs_0, " ");
+    local _cook_in = table.concat(_cook_outputs_0, " ");
     cook.add_unit({inputs = _cook_ins, outputs = _cook_outs, command = "set -e\nlalrpop src/grammar.lalrpop --out-dir out", consulted_env_keys = {}})
     table.insert(_cook_outputs_N, _cook_outs[1])
     table.insert(_cook_outputs_N, _cook_outs[2])
@@ -241,9 +241,11 @@ A `plate` step runs side-effects with no declared outputs (per Standard §4.7.1,
 | Body content (Shell) | Body content (Lua) | Mode |
 |---|---|---|
 | `$<in>` or `$<in.ACCESSOR>` | free identifier `input` | `OneToOne` |
-| `$<all>` | free identifier `inputs` | `ManyToOne` |
+| — (a shell body cannot express this; CS-0130 removed the old all-inputs placeholder) | free identifier `inputs` | `ManyToOne` |
 | neither | neither | `OneShot` |
 | both | both | error (`Mixed`) |
+
+A batched (many-to-one) plate/test body is Lua-block-only. `detect_plate_test_mode` never returns `ManyToOne` for `Body::ShellBlock` — a shell plate/test body is always `OneToOne` (if it contains `$<in>`/`$<in.ACCESSOR>`) or `OneShot`.
 
 The Lua free-identifier scan (`template.rs:413`) skips string literals (`"..."`, `'...'`, `[[...]]`), comments, and field accesses (`x.input`, `x:input`) — only bona-fide variable references count.
 
@@ -258,11 +260,12 @@ The Lua free-identifier scan (`template.rs:413`) skips string literals (`"..."`,
 | Body | Mode | Shape |
 |---|---|---|
 | Shell | OneToOne | `for _, _plate_in in ipairs(<src>) do cook.add_unit({command = ..., cache = false, ...}) end` |
-| Shell | ManyToOne | One `cook.add_unit({command = ..., cache = false, ...})`, no loop. |
 | Shell | OneShot | One `cook.add_unit({command = ..., cache = false, ...})`, no source binding. |
 | Lua | OneToOne | Loop; each unit's `lua_code` is built at register time by prepending `local input = <value>\n` to the body literal via `string.format("%q", _plate_in)`. |
 | Lua | ManyToOne | One unit; `lua_code` is built by an IIFE that serializes the source list into a `local inputs = {...}` header. |
 | Lua | OneShot | One unit; `lua_code` is the body literal as-is. |
+
+(`ManyToOne` never occurs for a Shell body — see Mode detection above. `plate_step.rs`'s Shell match arm groups `OneShot | ManyToOne` together for exhaustiveness only; the `ManyToOne` half is unreachable dead code, kept because `PlateTestMode` is a shared enum with the Lua side.)
 
 Plate units always carry `cache = false` (plates have no outputs to cache against) and `step_kind = "plate"` for Lua bodies (`plate_step.rs:95`) — the latter tells the worker to skip the project-root sandbox, since plates are the explicit ship-outside-the-project surface.
 
@@ -274,15 +277,15 @@ After the unit emission, plate steps emit `cook.passthrough(<src>)` (`plate_step
 
 - `$<in>` → the iter variable (e.g. `_plate_in`).
 - `$<in.ACCESSOR>` → `path.<ACCESSOR>(<iter_var>)`.
-- `$<all>` → `table.concat(<all_var>, " ")`.
 - `$<RECIPE>` (in-scope name) → `cook.dep_output("<RECIPE>")`.
-- Anything else (including `$<env.X>`) → `cook.require_env("<key>")`, with the key recorded in `consulted_env_keys`.
+- Anything else (including `$<env.X>` and the now-removed all-inputs builtin, which is no longer reserved) → `cook.require_env("<key>")`, with the key recorded in `consulted_env_keys`.
+
+`expand_plate_test_body` is only ever invoked for Shell bodies (`plate_step.rs`, `test_step.rs`), which are `OneToOne` or `OneShot` per the Mode detection table above — so its `$<in>` case is the only iteration-source substitution it performs. The Lua-block `ManyToOne` shape (`inputs`) is built separately, by the register-time IIFE described in the Six emission shapes table, not by this function.
 
 Several forms are *rejected* in plate / test bodies by `validate_plate_test_placeholders` (`template.rs:526`):
 
 - `$<out>`, `$<out_N>`, `$<out.X>`, `$<out_N.X>` — plate / test have no outputs.
 - `$<in>` / `$<in.X>` outside `OneToOne` mode.
-- `$<all>` outside `ManyToOne` mode.
 - Bare path accessors `$<stem>` / `$<name>` / `$<ext>` / `$<dir>`.
 - `$<NAME.ACCESSOR>` for an in-scope recipe — the Standard §5.4 firewall: plate / test have no output pattern to declare a driver, so dep-accessor placeholders cannot iterate here.
 
@@ -392,22 +395,22 @@ Three entry points cover the three template surfaces:
 |---|---|---|
 | `expand_sigil_template` (`template.rs:57`) | cook-step shell body, bare-shell command | A Lua expression. Errors on bad mode/count placeholders. |
 | `expand_output_pattern` / `expand_sigil_output_pattern` (`template.rs:235, 249`) | cook output pattern | A Lua expression. Unknown idents fall through to `cook.require_env(...)` (relaxed mode). |
-| `expand_plate_test_body` (`template.rs:607`) | plate / test body | A Lua expression. Reuses `iter_var` / `all_var` bindings (e.g. `_plate_in` / `source_expr`). |
+| `expand_plate_test_body` (`template.rs:607`) | plate / test body | A Lua expression. Reuses the `iter_var` binding (e.g. `_plate_in`); a Shell body is `OneToOne` or `OneShot` only (CS-0130 — batched `ManyToOne` is Lua-block-only, see above), so no batched/joined source binding is needed here. |
 
 All three follow the same emit pattern: walk `sigil::scan(template)` spans in order, interleaving literal segments (double-quoted, escaped) with resolved expressions (raw Lua), joined with ` .. `. The literal pre-quote uses `escape_lua_string`. A template with no placeholders becomes a single `"..."` literal; a template with exactly one span becomes a bare expression with no concatenation; the empty string becomes `""`.
 
 ### Builtin lowerings
 
 ```text
-$<in>          → _cook_in
+$<in>          → _cook_in       (cook step; OneToOne: current item, ManyToOne: full input list joined with " ")
 $<in.stem>     → path.stem(_cook_in)
 $<out>         → _cook_out
 $<out.dir>     → path.dir(_cook_out)
 $<out_1>       → _cook_outs[1]
 $<out_2.ext>   → path.ext(_cook_outs[2])
-$<all>         → _cook_all      (cook step)
-$<all>         → table.concat(<source>, " ")   (plate/test ManyToOne)
 ```
+
+CS-0130 removed the old dedicated all-inputs builtin; `$<in>` is unit-centric and now covers what that builtin used to mean in a `ManyToOne` cook step. In a plate/test body, the equivalent batched shape (`inputs`, the full collected source list) is Lua-block-only — see the Plate Step Emission section above.
 
 ### Recipe and env lowerings
 

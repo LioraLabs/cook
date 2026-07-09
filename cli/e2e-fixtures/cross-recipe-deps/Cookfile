@@ -10,7 +10,7 @@ recipe libmath
         mkdir -p build/obj/math && gcc -c $<in> -Isrc -o $<out>
     }
     cook "build/lib/libmath.a" {
-        mkdir -p build/lib && ar rcs $<out> $<all>
+        mkdir -p build/lib && ar rcs $<out> $<in>
     }
 
 recipe libstr
@@ -19,16 +19,16 @@ recipe libstr
         mkdir -p build/obj/str && gcc -c $<in> -Isrc -o $<out>
     }
     cook "build/lib/libstr.a" {
-        mkdir -p build/lib && ar rcs $<out> $<all>
+        mkdir -p build/lib && ar rcs $<out> $<in>
     }
 
 recipe app
     ingredients "src/main.c"
     cook "build/obj/main.o" {
-        mkdir -p build/obj && gcc -c $<all> -Isrc -o $<out>
+        mkdir -p build/obj && gcc -c $<in> -Isrc -o $<out>
     }
     cook "build/bin/app" {
-        mkdir -p build/bin && gcc -o $<out> $<all> $<libmath> $<libstr>
+        mkdir -p build/bin && gcc -o $<out> $<in> $<libmath> $<libstr>
     }
 
 recipe run: app

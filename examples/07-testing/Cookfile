@@ -18,7 +18,7 @@
 
 recipe app
     ingredients "src/greeting.txt"
-    cook "out/app.txt" { tr 'a-z' 'A-Z' < $<all> > $<out> }
+    cook "out/app.txt" { tr 'a-z' 'A-Z' < $<in> > $<out> }
 
 recipe check: app
     test { grep -q HELLO $<app> } as 'greeting is shouted'

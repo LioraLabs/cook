@@ -5,13 +5,14 @@ One recipe, three `cook` steps, three iteration modes:
 | step | pattern | mode |
 |---|---|---|
 | `cook "build/counts/$<in.stem>.count"` | per-input | **fan-out** — one unit per chapter |
-| `cook "build/total.txt"` with `$<all>` | collects the previous step's outputs | **many-to-one** |
+| `cook "build/total.txt"` with `$<in>` | collects the previous step's outputs | **many-to-one** |
 | `cook "build/report.txt" "build/report.csv"` | `$<out_1>`, `$<out_2>` | **multi-output** |
 
 The rule that makes the caching honest: each step consumes the previous one
-**through declared placeholders**. `$<all>` isn't just convenient — it's how
-cook knows the total depends on every count, so a one-chapter edit rebuilds
-exactly `two.count → total → report` and nothing else:
+**through declared placeholders**. `$<in>` is unit-centric — per-chapter in
+the fan-out, the whole collected set in the many-to-one step — and that's
+how cook knows the total depends on every count, so a one-chapter edit
+rebuilds exactly `two.count → total → report` and nothing else:
 
 ```
 $ cook report

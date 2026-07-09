@@ -38,11 +38,11 @@ Terms used throughout the Book and the Standard, in plain English.
 
 **Driver** — Whatever populates iteration for a `cook` step: either the recipe's own ingredients (referenced via `$<in.ACCESSOR>`) or another recipe's outputs (`$<lib.ACCESSOR>`). One unit per item.
 
-**Iteration mode** — How many units a step produces relative to its inputs. *One-to-one* (one unit per input, `$<in...>` in the output pattern), *many-to-one* (one unit consuming `$<all>` inputs, no `$<in...>` in the output pattern), or *one-shot* (no `ingredients` at all). *(Standard §4.5–§4.6.)*
+**Iteration mode** — How many units a step produces relative to its inputs. *One-to-one* (one unit per input, `$<in...>` in the output pattern, `$<in>` names the current item), *many-to-one* (one unit consuming every input, no `$<in...>` in the output pattern, `$<in>` names the whole collected set), or *one-shot* (no `ingredients` at all). *(Standard §4.5–§4.6.)*
 
 **Path accessor** — One of `stem`, `name`, `ext`, `dir`. Splits a path inside a placeholder.
 
-**Placeholder** — A `$<IDENT>` (optionally `$<IDENT.ACCESSOR>`, or the indexed form `$<out_N>` / `$<out_N.ACCESSOR>` for multi-output `cook` steps) that resolves to one of: a builtin (`in`/`out`/`all`/`out_N`), another recipe's outputs, or a declared env var. The `$<...>` sigil was picked specifically so it doesn't clash with shell brace expansion (`{a,b,c}`), shell parameter expansion (`${VAR}`), or anything else that uses curly braces.
+**Placeholder** — A `$<IDENT>` (optionally `$<IDENT.ACCESSOR>`, or the indexed form `$<out_N>` / `$<out_N.ACCESSOR>` for multi-output `cook` steps) that resolves to one of: a builtin (`in`/`out`/`out_N`), another recipe's outputs, or a declared env var. The `$<...>` sigil was picked specifically so it doesn't clash with shell brace expansion (`{a,b,c}`), shell parameter expansion (`${VAR}`), or anything else that uses curly braces.
 
 **Sigil** — A reserved marker at the Cookfile surface. Cook uses two: `$<...>` for placeholders inside shell text, and `//` for workspace-root-anchored import paths.
 

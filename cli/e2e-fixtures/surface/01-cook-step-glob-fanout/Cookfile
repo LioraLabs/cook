@@ -1,4 +1,4 @@
 recipe build
     ingredients "src/*.txt"
     cook "out/$<in.stem>.up" { printf '%s nonce=%s\n' "$(tr 'a-z' 'A-Z' < $<in>)" "$(date +%s%N)" > $<out> }
-    cook "out/stamp.txt" { printf 'files=%s nonce=%s\n' "$(echo $<all> | wc -w)" "$(date +%s%N)" > $<out> }
+    cook "out/stamp.txt" { printf 'files=%s nonce=%s\n' "$(echo $<in> | wc -w)" "$(date +%s%N)" > $<out> }
