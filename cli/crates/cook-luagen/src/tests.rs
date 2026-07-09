@@ -1422,7 +1422,7 @@ fn test_codegen_emits_unnamed_and_named_in_order() {
 
 #[test]
 fn test_config_body_line_alignment_unnamed_no_uses() {
-    let source = "config\n    env.X = bad()\n\nrecipe r\n    echo hi\n";
+    let source = "config\n    env.X = bad()\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
     let out = crate::generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
@@ -1438,7 +1438,7 @@ fn test_config_body_line_alignment_unnamed_no_uses() {
 
 #[test]
 fn test_config_body_line_alignment_with_leading_use() {
-    let source = "use foo\nconfig\n    env.Y = \"1\"\n\nrecipe r\n    echo hi\n";
+    let source = "use foo\nconfig\n    env.Y = \"1\"\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
     let out = crate::generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
@@ -1455,7 +1455,7 @@ fn test_config_body_line_alignment_with_leading_use() {
 #[test]
 fn test_config_body_line_alignment_named_block() {
     let source =
-        "config\n    env.A = \"1\"\nconfig release\n    env.B = \"2\"\n\nrecipe r\n    echo hi\n";
+        "config\n    env.A = \"1\"\nconfig release\n    env.B = \"2\"\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
     let out = crate::generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
@@ -1477,7 +1477,7 @@ fn test_config_body_line_alignment_named_block() {
 
 #[test]
 fn test_config_body_comment_line_becomes_blank_preserving_alignment() {
-    let source = "config\n    # note\n    env.Z = \"1\"\n\nrecipe r\n    echo hi\n";
+    let source = "config\n    # note\n    env.Z = \"1\"\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
     let out = crate::generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
@@ -1606,7 +1606,6 @@ fn blockstep_shell_multi_output() {
         cp x a.js
         cp y b.wasm
     }
-end
 "#;
     let cookfile = cook_lang::parse(source).expect("parse");
     let lua = crate::generate(&cookfile);
@@ -1630,7 +1629,6 @@ fn blockstep_lua_multi_output() {
     cook "a.js" "b.wasm" >{
         sh("wasm-pack build")
     }
-end
 "#;
     let cookfile = cook_lang::parse(source).expect("parse");
     let lua = crate::generate(&cookfile);
@@ -1666,7 +1664,6 @@ fn onetoone_lua_emits_lua_code_not_function() {
     cook "build/obj/$<in.stem>.o" >{
         sh("gcc -c " .. input .. " -o " .. output)
     }
-end
 "#;
     let cookfile = cook_lang::parse(source).expect("parse");
     let lua = crate::generate(&cookfile);
@@ -2033,10 +2030,11 @@ fn test_compile_chore_with_lua_step_cache_false() {
 fn chore_lua_block_unit_emits_interactive_true() {
     // CS-0051: Lua steps in a chore body run on the drain thread (controlling
     // terminal), so the emitted body unit must carry `interactive = true`.
-    // Uses `>` prefix for a Lua line.
+    // Uses `>` prefix for a Lua line. CS-0134: `@` is removed language-wide;
+    // chore shell steps are already always interactive.
     let cookfile_src = r#"
 chore mychore
-    @echo first
+    echo first
     > print("from lua")
 "#;
     let lua = generate_lua_for_test(cookfile_src);
@@ -2154,7 +2152,6 @@ fn cs_0022_validate_placeholders_returns_error_not_panic() {
     cook "build/$<in.stem>.o" {
         gcc -c $<in> -o $<out_1>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2181,7 +2178,6 @@ fn cs_0130_bare_in_in_many_to_one_is_valid() {
     cook "build/app" {
         gcc $<in> -o $<out>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2208,7 +2204,6 @@ fn cs_0130_in_accessor_in_many_to_one_returns_error() {
     cook "build/app" {
         gcc $<in.stem> -o $<out>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2229,7 +2224,6 @@ fn cs_0022_bare_stem_in_output_pattern_returns_error() {
     cook "build/$<stem>.o" {
         gcc -c $<in> -o $<out>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2257,7 +2251,6 @@ recipe "build"
     cook "build/$<in.stem>.o" {
         gcc -c $<in> -o $<out> -L $<libmath.dir>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2280,7 +2273,6 @@ fn cs_0022_out_bare_in_multi_output_returns_error() {
     cook "a.js" "a.wasm" {
         gen --js $<out>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2301,7 +2293,6 @@ recipe "build"
     cook "$<in.stem>.o" "$<libmath.stem>.bin" {
         do-stuff
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2645,7 +2636,6 @@ fn cook_step_with_env_tokens_emits_consulted_env_keys() {
 recipe build
     ingredients "src/*.c"
     cook "build/$<in.stem>.o" { gcc $<CFLAGS> -c $<in> -o $<out> }
-end
 "#;
     let lua = generate_lua_for_test(cookfile_text);
     assert!(
@@ -2668,7 +2658,6 @@ recipe build
     cook "build/{in.stem}.o" >{
         os.execute("gcc -c " .. input .. " -o " .. output)
     }
-end
 "#;
     let lua = generate_lua_for_test(cookfile_text);
     assert!(
@@ -2695,7 +2684,6 @@ recipe touch
         f:write("BAR=" .. tostring(cook.env.BAR))
         f:close()
     }
-end
 "#;
     let lua = generate_lua_for_test(cookfile_text);
     assert!(
@@ -3612,7 +3600,12 @@ fn for_each_test_probe_ref_in_shell_command_is_codegen_error() {
 
 #[test]
 fn malformed_shell_sigil_is_codegen_error_not_emitted_sentinel() {
-    let src = "recipe bad\n    echo $<out_0>\n";
+    // CS-0134: a malformed shell sigil at the recipe-step level can no
+    // longer be reproduced directly (loose shell is banned in recipe
+    // bodies) — a chore shell step goes through the same non-cacheable
+    // `expand_..._shell_command` -> hard-`?`-propagate path (recipe.rs
+    // compile_chore_checked), so it still exercises "no sentinel swallowing".
+    let src = "chore bad\n    echo $<out_0>\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let err = crate::generate_with_names_checked(&cookfile, &names)
@@ -3633,12 +3626,15 @@ fn malformed_shell_sigil_is_codegen_error_not_emitted_sentinel() {
 
 #[test]
 fn checked_codegen_covers_every_current_step_kind() {
+    // CS-0134: a recipe body is purely declarative — ForEach (via a bare
+    // `ingredients <probe>` member source), InlineLua (auto-classified bare
+    // module calls), Cook, Plate, and Test steps live here. Shell/Lua/
+    // LuaBlock steps no longer occur at recipe-step level at all — they only
+    // occur in a chore body now, so exercise them there.
     let src = r#"recipe everything
     ingredients cards
-    >> local register_line = true
-    >>{
-        local register_block = true
-    }
+    foo.register_line()
+    foo.register_block({ x = 1 })
     cook "out/$<in.id>.txt" { printf '%s\n' "$<in.id>" > $<out> }
     plate {
         cat $<in>
@@ -3646,7 +3642,9 @@ fn checked_codegen_covers_every_current_step_kind() {
     test >{
         assert(item.id ~= nil)
     }
-    @ echo interactive
+
+chore setup
+    echo interactive
     > local execute_line = true
     >{
         local execute_block = true
@@ -3804,7 +3802,6 @@ fn file_ref_lowering_hoists_local_and_passes_file_refs() {
     cook "build/$<in.stem>.html" {
         render --tokens $<file:tokens.css> $<in> -o $<out>
     }
-end
 "#;
     let lua = checked_lua(src);
     assert!(
@@ -3828,7 +3825,6 @@ fn file_ref_dedupes_repeated_pattern() {
     cook "build/page.html" {
         render $<file:t.css> $<file:t.css> -o $<out>
     }
-end
 "#;
     let lua = checked_lua(src);
     let count = lua.matches("cook.file_ref(\"t.css\")").count();
@@ -3851,7 +3847,6 @@ fn file_ref_with_probe_ref_hoists_before_add_unit() {
     cook "build/$<in.stem>.o" {
         cc $<cc:zlib.cflags> --tokens $<file:t.css> -c $<in> -o $<out>
     }
-end
 "#;
     let lua = checked_lua(src);
     let hoist_pos = lua
@@ -3887,7 +3882,6 @@ fn file_ref_in_output_pattern_is_codegen_error() {
     cook "build/$<file:tokens.css>.html" {
         render -o $<out>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);

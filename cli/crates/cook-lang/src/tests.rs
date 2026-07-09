@@ -74,12 +74,11 @@ config dev
     assert_eq!(body.lines().count(), 3);
 }
 
-// ── SHI-73 / CS-0072: Module calls in recipe bodies ────────────────
+// ── SHI-73 / CS-0134: Module calls in recipe bodies ─────────────────
 //
-// CS-0072 (Cook Standard v0.9) removes the in-body module_call dispatch.
-// A bare `<id>.<id>(...)` line inside a recipe body now classifies as
-// shell_command (Step::Shell), not InlineLua. Authors must use `>>` for
-// register-phase Lua inside a recipe body.
+// CS-0134 (Cook Standard, purely-declarative recipe body) removes the `>>`
+// sigil. A bare `<id>.<id>(...)` line inside a recipe body now auto-
+// classifies as register-phase Lua (Step::InlineLua) — no sigil needed.
 
 #[test]
 fn test_module_call_single_line_is_inline_lua() {
@@ -868,6 +867,15 @@ fn test_chore_register_sigil_rejected() {
     let err = parse(input).unwrap_err();
     let msg = format!("{}", err);
     assert!(msg.contains("`>>` sigil was removed"), "got: {}", msg);
+}
+
+#[test]
+fn test_chore_register_sigil_block_rejected() {
+    // CS-0134: the register-phase `>>{ … }` sigil was removed from chores too.
+    let input = "chore deploy\n    >>{\n        cook.env.K = \"v\"\n    }\n";
+    let err = parse(input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("`>>{ … }` sigil was removed"), "got: {}", msg);
 }
 
 #[test]

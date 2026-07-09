@@ -1,0 +1,15 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="pnpm.run(\"build\")"
+        InlineLua code="cook.add_unit({\n        name = \"u\",\n        inputs = {},\n        outputs = {\"out\"},\n        command = \"true\",\n    })"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

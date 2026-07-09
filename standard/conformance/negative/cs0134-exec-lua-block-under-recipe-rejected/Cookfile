@@ -1,0 +1,4 @@
+recipe build
+    >{
+        print("x")
+    }
