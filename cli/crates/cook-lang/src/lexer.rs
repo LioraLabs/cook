@@ -68,7 +68,7 @@ pub enum LexError {
     DottedChoreParam { line: usize, chore: String, name: String },
 }
 
-const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "all", "env"];
+const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "env"];
 
 fn check_reserved_recipe_name(name: &str, line: usize) -> Result<(), LexError> {
     let first_segment = name.split('.').next().unwrap_or(name);
@@ -1200,7 +1200,7 @@ recipe "build"
 
     #[test]
     fn test_chore_reserved_name_rejected() {
-        for reserved in &["stem", "name", "ext", "dir", "in", "out", "all"] {
+        for reserved in &["stem", "name", "ext", "dir", "in", "out"] {
             let input = format!("chore {}\n", reserved);
             let result = tokenize(&input);
             assert!(result.is_err(), "expected error for chore name '{}'", reserved);
@@ -1209,7 +1209,7 @@ recipe "build"
 
     #[test]
     fn test_reserved_recipe_name_rejected() {
-        for reserved in &["stem", "name", "ext", "dir", "in", "out", "all"] {
+        for reserved in &["stem", "name", "ext", "dir", "in", "out"] {
             let input = format!("recipe {}\n    echo hi\n", reserved);
             let result = crate::parse(&input);
             assert!(
@@ -1218,6 +1218,13 @@ recipe "build"
                 reserved
             );
         }
+    }
+
+    #[test]
+    fn recipe_named_all_is_allowed() {
+        // all is no longer a reserved recipe segment.
+        let src = "recipe all\n    ingredients \"src/*.c\"\n    cook \"out/$<in.stem>.o\" { cc -c $<in> -o $<out> }\n";
+        assert!(crate::parse(src).is_ok(), "recipe all must parse");
     }
 
     #[test]

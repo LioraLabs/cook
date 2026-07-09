@@ -75,7 +75,7 @@ The glob language itself — which characters are wildcards, whether `**` matche
 ```cook
 recipe lib
     ingredients "src/*.c" "include/*.h" !"src/lua.c" !"src/luac.c"
-    cook "build/libmath.a" { ar rcs $<out> $<all> }
+    cook "build/libmath.a" { ar rcs $<out> $<in> }
 ```
 
 The ingredient set is every `.c` file in `src/` and every `.h` file in `include/`, minus `src/lua.c` and `src/luac.c`.
@@ -143,10 +143,10 @@ After the output pattern(s), the body-dispatch order of §{grammar-appendix.step
 recipe lib
     ingredients "lib/*.c"
     cook "build/obj/$<in.stem>.o" { gcc -c $<in> -o $<out> }
-    cook "build/libmath.a" { ar rcs $<out> $<all> }
+    cook "build/libmath.a" { ar rcs $<out> $<in> }
 ```
 
-The first `cook` is a one-to-one mapping from each ingredient to one object file. The second is a many-to-one mapping producing a single archive from the collected set. Both use the inline (one-line) `shell_block` body form.
+The first `cook` is a one-to-one mapping from each ingredient to one object file, where `$<in>` is the loop member. The second is a many-to-one mapping producing a single archive from the collected set, where `$<in>` is the unit's full input set, space-joined. Both use the inline (one-line) `shell_block` body form.
 
 ### Example 8.4.2
 
@@ -184,13 +184,13 @@ When the recipe carries an `ingredients <probe>` source (§{steps.ingredients}),
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }    # one-to-one over own inputs
-    cook "build/app" { gcc $<all> -o $<out> }              # many-to-one (literal output)
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }    # one-to-one: $<in> is the loop member
+    cook "build/app" { gcc $<in> -o $<out> }               # many-to-one: $<in> is the collected input set
 ```
 
 ### Note 8.4.1.1
 
-The CS-0022 unification removes `$<in>` from the body's contents as a separate iteration trigger. Iteration mode is decided exclusively by the output pattern list. A body that contains `$<in>` while the output pattern list is fully literal is rejected at load time — see §{phl.cook-step} for the diagnostic shape.
+The CS-0022 unification removes `$<in>` from the body's contents as a separate iteration trigger. Iteration mode is decided exclusively by the output pattern list, not by which placeholders appear in the body. `$<in>` itself is admitted in both one-to-one and many-to-one bodies (CS-0130, §{phl.cook-step}): only its *value* differs by mode — the loop member in one-to-one, the space-joined collected set in many-to-one.
 
 ### 8.4.2. Lua-expression output [#steps.cook-lua-expr-output]
 
@@ -408,12 +408,12 @@ The `plate` step iterates over the preceding `cook` step's output list (one unit
 recipe bundle
     ingredients "src/*.c"
     cook "build/bin/$<in.stem>" { cc $<in> -o $<out> }
-    plate {
-        tar -czf build/bundle.tgz $<all>
+    plate >{
+        cook.sh("tar -czf build/bundle.tgz " .. table.concat(inputs, " "))
     }
 ```
 
-The body uses `$<all>` and no `$<in>`; the step is many-to-one and registers exactly one unit, with `$<all>` substituted as the space-joined preceding-cook output list.
+The body references `inputs` (no `input`); the step is many-to-one and registers exactly one unit, with `inputs` bound to the preceding-cook output list. A shell-block `plate` body has no batched-set placeholder (App. E CS-0130 removed the former all-inputs shell placeholder); a shell body is per-item (`$<in>`) or one-shot only, so a many-to-one plate step MUST use the Lua block form shown here.
 
 ### Note 8.6.1
 
@@ -427,19 +427,21 @@ A conforming implementation MUST run a `plate_step`'s body without applying the 
 
 ### 8.6.1. Plate/test iteration mode [#steps.iteration-mode-plate-test]
 
-A `plate_step` (and a `test_step`, §{steps.test}) is in one of three iteration modes, determined entirely by its body's content:
+A `plate_step` (and a `test_step`, §{steps.test}) is in one of three iteration modes, determined entirely by its body's content. A shell-block body has no batched-set placeholder (App. E CS-0130 removed the former all-inputs shell placeholder): it is per-item or one-shot only. The batched (many-to-one) form is expressible exclusively as a Lua-block body, where the collected source is bound to `inputs`.
 
-| Shell-block body contains | Lua-block body references | Mode |
+| Body form | Body contains / references | Mode |
 |---|---|---|
-| `$<in>` or `$<in.ACCESSOR>` (no `$<all>`) | `input` (no `inputs`) | **one-to-one** over source |
-| `$<all>` (no `$<in>` / `$<in.ACCESSOR>`) | `inputs` (no `input`) | **many-to-one** |
-| neither | neither | **one-shot** |
-| both | both | **error** (mixed iteration signal) |
+| Shell block | `$<in>` or `$<in.ACCESSOR>` | **one-to-one** over source |
+| Shell block | neither | **one-shot** |
+| Lua block | `input` (no `inputs`) | **one-to-one** over source |
+| Lua block | `inputs` (no `input`) | **many-to-one** |
+| Lua block | neither | **one-shot** |
+| Lua block | both `input` and `inputs` | **error** (mixed iteration signal) |
 
 The **iteration source** for a `plate_step` (and `test_step`) is the preceding `cook_step`'s output list (flattened across all units it produces), falling back to the recipe's resolved ingredients (§{steps.ingredients}) if no `cook_step` precedes it. When the recipe is driven by an `ingredients <probe>` source (§{steps.ingredients}), the iteration source is instead the resolved data-member list, and the per-member placeholders remain `$<in>` / `$<in.ACCESSOR>` (Lua: `item`), where `ACCESSOR` selects a record field rather than a path component; such a step is in **one-to-one over data members** mode. A step in **one-to-one** or **many-to-one** mode MUST have a non-empty source; a step in **one-shot** mode does not consult the source.
 
 A conforming implementation MUST reject:
-- A body that contains both an iteration-item placeholder/binding (`$<in>` / `$<in.ACCESSOR>` / `input`) and a batched-source placeholder/binding (`$<all>` / `inputs`).
+- A Lua-block body that contains both an iteration-item binding (`input`) and a batched-source binding (`inputs`).
 - A `plate_step` or `test_step` in one-to-one or many-to-one mode whose source is empty.
 
 The Lua identifier scan operates on the same lexical text the brace-balance lexer (§{lexical.brace-blocks}) operates on — strings, comments, and long strings are excluded; only free-identifier-position references count.

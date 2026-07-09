@@ -92,8 +92,8 @@ pub(crate) enum ProbeLowering {
 /// `$<in.FIELD>` bind the current data member (`item`); every other sigil
 /// resolves through the normal closed-set [`resolve`] against `ctx` — so
 /// `$<out>`, recipe refs, env vars, and probe refs behave exactly as in an
-/// ingredient-driven body. `$<in>` / `$<all>` are rejected when `ctx.mode` is
-/// `OneShot` (a `for_each` body has no path-input or batched-input source).
+/// ingredient-driven body. `$<in>` is rejected when `ctx.mode` is `OneShot`
+/// (a `for_each` body has no path-input source).
 ///
 /// `probe_lowering` selects how a probe-value reference lowers: `LiteralSigil`
 /// for anything that feeds a `command =` field (COOK-187/CS-0122 — the string
@@ -439,7 +439,6 @@ fn builtin_to_lua(b: BuiltinKind) -> String {
         BuiltinKind::OutAccessor(acc) => format!("path.{}(_cook_out)", acc),
         BuiltinKind::OutIndexed(n) => format!("_cook_outs[{}]", n),
         BuiltinKind::OutIndexedAccessor(n, acc) => format!("path.{}(_cook_outs[{}])", acc, n),
-        BuiltinKind::All => "_cook_all".to_string(),
         // COOK-63 §8.3: data-member bindings. `$<in>` renders the whole
         // member — canonical key-sorted JSON for a record, the scalar's string
         // form otherwise — via the `cook.member_to_string` runtime helper
@@ -686,8 +685,9 @@ pub(crate) enum PlateTestMode {
     /// Body references $<in>/$<in.X> (shell) or `input` (Lua), and not the
     /// batched form. One unit per source item.
     OneToOne,
-    /// Body references $<all> (shell) or `inputs` (Lua), and not the
-    /// per-item form. Exactly one unit, full source visible.
+    /// Body references `inputs` (Lua block form only — shell bodies cannot
+    /// express batched plate/test since CS-0130 removed `$<all>`), and not
+    /// the per-item form. Exactly one unit, full source visible.
     ManyToOne,
     /// Body references neither. Exactly one unit, source not consulted.
     OneShot,
@@ -703,13 +703,12 @@ pub(crate) fn detect_plate_test_mode(body: &Body) -> Result<PlateTestMode, Plate
     match body {
         Body::ShellBlock(lines) => {
             let joined: String = lines.join("\n");
-            let has_in = body_text_has_in_placeholder_sigil(&joined);
-            let has_all = body_text_has_sigil_token(&joined, "all");
-            match (has_in, has_all) {
-                (true, true) => Err(PlateTestModeError::Mixed("$<in>", "$<all>")),
-                (true, false) => Ok(PlateTestMode::OneToOne),
-                (false, true) => Ok(PlateTestMode::ManyToOne),
-                (false, false) => Ok(PlateTestMode::OneShot),
+            // A shell plate/test body is per-item ($<in>) or one-shot. Batched
+            // (many-to-one) plate/test is the Lua block form (`inputs`).
+            if body_text_has_in_placeholder_sigil(&joined) {
+                Ok(PlateTestMode::OneToOne)
+            } else {
+                Ok(PlateTestMode::OneShot)
             }
         }
         Body::LuaBlock(code) => {
@@ -730,16 +729,6 @@ fn body_text_has_in_placeholder_sigil(text: &str) -> bool {
     for span in sigil::scan(text) {
         let ident = &span.ident;
         if ident == "in" || ident.starts_with("in.") {
-            return true;
-        }
-    }
-    false
-}
-
-/// Scan a shell-body text for `$<TOKEN>` with a specific ident.
-fn body_text_has_sigil_token(text: &str, token: &str) -> bool {
-    for span in sigil::scan(text) {
-        if span.ident == token {
             return true;
         }
     }
@@ -921,18 +910,6 @@ fn validate_sigil_token(
         return Ok(());
     }
 
-    // $<all>: must be in ManyToOne.
-    if ident == "all" {
-        if mode != PlateTestMode::ManyToOne {
-            return Err(PlateTestPlaceholderError::BadPlaceholder {
-                token: "$<all>".to_string(),
-                mode_name: format!("{:?}", mode),
-                line: line.to_string(),
-            });
-        }
-        return Ok(());
-    }
-
     // Bare path-accessor: rejected.
     if matches!(ident, "stem" | "name" | "ext" | "dir") {
         return Err(PlateTestPlaceholderError::BareAccessor {
@@ -955,15 +932,15 @@ fn validate_sigil_token(
 
 // ─── CS-0024: parametric plate/test body expander ───────────────────────────
 
-/// Plate/test variant: substitute `$<in>` to `iter_var`, `$<all>` to `all_var`,
-/// and reject `$<out>` / `$<out_N>` (use `validate_plate_test_placeholders`
-/// before calling). `$<NAME>` resolves to `cook.dep_output(NAME)` if `NAME`
+/// Plate/test variant: substitute `$<in>` to `iter_var` (a shell body is
+/// per-item or one-shot only — see [`PlateTestMode`]), and reject `$<out>` /
+/// `$<out_N>` (use `validate_plate_test_placeholders` before calling).
+/// `$<NAME>` resolves to `cook.dep_output(NAME)` if `NAME`
 /// is a recipe; otherwise to `cook.require_env(NAME)`.
 pub(crate) fn expand_plate_test_body(
     template: &str,
     recipe_names: &BTreeSet<String>,
     iter_var: &str,
-    all_var: &str,
     out: &mut ConsultedEnv,
     file_refs: &mut FileRefs,
 ) -> String {
@@ -998,8 +975,6 @@ pub(crate) fn expand_plate_test_body(
             iter_var.to_string()
         } else if let Some(acc) = ident.strip_prefix("in.") {
             format!("path.{}({})", acc, iter_var)
-        } else if ident == "all" {
-            format!("table.concat({}, \" \")", all_var)
         } else if recipe_names.contains(ident.as_str()) {
             format!("cook.dep_output(\"{}\")", escape_lua_string(ident))
         } else {
@@ -1254,15 +1229,33 @@ mod tests {
 
     #[test]
     fn builtin_in_wrong_mode_returns_err() {
+        // CS-0130: `$<in>` is unit-centric — it is legal in OneToOne (loop
+        // member) and ManyToOne (joined set); only OneShot (no iteration
+        // source) rejects the bare form.
         let r = empty_recipes();
-        let ctx = ResolveCtx {
+        let os_ctx = ResolveCtx {
+            mode: IterMode::OneShot,
+            outputs: OutputShape::Single,
+            recipes_in_scope: &r,
+        };
+        let mut env = ConsultedEnv::new();
+        let result = expand_sigil_template("$<in>", &os_ctx, &mut env, &mut FileRefs::new("t"));
+        assert!(result.is_err(), "expected error for $<in> in one-shot mode");
+
+        // $<in.ACCESSOR> requires the input set be singular — still rejected
+        // outside OneToOne (both ManyToOne and OneShot).
+        let m2o_ctx = ResolveCtx {
             mode: IterMode::ManyToOne,
             outputs: OutputShape::Single,
             recipes_in_scope: &r,
         };
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("$<in>", &ctx, &mut env, &mut FileRefs::new("t"));
-        assert!(result.is_err(), "expected error for $<in> in many-to-one mode");
+        let result = expand_sigil_template("$<in.stem>", &m2o_ctx, &mut env, &mut FileRefs::new("t"));
+        assert!(result.is_err(), "expected error for $<in.stem> in many-to-one mode");
+
+        let mut env = ConsultedEnv::new();
+        let result = expand_sigil_template("$<in.stem>", &os_ctx, &mut env, &mut FileRefs::new("t"));
+        assert!(result.is_err(), "expected error for $<in.stem> in one-shot mode");
     }
 
     #[test]
@@ -1354,7 +1347,10 @@ mod sigil_template_tests {
     }
 
     #[test]
-    fn all_in_many_to_one() {
+    fn in_in_many_to_one() {
+        // CS-0130: `$<all>` is gone; `$<in>` is unit-centric and in ManyToOne
+        // lowers to the same `_cook_in` local, now holding the joined set
+        // (table.concat), rather than a per-item loop member.
         let r = empty_recipes();
         let ctx = ResolveCtx {
             mode: IterMode::ManyToOne,
@@ -1362,8 +1358,8 @@ mod sigil_template_tests {
             recipes_in_scope: &r,
         };
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("ar rcs $<out> $<all>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
-        assert_eq!(result, "\"ar rcs \" .. _cook_out .. \" \" .. _cook_all");
+        let result = expand_sigil_template("ar rcs $<out> $<in>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+        assert_eq!(result, "\"ar rcs \" .. _cook_out .. \" \" .. _cook_in");
     }
 
     #[test]

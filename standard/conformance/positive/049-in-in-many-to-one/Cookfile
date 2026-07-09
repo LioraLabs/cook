@@ -1,0 +1,3 @@
+recipe build
+    ingredients "src1.txt" "src2.txt"
+    cook "out.txt" { cat $<in> > out.txt }

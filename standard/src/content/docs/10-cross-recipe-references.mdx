@@ -43,7 +43,7 @@ A conforming implementation resolves a dotted `$<TOKEN>` by first attempting the
 Because no dotted name can resolve to a recipe defined in the current Cookfile, there is no whole-token-vs-split ambiguity to adjudicate.
 
 ### 10.2.2. Reserved final segment [#xref.reserved-segment]
-A recipe's final dot-separated segment MUST NOT equal a path accessor (§{xref.path-accessors}) or any of `in`, `out`, `all`. A conforming implementation MUST reject a Cookfile that declares such a name, at parse time. The rule is enforced by the `check_reserved_recipe_name` production in App. A.
+A recipe's final dot-separated segment MUST NOT equal a path accessor (§{xref.path-accessors}) or `in` or `out`. A conforming implementation MUST reject a Cookfile that declares such a name, at parse time. The rule is enforced by the `check_reserved_recipe_name` production in App. A. `all` is NOT among the reserved segments (CS-0130).
 
 ### 10.2.3. Environment-variable shadowing [#xref.env-shadowing]
 When step (2) or (3) succeeds, step (4) is NOT consulted. If `cook.env[TOKEN]` is also defined for the same `TOKEN`, the recipe name wins. A conforming implementation MUST emit a warning naming both.
@@ -92,7 +92,7 @@ recipe protos
 
 recipe compile_protos
     cook "build/obj/$<protos.stem>.pb.cc" { protoc --cpp_out=build/obj $<in> }
-    cook "build/lib/libprotos.a" { ar rcs $<out> $<all> }
+    cook "build/lib/libprotos.a" { ar rcs $<out> $<in> }
 ```
 
 The `compile_protos` recipe's first step is dep-driven by `protos`; for each `x` in `protos`'s output list (the resolved globs), one work unit is registered with `$<in>` = `x` and `$<out>` = `build/obj/STEM(x).pb.cc`. The second step chains on the first (§{steps.cook-single}), not on `protos`.
@@ -108,7 +108,7 @@ Rule. A `$<NAME>` bare reference in a `cook` shell block, **`plate` shell block,
 recipe libmath
     ingredients "src/math/*.c"
     cook "build/obj/math/$<in.stem>.o" { gcc -c $<in> -o $<out> }
-    cook "build/lib/libmath.a" { ar rcs $<out> $<all> }
+    cook "build/lib/libmath.a" { ar rcs $<out> $<in> }
 
 recipe app
     cook "build/bin/app" { gcc -o $<out> main.c $<libmath> }

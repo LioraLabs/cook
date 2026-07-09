@@ -97,15 +97,18 @@ fn test_expand_template_in_stem_in_path() {
 }
 
 #[test]
-fn test_expand_template_all() {
+fn test_expand_template_in_many_to_one() {
+    // CS-0130: `$<all>` is gone; `$<in>` is unit-centric — in ManyToOne it
+    // lowers to the same `_cook_in` local, now holding the joined
+    // (table.concat) set rather than a per-item loop member.
     use std::collections::BTreeSet;
     use crate::resolver::{IterMode, OutputShape, ResolveCtx};
     use crate::template::{ConsultedEnv, expand_sigil_template};
     let r = BTreeSet::new();
     let ctx = ResolveCtx { mode: IterMode::ManyToOne, outputs: OutputShape::Single, recipes_in_scope: &r };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("ar rcs $<out> $<all>", &ctx, &mut env, &mut crate::template::FileRefs::new("t")).unwrap();
-    assert_eq!(result, "\"ar rcs \" .. _cook_out .. \" \" .. _cook_all");
+    let result = expand_sigil_template("ar rcs $<out> $<in>", &ctx, &mut env, &mut crate::template::FileRefs::new("t")).unwrap();
+    assert_eq!(result, "\"ar rcs \" .. _cook_out .. \" \" .. _cook_in");
 }
 
 #[test]
@@ -241,7 +244,7 @@ fn test_cook_step_many_to_one() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib.a".to_string())],
                     body: Some(Body::ShellBlock(
-                        vec!["ar rcs $<out> $<all>".to_string()],
+                        vec!["ar rcs $<out> $<in>".to_string()],
                     )),
                     disposition: Default::default(),
                 },
@@ -251,7 +254,7 @@ fn test_cook_step_many_to_one() {
     )]);
     let output = generate(&cookfile);
     assert!(output.contains("local _cook_outputs_2 = {}"));
-    assert!(output.contains("local _cook_all = table.concat(_cook_outputs_1, \" \")"));
+    assert!(output.contains("local _cook_in = table.concat(_cook_outputs_1, \" \")"));
     assert!(output.contains("local _cook_out = \"build/lib.a\""));
     assert!(
         output.contains("cook.add_unit({inputs = _cook_outputs_1, output = _cook_out, command = "),
@@ -1010,10 +1013,11 @@ fn test_dep_ref_in_command_emits_dep_output() {
             },
             Step::Cook {
                 step: CookStep {
-                    // CS-0022: literal output → many-to-one; body uses $<all> not $<in>
+                    // CS-0022/CS-0130: literal output → many-to-one; body uses
+                    // $<in> (unit-centric — the joined set) alongside dep refs.
                     outputs: vec![OutputPattern::Quoted("build/bin/app".to_string())],
                     body: Some(Body::ShellBlock(vec![
-                        "gcc -o $<out> $<all> $<libmath> $<libstr>".into(),
+                        "gcc -o $<out> $<in> $<libmath> $<libstr>".into(),
                     ])),
                     disposition: Default::default(),
                 },
@@ -1278,7 +1282,7 @@ fn test_dep_driven_followed_by_many_to_one() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libprotos.a".to_string())],
-                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<in>".into()])),
                     disposition: Default::default(),
                 },
                 line: 3,
@@ -1515,7 +1519,7 @@ fn test_cross_recipe_deps_codegen_integration() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libmath.a".into())],
-                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<in>".into()])),
                     disposition: Default::default(),
                 },
                 line: 4,
@@ -1533,7 +1537,7 @@ fn test_cross_recipe_deps_codegen_integration() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libstr.a".into())],
-                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<in>".into()])),
                     disposition: Default::default(),
                 },
                 line: 9,
@@ -1542,9 +1546,10 @@ fn test_cross_recipe_deps_codegen_integration() {
         make_recipe("app", vec![], vec!["src/main.c"], vec![
             Step::Cook {
                 step: CookStep {
-                    // CS-0022: literal output → many-to-one; body uses $<all>
+                    // CS-0022/CS-0130: literal output → many-to-one; body
+                    // uses $<in> (unit-centric — the joined set).
                     outputs: vec![OutputPattern::Quoted("build/obj/main.o".into())],
-                    body: Some(Body::ShellBlock(vec!["gcc -c $<all> -o $<out>".into()])),
+                    body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
                     disposition: Default::default(),
                 },
                 line: 13,
@@ -1553,7 +1558,7 @@ fn test_cross_recipe_deps_codegen_integration() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/bin/app".into())],
                     body: Some(Body::ShellBlock(vec![
-                        "gcc -o $<out> $<all> $<libmath> $<libstr>".into(),
+                        "gcc -o $<out> $<in> $<libmath> $<libstr>".into(),
                     ])),
                     disposition: Default::default(),
                 },
@@ -2167,8 +2172,10 @@ end
 }
 
 #[test]
-fn cs_0022_validate_bare_in_in_many_to_one_returns_error() {
-    // $<in> in a many-to-one (literal output) step must error.
+fn cs_0130_bare_in_in_many_to_one_is_valid() {
+    // CS-0130: `$<in>` is unit-centric — in a many-to-one (literal output)
+    // step it resolves to the joined (table.concat) input set, so it is no
+    // longer an error.
     let src = r#"recipe "build"
     ingredients "src/*.c"
     cook "build/app" {
@@ -2180,11 +2187,38 @@ end
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let result = crate::generate_with_names_checked(&cookfile, &names);
     assert!(
+        result.is_ok(),
+        "$<in> in many-to-one step must be accepted, got: {:?}",
+        result.err()
+    );
+    let output = result.unwrap();
+    assert!(
+        output.contains("_cook_in"),
+        "expected the joined $<in> local, got:\n{output}"
+    );
+}
+
+#[test]
+fn cs_0130_in_accessor_in_many_to_one_returns_error() {
+    // $<in.ACCESSOR> requires the input set be singular — still rejected in
+    // many-to-one (the set is collected; a path accessor on the joined form
+    // is meaningless).
+    let src = r#"recipe "build"
+    ingredients "src/*.c"
+    cook "build/app" {
+        gcc $<in.stem> -o $<out>
+    }
+end
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
         result.is_err(),
-        "$<in> in many-to-one step must error"
+        "$<in.stem> in many-to-one step must error"
     );
     let err_str = result.unwrap_err().to_string();
-    assert!(err_str.contains("$<in>") || err_str.contains("in"), "error must name $<in>, got: {err_str}");
+    assert!(err_str.contains("in.stem") || err_str.contains("in"), "error must name $<in.stem>, got: {err_str}");
 }
 
 #[test]
@@ -2297,17 +2331,41 @@ fn test_plate_step_shell_one_to_one() {
 }
 
 #[test]
-fn test_plate_step_shell_many_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate { tar -czf bundle.tgz $<all> }\n";
+fn test_plate_step_shell_batched_form_is_gone() {
+    // CS-0130: a shell plate body is per-item ($<in>) or one-shot only.
+    // `$<all>` no longer exists, so what reads as a batched tar body lowers
+    // as a per-item OneToOne loop (the body has $<in>, which is now legal
+    // in a shell plate body only as the per-item member).
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate { tar -czf bundle.tgz $<in> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
-        !lua.contains("for _, _plate_in"),
-        "many-to-one should not emit a loop, got:\n{lua}"
+        lua.contains("for _, _plate_in in ipairs(_cook_outputs_1)"),
+        "expected one-to-one plate loop, got:\n{lua}"
+    );
+    assert!(lua.contains("cook.add_unit("), "expected cook.add_unit, got:\n{lua}");
+    assert!(lua.contains("cache = false"), "expected cache=false, got:\n{lua}");
+}
+
+#[test]
+fn test_plate_step_batched_via_lua_inputs() {
+    // CS-0130: batched (many-to-one) plate/test is expressed via the Lua
+    // block form (`inputs`) — the shell form cannot express it since
+    // `$<all>` was removed.
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate >{ os.execute(\"tar -czf bundle.tgz \" .. table.concat(inputs, \" \")) }\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let lua = crate::generate(&cookfile);
+    assert!(
+        !lua.contains("for _, _plate_in in ipairs"),
+        "many-to-one should not emit a _plate_in loop, got:\n{lua}"
     );
     assert!(
-        lua.contains("table.concat(_cook_outputs_1, \" \")"),
-        "expected table.concat for $<all>, got:\n{lua}"
+        lua.contains("local inputs = {"),
+        "expected 'local inputs = {{...}}' binding, got:\n{lua}"
+    );
+    assert!(
+        lua.contains("tar -czf bundle.tgz"),
+        "expected the batched body text embedded, got:\n{lua}"
     );
     assert!(lua.contains("cook.add_unit("), "expected cook.add_unit, got:\n{lua}");
     assert!(lua.contains("cache = false"), "expected cache=false, got:\n{lua}");
@@ -2396,17 +2454,34 @@ fn test_test_step_shell_one_to_one_with_modifiers() {
 }
 
 #[test]
-fn test_test_step_shell_many_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { run-suite $<all> }\n";
+fn test_test_step_shell_batched_form_is_gone() {
+    // CS-0130: a shell test body is per-item ($<in>) or one-shot only.
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { run-suite $<in> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
-        !lua.contains("for _, _test_in"),
-        "many-to-one should not emit a loop, got:\n{lua}"
+        lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
+        "expected one-to-one test loop, got:\n{lua}"
+    );
+    assert!(lua.contains("cook.add_test("), "expected cook.add_test, got:\n{lua}");
+    assert!(lua.contains("timeout = 300"), "expected default timeout 300, got:\n{lua}");
+}
+
+#[test]
+fn test_test_step_batched_via_lua_inputs() {
+    // CS-0130: batched (many-to-one) test is expressed via the Lua block
+    // form (`inputs`) — the shell form cannot express it since `$<all>`
+    // was removed.
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test >{ os.execute(\"run-suite \" .. table.concat(inputs, \" \")) }\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let lua = crate::generate(&cookfile);
+    assert!(
+        !lua.contains("for _, _test_in in ipairs"),
+        "many-to-one should not emit a _test_in loop, got:\n{lua}"
     );
     assert!(
-        lua.contains("table.concat(_cook_outputs_1, \" \")"),
-        "expected table.concat for $<all>, got:\n{lua}"
+        lua.contains("local inputs = {"),
+        "expected 'local inputs = {{...}}' binding, got:\n{lua}"
     );
     assert!(lua.contains("cook.add_test("), "expected cook.add_test, got:\n{lua}");
     assert!(lua.contains("timeout = 300"), "expected default timeout 300, got:\n{lua}");
@@ -2494,16 +2569,22 @@ fn test_plate_out_rejected() {
 }
 
 #[test]
-fn test_plate_mixed_in_and_all_rejected() {
-    // Using both $<in> and $<all> in the same plate body is a mixed-mode error.
+fn test_plate_shell_in_and_all_named_env_coexist() {
+    // CS-0130: `$<all>` is no longer a reserved builtin, so a shell plate
+    // body may combine `$<in>` (per-item, OneToOne) with a literal `$<all>`
+    // token, which now falls through to `cook.require_env("all")` like any
+    // other unrecognized name — no mixed-mode rejection.
     let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate { echo $<in> $<all> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
-    let msg = format!("{}", err);
+    let lua = crate::generate_with_names(&cookfile, &names).expect("codegen");
     assert!(
-        msg.contains("$<in>") && msg.contains("$<all>"),
-        "expected mixed-mode rejection naming both $<in> and $<all>, got: {msg}"
+        lua.contains("for _, _plate_in in ipairs(_cook_outputs_1)"),
+        "expected one-to-one plate loop, got:\n{lua}"
+    );
+    assert!(
+        lua.contains(r#"cook.require_env("all")"#),
+        "expected $<all> to fall through to require_env, got:\n{lua}"
     );
 }
 
@@ -2762,7 +2843,7 @@ fn cook_step_iterates_union_of_all_include_globs() {
 
 #[test]
 fn cook_step_many_to_one_iterates_union_too() {
-    // Many-to-one steps (literal output, $<all> body) used the same
+    // Many-to-one steps (literal output, $<in> body) used the same
     // hardcoded `recipe.ingredients[1]` as the iteration source. The
     // fix applies uniformly across iteration modes.
     let cookfile = make_cookfile(vec![make_recipe(
@@ -2773,7 +2854,7 @@ fn cook_step_many_to_one_iterates_union_too() {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/app".to_string())],
                 body: Some(Body::ShellBlock(
-                    vec!["echo $<all>".to_string()],
+                    vec!["echo $<in>".to_string()],
                 )),
                 disposition: Default::default(),
             },
@@ -2783,7 +2864,7 @@ fn cook_step_many_to_one_iterates_union_too() {
     let output = generate(&cookfile);
     assert!(
         output.contains("table.concat(ingredients, \" \")"),
-        "many-to-one $<all> must concat the merged `ingredients` local, got:\n{output}"
+        "many-to-one $<in> must concat the merged `ingredients` local, got:\n{output}"
     );
     assert!(
         !output.contains("table.concat(recipe.ingredients[1]"),
@@ -2847,7 +2928,7 @@ fn plate_step_emits_passthrough_after_iteration() {
 #[test]
 fn plate_step_oneshot_with_ingredients_still_passthroughs() {
     // The Standard rule applies even when the plate body doesn't use
-    // $<in>/$<all> (OneShot mode) — the input list is still the plate's
+    // $<in> at all (OneShot mode) — the input list is still the plate's
     // output. A bare `plate { echo "hi" }` after `ingredients "Cookfile"`
     // therefore emits a passthrough, and downstream `$<greet>` sees
     // `Cookfile` (not the empty string).

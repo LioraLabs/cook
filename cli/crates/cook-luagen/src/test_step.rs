@@ -64,97 +64,93 @@ pub(crate) fn generate_test_step(
     // OneShot / ManyToOne use an empty iter binding; OneToOne uses _test_in.
     let as_name_oto = test_step.as_name.as_deref().map(|n| {
         let mut _ignored = ConsultedEnv::new();
-        expand_plate_test_body(n, recipe_names, "_test_in", "{}", &mut _ignored, &mut file_refs)
+        expand_plate_test_body(n, recipe_names, "_test_in", &mut _ignored, &mut file_refs)
     });
     let as_name_mto = test_step.as_name.as_deref().map(|n| {
         let mut _ignored = ConsultedEnv::new();
-        expand_plate_test_body(n, recipe_names, "\"\"", &source_expr, &mut _ignored, &mut file_refs)
+        expand_plate_test_body(n, recipe_names, "\"\"", &mut _ignored, &mut file_refs)
     });
     let as_name_oneshot = test_step.as_name.as_deref().map(|n| {
         let mut _ignored = ConsultedEnv::new();
-        expand_plate_test_body(n, recipe_names, "\"\"", "{}", &mut _ignored, &mut file_refs)
+        expand_plate_test_body(n, recipe_names, "\"\"", &mut _ignored, &mut file_refs)
     });
 
-    match (&test_step.body, mode) {
-        (Body::ShellBlock(lines), PlateTestMode::OneToOne) => {
-            let cmd_text = build_shell_block_command(lines);
-            let mut consulted = ConsultedEnv::new();
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_test_in", "{}", &mut consulted, &mut file_refs);
-            let name_field = fmt_name_field(as_name_oto.as_deref());
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
+    match &test_step.body {
+        Body::ShellBlock(lines) => match mode {
+            PlateTestMode::OneToOne => {
+                let cmd_text = build_shell_block_command(lines);
+                let mut consulted = ConsultedEnv::new();
+                let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_test_in", &mut consulted, &mut file_refs);
+                let name_field = fmt_name_field(as_name_oto.as_deref());
+                if !file_refs.is_empty() {
+                    out.push_str(&file_refs.hoist_lines("    "));
+                }
+                out.push_str(&format!(
+                    "    for _, _test_in in ipairs({}) do\n        cook.add_test({{command = {}, {}{}timeout = {}, should_fail = {}, line = {}, iteration_item = _test_in, consulted_env_keys = {}}})\n    end\n",
+                    source_expr, cmd_expr, inputs_field, name_field, timeout, should_fail, line, consulted.to_lua_table()
+                ));
             }
-            out.push_str(&format!(
-                "    for _, _test_in in ipairs({}) do\n        cook.add_test({{command = {}, {}{}timeout = {}, should_fail = {}, line = {}, iteration_item = _test_in, consulted_env_keys = {}}})\n    end\n",
-                source_expr, cmd_expr, inputs_field, name_field, timeout, should_fail, line, consulted.to_lua_table()
-            ));
-        }
-        (Body::ShellBlock(lines), PlateTestMode::ManyToOne) => {
-            let cmd_text = build_shell_block_command(lines);
-            let mut consulted = ConsultedEnv::new();
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &source_expr, &mut consulted, &mut file_refs);
-            let name_field = fmt_name_field(as_name_mto.as_deref());
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
+            // `ManyToOne` is grouped in here for exhaustiveness only:
+            // `detect_plate_test_mode` never returns it for `Body::ShellBlock`
+            // (CS-0130 removed `$<all>`, so batched plate/test is
+            // Lua-block-only), and this arm is otherwise byte-for-byte what
+            // the old OneShot arm did.
+            PlateTestMode::OneShot | PlateTestMode::ManyToOne => {
+                let cmd_text = build_shell_block_command(lines);
+                let mut consulted = ConsultedEnv::new();
+                let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &mut consulted, &mut file_refs);
+                let name_field = fmt_name_field(as_name_oneshot.as_deref());
+                if !file_refs.is_empty() {
+                    out.push_str(&file_refs.hoist_lines("    "));
+                }
+                out.push_str(&format!(
+                    "    cook.add_test({{command = {}, {}{}timeout = {}, should_fail = {}, line = {}, iteration_item = nil, consulted_env_keys = {}}})\n",
+                    cmd_expr, inputs_field, name_field, timeout, should_fail, line, consulted.to_lua_table()
+                ));
             }
-            out.push_str(&format!(
-                "    cook.add_test({{command = {}, {}{}timeout = {}, should_fail = {}, line = {}, iteration_item = nil, consulted_env_keys = {}}})\n",
-                cmd_expr, inputs_field, name_field, timeout, should_fail, line, consulted.to_lua_table()
-            ));
-        }
-        (Body::ShellBlock(lines), PlateTestMode::OneShot) => {
-            let cmd_text = build_shell_block_command(lines);
-            let mut consulted = ConsultedEnv::new();
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", "{}", &mut consulted, &mut file_refs);
-            let name_field = fmt_name_field(as_name_oneshot.as_deref());
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
+        },
+        Body::LuaBlock(code) => match mode {
+            PlateTestMode::OneToOne => {
+                let name_field = fmt_name_field(as_name_oto.as_deref());
+                // CS-0101: the as-name expression may reference a file-ref local.
+                if !file_refs.is_empty() {
+                    out.push_str(&file_refs.hoist_lines("    "));
+                }
+                out.push_str(&format!(
+                    "    for _, _test_in in ipairs({}) do\n",
+                    source_expr
+                ));
+                // Binding convention: build lua_code at register time with `local input = <value>`.
+                out.push_str(&format!(
+                    "        cook.add_test({{lua_code = (\"local input = \" .. string.format(\"%q\", _test_in) .. \"\\n\") .. {}, {}{}timeout = {}, should_fail = {}, line = {}, iteration_item = _test_in, consulted_env_keys = \"*\"}})\n",
+                    lua_chunk_literal(code), inputs_field, name_field, timeout, should_fail, line
+                ));
+                out.push_str("    end\n");
             }
-            out.push_str(&format!(
-                "    cook.add_test({{command = {}, {}{}timeout = {}, should_fail = {}, line = {}, iteration_item = nil, consulted_env_keys = {}}})\n",
-                cmd_expr, inputs_field, name_field, timeout, should_fail, line, consulted.to_lua_table()
-            ));
-        }
-        (Body::LuaBlock(code), PlateTestMode::OneToOne) => {
-            let name_field = fmt_name_field(as_name_oto.as_deref());
-            // CS-0101: the as-name expression may reference a file-ref local.
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
+            PlateTestMode::ManyToOne => {
+                let name_field = fmt_name_field(as_name_mto.as_deref());
+                // CS-0101: the as-name expression may reference a file-ref local.
+                if !file_refs.is_empty() {
+                    out.push_str(&file_refs.hoist_lines("    "));
+                }
+                // Serialise the inputs table at register time into the lua_code string.
+                out.push_str(&format!(
+                    "    cook.add_test({{lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), {}{}timeout = {}, should_fail = {}, line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
+                    source_expr, lua_chunk_literal(code), inputs_field, name_field, timeout, should_fail, line
+                ));
             }
-            out.push_str(&format!(
-                "    for _, _test_in in ipairs({}) do\n",
-                source_expr
-            ));
-            // Binding convention: build lua_code at register time with `local input = <value>`.
-            out.push_str(&format!(
-                "        cook.add_test({{lua_code = (\"local input = \" .. string.format(\"%q\", _test_in) .. \"\\n\") .. {}, {}{}timeout = {}, should_fail = {}, line = {}, iteration_item = _test_in, consulted_env_keys = \"*\"}})\n",
-                lua_chunk_literal(code), inputs_field, name_field, timeout, should_fail, line
-            ));
-            out.push_str("    end\n");
-        }
-        (Body::LuaBlock(code), PlateTestMode::ManyToOne) => {
-            let name_field = fmt_name_field(as_name_mto.as_deref());
-            // CS-0101: the as-name expression may reference a file-ref local.
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
+            PlateTestMode::OneShot => {
+                let name_field = fmt_name_field(as_name_oneshot.as_deref());
+                // CS-0101: the as-name expression may reference a file-ref local.
+                if !file_refs.is_empty() {
+                    out.push_str(&file_refs.hoist_lines("    "));
+                }
+                out.push_str(&format!(
+                    "    cook.add_test({{lua_code = {}, {}{}timeout = {}, should_fail = {}, line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
+                    lua_chunk_literal(code), inputs_field, name_field, timeout, should_fail, line
+                ));
             }
-            // Serialise the inputs table at register time into the lua_code string.
-            out.push_str(&format!(
-                "    cook.add_test({{lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), {}{}timeout = {}, should_fail = {}, line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
-                source_expr, lua_chunk_literal(code), inputs_field, name_field, timeout, should_fail, line
-            ));
-        }
-        (Body::LuaBlock(code), PlateTestMode::OneShot) => {
-            let name_field = fmt_name_field(as_name_oneshot.as_deref());
-            // CS-0101: the as-name expression may reference a file-ref local.
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
-            }
-            out.push_str(&format!(
-                "    cook.add_test({{lua_code = {}, {}{}timeout = {}, should_fail = {}, line = {}, iteration_item = nil, consulted_env_keys = \"*\"}})\n",
-                lua_chunk_literal(code), inputs_field, name_field, timeout, should_fail, line
-            ));
-        }
+        },
     }
 
     // Standard §5.4.1: a `test` step's output is a passthrough of its

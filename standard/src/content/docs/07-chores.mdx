@@ -11,7 +11,7 @@ A chore is introduced by a **chore header** of the form `chore name (":" depende
 
 The keyword `chore` MUST be followed by a separator — whitespace, a tab, or a `"` character — before the name. The keyword is recognised only at column 0 (§{lexical.keywords}); an indented `chore foo` line inside a recipe body or chore body is a `Content` token dispatched as a `shell_command`.
 
-The reserved-segment rule of §{grammar-appendix.declarations} applies: a conforming implementation MUST reject a chore whose name's final dot-separated segment is one of `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`.
+The reserved-segment rule of §{grammar-appendix.declarations} applies: a conforming implementation MUST reject a chore whose name's final dot-separated segment is one of `stem`, `name`, `ext`, `dir`, `in`, `out`. `all` is NOT among them (CS-0130): `chore all` is well-formed.
 
 The **duplicate-name rule** of §{grammar-appendix.declarations} also applies: chores share the callable namespace with recipes, so a chore whose name matches that of an earlier `chore` or `recipe` declaration in the same Cookfile MUST be rejected at parse time. The diagnostic identifies both the offending declaration and the source line of the prior declaration.
 
@@ -41,7 +41,7 @@ A `param` is one of:
 
 **Ordering rule (normative).** Within a `param_list`, every required parameter MUST precede every defaulted parameter (string-literal or Lua-expression form). A conforming implementation MUST reject a chore header that violates this order.
 
-**Reserved-name rule (normative).** Parameter names MUST NOT equal one of the reserved identifiers from §A.2 (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`). Parameter names MUST NOT contain `.`. Duplicate parameter names within one header MUST be rejected at parse time.
+**Reserved-name rule (normative).** Parameter names MUST NOT equal one of the reserved identifiers from §A.2 (`stem`, `name`, `ext`, `dir`, `in`, `out`, `env`). Parameter names MUST NOT contain `.`. Duplicate parameter names within one header MUST be rejected at parse time. `all` is NOT reserved (CS-0130): a parameter named `all` is well-formed.
 
 ### Example 7.1.1.1
 
@@ -188,7 +188,7 @@ A chore MAY depend on a recipe (run a build, then post-process) and a recipe MAY
 recipe build
     ingredients "src/*.c"
     cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
-    cook "build/app" { cc $<all> -o $<out> }
+    cook "build/app" { cc $<in> -o $<out> }
 
 chore play: build
     ./build/app

@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      ingredients: ["src1.txt", "src2.txt"]
+      excludes: []
+      steps:
+        Cook outputs=["out.txt"] body=ShellBlock(["cat $<in> > out.txt"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

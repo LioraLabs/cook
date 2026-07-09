@@ -7,7 +7,7 @@ use crate::sigil;
 
 /// Built-in placeholders that are never recipe references.
 /// Note: "out_N" forms are handled structurally in parse_dep_token.
-const BUILTINS: &[&str] = &["in", "out", "all"];
+const BUILTINS: &[&str] = &["in", "out"];
 
 /// A reference to another recipe found in a step template.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -127,7 +127,7 @@ fn extract_body_tokens(body: &cook_lang::ast::Body) -> Vec<String> {
 /// Parse a single $<FOO> token into a DepRef if it matches a recipe name.
 ///
 /// Rules (CS-0033 updated):
-/// 1. Skip builtins: `in`, `out`, `all`
+/// 1. Skip builtins: `in`, `out`
 /// 2. Skip CS-0022 dotted own-input/output forms: `in.X`, `out.X`, `out_N.X`
 /// 3. If whole token is a recipe name → DepRef { recipe_name, accessor: None }
 /// 4. If token has a dot, split on LAST dot: if suffix is a known accessor AND prefix
@@ -295,6 +295,9 @@ mod tests {
         assert_eq!(parse_dep_token("in", &names), None);
         assert_eq!(parse_dep_token("out", &names), None);
         assert_eq!(parse_dep_token("stem", &names), None);
+        // "all" is no longer a builtin (COOK-195); this stays None here only
+        // because `names` has no recipe called "all" registered — not because
+        // "all" is skipped as a builtin.
         assert_eq!(parse_dep_token("all", &names), None);
     }
 
