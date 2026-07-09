@@ -48,7 +48,7 @@ Placeholder in plate body inside shell-quoted string
 
 recipe r
     plate {
-        echo "all: $<all>" > out.report
+        echo "all: $<in>" > out.report
     }
 
 ---

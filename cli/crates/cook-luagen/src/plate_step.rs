@@ -47,94 +47,89 @@ pub(crate) fn generate_plate_step(
     // substitution — hoisted locals, but NO `file_refs` unit field.
     let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));
 
-    match (&plate_step.body, mode) {
-        // (1) Shell, OneToOne — loop over source, one unit per item.
-        (Body::ShellBlock(lines), PlateTestMode::OneToOne) => {
-            let cmd_text = build_shell_block_command(lines);
-            let mut consulted = ConsultedEnv::new();
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_plate_in", "{}", &mut consulted, &mut file_refs);
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
+    match &plate_step.body {
+        Body::ShellBlock(lines) => match mode {
+            // (1) Shell, OneToOne — loop over source, one unit per item.
+            PlateTestMode::OneToOne => {
+                let cmd_text = build_shell_block_command(lines);
+                let mut consulted = ConsultedEnv::new();
+                let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "_plate_in", &mut consulted, &mut file_refs);
+                if !file_refs.is_empty() {
+                    out.push_str(&file_refs.hoist_lines("    "));
+                }
+                out.push_str(&format!(
+                    "    for _, _plate_in in ipairs({}) do\n        cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}}})\n    end\n",
+                    source_expr, cmd_expr, consulted.to_lua_table()
+                ));
             }
-            out.push_str(&format!(
-                "    for _, _plate_in in ipairs({}) do\n        cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}}})\n    end\n",
-                source_expr, cmd_expr, consulted.to_lua_table()
-            ));
-        }
-        // (2) Shell, ManyToOne — one unit, source visible as {all}.
-        (Body::ShellBlock(lines), PlateTestMode::ManyToOne) => {
-            let cmd_text = build_shell_block_command(lines);
-            let mut consulted = ConsultedEnv::new();
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &source_expr, &mut consulted, &mut file_refs);
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
+            // (2) Shell, OneShot — one unit, no source. `ManyToOne` is
+            // grouped in here for exhaustiveness only: `detect_plate_test_mode`
+            // never returns it for `Body::ShellBlock` (CS-0130 removed
+            // `$<all>`, so batched plate/test is Lua-block-only), and this arm
+            // is otherwise byte-for-byte what the old OneShot arm did.
+            PlateTestMode::OneShot | PlateTestMode::ManyToOne => {
+                let cmd_text = build_shell_block_command(lines);
+                let mut consulted = ConsultedEnv::new();
+                let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", &mut consulted, &mut file_refs);
+                if !file_refs.is_empty() {
+                    out.push_str(&file_refs.hoist_lines("    "));
+                }
+                out.push_str(&format!(
+                    "    cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}}})\n",
+                    cmd_expr, consulted.to_lua_table()
+                ));
             }
-            out.push_str(&format!(
-                "    cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}}})\n",
-                cmd_expr, consulted.to_lua_table()
-            ));
-        }
-        // (3) Shell, OneShot — one unit, no source.
-        (Body::ShellBlock(lines), PlateTestMode::OneShot) => {
-            let cmd_text = build_shell_block_command(lines);
-            let mut consulted = ConsultedEnv::new();
-            let cmd_expr = expand_plate_test_body(&cmd_text, recipe_names, "\"\"", "{}", &mut consulted, &mut file_refs);
-            if !file_refs.is_empty() {
-                out.push_str(&file_refs.hoist_lines("    "));
+        },
+        Body::LuaBlock(code) => match mode {
+            // (3) Lua, OneToOne — loop, body sees `input` as a Lua local.
+            //
+            // Binding convention (plan §8.1 note): build the `lua_code` string at
+            // register time by prepending a header that sets `local input = <value>`
+            // using the actual loop-variable value.  We use `string.format("%q", …)`
+            // to produce a correctly-quoted Lua string literal, then concatenate with
+            // the body long-string.  This way the execute-phase chunk is self-contained
+            // and does not rely on any out-of-band `_bind_*` field on `cook.add_unit`.
+            //
+            // CS-0045: `step_kind = "plate"` tells the worker to run this
+            // body without the project-root sandbox — plates are the
+            // explicit ship-outside-the-project surface.
+            PlateTestMode::OneToOne => {
+                out.push_str(&format!(
+                    "    for _, _plate_in in ipairs({}) do\n",
+                    source_expr
+                ));
+                // COOK-191/CS-0126: the "local input = ..." header adds exactly
+                // one line ahead of `code` in the same chunk, so subtract 1 from
+                // the reported line to compensate (see unit_api.rs's analogous
+                // chore-prelude handling).
+                out.push_str(&format!(
+                    "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (\"local input = \" .. string.format(\"%q\", _plate_in) .. \"\\n\") .. {}, consulted_env_keys = \"*\", line = {}}})\n",
+                    lua_chunk_literal(code), line.saturating_sub(1)
+                ));
+                out.push_str("    end\n");
             }
-            out.push_str(&format!(
-                "    cook.add_unit({{command = {}, cache = false, consulted_env_keys = {}}})\n",
-                cmd_expr, consulted.to_lua_table()
-            ));
-        }
-        // (4) Lua, OneToOne — loop, body sees `input` as a Lua local.
-        //
-        // Binding convention (plan §8.1 note): build the `lua_code` string at
-        // register time by prepending a header that sets `local input = <value>`
-        // using the actual loop-variable value.  We use `string.format("%q", …)`
-        // to produce a correctly-quoted Lua string literal, then concatenate with
-        // the body long-string.  This way the execute-phase chunk is self-contained
-        // and does not rely on any out-of-band `_bind_*` field on `cook.add_unit`.
-        //
-        // CS-0045: `step_kind = "plate"` tells the worker to run this
-        // body without the project-root sandbox — plates are the
-        // explicit ship-outside-the-project surface.
-        (Body::LuaBlock(code), PlateTestMode::OneToOne) => {
-            out.push_str(&format!(
-                "    for _, _plate_in in ipairs({}) do\n",
-                source_expr
-            ));
-            // COOK-191/CS-0126: the "local input = ..." header adds exactly
-            // one line ahead of `code` in the same chunk, so subtract 1 from
-            // the reported line to compensate (see unit_api.rs's analogous
-            // chore-prelude handling).
-            out.push_str(&format!(
-                "        cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (\"local input = \" .. string.format(\"%q\", _plate_in) .. \"\\n\") .. {}, consulted_env_keys = \"*\", line = {}}})\n",
-                lua_chunk_literal(code), line.saturating_sub(1)
-            ));
-            out.push_str("    end\n");
-        }
-        // (5) Lua, ManyToOne — one unit, body sees `inputs` as a Lua local.
-        //
-        // For many-to-one, the full source list must be available to the body as
-        // `inputs`.  We serialise the table at register time using a small Lua
-        // helper that quotes each element, producing a self-contained chunk.
-        (Body::LuaBlock(code), PlateTestMode::ManyToOne) => {
-            // COOK-191/CS-0126: the generated "local inputs = {...}\n"
-            // header adds exactly one line ahead of `code`, so subtract 1
-            // from the reported line (see the OneToOne arm above).
-            out.push_str(&format!(
-                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), consulted_env_keys = \"*\", line = {}}})\n",
-                source_expr, lua_chunk_literal(code), line.saturating_sub(1)
-            ));
-        }
-        // (6) Lua, OneShot — one unit, no source binding.
-        (Body::LuaBlock(code), PlateTestMode::OneShot) => {
-            out.push_str(&format!(
-                "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\", line = {}}})\n",
-                lua_chunk_literal(code), line
-            ));
-        }
+            // (4) Lua, ManyToOne — one unit, body sees `inputs` as a Lua local.
+            //
+            // For many-to-one, the full source list must be available to the body as
+            // `inputs`.  We serialise the table at register time using a small Lua
+            // helper that quotes each element, producing a self-contained chunk.
+            PlateTestMode::ManyToOne => {
+                // COOK-191/CS-0126: the generated "local inputs = {...}\n"
+                // header adds exactly one line ahead of `code`, so subtract 1
+                // from the reported line (see the OneToOne arm above).
+                out.push_str(&format!(
+                    "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = (function()\n        local _h = {{\"local inputs = {{\"}}\n        for _i, _v in ipairs({}) do if _i > 1 then _h[#_h+1] = \", \" end _h[#_h+1] = string.format(\"%q\", _v) end\n        _h[#_h+1] = \"}}\\n\"\n        return table.concat(_h) .. {}\n    end)(), consulted_env_keys = \"*\", line = {}}})\n",
+                    source_expr, lua_chunk_literal(code), line.saturating_sub(1)
+                ));
+            }
+            // (5) Lua, OneShot — one unit, no source binding.
+            PlateTestMode::OneShot => {
+                out.push_str(&format!(
+                    "    cook.add_unit({{cache = false, step_kind = \"plate\", lua_code = {}, consulted_env_keys = \"*\", line = {}}})\n",
+                    lua_chunk_literal(code), line
+                ));
+            }
+        },
     }
 
     // Standard §5.4.1: a `plate` step's output is a passthrough of its
@@ -165,7 +160,7 @@ pub(crate) fn generate_for_each_plate_step(
     use crate::template::{cook_step_ctx, expand_for_each_template};
 
     // OneShot + None: a plate body admits member sigils, recipes, env, and
-    // probe refs — but neither `$<in>`/`$<all>` nor `$<out>`.
+    // probe refs — but neither `$<in>` nor `$<out>`.
     let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::None, recipe_names);
     // CS-0101: substitution only (cache = false) — hoists, no file_refs field.
     let mut file_refs = crate::template::FileRefs::new(format!("l{}", line));

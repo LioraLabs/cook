@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["src/math/a.c"]
       excludes: []
       steps:
-        Cook outputs=["build/libmath.a"] body=ShellBlock(["ar rcs $<out> $<all>"])
+        Cook outputs=["build/libmath.a"] body=ShellBlock(["ar rcs $<out> $<in>"])
     Recipe name="app" line=7
       deps: []
       ingredients: []

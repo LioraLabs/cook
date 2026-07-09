@@ -1,4 +1,0 @@
-recipe r
-    ingredients "src/*.o"
-    cook "dist/bundle.tgz" { tar czf $<out> $<all> }
-    plate { echo $<in> $<all> }

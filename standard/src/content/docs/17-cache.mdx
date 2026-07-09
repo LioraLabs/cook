@@ -145,7 +145,7 @@ An implementation's artifact-store write path MUST treat a `put` of bytes that c
 ```cook
 recipe build
     ingredients "src/main.c"
-    cook "build/main.o" { gcc -c $<all> -o $<out> }
+    cook "build/main.o" { gcc -c $<in> -o $<out> }
 ```
 
 On the first run, `build/main.o`'s unit executes and its completion MAY be recorded. On a subsequent run with an unchanged `src/main.c` and unchanged command text, an implementation MAY skip the unit. If the command text changes or `src/main.c` changes, the unit MUST re-run.

@@ -18,7 +18,7 @@ The exact wording and formatting of diagnostics are implementation-defined (§{i
 ```cook
 recipe build
     ingredients "src/main.c"
-    cook "app { gcc $<all> -o $<out> }
+    cook "app { gcc $<in> -o $<out> }
 ```
 
 The unterminated output-path string in the `cook` step (`"app` has no closing `"`) is a syntactic error (§{lexical.strings}). The implementation MUST report this diagnostic and MUST NOT proceed to register-phase evaluation; any semantic issue that would have been detected later — for example, a missing dependency — MUST NOT be reported for this run.

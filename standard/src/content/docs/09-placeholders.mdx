@@ -50,13 +50,12 @@ The sigil syntax `$<IDENT>` is the sole placeholder surface for shell text as of
 
 | Placeholder | Valid in iteration mode | Meaning |
 |---|---|---|
-| `$<in>` | one-to-one (own, dep-driven, or data-member) | The current iteration item: a path for `ingredients`-driven recipes (glob form), or the whole data member rendered as canonical key-sorted JSON (record) / string form (scalar) for `ingredients <probe>`-driven recipes (§{steps.ingredients}) |
-| `$<in.ACCESSOR>` | one-to-one | For path members (`ingredients` glob): `path.ACCESSOR(in)` per §{lua.path-helpers}; for record members (`ingredients <probe>`): the value of record field `ACCESSOR` |
+| `$<in>` | one-to-one (own, dep-driven, or data-member) or many-to-one | In one-to-one mode: the current iteration item — a path for `ingredients`-driven recipes (glob form), or the whole data member rendered as canonical key-sorted JSON (record) / string form (scalar) for `ingredients <probe>`-driven recipes (§{steps.ingredients}). In many-to-one mode: the unit's full input list, joined by single space characters — byte-identical to the join the removed batched-input placeholder (App. E CS-0130) used to produce. |
+| `$<in.ACCESSOR>` | one-to-one only | For path members (`ingredients` glob): `path.ACCESSOR(in)` per §{lua.path-helpers}; for record members (`ingredients <probe>`): the value of record field `ACCESSOR`. An accessor requires the input be a single item, so this form is rejected in many-to-one mode (CS-0130) — see the invalid shapes below. |
 | `$<out>` | any mode, single declared output | The unit's single output path |
 | `$<out.ACCESSOR>` | any mode, single declared output | `path.ACCESSOR(out)` |
 | `$<out_N>` (`N` ∈ 1..) | any mode, multi-output | The unit's `N`-th declared output, in declaration order |
 | `$<out_N.ACCESSOR>` | any mode, multi-output | `path.ACCESSOR(out_N)` |
-| `$<all>` | many-to-one only | The unit's input list, joined by single space characters |
 | `$<NAME[]>` (NAME is a recipe in scope; CS-0098) | one-to-one inside `ingredients <probe>` fan-out body only | The named recipe's terminal output for the **current iteration member** (§{steps.cross-recipe-member}). `NAME` must be a recipe declared in scope; an unknown name with `[]` falls through to env-var lookup. `$<NAME>` (no brackets) continues to mean all terminal outputs, space-joined, and is unchanged. A conforming implementation MUST reject `$<NAME[]>` appearing outside an `ingredients <probe>` fan-out body with a load-time diagnostic. In the Lua lowering, `$<NAME[]>` emits `cook.dep_output_member("NAME", cook.member_to_string(item))` where `item` is the loop-local fan-out variable. The compiler extracts `$<NAME[]>` as a recipe-level DAG ordering edge (NAME must build before the referencing recipe, identical to the edge produced by bare `$<NAME>`) and folds the referenced output into the current member's cache fingerprint (per-member isolation — §{steps.cross-recipe-member}). Consumer and producer must iterate the same probe (same-probe precondition, v1); cross-probe joins are COOK-99. |
 | `$<NAME>` (NAME is a declared chore parameter, §7.1.1) | chore bodies only | The bound parameter value, POSIX single-quote-escaped to produce a single shell word; for variadic parameters, the space-separated, individually shell-quoted joined form. Scope-limited to chore bodies that declare the parameter. Resolved at register phase, before the shell step is dispatched. |
 | `$<file:PATH>` (CS-0101) | any mode | A **file reference**: expands to `PATH`'s resolved match list — the literal path, or for a glob the sorted matches — space-joined. `PATH` is resolved against the same base as `ingredients` patterns (the declaring Cookfile's directory). For a cacheable unit, the content of each resolved file is folded into the unit's observable input set (§{exec.cache.abstract} observable 6). Resolution is dispatched on the `file:` prefix before any other rule — `file:` is a reserved namespace analogous to `env.` (§{xref.env-namespace}, §{xref.file-namespace}). |
@@ -73,8 +72,8 @@ An unknown name within a chore body raises a runtime error when the shell step i
 
 A conforming implementation MUST reject the following shapes with a load-time diagnostic:
 
-- `$<in>` or `$<in.ACCESSOR>` in a many-to-one step (no current iteration item exists).
-- `$<all>` in a one-to-one step.
+- `$<in.ACCESSOR>` in a many-to-one step — an accessor requires the input set be singular; the collected set has no single member.
+- `$<in>` or `$<in.ACCESSOR>` in a one-shot step (no input set — the step has no ingredient source).
 - `$<out>` in a multi-output step (ambiguous — use `$<out_N>`).
 - `$<out_N>` in a single-output step (use plain `$<out>`).
 - `$<out_N>` for `N` greater than the step's declared output count.
@@ -113,20 +112,18 @@ Cross-recipe references inside a shell block follow §{xref.string-substitution}
 
 ## 9.4. Plate and test placeholders [#phl.plate-test]
 
-A `plate_step` or `test_step` body that is a `shell_block` admits the following placeholders:
+A `plate_step` or `test_step` body that is a `shell_block` is necessarily **per-item** (one-to-one) or **one-shot** — a shell body has no binding for a collected set. The batched (many-to-one) form is admitted only as a `using_lua_block` body, where the collected set is exposed as the Lua `inputs` table (§{lua.using-block-globals}); there is no shell-text spelling of many-to-one plate/test. A shell-block plate/test body admits the following placeholders:
 
 | Placeholder | Valid in mode | Meaning |
 |---|---|---|
 | `$<in>` | one-to-one (own, dep-driven, or data-member) | The current iteration item: a path for `ingredients`-driven recipes (glob form), or the whole data member (record as canonical key-sorted JSON, scalar as string) for `ingredients <probe>`-driven recipes (§{steps.ingredients}) |
 | `$<in.ACCESSOR>` | one-to-one | For path members (`ingredients` glob): `path.ACCESSOR(in)` per §{lua.path-helpers}; for record members (`ingredients <probe>`): the value of record field `ACCESSOR` |
-| `$<all>` | many-to-one | The source list, space-joined |
 | `$<NAME>` (NAME is a recipe in scope) | any mode | `cook.dep_output(NAME)` per §{xref.string-substitution} |
 | `$<file:PATH>` (CS-0101) | any mode | File reference per §{phl.cook-step}: expands to the resolved match list, space-joined, with the same load-time missing/empty diagnostics. Plate and test units are registered non-cacheable, so the §{exec.cache.abstract} fingerprint observable does not apply to them; the reference is pure substitution in these positions. |
 | `$<TOKEN>` (none of the above) | any mode | `cook.require_env(TOKEN)` per §{xref.resolution} |
 
 A conforming implementation MUST reject:
-- `$<in>` or `$<in.ACCESSOR>` in a many-to-one or one-shot body (no current iteration);
-- `$<all>` in a one-to-one or one-shot body (no batched input list);
+- `$<in>` or `$<in.ACCESSOR>` in a one-shot body (no current iteration);
 - Any `$<out>` / `$<out.ACCESSOR>` / `$<out_N>` / `$<out_N.ACCESSOR>` token in a plate or test body — the step declares no outputs. The diagnostic MUST state that plate/test produce no declared outputs; for a body in one-to-one mode the diagnostic SHOULD additionally direct the author to `$<in>` as the iteration item.
 - `$<NAME.ACCESSOR>` for any recipe `NAME` in scope (preserves the §{xref.dep-driven} firewall).
 - `$<in>` used outside any iteration driver — when no `ingredients_step` (glob or probe form) is present, no iteration item exists.

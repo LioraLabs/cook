@@ -1,0 +1,15 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="bundle" line=1
+      deps: []
+      ingredients: ["src/*.o"]
+      excludes: []
+      steps:
+        Cook outputs=["dist/bundle.tgz"] body=ShellBlock(["tar czf $<out> $<in>"])
+        Plate body=LuaBlock("os.execute(\"tar czf bundle.tgz \" .. table.concat(inputs, \" \"))")
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

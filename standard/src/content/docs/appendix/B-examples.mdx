@@ -75,7 +75,7 @@ This example exercises the four surfaces of cross-recipe references defined in Â
 recipe libmath
     ingredients "src/math/*.c"
     cook "build/obj/math/$<in.stem>.o" { gcc -c $<in> -o $<out> }
-    cook "build/lib/libmath.a" { ar rcs $<out> $<all> }
+    cook "build/lib/libmath.a" { ar rcs $<out> $<in> }
 
 recipe app
     cook "build/bin/app" { gcc -o $<out> main.c $<libmath> }

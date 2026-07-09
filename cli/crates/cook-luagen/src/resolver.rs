@@ -47,7 +47,6 @@ pub enum BuiltinKind {
     OutAccessor(String),   // {out.stem} etc
     OutIndexed(usize),     // {out_1}
     OutIndexedAccessor(usize, String), // {out_1.stem}
-    All,                   // {all}
     /// COOK-63 §8.3: `$<in>` — the whole current `for_each` data member.
     Item,
     /// COOK-63 §8.3: `$<in.FIELD>` — record field `FIELD` of the member.
@@ -257,7 +256,6 @@ fn match_builtin(ident: &str) -> BuiltinMatch {
     match ident {
         "in" => BuiltinMatch::Yes(BuiltinKind::In),
         "out" => BuiltinMatch::Yes(BuiltinKind::Out),
-        "all" => BuiltinMatch::Yes(BuiltinKind::All),
         _ => {
             if let Some(rest) = ident.strip_prefix("in.") {
                 if ACCESSORS.contains(&rest) {
@@ -306,8 +304,11 @@ fn validate_builtin(ident: &str, b: BuiltinKind, ctx: &ResolveCtx<'_>) -> Resolv
     use OutputShape::*;
 
     match &b {
-        In | InAccessor(_) => {
-            if ctx.mode != OneToOne {
+        In => {
+            // $<in> is the unit's input set — the loop member in one-to-one, the
+            // space-joined collected set in many-to-one. Only one-shot (no
+            // iteration source) rejects it.
+            if ctx.mode == OneShot {
                 return Resolved::Error(ResolveError::BuiltinWrongMode {
                     ident: ident.to_string(),
                     builtin: format!("{:?}", b),
@@ -315,8 +316,11 @@ fn validate_builtin(ident: &str, b: BuiltinKind, ctx: &ResolveCtx<'_>) -> Resolv
                 });
             }
         }
-        All => {
-            if ctx.mode != ManyToOne {
+        InAccessor(_) => {
+            // An accessor requires the input set be singular — legal only in
+            // one-to-one (fan-out) mode; in many-to-one the set is collected and a
+            // path accessor on the joined form is meaningless.
+            if ctx.mode != OneToOne {
                 return Resolved::Error(ResolveError::BuiltinWrongMode {
                     ident: ident.to_string(),
                     builtin: format!("{:?}", b),
@@ -565,14 +569,21 @@ mod tests {
     }
 
     #[test]
-    fn in_in_many_to_one_is_error() {
+    fn in_in_many_to_one_is_ok_accessor_is_error() {
+        // CS-0130: `$<in>` is unit-centric — in ManyToOne it resolves to the
+        // joined collected set (the `In` builtin), no longer an error.
         let r = empty();
         let ctx = ResolveCtx {
             mode: IterMode::ManyToOne,
             outputs: OutputShape::Single,
             recipes_in_scope: &r,
         };
-        assert!(matches!(resolve("in", &ctx), Resolved::Error(ResolveError::BuiltinWrongMode { .. })));
+        assert_eq!(resolve("in", &ctx), Resolved::Builtin(BuiltinKind::In));
+        // A path accessor on the joined form is still meaningless — rejected.
+        assert!(matches!(
+            resolve("in.stem", &ctx),
+            Resolved::Error(ResolveError::BuiltinWrongMode { .. })
+        ));
     }
 
     #[test]

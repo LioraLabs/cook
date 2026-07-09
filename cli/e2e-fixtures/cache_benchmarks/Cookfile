@@ -35,7 +35,7 @@ recipe greet
     ingredients "src/greet.c"
     cook "build/greet.o" {
         mkdir -p build
-        $<CC> $<CFLAGS> -c $<all> -o $<out>
+        $<CC> $<CFLAGS> -c $<in> -o $<out>
     }
 
 # util.c — also consumes $<CFLAGS>; provides main()
@@ -43,7 +43,7 @@ recipe util
     ingredients "src/util.c"
     cook "build/util.o" {
         mkdir -p build
-        $<CC> $<CFLAGS> -c $<all> -o $<out>
+        $<CC> $<CFLAGS> -c $<in> -o $<out>
     }
 
 # Link step — does NOT consume $<CFLAGS> via inference
@@ -69,7 +69,7 @@ recipe sister
     ingredients "src/sister.txt"
     cook "build/sister.out" {
         mkdir -p build
-        cat $<all> > $<out>
+        cat $<in> > $<out>
     }
 
 # Multi-output recipe — every output uploads as its own artifact via the

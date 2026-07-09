@@ -1,0 +1,3 @@
+recipe r
+    ingredients "src/*.o"
+    cook "dist/bundle.tgz" { tar czf $<out> $<in.stem> }

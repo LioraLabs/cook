@@ -1,6 +1,6 @@
 recipe r
     ingredients "src/*.o"
-    cook "dist/bundle.tgz" { tar czf $<out> $<all> }
+    cook "dist/bundle.tgz" { tar czf $<out> $<in> }
     plate >{
         print(input)
         print(inputs)

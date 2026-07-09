@@ -24,7 +24,7 @@ If you see `$<X` *without* a closing `>`, or with a non-identifier character bef
 
 Inside an output pattern, a `{ ... }` body, a `plate`/`test` body, or a bare shell command, a `$<TOKEN>` placeholder resolves in priority order:
 
-1. **Builtin placeholders** — the per-step accessors like `$<in>`, `$<out>`, `$<all>`, `$<out_1>`.
+1. **Builtin placeholders** — the per-step accessors like `$<in>`, `$<out>`, `$<out_1>`.
 2. **Recipe references** — `$<lib>` expands to the recipe `lib`'s outputs; `$<lib.stem>` is the same with a path accessor applied.
 3. **Declared environment variables** — `$<HOST>` resolves to `cook.env["HOST"]` *if and only if* `HOST` was declared in a `config` block.
 4. **Hard error** — anything else fails at load time with a diagnostic.
@@ -35,15 +35,14 @@ There is no silent fallthrough. If you typo a placeholder, you get a clear error
 
 | Placeholder       | Meaning                                              | Where it works                |
 |-------------------|------------------------------------------------------|-------------------------------|
-| `$<in>`           | The current input (in iterating steps)               | `cook` body, `plate`, `test` |
+| `$<in>`           | The current input — unit-centric: the one item being processed in a one-to-one (fan-out) step, or every input on one line, space-separated, in a many-to-one step | `cook` body, `plate`, `test` |
 | `$<out>`          | The current output                                   | `cook` body                   |
-| `$<all>`          | Every input on one line, space-separated              | `cook` body                   |
 | `$<out_1>`, `$<out_2>`, ... | Nth declared output                       | `cook` body, multi-output `cook` |
 | `$<in.stem>`      | Stem of the current input (any path accessor)        | output pattern, `cook` body   |
 
 Bare shell commands in a recipe body run in *one-shot* mode — no iteration source, no declared output — so the iteration/output builtins above don't apply there. Bare shell *can* still substitute recipe references (`$<compile>`) and declared env vars (`$<TARGET>`), which is what §7.10's "Try it" does.
 
-`$<in>`, `$<out>`, `$<all>` are the ones you'll write 90% of the time.
+`$<in>` and `$<out>` are the ones you'll write 90% of the time.
 
 ## 7.4. Path accessors as placeholders
 
@@ -77,7 +76,7 @@ recipe link
     cook "build/app" { gcc $<compile> -o $<out> }
 ```
 
-`$<compile>` in the link body expands to every output of the `compile` recipe, space-separated, exactly as if you'd written `$<all>` referring to compile's outputs. The placeholder also records `link`'s dep on `compile` for you, so no explicit `: compile` is needed (see the tip below). *(Standard §5.5.)*
+`$<compile>` in the link body expands to every output of the `compile` recipe, space-separated — the same "collected set" shape that `$<in>` gets in a many-to-one step. The placeholder also records `link`'s dep on `compile` for you, so no explicit `: compile` is needed (see the tip below). *(Standard §5.5.)*
 
 You can have any number of bare recipe references in a single step. They don't drive iteration — they're just text substitution. The dependency graph picks up the edge automatically (referencing `$<compile>` inside `link` makes `link` depend on `compile`).
 
