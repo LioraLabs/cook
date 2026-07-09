@@ -21,12 +21,13 @@ chore clean
 chore status
     ls -la .scratch || echo "(no .scratch directory)"
 
-# A recipe that produces a cached artifact.
-# The cook step declares the output; the shell step below it produces the file.
+# A recipe that produces a cached artifact: the cook step declares the output
+# and builds it in a shell block.
 recipe build
-    cook ".scratch/marker"
-    mkdir -p .scratch
-    echo built > .scratch/marker
+    cook ".scratch/marker" {
+        mkdir -p .scratch
+        echo built > .scratch/marker
+    }
 
 # A chore that depends on a recipe. Runs the artifact interactively.
 chore play: build
