@@ -184,7 +184,7 @@ seal_step             ::= ("seal" | "unseal") probe_ref+ NEWLINE
                           /* recipe-body step; a determinant input stream,
                              sibling of ingredients_step. Recipe-level `unseal`
                              is rejected (trailing-only) — see §8.4.3. */
-cook_step             ::= "cook" cook_output body? cook_mods NEWLINE
+cook_step             ::= "cook" cook_output body cook_mods NEWLINE
 cook_output           ::= STRING+ | "(" LUA_EXPR ")"
 exec_lua_block        ::= ">{" LUA_BLOCK_CONTENT "}"
 shell_block           ::= "{" SHELL_BLOCK_CONTENT "}"
@@ -225,7 +225,7 @@ shell_command         ::= SHELL_LINE_CONTENT NEWLINE
                              alternative. See § 3.8. */
 ```
 
-**Multi-line patterns (CS-0078).** In both `ingredients_step` and `cook_step`, whitespace between successive `STRING` (or `ingredient`) tokens MAY include line breaks. A conforming implementation MUST accept continuation lines that begin with `"` (or `!"` in the case of `ingredients_step`) as part of the same declaration. Pattern collection terminates at the first non-quote token on the same physical line as a quoted pattern, which then resolves per the surrounding production (the body opener `{` / `>{`, or — when no body follows — a trailing `cook_mods` token, for `cook_step`; end-of-declaration for `ingredients_step`); a non-quote token on the same line as a quoted pattern that is neither a legal terminator nor a valid `cook_mods` token MUST produce a diagnostic naming the offending text. A continuation line whose first token after leading whitespace is not `"` (or `!"` for `ingredients_step`) terminates the declaration silently — the declaration is treated as complete, and the line is dispatched per §A.4's step-dispatch-priority order. The latter case is genuinely ambiguous between an intended-but-misspelled continuation and the start of a new step; the Standard chooses non-diagnosis to preserve the unambiguous declaration-only form of `cook_step` (App. A.4, "Declaration-only cook step") and the analogous "ingredients without trailing patterns" idiom.
+**Multi-line patterns (CS-0078).** In both `ingredients_step` and `cook_step`, whitespace between successive `STRING` (or `ingredient`) tokens MAY include line breaks. A conforming implementation MUST accept continuation lines that begin with `"` (or `!"` in the case of `ingredients_step`) as part of the same declaration. Pattern collection terminates at the first non-quote token on the same physical line as a quoted pattern, which then resolves per the surrounding production (the body opener `{` / `>{`, which is mandatory for `cook_step` — CS-0133; end-of-declaration for `ingredients_step`); a non-quote token on the same line as a quoted pattern that is neither a legal terminator nor a valid `cook_mods` token MUST produce a diagnostic naming the offending text. A continuation line whose first token after leading whitespace is not `"` (or `!"` for `ingredients_step`) terminates the declaration silently — the declaration is treated as complete, and the line is dispatched per §A.4's step-dispatch-priority order. The latter case is genuinely ambiguous between an intended-but-misspelled continuation and the start of a new step; the Standard chooses non-diagnosis to preserve the analogous "ingredients without trailing patterns" idiom. For `cook_step`, a continuation line that is not a quoted pattern still terminates pattern collection silently, after which the body-mandatory rule (CS-0133) applies: a `cook_step` left without a body opener on its final pattern line is rejected.
 
 ### Example A.4.1
 
@@ -252,7 +252,7 @@ ingredients "src/*.c"
             !"src/legacy.c"
 ```
 
-**Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before the body, the body resolves per the unrestricted production above — the bare-`STRING` arm having been removed in CS-0022, a trailing `STRING` simply joins the output-pattern list (declaration-only form) rather than being read as a body.
+**Multi-output cook-step rule.** When `cook_step` has two or more `STRING` output patterns before the body, the body resolves per the unrestricted production above — the bare-`STRING` arm having been removed in CS-0022, a trailing `STRING` simply joins the output-pattern list rather than being read as a body; the resulting body-less multi-output `cook_step` is then rejected because a body is mandatory (CS-0133).
 
 **Iteration coherence (CS-0022).** All `STRING` output patterns of a single `cook_step` MUST share an iteration source: every output is literal (no accessor placeholder), or every output bears `$<in.ACCESSOR>` (own-input driver), or every output bears `$<lib.ACCESSOR>` for the same recipe `lib` (dep-driven driver). A conforming implementation MUST reject a `cook_step` whose output patterns mix sources, with a diagnostic naming the offending outputs. See §{steps.iteration-mode}.
 
@@ -268,7 +268,7 @@ ingredients "src/*.c"
 
 **`using` is rejected (CS-0099).** The former body introducer `using` (`cook STR { … }` / `cook STR >{ … }`, removed in CS-0099) MUST be rejected at the body position with a migration diagnostic that names CS-0099 and states that the keyword was removed. The body opener follows the output pattern(s) directly. Conformance fixture `cs0099-using-keyword-rejected` pins the diagnostic.
 
-**Declaration-only cook step.** A `cook_step` whose body is absent is a declaration — it announces the output without providing a build command inline. Its build is assumed to be provided by preceding Lua registrations or a later amendment.
+**Cook body is mandatory (CS-0133).** A `cook_step` MUST have a body (`{ … }` or `>{ … }`). The former declaration-only form (a `cook` with output pattern(s) and no body) was removed: it registered no work unit and its documented "declaration now, build later via a following `shell_command` or preceding Lua" idiom never executed. A conforming implementation MUST reject a body-less `cook_step` with a diagnostic naming CS-0133. A tail that is neither a body opener nor a valid `cook_mods` token still produces the sharper `cook_mods` diagnostic (see "Multi-line patterns"). Conformance fixture `cs0133-declaration-only-cook-rejected` pins the rejection.
 
 **Cook-step disposition (normative).** A unit's cache participation is declared by two crisp surfaces (COOK-171): `seal`/`unseal` **steps** (a recipe-body determinant input stream) and the trailing **`cook_mods`** on a `cook_step`. The full surface and its parse-time rules are normative in §{steps.cook-disposition}; in summary, a conforming implementation MUST enforce: a recipe-level `seal` step requires at least one `probe_ref` (bare `seal` rejected), is additive across the recipe, and contributes to a recipe-wide baseline applied to every cook regardless of position (order-independent); a recipe-level `unseal` is rejected (`unseal` is a trailing modifier only); a `cook_step`'s effective seal set is `(baseline ∪ trailing seals) − trailing unseals`, sorted and de-duplicated; the trailing `share_mod` is a single optional slot (`local`, `pinned`, or `nondet`) which MUST be last (at most one — `local`/`pinned`/`nondet` are mutually exclusive by construction); a `probe_ref` is a bare `BARE_PROBE_KEY` (the `STRING` form and a third `:IDENT` segment are rejected, as in §{grammar-appendix.probe}); and the removed `record` keyword (renamed `nondet`) is rejected with a migration diagnostic. `seal`, `unseal`, `local`, `pinned`, and `nondet` are NOT reserved words; `seal`/`unseal` are recognised as steps only at a recipe-body line position, and `local`/`pinned`/`nondet` only in the trailing `cook_mods` position.
 
@@ -277,7 +277,7 @@ ingredients "src/*.c"
 1. Prefix `ingredients` + separator (space, tab, or end of token) → `ingredients_step`.
 2. Prefix `seal` + separator → recipe-level `seal_step` (its `probe_ref`s contribute to the recipe seal baseline).
 3. Prefix `unseal` + separator → rejected as a recipe-level step (`unseal` is a trailing `cook_mods` modifier only; §{steps.cook-disposition}).
-4. Prefix `cook` + separator → `cook_step` (its trailing `cook_mods` are parsed after the body, or after the output patterns for a declaration-only cook).
+4. Prefix `cook` + separator → `cook_step` (its trailing `cook_mods` are parsed after the body — a cook always has one, CS-0133).
 5. Prefix `plate` + separator → `plate_step`.
 6. Prefix `test` + separator → `test_step`.
 7. First character is `@` and the remainder is non-empty → `interactive_command`.
