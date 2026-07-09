@@ -219,19 +219,15 @@ fn test_cook_step_many_to_one() {
 }
 
 #[test]
-fn test_cook_step_declaration_only() {
+fn cs0133_body_less_cook_rejected() {
+    // CS-0133: declaration-only cook steps were removed. A body-less cook
+    // (the §8.4.2 "decl + following shell_command" vaporware pattern) is a
+    // parse error, converting the former silent 0-node registration + OneShot
+    // runtime trap into a compile-time diagnostic.
     let source = "recipe \"build\"\n    ingredients \"src/*.c\"\n    cook \"bin/app\"\n    gcc src/main.c -o bin/app\n";
-    let result = parse(source).unwrap();
-    let recipe = &result.recipes[0];
-    assert_eq!(recipe.steps.len(), 2);
-    match &recipe.steps[0] {
-        Step::Cook { step, .. } => {
-            assert_eq!(step.outputs[0].as_str(), "bin/app");
-            assert!(step.body.is_none());
-        }
-        other => panic!("expected Cook, got {:?}", other),
-    }
-    assert!(matches!(&recipe.steps[1], Step::Shell { .. }));
+    let err = parse(source).expect_err("body-less cook must be rejected");
+    let msg = err.to_string();
+    assert!(msg.contains("declaration-only cook steps were removed"), "got: {}", msg);
 }
 
 #[test]
@@ -886,7 +882,7 @@ fn test_chore_implicit_termination() {
 
 #[test]
 fn test_recipe_after_chore_ok() {
-    let input = "chore clean\n    rm -rf build\nrecipe build\n    cook \"out\"\n";
+    let input = "chore clean\n    rm -rf build\nrecipe build\n    cook \"out\" { touch out }\n";
     let cookfile = parse(input).expect("recipe after chore should parse");
     assert_eq!(cookfile.chores.len(), 1);
     assert_eq!(cookfile.recipes.len(), 1);
@@ -2018,15 +2014,12 @@ fn cs0099_cook_lua_expr_output_with_body() {
 }
 
 #[test]
-fn cs0099_cook_declaration_only_still_parses() {
+fn cs0133_cook_no_body_rejected_bare() {
+    // CS-0133 supersedes the old CS-0099 "declaration-only still parses"
+    // guarantee: a body is now mandatory.
     let src = "recipe \"build\"\n    cook \"bin/app\"\n    gcc src/main.c -o bin/app\n";
-    let result = parse(src).unwrap();
-    let recipe = &result.recipes[0];
-    match &recipe.steps[0] {
-        Step::Cook { step, .. } => assert!(step.body.is_none()),
-        other => panic!("expected Cook, got {:?}", other),
-    }
-    assert!(matches!(&recipe.steps[1], Step::Shell { .. }));
+    let err = parse(src).expect_err("body-less cook must be rejected");
+    assert!(err.to_string().contains("declaration-only cook steps were removed"), "got: {}", err);
 }
 
 #[test]
@@ -2129,10 +2122,11 @@ fn disp_trailing_seal_then_share_mod() {
 }
 
 #[test]
-fn disp_declaration_only_cook_with_trailing_mod() {
-    let cf = parse("recipe r\n    cook \"x\" local\n").unwrap();
-    let d = first_cook_disposition(&cf);
-    assert_eq!(d.sharing, cook_contracts::Sharing::Local);
+fn cs0133_body_less_cook_with_trailing_mod_rejected() {
+    // CS-0133: a clean cook_mods tail (`local`) no longer keeps a body-less
+    // cook alive — the modifier annotated a unit that never registered.
+    let err = parse("recipe r\n    cook \"x\" local\n").expect_err("body-less cook + mod must be rejected");
+    assert!(err.to_string().contains("declaration-only cook steps were removed"), "got: {}", err);
 }
 
 #[test]

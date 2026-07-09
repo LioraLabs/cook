@@ -119,19 +119,18 @@ The four Lua-prefix forms (`>>`, `>>{`, `>`, `>{`) are not subject to this casca
 The "separator" after a step keyword is space, tab, or end of token. A Content line whose first token is `cooking` is a `shell_command`, not a malformed `cook_step`. See parser test `test_strip_keyword`.
 
 ## 8.4. `cook` — single-output form [#steps.cook-single]
-A `cook_step` (§{grammar-appendix.steps}, `cook_step`) declares a build output. The single-output form has exactly one `STRING` output pattern before the optional body (CS-0099 removed the `using` introducer; the body opener follows the pattern directly):
+A `cook_step` (§{grammar-appendix.steps}, `cook_step`) declares a build output. The single-output form has exactly one `STRING` output pattern before the body (CS-0099 removed the `using` introducer; the body opener follows the pattern directly). The body is mandatory (CS-0133):
 
 ```ebnf
-cook "out" body?
+cook "out" body
 ```
 
 The output is a `STRING` whose interior MAY contain substitution placeholders (e.g. `$<in.stem>`, `$<in>`, `$<out>`). The placeholder language is defined by §{phl} for substitution shapes and by §{xref} for cross-recipe references; §{recipes} treats placeholder text as opaque.
 
-A conforming implementation MUST accept all three of the following forms:
+A conforming implementation MUST accept both of the following forms:
 
 | Form | `body` | Semantic |
 |---|---|---|
-| `cook "out"`                    | absent                  | declaration-only: announces the output without a build command (§{grammar-appendix.steps}, "Declaration-only cook step"). The build command is expected to be registered by preceding Lua code or supplied by a later amendment. |
 | `cook "out" >{ ... }`           | `exec_lua_block`        | execute-phase Lua block; produces the build effect, with `inputs` / `outputs` / `input` / `output` bindings per §{lua.using-block-globals}. |
 | `cook "out" { ... }`            | `shell_block`           | sequence of shell commands, one per non-blank line of the block (§{lexical.brace-blocks}, "Shell block line normalisation"). The block's textual placeholders (§{phl.cook-step}) are substituted at register time. |
 
@@ -147,17 +146,6 @@ recipe lib
 ```
 
 The first `cook` is a one-to-one mapping from each ingredient to one object file. The second is a many-to-one mapping producing a single archive from the collected set. Both use the inline (one-line) `shell_block` body form.
-
-### Example 8.4.2
-
-```cook
-recipe build
-    ingredients "src/*.c"
-    cook "bin/app"
-    gcc src/main.c -o bin/app
-```
-
-The `cook "bin/app"` step is declaration-only. The following `shell_command` supplies the actual build command; the execution model (§{exec.phases}) is responsible for associating it with the declared output.
 
 ### Note 8.4.1
 
@@ -197,7 +185,7 @@ The CS-0022 unification removes `$<in>` from the body's contents as a separate i
 A `cook_step` MAY substitute a parenthesised Lua expression for the quoted output-path `STRING`:
 
 ```ebnf
-cook_step ::= "cook" ( STRING+ | "(" LUA_EXPR ")" ) body? NEWLINE
+cook_step ::= "cook" ( STRING+ | "(" LUA_EXPR ")" ) body NEWLINE
 ```
 
 A conforming implementation MUST accept the Lua-expression form under the following rules.
@@ -207,7 +195,7 @@ A conforming implementation MUST accept the Lua-expression form under the follow
 3. **Return value.** The expression's return value MUST coerce to a non-empty string under the same coercion rules the Standard applies to chore Lua-expression defaults (§{chores.params}): `string` verbatim, `number` via Lua `tostring`, `boolean` to `"true"` or `"false"`; any other type — including `nil`, `table`, `function`, `thread`, `userdata` — is a register-phase diagnostic. The empty string is likewise a register-phase diagnostic.
 4. **One-to-one only.** The Lua-expression form is admitted exclusively when the resulting `cook_step` is in **one-to-one over own inputs** mode or **one-to-one over data members** mode (§{steps.iteration-mode}); in the data-member case the expression sees `item` rather than `input` (rule 2). The expression is evaluated per iteration element, so dep-driven and many-to-one modes — neither of which iterates element-by-element — have no well-defined evaluation contract. A conforming implementation MUST reject a Lua-expression-output `cook_step` whose recipe has no `ingredients_step`, or whose iteration source resolves to the empty set, with a register-phase diagnostic.
 5. **Mutual exclusion with quoted-string outputs.** Within a single `cook_step`, the output declaration is either (a) one or more `STRING` patterns with the `$<...>` sigil vocabulary of §{phl.cook-step}, or (b) exactly one parenthesised Lua expression. A conforming implementation MUST reject a `cook_step` that mixes the two forms (e.g. `cook "a.out" (input:gsub(...)) { ... }`) with a register-phase diagnostic naming the offending tokens.
-6. **Body.** The body of a Lua-expression-output `cook_step` follows the same grammar as the quoted-string form (§{steps.cook-single}): the declaration-only form (no body), `exec_lua_block` (`>{ ... }`), and `shell_block` (`{ ... }`) are all admitted. The placeholder vocabulary inside the body (§{phl.cook-step}) is the one-to-one vocabulary: `$<in>`, `$<in.ACCESSOR>`, `$<out>`. Note that `$<out>` resolves to the Lua-expression's evaluated string for the current iteration; placeholders that index the output position list (`$<out_1>`, `$<out_2>`, …) have no use in this form because the form declares exactly one output per iteration.
+6. **Body.** The body of a Lua-expression-output `cook_step` follows the same grammar as the quoted-string form (§{steps.cook-single}): `exec_lua_block` (`>{ ... }`) and `shell_block` (`{ ... }`) are both admitted; the body is mandatory (CS-0133). The placeholder vocabulary inside the body (§{phl.cook-step}) is the one-to-one vocabulary: `$<in>`, `$<in.ACCESSOR>`, `$<out>`. Note that `$<out>` resolves to the Lua-expression's evaluated string for the current iteration; placeholders that index the output position list (`$<out_1>`, `$<out_2>`, …) have no use in this form because the form declares exactly one output per iteration.
 
 ### Example 8.4.2.1
 
@@ -287,7 +275,7 @@ cook_mods ::= ("seal" probe_ref+ | "unseal" probe_ref+)* share_mod?
 share_mod ::= "local" | "pinned" | "nondet"
 ```
 
-The tail of a `cook` step tunes that one unit. The `cook_mods` are line-final: they follow the body's closing `}` on the same physical line, or — for a declaration-only cook (no body) — the output pattern(s) on the `cook` line. Tokens on a subsequent line are not part of the `cook_mods` (a `}` on its own line followed by a `seal …` line dispatches the latter as a recipe-level `seal` step). A conforming implementation MUST enforce:
+The tail of a `cook` step tunes that one unit. The `cook_mods` are line-final: they follow the body's closing `}` on the same physical line (a cook step always has a body, CS-0133). Tokens on a subsequent line are not part of the `cook_mods` (a `}` on its own line followed by a `seal …` line dispatches the latter as a recipe-level `seal` step). A conforming implementation MUST enforce:
 
 4. **Per-unit seal/unseal adjust the baseline.** A unit's *effective seal set* is `(baseline ∪ trailing seals) − trailing unseals`, sorted and de-duplicated. Bare trailing `seal`/`unseal` (no refs) MUST be rejected.
 5. **`unseal` is trailing-only.** `unseal <probes>` removes refs from this unit's effective set; it is valid only here (not as a recipe-level step, rule 3).
@@ -334,9 +322,9 @@ A `cook_step` MAY declare two or more outputs by listing additional `STRING` pat
 cook "a" "b" ... body
 ```
 
-When two or more outputs are present and a body is given, the body is one of the two block forms (§{steps.cook-single}): `exec_lua_block` (`>{ ... }`) or `shell_block` (`{ ... }`). The bare-string form was removed in CS-0022, and `cook "a" "b" "cmd"` parses as a three-output declaration-only step rather than a body-bearing one (§{grammar-appendix.steps}).
+When two or more outputs are present and a body is given, the body is one of the two block forms (§{steps.cook-single}): `exec_lua_block` (`>{ ... }`) or `shell_block` (`{ ... }`). The bare-string form was removed in CS-0022, and `cook "a" "b" "cmd"` parses as a three-output cook with no body — a trailing `STRING` joins the output-pattern list rather than being read as a body — which is then rejected because a body is mandatory (CS-0133).
 
-The declaration-only form of §{steps.cook-single} also applies to the multi-output case: a `cook_step` listing two or more outputs with no body is accepted and announces the outputs without providing an inline build command. Its build is assumed to be provided by preceding Lua registrations or a later amendment (App. A.4, "Declaration-only cook step").
+Like the single-output form, a multi-output `cook_step` MUST have a body (CS-0133); `cook "a" "b"` with no body is a parse error.
 
 ### Example 8.5.1
 

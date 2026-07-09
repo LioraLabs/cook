@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Cook outputs=["out/app"] body=None
+        Cook outputs=["out/app"] body=ShellBlock(["touch out/app"])
   chores:
     Chore name="play" line=4
       params: []
