@@ -5,4 +5,4 @@ register
     cook_cc.find("raylib", { version = ">=5.0" })
 
 recipe noop
-    > cook.sh("true")
+    test >{ cook.sh("true") }

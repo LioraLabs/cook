@@ -1,1 +1,6 @@
-Diagnostic class: `@` must be followed by non-empty content. Exercises § 2.7 (line prefixes) and § 4.10 (shell steps — interactive form). The substring "empty" is the normative class indicator; Task 18's harness may adjust the exact substring to match whatever the Rust parser's current wording uses — but the class ("empty interactive command") is normative.
+Diagnostic class: a leading `@` interactive prefix is removed from the
+language (CS-0134). Exercises § 2.7 (line prefixes) and § 4.10 (recipes are
+declarative; chore commands are interactive by default). The substring
+"interactive prefix was removed from the language (CS-0134)" is the normative
+class indicator; any leading `@` — including an otherwise-empty one — is
+rejected before its (now nonexistent) content is examined.

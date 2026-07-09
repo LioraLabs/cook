@@ -1,5 +1,5 @@
 recipe build
-    >{
+    test >{
         local s = [[
             this string contains a } brace
             and another } here

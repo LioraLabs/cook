@@ -8,19 +8,13 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Shell interactive=false command="cook_cc.lib(\"foo\", {"
-        Shell interactive=false command="sources = { \"src/lib.cpp\" },"
-        Shell interactive=false command="defines = { \"FOO_INTERNAL\" },"
-        Shell interactive=false command="})"
+        InlineLua code="cook_cc.lib(\"foo\", {\n        sources = { \"src/lib.cpp\" },\n        defines = { \"FOO_INTERNAL\" },\n    })"
     Recipe name="build" line=9
       deps: ["libfoo"]
       ingredients: []
       excludes: []
       steps:
-        Shell interactive=false command="cook_cc.bin(\"app\", {"
-        Shell interactive=false command="sources = { \"src/main.cpp\" },"
-        Shell interactive=false command="links = { \"foo\" },"
-        Shell interactive=false command="})"
+        InlineLua code="cook_cc.bin(\"app\", {\n        sources = { \"src/main.cpp\" },\n        links = { \"foo\" },\n    })"
   chores:
   register_blocks: []
   top_level_module_calls: []

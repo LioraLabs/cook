@@ -1,5 +1,7 @@
 use cook_cc
 
 recipe probe
-    > local r = cook_cc.find("SDL3", { cmake = true, version = ">=3.2" })
-    > -- cmake-compat reports skip on opts.version; chain falls through.
+    test >{
+        local r = cook_cc.find("SDL3", { cmake = true, version = ">=3.2" })
+        -- cmake-compat reports skip on opts.version; chain falls through.
+    }

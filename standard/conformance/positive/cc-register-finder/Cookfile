@@ -1,8 +1,10 @@
 use cook_cc
 
 recipe probe
-    > cook_cc.register_finder("mylib", function(_opts)
-    >     return { found = true, cflags = "", libs = "-lmylib", system_libs = {"mylib"}, include_dirs = {}, lib_dirs = {}, frameworks = {}, version = nil, tried = {} }
-    > end)
-    > local r = cook_cc.find("mylib")
-    > if not r.found then error("expected project-registered hit") end
+    test >{
+        cook_cc.register_finder("mylib", function(_opts)
+            return { found = true, cflags = "", libs = "-lmylib", system_libs = {"mylib"}, include_dirs = {}, lib_dirs = {}, frameworks = {}, version = nil, tried = {} }
+        end)
+        local r = cook_cc.find("mylib")
+        if not r.found then error("expected project-registered hit") end
+    }

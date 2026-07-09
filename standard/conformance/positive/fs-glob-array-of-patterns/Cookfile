@@ -1,5 +1,7 @@
 recipe "list_sources"
-    > local files = fs.glob({"src/*.c", "src/legacy/*.c"})
-    > for _, f in ipairs(files) do
-    >   print(f)
-    > end
+    test >{
+        local files = fs.glob({"src/*.c", "src/legacy/*.c"})
+        for _, f in ipairs(files) do
+          print(f)
+        end
+    }

@@ -1,1 +1,0 @@
-Pins the recipe-body region rule (§{recipes.step-kinds} Note 4.4.2 / App. A.3 "Region ordering rule"): once a recipe's imperative region begins (here, on line 3 with `> print("midway")`), no declarative-region step may follow. The trailing `cook "b" ...` on line 4 is the offending step. Error class: `imperative region`.

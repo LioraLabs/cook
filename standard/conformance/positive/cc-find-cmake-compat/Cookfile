@@ -1,8 +1,10 @@
 use cook_cc
 
 recipe probe
-    > local r = cook_cc.find("SDL3")
-    > if not r.found then return end
-    > for _, a in ipairs(r.tried) do
-    >     if a.strategy == "cmake-compat" then break end
-    > end
+    test >{
+        local r = cook_cc.find("SDL3")
+        if not r.found then return end
+        for _, a in ipairs(r.tried) do
+            if a.strategy == "cmake-compat" then break end
+        end
+    }

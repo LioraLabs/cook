@@ -1,1 +1,1 @@
-requires a command
+interactive prefix was removed from the language (CS-0134)

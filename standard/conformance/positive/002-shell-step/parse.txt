@@ -3,12 +3,11 @@ Cookfile
   imports: []
   config_blocks: []
   recipes:
-    Recipe name="clean" line=1
-      deps: []
-      ingredients: []
-      excludes: []
-      steps:
-        Shell interactive=false command="rm -rf build"
   chores:
+    Chore name="clean" line=1
+      params: []
+      deps: []
+      steps:
+        Shell interactive=true command="rm -rf build"
   register_blocks: []
   top_level_module_calls: []

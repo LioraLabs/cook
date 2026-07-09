@@ -1,5 +1,5 @@
 recipe build
-    > cook.sh("echo surface")
+    test >{ cook.sh("echo surface") }
 
 register
     cook.recipe("build", {requires = {}}, function()

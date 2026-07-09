@@ -8,10 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Lua code="local files = fs.glob({\"src/*.c\", \"src/legacy/*.c\"})"
-        Lua code="for _, f in ipairs(files) do"
-        Lua code="  print(f)"
-        Lua code="end"
+        Test body=LuaBlock("        local files = fs.glob({\"src/*.c\", \"src/legacy/*.c\"})\n        for _, f in ipairs(files) do\n          print(f)\n        end") timeout=None should_fail=false
   chores:
   register_blocks: []
   top_level_module_calls: []

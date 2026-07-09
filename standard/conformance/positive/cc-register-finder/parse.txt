@@ -8,11 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Lua code="cook_cc.register_finder(\"mylib\", function(_opts)"
-        Lua code="    return { found = true, cflags = \"\", libs = \"-lmylib\", system_libs = {\"mylib\"}, include_dirs = {}, lib_dirs = {}, frameworks = {}, version = nil, tried = {} }"
-        Lua code="end)"
-        Lua code="local r = cook_cc.find(\"mylib\")"
-        Lua code="if not r.found then error(\"expected project-registered hit\") end"
+        Test body=LuaBlock("        cook_cc.register_finder(\"mylib\", function(_opts)\n            return { found = true, cflags = \"\", libs = \"-lmylib\", system_libs = {\"mylib\"}, include_dirs = {}, lib_dirs = {}, frameworks = {}, version = nil, tried = {} }\n        end)\n        local r = cook_cc.find(\"mylib\")\n        if not r.found then error(\"expected project-registered hit\") end") timeout=None should_fail=false
   chores:
   register_blocks: []
   top_level_module_calls: []
