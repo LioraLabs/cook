@@ -95,6 +95,10 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   'recipes.iteration-mode':          'steps.iteration-mode',
   'recipes.plate-step-not-sandboxed':'steps.plate',
 
+  // v1.0 language cut (CS-0135): the `plate` step kind is removed outright.
+  'steps.plate':                     null,
+  'steps.plate-not-sandboxed':       null,
+
   'intro.conformance':               'conf.criteria',
 };
 
