@@ -14,10 +14,10 @@
 # walkthrough itself.
 
 recipe build
-    echo "ok"
+    cook "out/build.txt" { echo ok > $<out> }
 
 recipe boom
-    false
+    cook "out/boom.txt" { false }
 
 recipe failing_test
     cook "out/c.txt" { echo hi > $<out> }

@@ -106,7 +106,7 @@ rm -rf "$tmpdir"
 
 # Exit 1 — cook serve: register-phase error exits non-zero (never enters watch)
 tmpdir=$(mktemp -d)
-printf 'recipe build\n    cook "x.txt" { echo hi > x.txt }\n\nlua\n    error("register-phase boom")\n' > "$tmpdir/Cookfile"
+printf 'recipe build\n    cook "x.txt" { echo hi > x.txt }\n\nregister\n    error("register-phase boom")\n' > "$tmpdir/Cookfile"
 (cd "$tmpdir" && timeout 10 "$COOK" serve >/dev/null 2>&1)
 check_exit "cook serve: register-phase error" 1 "$?"
 rm -rf "$tmpdir"

@@ -1,14 +1,12 @@
 recipe build
-    >>{
-        cook.probe("codec:info", {
-            inputs = {},
-            produce = "return cook.json_decode('{\"word\":\"hello-json\"}')",
-        })
-        cook.add_unit({
-            name = "echo",
-            inputs = {},
-            outputs = {"done.marker"},
-            probes = {"codec:info"},
-            command = "echo $<codec:info.word> > done.marker",
-        })
-    }
+    cook.probe("codec:info", {
+        inputs = {},
+        produce = "return cook.json_decode('{\"word\":\"hello-json\"}')",
+    })
+    cook.add_unit({
+        name = "echo",
+        inputs = {},
+        outputs = {"done.marker"},
+        probes = {"codec:info"},
+        command = "echo $<codec:info.word> > done.marker",
+    })

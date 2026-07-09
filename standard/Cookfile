@@ -23,11 +23,11 @@ chore lint
     checks.lint_keywords()
 
 chore host
-    @pnpm host
+    pnpm host
 
 chore preview
     pnpm build
-    @pnpm host
+    pnpm host
 
 chore against-tag version=(fs.read("VERSION"):gsub("%s+$", ""))
     > checks.against_tag(version)
