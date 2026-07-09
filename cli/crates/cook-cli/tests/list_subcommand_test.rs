@@ -34,12 +34,11 @@ fn list_prints_names_one_per_line_no_decoration() {
     let tmp = TempDir::new().expect("tempdir");
     write_cookfile(
         tmp.path(),
-        // Two recipes + two chores. Use trivial bodies so parse succeeds.
+        // Two recipes + two chores. Recipes are body-less (declarative);
+        // chores keep shell bodies. Trivial so parse succeeds.
         "recipe build\n\
-             echo build\n\
          \n\
          recipe deploy\n\
-             echo deploy\n\
          \n\
          chore clean\n\
              rm -rf build\n\
@@ -82,7 +81,6 @@ fn list_recipes_only_filters_chores() {
     write_cookfile(
         tmp.path(),
         "recipe build\n\
-             echo build\n\
          \n\
          chore clean\n\
              rm -rf build\n",
@@ -106,7 +104,6 @@ fn list_chores_only_filters_recipes() {
     write_cookfile(
         tmp.path(),
         "recipe build\n\
-             echo build\n\
          \n\
          chore clean\n\
              rm -rf build\n",
@@ -127,7 +124,7 @@ fn list_chores_only_filters_recipes() {
 #[test]
 fn list_rejects_both_filter_flags() {
     let tmp = TempDir::new().expect("tempdir");
-    write_cookfile(tmp.path(), "recipe build\n    echo hi\n");
+    write_cookfile(tmp.path(), "recipe build\n");
 
     let out = run_list(tmp.path(), &["--recipes-only", "--chores-only"]);
     assert!(

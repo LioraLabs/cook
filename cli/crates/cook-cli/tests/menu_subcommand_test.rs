@@ -37,8 +37,7 @@ fn menu_shows_chore_params_and_bare_recipe() {
         tmp.path(),
         "chore greet caller who=\"world\"\n    echo \"$<who>\"\n\
          \n\
-         recipe build\n\
-             echo hi\n",
+         recipe build\n",
     );
 
     let out = run_cook(tmp.path(), &["menu"]);
@@ -74,8 +73,7 @@ fn list_shows_bare_names_no_params() {
         tmp.path(),
         "chore greet caller who=\"world\"\n    echo \"$<who>\"\n\
          \n\
-         recipe build\n\
-             echo hi\n",
+         recipe build\n",
     );
 
     let out = run_cook(tmp.path(), &["list"]);

@@ -47,7 +47,7 @@ fn write_cookfile(wd: &std::path::Path, outputs: &[&str]) {
     fs::write(
         wd.join("Cookfile"),
         format!(
-            "recipe build\n    >>{{\n        cook.add_unit({{\n            inputs  = {{ \"src.txt\" }},\n            outputs = {{ {outs} }},\n            command = \"mkdir -p build && {copies}\",\n        }})\n    }}\n"
+            "recipe build\n    cook.add_unit({{\n        inputs  = {{ \"src.txt\" }},\n        outputs = {{ {outs} }},\n        command = \"mkdir -p build && {copies}\",\n    }})\n"
         ),
     )
     .unwrap();
@@ -132,14 +132,12 @@ fn discovered_input_depfile_is_not_swept() {
     fs::write(
         wd.join("Cookfile"),
         r#"recipe build
-    >>{
         cook.add_unit({
             inputs  = { "src.txt" },
             outputs = { "build/out.o" },
             command = "mkdir -p build .cook/deps && cp src.txt build/out.o && echo 'build/out.o: src.txt' > .cook/deps/build.d",
             discovered_inputs = { from = ".cook/deps/build.d", format = "make" },
         })
-    }
 "#,
     )
     .unwrap();

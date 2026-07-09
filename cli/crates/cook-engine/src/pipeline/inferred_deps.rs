@@ -256,8 +256,8 @@ mod tests {
     #[test]
     fn workspace_inferred_deps_empty_when_no_body_refs() {
         let (_dir, ws) = make_workspace(
-            "import lib ./lib\nrecipe top\n    echo hello\n",
-            &[("lib", "recipe lib_build\n    echo world\n")],
+            "import lib ./lib\nrecipe top\n",
+            &[("lib", "recipe lib_build\n")],
         );
         let deps = compute_workspace_inferred_deps(&ws);
         assert!(
