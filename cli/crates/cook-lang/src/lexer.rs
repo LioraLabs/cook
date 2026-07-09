@@ -451,13 +451,14 @@ fn parse_names(text: &str, line: usize) -> Result<Vec<String>, LexError> {
 }
 
 /// Scan one `probe_ref ::= IDENT (":" IDENT)?` from the front of `s`.
-/// IDENT chars are `[A-Za-z0-9_]`. A `:` is consumed into the name ONLY when
+/// Each segment uses the recipe-name char set `is_ident_char`
+/// (`[A-Za-z0-9_.-]`, CS-0131). A `:` is consumed into the name ONLY when
 /// immediately followed by an ident-start char (no whitespace) — this is the
 /// module-prefix colon. A second contiguous `:` is the malformed triple-colon
 /// case. Returns `(name, rest_after_name)`.
 fn scan_probe_ref(s: &str, line: usize) -> Result<(String, &str), LexError> {
     fn seg_len(s: &str) -> usize {
-        s.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(s.len())
+        s.find(|c: char| !is_ident_char(c)).unwrap_or(s.len())
     }
     let s = s.trim_start();
     let n1 = seg_len(s);
@@ -488,7 +489,14 @@ fn parse_probe_dep_list(text: &str, line: usize) -> Result<Vec<String>, LexError
     let mut deps = Vec::new();
     let mut rest = text.trim();
     while !rest.is_empty() {
-        let (name, after) = scan_probe_ref(rest, line)?;
+        // probe_ref ::= BARE_PROBE_KEY | STRING (App. A.3.2). Quoted arm mirrors
+        // the probe-NAME dispatch; the STRING form is the escape hatch for keys
+        // outside is_ident_char. CS-0131 / COOK-71.
+        let (name, after) = if rest.starts_with('"') {
+            parse_name(rest, line)?
+        } else {
+            scan_probe_ref(rest, line)?
+        };
         deps.push(name);
         rest = after.trim_start();
     }
@@ -1337,6 +1345,52 @@ recipe "build"
         let t = tokenize("probe cc:zlib: cc:compiler").unwrap();
         assert_eq!(t[0].value, Token::ProbeHeader {
             name: "cc:zlib".into(), deps: vec!["cc:compiler".into()],
+        });
+    }
+
+    #[test]
+    fn probe_header_hyphenated_bare_name() {
+        // COOK-71 sub-gap 1: a hyphen in a bare probe key must tokenise as one name.
+        let t = tokenize("probe demo:cc-version").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "demo:cc-version".into(), deps: vec![],
+        });
+    }
+
+    #[test]
+    fn probe_header_hyphenated_bare_dep() {
+        // COOK-71 sub-gap 2 (bare arm): a hyphenated upstream key in the dep list.
+        let t = tokenize("probe x: demo:cc-path").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "x".into(), deps: vec!["demo:cc-path".into()],
+        });
+    }
+
+    #[test]
+    fn probe_header_dotted_bare_name() {
+        // CS-0131: the widened segment matches BARE_IDENTIFIER (is_ident_char), which also admits '.'.
+        let t = tokenize("probe cc:zlib.dev").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "cc:zlib.dev".into(), deps: vec![],
+        });
+    }
+
+    #[test]
+    fn probe_header_quoted_hyphenated_dep() {
+        // COOK-71 sub-gap 2 (quoted arm): the dep list gains the STRING escape hatch
+        // already blessed by App. A.3.2 L168 (probe_ref ::= BARE_PROBE_KEY | STRING).
+        let t = tokenize("probe x: \"demo:cc-path\"").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "x".into(), deps: vec!["demo:cc-path".into()],
+        });
+    }
+
+    #[test]
+    fn probe_header_mixed_bare_and_quoted_deps() {
+        let t = tokenize("probe x: alpha \"cc:beta-1\" gamma").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "x".into(),
+            deps: vec!["alpha".into(), "cc:beta-1".into(), "gamma".into()],
         });
     }
 

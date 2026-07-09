@@ -131,10 +131,11 @@ chore_imperative_item    ::= lua_line
 ```ebnf
 probe_decl     ::= "probe" probe_name (":" probe_dep_list)? NEWLINE INDENT probe_body DEDENT
 probe_name     ::= BARE_PROBE_KEY | STRING
-BARE_PROBE_KEY ::= IDENT (":" IDENT)?
+BARE_PROBE_KEY ::= PROBE_SEG (":" PROBE_SEG)?
 probe_dep_list ::= probe_ref (WS probe_ref)*
 probe_ref      ::= BARE_PROBE_KEY | STRING
 IDENT          ::= /[A-Za-z_][A-Za-z0-9_]*/
+PROBE_SEG      ::= /[A-Za-z_][A-Za-z0-9_.\-]*/   /* CS-0131: matches BARE_IDENTIFIER's inner charset */
 probe_body       ::= ingredients_step? producer NEWLINE
 producer         ::= ("json" | "lines")? shell_block
                    | ("tools" | "envs") name_list
@@ -161,11 +162,13 @@ particular a `>{ … }` `exec_lua_block`) supplied where a `name_list` is requir
 - A contiguous third `:IDENT` segment (e.g. `a:b:c`) MUST be rejected. A conforming implementation MUST produce a diagnostic identifying the malformed name and source line. The diagnostic form is: `probe name 'NAME': a probe key is at most \`IDENT:IDENT\`; 'NAME' has too many ':' segments`.
 - The quoted `STRING` form (e.g. `probe "cc:zlib"`) is always unambiguous and bypasses the positional rule entirely.
 
+**Probe-key segment charset (normative; CS-0131).** Each `PROBE_SEG` of a `BARE_PROBE_KEY` uses the recipe-name character set (`BARE_IDENTIFIER`'s inner class — internal `-` and `.` admitted), NOT the narrow `IDENT` used by the `tools` / `envs` `name_list`. A conforming implementation MUST tokenise a hyphenated bare probe key (`demo:cc-version`) as a single `probe_name`, and MUST accept a hyphenated bare `probe_ref` in the dependency list (`probe x: demo:cc-path`). The module-prefix colon is still the sole segment separator — `-` and `.` never terminate a segment. The `STRING` form remains an exact-equivalent escape hatch for the same key (see the `probe_dep_list` element-shape note below); `"demo:cc-version"` and bare `demo:cc-version` denote the identical probe key.
+
 **Missing probe name (normative).** If the `probe` keyword is followed by content that does not parse as a valid `probe_name` (e.g. `probe :deps`), the implementation MUST reject the input with a diagnostic of the form: `line N: expected a probe name after \`probe\``.
 
 **Unexpected token after probe name (normative).** If the `probe` keyword is followed by a valid `probe_name` and then by content that is neither `:` (introducing `probe_dep_list`) nor end-of-line (e.g. `probe foo bar`), the implementation MUST reject the input with a diagnostic of the form: `line N: probe 'NAME': unexpected token after the probe name; a dependency list is introduced with ':' (e.g. \`probe NAME: dep1 dep2\`)`. The diagnostic MUST NOT identify the error as a recipe error.
 
-**`probe_dep_list` element shape (normative).** Each element of `probe_dep_list` is a `probe_ref`, which follows the same `BARE_PROBE_KEY | STRING` shape as `probe_name`. Module-prefixed dep references (e.g. `cc:compiler`) are therefore syntactically valid in the dependency list.
+**`probe_dep_list` element shape (normative).** Each element of `probe_dep_list` is a `probe_ref`, which follows the same `BARE_PROBE_KEY | STRING` shape as `probe_name`. Module-prefixed dep references (e.g. `cc:compiler`) are therefore syntactically valid in the dependency list. A conforming implementation MUST accept the `STRING` form in dependency position (`probe x: "cc:zlib"`), not only bare `BARE_PROBE_KEY` — the quoted arm is the escape hatch for keys a bare segment cannot spell (CS-0131).
 
 **Column-zero constraint (normative).** The `probe` keyword is recognised as a header only when it appears at column zero (the line does not begin with whitespace). An indented `probe` line is classified as `Content` per §{lexical.line-classification}.
 
