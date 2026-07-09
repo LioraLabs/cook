@@ -452,7 +452,7 @@ The Lua body references `inputs` (no `input`); the step is many-to-one and runs 
 
 A `test_step` running a Lua body where `cook.sh`/`cook.exec` returns non-zero fails the test by the same rule as an uncaught Lua error.
 
-## 8.8. Lua steps — line and block forms [#steps.lua]
+## 8.7. Lua steps — line and block forms [#steps.lua]
 
 The Cookfile language has one family of Lua step, the execute-phase `>` / `>{` forms, distinguished from each other only by whether they open a nested block. As of CS-0134, both forms are admitted **only in body position** — as the opener of a `cook`, `test`, or `probe` step's body, or as a standalone step inside a `chore` body — and MUST NOT appear as a standalone top-level line of a `recipe_body` (§{steps.dispatch}).
 
@@ -461,11 +461,11 @@ The Cookfile language has one family of Lua step, the execute-phase `>` / `>{` f
 | `>` *body* `\n`           | `LuaLine`              | execute  | `cook`/`test`/`probe` body opener; standalone inside a chore body |
 | `>{` *body* `}` `\n`      | `LuaBlockOpen`         | execute  | `cook`/`test`/`probe` body opener; standalone inside a chore body |
 
-### Note 8.8.0 — Removal of the doubled-`>` forms (CS-0134)
+### Note 8.7.0 — Removal of the doubled-`>` forms (CS-0134)
 
 Prior to CS-0134, a second family existed: the register-phase doubled-`>` prefixes `>>` (`InlineLuaLine`) and `>>{` (`InlineLuaBlockOpen`), admitted as standalone declarative-region steps inside a recipe body. CS-0134 REMOVED both prefixes from the language entirely — they are rejected unconditionally at the lexical layer (§{lexical.line-prefixes}, Note 3.7.1), not merely repositioned. A Cookfile that needs register-phase Lua inside a recipe body now writes a bare module call instead (§{steps.dispatch}, rule 6): `ns.fn(...)` where a pre-CS-0134 Cookfile would have written `>> ns.fn(...)`.
 
-### 8.8.1. Delimitation [#steps.lua-delimitation]
+### 8.7.1. Delimitation [#steps.lua-delimitation]
 
 A `lua_line` step's body is the remainder of the line after `>` and an optional single space; the body MAY be empty (App. A.5, "`lua_line` MAY be empty").
 
@@ -473,7 +473,7 @@ A `lua_block` step's body is the source text between the opening `>{` and the ma
 
 A conforming implementation MUST NOT reinterpret the Lua body text. Comments, strings, and other Lua constructs inside the body are the Lua runtime's concern, with the single exception that the brace-balance algorithm (§{lexical.brace-blocks}) MUST ignore braces appearing inside Lua line comments, double-quoted strings, single-quoted strings, and long strings (`[[...]]`) when locating the closing `}` of a Lua block.
 
-### 8.8.2. Execution phase [#steps.lua-execution-phase]
+### 8.7.2. Execution phase [#steps.lua-execution-phase]
 
 `lua_line` and `lua_block` are **execute-phase** steps in both of their admitted positions. Their bodies are never evaluated during registration.
 
@@ -483,7 +483,7 @@ When a `lua_line` or `lua_block` occurs as a standalone step inside a `chore` bo
 
 Register-phase Lua inside a recipe body — the role the removed `>>` / `>>{` prefixes used to fill — is now written as a bare **module call** (§{steps.dispatch}, rule 6): `ns.fn(...)`, dispatched and evaluated in the recipe-registration Lua scope alongside `ingredients` / `cook` / `test` (§{steps.dispatch}, §{toplevel.module-call}).
 
-### 8.8.3. Examples [#steps.lua-examples]
+### 8.7.3. Examples [#steps.lua-examples]
 
 ```cook
 recipe build
@@ -519,22 +519,22 @@ chore legacy
 
 The first step is a single-line execute-phase Lua statement. The second is an execute-phase Lua block whose body contains a literal `{` that does not prematurely close the block. The third is an empty `lua_line`. All three are standalone steps of the chore body (§{chores}); the empty third line contributes nothing.
 
-### Note 8.8.1
+### Note 8.7.1
 
 A Lua block (either form) opened on an indented line closes on the line where the running brace-depth first returns to zero, not on the first bare `}`. A line like `    local s = "}"` does not close the enclosing block because the `}` sits inside a double-quoted string (§{lexical.brace-blocks}). See parser tests `test_lua_block_brace_in_string` and `test_lua_block_brace_in_comment`.
 
-### Note 8.8.2
+### Note 8.7.2
 
 The execute-phase API surface available inside a `lua_line` or `lua_block` is a strict subset of the register-phase API: register-only helpers (`cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, `cook.recipe`) MUST raise a Lua runtime error when called from execute-phase Lua. `cook.sh` is available in both phases (§{lua.cook-sh}). See §{rationale.execute-phase-api} for the rationale.
 
-## 8.9. Shell steps [#steps.shell]
+## 8.8. Shell steps [#steps.shell]
 A `shell_command` is a **chore-body** step kind (§{chores.body}). CS-0134 removed it from the recipe-body dispatch cascade: a recipe body is purely declarative (§{steps.dispatch}), and a recipe-body `Content` line that matches none of the declarative step kinds is REJECTED (§{steps.dispatch}, rule 7; Note 8.1.1), not classified as a shell step. A `shell_command` is defined here and is admitted only inside a `chore` body (§{chores}).
 
 A `shell_command` is any `Content` line inside a chore body that is not classified as one of the step kinds earlier in the §{chores.body} dispatch cascade. Its body is the trimmed source line; a conforming implementation MUST preserve the body text verbatim, including any internal quoting, variable references, and shell metacharacters.
 
 Every chore-body `shell_command` is **implicitly interactive**: it runs on the chore's single drain thread with the controlling terminal inherited (§{chores.default-interactive}), so a child such as `fzf` sees a real TTY. There is no separate marker or step kind for interactivity. CS-0134 removed the `@` interactive prefix — and the `interactive_command` step kind it once introduced — from the language entirely (§{lexical.line-prefixes}): a line beginning with `@` is now invalid syntax everywhere. The interactivity a pre-CS-0134 author spelled with `@` is simply the chore-body default.
 
-### Example 8.9.1
+### Example 8.8.1
 
 ```cook
 chore play
@@ -545,11 +545,11 @@ chore play
 
 All three lines are `shell_command` steps of the chore body. Because they sit in a chore body they each run under the chore's default-interactive single drain (§{chores.default-interactive}), so `fzf` inherits the user's terminal and can draw a full-screen prompt. No marker is needed; the chore form supplies the interactivity.
 
-### Note 8.9.1
+### Note 8.8.1
 
 A `@` embedded inside a `cook` step's `{ ... }` shell-block body, or elsewhere inside a quoted string, is a literal `@` — ordinary shell text, not a language marker, since CS-0134 removed `@` from the Cookfile grammar entirely (§{lexical.line-prefixes}). See parser test `test_at_in_cook_body_is_not_interactive`.
 
-## 8.10. Cross-recipe per-member output accessor [#steps.cross-recipe-member]
+## 8.9. Cross-recipe per-member output accessor [#steps.cross-recipe-member]
 
 Inside an `ingredients <probe>` fan-out body (§{steps.ingredients}), a placeholder of the form `$<NAME[]>` — where `NAME` is a recipe declared in the same Cookfile — resolves to that recipe's terminal output **for the current fan-out member**. It is the per-member counterpart of bare `$<NAME>` (which substitutes all terminal outputs of `NAME`, space-joined, and is unchanged by this feature).
 
@@ -565,7 +565,7 @@ Inside an `ingredients <probe>` fan-out body (§{steps.ingredients}), a placehol
 
 **Relation to `$<NAME>`.** Both forms record a recipe-level dependency on `NAME`. `$<NAME>` substitutes the full output list (useful in a many-to-one step that needs all of `NAME`'s artifacts); `$<NAME[]>` substitutes only the current-member output (useful in a fan-out step that must stay per-member). The two forms MAY coexist in the same Cookfile but MUST NOT coexist in the same step unless `NAME` differs between the two placeholders.
 
-### Example 8.10.1
+### Example 8.9.1
 
 ```cook
 probe scenes
@@ -586,6 +586,6 @@ recipe mux
 
 For member `{"id":"intro"}`, `mux` builds `build/intro.mp4` by combining `build/intro.silent.mp4` (from `render`) and `build/intro.wav` (from `tts`). For member `{"id":"outro"}` the same pattern repeats independently. Only the `outro` member's units are dirty when `outro.blend` changes — `intro.mp4` is unaffected.
 
-### Note 8.10.1 — Conformance fixture
+### Note 8.9.1 — Conformance fixture
 
 `standard/conformance/positive/recipe-member-accessor` pins this surface. The `parse.txt` golden confirms that `$<render[]>` and `$<tts[]>` are preserved verbatim in the `ShellBlock` strings at the parser layer; the codegen layer (CS-0098) lowers them to `cook.dep_output_member` calls.

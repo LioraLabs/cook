@@ -11,7 +11,7 @@ Before invoking the shell text of a `cook` step, a conforming implementation MUS
 
 The output paths covered by this rule are exactly those declared by the `cook` step in its surface form (§{steps.cook-single}, §{steps.cook-multi}) — that is, the paths recorded as the unit's output-path list during the register phase (§{exec.cache}). Each output path is resolved against the unit's working directory using the same resolution that the cache fingerprint applies. An output path with no parent component (a path that resolves to the working directory itself) is a no-op.
 
-This rule applies to `cook` steps only. `plate` steps (§{steps.plate}) and `test` steps (§{steps.test}) declare no cacheable output paths and are therefore not covered; authors of `plate` and `test` step bodies that need to create directories MUST do so explicitly.
+This rule applies to `cook` steps only. `test` steps (§{steps.test}) declare no cacheable output paths and are therefore not covered; authors of `test` step bodies that need to create directories MUST do so explicitly.
 
 ### Note 18.1.1
 

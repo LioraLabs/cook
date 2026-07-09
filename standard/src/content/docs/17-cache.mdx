@@ -69,7 +69,7 @@ The **local cache and the shared (cross-machine) store are addressed by this sam
 
 ### 17.1.3. Sharing and disposition effect [#exec.cache.sharing]
 
-Caching over the local index is always on. **Sharing** — publishing a unit's output artifacts to, and fetching them from, the shared content-addressed store — is also on by default for every cacheable unit, keyed by the same single key (§{exec.cache.single-key}). The local index and the shared store are addressed by that one key; a consumer reuses a shared artifact for a key K if and only if it recomputes K. A unit with no declared output (e.g. a `plate`, §{exec.cache.reconcile}) and any side-effecting step is never cached or shared.
+Caching over the local index is always on. **Sharing** — publishing a unit's output artifacts to, and fetching them from, the shared content-addressed store — is also on by default for every cacheable unit, keyed by the same single key (§{exec.cache.single-key}). The local index and the shared store are addressed by that one key; a consumer reuses a shared artifact for a key K if and only if it recomputes K. A unit with no declared output (e.g. a `test`, §{exec.cache.reconcile}) and any side-effecting step is never cached or shared.
 
 The unit's *disposition* (§{steps.cook-disposition}) selects its sharing policy. The disposition does not change the key (§{exec.cache.single-key}); it changes only whether the shared store participates and how a miss is resolved. A conforming implementation MUST observe:
 
@@ -258,7 +258,7 @@ A conforming implementation:
 - on a first run, or against a cache with no recorded outputs, MUST compute an empty prior set and therefore delete nothing;
 - reconciles **files only** in this edition — directories are left in place.
 
-`plate` and `test` steps declare no outputs and are no-ops for reconciliation.
+`test` steps declare no outputs and are no-ops for reconciliation.
 
 ### Opt-out
 

@@ -44,12 +44,10 @@ Every Lua expression in a Cookfile is evaluated in exactly one of three timings.
 | `register_block` body                        | §{decl.register} | **register** | no — spliced verbatim into the compiled register-phase Lua program |
 | top-level `module_call` (`alias.fn(…)`)      | §{toplevel.module-call} | **register** | no — spliced verbatim at source position |
 | recipe-body `module_call` (`ns.fn(…)`)       | §{steps.dispatch} | **register** | no — bare module call in a recipe body; CS-0134 reinstates this dispatch (§{toplevel.module-call}), reversing CS-0072, and it replaces the removed `>>` / `>>{` prefixes |
-| `lua_line` (`>` *body*)                      | §{steps.lua} | **execute** | yes — admitted only in body position (a `cook`/`test`/`plate`/`probe` step's body opener) or as a standalone step inside a `chore` body; never a standalone recipe-body item (CS-0134). Recipe body-bundling (§{exec.body-bundling}) is vacuous. |
+| `lua_line` (`>` *body*)                      | §{steps.lua} | **execute** | yes — admitted only in body position (a `cook`/`test`/`probe` step's body opener) or as a standalone step inside a `chore` body; never a standalone recipe-body item (CS-0134). Recipe body-bundling (§{exec.body-bundling}) is vacuous. |
 | `lua_block` (`>{ … }`)                       | §{steps.lua} | **execute** | yes — same admitted positions as `lua_line` (CS-0134) |
 | `cook STR >{ … }` (cook-body Lua)   | §{steps.cook-single}, §{steps.cook-multi} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals} bindings |
 | `cook.add_unit({lua_code = "…"})` payload    | §{lua.add-unit} | **execute** | yes — runs on the worker VM that picks up the unit |
-| `plate { … }` (shell block)                  | §{steps.plate} | **execute** | yes — recorded with shell payload, with §{phl.plate-test} substitutions |
-| `plate >{ … }` (Lua block)                   | §{steps.plate} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals-plate-test} bindings |
 | `test { … }` (shell block)                   | §{steps.test}  | **execute** | yes — recorded with shell payload via `cook.add_test`, with §{phl.plate-test} substitutions |
 | `test >{ … }` (Lua block)                    | §{steps.test}  | **execute** | yes — recorded with `lua_code` payload via `cook.add_test`, with §{lua.using-block-globals-plate-test} bindings |
 
