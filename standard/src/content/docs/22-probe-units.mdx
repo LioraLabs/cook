@@ -302,18 +302,18 @@ register
     })
 
 recipe foo
-    >>{
-        cook.add_unit({
-            name = "u1", inputs = {}, outputs = {"build/foo.txt"},
-            probes = {"env:slow"},
-            command = "echo $<env:slow.ts> > build/foo.txt",
-        })
-    }
-    > cook.sh("cat build/foo.txt")
+    cook.add_unit({
+        name = "u1", inputs = {}, outputs = {"build/foo.txt"},
+        probes = {"env:slow"},
+        command = "echo $<env:slow.ts> > build/foo.txt",
+    })
+    test { cat build/foo.txt }
 
 recipe bar
-    > cook.sh("echo bar")
+    test { echo bar }
 ```
+
+The bare `cook.add_unit(…)` line is a register-phase `module_call` step (§{steps.dispatch}, rule 7) — the CS-0134 form of what a pre-CS-0134 Cookfile wrote as `>>{ cook.add_unit(…) }`. Each `test { … }` block body is an execute-phase verification unit.
 
 `cook foo` MUST execute the `env:slow` probe and `u1` exactly once.
 `cook bar` MUST execute no probes; `env:slow` is unreached and its
