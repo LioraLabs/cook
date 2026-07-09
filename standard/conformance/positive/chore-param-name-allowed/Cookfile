@@ -1,2 +1,2 @@
 chore deploy name in out
-    @echo $<name> $<in> $<out>
+    echo $<name> $<in> $<out>
