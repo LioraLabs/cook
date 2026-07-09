@@ -465,20 +465,6 @@ pub(crate) fn parse_recipe(
     // one probe source is allowed per recipe.
     let mut for_each_seen = false;
 
-    // Track the line on which the imperative region began (the first
-    // imperative-region step). None until we see one. App. A.3 "Region
-    // ordering rule" / §{recipes.step-kinds} Note 4.4.2: once set, no
-    // declarative-region step may follow.
-    let mut imperative_began: Option<usize> = None;
-
-    let region_violation = |kind: &str, step_line: usize, started_line: usize| ParseError::Parse {
-        line: step_line,
-        message: format!(
-            "{} step on line {} is not allowed after the imperative region began on line {}",
-            kind, step_line, started_line
-        ),
-    };
-
     // COOK-171: recipe-level `seal` baseline (the determinant set applied to
     // every cook in the recipe) and each cook's per-unit trailing `unseal`
     // set. Both are folded into the cooks' effective seal sets at finalize
@@ -526,6 +512,7 @@ pub(crate) fn parse_recipe(
                         .copied()
                         .unwrap_or("");
                     if !raw.starts_with(|c: char| c.is_whitespace()) {
+                        // column-0 module call terminates the recipe body.
                         apply_base_seal(&mut steps, &base_seal, &cook_unseals);
                         return Ok((
                             Recipe {
@@ -539,14 +526,17 @@ pub(crate) fn parse_recipe(
                             pos,
                         ));
                     }
+                    // CS-0134: an indented bare module call is register-phase Lua.
+                    let (code, new_pos) =
+                        collect_module_call(text, tok.line, tokens, pos, source_lines)?;
+                    steps.push(Step::InlineLua { code, line: tok.line });
+                    pos = new_pos;
+                    continue;
                 }
                 // COOK-171: `seal` is a recipe-body step (a determinant input
                 // stream, sibling of `ingredients`). It contributes to the
                 // recipe-level baseline applied to every cook at finalize.
                 if let Some(rest) = strip_keyword(text, "seal") {
-                    if let Some(started) = imperative_began {
-                        return Err(region_violation("seal", tok.line, started));
-                    }
                     let refs: Vec<String> =
                         rest.split_whitespace().map(str::to_string).collect();
                     if refs.is_empty() {
@@ -575,9 +565,6 @@ pub(crate) fn parse_recipe(
                     });
                 }
                 if let Some(rest) = strip_keyword(text, "ingredients") {
-                    if let Some(started) = imperative_began {
-                        return Err(region_violation("ingredients", tok.line, started));
-                    }
                     if for_each_seen {
                         return Err(ParseError::Parse {
                             line: tok.line,
@@ -618,9 +605,6 @@ pub(crate) fn parse_recipe(
                         continue;
                     }
                 } else if let Some(rest) = strip_keyword(text, "cook") {
-                    if let Some(started) = imperative_began {
-                        return Err(region_violation("cook", tok.line, started));
-                    }
                     // COOK-171: parse_cook_line resolves the trailing `cook_mods`
                     // (per-unit seal/unseal + share_mod) onto the step's
                     // disposition. The `as` modifier rejection (CS-0061) is folded
@@ -639,9 +623,6 @@ pub(crate) fn parse_recipe(
                     pos = new_pos;
                     continue;
                 } else if let Some(rest) = strip_keyword(text, "plate") {
-                    if let Some(started) = imperative_began {
-                        return Err(region_violation("plate", tok.line, started));
-                    }
                     let (body, new_pos) = crate::cook_line::parse_body_payload(
                         rest, tok.line, tokens, pos, source_lines, "plate",
                     )?;
@@ -662,9 +643,6 @@ pub(crate) fn parse_recipe(
                     pos = new_pos;
                     continue;
                 } else if let Some(rest) = strip_keyword(text, "test") {
-                    if let Some(started) = imperative_began {
-                        return Err(region_violation("test", tok.line, started));
-                    }
                     let (body, new_pos) = crate::cook_line::parse_body_payload(
                         rest, tok.line, tokens, pos, source_lines, "test",
                     )?;
@@ -688,21 +666,14 @@ pub(crate) fn parse_recipe(
                     });
                     pos = new_pos;
                     continue;
-                } else if let Some(cmd) = text.strip_prefix('@') {
-                    let cmd = cmd.to_string();
-                    if cmd.is_empty() {
-                        return Err(ParseError::Parse {
-                            line: tok.line,
-                            message: "interactive '@' prefix requires a command".to_string(),
-                        });
-                    }
-                    if imperative_began.is_none() {
-                        imperative_began = Some(tok.line);
-                    }
-                    steps.push(Step::Shell {
-                        command: cmd,
+                } else if text.starts_with('@') {
+                    return Err(ParseError::Parse {
                         line: tok.line,
-                        interactive: true,
+                        message:
+                            "the `@` interactive prefix was removed from the language (CS-0134); \
+                             recipes are declarative and chore commands are interactive by default — \
+                             drop the `@`"
+                                .to_string(),
                     });
                 } else {
                     // SHI-216 / CS-0072 §3.9: reject `register` + separator inside a recipe body.
@@ -727,62 +698,52 @@ pub(crate) fn parse_recipe(
                             });
                         }
                     }
-                    if imperative_began.is_none() {
-                        imperative_began = Some(tok.line);
-                    }
-                    steps.push(Step::Shell {
-                        command: text.clone(),
+                    return Err(ParseError::Parse {
                         line: tok.line,
-                        interactive: false,
+                        message: format!(
+                            "loose shell commands are not allowed in a recipe body (CS-0134): `{}`; \
+                             move it into a `cook \"out\" {{ … }}` body or a chore",
+                            text.trim()
+                        ),
                     });
                 }
-                pos += 1;
             }
-            Token::LuaLine(code) => {
-                if imperative_began.is_none() {
-                    imperative_began = Some(tok.line);
-                }
-                steps.push(Step::Lua {
-                    code: code.clone(),
+            Token::LuaLine(_) => {
+                return Err(ParseError::Parse {
                     line: tok.line,
+                    message:
+                        "execute-phase `>` Lua is not allowed in a recipe body (CS-0134); \
+                         use `cook \"out\" >{ … }`, `test >{ … }`, or a chore"
+                            .to_string(),
                 });
-                pos += 1;
             }
             Token::LuaBlockOpen => {
-                if imperative_began.is_none() {
-                    imperative_began = Some(tok.line);
-                }
-                let block_line = tok.line;
-                pos += 1;
-                let (code, new_pos) = collect_lua_block(block_line, tokens, pos, source_lines)?;
-                steps.push(Step::LuaBlock {
-                    code,
-                    line: block_line,
-                });
-                pos = new_pos;
-            }
-            Token::InlineLuaLine(code) => {
-                if let Some(started) = imperative_began {
-                    return Err(region_violation("inline-lua (`>>`)", tok.line, started));
-                }
-                steps.push(Step::InlineLua {
-                    code: code.clone(),
+                return Err(ParseError::Parse {
                     line: tok.line,
+                    message:
+                        "execute-phase `>{ … }` Lua block is not allowed in a recipe body (CS-0134); \
+                         use `cook \"out\" >{ … }`, `test >{ … }`, or a chore"
+                            .to_string(),
                 });
-                pos += 1;
+            }
+            Token::InlineLuaLine(_) => {
+                return Err(ParseError::Parse {
+                    line: tok.line,
+                    message:
+                        "the register-phase `>>` sigil was removed (CS-0134); write a bare \
+                         `module.call()` in the recipe body, or move register work to a \
+                         top-level `register` block"
+                            .to_string(),
+                });
             }
             Token::InlineLuaBlockOpen => {
-                if let Some(started) = imperative_began {
-                    return Err(region_violation("inline-lua-block (`>>{`)", tok.line, started));
-                }
-                let block_line = tok.line;
-                pos += 1;
-                let (code, new_pos) = collect_lua_block(block_line, tokens, pos, source_lines)?;
-                steps.push(Step::InlineLuaBlock {
-                    code,
-                    line: block_line,
+                return Err(ParseError::Parse {
+                    line: tok.line,
+                    message:
+                        "the register-phase `>>{ … }` sigil was removed (CS-0134); move it into a \
+                         top-level `register` block"
+                            .to_string(),
                 });
-                pos = new_pos;
             }
         }
     }
@@ -815,15 +776,6 @@ pub(crate) fn parse_chore(
 ) -> Result<(Chore, usize), ParseError> {
     let mut pos = start;
     let mut steps: Vec<Step> = Vec::new();
-    let mut imperative_began: Option<usize> = None;
-
-    let region_violation = |kind: &str, step_line: usize, started_line: usize| ParseError::Parse {
-        line: step_line,
-        message: format!(
-            "{} step on line {} is not allowed after the imperative region began on line {}",
-            kind, step_line, started_line
-        ),
-    };
 
     let chore_banned = |keyword: &str, line: usize| -> ParseError {
         let kind_descriptor = match keyword {
@@ -886,22 +838,13 @@ pub(crate) fn parse_chore(
                     return Err(chore_banned("plate", tok.line));
                 } else if strip_keyword(&text, "test").is_some() {
                     return Err(chore_banned("test", tok.line));
-                } else if let Some(cmd) = text.strip_prefix('@') {
-                    let cmd = cmd.to_string();
-                    if cmd.is_empty() {
-                        return Err(ParseError::Parse {
-                            line: tok.line,
-                            message: "interactive '@' prefix requires a command".to_string(),
-                        });
-                    }
-                    if imperative_began.is_none() {
-                        imperative_began = Some(tok.line);
-                    }
-                    // Default-interactive — `@` marker is no-op (always interactive)
-                    steps.push(Step::Shell {
-                        command: cmd,
+                } else if text.starts_with('@') {
+                    return Err(ParseError::Parse {
                         line: tok.line,
-                        interactive: true,
+                        message:
+                            "the `@` interactive prefix was removed from the language (CS-0134); \
+                             chore commands are interactive by default — drop the `@`"
+                                .to_string(),
                     });
                 } else {
                     // SHI-216 / CS-0072 §3.9: reject `register` + separator inside a chore body.
@@ -924,9 +867,6 @@ pub(crate) fn parse_chore(
                             });
                         }
                     }
-                    if imperative_began.is_none() {
-                        imperative_began = Some(tok.line);
-                    }
                     // Default-interactive — no `@` required
                     steps.push(Step::Shell {
                         command: text.clone(),
@@ -937,38 +877,34 @@ pub(crate) fn parse_chore(
                 pos += 1;
             }
             Token::LuaLine(code) => {
-                if imperative_began.is_none() {
-                    imperative_began = Some(tok.line);
-                }
                 steps.push(Step::Lua { code: code.clone(), line: tok.line });
                 pos += 1;
             }
             Token::LuaBlockOpen => {
-                if imperative_began.is_none() {
-                    imperative_began = Some(tok.line);
-                }
                 let block_line = tok.line;
                 pos += 1;
                 let (code, new_pos) = collect_lua_block(block_line, tokens, pos, source_lines)?;
                 steps.push(Step::LuaBlock { code, line: block_line });
                 pos = new_pos;
             }
-            Token::InlineLuaLine(code) => {
-                if let Some(started) = imperative_began {
-                    return Err(region_violation("inline-lua (`>>`)", tok.line, started));
-                }
-                steps.push(Step::InlineLua { code: code.clone(), line: tok.line });
-                pos += 1;
+            Token::InlineLuaLine(_) => {
+                return Err(ParseError::Parse {
+                    line: tok.line,
+                    message:
+                        "the register-phase `>>` sigil was removed (CS-0134); write a bare \
+                         `module.call()` in the recipe body, or move register work to a \
+                         top-level `register` block"
+                            .to_string(),
+                });
             }
             Token::InlineLuaBlockOpen => {
-                if let Some(started) = imperative_began {
-                    return Err(region_violation("inline-lua-block (`>>{`)", tok.line, started));
-                }
-                let block_line = tok.line;
-                pos += 1;
-                let (code, new_pos) = collect_lua_block(block_line, tokens, pos, source_lines)?;
-                steps.push(Step::InlineLuaBlock { code, line: block_line });
-                pos = new_pos;
+                return Err(ParseError::Parse {
+                    line: tok.line,
+                    message:
+                        "the register-phase `>>{ … }` sigil was removed (CS-0134); move it into a \
+                         top-level `register` block"
+                            .to_string(),
+                });
             }
         }
     }

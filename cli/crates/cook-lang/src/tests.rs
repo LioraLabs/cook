@@ -4,14 +4,14 @@ use super::*;
 
 #[test]
 fn test_bare_recipe_name_parses() {
-    let source = "recipe build\n    echo hello\n";
+    let source = "recipe build\n    cook.log(\"hi\")\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].name, "build");
 }
 
 #[test]
 fn test_bare_recipe_name_with_deps() {
-    let source = "recipe build: lib setup\n    echo hello\n";
+    let source = "recipe build: lib setup\n    cook.log(\"hi\")\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].name, "build");
     assert_eq!(result.recipes[0].deps, vec!["lib", "setup"]);
@@ -26,7 +26,7 @@ fn test_bare_dotted_dep() {
 
 #[test]
 fn test_bare_use_statement() {
-    let source = "use cpp\n\nrecipe build\n    echo hello\n";
+    let source = "use cpp\n\nrecipe build\n    cook.log(\"hi\")\n";
     let cookfile = parse(source).unwrap();
     assert_eq!(cookfile.uses[0].module_name, "cpp");
 }
@@ -82,49 +82,49 @@ config dev
 // register-phase Lua inside a recipe body.
 
 #[test]
-fn test_module_call_single_line_is_shell_after_cs0072() {
-    // CS-0072: bare module-call in recipe body becomes Shell, not InlineLua.
+fn test_module_call_single_line_is_inline_lua() {
+    // CS-0134: an indented bare module-call in a recipe body auto-classifies
+    // as register-phase InlineLua.
     let source = "recipe build\n    cpp.compile(\"src/*.cpp\")\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].steps.len(), 1);
     match &result.recipes[0].steps[0] {
-        Step::Shell { command, .. } => {
-            assert_eq!(command, "cpp.compile(\"src/*.cpp\")");
+        Step::InlineLua { code, .. } => {
+            assert_eq!(code, "cpp.compile(\"src/*.cpp\")");
         }
-        other => panic!("expected Shell step (CS-0072), got {:?}", other),
+        other => panic!("expected InlineLua step (CS-0134), got {:?}", other),
     }
 }
 
 #[test]
-fn test_module_call_multiline_is_multiple_shell_after_cs0072() {
-    // CS-0072: a bare module-call spanning multiple lines in a recipe body
-    // becomes individual Shell steps (one per content line) since the
-    // multi-line collection only runs for top-level module calls now.
+fn test_loose_shell_after_module_call_rejected() {
+    // CS-0134: a bare module call is InlineLua; a following loose shell line
+    // (`echo done`) is rejected.
     let source = "recipe build\n    cpp.compile(\"src/*.cpp\")\n    echo done\n";
-    let result = parse(source).unwrap();
-    assert_eq!(result.recipes[0].steps.len(), 2);
-    assert!(matches!(&result.recipes[0].steps[0], Step::Shell { .. }));
-    assert!(matches!(&result.recipes[0].steps[1], Step::Shell { .. }));
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("loose shell commands are not allowed"), "got: {}", msg);
 }
 
 #[test]
-fn test_non_module_dot_is_shell() {
-    // A line starting with `.` is not a module call
+fn test_non_module_dot_loose_shell_rejected() {
+    // CS-0134: `./run.sh` is not a module call and is rejected as loose shell.
     let source = "recipe build\n    ./run.sh\n";
-    let result = parse(source).unwrap();
-    assert!(matches!(&result.recipes[0].steps[0], Step::Shell { .. }));
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("loose shell commands are not allowed"), "got: {}", msg);
 }
 
 #[test]
-fn test_module_call_no_args_is_shell_after_cs0072() {
-    // CS-0072: bare module-call with no args in recipe body becomes Shell.
+fn test_module_call_no_args_is_inline_lua() {
+    // CS-0134: an indented bare module-call with no args becomes InlineLua.
     let source = "recipe build\n    cpp.detect_compiler()\n";
     let result = parse(source).unwrap();
     match &result.recipes[0].steps[0] {
-        Step::Shell { command, .. } => {
-            assert_eq!(command, "cpp.detect_compiler()");
+        Step::InlineLua { code, .. } => {
+            assert_eq!(code, "cpp.detect_compiler()");
         }
-        other => panic!("expected Shell step (CS-0072), got {:?}", other),
+        other => panic!("expected InlineLua step (CS-0134), got {:?}", other),
     }
 }
 
@@ -138,26 +138,25 @@ fn test_empty_cookfile() {
 
 #[test]
 fn test_minimal_recipe() {
-    let source = "recipe \"build\"\n    gcc -o main main.c\n";
+    let source = "recipe \"build\"\n    cook.log(\"hi\")\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes.len(), 1);
     assert_eq!(result.recipes[0].name, "build");
     assert!(result.recipes[0].deps.is_empty());
     assert!(result.recipes[0].ingredients.is_empty());
     assert_eq!(result.recipes[0].steps.len(), 1);
-    assert_eq!(
-        result.recipes[0].steps[0],
-        Step::Shell {
-            command: "gcc -o main main.c".to_string(),
-            line: 2,
-            interactive: false,
+    match &result.recipes[0].steps[0] {
+        Step::InlineLua { code, line } => {
+            assert_eq!(code, "cook.log(\"hi\")");
+            assert_eq!(*line, 2);
         }
-    );
+        other => panic!("expected InlineLua step (CS-0134), got {:?}", other),
+    }
 }
 
 #[test]
 fn test_recipe_with_deps() {
-    let source = "recipe \"build\": \"setup\" \"lib\"\n    echo building\n";
+    let source = "recipe \"build\": \"setup\" \"lib\"\n    cook.log(\"hi\")\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(recipe.deps, vec!["setup".to_string(), "lib".to_string()]);
@@ -165,7 +164,7 @@ fn test_recipe_with_deps() {
 
 #[test]
 fn test_recipe_with_ingredients() {
-    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\" \"include/*.h\"\n    echo compiling\n";
+    let source = "recipe \"lib\"\n    ingredients \"lib/*.c\" \"include/*.h\"\n    cook.log(\"hi\")\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert_eq!(
@@ -268,15 +267,15 @@ fn test_plate_step() {
 
 #[test]
 fn test_mixed_steps() {
-    // Note 4.4.2 region rule: imperative-region steps (> shell @) must come
-    // after all declarative-region steps. The middle step here uses `>>`
-    // (register-phase InlineLua) so it can sit between two cook steps.
+    // CS-0134: recipe bodies are purely declarative. A bare `module.call()`
+    // line auto-classifies as register-phase InlineLua and can sit between
+    // two cook steps.
     let source = r#"recipe "lib": "setup"
     ingredients "lib/*.c" "include/*.h"
     cook "build/obj/{stem}.o" {
         gcc -c {in} -o {out}
     }
-    >> print("compiled")
+    cook.log("compiled")
     cook "build/libmath.a" {
         ar rcs {out} {all}
     }
@@ -292,9 +291,8 @@ fn test_mixed_steps() {
 }
 
 #[test]
-fn test_imperative_then_declarative_rejected() {
-    // App. A.3 "Region ordering rule": once the imperative region begins,
-    // no declarative-region step may follow.
+fn test_execute_lua_line_in_recipe_rejected() {
+    // CS-0134: execute-phase `>` Lua is not allowed in a recipe body.
     let source = r#"recipe "bad"
     cook "a" {
         echo a
@@ -306,17 +304,83 @@ fn test_imperative_then_declarative_rejected() {
 "#;
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("imperative region"), "got: {}", msg);
+    assert!(msg.contains("execute-phase `>` Lua is not allowed"), "got: {}", msg);
 }
 
 #[test]
-fn test_inline_lua_line_register_phase() {
-    let source = "recipe \"r\"\n    >> local x = 1\n    >>{\n        cook.env.K = \"v\"\n    }\n";
+fn test_indented_module_call_is_inline_lua() {
+    // CS-0134: an indented bare module call auto-classifies as register-phase
+    // InlineLua.
+    let source = "recipe \"r\"\n    pnpm.run(\"build\")\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
-    assert_eq!(recipe.steps.len(), 2);
-    assert!(matches!(&recipe.steps[0], Step::InlineLua { .. }));
-    assert!(matches!(&recipe.steps[1], Step::InlineLuaBlock { .. }));
+    assert_eq!(recipe.steps.len(), 1);
+    match &recipe.steps[0] {
+        Step::InlineLua { code, .. } => assert_eq!(code, "pnpm.run(\"build\")"),
+        other => panic!("expected InlineLua, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_multiline_module_call_is_inline_lua() {
+    // CS-0134: a multi-line bare module call collects into one InlineLua step.
+    let source = "recipe \"r\"\n    cook.add_unit({\n        command = \"x\",\n        outputs = { \"o\" },\n    })\n";
+    let result = parse(source).unwrap();
+    let recipe = &result.recipes[0];
+    assert_eq!(recipe.steps.len(), 1);
+    match &recipe.steps[0] {
+        Step::InlineLua { code, .. } => {
+            assert!(code.contains("cook.add_unit({"), "got: {}", code);
+            assert!(code.contains("command = \"x\""), "got: {}", code);
+            assert!(code.contains("})"), "got: {}", code);
+        }
+        other => panic!("expected InlineLua, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_register_sigil_line_removed_in_recipe() {
+    // CS-0134: the register-phase `>>` sigil was removed from the language.
+    let source = "recipe \"r\"\n    >> local x = 1\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("`>>` sigil was removed"), "got: {}", msg);
+}
+
+#[test]
+fn test_register_sigil_block_removed_in_recipe() {
+    // CS-0134: the register-phase `>>{ … }` sigil was removed.
+    let source = "recipe \"r\"\n    >>{\n        cook.env.K = \"v\"\n    }\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("`>>{ … }` sigil was removed"), "got: {}", msg);
+}
+
+#[test]
+fn test_execute_lua_block_in_recipe_rejected() {
+    // CS-0134: execute-phase `>{ … }` block is not allowed in a recipe body.
+    let source = "recipe \"r\"\n    >{\n        cook.sh(\"echo hi\")\n    }\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("execute-phase `>{ … }` Lua block is not allowed"), "got: {}", msg);
+}
+
+#[test]
+fn test_loose_shell_in_recipe_rejected() {
+    // CS-0134: loose shell commands are not allowed in a recipe body.
+    let source = "recipe \"r\"\n    gcc -o main main.c\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("loose shell commands are not allowed"), "got: {}", msg);
+}
+
+#[test]
+fn test_at_prefix_in_recipe_rejected() {
+    // CS-0134: the `@` interactive prefix was removed from the language.
+    let source = "recipe \"r\"\n    @./bin/app\n";
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("`@` interactive prefix was removed"), "got: {}", msg);
 }
 
 #[test]
@@ -339,7 +403,7 @@ fn test_triple_arrow_reserved() {
 
 #[test]
 fn test_task_runner_no_metadata() {
-    let source = "recipe \"clean\"\n    rm -rf build bin\n";
+    let source = "recipe \"clean\"\n    cook.log(\"hi\")\n";
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
     assert!(recipe.deps.is_empty());
@@ -349,7 +413,7 @@ fn test_task_runner_no_metadata() {
 
 #[test]
 fn test_multiple_recipes() {
-    let source = "recipe \"setup\"\n    mkdir -p build\n\nrecipe \"build\": \"setup\"\n    echo building\n";
+    let source = "recipe \"setup\"\n    cook.log(\"a\")\n\nrecipe \"build\": \"setup\"\n    cook.log(\"b\")\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes.len(), 2);
     assert_eq!(result.recipes[0].name, "setup");
@@ -358,18 +422,19 @@ fn test_multiple_recipes() {
 }
 
 #[test]
-fn test_lua_block_in_recipe() {
-    let source = "recipe \"build\"\n>{\n    local x = 1\n    print(x)\n}\n";
+fn test_lua_block_in_chore() {
+    // CS-0134: execute-phase `>{ … }` blocks live in chores, not recipes.
+    let source = "chore \"build\"\n>{\n    local x = 1\n    print(x)\n}\n";
     let result = parse(source).unwrap();
-    assert_eq!(result.recipes[0].steps.len(), 1);
-    assert!(matches!(&result.recipes[0].steps[0], Step::LuaBlock { .. }));
+    assert_eq!(result.chores[0].steps.len(), 1);
+    assert!(matches!(&result.chores[0].steps[0], Step::LuaBlock { .. }));
 }
 
 #[test]
 fn test_lua_block_nested_braces() {
-    let source = "recipe \"build\"\n>{\n    if true then\n        local t = {1, 2, 3}\n    end\n}\n";
+    let source = "chore \"build\"\n>{\n    if true then\n        local t = {1, 2, 3}\n    end\n}\n";
     let result = parse(source).unwrap();
-    match &result.recipes[0].steps[0] {
+    match &result.chores[0].steps[0] {
         Step::LuaBlock { code, .. } => {
             assert!(code.contains("local t = {1, 2, 3}"));
         }
@@ -379,7 +444,7 @@ fn test_lua_block_nested_braces() {
 
 #[test]
 fn test_comments_and_blanks_skipped() {
-    let source = "recipe \"build\"\n    # comment\n    gcc -o main main.c\n";
+    let source = "recipe \"build\"\n    # comment\n    cook.log(\"hi\")\n";
     let result = parse(source).unwrap();
     assert_eq!(result.recipes[0].steps.len(), 1);
 }
@@ -397,9 +462,9 @@ fn test_unclosed_lua_block() {
 
 #[test]
 fn test_lua_block_brace_in_string() {
-    let source = "recipe \"build\"\n>{\n    local s = \"}\"\n    print(s)\n}\n";
+    let source = "chore \"build\"\n>{\n    local s = \"}\"\n    print(s)\n}\n";
     let result = parse(source).unwrap();
-    match &result.recipes[0].steps[0] {
+    match &result.chores[0].steps[0] {
         Step::LuaBlock { code, .. } => {
             assert!(code.contains("local s = \"}\""));
         }
@@ -409,9 +474,9 @@ fn test_lua_block_brace_in_string() {
 
 #[test]
 fn test_lua_block_brace_in_comment() {
-    let source = "recipe \"build\"\n>{\n    local x = 1 -- }\n    print(x)\n}\n";
+    let source = "chore \"build\"\n>{\n    local x = 1 -- }\n    print(x)\n}\n";
     let result = parse(source).unwrap();
-    match &result.recipes[0].steps[0] {
+    match &result.chores[0].steps[0] {
         Step::LuaBlock { code, .. } => {
             assert!(code.contains("local x = 1 -- }"));
         }
@@ -454,7 +519,7 @@ fn test_empty_config_block() {
     let source = r#"config "empty"
 
 recipe "build"
-    echo hello
+    cook.log("hi")
 "#;
     let result = parse(source).unwrap();
     assert_eq!(result.config_blocks.len(), 1);
@@ -463,13 +528,15 @@ recipe "build"
 
 #[test]
 fn test_indented_quoted_pair_is_shell_command() {
-    let source = r#"recipe "build"
+    // CS-0134: recipe bodies reject loose shell, so the `NAME "value"` shell
+    // classification is exercised in a chore (where shell is permitted).
+    let source = r#"chore "build"
     CC "gcc"
 "#;
     let result = parse(source).unwrap();
-    assert_eq!(result.recipes.len(), 1);
+    assert_eq!(result.chores.len(), 1);
     assert!(matches!(
-        &result.recipes[0].steps[0],
+        &result.chores[0].steps[0],
         Step::Shell { command, .. } if command.contains("CC")
     ));
 }
@@ -477,7 +544,7 @@ fn test_indented_quoted_pair_is_shell_command() {
 #[test]
 fn test_config_after_recipe_errors() {
     let source = r#"recipe "build"
-    echo hello
+    cook.log("hi")
 
 config "debug"
     CFLAGS "-g"
@@ -517,38 +584,14 @@ end
 }
 
 #[test]
-fn test_interactive_shell_step() {
-    let source = "recipe \"run\"\n    @./bin/app\n";
-    let result = parse(source).unwrap();
-    let step = &result.recipes[0].steps[0];
-    match step {
-        Step::Shell { command, interactive, .. } => {
-            assert!(interactive, "expected interactive=true");
-            assert_eq!(command, "./bin/app", "@ should be stripped from command");
-        }
-        other => panic!("expected Shell step, got {:?}", other),
-    }
-}
-
-#[test]
-fn test_non_interactive_shell_step() {
-    let source = "recipe \"build\"\n    echo hello\n";
-    let result = parse(source).unwrap();
-    match &result.recipes[0].steps[0] {
-        Step::Shell { interactive, .. } => {
-            assert!(!interactive, "expected interactive=false for normal shell step");
-        }
-        other => panic!("expected Shell step, got {:?}", other),
-    }
-}
-
-#[test]
 fn test_empty_interactive_step_errors() {
+    // CS-0134: the `@` interactive prefix was removed; a bare `@` is rejected
+    // with the removal diagnostic.
     let source = "recipe \"run\"\n    @\n";
     let result = parse(source);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("requires a command"), "got: {err}");
+    assert!(err.contains("`@` interactive prefix was removed"), "got: {err}");
 }
 
 #[test]
@@ -575,7 +618,7 @@ fn test_at_in_cook_body_is_not_interactive() {
 
 #[test]
 fn test_parse_use_statement() {
-    let source = "use \"cpp\"\n\nrecipe \"build\"\n    echo hello\n";
+    let source = "use \"cpp\"\n\nrecipe \"build\"\n    cook.log(\"hi\")\n";
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.uses.len(), 1);
     assert_eq!(cookfile.uses[0].module_name, "cpp");
@@ -585,7 +628,7 @@ fn test_parse_use_statement() {
 
 #[test]
 fn test_parse_multiple_use_statements() {
-    let source = "use \"cpp\"\nuse \"proto\"\n\nrecipe \"build\"\n    echo hello\n";
+    let source = "use \"cpp\"\nuse \"proto\"\n\nrecipe \"build\"\n    cook.log(\"hi\")\n";
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.uses.len(), 2);
     assert_eq!(cookfile.uses[0].module_name, "cpp");
@@ -594,7 +637,7 @@ fn test_parse_multiple_use_statements() {
 
 #[test]
 fn test_parse_use_with_configs() {
-    let source = "use \"cpp\"\n\nconfig \"debug\"\n    env.CFLAGS = \"-g\"\n\nrecipe \"build\"\n    @echo hello\n";
+    let source = "use \"cpp\"\n\nconfig \"debug\"\n    env.CFLAGS = \"-g\"\n\nrecipe \"build\"\n    cook.log(\"hi\")\n";
     let cookfile = crate::parse(source).unwrap();
     assert_eq!(cookfile.uses.len(), 1);
     assert_eq!(cookfile.config_blocks.len(), 1);
@@ -708,7 +751,6 @@ import backend ./services/b
 fn test_ingredients_with_excludes() {
     let source = r#"recipe build
     ingredients "src/*.c" !"src/lua.c" !"src/luac.c"
-    echo compiling
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
@@ -720,7 +762,6 @@ fn test_ingredients_with_excludes() {
 fn test_ingredients_excludes_only() {
     let source = r#"recipe build
     ingredients !"src/test.c"
-    echo compiling
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
@@ -732,7 +773,6 @@ fn test_ingredients_excludes_only() {
 fn test_ingredients_no_excludes() {
     let source = r#"recipe build
     ingredients "src/*.c" "include/*.h"
-    echo compiling
 "#;
     let result = parse(source).unwrap();
     let recipe = &result.recipes[0];
@@ -812,18 +852,34 @@ fn test_chore_basic() {
 }
 
 #[test]
-fn test_chore_at_prefix_no_op() {
+fn test_chore_at_prefix_rejected() {
+    // CS-0134: the `@` interactive prefix was removed; chore commands are
+    // interactive by default so the marker is rejected.
     let input = "chore deploy\n    @rsync -av out/\n";
+    let err = parse(input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("`@` interactive prefix was removed"), "got: {}", msg);
+}
+
+#[test]
+fn test_chore_register_sigil_rejected() {
+    // CS-0134: the `>>` register sigil was removed from chores too.
+    let input = "chore deploy\n    >> local x = 1\n";
+    let err = parse(input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("`>>` sigil was removed"), "got: {}", msg);
+}
+
+#[test]
+fn test_chore_keeps_execute_lua() {
+    // CS-0134: chores stay imperative — plain shell + `>` / `>{` still parse.
+    let input = "chore build\n    echo hi\n    > cook.sh(\"echo x\")\n    >{\n        cook.sh(\"echo y\")\n    }\n";
     let cookfile = parse(input).expect("chore should parse");
-    match &cookfile.chores[0].steps[0] {
-        Step::Shell { command, interactive, .. } => {
-            // `@` is stripped (preserving symmetry with recipe bodies);
-            // chore default-interactive remains.
-            assert_eq!(command, "rsync -av out/");
-            assert!(*interactive);
-        }
-        _ => panic!("expected Shell step"),
-    }
+    let steps = &cookfile.chores[0].steps;
+    assert_eq!(steps.len(), 3);
+    assert!(matches!(&steps[0], Step::Shell { interactive: true, .. }));
+    assert!(matches!(&steps[1], Step::Lua { .. }));
+    assert!(matches!(&steps[2], Step::LuaBlock { .. }));
 }
 
 #[test]
@@ -1107,7 +1163,7 @@ fn cs_0035_lua_block_with_multiline_long_string() {
     // the surrounding `>{ … }` Lua block. Pre-CS-0035, the line-local
     // brace counter saw the bare `}` as a closer.
     let source = "\
-recipe build
+chore build
     >{
         local s = [[
             this string contains a } brace
@@ -1117,7 +1173,7 @@ recipe build
     }
 ";
     let result = parse(source).expect("CS-0035: long string should not close block");
-    let step = &result.recipes[0].steps[0];
+    let step = &result.chores[0].steps[0];
     match step {
         Step::LuaBlock { code, .. } => {
             assert!(code.contains("local s = [["));
@@ -1135,7 +1191,7 @@ fn cs_0035_lua_block_with_multiline_long_string_levels() {
     // `[==[ … ]==]` long strings: closing `]]` of a lower level does not
     // close a higher-level open.
     let source = "\
-recipe build
+chore build
     >{
         local s = [==[
             this is opaque text
@@ -1145,7 +1201,7 @@ recipe build
     }
 ";
     let result = parse(source).expect("CS-0035: leveled long string should not close block");
-    match &result.recipes[0].steps[0] {
+    match &result.chores[0].steps[0] {
         Step::LuaBlock { code, .. } => {
             assert!(code.contains("with } and ]] inside"));
             assert!(code.contains("]==]"));
@@ -1159,7 +1215,7 @@ fn cs_0035_lua_block_with_multiline_block_comment() {
     // A `}` byte inside a multi-line `--[[ … ]]` block comment MUST NOT
     // close the surrounding `>{ … }` Lua block.
     let source = "\
-recipe build
+chore build
     >{
         --[[
             here is a } in a block comment
@@ -1169,7 +1225,7 @@ recipe build
     }
 ";
     let result = parse(source).expect("CS-0035: block comment should not close block");
-    match &result.recipes[0].steps[0] {
+    match &result.chores[0].steps[0] {
         Step::LuaBlock { code, .. } => {
             assert!(code.contains("--[["));
             assert!(code.contains("here is a } in a block comment"));
@@ -1361,10 +1417,10 @@ recipe r
 fn test_duplicate_recipe_name_rejected() {
     let src = "\
 recipe foo
-    echo first
+    cook.log(\"a\")
 
 recipe foo
-    echo second
+    cook.log(\"b\")
 ";
     let err = parse(src).expect_err("expected duplicate-recipe rejection").to_string();
     assert!(
@@ -1393,7 +1449,7 @@ chore tidy
 fn test_recipe_then_chore_same_name_rejected() {
     let src = "\
 recipe play
-    echo r
+    cook.log(\"r\")
 
 chore play
     echo c
@@ -1428,9 +1484,9 @@ fn test_duplicate_quoted_recipe_name_rejected() {
     // Quoted form on either side still collides — names compare verbatim.
     let src = "\
 recipe \"build\"
-    echo first
+    cook.log(\"a\")
 recipe build
-    echo second
+    cook.log(\"b\")
 ";
     let err = parse(src).expect_err("expected duplicate rejection across quote forms").to_string();
     assert!(
@@ -1468,7 +1524,7 @@ fn test_parse_multiple_register_blocks() {
 
 #[test]
 fn test_parse_register_block_after_recipe_is_allowed() {
-    let source = "recipe build\n    @ ./build\n\nregister\n    cook_cc.bin(\"x\", {})\n";
+    let source = "recipe build\n    cook.log(\"x\")\n\nregister\n    cook_cc.bin(\"x\", {})\n";
     let cookfile = parse(source).unwrap();
     assert_eq!(cookfile.recipes.len(), 1);
     assert_eq!(cookfile.register_blocks.len(), 1);
@@ -1476,7 +1532,7 @@ fn test_parse_register_block_after_recipe_is_allowed() {
 
 #[test]
 fn test_parse_register_block_interleaved() {
-    let source = "register\n    a()\n\nrecipe build\n    @ ./build\n\nregister\n    b()\n";
+    let source = "register\n    a()\n\nrecipe build\n    cook.log(\"x\")\n\nregister\n    b()\n";
     let cookfile = parse(source).unwrap();
     assert_eq!(cookfile.register_blocks.len(), 2);
     assert_eq!(cookfile.recipes.len(), 1);
@@ -1495,7 +1551,7 @@ fn test_parse_register_with_name_rejected() {
 
 #[test]
 fn test_parse_register_terminates_recipe_body() {
-    let source = "recipe build\n    @ ./build\nregister\n    a()\n";
+    let source = "recipe build\n    cook.log(\"x\")\nregister\n    a()\n";
     let cookfile = parse(source).unwrap();
     assert_eq!(cookfile.recipes.len(), 1);
     assert_eq!(cookfile.recipes[0].steps.len(), 1);
@@ -1524,7 +1580,7 @@ fn test_parse_top_level_module_call_multiline() {
 
 #[test]
 fn test_parse_top_level_module_call_terminates_recipe() {
-    let source = "use cook_cc\nrecipe build\n    @ ./build\ncook_cc.bin(\"x\", {})\n";
+    let source = "use cook_cc\nrecipe build\n    cook.log(\"x\")\ncook_cc.bin(\"x\", {})\n";
     let cookfile = parse(source).unwrap();
     assert_eq!(cookfile.recipes.len(), 1);
     assert_eq!(cookfile.recipes[0].steps.len(), 1);
@@ -1543,25 +1599,28 @@ fn test_parse_top_level_colon_call_rejected() {
 // ── In-body module_call dispatch REMOVED (SHI-216 §3.9 amendment) ─────
 
 #[test]
-fn test_parse_in_body_bare_module_call_is_shell_after_cs0072() {
+fn test_parse_in_body_bare_module_call_is_inline_lua_after_cs0134() {
+    // CS-0134: an indented bare module call auto-classifies as register-phase
+    // InlineLua (reverting the CS-0072 shell classification).
     let source = "use cpp\nrecipe build\n    cpp.bin(\"x\", { sources = { \"a.c\" } })\n";
     let cookfile = parse(source).unwrap();
     assert_eq!(cookfile.recipes.len(), 1);
     assert_eq!(cookfile.recipes[0].steps.len(), 1);
     use crate::ast::Step;
     assert!(
-        matches!(cookfile.recipes[0].steps[0], Step::Shell { .. }),
-        "expected Shell step (CS-0072 amendment), got: {:?}",
+        matches!(cookfile.recipes[0].steps[0], Step::InlineLua { .. }),
+        "expected InlineLua step (CS-0134), got: {:?}",
         cookfile.recipes[0].steps[0],
     );
 }
 
 #[test]
-fn test_parse_in_body_explicit_register_prefix_still_inline_lua() {
+fn test_parse_in_body_register_sigil_rejected() {
+    // CS-0134: the register-phase `>>` sigil was removed from the language.
     let source = "use cpp\nrecipe build\n    >> cpp.bin(\"x\", { sources = { \"a.c\" } })\n";
-    let cookfile = parse(source).unwrap();
-    use crate::ast::Step;
-    assert!(matches!(cookfile.recipes[0].steps[0], Step::InlineLua { .. }));
+    let err = parse(source).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("`>>` sigil was removed"), "got: {}", msg);
 }
 
 #[test]
@@ -1576,14 +1635,15 @@ fn test_parse_register_inside_recipe_body_rejected() {
 #[test]
 fn test_parse_register_bareword_indented_alone_is_shell() {
     // Indented bare `register` (no separator) is a shell_command "register"
-    // per (post-CS-0072) rule 6 — not rejected. The rejection rule fires
-    // only when `register` is followed by a separator.
-    let source = "recipe build\n    register\n";
+    // per (post-CS-0072) rule 6 — exercised in a chore, since CS-0134 bans
+    // loose shell in recipe bodies. The `register`+separator rejection rule
+    // still fires (see test_parse_register_inside_chore_body_rejected).
+    let source = "chore build\n    register\n";
     let cookfile = parse(source).unwrap();
-    assert_eq!(cookfile.recipes.len(), 1);
-    assert_eq!(cookfile.recipes[0].steps.len(), 1);
+    assert_eq!(cookfile.chores.len(), 1);
+    assert_eq!(cookfile.chores[0].steps.len(), 1);
     use crate::ast::Step;
-    match &cookfile.recipes[0].steps[0] {
+    match &cookfile.chores[0].steps[0] {
         Step::Shell { command, .. } => assert_eq!(command, "register"),
         other => panic!("expected Shell step, got {:?}", other),
     }
@@ -1592,11 +1652,11 @@ fn test_parse_register_bareword_indented_alone_is_shell() {
 #[test]
 fn test_parse_register_underscore_inside_body_is_shell() {
     // `register_foo` is not a separator-followed `register`; remains a
-    // shell_command per rule 6.
-    let source = "recipe build\n    register_foo\n";
+    // shell_command per rule 6 (exercised in a chore per CS-0134).
+    let source = "chore build\n    register_foo\n";
     let cookfile = parse(source).unwrap();
     use crate::ast::Step;
-    match &cookfile.recipes[0].steps[0] {
+    match &cookfile.chores[0].steps[0] {
         Step::Shell { command, .. } => assert_eq!(command, "register_foo"),
         other => panic!("expected Shell step, got {:?}", other),
     }
@@ -1723,7 +1783,7 @@ fn parse_probe_lua_block_with_deps_and_ingredients() {
 
 #[test]
 fn parse_probe_terminates_at_next_recipe() {
-    let src = "probe a\n    >{ return 1 }\nrecipe build\n    echo hi\n";
+    let src = "probe a\n    >{ return 1 }\nrecipe build\n    cook.log(\"hi\")\n";
     let cf = crate::parse(src).unwrap();
     assert_eq!(cf.probes.len(), 1);
     assert_eq!(cf.recipes.len(), 1);
@@ -2195,14 +2255,12 @@ fn disp_recipe_seal_quoted_ref_errors() {
 }
 
 #[test]
-fn disp_bare_local_line_is_shell_command() {
-    // recipe-body `local` on its own line is NOT a disposition anymore → shell
-    // step (a non-reserved word). It starts the imperative region, so a `cook`
-    // after it would be a region-ordering violation; assert the classification
-    // on a recipe whose `cook` precedes it.
-    let cf = parse("recipe r\n    cook \"x\" { c }\n    local\n").unwrap();
-    let steps = &cf.recipes[0].steps;
-    assert!(matches!(steps[steps.len() - 1], crate::ast::Step::Shell { .. }));
+fn disp_bare_local_line_is_rejected_loose_shell() {
+    // CS-0134: recipe-body `local` on its own line is not a disposition and not
+    // a module call, so it is rejected as loose shell.
+    let err = parse("recipe r\n    cook \"x\" { c }\n    local\n").unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("loose shell commands are not allowed"), "got: {}", msg);
 }
 
 #[test]
@@ -2239,7 +2297,7 @@ fn test_config_valid_lua_still_parses() {
         "    OUTDIR = \"build\"",
         "    if true then env.A = \"1\" end",
     ] {
-        let src = format!("config\n{body}\n\nrecipe hello\n    echo hi\n");
+        let src = format!("config\n{body}\n\nrecipe hello\n    cook.log(\"hi\")\n");
         assert!(parse(&src).is_ok(), "should parse: {body}");
     }
 }
