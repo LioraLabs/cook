@@ -1,0 +1,2 @@
+probe x: demo:cc-path
+    >{ return 1 }
