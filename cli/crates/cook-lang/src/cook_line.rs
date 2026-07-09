@@ -560,9 +560,8 @@ pub(crate) fn parse_cook_line(
         });
     }
 
-    // A non-empty tail that does NOT open a body (`{` / `>{` / `>>{`) is a
-    // declaration-only cook step carrying trailing `cook_mods` (COOK-171), e.g.
-    // `cook "x" local` or `cook "x" seal rev`.
+    // Does the tail open a body (`{` / `>{` / `>>{`)? A cook step MUST have one
+    // (CS-0133); a non-body tail is rejected below.
     let opens_body = after_pattern.starts_with('{')
         || after_pattern.starts_with(">{")
         || after_pattern.starts_with(">>{");
@@ -577,7 +576,7 @@ pub(crate) fn parse_cook_line(
         // diagnostic (e.g. `cook "a" "b" junk {` names `junk`). Only a tail
         // that parses as a clean `cook_mods` (empty, or `local`/`seal R`/…)
         // reaches the body-required error below.
-        let _ = cook_disposition_from_tail(after_pattern, line)?;
+        cook_disposition_from_tail(after_pattern, line)?;
         return Err(ParseError::Parse {
             line,
             message: "cook: a cook step requires a body; declaration-only cook \
