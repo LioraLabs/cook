@@ -1,0 +1,3 @@
+recipe name
+    ingredients "src/*.c"
+    cook "out/$<in.stem>.o" { cc -c $<in> -o $<out> }

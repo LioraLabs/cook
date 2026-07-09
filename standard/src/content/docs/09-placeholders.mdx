@@ -64,7 +64,7 @@ The sigil syntax `$<IDENT>` is the sole placeholder surface for shell text as of
 
 **Chore-body resolution order.** Within a chore body, `$<NAME>` resolution proceeds in this order:
 
-1. Declared chore parameter names (§7.1.1). Collisions between parameter names and other placeholder forms are statically prevented by the reserved-name ban (§7.1.1, §A.2).
+1. Declared chore parameter names (§7.1.1). A parameter name is an undotted `BARE_IDENTIFIER` and is resolved ahead of every other form; the remaining chore-body forms are either unavailable in chore bodies (the cross-recipe / ingredient `$<in>` and `$<out>` families, item 3) or take a dotted or prefixed shape an undotted parameter name cannot (`$<env.KEY>`, `$<file:PATH>`). A parameter name therefore collides with none of them, without needing a reserved-name ban (CS-0132; the ban that formerly forbade parameter names such as `name`/`in`/`out` was removed).
 2. `$<env.KEY>` form (§{xref.env-namespace}).
 3. Cross-recipe outputs and ingredients — not available in chore bodies in any case, since chore bodies cannot contain `cook` / `plate` / `test` steps (§7.2).
 

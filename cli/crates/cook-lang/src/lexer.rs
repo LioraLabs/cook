@@ -42,8 +42,6 @@ pub enum LexError {
     DottedDeclaredChoreName { name: String, line: usize },
     #[error("line {line}: chore '{chore}': duplicate parameter '{name}'")]
     DuplicateChoreParam { line: usize, chore: String, name: String },
-    #[error("line {line}: chore '{chore}': parameter '{name}' uses reserved identifier")]
-    ReservedChoreParam { line: usize, chore: String, name: String },
     #[error("line {line}: chore '{chore}': required parameter '{required}' must precede defaulted parameter '{defaulted}'")]
     RequiredAfterDefaulted { line: usize, chore: String, required: String, defaulted: String },
     #[error("line {line}: chore '{chore}': default for parameter '{name}' must be a quoted string")]
@@ -200,8 +198,8 @@ fn scan_balanced_paren<'a>(
 /// Parse the chore parameter list from `text`.
 ///
 /// Reads bare-identifier params with optional `="STRING"` or `=( EXPR )`
-/// defaults, enforces required-before-defaulted ordering, duplicate-name
-/// rejection, and reserved-name rejection. Stops at `:` or end-of-input.
+/// defaults, enforces required-before-defaulted ordering and duplicate-name
+/// rejection. Stops at `:` or end-of-input.
 ///
 /// Returns `(params, remaining_text)`.
 fn parse_chore_params<'a>(
@@ -277,14 +275,9 @@ fn parse_chore_params<'a>(
         }
         remaining = remaining.trim_start();
 
-        // Reserved-name check.
-        if RESERVED_RECIPE_SEGMENTS.contains(&param_name.as_str()) {
-            return Err(LexError::ReservedChoreParam {
-                line,
-                chore: chore_name.to_string(),
-                name: param_name,
-            });
-        }
+        // CS-0132: the reserved-segment ban (§A.2) is gated to dotted
+        // reference surfaces and the env-first prefix; it does NOT constrain
+        // chore parameter names. `name`, `in`, `out`, etc. are all legal.
 
         // Duplicate-name check.
         if !seen_names.insert(param_name.clone()) {
@@ -540,12 +533,13 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
         {
             let rest = trimmed["recipe".len()..].trim();
             let (name, after_name) = parse_name(rest, line_num)?;
-            // Reserved-segment check first so the existing, more-specific
-            // diagnostics (e.g. "'env' is a reserved word") still fire for
-            // names like `env.foo` instead of being shadowed by the generic
-            // dotted-name rejection below.
-            check_reserved_recipe_name(&name, line_num)?;
             if name.contains('.') {
+                // CS-0132: the reserved-segment ban no longer constrains
+                // undotted declaration names. A dotted declaration name is
+                // rejected outright; run the reserved check first so a dotted
+                // reserved reference (env.foo, foo.out) keeps its specific
+                // "reserved word" diagnostic rather than the generic dotted one.
+                check_reserved_recipe_name(&name, line_num)?;
                 return Err(LexError::DottedDeclaredRecipeName { name, line: line_num });
             }
 
@@ -572,8 +566,10 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
         {
             let rest = trimmed["chore".len()..].trim();
             let (name, after_name) = parse_name(rest, line_num)?;
-            check_reserved_recipe_name(&name, line_num)?;
             if name.contains('.') {
+                // CS-0132: see the recipe reduction above — reserved check is
+                // gated to the dotted path so undotted `chore name` is legal.
+                check_reserved_recipe_name(&name, line_num)?;
                 return Err(LexError::DottedDeclaredChoreName { name, line: line_num });
             }
 
@@ -1207,24 +1203,42 @@ recipe "build"
     }
 
     #[test]
-    fn test_chore_reserved_name_rejected() {
-        for reserved in &["stem", "name", "ext", "dir", "in", "out"] {
-            let input = format!("chore {}\n", reserved);
-            let result = tokenize(&input);
-            assert!(result.is_err(), "expected error for chore name '{}'", reserved);
+    fn former_reserved_words_allowed_as_chore_params() {
+        // CS-0132: the reserved-segment ban no longer applies to chore param names.
+        for word in &["stem", "name", "ext", "dir", "in", "out", "env"] {
+            let input = format!("chore deploy {}\n    > do_thing()\n", word);
+            assert!(
+                crate::parse(&input).is_ok(),
+                "chore param named '{}' must parse (CS-0132), got err",
+                word
+            );
         }
     }
 
     #[test]
-    fn test_reserved_recipe_name_rejected() {
-        for reserved in &["stem", "name", "ext", "dir", "in", "out"] {
-            let input = format!("recipe {}\n    echo hi\n", reserved);
-            let result = crate::parse(&input);
-            assert!(
-                result.is_err(),
-                "expected error for reserved recipe name '{}', got ok",
-                reserved
-            );
+    fn former_reserved_words_allowed_as_undotted_decl_names() {
+        // CS-0132: the reserved-segment ban no longer applies to undotted
+        // recipe/chore DECLARATION names.
+        for word in &["stem", "name", "ext", "dir", "in", "out", "env"] {
+            let recipe = format!("recipe {}\n    ingredients \"src/*.c\"\n    cook \"o/$<in.stem>.o\" {{ cc -c $<in> -o $<out> }}\n", word);
+            assert!(crate::parse(&recipe).is_ok(), "recipe named '{}' must parse (CS-0132)", word);
+            let chore = format!("chore {}\n    > do_thing()\n", word);
+            assert!(crate::parse(&chore).is_ok(), "chore named '{}' must parse (CS-0132)", word);
+        }
+    }
+
+    #[test]
+    fn dotted_env_decl_name_still_reserved_diagnostic() {
+        // CS-0132 keeps the reserved check on the dotted path: env.foo at a
+        // declaration site keeps the specific "reserved word" diagnostic rather
+        // than falling through to the generic dotted-name rejection.
+        let input = "recipe \"env.foo\"\n    echo hi\n";
+        match crate::parse(input) {
+            Err(e) => assert!(
+                e.to_string().contains("reserved word"),
+                "expected reserved-word diagnostic for 'env.foo', got: {e}"
+            ),
+            Ok(_) => panic!("recipe env.foo must be rejected"),
         }
     }
 
