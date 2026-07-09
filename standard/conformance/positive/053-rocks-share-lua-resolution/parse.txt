@@ -8,10 +8,9 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Lua code="local m = require(\"rockmod\")"
-        Lua code="print(m.value)"
+        Test body=LuaBlock("        local m = require(\"rockmod\")\n        print(m.value)") timeout=None should_fail=false
   chores:
-    Chore name="verify" line=7
+    Chore name="verify" line=9
       params: []
       deps: []
       steps:

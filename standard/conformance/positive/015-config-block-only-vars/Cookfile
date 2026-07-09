@@ -2,5 +2,5 @@ config
     cook.env.CC = "gcc"
     cook.env.CFLAGS = "-Wall"
 
-recipe "build"
-    @echo hello
+chore build
+    echo hello

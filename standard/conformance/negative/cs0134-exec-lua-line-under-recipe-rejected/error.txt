@@ -1,0 +1,1 @@
+Lua is not allowed in a recipe body (CS-0134)

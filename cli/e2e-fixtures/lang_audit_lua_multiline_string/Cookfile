@@ -7,7 +7,7 @@
 # block closes only on the trailing `}`.
 
 recipe build
-    >{
+    test >{
         local doc = [[
             this Lua long string contains a } brace
             and another } here

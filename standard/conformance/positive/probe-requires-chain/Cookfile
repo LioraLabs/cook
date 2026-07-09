@@ -9,4 +9,4 @@ register
     })
 
 recipe build
-    > cook.sh("echo built")
+    test >{ cook.sh("echo built") }

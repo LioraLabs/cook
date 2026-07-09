@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Lua code="greet.say(\"world\")"
+        Test body=LuaBlock("greet.say(\"world\")") timeout=None should_fail=false
   chores:
   register_blocks: []
   top_level_module_calls: []

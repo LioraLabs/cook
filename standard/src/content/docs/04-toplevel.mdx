@@ -43,7 +43,7 @@ config release
     env.CXXFLAGS = "-O3"
 
 recipe build
-    gcc -o main main.c
+    cook "main" { gcc -o main main.c }
 ```
 
 Each of the three ordered forms (`use_declaration`, `import_declaration`, `config_block`) appears before the single `recipe`. The `use`, `import`, and `config` items are in the prefix; any of them placed after `recipe build` would be rejected.
@@ -62,31 +62,31 @@ End-of-file is also a terminating boundary.
 
 A conforming implementation MUST consume only the source lines strictly between the header and the next terminating line (or EOF) as the body. The terminating line itself is parsed independently as the next `toplevel_item`. There is no closing keyword.
 
-Comments and blank lines inside a body are part of the body (per the existing body conventions) and do not terminate it. An indented `recipe foo` or `chore foo` line inside a body is not a terminating line — the column-0 requirement applies — and falls through to the body's step-dispatch cascade as a `shell_command` (§{steps.shell}).
+Comments and blank lines inside a body are part of the body (per the existing body conventions) and do not terminate it. An indented `recipe foo` or `chore foo` line inside a body is not a terminating line — the column-0 requirement applies. Its classification then depends on the body kind: inside a **chore** body it falls through to the step-dispatch cascade as a `shell_command` (§{steps.shell}); inside a **recipe** body it is a `Content` line matching none of the declarative step kinds and is rejected (§{steps.dispatch}, rule 8).
 
-A bare `end` line is not a terminating line. It is a `Content` token: at top level it is rejected (§{toplevel.overview}); inside a recipe body it dispatches as a `shell_command` whose body text is `end` (§{steps.shell}).
+A bare `end` line is not a terminating line. It is a `Content` token: at top level it is rejected (§{toplevel.overview}); inside a **chore** body it dispatches as a `shell_command` whose body text is `end` (§{steps.shell}); inside a **recipe** body it is rejected as a loose shell line (§{steps.dispatch}, rule 8).
 
 ### Example 4.3.1
 
 ```cook
 recipe build
-    gcc -o main main.c
+    cook "main" { gcc -o main main.c }
 
 recipe test
-    ./main --selftest
+    test { ./main --selftest }
 ```
 
-The `recipe build` body extends from the `gcc ...` line up to (but not including) the column-0 `recipe test` line. The `recipe test` body extends from `./main ...` to EOF. No `end` lines appear.
+The `recipe build` body extends from the `cook ...` line up to (but not including) the column-0 `recipe test` line. The `recipe test` body extends from the `test { ... }` line to EOF. Each body carries only declarative steps (§{steps.dispatch}); no `end` lines appear. The termination boundary is fixed by the column-0 `recipe test` header, not by anything inside `build`'s body.
 
 ### Example 4.3.2
 
 ```cook
-recipe legacy
+chore legacy
     end
     echo done
 ```
 
-The bare `end` on line 2 is a `Content` token (§{lexical.line-classification}). The step-dispatch cascade (§{steps.dispatch}) classifies it as a `shell_command` whose body text is the literal command `end`. The recipe body has two shell steps; the recipe terminates at EOF.
+A chore body retains the imperative shell-step surface (§{chores.body}). The bare `end` on line 2 is a `Content` token (§{lexical.line-classification}). The chore step-dispatch cascade classifies it as a `shell_command` whose body text is the literal command `end`. The chore body has two shell steps; the chore terminates at EOF — the body-termination rule is what proves `end` is an ordinary body line and not a closing keyword.
 
 ### Note 4.3.1
 
@@ -94,7 +94,7 @@ The terminator-set is the column-0 top-level keyword set fixed by §{lexical.key
 
 ## 4.4. Top-level module calls [#toplevel.module-call]
 
-A **top-level module_call** is a column-0 `Content` token whose first token matches the module-call shape `BARE_IDENTIFIER "." BARE_IDENTIFIER (…)` per App. A.4 (`module_call`). The first segment (before the `.`) is restricted to ASCII letters, digits, and underscore — narrower than `BARE_IDENTIFIER` at large; this is the same restriction §{steps.dispatch} rule 5 applied before CS-0072.
+A **top-level module_call** is a column-0 `Content` token whose first token matches the module-call shape `BARE_IDENTIFIER "." BARE_IDENTIFIER (…)` per App. A.4 (`module_call`). The first segment (before the `.`) is restricted to ASCII letters, digits, and underscore — narrower than `BARE_IDENTIFIER` at large; this is the same restriction the §{steps.dispatch} module-call rule applied before CS-0072.
 
 A top-level module_call MUST be a single Lua expression statement. The lexer recognises its first source line; a multi-line call is collected by the brace-balance algorithm of §{lexical.brace-blocks}, treating the call as a Lua source span and using the Lua-spans rule of §{lexical.brace-blocks.lua-spans}. The collected source body is the call as written, preserving interior whitespace and comments.
 

@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Shell interactive=false command="cook_cc.bin(\"hello\", { sources = { \"src/hello.c\" }, needs = { \"zlib\" } })"
+        InlineLua code="cook_cc.bin(\"hello\", { sources = { \"src/hello.c\" }, needs = { \"zlib\" } })"
   chores:
   register_blocks: []
   top_level_module_calls: []

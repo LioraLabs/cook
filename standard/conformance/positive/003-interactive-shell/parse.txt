@@ -3,12 +3,11 @@ Cookfile
   imports: []
   config_blocks: []
   recipes:
-    Recipe name="play" line=1
+  chores:
+    Chore name="play" line=1
+      params: []
       deps: []
-      ingredients: []
-      excludes: []
       steps:
         Shell interactive=true command="./run"
-  chores:
   register_blocks: []
   top_level_module_calls: []

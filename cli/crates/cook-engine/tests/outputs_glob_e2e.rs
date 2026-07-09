@@ -26,13 +26,11 @@ fn write_cookfile(wd: &std::path::Path) {
     fs::write(
         wd.join("Cookfile"),
         r#"recipe build
-    >>{
         cook.add_unit({
             inputs  = { "src.c" },
             outputs = { "build/**" },
             command = "mkdir -p build && cp src.c build/a.out && date > build/stamp",
         })
-    }
 "#,
     )
     .unwrap();

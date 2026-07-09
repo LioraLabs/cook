@@ -43,7 +43,7 @@ The Cookfile MUST be rejected at plan time. `writer_a` and `writer_b` both decla
 The check is plan-time, not execute-time: an implementation that defers detection until a write-write conflict occurs in the filesystem fails the requirement, because a successful first run can mask a race that fails on a subsequent run. The check looks at canonical paths derived from the source, not at filesystem state.
 
 ## 16.2. Interactive step draining [#exec.interactive-drain]
-A step classified as `interactive_command` (§{steps.shell}) — that is, a step whose Cookfile source line begins with `@` — MUST, at execute time, **drain** the implementation's concurrent execute-phase work before its command begins. Draining means: at the instant the interactive unit is about to run, no other work unit of any recipe MUST be in progress. The implementation MUST wait until every then-running work unit has completed before beginning the interactive command.
+An **interactive unit** — a chore-body `shell_command` (§{steps.shell}), which is implicitly interactive by the chore default (§{chores.default-interactive}) — MUST, at execute time, **drain** the implementation's concurrent execute-phase work before its command begins. Draining means: at the instant the interactive unit is about to run, no other work unit of any recipe MUST be in progress. The implementation MUST wait until every then-running work unit has completed before beginning the interactive command.
 
 An interactive unit MUST execute on a thread that inherits the controlling terminal of the Cook process, so that the spawned child inherits stdin, stdout, and stderr attached to a real TTY. The Standard does not prescribe which thread; it requires only the inheritance property and the drain property.
 
@@ -52,14 +52,16 @@ After an interactive unit completes, execution resumes under the normal rules: n
 ### Example 16.2.1
 
 ```cook
-recipe dev
+recipe app
     cook "build/app" { gcc main.c -o $<out> }
-    @./build/app
+
+chore dev: app
+    ./build/app
     echo "exited"
 ```
 
-When the interactive step is reached at execute time, any other work in progress is drained. `./build/app` runs on a thread with the controlling TTY. Once it completes, `echo "exited"` runs. The `cook` step in the same recipe MUST have completed before `./build/app` begins, by the within-recipe rule of §{exec.step-groups}.
+Interactive units live in a chore body (§{chores}), where every shell step is interactive by default (§{chores.default-interactive}); `recipe app` builds `build/app` as a declarative `cook` step, and `chore dev` depends on it. When the interactive `./build/app` step is reached at execute time, any other work in progress is drained, and it runs on a thread with the controlling TTY. Once it completes, `echo "exited"` runs — it too runs on the drain thread. The `cook` step of `app` MUST have completed before `./build/app` begins, by the dependency edge `dev: app` (§{exec.cross-recipe-ordering}).
 
 ### Note 16.2.1
 
-Draining is stronger than "runs on a single thread": it also excludes the interactive unit from running while any other work unit is still active anywhere in the build. This mirrors the common user expectation that an `@`-prefixed command is a standalone interactive session with no concurrent output from background jobs.
+Draining is stronger than "runs on a single thread": it also excludes the interactive unit from running while any other work unit is still active anywhere in the build. This mirrors the common user expectation that a chore's interactive command is a standalone interactive session with no concurrent output from background jobs.

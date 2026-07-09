@@ -132,7 +132,7 @@ A `register_body` MAY be empty: the next top-level construct or EOF MAY immediat
 
 ### 5.4.1. Splicing semantics [#decl.register-splicing]
 
-A conforming implementation MUST execute each `register_block` body on the register-phase Lua VM in **source order**, interleaved with recipe registrations. The effect MUST be as if each `register_block` body were spliced verbatim into the compiled register-phase Lua program at its source position. `local` variables and other Lua state declared in one `register_block` body MUST remain in scope for subsequent `register_block` bodies, for `inline_lua_line` / `inline_lua_block` (§{steps.lua}) lines in recipes that follow, and for the bodies of `cook.recipe(…)` invocations triggered by either, subject to the visibility rules of the underlying Lua language. An implementation MAY represent the parsed `register_block`s as an ordered collection within its abstract syntax tree; the reference implementation in `cli/crates/cook-lang` uses a `Vec<RegisterBlock>` field on the top-level `Cookfile` AST node (informative).
+A conforming implementation MUST execute each `register_block` body on the register-phase Lua VM in **source order**, interleaved with recipe registrations. The effect MUST be as if each `register_block` body were spliced verbatim into the compiled register-phase Lua program at its source position. `local` variables and other Lua state declared in one `register_block` body MUST remain in scope for subsequent `register_block` bodies, for recipe-body `module_call` lines (§{steps.dispatch}) in recipes that follow, and for the bodies of `cook.recipe(…)` invocations triggered by either, subject to the visibility rules of the underlying Lua language. An implementation MAY represent the parsed `register_block`s as an ordered collection within its abstract syntax tree; the reference implementation in `cli/crates/cook-lang` uses a `Vec<RegisterBlock>` field on the top-level `Cookfile` AST node (informative).
 
 A `register_block` body MAY call any register-phase Cook Lua API, including `cook.recipe`, `cook.add_unit`, `cook.step_group`, `cook.exec`, `cook.interactive`, and the both-phase APIs.
 
@@ -150,7 +150,7 @@ register
     })
 ```
 
-The `register` block calls `cook_cc.bin`, a §{cat.cc} target-maker that internally invokes `cook.recipe("game", …)` to create the recipe header and `cook.add_unit(…)` to record its work units. The block runs once during recipe registration; the resulting `recipe "game"` is indistinguishable from one declared with `recipe game / >> cook_cc.bin(…)` under the v0.3 idiom.
+The `register` block calls `cook_cc.bin`, a §{cat.cc} target-maker that internally invokes `cook.recipe("game", …)` to create the recipe header and `cook.add_unit(…)` to record its work units. The block runs once during recipe registration; the resulting `recipe "game"` is indistinguishable from one declared as a `recipe game` header carrying a bare `cook_cc.bin(…)` module-call line in its body (§{steps.dispatch}).
 
 ### Example 5.4.2
 
@@ -159,15 +159,15 @@ register
     zlib = cook_cc.find_or_error("zlib")
     cook_cc.lib("common", { sources = { "src/common.c" } })
 
-recipe run
-    @ ./packer test.dat
+chore run
+    ./packer test.dat
 
 register
     cook_cc.bin("packer", { sources = { "src/packer.c" }, links = { "common" }, system_libs = zlib.system_libs })
 ```
 
-The two-block-with-recipe-between form demonstrates the source-order splicing rule plus shared scope: the `zlib` table written in the first block is visible in the second block. Both blocks splice into the same register-phase Lua chunk; the only restriction is Lua's normal lexical-scope rules (`local` in a `do … end` is not visible outside it, but assignments and `local` at the chunk's top level — which is where register-block bodies splice — persist through the rest of the chunk).
+The interactive shell step lives in a `chore` body (§{chores}), not a recipe body — a recipe body is purely declarative under CS-0134, and a chore shell command is interactive by default (§{chores.default-interactive}), so no `@` marker is written (CS-0134 removed it from the language). The two-block-with-chore-between form demonstrates the source-order splicing rule plus shared scope: the `zlib` table written in the first block is visible in the second block. Both blocks splice into the same register-phase Lua chunk; the only restriction is Lua's normal lexical-scope rules (`local` in a `do … end` is not visible outside it, but assignments and `local` at the chunk's top level — which is where register-block bodies splice — persist through the rest of the chunk).
 
 ### Note 5.4.1
 
-The recipe-body step-dispatch cascade in §{steps.dispatch} no longer includes the module_call rule as of CS-0072. A bare `<id>.<id>(…)` line inside a recipe body classifies as `shell_command` and would try to exec the literal text as a shell command. Authors who want register-phase Lua inside a recipe body MUST use `>>` (`inline_lua_line`) or `>>{` (`inline_lua_block`).
+As of CS-0134 the recipe-body step-dispatch cascade in §{steps.dispatch} reinstates the `module_call` rule that CS-0072 had removed. A bare `<id>.<id>(…)` line inside a recipe body is a `module_call`, classified and evaluated as register-phase Lua alongside the recipe's other declarative steps. The register-phase doubled-`>` prefixes `>>` (`inline_lua_line`) and `>>{` (`inline_lua_block`) were removed from the language entirely by CS-0134 (§{lexical.line-prefixes}); a bare module call is now the way to write register-phase Lua inside a recipe body, and a top-level `register` block (§{decl.register}) hosts register-phase Lua that is not itself a module call (e.g. a `local` assignment reading `cook.env`).

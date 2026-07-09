@@ -5,4 +5,4 @@ register
     })
 
 recipe build
-    > cook.sh("echo hello")
+    test >{ cook.sh("echo hello") }

@@ -1,6 +1,0 @@
-recipe "lua_step"
-    > print("hello")
-    >{
-        local x = 1
-        print(x + 1)
-    }

@@ -15,5 +15,5 @@ recipe greet
     ingredients "Cookfile"
     plate { echo "hello" }
 
-recipe shout: greet
+chore shout: greet
     echo "shout sees: $<greet>"

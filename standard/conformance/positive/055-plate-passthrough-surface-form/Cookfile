@@ -9,5 +9,5 @@ recipe greet
     ingredients "Cookfile"
     plate { echo "hello" }
 
-recipe shout
-    @echo "shout sees $<greet>"
+chore shout: greet
+    echo "shout sees $<greet>"

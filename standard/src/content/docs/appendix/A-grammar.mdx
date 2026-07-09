@@ -62,29 +62,15 @@ Names compare verbatim — bare and quoted forms of the same name (e.g. `recipe 
 recipe                ::= recipe_header NEWLINE recipe_body
 recipe_header         ::= "recipe" name (":" dependency_list)?
 dependency_list       ::= name+
-recipe_body           ::= declarative_region imperative_region?
-declarative_region    ::= declarative_item*
-declarative_item      ::= ingredients_step
-                       | seal_step
-                       | cook_step
-                       | plate_step
-                       | test_step
-                       | inline_lua_line
-                       | inline_lua_block
-                       | comment
-                       | NEWLINE
-imperative_region     ::= imperative_item+
-imperative_item       ::= lua_line
-                       | lua_block
-                       | shell_command
-                       | interactive_command
-                       | comment
-                       | NEWLINE
+recipe_body           ::= recipe_item*
+recipe_item           ::= ingredients_step | seal_step | cook_step
+                       | plate_step | test_step | module_call
+                       | comment | NEWLINE
 ```
 
-**At-most-one-ingredients rule.** A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe with two or more `ingredients_step` items.
+As of CS-0134 a recipe body is **purely declarative**: it is a flat sequence of `recipe_item`s, all of which are register-phase (§{steps.dispatch}, §{steps.overview}). The pre-CS-0134 two-region structure — a `declarative_region` followed by an optional `imperative_region` of `lua_line` / `lua_block` / `shell_command` steps — is removed, along with the register-phase `inline_lua_line` (`>>`) and `inline_lua_block` (`>>{`) items (those prefixes no longer exist anywhere in the language, §{lexical.line-prefixes}), and along with the `@` interactive prefix and its `interactive_command` step kind, which CS-0134 removed from the language outright (§{lexical.line-prefixes}). Register-phase Lua inside a recipe body is now written as a bare `module_call` (§{grammar-appendix.steps}, "Step-dispatch priority", the module-call rule). The `lua_line` / `lua_block` (`>` / `>{`) forms survive only in **body position** — as the opener of a `cook` / `test` / `plate` / `probe` step's body — and never as a standalone recipe-body item; a `shell_command` is rejected as a recipe-body item and survives only inside a `chore` body (§{grammar-appendix.chore}, §{steps.dispatch}).
 
-**Region ordering rule.** A conforming implementation MUST reject a `recipe_body` in which a `declarative_item` (other than `comment` or `NEWLINE`) appears after the first `imperative_item` (other than `comment` or `NEWLINE`) of the same recipe. The diagnostic MUST identify the offending step's line and the line on which the imperative region began. See §{steps.overview}, Note 4.4.2 for the prose treatment.
+**At-most-one-ingredients rule.** A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe with two or more `ingredients_step` items.
 
 **Body termination (normative).** A `recipe_body`'s extent is determined by the implicit-termination rule of §{toplevel.termination}: it ranges from the line after the header to the next column-0 line classified as `recipe`, `chore`, `config`, `use`, `import`, or `register`, or to a column-0 line matching the top-level module_call shape, or to end-of-file. A bare `end` line is a `Content` token (§{lexical.line-classification}) and does NOT terminate the body. A conforming implementation MUST NOT require an explicit `end` line.
 
@@ -99,20 +85,15 @@ required_param           ::= BARE_IDENTIFIER
 defaulted_param          ::= BARE_IDENTIFIER "=" default_value
 default_value            ::= STRING | "(" LUA_EXPR ")"
 variadic_param           ::= ("+" | "*") BARE_IDENTIFIER
-chore_body               ::= chore_declarative_region chore_imperative_region?
-chore_declarative_region ::= chore_declarative_item*
-chore_declarative_item   ::= inline_lua_line
-                           | inline_lua_block
-                           | comment
-                           | NEWLINE
-chore_imperative_region  ::= chore_imperative_item+
-chore_imperative_item    ::= lua_line
+chore_body               ::= chore_item*
+chore_item               ::= lua_line
                            | lua_block
                            | shell_command
-                           | interactive_command
                            | comment
                            | NEWLINE
 ```
+
+As of CS-0134 a `chore_body` is a flat sequence of execute-phase (imperative) step kinds — `lua_line` (`>`), `lua_block` (`>{`), and `shell_command`. The pre-CS-0134 two-region structure is collapsed: chores lose the register-phase `inline_lua_line` (`>>`) and `inline_lua_block` (`>>{`) items (those prefixes are removed from the language outright, §{lexical.line-prefixes}), and the `@` interactive prefix / `interactive_command` step kind is likewise removed everywhere (§{lexical.line-prefixes}) — a chore `shell_command` is interactive by default (§{chores.default-interactive}), so no marker is needed. This leaves no declarative region and therefore nothing to order against. Chores keep the loose (implicitly-interactive) shell surface a recipe body no longer admits (§{chores.body}).
 
 **Chore parameter ordering rule (normative).** Within a `param_list`, every `required_param` MUST precede every `defaulted_param`, and the optional `variadic_param` MUST be the final parameter. A conforming implementation MUST reject a header that violates this order.
 
@@ -122,7 +103,7 @@ chore_imperative_item    ::= lua_line
 
 **Chore step-kind ban (normative).** A `chore_body` MUST NOT contain `ingredients_step`, `cook_step`, `plate_step`, or `test_step`. A conforming implementation MUST reject a chore body that contains any of these. The diagnostic MUST identify the offending step's keyword.
 
-**Chore default-interactive (normative).** Every `shell_command` inside a `chore_body` MUST be treated as if it had been an `interactive_command` (§{grammar-appendix.steps}, `interactive_command`). The `@` prefix MAY be present (no-op) but is unnecessary.
+**Chore default-interactive (normative).** Every `shell_command` inside a `chore_body` is interactive: it MUST be run with the controlling terminal inherited (§{chores.default-interactive}). There is no `@` prefix or `interactive_command` step kind — CS-0134 removed both from the language (§{lexical.line-prefixes}).
 
 **Chore no-caching (normative).** A unit registered from inside a chore body via `cook.add_unit` or the Cook Lua API's unit-recording helpers MUST be registered with `cache = false`. A conforming implementation MUST reject a register-phase call that would set `cache = true` (or equivalent) from within a chore body.
 
@@ -202,14 +183,29 @@ test_modifiers        ::= ("as" STRING)? ("timeout" NUMBER)? "should_fail"?
 
 lua_line              ::= ">" LUA_LINE_CONTENT? NEWLINE
 lua_block             ::= ">{" LUA_BLOCK_CONTENT "}" NEWLINE
+                          /* CS-0134: the `>` / `>{` forms are admitted ONLY in
+                             body position — as the opener of a cook / test /
+                             plate / probe step's body — or as a standalone step
+                             inside a chore body (§{grammar-appendix.chore}).
+                             They MUST NOT appear as a standalone recipe-body
+                             item (§{steps.dispatch}, §{steps.lua}). The doubled-
+                             `>` register-phase forms `inline_lua_line` (`>>`)
+                             and `inline_lua_block` (`>>{`) are removed from the
+                             language outright (§{lexical.line-prefixes}). */
 
-inline_lua_line       ::= ">>" LUA_LINE_CONTENT? NEWLINE
-inline_lua_block      ::= ">>{" LUA_BLOCK_CONTENT "}" NEWLINE
-
-interactive_command   ::= "@" SHELL_LINE_CONTENT NEWLINE
+                          /* CS-0134 removed the `interactive_command`
+                             production (`@` SHELL_LINE_CONTENT) and the `@`
+                             interactive prefix from the language entirely
+                             (§{lexical.line-prefixes}). A chore-body
+                             `shell_command` is interactive by default
+                             (§{grammar-appendix.chore}); no `@` marker exists. */
 
 module_call           ::= MODULE_CALL_TEXT NEWLINE?
-                          /* MODULE_CALL_TEXT is any Content line whose first
+                          /* Used both as a top_level_module_call (§A.1) and,
+                             as of CS-0134, as a recipe-body item (register-
+                             phase; §{steps.dispatch}, rule 7) — reinstating the
+                             recipe-body dispatch CS-0072 had removed.
+                             MODULE_CALL_TEXT is any Content line whose first
                              token matches /[A-Za-z_][A-Za-z0-9_]*/ (alphanumeric
                              and underscore only; hyphens and dots are NOT
                              permitted in the first segment), followed by a
@@ -262,9 +258,9 @@ ingredients "src/*.c"
 
 **`as` modifier is test_step-only (CS-0061).** The `as STRING` modifier is syntactically valid only on `test_step`. A conforming implementation MUST reject `as` appearing after the body of a `cook_step` or `plate_step`, with a diagnostic naming the modifier and identifying it as `test_step`-only.
 
-**`>>{` is rejected as a body.** A `cook_step` body MUST NOT use the `>>{` (register-phase Lua block) prefix. The body produces work for execute, not register-phase orchestration; a register-phase Lua block in this position is incoherent. A conforming implementation MUST reject `cook STR >>{ … }`.
+**`>>{` is rejected as a body.** The only valid body openers are `{` (shell block) and `>{` (Lua block). As of CS-0134 the `>>{` prefix no longer exists anywhere in the language — it is rejected unconditionally at the lexical layer (§{lexical.line-prefixes}) — so `cook "out" >>{ … }` is rejected because `>>{` is not a valid body opener. A conforming implementation MUST reject `cook STR >>{ … }`.
 
-**Body dispatch order (normative).** After the output pattern(s), a conforming implementation checks in this order: `>>{` (rejected as above), `>{` (Lua block), `{` (shell block). The `>>{` test is present so the diagnostic for the rejected form is sharp; the first matching admitted alternative wins for the others. The bare-`STRING` form is no longer admitted (CS-0022).
+**Body dispatch order (normative).** After the output pattern(s), a conforming implementation checks in this order: `>{` (Lua block), `{` (shell block); the first matching alternative wins. An implementation MAY additionally test for the now-removed `>>{` prefix (CS-0134, rejected as above) purely to emit a sharper migration diagnostic, but `>>{` is not an admitted body form. The bare-`STRING` form is no longer admitted (CS-0022).
 
 **`using` is rejected (CS-0099).** The former body introducer `using` (`cook STR { … }` / `cook STR >{ … }`, removed in CS-0099) MUST be rejected at the body position with a migration diagnostic that names CS-0099 and states that the keyword was removed. The body opener follows the output pattern(s) directly. Conformance fixture `cs0099-using-keyword-rejected` pins the diagnostic.
 
@@ -272,18 +268,18 @@ ingredients "src/*.c"
 
 **Cook-step disposition (normative).** A unit's cache participation is declared by two crisp surfaces (COOK-171): `seal`/`unseal` **steps** (a recipe-body determinant input stream) and the trailing **`cook_mods`** on a `cook_step`. The full surface and its parse-time rules are normative in §{steps.cook-disposition}; in summary, a conforming implementation MUST enforce: a recipe-level `seal` step requires at least one `probe_ref` (bare `seal` rejected), is additive across the recipe, and contributes to a recipe-wide baseline applied to every cook regardless of position (order-independent); a recipe-level `unseal` is rejected (`unseal` is a trailing modifier only); a `cook_step`'s effective seal set is `(baseline ∪ trailing seals) − trailing unseals`, sorted and de-duplicated; the trailing `share_mod` is a single optional slot (`local`, `pinned`, or `nondet`) which MUST be last (at most one — `local`/`pinned`/`nondet` are mutually exclusive by construction); a `probe_ref` is a bare `BARE_PROBE_KEY` (the `STRING` form and a third `:IDENT` segment are rejected, as in §{grammar-appendix.probe}); and the removed `record` keyword (renamed `nondet`) is rejected with a migration diagnostic. `seal`, `unseal`, `local`, `pinned`, and `nondet` are NOT reserved words; `seal`/`unseal` are recognised as steps only at a recipe-body line position, and `local`/`pinned`/`nondet` only in the trailing `cook_mods` position.
 
-**Step-dispatch priority (normative).** A single `Content` line inside a recipe body is dispatched in this order, with the first match winning:
+**Step-dispatch priority (normative).** A single `Content` line inside a recipe body is dispatched in this order, with the first match winning. This cascade MUST agree with the prose cascade of §{steps.dispatch} (§8.1). As of CS-0134 the recipe body is **purely declarative**: every admitted line is a register-phase step, and a line matching none of the admitted forms is REJECTED — the pre-CS-0134 `shell_command` fall-through is gone (a `shell_command` survives only inside a `chore` body, §{grammar-appendix.chore}), and the `@` interactive prefix with its `interactive_command` step kind is removed from the language entirely (§{lexical.line-prefixes}):
 
 1. Prefix `ingredients` + separator (space, tab, or end of token) → `ingredients_step`.
-2. Prefix `seal` + separator → recipe-level `seal_step` (its `probe_ref`s contribute to the recipe seal baseline).
+2. Prefix `seal` + separator → recipe-level `seal_step` (its `probe_ref`s contribute to the recipe seal baseline; §{steps.cook-disposition}).
 3. Prefix `unseal` + separator → rejected as a recipe-level step (`unseal` is a trailing `cook_mods` modifier only; §{steps.cook-disposition}).
 4. Prefix `cook` + separator → `cook_step` (its trailing `cook_mods` are parsed after the body — a cook always has one, CS-0133).
 5. Prefix `plate` + separator → `plate_step`.
 6. Prefix `test` + separator → `test_step`.
-7. First character is `@` and the remainder is non-empty → `interactive_command`.
-8. Otherwise → `shell_command`. (A line whose first token is `local`, `pinned`, or `nondet` is NOT a disposition at this position — those keywords are recognised only in the trailing `cook_mods` of a `cook_step` — so such a line falls through to `shell_command`.)
+7. `BARE_IDENTIFIER "." BARE_IDENTIFIER` immediately followed by `(` — a **module call** — → `module_call`, register-phase Lua (§{toplevel.module-call}).
+8. Otherwise → REJECTED (§{steps.dispatch}). In particular a loose/anonymous `shell_command`, a line beginning with `@` (the `@` prefix and its former `interactive_command` step kind are removed from the language, §{lexical.line-prefixes}), and a standalone `>` / `>{` line (outside body position) are all rejected here; the standalone `>>` / `>>{` forms are already rejected at the lexical layer because CS-0134 removes those prefixes from the language (§{lexical.line-prefixes}). A line whose first token is `local`, `pinned`, or `nondet` is likewise rejected — those keywords are recognised only in the trailing `cook_mods` of a `cook_step`, not at a recipe-body line position.
 
-Note: CS-0072 removed the former rule 5 that classified a `Content` line matching `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` as `module_call` (register-phase Lua) from the recipe-body cascade. Top-level module_call dispatch is now governed by §{toplevel.module-call}; authors who want register-phase Lua inside a recipe body MUST use the `>>` or `>>{` prefix.
+Note: **CS-0134 reinstates rule 7 (the module-call classification), reversing the CS-0072 removal** of the recipe-body `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` dispatch. CS-0072 had removed that rule and forced authors to reach for the `>>` (`inline_lua_line`) / `>>{` (`inline_lua_block`) prefix to get register-phase Lua inside a recipe body; CS-0134 both reinstates the bare module-call dispatch and removes `>>` / `>>{` from the language entirely (§{lexical.line-prefixes}). Top-level module_call dispatch (§{toplevel.module-call}) is unaffected by this reinstatement.
 
 ## A.5. Primitives [#grammar-appendix.primitives]
 ```ebnf

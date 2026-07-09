@@ -1,0 +1,1 @@
+loose shell commands are not allowed in a recipe body (CS-0134)

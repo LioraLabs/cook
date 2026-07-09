@@ -3,12 +3,11 @@ Cookfile
   imports: [ImportDecl name="core" path="//core/lib" line=1]
   config_blocks: []
   recipes:
-    Recipe name="x" line=2
-      deps: []
-      ingredients: []
-      excludes: []
-      steps:
-        Shell interactive=false command="echo ok"
   chores:
+    Chore name="x" line=2
+      params: []
+      deps: []
+      steps:
+        Shell interactive=true command="echo ok"
   register_blocks: []
   top_level_module_calls: []

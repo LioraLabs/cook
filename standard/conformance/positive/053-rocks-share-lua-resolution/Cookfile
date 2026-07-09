@@ -1,8 +1,10 @@
 use rockmod
 
 recipe smoke
-    > local m = require("rockmod")
-    > print(m.value)
+    test >{
+        local m = require("rockmod")
+        print(m.value)
+    }
 
 chore verify
     > if rockmod.value ~= 42 then error("rockmod.value mismatch") end

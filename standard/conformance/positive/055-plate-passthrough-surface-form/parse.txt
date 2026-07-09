@@ -9,12 +9,11 @@ Cookfile
       excludes: []
       steps:
         Plate body=ShellBlock(["echo \"hello\""])
-    Recipe name="shout" line=12
-      deps: []
-      ingredients: []
-      excludes: []
+  chores:
+    Chore name="shout" line=12
+      params: []
+      deps: ["greet"]
       steps:
         Shell interactive=true command="echo \"shout sees $<greet>\""
-  chores:
   register_blocks: []
   top_level_module_calls: []

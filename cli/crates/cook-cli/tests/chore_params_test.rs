@@ -162,7 +162,7 @@ fn recipe_with_argv_errors() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe build\n    > print(\"building\")\n",
+        "recipe build\n    test >{ print(\"building\") }\n",
     )
     .unwrap();
 
@@ -223,7 +223,7 @@ fn parametric_chore_env_placeholder_resolves() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "config\n    env.MODE = os.getenv(\"MODE\") or \"dev\"\n\nchore greet who=\"world\"\n    @echo hello $<who>, mode=$<MODE>\n",
+        "config\n    env.MODE = os.getenv(\"MODE\") or \"dev\"\n\nchore greet who=\"world\"\n    echo hello $<who>, mode=$<MODE>\n",
     )
     .unwrap();
 
@@ -245,7 +245,7 @@ fn parametric_chore_recipe_placeholder_creates_edge() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe build\n    cook \"out/tool.txt\" { mkdir -p out && printf tool > $<out> }\n\nchore show what=\"x\"\n    @cat $<build>\n",
+        "recipe build\n    cook \"out/tool.txt\" { mkdir -p out && printf tool > $<out> }\n\nchore show what=\"x\"\n    cat $<build>\n",
     )
     .unwrap();
 
@@ -389,7 +389,7 @@ fn shell_step_substitutes_param_placeholders() {
     fs::write(
         tmp.path().join("Cookfile"),
         // Use printf to get clean output unaffected by echo quoting rules.
-        "chore say target\n    @printf 'got: %s\\n' $<target>\n",
+        "chore say target\n    printf 'got: %s\\n' $<target>\n",
     )
     .unwrap();
     let out = run_cook_raw(tmp.path(), &["say", "hello"]);
@@ -406,7 +406,7 @@ fn shell_step_substitutes_variadic_placeholder_shell_quoted() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "chore lint +files\n    @printf '%s\\n' $<files>\n",
+        "chore lint +files\n    printf '%s\\n' $<files>\n",
     )
     .unwrap();
     // Last arg has a space — verify quoting preserves it as one word.
@@ -424,7 +424,7 @@ fn shell_step_with_unknown_sigil_in_chore_errors() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "chore say target\n    @echo $<unknown>\n",
+        "chore say target\n    echo $<unknown>\n",
     )
     .unwrap();
     let out = run_cook_raw(tmp.path(), &["say", "hello"]);
@@ -528,7 +528,7 @@ fn chore_param_exported_as_env_var_to_shell_child() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "chore say target\n    @sh -c 'echo \"env_target=$target\"'\n",
+        "chore say target\n    sh -c 'echo \"env_target=$target\"'\n",
     )
     .unwrap();
     let out = run_cook_raw(tmp.path(), &["say", "production"]);
@@ -544,7 +544,7 @@ fn variadic_param_exported_as_space_joined_env_var() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "chore lint +files\n    @sh -c 'echo \"env_files=$files\"'\n",
+        "chore lint +files\n    sh -c 'echo \"env_files=$files\"'\n",
     )
     .unwrap();
     let out = run_cook_raw(tmp.path(), &["lint", "a.lua", "b.lua"]);
@@ -560,7 +560,7 @@ fn defaulted_param_env_var_uses_default_when_argv_absent() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "chore say target=\"staging\"\n    @sh -c 'echo \"env=$target\"'\n",
+        "chore say target=\"staging\"\n    sh -c 'echo \"env=$target\"'\n",
     )
     .unwrap();
     let out = run_cook_raw(tmp.path(), &["say"]);
@@ -578,7 +578,7 @@ fn preset_via_at_sigil() {
     // the shell-quoting that $<target> introduces around the value.
     fs::write(
         tmp.path().join("Cookfile"),
-        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    @sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
+        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
     ).unwrap();
     let out = run_cook_raw(tmp.path(), &["show", "production", "@rel"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -593,7 +593,7 @@ fn preset_via_long_flag() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    @sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
+        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
     ).unwrap();
     let out = run_cook_raw(tmp.path(), &["show", "production", "--config", "rel"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -607,7 +607,7 @@ fn preset_via_short_flag() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    @sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
+        "config rel\n    env.MODE = \"rel\"\n\nchore show target\n    sh -c 'echo \"target=$target mode=${MODE:-none}\"'\n",
     ).unwrap();
     let out = run_cook_raw(tmp.path(), &["show", "production", "-c", "rel"]);
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -682,7 +682,7 @@ fn legacy_second_positional_emits_migration_hint() {
 //   - Lua-expression-default parameter (`version=("v0")`)
 //   - Zero-or-more variadic (`*extras`)
 // And every binding surface:
-//   - Inline Lua (`>>`) — register-phase locals
+//   - Execute-phase Lua (`>`) — sees param locals
 //   - Shell `$<name>` placeholder substitution (scalar + variadic)
 //   - Shell env-var export
 //   - Execute-phase Lua (`>`) locals (via the prelude prepended to LuaChunk units)
@@ -696,9 +696,9 @@ fn comprehensive_chore_params_smoke_defaults_fire() {
     fs::write(
         tmp.path().join("Cookfile"),
         "chore demo target host=\"prod\" version=(\"v0\") *extras\n\
-         \x20\x20\x20\x20>> print(\"register: target=\" .. target)\n\
-         \x20\x20\x20\x20@echo \"shell-sub: $<target> $<host> $<version> $<extras>\"\n\
-         \x20\x20\x20\x20@sh -c 'echo \"env: $target/$host/$version/$extras\"'\n\
+         \x20\x20\x20\x20> print(\"register: target=\" .. target)\n\
+         \x20\x20\x20\x20echo \"shell-sub: $<target> $<host> $<version> $<extras>\"\n\
+         \x20\x20\x20\x20sh -c 'echo \"env: $target/$host/$version/$extras\"'\n\
          \x20\x20\x20\x20> print(\"exec-lua: \" .. target .. \" \" .. host .. \" \" .. version .. \" #extras=\" .. #extras)\n",
     ).unwrap();
 
@@ -707,7 +707,7 @@ fn comprehensive_chore_params_smoke_defaults_fire() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
 
-    // Inline-Lua (`>>`) sees the register-phase locals.
+    // Execute-phase Lua (`>`) sees the param locals.
     assert!(stdout.contains("register: target=production"), "stdout: {stdout}");
     // Shell placeholders resolve through the unified sigil path; declared
     // params are quoted via cook.__quote_param. CS-0128: these sigils sit
@@ -726,9 +726,9 @@ fn comprehensive_chore_params_smoke_argv_overrides_defaults() {
     fs::write(
         tmp.path().join("Cookfile"),
         "chore demo target host=\"prod\" version=(\"v0\") *extras\n\
-         \x20\x20\x20\x20>> print(\"register: target=\" .. target)\n\
-         \x20\x20\x20\x20@echo \"shell-sub: $<target> $<host> $<version> $<extras>\"\n\
-         \x20\x20\x20\x20@sh -c 'echo \"env: $target/$host/$version/$extras\"'\n\
+         \x20\x20\x20\x20> print(\"register: target=\" .. target)\n\
+         \x20\x20\x20\x20echo \"shell-sub: $<target> $<host> $<version> $<extras>\"\n\
+         \x20\x20\x20\x20sh -c 'echo \"env: $target/$host/$version/$extras\"'\n\
          \x20\x20\x20\x20> print(\"exec-lua: \" .. target .. \" \" .. host .. \" \" .. version .. \" extras=\" .. table.concat(extras, \",\"))\n",
     ).unwrap();
 
@@ -764,7 +764,7 @@ fn paramless_chore_dependency_body_runs() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "chore a: b\n    @echo a-runs\nchore b\n    @echo b-runs\n",
+        "chore a: b\n    echo a-runs\nchore b\n    echo b-runs\n",
     )
     .unwrap();
 
@@ -791,7 +791,7 @@ fn parametric_chore_dependency_runs_with_defaults() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "chore main: helper\n    @echo main-runs\nchore helper target=\"prod\"\n    @echo helper-target=$<target>\n",
+        "chore main: helper\n    echo main-runs\nchore helper target=\"prod\"\n    echo helper-target=$<target>\n",
     )
     .unwrap();
 
@@ -817,7 +817,7 @@ fn parametric_chore_dependency_with_required_no_default_errors() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "chore main: helper\n    @echo main-runs\nchore helper target\n    @echo helper-target=$<target>\n",
+        "chore main: helper\n    echo main-runs\nchore helper target\n    echo helper-target=$<target>\n",
     )
     .unwrap();
 
@@ -878,7 +878,7 @@ fn sibling_chore_required_param_does_not_block_unrelated_target() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "chore greet who\n    @echo hello $<who>\nchore demo target host=\"prod\"\n    @echo demo $<target> $<host>\n",
+        "chore greet who\n    echo hello $<who>\nchore demo target host=\"prod\"\n    echo demo $<target> $<host>\n",
     )
     .unwrap();
 
@@ -907,10 +907,10 @@ fn many_sibling_parametric_chores_do_not_block_target() {
         tmp.path().join("Cookfile"),
         // Mix: targeted chore, required-no-default sibling, defaulted sibling,
         // variadic-plus sibling. None of them are reachable from `greet`.
-        "chore greet who\n    @echo hello $<who>\n\
-         chore demo target host=\"prod\" version=(\"v0\") *extras\n    @echo demo $<target>\n\
-         chore deploy target host=\"prod.example.com\"\n    @echo deploy $<target>\n\
-         chore lint +files\n    @echo lint $<files>\n",
+        "chore greet who\n    echo hello $<who>\n\
+         chore demo target host=\"prod\" version=(\"v0\") *extras\n    echo demo $<target>\n\
+         chore deploy target host=\"prod.example.com\"\n    echo deploy $<target>\n\
+         chore lint +files\n    echo lint $<files>\n",
     )
     .unwrap();
 

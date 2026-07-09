@@ -53,5 +53,6 @@ recipe nvim-install: generate
             mv "$f" "$f.bak.$stamp"
             echo "backed up stale parser → $f.bak.$stamp"
         done
+
+        bash scripts/install-nvim-queries.sh
     }
-    bash scripts/install-nvim-queries.sh

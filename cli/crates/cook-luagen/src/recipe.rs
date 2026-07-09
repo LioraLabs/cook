@@ -354,7 +354,7 @@ fn validate_accessor_placement(
                         }
                     }
                 }
-                Step::InlineLua { .. } | Step::InlineLuaBlock { .. } => {
+                Step::InlineLua { .. } => {
                     // Inline Lua bodies are opaque to the accessor-placement
                     // check; the templater does not run on Lua source.
                 }
@@ -426,15 +426,14 @@ fn is_bundleable(step: &Step) -> bool {
 /// with no known line falls back to `0` (unknown — pool.rs applies no
 /// padding for that case).
 ///
-/// `LuaBlock`/`InlineLuaBlock`'s `line` field is the line of the opening
-/// `>{` token itself — `cook_lang::lua_block::collect_lua_block` starts
-/// reading the block's code on the *next* physical line — so +1 here to
-/// point at the code's real first line, matching `Lua`'s `line` (which
-/// already is the code's own line, since a `>` line has no separate
-/// opener).
+/// `LuaBlock`'s `line` field is the line of the opening `>{` token
+/// itself — `cook_lang::lua_block::collect_lua_block` starts reading the
+/// block's code on the *next* physical line — so +1 here to point at
+/// the code's real first line, matching `Lua`'s `line` (which already is
+/// the code's own line, since a `>` line has no separate opener).
 fn step_line(step: &Step) -> usize {
     match step {
-        Step::LuaBlock { line, .. } | Step::InlineLuaBlock { line, .. } => *line + 1,
+        Step::LuaBlock { line, .. } => *line + 1,
         Step::Shell { line, .. }
         | Step::Lua { line, .. }
         | Step::InlineLua { line, .. }
@@ -969,13 +968,6 @@ pub fn generate_with_names(
                             out.push_str(&format!("    {}\n", code));
                             i += 1;
                         }
-                        Step::InlineLuaBlock { code, .. } => {
-                            // §{recipes.lua-steps}: register-phase, inlined.
-                            for code_line in code.lines() {
-                                out.push_str(&format!("    {}\n", code_line));
-                            }
-                            i += 1;
-                        }
                         Step::Cook {
                             step: cook_step,
                             line,
@@ -1444,12 +1436,6 @@ fn compile_chore_checked(
             }
             Step::InlineLua { code, .. } => {
                 out.push_str(&format!("    {}\n", code));
-                i += 1;
-            }
-            Step::InlineLuaBlock { code, .. } => {
-                for code_line in code.lines() {
-                    out.push_str(&format!("    {}\n", code_line));
-                }
                 i += 1;
             }
             // Cook / Plate / Test steps are banned in chores by the parser.

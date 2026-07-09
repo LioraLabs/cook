@@ -54,14 +54,12 @@ fn cook_bin() -> std::path::PathBuf {
 /// flip on disk without disturbing the cache key K (the manifest filename).
 const COOKFILE: &str = r#"
 recipe build
-    >>{
         cook.add_unit({
             name    = "build-step",
             inputs  = {"src/in.txt"},
             outputs = {"out.txt"},
             command = "cp src/in.txt out.txt",
         })
-    }
 "#;
 
 /// Init a tempdir workspace with a private shared-cache backend (isolated from

@@ -26,13 +26,11 @@ register
     })
 
 recipe build
-    >>{
-        cook.add_unit({
-            name    = "print-version",
-            inputs  = {},
-            outputs = {"build/version.txt"},
-            probes  = {"demo:cc-version"},
-            command = "mkdir -p build && echo $<demo:cc-version.version> > build/version.txt",
-        })
-    }
-    > cook.sh("cat build/version.txt")
+    cook.add_unit({
+        name    = "print-version",
+        inputs  = {},
+        outputs = {"build/version.txt"},
+        probes  = {"demo:cc-version"},
+        command = "mkdir -p build && echo $<demo:cc-version.version> > build/version.txt",
+    })
+    test { cat build/version.txt }

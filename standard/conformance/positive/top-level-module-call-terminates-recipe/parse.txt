@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Shell interactive=true command=" ./build"
+        Cook outputs=["build.out"] body=ShellBlock(["./build > $<out>"])
   chores:
   register_blocks: []
   top_level_module_calls: [TopLevelModuleCall code="cook_cc.bin(\"a\", { sources = { \"a.c\" } })" line=6]

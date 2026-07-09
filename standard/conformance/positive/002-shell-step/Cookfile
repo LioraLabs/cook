@@ -1,2 +1,2 @@
-recipe "clean"
+chore clean
     rm -rf build

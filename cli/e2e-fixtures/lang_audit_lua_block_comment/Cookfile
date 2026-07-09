@@ -4,7 +4,7 @@
 # block comment would prematurely close the surrounding `>{ ... }` block.
 
 recipe build
-    >{
+    test >{
         --[[
             multi-line block comment with a } brace
             and a second } here

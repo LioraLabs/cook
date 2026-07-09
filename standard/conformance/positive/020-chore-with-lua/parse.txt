@@ -8,7 +8,6 @@ Cookfile
       params: []
       deps: []
       steps:
-        InlineLua code="local hostname = \"localhost\""
         Lua code="print(\"status check: \" .. cook.env.HOST)"
         Shell interactive=true command="uname -a"
   register_blocks: []

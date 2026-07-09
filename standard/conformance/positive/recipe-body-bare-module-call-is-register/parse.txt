@@ -1,15 +1,14 @@
 Cookfile
-  uses: []
+  uses: [UseStatement module_name="cpp" line=1]
   imports: []
   config_blocks: []
   recipes:
-    Recipe name="lua_step" line=1
+    Recipe name="build" line=3
       deps: []
       ingredients: []
       excludes: []
       steps:
-        Lua code="print(\"hello\")"
-        LuaBlock code="        local x = 1\n        print(x + 1)"
+        InlineLua code="cpp.bin(\"x\", { sources = { \"a.c\" } })"
   chores:
   register_blocks: []
   top_level_module_calls: []
