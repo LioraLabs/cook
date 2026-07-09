@@ -466,6 +466,32 @@ fn dquote_context_param_does_not_leak_single_quotes() {
     );
 }
 
+/// CS-0132 frees `name` as a chore param (the 2026-07-06 dogfood repro);
+/// CS-0128 regression: quote-context-aware `$<name>` substitution still works
+/// when the param is literally named `name` and referenced in a double-quoted
+/// shell region.
+#[test]
+fn chore_param_named_name_substitutes_in_body() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "chore greet name=\"world\"\n    echo \"hello $<name>\"\n",
+    )
+    .unwrap();
+    let out = run_cook_isolated(tmp.path(), &["greet", "world"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cook greet world failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert_eq!(
+        stdout.trim(),
+        "hello world",
+        "param named 'name' must substitute cleanly (CS-0132 + CS-0128)\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
 /// Word-safety guard for the UNQUOTED (bare) context. `chore greet who="a b"`
 /// with body `printf '[%s]\n' $<who>` and value `a b` must stay a SINGLE
 /// printf argument — proving the bare context still single-quotes for

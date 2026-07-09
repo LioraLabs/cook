@@ -1,0 +1,13 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+    Chore name="deploy" line=1
+      params: [Required name="name", Required name="in", Required name="out"]
+      deps: []
+      steps:
+        Shell interactive=true command="echo $<name> $<in> $<out>"
+  register_blocks: []
+  top_level_module_calls: []
