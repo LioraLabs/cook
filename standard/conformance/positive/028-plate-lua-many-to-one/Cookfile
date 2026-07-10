@@ -1,4 +1,0 @@
-recipe bundle
-    ingredients "src/*.o"
-    cook "dist/bundle.tgz" { tar czf $<out> $<in> }
-    plate >{ os.execute("tar czf bundle.tgz " .. table.concat(inputs, " ")) }

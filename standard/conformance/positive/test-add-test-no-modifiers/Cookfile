@@ -1,0 +1,5 @@
+recipe suite
+    ingredients "tests/*.sh"
+    cook "build/$<in.stem>" { cp $<in> $<out> }
+    test { ./$<in> }
+    test >{ for _, b in ipairs(inputs) do cook.sh(b) end }

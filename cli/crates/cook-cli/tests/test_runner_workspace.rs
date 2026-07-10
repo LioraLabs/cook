@@ -33,7 +33,7 @@ fn write_workspace(root: &std::path::Path) {
     fs::create_dir(root.join("sub")).unwrap();
     fs::write(
         root.join("sub/Cookfile"),
-        "recipe pass\n    test { true } timeout 5\nrecipe fail_one\n    test { false } timeout 5\n",
+        "recipe pass\n    test { true }\nrecipe fail_one\n    test { false }\n",
     )
     .unwrap();
 }

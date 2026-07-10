@@ -14,13 +14,11 @@ Terms used throughout the Book and the Standard, in plain English.
 
 **Chore** — A named bundle of *non-build* commands. Started by the `chore` keyword. No caching, no `ingredients`, no `cook` step. Commands run interactively by default.
 
-**Step** — A single line (or block) inside a recipe or chore body. Each step has a *kind*: `ingredients`, `cook`, `plate`, `test`, shell command, Lua line, Lua block, module call.
+**Step** — A single line (or block) inside a recipe or chore body. Each step has a *kind*: `ingredients`, `cook`, `test`, shell command, Lua line, Lua block, module call.
 
 **`cook` step** — The build-step keyword (distinct from the `cook` binary). Declares one or more outputs and a shell or Lua body that produces them; every `cook` step is cacheable. *(Standard §4.5–§4.6.)*
 
-**`plate` step** — A `cook`-style step with no declared outputs. Iterates over the preceding `cook` step's outputs (or the recipe's ingredients, if no `cook` step precedes), typically to ship something outside the project (deploy, install, publish). Not cached. *(Standard §4.7.)*
-
-**`test` step** — Like `plate`, but its units report pass/fail rather than producing artifacts. Supports `as 'name'`, `timeout N`, and `should_fail` modifiers in that canonical order. The Standard leaves cross-recipe aggregation implementation-defined in v0.8; the bundled `cook test` runner currently collects failures into one summary and exposes `--fail-fast` to short-circuit. *(Standard §4.8.)*
+**`test` step** — A `cook`-style step with no declared outputs, whose units report pass/fail rather than producing artifacts. Iterates over the preceding `cook` step's outputs (or the recipe's ingredients, if no `cook` step precedes). Has no modifiers — unnamed tests display as `recipe@line`, and a negative test is written by inverting the body's command with `!` rather than a `should_fail` flag. The Standard leaves cross-recipe aggregation implementation-defined in v0.8; the bundled `cook test` runner currently collects failures into one summary and exposes `--fail-fast` to short-circuit. *(Standard §4.8.)*
 
 **`@` step / interactive command** — A shell step prefixed with `@`. Drains all concurrent work before running, inherits the controlling TTY, and is never cached. Chore-body shell steps behave this way by default; recipe-body shell steps need the explicit `@`. *(Standard §4.10, §4a.3.)*
 

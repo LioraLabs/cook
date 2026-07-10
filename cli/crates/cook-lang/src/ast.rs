@@ -157,9 +157,9 @@ pub struct Recipe {
 
 /// A step body — the `body` production from App. A.4 (CS-0024): either a
 /// `{ … }` shell block or a `>{ … }` execute-phase Lua block. Shared by
-/// `cook_step` (CS-0099: the body follows the output pattern(s) directly),
-/// `plate_step`, and `test_step` so the codegen can share substitution /
-/// mode detection helpers without duplicating the enum.
+/// `cook_step` (CS-0099: the body follows the output pattern(s) directly)
+/// and `test_step` so the codegen can share substitution / mode detection
+/// helpers without duplicating the enum.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body {
     ShellBlock(Vec<String>),
@@ -232,16 +232,8 @@ pub struct CookStep {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PlateStep {
-    pub body: Body,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct TestStep {
     pub body: Body,
-    pub as_name: Option<String>,
-    pub timeout: Option<u64>,
-    pub should_fail: bool,
 }
 
 /// The source of a `for_each` step's data members. Only a probe-key source
@@ -279,7 +271,6 @@ pub enum Step {
     /// formerly also by the removed `>>` prefix.
     InlineLua { code: String, line: usize },
     Cook { step: CookStep, line: usize },
-    Plate { step: PlateStep, line: usize },
     Test { step: TestStep, line: usize },
     /// Register-phase data-member iteration driver (§8.3). Declarative.
     ForEach { step: ForEachStep, line: usize },
@@ -356,8 +347,8 @@ mod tests {
     }
 
     #[test]
-    fn test_plate_step() {
-        let _step = PlateStep {
+    fn test_test_step() {
+        let _step = TestStep {
             body: Body::ShellBlock(vec!["./{in}".to_string()]),
         };
     }

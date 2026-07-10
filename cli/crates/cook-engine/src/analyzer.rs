@@ -562,7 +562,7 @@ recipe build\n\
 recipe inner\n\
     cook \"build/i.txt\" { echo > $<out> }\n\
 recipe test_only\n\
-    test { true } timeout 5\n\
+    test { true }\n\
 ").unwrap();
 
         let result = register_workspace_for_test(root).expect("must succeed");

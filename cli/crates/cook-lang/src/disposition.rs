@@ -52,7 +52,7 @@ fn is_clause_kw(t: &str) -> bool {
 /// closing `}`, or after the output patterns for a declaration-only cook).
 /// An empty tail yields the default modifiers. `share_mod` is a single optional
 /// slot that MUST be last; a bare `seal`/`unseal` (no refs) is rejected; the
-/// removed `record` keyword and the test-only `as` keyword get migration hints.
+/// removed `record` keyword and the removed `as` keyword get migration hints.
 pub(crate) fn parse_cook_modifiers(tail: &str, line: usize) -> Result<CookModifiers, ParseError> {
     let toks: Vec<&str> = tail.split_whitespace().collect();
     let mut m = CookModifiers::default();
@@ -114,7 +114,8 @@ pub(crate) fn parse_cook_modifiers(tail: &str, line: usize) -> Result<CookModifi
             "as" => {
                 return Err(ParseError::Parse {
                     line,
-                    message: "cook: modifier `as` is only valid on test steps"
+                    message: "cook: `as` was removed in v1.0 — it is no longer a step modifier \
+                              (CS-0135)"
                         .to_string(),
                 });
             }
@@ -241,10 +242,10 @@ mod tests {
     }
 
     #[test]
-    fn mods_as_keyword_hints_test_only() {
+    fn mods_as_keyword_hints_removed_in_v1() {
         let e = parse_cook_modifiers("as 'x'", 1).unwrap_err();
         if let ParseError::Parse { message, .. } = e {
-            assert!(message.contains("test"));
+            assert!(message.contains("removed in v1.0"));
         } else {
             panic!("expected Parse error");
         }

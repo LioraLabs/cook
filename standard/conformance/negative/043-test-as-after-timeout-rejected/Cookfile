@@ -1,2 +1,0 @@
-recipe r
-    test { foo } timeout 30 as 'name'

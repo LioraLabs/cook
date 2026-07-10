@@ -91,9 +91,8 @@ The sandboxed contexts are:
 | `test_step` body (Lua or shell) | yes |
 | `chore` body (Lua or shell) | yes |
 | Register-phase Lua: `config_block` body, recipe-body `module_call`, `register_block` body, `cook_step` register-time `cook.add_unit({...})` orchestration | yes |
-| `plate_step` body (Lua or shell) | **no** (§{rationale.plate-test-no-output-decl}) |
 
-The plate-step exemption is normative: a `plate_step`'s body MUST NOT have the confinement applied, because shipping outside the project root (deploys, uploads, package installs to `$HOME`, etc.) is the explicit purpose of the step kind. Authors who want the confinement on a non-cacheable side-effect step use a `chore` instead.
+Every Lua execution context in the language is sandboxed; there is no exempted step kind. An author who needs to write outside the project root (deploys, uploads, package installs to `$HOME`, etc.) uses a `chore`'s raw `shell_command` steps (§{steps.shell}), which are ordinary shell text and are not mediated by `fs.*` at all — the confinement in this table applies only to `fs.*` Lua calls, not to shell text.
 
 A conforming implementation MUST NOT apply the lexical normalization to a path whose `..` resolution would walk above a filesystem root; such a candidate is treated as escaping the project root regardless of the project root's location.
 
@@ -101,6 +100,6 @@ A conforming implementation MUST NOT apply the lexical normalization to a path w
 
 ## 25.10. Lua-side shell escape hatches [#lua.shell-escape-hatches]
 
-The standard Lua library includes two surfaces that run shell commands directly: `os.execute(cmd)` and `io.popen(cmd, mode?)`. Both bypass `cook.sh` (§{lua.cook-sh}) and therefore neither inherits the recipe's working-directory rooting nor contributes to the unit's `command_hash`. In a sandboxed context (§{lua.fs-sandbox}), a conforming implementation MUST disable these entries: a call MUST raise a Lua runtime error referencing this section's tag (`CS-0045`) rather than spawning a child process. In a non-sandboxed context (`plate_step` bodies), `os.execute` and `io.popen` MUST behave exactly as the standard Lua library specifies.
+The standard Lua library includes two surfaces that run shell commands directly: `os.execute(cmd)` and `io.popen(cmd, mode?)`. Both bypass `cook.sh` (§{lua.cook-sh}) and therefore neither inherits the recipe's working-directory rooting nor contributes to the unit's `command_hash`. Every Lua execution context is sandboxed (§{lua.fs-sandbox}), so a conforming implementation MUST disable these entries in all of them: a call MUST raise a Lua runtime error referencing this section's tag (`CS-0045`) rather than spawning a child process.
 
 This is a normative constraint on the Cook Lua sandbox surface, not a Lua language change: the Lua specification is unaffected. A conforming Cook implementation MAY install the guard by replacing `os.execute` and `io.popen` with closures that consult the active policy and either delegate to the original implementation (under `Off`) or raise (under `Confined`). The reference implementation does so via `cook-lua-stdlib::install_shell_escape_guards`.

@@ -1,4 +1,0 @@
-recipe r
-    ingredients "src/*.c"
-    cook "build/bin/$<in.stem>" { cc $<in> -o $<out> }
-    plate { ./$<out> }

@@ -547,6 +547,18 @@ where
                     &cache_ctx.project_root,
                     &mut hash_memo,
                 );
+                // CS-0135 §8.6.1/§17.4: a source-less test — no `ingredients`,
+                // no upstream `cook`, so no resolved file inputs — has no cache
+                // key and MUST always run. Skipping fingerprint insertion here
+                // makes the executor bypass both the test-cache lookup and the
+                // post-run write (both gated on `fingerprint_by_node`), so the
+                // test reports every invocation with no `(cached)`. A stable
+                // command-text-only key would be a false green: the true inputs
+                // of a `test { cargo test }` (Cargo.toml/lock, build.rs) are
+                // opaque to Cook, so caching on the command alone is unsound.
+                if cook_outputs.is_empty() && dep_outputs.is_empty() {
+                    continue;
+                }
                 let inputs = FingerprintInputs {
                     cook_outputs,
                     dep_outputs,

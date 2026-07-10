@@ -137,10 +137,9 @@ A chore body MUST NOT contain any of the following step kinds:
 |---|---|---|
 | §{steps.ingredients} | `ingredients_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
 | §{steps.cook-single} | `cook_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
-| §{steps.plate} | `plate_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
 | §{steps.test} | `test_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
 
-A conforming implementation MUST reject a chore body that contains any of the four banned step kinds. The diagnostic MUST identify the offending step's line and the offending keyword by name; the recommended message form names the keyword and suggests the `recipe` form.
+A conforming implementation MUST reject a chore body that contains any of the three banned step kinds. The diagnostic MUST identify the offending step's line and the offending keyword by name; the recommended message form names the keyword and suggests the `recipe` form.
 
 **No register-phase steps (CS-0134).** CS-0134 removes the register-phase `inline_lua_line` (`>>`) and `inline_lua_block` (`>>{`) steps from the language entirely (§{lexical.line-prefixes}, Note 3.7.1). A chore body therefore admits **only** the four execute-phase step kinds above. Because there is no declarative-region step kind left in a chore body, the pre-CS-0134 region-ordering rule (§{recipes.region-rule}) is satisfied **vacuously** for chore bodies — there is no declarative region to place before the imperative steps. A conforming implementation MUST reject a `>>` or `>>{` line wherever it appears, including inside a chore body, with the migration diagnostic of §{lexical.line-classification}.
 
@@ -167,7 +166,7 @@ The two shell steps are interactive: `cd build` and `rsync ...` run with the use
 
 ## 7.4. No caching [#chores.no-caching]
 
-A chore body MUST NOT register a cached work unit. This is satisfied trivially by the parse-time ban on `cook` and `plate` steps (§{chores.body}); a chore has no declarative cook step that would produce a cacheable output. As of CS-0134 a chore body admits no register-phase step at all (§{chores.body}), so it cannot record a work unit from its own body: the register-only helper `cook.add_unit` (§{lua.add-unit}) is unreachable from a chore body, and calling it from an execute-Lua step (`>` / `>{`) raises the execute-phase diagnostic of §{rationale.execute-phase-api} regardless of the `cache` flag.
+A chore body MUST NOT register a cached work unit. This is satisfied trivially by the parse-time ban on `cook` and `test` steps (§{chores.body}); a chore has no declarative cook step that would produce a cacheable output. As of CS-0134 a chore body admits no register-phase step at all (§{chores.body}), so it cannot record a work unit from its own body: the register-only helper `cook.add_unit` (§{lua.add-unit}) is unreachable from a chore body, and calling it from an execute-Lua step (`>` / `>{`) raises the execute-phase diagnostic of §{rationale.execute-phase-api} regardless of the `cache` flag.
 
 This rule preserves the chore-vs-recipe semantic distinction: chores always run when invoked; they never short-circuit on a cache hit.
 

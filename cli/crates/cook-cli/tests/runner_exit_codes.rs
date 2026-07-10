@@ -38,7 +38,7 @@ fn combined(out: &std::process::Output) -> String {
 #[test]
 fn failing_test_step_under_runner_exits_one() {
     let dir = write_cookfile(
-        "recipe failing\n    cook \"out/c.txt\" { echo hi > $<out> }\n    test { false } as 'always fails'\n",
+        "recipe failing\n    cook \"out/c.txt\" { echo hi > $<out> }\n    test { false }\n",
     );
     let out = run_recipe(dir.path(), "failing");
     let c = combined(&out);
@@ -56,7 +56,7 @@ fn failing_test_step_under_runner_exits_one() {
 #[test]
 fn passing_test_step_under_runner_exits_zero() {
     let dir = write_cookfile(
-        "recipe passing\n    cook \"out/c.txt\" { echo hi > $<out> }\n    test { true } as 'always passes'\n",
+        "recipe passing\n    cook \"out/c.txt\" { echo hi > $<out> }\n    test { true }\n",
     );
     let out = run_recipe(dir.path(), "passing");
     let c = combined(&out);
@@ -64,15 +64,15 @@ fn passing_test_step_under_runner_exits_zero() {
 }
 
 #[test]
-fn should_fail_test_that_fails_as_expected_exits_zero() {
+fn inverted_test_whose_body_fails_as_expected_exits_zero() {
     let dir = write_cookfile(
-        "recipe inverted\n    cook \"out/c.txt\" { echo hi > $<out> }\n    test { false } as 'expected to fail' should_fail\n",
+        "recipe inverted\n    cook \"out/c.txt\" { echo hi > $<out> }\n    test { ! false }\n",
     );
     let out = run_recipe(dir.path(), "inverted");
     let c = combined(&out);
     assert!(
         out.status.success(),
-        "satisfied should_fail test must exit 0.\n{c}"
+        "satisfied inverted test must exit 0.\n{c}"
     );
 }
 

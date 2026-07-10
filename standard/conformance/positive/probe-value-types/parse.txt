@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Test body=LuaBlock("cook.sh(\"true\")") timeout=None should_fail=false
+        Test body=LuaBlock("cook.sh(\"true\")")
   chores:
   register_blocks: [RegisterBlock body="    cook.probe(\"test:types\", {\n        inputs = {},\n        produce = \"return { n = 42, s = \\\"hi\\\", a = {1,2,3}, t = { nested = true } }\",\n    })" line=1]
   top_level_module_calls: []

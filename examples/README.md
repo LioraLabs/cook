@@ -14,9 +14,9 @@ environment, and never does the same work twice.
 | 04 | [probes](04-probes/) | computed values the cache can see: shell/lines/json/Lua producers, probe chains, fan-out over members |
 | 05 | [data-fanout](05-data-fanout/) | the build's shape from a JSON manifest; grow the data, build only the new member; per-member joins |
 | 06 | [lua-recipes](06-lua-recipes/) | execute-time Lua bodies, computed output paths, the register-time low-level API |
-| 07 | [testing](07-testing/) | tests as cached steps; `as`/`timeout`/`should_fail`; the `cook test` runner |
+| 07 | [testing](07-testing/) | tests as cached steps; one-to-one vs naked, `!` inversion; the `cook test` runner |
 | 08 | [workspace](08-workspace/) | many Cookfiles, one workspace: imports, `//` targets, run cook from any subdirectory |
-| 09 | [deploy](09-deploy/) | `plate` — the unsandboxed ship-it step; artifacts cache, side effects don't pretend to |
+| 09 | [deploy](09-deploy/) | `chore` — the uncached ship-it step; artifacts cache, side effects don't pretend to |
 | 10 | [cache-trust](10-cache-trust/) | who may write your cache: `seal`, `local`, `pinned`, `nondet`; `cook why`; cross-machine sharing |
 
 Examples that require installed modules (C/C++ via `cook_cc`, pnpm

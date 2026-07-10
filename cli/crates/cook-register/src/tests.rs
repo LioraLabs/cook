@@ -247,14 +247,10 @@ cook.recipe("tests", {}, function()
         cook.add_test({
             command = "./run_test_a",
             suite = "unit",
-            name = "test_a",
-            timeout = 60,
         })
         cook.add_test({
             command = "./run_test_b",
             suite = "unit",
-            name = "test_b",
-            should_fail = true,
         })
     end)
 end)
@@ -264,16 +260,19 @@ end)
     match &result.units[0].payload {
         WorkPayload::Test { cmd, timeout, should_fail, suite_name, test_name, .. } => {
             assert_eq!(cmd, "./run_test_a");
-            assert_eq!(*timeout, 60);
+            // CS-0135: cook.add_test no longer accepts timeout/should_fail/
+            // name; WorkPayload::Test still carries these fields for the
+            // engine executor, populated with their prior absent-defaults.
+            assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
             assert!(!should_fail);
             assert_eq!(suite_name, "unit");
-            assert_eq!(test_name, "test_a");
+            assert_eq!(test_name, "");
         }
         _ => panic!("expected Test payload"),
     }
     match &result.units[1].payload {
         WorkPayload::Test { should_fail, .. } => {
-            assert!(*should_fail);
+            assert!(!should_fail);
         }
         _ => panic!("expected Test payload"),
     }
@@ -351,21 +350,10 @@ end)
     assert!(err.contains("command"), "error should mention 'command', got: {err}");
 }
 
-/// CS-0061 §3.2: timeout = 0 is rejected at register time.
-#[test]
-fn test_add_test_rejects_zero_timeout_via_engine() {
-    let dir = TempDir::new().unwrap();
-    let rt = make_registry(dir.path());
-    let lua_src = r#"
-cook.recipe("r", {}, function()
-    cook.add_test({ command = "true", timeout = 0 })
-end)
-"#;
-    let result = register_cookfile(rt, lua_src, None);
-    assert!(result.is_err(), "timeout = 0 must be rejected");
-    let err = result.err().unwrap().to_string();
-    assert!(err.contains("timeout"), "error should mention 'timeout', got: {err}");
-}
+// CS-0135 §22.4: `cook.add_test` no longer accepts a `timeout` field, so
+// the prior `test_add_test_rejects_zero_timeout_via_engine` register-time
+// rejection test no longer has a live contract to cover (the field is
+// silently ignored, not validated).
 
 // -----------------------------------------------------------------------
 // CS-0127: cook.add_unit typed-field sweep — every wrong-typed field is a

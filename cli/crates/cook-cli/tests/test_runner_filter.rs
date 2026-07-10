@@ -31,7 +31,7 @@ fn filter_restricts_test_set() {
     let tmp = tempdir().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe alpha_suite\n    test { true } as 'alpha' timeout 5\nrecipe beta_suite\n    test { true } as 'beta' timeout 5\n",
+        "recipe alpha_suite\n    test { true }\nrecipe beta_suite\n    test { true }\n",
     )
     .unwrap();
 
@@ -67,7 +67,7 @@ fn filter_with_zero_matches_exits_zero() {
     let tmp = tempdir().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    test { true } timeout 5\n",
+        "recipe r\n    test { true }\n",
     )
     .unwrap();
 

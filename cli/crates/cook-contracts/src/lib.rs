@@ -55,18 +55,14 @@ pub enum OutputStream {
 /// Which Cookfile step kind a unit was captured from.
 ///
 /// CS-0045: drives the per-item sandbox policy in the execute-phase
-/// Lua VM. Cook/test/chore step Lua bodies run with the project-root
-/// sandbox; plate step Lua bodies run unsandboxed because plates are
-/// the explicit "ship outside the project" surface
-/// (§{recipes.plate-step}).
+/// Lua VM. Cook/test/chore step Lua bodies all run with the
+/// project-root sandbox — there is no unsandboxed step kind
+/// (CS-0135 retired the `plate` step, which was the prior exception).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum StepKind {
     /// `cook` step body — cacheable, hermetic, sandboxed.
     Cook,
-    /// `plate` step body — non-cacheable, non-hermetic by design,
-    /// not sandboxed.
-    Plate,
     /// `test` step body — non-cacheable but hermetic-by-intent,
     /// sandboxed identically to `Cook`.
     Test,

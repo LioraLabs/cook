@@ -146,29 +146,32 @@ many_to_one_lua: 8 inputs
 The canonical CS-0022 regression check: if `#inputs == 1` here, the wart is
 back. `#inputs == 8` confirms the fix is in effect.
 
-## Plate/test modes
+## Second-stage and test modes
 
-CS-0024 adds `plate` and `test` steps to recipes. These steps share the same
-iteration-mode detection rules as `cook`: the body content (not the output
-pattern) determines whether each step runs once per item, once for all items,
-or once unconditionally.
+CS-0024 added shared iteration-mode detection for un-sandboxed side-effect
+steps and `test` steps: the body content (not the output pattern)
+determines whether each step runs once per item, once for all items, or
+once unconditionally. CS-0135 removed the un-sandboxed `plate` step itself
+— the shapes below now run as a second, declared-output `cook` step
+(cached, and still one-to-one/many-to-one/one-shot per its own output
+pattern), kept here purely for iteration-mode benchmark coverage.
 
-### Mode detection for plate/test bodies
+### Mode detection for cook/test bodies
 
 | Body contains | Mode | Units |
 |---|---|---|
-| `{in}` or `{in.X}` (shell) / `input` (Lua) | One-to-one | One per cook output |
-| `{all}` (shell) / `inputs` (Lua) | Many-to-one | Exactly one |
+| `$<in>` or `$<in.X>` (shell) / `input` (Lua) | One-to-one | One per cook output |
+| collected list (shell) / `inputs` (Lua) | Many-to-one | Exactly one |
 | Neither | One-shot | Exactly one |
 
-### Plate recipes (six modes)
+### Second-stage recipes (six modes, formerly `plate`)
 
-| Recipe | Body form | Plate mode | What it does |
+| Recipe | Body form | Mode | What it does |
 |---|---|---|---|
-| `plate_one_to_one_shell` | `{in}` in shell | One-to-one | Appends a line to each cook output |
-| `plate_many_to_one_shell` | `{all}` in shell | Many-to-one | Writes a report listing all cook outputs |
+| `plate_one_to_one_shell` | `$<in>` in shell | One-to-one | Writes a `.plated` file per cook output |
+| `plate_many_to_one_shell` | `inputs` in Lua | Many-to-one | Writes a report listing all cook outputs |
 | `plate_one_shot_shell` | no source ref | One-shot | Writes a `.flag` file once |
-| `plate_one_to_one_lua` | `input` in Lua | One-to-one | Appends a line to each cook output |
+| `plate_one_to_one_lua` | `input` in Lua | One-to-one | Writes a `.plated` file per cook output |
 | `plate_many_to_one_lua` | `inputs` in Lua | Many-to-one | Writes a report with the input count |
 | `plate_one_shot_lua` | no source ref | One-shot | Touches a `.flag` file once |
 

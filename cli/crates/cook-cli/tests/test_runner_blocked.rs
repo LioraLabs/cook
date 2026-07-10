@@ -38,7 +38,7 @@ fn write_broken_cookfile(dir: &std::path::Path) {
         mkdir -p build
         false
     }
-    test { test -f $<in> } as 'never_runs' timeout 5
+    test { test -f $<in> }
 "#,
     )
     .unwrap();

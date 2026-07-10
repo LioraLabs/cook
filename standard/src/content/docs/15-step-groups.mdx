@@ -18,7 +18,6 @@ The Cookfile surface syntax in §{recipes} produces step groups and sequential u
 | Surface construct | Registration behaviour |
 |---|---|
 | `cook` step (§{steps.cook-single}, §{steps.cook-multi}) | One step group per `cook` step. Recorded by the declarative region. |
-| `plate` step (§{steps.plate}) | One step group per `plate` step. Recorded by the declarative region. |
 | `test` step (§{steps.test}) | One step group per `test` step. Recorded by the declarative region. |
 | `register_block` body (§{decl.register}) | Spliced verbatim into the compiled register-phase Lua program at its source position. Evaluated during the register phase; produces units only via explicit Cook Lua API calls. |
 | top-level `module_call` (§{toplevel.module-call}) | Spliced verbatim at source position; same registration behaviour as `register_block`. |

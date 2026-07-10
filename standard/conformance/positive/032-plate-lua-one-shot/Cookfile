@@ -1,4 +1,0 @@
-recipe notify
-    plate >{
-        os.execute("echo done")
-    }

@@ -1,2 +1,0 @@
-recipe r
-    test { foo } should_fail timeout 30

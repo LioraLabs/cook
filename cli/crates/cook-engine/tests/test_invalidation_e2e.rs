@@ -50,14 +50,14 @@ fn write_fixture(wd: &std::path::Path) {
 
 recipe unit_direct
     ingredients "src/lib.txt"
-    test { grep -qx ok src/lib.txt } timeout 10
+    test { grep -qx ok src/lib.txt }
 
 recipe consumer
-    test { grep -qx ok $<lib> } timeout 10
+    test { grep -qx ok $<lib> }
 
 recipe untouched
     ingredients "src/other.txt"
-    test { grep -qx stable src/other.txt } timeout 10
+    test { grep -qx stable src/other.txt }
 "#,
     )
     .unwrap();

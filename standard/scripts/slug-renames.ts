@@ -84,7 +84,7 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   // moved with them.
   'recipes.cook-single-output':      'steps.cook-single',
   'recipes.cook-multi-output':       'steps.cook-multi',
-  'recipes.plate-step':              'steps.plate',
+  'recipes.plate-step':              null,
   'recipes.test-step':               'steps.test',
   'recipes.lua-steps':               'steps.lua',
   'recipes.shell-steps':             'steps.shell',
@@ -93,7 +93,11 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   'recipes.step-kinds':              'steps.overview',
   'recipes.iteration-mode-plate-test':'steps.iteration-mode-plate-test',
   'recipes.iteration-mode':          'steps.iteration-mode',
-  'recipes.plate-step-not-sandboxed':'steps.plate',
+  'recipes.plate-step-not-sandboxed':null,
+
+  // v1.0 language cut (CS-0135): the `plate` step kind is removed outright.
+  'steps.plate':                     null,
+  'steps.plate-not-sandboxed':       null,
 
   'intro.conformance':               'conf.criteria',
 };

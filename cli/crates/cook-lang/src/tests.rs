@@ -247,24 +247,6 @@ fn test_cook_step_lua_block() {
 }
 
 #[test]
-fn test_plate_step() {
-    let source = "recipe test_recipe\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" {\n        cc {in} -o {out}\n    }\n    plate {\n        ./{in}\n    }\n";
-    let cookfile = parse(source).expect("should parse");
-    let recipe = &cookfile.recipes[0];
-    assert_eq!(recipe.steps.len(), 2);
-    match &recipe.steps[1] {
-        Step::Plate { step, .. } => match &step.body {
-            Body::ShellBlock(lines) => {
-                assert_eq!(lines.len(), 1);
-                assert_eq!(lines[0].trim(), "./{in}");
-            }
-            other => panic!("expected ShellBlock, got {:?}", other),
-        },
-        other => panic!("expected Plate step, got {:?}", other),
-    }
-}
-
-#[test]
 fn test_mixed_steps() {
     // CS-0134: recipe bodies are purely declarative. A bare `module.call()`
     // line auto-classifies as register-phase InlineLua and can sit between
@@ -650,53 +632,35 @@ fn test_test_step_basic() {
     match &cookfile.recipes[0].steps[1] {
         Step::Test { step, .. } => {
             assert!(matches!(step.body, Body::ShellBlock(_)));
-            assert!(!step.should_fail);
-            assert_eq!(step.timeout, None);
         }
         other => panic!("expected Test, got {:?}", other),
     }
 }
 
 #[test]
-fn test_test_step_with_timeout() {
-    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test { ./{in} } timeout 60\n";
+fn test_test_step_shell_body_with_dep_ref() {
+    // CS-0135: test steps carry only a body (no as/timeout/should_fail).
+    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test { ./$<in> }\n";
     let cookfile = parse(source).expect("should parse");
     match &cookfile.recipes[0].steps[1] {
-        Step::Test { step, .. } => {
-            assert!(matches!(step.body, Body::ShellBlock(_)));
-            assert!(!step.should_fail);
-            assert_eq!(step.timeout, Some(60));
-        }
+        Step::Test { step, .. } => match &step.body {
+            Body::ShellBlock(lines) => {
+                assert!(lines.iter().any(|l| l.contains("$<in>")), "lines: {:?}", lines);
+            }
+            other => panic!("expected ShellBlock, got {:?}", other),
+        },
         other => panic!("expected Test, got {:?}", other),
     }
 }
 
 #[test]
-fn test_test_step_with_should_fail() {
-    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test { ./{in} } should_fail\n";
-    let cookfile = parse(source).expect("should parse");
-    match &cookfile.recipes[0].steps[1] {
-        Step::Test { step, .. } => {
-            assert!(matches!(step.body, Body::ShellBlock(_)));
-            assert!(step.should_fail);
-            assert_eq!(step.timeout, None);
-        }
-        other => panic!("expected Test, got {:?}", other),
-    }
-}
-
-#[test]
-fn test_test_step_with_timeout_and_should_fail() {
-    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test { ./{in} } timeout 60 should_fail\n";
-    let cookfile = parse(source).expect("should parse");
-    match &cookfile.recipes[0].steps[1] {
-        Step::Test { step, .. } => {
-            assert!(matches!(step.body, Body::ShellBlock(_)));
-            assert!(step.should_fail);
-            assert_eq!(step.timeout, Some(60));
-        }
-        other => panic!("expected Test, got {:?}", other),
-    }
+fn test_test_step_should_fail_removed() {
+    // CS-0135: `should_fail` was removed in v1.0; trailing content after a
+    // test body's closing `}` is a parse error with a did-you-mean hint.
+    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test { x } should_fail\n";
+    let err = parse(source).expect_err("should_fail modifier must be rejected");
+    let msg = err.to_string();
+    assert!(msg.contains("should_fail was removed in v1.0"), "got: {}", msg);
 }
 
 #[test]
@@ -917,12 +881,6 @@ fn test_chore_with_cook_rejected() {
 }
 
 #[test]
-fn test_chore_with_plate_rejected() {
-    let input = "chore deploy\n    plate { ./{in} }\n";
-    assert!(parse(input).is_err());
-}
-
-#[test]
 fn test_chore_with_test_rejected() {
     let input = "chore play\n    test { ./run }\n";
     assert!(parse(input).is_err());
@@ -1027,28 +985,16 @@ fn cs_0022_one_line_shell_block_with_placeholder_braces() {
 fn cs_0022_one_line_shell_block_followed_by_more_steps() {
     // A one-line block must correctly advance the token position so that
     // subsequent steps parse correctly.
-    let src = "recipe build\n    cook \"build/app\" { gcc main.c -o {out} }\n    plate { ./{in} }\n";
+    let src = "recipe build\n    cook \"build/app\" { gcc main.c -o {out} }\n    test { ./{in} }\n";
     let cookfile = parse(src).expect("should parse");
-    assert_eq!(cookfile.recipes[0].steps.len(), 2, "should have cook + plate");
+    assert_eq!(cookfile.recipes[0].steps.len(), 2, "should have cook + test");
     assert!(matches!(&cookfile.recipes[0].steps[0], Step::Cook { .. }));
-    assert!(matches!(&cookfile.recipes[0].steps[1], Step::Plate { step, .. } if matches!(step.body, Body::ShellBlock(_))));
-}
-
-#[test]
-fn test_plate_string_form_rejected() {
-    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    plate \"./{out}\"\n";
-    let err = parse(source).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(
-        msg.contains("plate") && msg.contains("not supported") && msg.contains("{ cmd }"),
-        "expected migration diagnostic for plate string form, got: {}",
-        msg
-    );
+    assert!(matches!(&cookfile.recipes[0].steps[1], Step::Test { step, .. } if matches!(step.body, Body::ShellBlock(_))));
 }
 
 #[test]
 fn test_test_string_form_rejected() {
-    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test \"./{out}\" timeout 60\n";
+    let source = "recipe r\n    ingredients \"tests/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test \"./{out}\"\n";
     let err = parse(source).unwrap_err();
     let msg = format!("{}", err);
     assert!(
@@ -1059,12 +1005,12 @@ fn test_test_string_form_rejected() {
 }
 
 #[test]
-fn test_plate_lua_block_parses() {
-    let source = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    plate >{\n        cook.sh(\"strip \" .. input)\n    }\n";
+fn test_test_lua_block_parses() {
+    let source = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/{in.stem}\" { cc {in} -o {out} }\n    test >{\n        cook.sh(\"strip \" .. input)\n    }\n";
     let cookfile = parse(source).expect("should parse");
     match &cookfile.recipes[0].steps[1] {
-        Step::Plate { step, .. } => assert!(matches!(step.body, Body::LuaBlock(_))),
-        other => panic!("expected Plate Lua, got {:?}", other),
+        Step::Test { step, .. } => assert!(matches!(step.body, Body::LuaBlock(_))),
+        other => panic!("expected Test Lua, got {:?}", other),
     }
 }
 
@@ -1304,43 +1250,20 @@ recipe emit
     }
 }
 
-// ── Task 2.4: `as` rejected on cook_step and plate_step ───────────
-
-#[test]
-fn test_as_rejected_on_cook_step() {
-    let src = r#"
-recipe r
-    cook "out.txt" { echo > $<out> } as 'foo'
-"#;
-    let err = parse(src).expect_err("must reject");
-    let msg = err.to_string();
-    assert!(msg.contains("`as`"));
-    assert!(msg.contains("test_step") || msg.contains("test-step") || msg.contains("test"));
-}
-
-#[test]
-fn test_as_rejected_on_plate_step() {
-    let src = r#"
-recipe r
-    cook "out.txt" { echo > $<out> }
-    plate { cp $<in> /tmp } as 'foo'
-"#;
-    let err = parse(src).expect_err("must reject");
-    assert!(err.to_string().contains("`as`"));
-}
-
-// ── Task 2.3: out-of-order modifier rejection ─────────────────────
+// ── CS-0135: `as`/`timeout`/`should_fail` removed as test-step modifiers ──
 
 #[test]
 fn test_step_rejects_as_after_timeout() {
+    // Trailing content after a test body's `}` is always rejected; the first
+    // trailing token drives the did-you-mean diagnostic (here `timeout`).
     let src = r#"
 recipe r
     test { foo } timeout 30 as 'name'
 "#;
     let err = parse(src).expect_err("must reject");
     assert!(
-        err.to_string().contains("`as`") && err.to_string().contains("must precede"),
-        "diagnostic should name `as` and `must precede`, got: {err}"
+        err.to_string().contains("timeout was removed in v1.0"),
+        "got: {err}"
     );
 }
 
@@ -1351,69 +1274,27 @@ recipe r
     test { foo } should_fail timeout 30
 "#;
     let err = parse(src).expect_err("must reject");
-    assert!(err.to_string().contains("`timeout`"));
+    assert!(err.to_string().contains("should_fail was removed in v1.0"));
 }
 
 #[test]
-fn test_step_rejects_should_fail_before_as() {
+fn test_step_rejects_as_modifier() {
     let src = r#"
 recipe r
-    test { foo } should_fail as 'name'
+    test { foo } as 'name'
 "#;
     let err = parse(src).expect_err("must reject");
-    let msg = err.to_string();
-    assert!(msg.contains("`as`") || msg.contains("`should_fail`"));
-}
-
-// ── Task 2.2: as STRING modifier ───────────────────────────────────
-
-#[test]
-fn test_step_parses_as_modifier() {
-    let src = r#"
-recipe r
-    test { foo $<in> } as 'name' timeout 30 should_fail
-"#;
-    let recipes = parse(src).expect("parse").recipes;
-    let step = match &recipes[0].steps[0] {
-        Step::Test { step, .. } => step,
-        other => panic!("expected test_step, got {:?}", other),
-    };
-    assert_eq!(step.as_name.as_deref(), Some("name"));
-    assert_eq!(step.timeout, Some(30));
-    assert!(step.should_fail);
+    assert!(err.to_string().contains("as was removed in v1.0"));
 }
 
 #[test]
-fn test_step_as_only() {
+fn test_step_rejects_timeout_modifier() {
     let src = r#"
 recipe r
-    test { foo } as 'just-as'
+    test { foo } timeout 30
 "#;
-    let recipes = parse(src).expect("parse").recipes;
-    let step = match &recipes[0].steps[0] {
-        Step::Test { step, .. } => step,
-        _ => panic!(),
-    };
-    assert_eq!(step.as_name.as_deref(), Some("just-as"));
-    assert_eq!(step.timeout, None);
-    assert!(!step.should_fail);
-}
-
-#[test]
-fn test_step_as_with_substitution_string() {
-    let src = r#"
-recipe r
-    ingredients "src/*.txt"
-    cook "build/$<in.stem>.out" { echo > $<out> }
-    test { foo $<in> } as '$<in.stem>-roundtrip' timeout 10
-"#;
-    let recipes = parse(src).expect("parse").recipes;
-    let test = recipes[0].steps.iter().find_map(|s| match s {
-        Step::Test { step, .. } => Some(step),
-        _ => None,
-    }).unwrap();
-    // Parser preserves the literal string; substitution happens at codegen.
-    assert_eq!(test.as_name.as_deref(), Some("$<in.stem>-roundtrip"));
+    let err = parse(src).expect_err("must reject");
+    assert!(err.to_string().contains("timeout was removed in v1.0"));
 }
 
 // ── App. A.2: duplicate recipe / chore declaration name rule ───────
@@ -2274,7 +2155,7 @@ fn disp_bare_local_line_is_rejected_loose_shell() {
 #[test]
 fn disp_as_modifier_on_cook_rejected() {
     let e = parse("recipe r\n    cook \"x\" { c } as 'name'\n").unwrap_err();
-    assert!(format!("{e:?}").contains("test"));
+    assert!(format!("{e:?}").contains("removed in v1.0"));
 }
 
 // ── COOK-191 Task 3: config-block bare `NAME "value"` did-you-mean (CS-0126) ──

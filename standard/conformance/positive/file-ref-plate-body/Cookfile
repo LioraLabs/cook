@@ -1,5 +1,0 @@
-recipe "check"
-    ingredients "src/*.md"
-    plate {
-        lint --tokens $<file:tokens.css> $<in>
-    }

@@ -76,7 +76,7 @@ recipe build
 
 recipe run-tests: build
     ingredients "build/test_*"
-    test { ./$<in> } timeout 30
+    test { ./$<in> }
 ```
 
 ## A.5. Tarball the build

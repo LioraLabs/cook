@@ -14,7 +14,7 @@ sidebar:
 
 In the **register phase**, `cook.sh` is a utility for control-flow decisions during registration (feature detection, tool discovery, reading version files). It is NOT the mechanism by which work units are recorded; use `cook.add_unit` for that. The capture-mode contract of §{exec.capture} applies: a register-phase `cook.sh` call MUST be deterministic with respect to the Cookfile source and the register-phase record accumulated so far, and MUST NOT modify files under the working directory in a way that affects declared outputs.
 
-In the **execute phase**, `cook.sh` runs on the worker VM that is evaluating an execute-phase Lua chunk — for example, a `cook` / `test` / `plate` / `probe` step's `>{ … }` body payload (§{lua.using-block-globals}), whose Lua runs in that step's own execute-phase work unit. As of CS-0134 a recipe body carries no imperative region, so there is no coalesced "body unit"; the former imperative-region run no longer exists for recipes (§{exec.body-bundling} is vacuous for recipe bodies). `cook.sh` remains the mechanism by which a `lua_line` or `lua_block` shells out, and inside a `chore` body it is the call into which the chore's shell steps desugar under the single-drain model of §{chores}. Stdout is captured and returned to the calling Lua code; stderr is streamed to the worker's stderr. The `COOK_CMD_FAILED:` Lua error is identical in shape to the register-phase variant.
+In the **execute phase**, `cook.sh` runs on the worker VM that is evaluating an execute-phase Lua chunk — for example, a `cook` / `test` / `probe` step's `>{ … }` body payload (§{lua.using-block-globals}), whose Lua runs in that step's own execute-phase work unit. As of CS-0134 a recipe body carries no imperative region, so there is no coalesced "body unit"; the former imperative-region run no longer exists for recipes (§{exec.body-bundling} is vacuous for recipe bodies). `cook.sh` remains the mechanism by which a `lua_line` or `lua_block` shells out, and inside a `chore` body it is the call into which the chore's shell steps desugar under the single-drain model of §{chores}. Stdout is captured and returned to the calling Lua code; stderr is streamed to the worker's stderr. The `COOK_CMD_FAILED:` Lua error is identical in shape to the register-phase variant.
 
 ## 24.2. `cook.load_module` [#lua.cook-load-module]
 **Signature.** `cook.load_module(name: string) -> table`
@@ -140,7 +140,7 @@ The `cook.platform.os` check happens at register time on the register-phase VM; 
 ## 24.7. `cook.dep_output` and `cook.dep_output_list` [#lua.cook-dep-output]
 **Phase.** Both.
 
-`cook.dep_output` and `cook.dep_output_list` are the Lua-side counterpart of the `$<NAME>` string-substitution surface (§{xref.string-substitution}). A `>{ … }`, `plate >{ … }`, or `test >{ … }` body that needs to reference another recipe's output uses these functions instead of textual placeholder substitution.
+`cook.dep_output` and `cook.dep_output_list` are the Lua-side counterpart of the `$<NAME>` string-substitution surface (§{xref.string-substitution}). A `>{ … }` or `test >{ … }` body that needs to reference another recipe's output uses these functions instead of textual placeholder substitution.
 
 ### 24.7.1. `cook.dep_output` [#lua.cook-dep-output-single]
 **Signature.** `cook.dep_output(name: string) -> string`

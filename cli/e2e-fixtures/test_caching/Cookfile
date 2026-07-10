@@ -14,7 +14,7 @@ recipe deterministic
         sleep $<SLEEP>
         echo "stable" > $<out>
     }
-    test { test -s $<in> } timeout 5
+    test { test -s $<in> }
 
 # Iterated test — should cache N entries (one per iteration).
 recipe iterated
@@ -24,11 +24,12 @@ recipe iterated
         sleep $<SLEEP>
         cat $<in> > $<out>
     }
-    test { grep -q "stable" $<in> } timeout 5
+    test { grep -q "stable" $<in> }
 
-# should_fail — caches as a pass when the body exits non-zero.
+# Inverted (body `!`) test — the should_fail->inversion migration. Source-less,
+# so it always runs (CS-0135); a sourced inverted test would cache as a pass.
 recipe should_fail_caches
-    test { exit 1 } timeout 5 should_fail
+    test { ! (exit 1) }
 
 chore clean
     rm -rf build .cook src

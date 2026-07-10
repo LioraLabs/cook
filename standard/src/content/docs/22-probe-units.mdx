@@ -61,7 +61,7 @@ the offending line:
   implementation MUST reject with a diagnostic indicating that `ingredients`
   must precede the producer.
 - A body step that is neither `ingredients` nor a producer (e.g. a `cook`,
-  `plate`, `test`, or other non-producer step) — a conforming implementation MUST
+  `test`, or other non-producer step) — a conforming implementation MUST
   reject with a diagnostic indicating that only `ingredients` and a producer are
   permitted in a probe body.
 - A probe name containing three or more colon-separated segments (e.g.
@@ -252,7 +252,7 @@ The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{phl.t
 
 These rules apply uniformly to probe-value references written in native `cook`-step bodies (§{steps.cook-single} / §{steps.cook-multi}, including `for_each` bodies) and to raw `cook.add_unit` command strings. In both cases the reference MUST reach register-time unit capture as literal `$<...>` text inside the unit's `command` **string**; the capture layer performs the rewrite described above. An implementation MUST NOT lower a probe-value reference to a non-string `command` value (e.g. a deferred Lua function): `cook.add_unit` MUST reject a `command` that is not a string with a register-phase diagnostic naming the received type. (CS-0122; defect COOK-187 — the reference implementation previously emitted a function-valued `command` for probe-referencing native bodies, which was coerced to the empty string and silently succeeded.)
 
-The literal-text rule applies regardless of which step kind's body originated the command — including `plate` bodies in `for_each` recipes (§8.3, §8.6), which are unsandboxed by design and remain so even after a probe-value reference triggers this desugaring. The register-time rewrite described above turns the command into a Lua chunk; that chunk MUST run under the originating step kind's sandbox policy, not a default one. Concretely, a `plate` command rewritten this way MUST stay a plate-policy chunk (unsandboxed), never silently promoted to the `cook`-step (sandboxed) policy merely because it happened to reference a probe value. (CS-0127.)
+The literal-text rule applies regardless of which step kind's body originated the command, including `cook` and `test` bodies in `for_each` recipes (§8.3, §8.6). The register-time rewrite described above turns the command into a Lua chunk; that chunk MUST run under the originating step kind's sandbox policy (§{lua.fs-sandbox}), not a default one. (CS-0127.)
 
 Substitution rules:
 

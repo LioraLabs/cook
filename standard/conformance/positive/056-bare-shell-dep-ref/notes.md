@@ -1,7 +1,7 @@
 Pins Standard §5.5: a `$<NAME>` bare reference in a bare
 `shell_command` body MUST substitute by the space-joined concatenation
 of the named recipe's output list, identical to its meaning in `cook`
-cook-step shell bodies and `plate`/`test` shell bodies.
+cook-step shell bodies and `test` shell bodies.
 
 Codegen used to lower the bare-shell substitution as a `cook.sh(...)`
 expression embedded in a long-string `lua_code` payload, with

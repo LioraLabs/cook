@@ -3,4 +3,4 @@ recipe integration
     cook "build/tests/$<in.stem>" { luac $<in> -o $<out> }
     test >{
         for _, b in ipairs(inputs) do cook.sh("./" .. b) end
-    } timeout 300
+    }

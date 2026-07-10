@@ -7,9 +7,9 @@ recipe build
     }
 
 recipe unit: build
-    test { true } timeout 5
-    test { echo "unit ok"; true } timeout 5
+    test { true }
+    test { echo "unit ok"; true }
 
 recipe e2e: build
-    test { test -s $<build> } timeout 5
-    test { exit 1 } timeout 5
+    test { test -s $<build> }
+    test { exit 1 }
