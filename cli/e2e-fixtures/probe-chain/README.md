@@ -2,7 +2,7 @@
 
 Demonstrates probe-depends-on-probe topology. `demo:cc-version` declares
 `requires = {"demo:cc-path"}` — the engine wires a DAG edge so `cc-path`
-runs first; `cc-version` reads its value via `cook.cache.get`.
+runs first; `cc-version` reads its value via `cook.probes.get`.
 
 > **Note (CS-0074):** This example requires the probe-execution wiring to be
 > complete. Currently, `cook.probe()` does not emit `WorkPayload::Probe` work

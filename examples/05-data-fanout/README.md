@@ -10,7 +10,7 @@ probe services_raw
     json { cat data/services.json }
 
 probe services: services_raw             # enrich records in Lua
-    >{ ... cook.cache.get("services_raw") ... }
+    >{ ... cook.probes.get("services_raw") ... }
 
 recipe render
     ingredients services                 # fan out: one unit per record

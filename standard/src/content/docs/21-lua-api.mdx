@@ -32,9 +32,9 @@ A conforming implementation MUST install the following top-level Lua globals bef
 
 The `cook` table carries recipe registration, work-unit registration, shell helpers, dependency-output accessors, module loading, platform information, export/import, and environment access. The full set of keys on the `cook` table is implementation-defined except for the members that are normatively specified in this Part.
 
-### cook.cache.get (cross-phase note)
+### cook.probes.get (cross-phase note)
 
-`cook.cache.get(key)` on the execute-phase VM MUST read from the per-run probe-value store (§{cat.probes.exec}). On the register-phase VM, `cook.cache.get(key)` continues to read from the module-scoped persistent kv store. The two surfaces share a function name but back different stores; this is intentional and transitional — the register-phase store will be removed alongside `cook.cache.set` at v1.0.
+`cook.probes.get(key)` on the execute-phase VM MUST read from the per-run probe-value store (§{cat.probes.exec}). On the register-phase VM, `cook.probes.get(key)` continues to read from the module-scoped persistent kv store. The two surfaces share a function name but back different stores; this is intentional and transitional — the register-phase store is slated for removal alongside `cook.probes.set` in a later 1.x revision.
 
 ### cook.probe
 

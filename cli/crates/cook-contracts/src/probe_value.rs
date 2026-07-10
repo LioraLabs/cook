@@ -58,7 +58,7 @@ fn canonicalise(v: &JsonValue) -> JsonValue {
 
 /// Decode probe-value bytes. An Err here means "not a probe-value JSON
 /// artifact" — callers reading CacheBackend artifacts MUST treat an Err as
-/// a miss (per §22.5.8). Worker-store reads (`cook.cache.get`) instead
+/// a miss (per §22.5.8). Worker-store reads (`cook.probes.get`) instead
 /// surface decode failures as loud runtime errors: a hand-corrupted
 /// `.cook/probes/<key>.json` should fail the unit, not silently rebuild.
 pub fn decode_json(bytes: &[u8]) -> Result<JsonValue, String> {

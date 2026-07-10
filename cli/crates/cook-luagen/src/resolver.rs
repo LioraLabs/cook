@@ -64,7 +64,7 @@ pub enum Resolved {
     EnvRuntime(String),
     /// CS-0074: a probe-value reference — `$<key>`, `$<key.field>`, or `$<key.field[i]>`.
     /// `key` is the probe key (everything before the first `.` or `[`).
-    /// `access` is the ready-to-emit Lua expression (e.g. `cook.cache.get("cc:zlib").cflags`).
+    /// `access` is the ready-to-emit Lua expression (e.g. `cook.probes.get("cc:zlib").cflags`).
     ProbeRef { key: String, access: String },
     /// CS-0101: `$<file:PATH>` — a file reference. Interpolates the resolved
     /// match list and (for cacheable units) folds each file's content into
@@ -106,7 +106,7 @@ enum BuiltinMatch {
 ///
 /// `ident` must contain `:`. Everything before the first `.` or `[` that
 /// follows the `:` is the key; the rest is the path. Returns the Lua expression
-/// that reads `cook.cache.get(key)` with the path appended.
+/// that reads `cook.probes.get(key)` with the path appended.
 fn parse_probe_ref(ident: &str, escape: impl Fn(&str) -> String) -> (String, String) {
     // Find the boundary between key and path. The key ends at the first `.` or `[`
     // that appears after the `:` discriminator.
@@ -120,7 +120,7 @@ fn parse_probe_ref(ident: &str, escape: impl Fn(&str) -> String) -> (String, Str
     let key = &ident[..path_start];
     let path_str = &ident[path_start..];
 
-    let mut access = format!("cook.cache.get(\"{}\")", escape(key));
+    let mut access = format!("cook.probes.get(\"{}\")", escape(key));
 
     // Walk the path string, building `.field` or `[N]` accesses.
     let mut chars = path_str.chars().peekable();
@@ -460,7 +460,7 @@ mod tests {
         match resolve("cc:zlib", &ctx) {
             Resolved::ProbeRef { key, access } => {
                 assert_eq!(key, "cc:zlib");
-                assert_eq!(access, r#"cook.cache.get("cc:zlib")"#);
+                assert_eq!(access, r#"cook.probes.get("cc:zlib")"#);
             }
             other => panic!("expected ProbeRef, got {other:?}"),
         }
@@ -473,7 +473,7 @@ mod tests {
         match resolve("cc:zlib.cflags", &ctx) {
             Resolved::ProbeRef { key, access } => {
                 assert_eq!(key, "cc:zlib");
-                assert_eq!(access, r#"cook.cache.get("cc:zlib").cflags"#);
+                assert_eq!(access, r#"cook.probes.get("cc:zlib").cflags"#);
             }
             other => panic!("expected ProbeRef, got {other:?}"),
         }
@@ -486,7 +486,7 @@ mod tests {
         match resolve("cc:zlib.libs[2]", &ctx) {
             Resolved::ProbeRef { key, access } => {
                 assert_eq!(key, "cc:zlib");
-                assert_eq!(access, r#"cook.cache.get("cc:zlib").libs[2]"#);
+                assert_eq!(access, r#"cook.probes.get("cc:zlib").libs[2]"#);
             }
             other => panic!("expected ProbeRef, got {other:?}"),
         }

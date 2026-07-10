@@ -3161,7 +3161,7 @@ fn for_each_probe_cook_fans_out_per_member() {
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = generate(&cookfile);
     // Member set sourced from the probe value (the COOK-64 pre-pass populates it).
-    assert!(lua.contains("local _items = cook.cache.get(\"cards\")"),
+    assert!(lua.contains("local _items = cook.probes.get(\"cards\")"),
         "missing probe member source, got:\n{lua}");
     // One cook.add_unit per member, member bound as `item`.
     assert!(lua.contains("for _, item in ipairs(_items) do"),
@@ -3183,7 +3183,7 @@ fn for_each_probe_ref_passes_through_verbatim() {
     // under the verbatim ref.
     let src = "recipe a\n    ingredients cards:items\n    cook \"o/$<in.id>\" { build $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
-    assert!(lua.contains("local _items = cook.cache.get(\"cards:items\")"),
+    assert!(lua.contains("local _items = cook.probes.get(\"cards:items\")"),
         "ref must pass through unsplit, got:\n{lua}");
 }
 

@@ -2086,7 +2086,7 @@ pub fn execute_dag(
 
         // G3 (CS-0074): if this result carries a probe output, write it into
         // the ProbeValueStore immediately so that consumer units
-        // dispatched after this point can read it via cook.cache.get (§22.5.7).
+        // dispatched after this point can read it via cook.probes.get (§22.5.7).
         // CS-0102: first materialise the canonical local copy at
         // .cook/probes/<key>.json with the worker's bytes verbatim, so the
         // file, the per-run store, and the CAS artifact (G5 below) hold

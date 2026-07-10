@@ -24,7 +24,7 @@ use crate::sigil;
 /// `command`; a probe-value reference is left as literal `$<key:...>` sigil
 /// text inside that string. §22.5.7's register-time capture
 /// (`try_expand_probe_templates` in cook-register) detects the sigil text and
-/// rewrites the unit's command into an execute-time `cook.cache.get` chunk.
+/// rewrites the unit's command into an execute-time `cook.probes.get` chunk.
 /// Emitting a function-valued command here would silently no-op the unit
 /// once `cook.add_unit` coerces the non-string value to `""` — this is the
 /// COOK-187 defect; the fix is to never produce that shape.
@@ -48,7 +48,7 @@ pub(crate) fn expand_command_template(
             // COOK-187 / CS-0122: probe-value refs stay LITERAL `$<key:...>`
             // text in the register-time command string. cook.add_unit's
             // CS-0074 capture (§22.5.7) rewrites the string into an
-            // execute-time cook.cache.get chunk. Emitting a deferred
+            // execute-time cook.probes.get chunk. Emitting a deferred
             // `function() ... end` here is forbidden — cook.add_unit
             // rejects non-string commands.
             probe_keys.insert(key.clone());
@@ -81,7 +81,7 @@ pub(crate) enum ProbeLowering {
     /// `cook.add_unit`'s register-time capture rewrites it (COOK-187/CS-0122).
     /// Required for anything that feeds `command =`.
     LiteralSigil,
-    /// Lower to `tostring(cook.cache.get(...))` evaluated where the
+    /// Lower to `tostring(cook.probes.get(...))` evaluated where the
     /// expression is evaluated (register time). Pre-existing behavior for
     /// non-command positions (for_each output patterns, test as-names).
     CacheGet,
@@ -1425,7 +1425,7 @@ mod probe_template_tests {
         // `$<key:...>` sigil text stays in the command string for
         // cook.add_unit's register-time capture to rewrite.
         assert!(!lua.contains("function()"), "got: {}", lua);
-        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(!lua.contains("cook.probes.get"), "got: {}", lua);
         assert!(lua.contains("$<cc:zlib.cflags>"), "got: {}", lua);
         // Sigil $<in> should still resolve normally.
         assert!(lua.contains("_cook_in"), "got: {}", lua);
@@ -1445,7 +1445,7 @@ mod probe_template_tests {
         let (lua, keys) =
             expand_command_template("$<cc:compiler> -c foo.c", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert!(!lua.contains("function()"), "got: {}", lua);
-        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(!lua.contains("cook.probes.get"), "got: {}", lua);
         assert!(lua.contains("$<cc:compiler>"), "got: {}", lua);
         assert!(keys.contains("cc:compiler"), "expected cc:compiler in keys; got: {:?}", keys);
     }
@@ -1463,7 +1463,7 @@ mod probe_template_tests {
         let (lua, keys) =
             expand_command_template("$<cc:zlib.libs[2]>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert!(!lua.contains("function()"), "got: {}", lua);
-        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(!lua.contains("cook.probes.get"), "got: {}", lua);
         assert!(lua.contains("$<cc:zlib.libs[2]>"), "got: {}", lua);
         assert!(keys.contains("cc:zlib"));
     }
@@ -1480,7 +1480,7 @@ mod probe_template_tests {
         let (lua, keys) =
             expand_command_template("$<cc:compiler.path> -c foo.c $<cc:zlib.cflags>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert!(!lua.contains("function()"), "got: {}", lua);
-        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(!lua.contains("cook.probes.get"), "got: {}", lua);
         assert!(lua.contains("$<cc:compiler.path>"), "got: {}", lua);
         assert!(lua.contains("$<cc:zlib.cflags>"), "got: {}", lua);
         assert!(keys.contains("cc:compiler"), "keys: {:?}", keys);

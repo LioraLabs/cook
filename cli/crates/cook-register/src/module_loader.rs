@@ -199,7 +199,7 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
         }
 
         // 4. Mark as in-flight (for cycle detection) and set current_module
-        // (for cook.cache scoping).
+        // (for cook.probes scoping).
         {
             let mut state = s.borrow_mut();
             state.currently_loading.insert(name.clone());
@@ -323,7 +323,7 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
 }
 
 // ---------------------------------------------------------------------------
-// cook.cache.* API
+// cook.probes.* API
 // ---------------------------------------------------------------------------
 
 /// COOK-64 §22.5.9: register-phase store of resolved `for_each`-feeding probe
@@ -333,8 +333,8 @@ pub fn register_module_loader(lua: &Lua, state: SharedModuleLoaderState) -> LuaR
 /// alongside the whole value stored under the bare probe key — a source ref
 /// that names a probe exactly needs no such extra entry. The pre-pass
 /// (`engine.rs`) populates it after top-level load but before any recipe body
-/// runs; `cook.cache.get` consults it *before* the module-cache path so a
-/// `for_each` recipe body's `local _items = cook.cache.get("<ref>")` sees the
+/// runs; `cook.probes.get` consults it *before* the module-cache path so a
+/// `for_each` recipe body's `local _items = cook.probes.get("<ref>")` sees the
 /// resolved array instead of erroring "outside of a module context". Empty
 /// for non-`for_each` sessions, so the module-cache behaviour is unchanged.
 /// Values are decoded `serde_json::Value`s — JSON-native since CS-0102.
@@ -348,7 +348,7 @@ pub fn register_cache_api(
     let cook: LuaTable = lua.globals().get("cook")?;
     let cache_tbl = lua.create_table()?;
 
-    // cook.cache.get(key)
+    // cook.probes.get(key)
     let s = state.clone();
     let prepass_get = prepass.clone();
     let get_fn = lua.create_function(move |lua, key: String| {
@@ -361,7 +361,7 @@ pub fn register_cache_api(
         }
         let state = s.borrow();
         let module_name = state.active_module().ok_or_else(|| {
-            LuaError::runtime("cook.cache.get called outside of a module context")
+            LuaError::runtime("cook.probes.get called outside of a module context")
         })?.to_string();
         match state.caches.get(&module_name).and_then(|c| c.get(&key)) {
             Some(val) => json_to_lua_value(lua, val.clone()),
@@ -370,13 +370,13 @@ pub fn register_cache_api(
     })?;
     cache_tbl.set("get", get_fn)?;
 
-    // cook.cache.set(key, value)
+    // cook.probes.set(key, value)
     let s2 = state.clone();
     let set_fn = lua.create_function(move |_, (key, value): (String, LuaValue)| {
         let json_val = lua_value_to_json(value);
         let mut state = s2.borrow_mut();
         let module_name = state.active_module().ok_or_else(|| {
-            LuaError::runtime("cook.cache.set called outside of a module context")
+            LuaError::runtime("cook.probes.set called outside of a module context")
         })?.to_string();
         if let Some(cache) = state.caches.get_mut(&module_name) {
             cache.set(&key, json_val);
@@ -385,35 +385,24 @@ pub fn register_cache_api(
     })?;
     cache_tbl.set("set", set_fn)?;
 
-    // cook.cache.invalidate(key)
-    let s3 = state.clone();
-    let invalidate_fn = lua.create_function(move |_, key: String| {
-        let mut state = s3.borrow_mut();
-        let module_name = state.active_module().ok_or_else(|| {
-            LuaError::runtime("cook.cache.invalidate called outside of a module context")
-        })?.to_string();
-        if let Some(cache) = state.caches.get_mut(&module_name) {
-            cache.invalidate(&key);
-        }
-        Ok(())
-    })?;
-    cache_tbl.set("invalidate", invalidate_fn)?;
+    cook.set("probes", cache_tbl)?;
+    install_renamed_cache_stub(lua, &cook)?;
+    Ok(())
+}
 
-    // cook.cache.clear()
-    let s4 = state.clone();
-    let clear_fn = lua.create_function(move |_, ()| {
-        let mut state = s4.borrow_mut();
-        let module_name = state.active_module().ok_or_else(|| {
-            LuaError::runtime("cook.cache.clear called outside of a module context")
-        })?.to_string();
-        if let Some(cache) = state.caches.get_mut(&module_name) {
-            cache.clear();
-        }
-        Ok(())
+/// `cook.cache.*` was renamed to `cook.probes.*` in v1.0 (CS-0136).
+/// Install a stub whose every field access is a hard error with a did-you-mean.
+fn install_renamed_cache_stub(lua: &Lua, cook: &LuaTable) -> LuaResult<()> {
+    let stub = lua.create_table()?;
+    let mt = lua.create_table()?;
+    let index_fn = lua.create_function(|_, (_t, key): (LuaTable, String)| -> LuaResult<LuaValue> {
+        Err(LuaError::runtime(format!(
+            "'cook.cache' was renamed to 'cook.probes' in v1.0 (use cook.probes.{key})"
+        )))
     })?;
-    cache_tbl.set("clear", clear_fn)?;
-
-    cook.set("cache", cache_tbl)?;
+    mt.set("__index", index_fn)?;
+    stub.set_metatable(Some(mt));
+    cook.set("cache", stub)?;
     Ok(())
 }
 
@@ -660,10 +649,10 @@ mod tests {
             "test_mod",
             r#"local m = {}
             function m.init()
-                cook.cache.set("greeting", "hello")
+                cook.probes.set("greeting", "hello")
             end
             function m.get_greeting()
-                return cook.cache.get("greeting")
+                return cook.probes.get("greeting")
             end
             return m"#,
         );
@@ -675,6 +664,21 @@ mod tests {
         state.borrow().flush_all();
         let cache_file = dir.path().join(".cook/cache/test_mod.json");
         assert!(cache_file.exists());
+    }
+
+    #[test]
+    fn cook_cache_is_hard_error_with_did_you_mean() {
+        let (lua, _dir, _state) = setup_with_module("test_mod", "return {}");
+        let err = lua
+            .load(r#"return cook.cache.get("x")"#)
+            .exec()
+            .expect_err("cook.cache.get must be a hard error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cook.cache' was renamed to 'cook.probes'")
+                && msg.contains("cook.probes.get"),
+            "rename diagnostic must name the new spelling; got: {msg}"
+        );
     }
 
     #[test]

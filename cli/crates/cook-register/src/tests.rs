@@ -1701,7 +1701,7 @@ fn for_each_probe_prepass_fans_out_units() {
     let dir = TempDir::new().unwrap();
     // A self-contained probe (no file inputs) returns a 3-element array; the
     // pre-pass must resolve it so the `ingredients <probe>` body fans out one
-    // unit per card. Before COOK-64 the body errored on `cook.cache.get` returning nil.
+    // unit per card. Before COOK-64 the body errored on `cook.probes.get` returning nil.
     let cookfile = r#"
 register
     cook.probe("cards", {
