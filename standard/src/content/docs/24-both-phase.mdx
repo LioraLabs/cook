@@ -72,7 +72,7 @@ On the register-phase VM, `cook.probes.get(key)` returns the value previously st
 ### 24.4.2. `cook.probes.set` [#lua.cook-probes-set]
 **Signature.** `cook.probes.set(key: string, value: any) -> nil`
 
-> **Deprecated** (CS-0074, v0.11). Removed at v1.0. Use `cook.probe` (§{cat.probes}) for memoised values.
+> **Deprecated** (CS-0074, v0.11; renamed `cook.cache` → `cook.probes` in CS-0136). Not available on the execute-phase VM; full removal deferred to a later 1.x revision. Use `cook.probe` (§{cat.probes}) for memoised values.
 
 Stores `value` under `key`. Subsequent `cook.probes.get(key)` returns `value` (or its deserialisation-equal counterpart).
 
@@ -83,7 +83,7 @@ A register-phase write MUST be persisted by the implementation in a way that sur
 ### 24.4.3. `cook.probes.scope` [#lua.cook-probes-scope]
 **Signature.** `cook.probes.scope(label: string) -> table`
 
-> **Deprecated** (CS-0074, v0.11). Removed at v1.0. Use `cook.probe` (§{cat.probes}) for memoised values.
+> **Deprecated** (CS-0074, v0.11; renamed `cook.cache` → `cook.probes` in CS-0136). Not available on the execute-phase VM; full removal deferred to a later 1.x revision. Use `cook.probe` (§{cat.probes}) for memoised values.
 
 Returns a "scoped" table view whose `get(key)` and `set(key, value)` operations are equivalent to `cook.probes.get(label .. ":" .. key)` and `cook.probes.set(label .. ":" .. key, value)` respectively. The label string MUST NOT contain the `:` character; a conforming implementation MUST raise a Lua runtime error on such a label.
 
