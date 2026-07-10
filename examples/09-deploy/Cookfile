@@ -1,15 +1,16 @@
-# 09 — plate: the ship-it step.
+# 09 — deploys are chores.
 #
 # `cook` steps PRODUCE artifacts and must be reproducible — they run
-# sandboxed and cached. `plate` steps PUSH artifacts somewhere: they are
-# side effects, deliberately NOT sandboxed (they may touch $HOME, a
-# server, a device) and they re-run when their upstream changes.
+# sandboxed and cached. `chore` steps are the un-sandboxed escape hatch:
+# plain indented shell lines that always run and are deliberately NOT
+# cached (they may touch $HOME, a server, a device) — the natural shape
+# for a deploy.
 #
 # Here the "device" is a local directory. In real Cookfiles the body is
-# the same shape with a real transport:
-#     plate { scp $<site> deploy@host:/var/www/ }
-#     plate { adb push $<apk> /data/local/tmp/ }
-#     plate { aws s3 sync build/site "s3://my-bucket" }
+# the same shape with a real transport, e.g. one of:
+#     scp $<site> deploy@host:/var/www/
+#     adb push $<apk> /data/local/tmp/
+#     aws s3 sync build/site "s3://my-bucket"
 #
 # Try:
 #   cook release             # build once, then push
@@ -21,12 +22,10 @@ recipe site
     ingredients "pages/*.md"
     cook "build/$<in.stem>.html" { sed 's|^# \(.*\)|<h1>\1</h1>|' $<in> > $<out> }
 
-recipe release: site
-    plate {
-        mkdir -p ./device
-        cp $<site> ./device/
-        echo "released $(ls device | wc -l) page(s) to ./device"
-    }
+chore release: site
+    mkdir -p ./device
+    cp $<site> ./device/
+    echo "released $(ls device | wc -l) page(s) to ./device"
 
 chore clean
     rm -rf build device

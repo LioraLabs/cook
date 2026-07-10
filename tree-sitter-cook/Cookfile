@@ -27,32 +27,16 @@ recipe wasm: generate
         mkdir -p ../standard/public && tree-sitter build --wasm . -o $<out>
     }
 
-recipe nvim-install: generate
+recipe nvim-parser: generate
     ingredients "src/parser.c" "src/scanner.c"
     cook "build/parser/cook.so" {
         mkdir -p build/parser
         tree-sitter build . -o $<out>
     }
-    plate {
-        mkdir -p $NVIM_SITE/parser
-        cp $<in> $NVIM_SITE/parser/cook.so
-        echo "installed parser → $NVIM_SITE/parser/cook.so"
 
-        # Stale plugin-distributed cook.so (nvim-treesitter via lazy.nvim,
-        # site/pack, etc.) sits earlier in &rtp than $NVIM_SITE and shadows
-        # the fresh parser, so local edits never reach the editor. Move
-        # conflicting copies aside (timestamped .bak) — non-destructive,
-        # and Neovim stops loading them.
-        nvim_data="$(dirname "$NVIM_SITE")"
-        nvim_config="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
-        stamp=$(date +%s)
-        find "$nvim_data" "$nvim_config" -maxdepth 6 -name cook.so \
-            -path '*/parser/cook.so' \
-            -not -path "$NVIM_SITE/parser/cook.so" 2>/dev/null \
-        | while read -r f; do
-            mv "$f" "$f.bak.$stamp"
-            echo "backed up stale parser → $f.bak.$stamp"
-        done
-
-        bash scripts/install-nvim-queries.sh
-    }
+chore nvim-install: nvim-parser
+    mkdir -p $NVIM_SITE/parser
+    cp $<nvim-parser> $NVIM_SITE/parser/cook.so
+    echo "installed parser → $NVIM_SITE/parser/cook.so"
+    bash scripts/clean-stale-nvim-parsers.sh
+    bash scripts/install-nvim-queries.sh

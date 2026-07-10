@@ -7,5 +7,5 @@ recipe build
     }
 
 recipe unit: build
-    test { true } timeout 5
-    test { test -s $<build> } timeout 5
+    test { true }
+    test { test -s $<build> }

@@ -23,7 +23,7 @@ The current member is available as:
   scalar's string form otherwise);
 - `$<in.FIELD>` — the value of record field `FIELD`.
 
-`cook`, `plate`, and `test` steps each produce **one unit per member**.
+`cook` and `test` steps each produce **one unit per member**.
 
 ## The recipes
 

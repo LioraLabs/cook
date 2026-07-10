@@ -2,7 +2,9 @@
 //! §22.4). Task 3 wired register/codegen so `cook.add_test` accepts
 //! `lua_code` XOR `command`; this file locks the worker-pool execution path
 //! at the binary level — a lua test body must actually run on the worker VM
-//! and its pass/fail/should_fail semantics must match the shell-test path.
+//! and its pass/fail semantics must match the shell-test path. (CS-0135
+//! removed the `should_fail` modifier; a negative Lua-body test now asserts
+//! the failure itself via `pcall`, mirroring the shell-body `!` inversion.)
 
 use std::fs;
 use std::path::Path;
@@ -66,14 +68,14 @@ fn lua_body_test_failure_exits_one() {
 }
 
 #[test]
-fn lua_body_test_should_fail_inverts() {
+fn lua_body_test_pcall_inverts() {
     let dir = write_cookfile(
-        "recipe check\n    test >{\n        error(\"expected\")\n    } should_fail\n",
+        "recipe check\n    test >{\n        assert(not pcall(error, \"expected\"))\n    }\n",
     );
     let out = run_recipe(dir.path(), "check");
     let c = combined(&out);
     assert!(
         out.status.success(),
-        "a should_fail lua-body test whose body errors must exit 0.\n{c}"
+        "a lua-body test that pcalls a failing check and asserts the failure must exit 0.\n{c}"
     );
 }

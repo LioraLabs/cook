@@ -27,7 +27,7 @@ fn rerun_failed_runs_only_previously_failed() {
     let tmp = tempdir().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe pass\n    test { true } as 'p1' timeout 5\nrecipe fail\n    test { false } as 'f1' timeout 5\n",
+        "recipe pass\n    test { true }\nrecipe fail\n    test { false }\n",
     )
     .unwrap();
 
@@ -72,7 +72,7 @@ fn rerun_failed_with_no_state_warns_and_exits_zero() {
     let tmp = tempdir().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    test { true } timeout 5\n",
+        "recipe r\n    test { true }\n",
     )
     .unwrap();
 

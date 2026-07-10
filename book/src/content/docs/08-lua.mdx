@@ -6,7 +6,7 @@ sidebar:
 
 # 8. Lua: registering work
 
-Most Cookfiles can be written entirely in surface syntax — `recipe`, `ingredients`, `cook`, `plate`, `test`, `chore`. But underneath it all, Cook is a Lua program: every Cookfile compiles to Lua, and the surface forms desugar to calls on the `cook.*` API.
+Most Cookfiles can be written entirely in surface syntax — `recipe`, `ingredients`, `cook`, `test`, `chore`. But underneath it all, Cook is a Lua program: every Cookfile compiles to Lua, and the surface forms desugar to calls on the `cook.*` API.
 
 This chapter is about reaching for that API directly when the surface syntax can't quite express what you need.
 
@@ -204,7 +204,7 @@ After each unit runs, Cook reads `.cook/deps/<stem>.d`, parses it as Make-style 
 
 ## 8.8. Where to use Lua and where not to
 
-**Use surface syntax when you can.** `recipe build`, `ingredients`, `cook`, `plate`, `test`, `chore` cover most projects. Surface syntax is shorter, denser, and reads more like a list of things than like a program.
+**Use surface syntax when you can.** `recipe build`, `ingredients`, `cook`, `test`, `chore` cover most projects. Surface syntax is shorter, denser, and reads more like a list of things than like a program.
 
 **Reach for Lua when:**
 - You need a transformation that's natural in Lua and awkward in shell (string manipulation, JSON, anything with quoting).

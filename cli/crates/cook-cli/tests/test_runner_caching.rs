@@ -28,7 +28,7 @@ fn passing_test_caches_and_replays() {
     let tmp = tempdir().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    test { true } timeout 5\n",
+        "recipe r\n    test { true }\n",
     )
     .unwrap();
 
@@ -67,7 +67,7 @@ fn failing_test_is_not_cached() {
     let tmp = tempdir().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    test { false } timeout 5\n",
+        "recipe r\n    test { false }\n",
     )
     .unwrap();
 
@@ -101,7 +101,7 @@ fn rerun_busts_cache() {
     let tmp = tempdir().unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    test { true } timeout 5\n",
+        "recipe r\n    test { true }\n",
     )
     .unwrap();
 

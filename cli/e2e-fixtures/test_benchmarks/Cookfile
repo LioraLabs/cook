@@ -9,7 +9,7 @@ config
 
 # (1) Green path, one-shot. Pins terminal output, cache write.
 recipe pass_basic
-    test { true } timeout 5
+    test { true }
 
 # (2) One-to-one over 12 inputs. Pins per-iteration discriminator,
 #     12 separate cache entries.
@@ -20,16 +20,16 @@ recipe pass_iterated
         sleep $<SLEEP>
         echo "ok" > $<out>
     }
-    test { test -s $<in> } timeout 5
+    test { test -s $<in> }
 
-# (3) should_fail test whose body exits non-zero. Pins should_fail
-#     semantics survive caching.
+# (3) Inverted test: the underlying command fails, `!` flips it to a pass.
+#     Pins body-inversion semantics survive caching.
 recipe pass_should_fail
-    test { exit 1 } timeout 5 should_fail
+    test { ! (exit 1) }
 
 # (4) One-shot test that fails. Pins failure capture, never-cached invariant.
 recipe fail_basic
-    test { exit 1 } timeout 5
+    test { exit 1 }
 
 # (5) One-to-one over 12 inputs where 3 fail (those whose stem ends in 3, 6, 9).
 #     Pins continue-past-failure and mixed pass/fail aggregation.
@@ -45,7 +45,7 @@ recipe fail_partial
             *3|*6|*9) exit 1 ;;
             *) exit 0 ;;
         esac
-    } timeout 5
+    }
 
 # (6) Test whose preceding cook step calls false. Pins blocked status.
 recipe blocked_by_build
@@ -53,20 +53,24 @@ recipe blocked_by_build
         mkdir -p build/blocked_by_build
         false
     }
-    test { test -f $<in> } timeout 5
+    test { test -f $<in> }
 
-# (7) Test that times out. Pins timed_out outcome.
-recipe slow_timeout
-    test { sleep 10 } timeout 1
+# (7) The `timeout` modifier was removed (CS-0135); the engine now applies a
+#     fixed internal ceiling that Cookfiles can't configure or trigger on
+#     demand. This recipe now just pins that a slow-but-successful test still
+#     passes rather than being mistaken for hung/blocked.
+recipe slow_pass
+    test { sleep 2 }
 
-# (8) `as` modifier. Pins name override surface.
+# (8) The `as` modifier was removed (CS-0135); unnamed tests now always
+#     display as `recipe@line`. Pins that auto-labeling surface.
 recipe named_test
     ingredients "src/inputs/*.txt"
     cook "build/named_test/$<in.stem>.out" {
         mkdir -p build/named_test
         echo "ok" > $<out>
     }
-    test { test -s $<in> } as 'non-empty' timeout 5
+    test { test -s $<in> }
 
 # (9) Cache replay. Pins cache hit on second run.
 recipe cached_replay
@@ -76,7 +80,7 @@ recipe cached_replay
         sleep $<SLEEP>
         echo "ok" > $<out>
     }
-    test { true } timeout 5
+    test { true }
 
 # (10) Used by walkthrough --rerun-failed cycle.
 #      First run: tests #1, #2 fail. Second run with --rerun-failed: only
@@ -94,7 +98,7 @@ recipe rerun_failed_set
             input_01|input_02) exit 1 ;;
             *) exit 0 ;;
         esac
-    } timeout 5
+    }
 
 chore clean
     rm -rf build .cook

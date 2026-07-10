@@ -1,12 +1,10 @@
 #!/bin/bash
-# Plate-side companion to cross_cookfile_test/walkthrough.sh. Same shape:
-# a recipe whose body refs an imported recipe via {lib.gen}, but the body
-# is a `plate` step instead of a `test` step. plate lowers to
-# cook.add_unit, which propagates step_group_dep_refs into dep_edges, so
-# the wave grouper sequences lib.gen before consume_gen even at high job
-# counts. This fixture exists as a positive-coverage mirror of the test
-# fixture — diff the two Cookfiles and the only line that changes is the
-# step kind.
+# Chore-side companion demonstrating body-ref dep propagation. A chore
+# whose body refs an imported recipe via $<lib.gen> instead of a `test`
+# step. Chores lower to cook.add_unit (same as a `cook "out" { }` step),
+# which propagates step_group_dep_refs into dep_edges, so the wave grouper
+# sequences lib.gen before consume_gen even at high job counts — unlike
+# `test`, which lowers to cook.add_test and drops those refs.
 
 set -uo pipefail
 
@@ -29,7 +27,7 @@ clean_state() {
     find . -type d -name "build" -exec rm -rf {} + 2>/dev/null || true
 }
 
-echo "=== cross_cookfile_plate positive-coverage ==="
+echo "=== cross_cookfile_chore positive-coverage ==="
 echo
 
 echo "--- Scenario 1: cook consume_gen --jobs 1 ---"
