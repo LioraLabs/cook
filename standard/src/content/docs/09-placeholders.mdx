@@ -112,14 +112,14 @@ Cross-recipe references inside a shell block follow §{xref.string-substitution}
 
 ## 9.4. Test placeholders [#phl.plate-test]
 
-A `test_step` body that is a `shell_block` is necessarily **per-item** (one-to-one) or **one-shot** — a shell body has no binding for a collected set. The batched (many-to-one) form is admitted only as a `using_lua_block` body, where the collected set is exposed as the Lua `inputs` table (§{lua.using-block-globals}); there is no shell-text spelling of many-to-one test. A shell-block test body admits the following placeholders:
+A `test_step` body that is a `shell_block` cannot textually reference a collected input set — a shell body has no all-inputs placeholder (CS-0130). It therefore either references the per-item accessor `$<in>` / `$<in.ACCESSOR>` (one-to-one) or references no iteration item (a single unit, whose caching follows the recipe's source per §{steps.iteration-mode-plate-test}). A Lua-block test body MAY expose the collected set as the Lua `inputs` table (§{lua.using-block-globals}). A shell-block test body admits the following placeholders:
 
 | Placeholder | Valid in mode | Meaning |
 |---|---|---|
 | `$<in>` | one-to-one (own, dep-driven, or data-member) | The current iteration item: a path for `ingredients`-driven recipes (glob form), or the whole data member (record as canonical key-sorted JSON, scalar as string) for `ingredients <probe>`-driven recipes (§{steps.ingredients}) |
 | `$<in.ACCESSOR>` | one-to-one | For path members (`ingredients` glob): `path.ACCESSOR(in)` per §{lua.path-helpers}; for record members (`ingredients <probe>`): the value of record field `ACCESSOR` |
 | `$<NAME>` (NAME is a recipe in scope) | any mode | `cook.dep_output(NAME)` per §{xref.string-substitution} |
-| `$<file:PATH>` (CS-0101) | any mode | File reference per §{phl.cook-step}: expands to the resolved match list, space-joined, with the same load-time missing/empty diagnostics. Test units are registered non-cacheable, so the §{exec.cache.abstract} fingerprint observable does not apply to them; the reference is pure substitution in these positions. |
+| `$<file:PATH>` (CS-0101) | any mode | File reference per §{phl.cook-step}: expands to the resolved match list, space-joined, with the same load-time missing/empty diagnostics. The reference is substituted here; whether and how the test's result caches is governed by §{exec.cache.test-unit}. |
 | `$<TOKEN>` (none of the above) | any mode | `cook.require_env(TOKEN)` per §{xref.resolution} |
 
 A conforming implementation MUST reject:

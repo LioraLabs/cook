@@ -378,9 +378,9 @@ body      ::= shell_block | exec_lua_block
 
 A conforming implementation MUST accept both `test { ... }` (a `shell_block` body) and `test >{ ... }` (an `exec_lua_block` body), and MUST reject any leading `STRING` or trailing token after the body.
 
-Iteration is decided entirely by the body's content, mirroring §{steps.iteration-mode-plate-test}: a shell body containing `$<in>` / `$<in.ACCESSOR>`, or a Lua body binding `input`, puts the step in **one-to-one** mode — a fan-out over the iteration source with one cached pass/fail unit per item. A body containing neither puts the step in **one-shot** mode (a single unit), except that a Lua body binding `inputs` instead puts the step in **many-to-one** mode — a single unit cached over the whole source set. Caching is **derived**, not declared: it follows from whatever file source the recipe provides (`ingredients`, or an upstream `cook`'s outputs), exactly as for a `cook_step`; there is no test-specific cache surface to configure.
+Iteration is decided by a single signal — whether the body references the iteration item (§{steps.iteration-mode-plate-test}). A shell body containing `$<in>` / `$<in.ACCESSOR>`, or a Lua body binding `input`, puts the step in **one-to-one** mode: a fan-out over the iteration source with one cached pass/fail unit per item. A body that references no iteration item is a **single unit** — one node — whose caching is derived from the recipe's declared file source: when the recipe supplies a source (`ingredients`, or an upstream `cook`'s outputs) the unit is keyed on the whole source set (the engine's `ManyToOne`); when the recipe supplies no source at all the unit runs uncached on every invocation (the engine's `OneShot`). Caching is **derived**, not declared — it follows from whatever file source the recipe provides, exactly as for a `cook_step`; there is no test-specific cache surface to configure.
 
-This is the deliberate parallel with `cook`: the iteration accessor lives wherever the step's defining payload is — the output pattern for `cook`, the body for `test`.
+This is the deliberate parallel with `cook` (§{steps.iteration-mode}): the iteration accessor lives wherever the step's defining payload is — the output pattern for `cook`, the body for `test`. CS-0022's hazard (a body `$<in>` conflicting with a literal output pattern) cannot arise for `test`, which has no output pattern for the body signal to conflict with.
 
 **Trailing content after the body is rejected.** The body follows the `test` keyword directly and takes no trailing modifiers; a conforming implementation MUST reject any token after the body's closing `}`. When the rejected trailing token is `should_fail`, `timeout`, or `as`, a conforming implementation SHOULD emit a did-you-mean diagnostic naming the removed modifier and the v1.0 migration path:
 
@@ -392,24 +392,23 @@ None of `should_fail`, `timeout`, or `as` were ever reserved words (§{lexical.k
 
 ### 8.6.1. Test iteration mode [#steps.iteration-mode-plate-test]
 
-A `test_step` is in one of three iteration modes, determined entirely by its body's content. A shell-block body has no batched-set placeholder (App. E CS-0130 removed the former all-inputs shell placeholder): it is per-item or one-shot only. The batched (many-to-one) form is expressible exclusively as a Lua-block body, where the collected source is bound to `inputs`.
+A `test_step` has two author-facing modes, selected by whether its body references the iteration item. The single-unit mode maps onto one of the engine's two batch dispositions according to whether the recipe supplies a source:
 
-| Body form | Body contains / references | Mode |
+| Body references the iteration item? | Recipe source | Mode |
 |---|---|---|
-| Shell block | `$<in>` or `$<in.ACCESSOR>` | **one-to-one** over source |
-| Shell block | neither | **one-shot** |
-| Lua block | `input` (no `inputs`) | **one-to-one** over source |
-| Lua block | `inputs` (no `input`) | **many-to-one** |
-| Lua block | neither | **one-shot** |
-| Lua block | both `input` and `inputs` | **error** (mixed iteration signal) |
+| `$<in>` / `$<in.ACCESSOR>` (shell) or `input` (Lua) present | non-empty (required) | **one-to-one** — one cached pass/fail unit per item |
+| absent | a source is declared (non-empty) | **single unit**, keyed on the whole source set (engine `ManyToOne`) |
+| absent | no source declared | **single unit**, uncached, runs every invocation (engine `OneShot`) |
 
-The **iteration source** for a `test_step` is the preceding `cook_step`'s output list (flattened across all units it produces), falling back to the recipe's resolved ingredients (§{steps.ingredients}) if no `cook_step` precedes it. When the recipe is driven by an `ingredients <probe>` source (§{steps.ingredients}), the iteration source is instead the resolved data-member list, and the per-member placeholders remain `$<in>` / `$<in.ACCESSOR>` (Lua: `item`), where `ACCESSOR` selects a record field rather than a path component; such a step is in **one-to-one over data members** mode. A step in **one-to-one** or **many-to-one** mode MUST have a non-empty source; a step in **one-shot** mode does not consult the source.
+A shell body has no batched-set placeholder (App. E CS-0130 removed the former all-inputs shell placeholder), so a shell single-unit body runs its command once over the unit. A Lua single-unit body MAY bind `inputs` to observe the collected source set. A Lua body MUST NOT reference both `input` and `inputs`.
+
+The **iteration source** for a `test_step` is the preceding `cook_step`'s output list (flattened across all units it produces), falling back to the recipe's resolved ingredients (§{steps.ingredients}) if no `cook_step` precedes it. When the recipe is driven by an `ingredients <probe>` source (§{steps.ingredients}), the iteration source is instead the resolved data-member list, and the per-member placeholders remain `$<in>` / `$<in.ACCESSOR>` (Lua: `item`), where `ACCESSOR` selects a record field rather than a path component; such a step is in **one-to-one over data members** mode.
 
 A conforming implementation MUST reject:
-- A Lua-block body that contains both an iteration-item binding (`input`) and a batched-source binding (`inputs`).
-- A `test_step` in one-to-one or many-to-one mode whose source is empty.
+- A Lua-block body that references both an iteration-item binding (`input`) and a batched-source binding (`inputs`).
+- A `test_step` whose mode consults a declared source — one-to-one, or single-unit with a source — but whose source resolves empty.
 
-A `test_step` in one-shot mode with no source at all — no preceding `cook`, no `ingredients` — is admitted and runs uncached, always; it simply does not consult the source.
+A `test_step` with no declared source at all — no preceding `cook`, no `ingredients` — is admitted and runs uncached, always (the engine's one-shot disposition); it simply does not consult the source.
 
 The Lua identifier scan operates on the same lexical text the brace-balance lexer (§{lexical.brace-blocks}) operates on — strings, comments, and long strings are excluded; only free-identifier-position references count.
 
@@ -446,7 +445,7 @@ recipe coverage
     }
 ```
 
-The Lua body references `inputs` (no `input`); the step is many-to-one and runs once with all test binaries visible as `inputs`.
+The Lua body references `inputs` (no `input`); the recipe supplies a source (the `cook` step's outputs), so the step is a single unit keyed on the whole source set (engine `ManyToOne`), run once with all test binaries visible as `inputs`.
 
 ### Note 8.6.1
 

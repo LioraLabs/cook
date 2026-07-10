@@ -171,22 +171,9 @@ A `NUMBER` token is a non-empty sequence of ASCII digits defined in App. A.5:
 NUMBER ::= /[0-9]+/
 ```
 
-`NUMBER` has a single use in the Cookfile grammar: the `timeout` operand of a `test_step` (App. A.4). The `NUMBER` is parsed as an unsigned integer denoting a whole number of seconds. A conforming implementation MUST reject a `test` step whose `timeout` operand is not a valid `NUMBER`. Signs, decimal points, fractional digits, and unit suffixes are NOT permitted.
+The `NUMBER` token denotes an unsigned integer: signs, decimal points, fractional digits, and unit suffixes are NOT permitted. As of CS-0135 the `NUMBER` token has **no grammar consumer**: its sole use was the `timeout` operand of a `test_step`, and the `test` modifiers (`as` / `timeout` / `should_fail`) were removed in the v1.0 language cut (§{steps.test}, App. E CS-0135). The token class is retained in the lexical grammar in anticipation of the planned 1.x re-add of a per-test time bound.
 
-No other step kind accepts a bare `NUMBER`; digits that appear inside a shell command, a `STRING`, or a Lua block are the interior language's concern and are not Cookfile tokens.
-
-### Example 3.8.1
-
-```cook
-recipe "run-tests"
-    test { ./$<in> } timeout 30 should_fail
-```
-
-`30` is a `NUMBER` denoting a 30-second timeout.
-
-### Note 3.8.1
-
-The reference implementation is `parse_test_modifier_tail` in `cli/crates/cook-lang/src/recipe.rs`. The test `test_test_step_with_timeout_and_should_fail` demonstrates the admitted operand ordering: a `NUMBER` directly after `timeout`, followed by the optional `should_fail` marker.
+No step kind currently accepts a bare `NUMBER`; digits that appear inside a shell command, a `STRING`, or a Lua block are the interior language's concern and are not Cookfile tokens.
 
 ## 3.9. Brace-balanced blocks [#lexical.brace-blocks]
 A **brace-balanced block** is a span of source text delimited by `{` and a matching `}`, where matching is defined by a stateful brace-counting algorithm that ignores braces appearing inside certain syntactic contexts. Both the `LUA_BLOCK_CONTENT` (inside `>{ … }`) and the `SHELL_BLOCK_CONTENT` (inside `{ … }`) are brace-balanced blocks; they differ in their interior language (Lua vs. shell) and in how their collected body is normalised after the block closes.
