@@ -26,7 +26,8 @@ recipe iterated
     }
     test { grep -q "stable" $<in> }
 
-# Inverted test — caches as a pass when the underlying body exits non-zero.
+# Inverted (body `!`) test — the should_fail->inversion migration. Source-less,
+# so it always runs (CS-0135); a sourced inverted test would cache as a pass.
 recipe should_fail_caches
     test { ! (exit 1) }
 

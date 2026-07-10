@@ -406,9 +406,9 @@ The **iteration source** for a `test_step` is the preceding `cook_step`'s output
 
 A conforming implementation MUST reject:
 - A Lua-block body that references both an iteration-item binding (`input`) and a batched-source binding (`inputs`).
-- A `test_step` whose mode consults a declared source — one-to-one, or single-unit with a source — but whose source resolves empty.
+- A one-to-one `test_step` (its body references the iteration item) whose iteration source resolves empty — a fan-out over nothing is an author error.
 
-A `test_step` with no declared source at all — no preceding `cook`, no `ingredients` — is admitted and runs uncached, always (the engine's one-shot disposition); it simply does not consult the source.
+A `test_step` with no declared source at all — no preceding `cook`, no `ingredients` — is admitted and runs uncached, always (the engine's one-shot disposition); it simply does not consult the source. A single-unit `test_step` whose declared source resolves empty is likewise not rejected: with no resolved inputs it has no cache key and degrades to the same always-run behavior.
 
 The Lua identifier scan operates on the same lexical text the brace-balance lexer (§{lexical.brace-blocks}) operates on — strings, comments, and long strings are excluded; only free-identifier-position references count.
 

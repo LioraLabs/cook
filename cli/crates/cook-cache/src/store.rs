@@ -198,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn plate_step_no_output() {
+    fn no_output_step_entry() {
         let step = StepEntry {
             inputs: vec![FileRecord {
                 path: "src/main.c".to_string(),

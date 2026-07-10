@@ -60,13 +60,14 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             }
         };
 
-        // CS-0135 §22.4: `cook.add_test` no longer accepts a `timeout`
-        // field (the `test` step's `timeout` modifier was removed).
-        // `WorkPayload::Test::timeout` stays populated for the engine
-        // executor, which still consumes it; this call site always
-        // supplies the same default the field used to fall back to
-        // when absent.
-        let timeout: u64 = 300;
+        // CS-0135 §22.4 / §7: `cook.add_test` no longer accepts a `timeout`
+        // field (the `test` step's `timeout` modifier was removed), and there
+        // is no per-test time bound in v1.0 — a hung test hangs the run, the
+        // same as `make` (App. E CS-0135). We therefore pass an effectively
+        // unbounded timeout so the executor's kill loop never fires. The
+        // `WorkPayload::Test::timeout` field stays populated for the engine
+        // (and for the planned 1.x per-test-timeout re-add).
+        let timeout: u64 = u64::MAX;
 
         // CS-0127 §22.4: `suite` defaults to the enclosing recipe's name.
         let suite_name: String = match tbl.get::<LuaValue>("suite") {
@@ -247,7 +248,7 @@ mod tests {
                 // CS-0135: cook.add_test no longer accepts timeout/should_fail/
                 // name; WorkPayload::Test still carries these fields for the
                 // engine executor, populated with their prior absent-defaults.
-                assert_eq!(*timeout, 300);
+                assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
                 assert!(!should_fail);
                 assert_eq!(suite_name, "unit");
                 assert_eq!(test_name, "");
@@ -301,7 +302,7 @@ mod tests {
         let state = body_ref(&capture_state);
         match &state.units[0].payload {
             WorkPayload::Test { timeout, should_fail, test_name, .. } => {
-                assert_eq!(*timeout, 300);
+                assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
                 assert!(!should_fail);
                 assert_eq!(test_name, "");
             }

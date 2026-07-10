@@ -146,9 +146,12 @@ fn failing_test_is_not_cached() {
 #[test]
 fn rerun_busts_cache() {
     let tmp = tempdir().unwrap();
+    // Needs a file source so the test actually caches (CS-0135: a source-less
+    // test never caches, which would make the --rerun assertion vacuous).
+    fs::write(tmp.path().join("data.txt"), "seed\n").unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    test { true }\n",
+        "recipe r\n    ingredients \"data.txt\"\n    test { true }\n",
     )
     .unwrap();
 
