@@ -278,145 +278,40 @@ pub(crate) fn parse_register_block_lua(
     Ok((body, pos))
 }
 
-struct TestModifierTail {
-    as_name: Option<String>,
-    timeout: Option<u64>,
-    should_fail: bool,
-}
-
-/// Parse a single-quoted string from the beginning of `s`.
-/// Returns `(content, rest_after_closing_quote)` on success.
-fn parse_single_quoted(s: &str, line: usize) -> Result<(String, &str), ParseError> {
-    // `s` should start with `'`
-    let inner = &s[1..];
-    match inner.find('\'') {
-        Some(end) => Ok((inner[..end].to_string(), &inner[end + 1..])),
-        None => Err(ParseError::Parse {
+/// Reject any trailing content after a `test` body's closing `}` (CS-0135:
+/// the `as`/`timeout`/`should_fail` modifiers were removed in v1.0). When the
+/// first trailing token names one of the removed modifiers, emit a
+/// did-you-mean diagnostic naming it explicitly; otherwise a generic
+/// unexpected-trailing-content error.
+fn reject_test_trailing(trailing: &str, line: usize) -> Result<(), ParseError> {
+    let trimmed = trailing.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    let first = trimmed.split_whitespace().next().unwrap_or(trimmed);
+    match first {
+        "should_fail" => Err(ParseError::Parse {
             line,
-            message: "test: unterminated single-quoted string in `as` modifier".to_string(),
+            message: "test: should_fail was removed in v1.0 — invert the check in the body \
+                      instead (e.g. run the command and fail if it unexpectedly succeeds)"
+                .to_string(),
+        }),
+        "timeout" => Err(ParseError::Parse {
+            line,
+            message: "test: timeout was removed in v1.0 — enforce a deadline from inside the \
+                      test body instead (e.g. `timeout N ...` in a shell body)"
+                .to_string(),
+        }),
+        "as" => Err(ParseError::Parse {
+            line,
+            message: "test: as was removed in v1.0 — test steps no longer take a custom name"
+                .to_string(),
+        }),
+        _ => Err(ParseError::Parse {
+            line,
+            message: format!("unexpected text after test body: '{}'", trimmed),
         }),
     }
-}
-
-/// Parse the trailing modifier suffix on a `test` line — the text that
-/// follows the closing brace of the body. Accepts (canonical order per §4.8):
-///     as 'NAME'
-///     timeout N
-///     should_fail
-///     as 'NAME' timeout N should_fail
-///     (and all valid subsets in canonical order)
-/// Out-of-order sequences are rejected.
-fn parse_test_modifier_tail(line_text: &str, line: usize) -> Result<TestModifierTail, ParseError> {
-    let suffix = match line_text.rfind('}') {
-        Some(idx) => &line_text[idx + 1..],
-        None => "",
-    };
-    let mut rest = suffix.trim();
-
-    // ── as 'NAME' ────────────────────────────────────────────────────
-    let as_name = if rest.starts_with("as") && rest[2..].starts_with(|c: char| c.is_whitespace() || c == '\'') {
-        let after_as = rest[2..].trim_start();
-        if !after_as.starts_with('\'') {
-            return Err(ParseError::Parse {
-                line,
-                message: "test: `as` requires a single-quoted string argument".to_string(),
-            });
-        }
-        let (name, remaining) = parse_single_quoted(after_as, line)?;
-        rest = remaining.trim_start();
-        Some(name)
-    } else {
-        None
-    };
-
-    // ── timeout N ────────────────────────────────────────────────────
-    let timeout = if rest.starts_with("timeout") && rest[7..].starts_with(|c: char| c.is_whitespace() || c.is_ascii_digit()) {
-        // Check `as` is not lurking after timeout (order enforcement handled below)
-        let after_timeout = rest[7..].trim_start();
-        let (num_str, remaining) = match after_timeout.split_once(|c: char| c.is_whitespace()) {
-            Some((n, r)) => (n, r.trim_start()),
-            None => (after_timeout, ""),
-        };
-        let n = num_str.parse::<u64>().map_err(|_| ParseError::Parse {
-            line,
-            message: format!("test: invalid timeout value: {}", num_str),
-        })?;
-        rest = remaining;
-        Some(n)
-    } else {
-        None
-    };
-
-    // Reject `as` appearing after `timeout` (canonical order violation).
-    if rest.starts_with("as") && (rest.len() == 2 || rest[2..].starts_with(|c: char| c.is_whitespace() || c == '\'')) {
-        return Err(ParseError::Parse {
-            line,
-            message: "test: modifier `as` must precede `timeout` in test_step \
-                      (canonical order: as → timeout → should_fail)".to_string(),
-        });
-    }
-
-    // ── should_fail ──────────────────────────────────────────────────
-    let should_fail = if rest == "should_fail" || rest.starts_with("should_fail ") {
-        let remaining = rest["should_fail".len()..].trim_start();
-        rest = remaining;
-        true
-    } else {
-        false
-    };
-
-    // Reject `as` or `timeout` appearing after `should_fail` (order violations).
-    if should_fail {
-        if rest.starts_with("as") && (rest.len() == 2 || rest[2..].starts_with(|c: char| c.is_whitespace() || c == '\'')) {
-            return Err(ParseError::Parse {
-                line,
-                message: "test: modifier `as` must precede `should_fail` in test_step \
-                          (canonical order: as → timeout → should_fail)".to_string(),
-            });
-        }
-        if rest.starts_with("timeout") && (rest.len() == 7 || rest[7..].starts_with(|c: char| c.is_whitespace())) {
-            return Err(ParseError::Parse {
-                line,
-                message: "test: modifier `timeout` must precede `should_fail` in test_step \
-                          (canonical order: as → timeout → should_fail)".to_string(),
-            });
-        }
-    }
-
-    // ── Reject anything remaining ────────────────────────────────────
-    if !rest.is_empty() {
-        return Err(ParseError::Parse {
-            line,
-            message: format!("test: unexpected modifier `{}`", rest.split_whitespace().next().unwrap_or(rest)),
-        });
-    }
-
-    Ok(TestModifierTail { as_name, timeout, should_fail })
-}
-
-/// Check that no `as` modifier follows the closing `}` of a cook or plate
-/// step body.  Returns an error if `as` is found; the modifier is only valid
-/// on `test_step` (CS-0061 §3.1.3).
-fn reject_as_modifier_on_non_test(
-    line_text: &str,
-    step_keyword: &str,
-    line: usize,
-) -> Result<(), ParseError> {
-    let suffix = match line_text.rfind('}') {
-        Some(idx) => &line_text[idx + 1..],
-        None => "",
-    };
-    let trimmed = suffix.trim();
-    if trimmed.starts_with("as") && (trimmed.len() == 2 || trimmed[2..].starts_with(|c: char| c.is_whitespace() || c == '\'')) {
-        return Err(ParseError::Parse {
-            line,
-            message: format!(
-                "{}: modifier `as` is only valid on test steps",
-                step_keyword
-            ),
-        });
-    }
-    Ok(())
 }
 
 /// COOK-171: fold the recipe-level `seal` baseline into each `cook` step's
@@ -622,26 +517,6 @@ pub(crate) fn parse_recipe(
                     }
                     pos = new_pos;
                     continue;
-                } else if let Some(rest) = strip_keyword(text, "plate") {
-                    let (body, new_pos) = crate::cook_line::parse_body_payload(
-                        rest, tok.line, tokens, pos, source_lines, "plate",
-                    )?;
-                    // Reject `as` modifier on plate_step (CS-0061 §3.1.3).
-                    let close_line_text = if new_pos > 0 {
-                        match tokens.get(new_pos - 1) {
-                            Some(t) => source_lines.get(t.line.saturating_sub(1)).copied().unwrap_or(""),
-                            None => "",
-                        }
-                    } else {
-                        source_lines.get(tok.line.saturating_sub(1)).copied().unwrap_or("")
-                    };
-                    reject_as_modifier_on_non_test(close_line_text, "plate", tok.line)?;
-                    steps.push(Step::Plate {
-                        step: PlateStep { body },
-                        line: tok.line,
-                    });
-                    pos = new_pos;
-                    continue;
                 } else if let Some(rest) = strip_keyword(text, "test") {
                     let (body, new_pos) = crate::cook_line::parse_body_payload(
                         rest, tok.line, tokens, pos, source_lines, "test",
@@ -654,14 +529,13 @@ pub(crate) fn parse_recipe(
                     } else {
                         ""
                     };
-                    let modifier_tail = parse_test_modifier_tail(modifier_line, tok.line)?;
+                    let trailing = match modifier_line.rfind('}') {
+                        Some(idx) => &modifier_line[idx + 1..],
+                        None => "",
+                    };
+                    reject_test_trailing(trailing, tok.line)?;
                     steps.push(Step::Test {
-                        step: TestStep {
-                            body,
-                            as_name: modifier_tail.as_name,
-                            timeout: modifier_tail.timeout,
-                            should_fail: modifier_tail.should_fail,
-                        },
+                        step: TestStep { body },
                         line: tok.line,
                     });
                     pos = new_pos;
@@ -781,7 +655,6 @@ pub(crate) fn parse_chore(
         let kind_descriptor = match keyword {
             "ingredients" => "inputs",
             "cook"        => "outputs",
-            "plate"       => "plated outputs",
             "test"        => "tested outputs",
             _             => "targets",
         };
@@ -834,8 +707,6 @@ pub(crate) fn parse_chore(
                     return Err(chore_banned("ingredients", tok.line));
                 } else if strip_keyword(&text, "cook").is_some() {
                     return Err(chore_banned("cook", tok.line));
-                } else if strip_keyword(&text, "plate").is_some() {
-                    return Err(chore_banned("plate", tok.line));
                 } else if strip_keyword(&text, "test").is_some() {
                     return Err(chore_banned("test", tok.line));
                 } else if text.starts_with('@') {

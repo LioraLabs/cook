@@ -1,2 +1,2 @@
 recipe check
-    test { make integration } timeout 30
+    test { make integration }

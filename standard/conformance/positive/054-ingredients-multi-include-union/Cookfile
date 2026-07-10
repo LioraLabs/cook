@@ -11,8 +11,8 @@ recipe build
 
 recipe show
     ingredients "src/*.c" "include/*.h"
-    plate { echo "$<in>" }
+    cook "build/$<in.stem>.log" { echo "$<in>" }
 
 recipe check
     ingredients "tests/*.sh" "extra/*.sh"
-    test { bash "$<in>" } timeout 5
+    test { bash "$<in>" }

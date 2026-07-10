@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Test body=LuaBlock("        local r = cook_cc.find(\"SDL3\", { cmake = true })\n        if not r.found then return end") timeout=None should_fail=false
+        Test body=LuaBlock("        local r = cook_cc.find(\"SDL3\", { cmake = true })\n        if not r.found then return end")
   chores:
   register_blocks: []
   top_level_module_calls: []

@@ -1,2 +1,0 @@
-recipe r
-    cook "out.txt" { echo hi } as 'foo'

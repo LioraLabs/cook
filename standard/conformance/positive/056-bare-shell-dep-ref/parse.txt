@@ -8,7 +8,7 @@ Cookfile
       ingredients: ["Cookfile"]
       excludes: []
       steps:
-        Plate body=ShellBlock(["echo \"hello\""])
+        Cook outputs=["build/greeting.txt"] body=ShellBlock(["echo \"hello\""])
   chores:
     Chore name="shout" line=18
       params: []

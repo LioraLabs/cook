@@ -1,6 +1,0 @@
-recipe strip
-    ingredients "build/*.so"
-    cook "dist/$<in.name>" { cp $<in> $<out> }
-    plate >{
-        cook.sh("strip " .. input)
-    }

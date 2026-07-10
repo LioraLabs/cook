@@ -1,2 +1,0 @@
-recipe r
-    test { true } as 5

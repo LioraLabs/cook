@@ -234,19 +234,7 @@ fn format_step(step: &Step) -> String {
                 ForEachSource::ProbeKey(k) => format!("ProbeKey({})", repr(k)),
             },
         ),
-        Step::Plate { step, .. } => format!("Plate body={}", repr_body(&step.body)),
-        Step::Test { step, .. } => {
-            let timeout = match step.timeout {
-                None    => "None".to_string(),
-                Some(n) => format!("Some({})", n),
-            };
-            format!(
-                "Test body={} timeout={} should_fail={}",
-                repr_body(&step.body),
-                timeout,
-                step.should_fail,
-            )
-        }
+        Step::Test { step, .. } => format!("Test body={}", repr_body(&step.body)),
         // `Step` is `#[non_exhaustive]`; render unknown future variants with a
         // generic placeholder so the conformance harness keeps building when
         // the AST grows.

@@ -100,9 +100,8 @@ pub(crate) fn try_inline_lua_block(after_open: &str) -> Option<String> {
 ///
 /// `after_kw` is the line text starting at the body opener (`{` or `>{`),
 /// i.e. the remainder after the step's output pattern(s) for cook (CS-0099
-/// removed the `using` introducer) or after the keyword for plate/test.
-/// `kw_for_diag` is the step name used in error messages (`cook`, `plate`,
-/// `test`).
+/// removed the `using` introducer) or after the keyword for test.
+/// `kw_for_diag` is the step name used in error messages (`cook`, `test`).
 ///
 /// Returns the parsed `Body` plus the new token-stream position.
 pub(crate) fn parse_body_payload(

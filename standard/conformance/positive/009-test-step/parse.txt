@@ -8,8 +8,8 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Test body=ShellBlock(["./check"]) timeout=Some(30) should_fail=false
-        Test body=ShellBlock(["./mustfail"]) timeout=None should_fail=true
+        Test body=ShellBlock(["./check"])
+        Test body=ShellBlock(["! ./mustfail"])
   chores:
   register_blocks: []
   top_level_module_calls: []

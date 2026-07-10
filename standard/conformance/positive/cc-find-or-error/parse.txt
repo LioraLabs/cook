@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Test body=LuaBlock("        local r = cook_cc.find_or_error(\"zlib\")\n        if not r.found then error(\"unreachable\") end") timeout=None should_fail=false
+        Test body=LuaBlock("        local r = cook_cc.find_or_error(\"zlib\")\n        if not r.found then error(\"unreachable\") end")
   chores:
   register_blocks: []
   top_level_module_calls: []
