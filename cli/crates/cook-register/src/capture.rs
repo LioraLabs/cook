@@ -60,7 +60,7 @@ pub struct RegisteredRecipe {
 ///   or `key:field`; a probe key may itself be two-segment `ns:name`).
 ///   Resolution against the probe registry happens in the register
 ///   pre-pass (COOK-190); the body reads the resolved member array via
-///   `cook.cache.get(<verbatim ref>)`.
+///   `cook.probes.get(<verbatim ref>)`.
 ///
 /// The `Shell { cmd, as_lines }` and `Lua` variants have been removed in
 /// COOK-97 — only `Probe` remains.

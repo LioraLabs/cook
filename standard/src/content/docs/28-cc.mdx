@@ -24,7 +24,7 @@ use cook_cc
 
 Per §{mods.use} (`use` declaration) and §{comp.overview} (cross-Cookfile composition), `use cook_cc` MUST bind the loaded module table to the local name `cook_cc` in the Cookfile's scope. The grammar of `§{mods.use}` does not currently provide an `as`-alias form; call sites refer to the module by its rock name (`cook_cc.bin(...)`, `cook_cc.find(...)`, etc.). A future Standard revision can introduce alias syntax; this clause will be updated in lockstep.
 
-The implementation's module table MUST include an `init` function honoured by the loader contract at §{lua.cook-load-module}: the loader MUST call `init()` exactly once per Lua VM that loads the module. The `init` function MAY rehydrate state from `cook.cache` (e.g., a previously-detected compiler triple) and MUST NOT be exposed as part of the user-callable surface (callers reading §{cat.cc.surface} do not invoke `init()` directly).
+The implementation's module table MUST include an `init` function honoured by the loader contract at §{lua.cook-load-module}: the loader MUST call `init()` exactly once per Lua VM that loads the module. The `init` function MAY rehydrate state from `cook.probes` (e.g., a previously-detected compiler triple) and MUST NOT be exposed as part of the user-callable surface (callers reading §{cat.cc.surface} do not invoke `init()` directly).
 
 ## 28.3. Public surface [#cat.cc.surface]
 
@@ -178,7 +178,7 @@ A strategy MAY report `outcome = "skip"` (the strategy structurally could not be
 | `reason` | string | Human-readable explanation. MAY be empty on `"hit"`. |
 | `hint` | string \| nil | Install hint (e.g., `"apt: libraylib-dev / brew: raylib"`). Curated finders SHOULD emit on miss; other strategies SHOULD NOT. |
 
-Caching: results MUST be cached in `cook.cache` keyed by `"cc.find:<name>:<canonical-opts>"`, where `canonical-opts` is the deterministic serialisation of `opts` (keys sorted, values stringified, list-valued opts joined with `,`). Repeat calls within one invocation MUST NOT re-consult the chain.
+Caching: results MUST be cached in `cook.probes` keyed by `"cc.find:<name>:<canonical-opts>"`, where `canonical-opts` is the deterministic serialisation of `opts` (keys sorted, values stringified, list-valued opts joined with `,`). Repeat calls within one invocation MUST NOT re-consult the chain.
 
 #### 28.3.8.1. cmake-compat strategy [#cat.cc.find-cmake-compat]
 
@@ -244,7 +244,7 @@ If never called, the implementation MUST auto-detect a compiler via PATH probing
 cc.compile_commands()
 ```
 
-Writes `compile_commands.json` in the current working directory, one entry per source per known target. The output MUST be valid JSON parseable by clangd and equivalent tools. The implementation runs in the worker VM (called from a recipe body), so its inputs MUST be sourced from `cook.cache` (target list) and `cook.import` (per-target compile info) — both established Cook APIs.
+Writes `compile_commands.json` in the current working directory, one entry per source per known target. The output MUST be valid JSON parseable by clangd and equivalent tools. The implementation runs in the worker VM (called from a recipe body), so its inputs MUST be sourced from `cook.probes` (target list) and `cook.import` (per-target compile info) — both established Cook APIs.
 
 ### 28.3.12. cc.register_finder [#cat.cc.register-finder]
 

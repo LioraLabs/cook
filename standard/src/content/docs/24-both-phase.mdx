@@ -28,7 +28,7 @@ When `cook.load_module` is exposed on the execute-phase Lua VM, the execute-phas
 
 A conforming implementation MUST report a runtime error when `name` does not resolve to a file under the calling Cookfile's `cook_modules/`. The diagnostic MUST identify `name` and the absolute path(s) that were searched.
 
-The body of a module loaded into the execute-phase VM MUST NOT call register-only API (`cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, `cook.recipe`). A conforming implementation MUST surface such a call as the §{rationale.execute-phase-api} runtime error. Module functions whose bodies are restricted to both-phase API (`cook.sh`, `cook.env`, `cook.cache`, `cook.platform`, `fs.*`, `path.*`) work in either phase; module authors document per-function which phase a function targets.
+The body of a module loaded into the execute-phase VM MUST NOT call register-only API (`cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, `cook.recipe`). A conforming implementation MUST surface such a call as the §{rationale.execute-phase-api} runtime error. Module functions whose bodies are restricted to both-phase API (`cook.sh`, `cook.env`, `cook.probes`, `cook.platform`, `fs.*`, `path.*`) work in either phase; module authors document per-function which phase a function targets.
 
 `cook.load_module` is the resolver behind the `use` declaration (§{mods.use}). The codegen for `use foo` emits `local foo = cook.load_module("foo")` at the top of the Cookfile's register-phase Lua, and prepends the same binding to every execute-phase body unit's `lua_code` payload, so the alias `foo` is in scope for both phases of every recipe in the declaring Cookfile.
 
@@ -57,35 +57,35 @@ config
 
 The bare `env` inside the config body writes to `cook.env`; the keys `CC` and `CXXFLAGS` are subsequently resolvable as `$<CC>` and `$<CXXFLAGS>` placeholders in recipe bodies (§{phl.cook-step}).
 
-## 24.4. `cook.cache` [#lua.cook-cache]
+## 24.4. `cook.probes` [#lua.cook-probes]
 **Phase.** Both. [Pinned by CS-0070.]
 
-`cook.cache` is the Cook-managed key/value store available to register-phase and execute-phase Lua. Its purpose is to let modules persist register-phase computations (compiler detection, package finder results) into a form that execute-phase code can read without redoing the work.
+`cook.probes` is the Cook-managed key/value store available to register-phase and execute-phase Lua. Its purpose is to let modules persist register-phase computations (compiler detection, package finder results) into a form that execute-phase code can read without redoing the work.
 
-### 24.4.1. `cook.cache.get` [#lua.cook-cache-get]
-**Signature.** `cook.cache.get(key: string) -> any`
+### 24.4.1. `cook.probes.get` [#lua.cook-probes-get]
+**Signature.** `cook.probes.get(key: string) -> any`
 
-On the execute-phase VM, `cook.cache.get(key)` MUST read from the per-run probe-value store specified in §{cat.probes.exec}. The store is populated by completed probe units in topological order before any consuming unit dispatches. An unknown key returns `nil`. `cook.cache.set` is NOT available on the execute-phase VM (deprecated entirely per CS-0074).
+On the execute-phase VM, `cook.probes.get(key)` MUST read from the per-run probe-value store specified in §{cat.probes.exec}. The store is populated by completed probe units in topological order before any consuming unit dispatches. An unknown key returns `nil`. `cook.probes.set` is NOT available on the execute-phase VM (deprecated entirely per CS-0074).
 
-On the register-phase VM, `cook.cache.get(key)` returns the value previously stored under `key` via `cook.cache.set` (or `nil` if no value is stored). The value MUST round-trip through any serialisation the implementation uses for persistence; non-serialisable values (Lua functions, userdata, coroutines) MUST raise a Lua runtime error when passed to `cook.cache.set`.
+On the register-phase VM, `cook.probes.get(key)` returns the value previously stored under `key` via `cook.probes.set` (or `nil` if no value is stored). The value MUST round-trip through any serialisation the implementation uses for persistence; non-serialisable values (Lua functions, userdata, coroutines) MUST raise a Lua runtime error when passed to `cook.probes.set`.
 
-### 24.4.2. `cook.cache.set` [#lua.cook-cache-set]
-**Signature.** `cook.cache.set(key: string, value: any) -> nil`
+### 24.4.2. `cook.probes.set` [#lua.cook-probes-set]
+**Signature.** `cook.probes.set(key: string, value: any) -> nil`
 
 > **Deprecated** (CS-0074, v0.11). Removed at v1.0. Use `cook.probe` (§{cat.probes}) for memoised values.
 
-Stores `value` under `key`. Subsequent `cook.cache.get(key)` returns `value` (or its deserialisation-equal counterpart).
+Stores `value` under `key`. Subsequent `cook.probes.get(key)` returns `value` (or its deserialisation-equal counterpart).
 
 A register-phase write MUST be persisted by the implementation in a way that survives across Cook invocations: a register-phase `set` followed by a later register-phase `get` in a different Cook invocation MUST return the previously-stored value. The on-disk format is implementation-defined.
 
-`cook.cache.set` is NOT available on the execute-phase VM; a conforming implementation MUST raise a Lua runtime error when `cook.cache.set` is called from execute-phase Lua.
+`cook.probes.set` is NOT available on the execute-phase VM; a conforming implementation MUST raise a Lua runtime error when `cook.probes.set` is called from execute-phase Lua.
 
-### 24.4.3. `cook.cache.scope` [#lua.cook-cache-scope]
-**Signature.** `cook.cache.scope(label: string) -> table`
+### 24.4.3. `cook.probes.scope` [#lua.cook-probes-scope]
+**Signature.** `cook.probes.scope(label: string) -> table`
 
 > **Deprecated** (CS-0074, v0.11). Removed at v1.0. Use `cook.probe` (§{cat.probes}) for memoised values.
 
-Returns a "scoped" table view whose `get(key)` and `set(key, value)` operations are equivalent to `cook.cache.get(label .. ":" .. key)` and `cook.cache.set(label .. ":" .. key, value)` respectively. The label string MUST NOT contain the `:` character; a conforming implementation MUST raise a Lua runtime error on such a label.
+Returns a "scoped" table view whose `get(key)` and `set(key, value)` operations are equivalent to `cook.probes.get(label .. ":" .. key)` and `cook.probes.set(label .. ":" .. key, value)` respectively. The label string MUST NOT contain the `:` character; a conforming implementation MUST raise a Lua runtime error on such a label.
 
 Scopes are conventionally named after the module that owns them (e.g. `cook_cc:toolchain`, `cook_cc:find:raylib`) to prevent key collisions between modules.
 

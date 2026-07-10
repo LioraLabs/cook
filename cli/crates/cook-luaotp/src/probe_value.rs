@@ -179,7 +179,7 @@ fn table_to_json(
     }
 }
 
-/// Convert a JSON value to a Lua value. Used by `cook.cache.get` on the
+/// Convert a JSON value to a Lua value. Used by `cook.probes.get` on the
 /// execute-phase VM to materialise probe values from the JSON store
 /// (§22.5.7, CS-0102).
 pub fn json_to_lua(lua: &Lua, v: &JsonValue) -> LuaResult<LuaValue> {

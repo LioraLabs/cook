@@ -76,7 +76,7 @@ A conforming implementation MUST execute module code in the following order, for
 
 1. For each `use <name>` declaration (§{mods.use}) in source order, resolve `<name>` against the search paths of §{mods.local} and §{mods.builtin}. The first hit wins.
 2. Execute the resolved module's top-level chunk on the calling Cookfile's register-phase Lua VM. The chunk MUST return a Lua table; a chunk that does not return a table is a load-time error. The returned table is bound under the alias derived from `<name>` per §{mods.use}.
-3. If the returned table has an `init` field bound to a function value, call `init()` exactly once on the register-phase VM. The `init()` call MAY read `cook.cache` (§{lua.both}) and MAY call register-phase Cook Lua API (§{lua.reg}).
+3. If the returned table has an `init` field bound to a function value, call `init()` exactly once on the register-phase VM. The `init()` call MAY read `cook.probes` (§{lua.both}) and MAY call register-phase Cook Lua API (§{lua.reg}).
 4. Repeat for the next `use <name>` declaration in source order. A later `use` declaration's module body MAY observe state established by an earlier `use` declaration's `init()`.
 
 Module code MUST NOT register work units during top-level chunk execution. Work-unit registration is the responsibility of recipe bodies; modules typically expose functions (e.g. target makers) that recipe bodies call.
@@ -93,7 +93,7 @@ Detection MUST survive recoverable errors: when a module's body or `init()` rais
 
 ### 12.3.4. Cross-VM rehydration [#mods.lifecycle.rehydration]
 
-When a module's `init()` records state into `cook.cache` (§{lua.both}) during register-phase load, an execute-phase VM that later loads the same module MUST observe that cached state. The execute-phase implementation MAY use in-memory-only storage scoped to the worker's lifetime (no cross-invocation persistence). [Pinned by CS-0070.]
+When a module's `init()` records state into `cook.probes` (§{lua.both}) during register-phase load, an execute-phase VM that later loads the same module MUST observe that cached state. The execute-phase implementation MAY use in-memory-only storage scoped to the worker's lifetime (no cross-invocation persistence). [Pinned by CS-0070.]
 
 When a module records transitive-link info via `cook.export` (§{lua.both}) at register time, an execute-phase recipe body that calls `cook.import` MUST observe the recorded info. [Pinned by CS-0071.]
 

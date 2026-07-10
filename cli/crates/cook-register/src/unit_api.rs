@@ -124,7 +124,7 @@ fn lua_escape(s: &str) -> String {
 }
 
 /// CS-0074: If `command` contains `$<key:...>` probe-value sigils, rewrite it
-/// into a Lua chunk string that performs the substitution using `cook.cache.get`
+/// into a Lua chunk string that performs the substitution using `cook.probes.get`
 /// at execute time and invokes `cook.sh` with the fully-resolved command.
 ///
 /// Detection uses the same `cook_luagen::sigil::scan` scanner that codegen uses,
@@ -177,7 +177,7 @@ fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<Strin
     }
 
     // Build the Lua access expression for a probe sigil ident.
-    // Returns the `cook.cache.get("key").field[N]...` expression.
+    // Returns the `cook.probes.get("key").field[N]...` expression.
     let build_access = |ident: &str| -> String {
         let colon = ident.find(':').unwrap();
         let after_colon = &ident[colon + 1..];
@@ -187,7 +187,7 @@ fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<Strin
         let key = &ident[..path_start];
         let path_str = &ident[path_start..];
 
-        let mut access = format!("cook.cache.get(\"{}\")", lua_escape(key));
+        let mut access = format!("cook.probes.get(\"{}\")", lua_escape(key));
         let mut chars = path_str.chars().peekable();
         while let Some(&c) = chars.peek() {
             match c {
@@ -863,7 +863,7 @@ pub fn register_unit_api(
         } else {
             // CS-0074: scan command for `$<key:field>` probe-value sigils.
             // If found, rewrite as a LuaChunk that resolves the values at
-            // execute time via cook.cache.get and calls cook.sh. Also
+            // execute time via cook.probes.get and calls cook.sh. Also
             // auto-add the detected probe keys to probes.
             //
             // CS-0127: the rewritten LuaChunk carries the ALREADY-PARSED
@@ -2193,7 +2193,7 @@ mod tests {
 
     /// CS-0074: cook.add_unit with a command containing `$<key:field>` probe-value
     /// sigils MUST be rewritten into a LuaChunk that resolves the probe value at
-    /// execute time via cook.cache.get.
+    /// execute time via cook.probes.get.
     #[test]
     fn add_unit_command_with_probe_template_is_rewritten() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
@@ -2215,8 +2215,8 @@ mod tests {
         let unit = state.units.first().expect("one unit");
 
         let has_cache_get = match &unit.payload {
-            WorkPayload::LuaChunk { code, .. } => code.contains("cook.cache.get"),
-            WorkPayload::Shell { cmd, .. } => cmd.contains("cook.cache.get"),
+            WorkPayload::LuaChunk { code, .. } => code.contains("cook.probes.get"),
+            WorkPayload::Shell { cmd, .. } => cmd.contains("cook.probes.get"),
             _ => false,
         };
         assert!(

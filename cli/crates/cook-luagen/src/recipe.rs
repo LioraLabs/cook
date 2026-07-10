@@ -1109,7 +1109,7 @@ fn emit_for_each_items(out: &mut String, fe: &ForEachStep) {
     match &fe.source {
         ForEachSource::ProbeKey(k) => {
             out.push_str(&format!(
-                "    local _items = cook.cache.get(\"{}\")\n",
+                "    local _items = cook.probes.get(\"{}\")\n",
                 escape_lua_string(k)
             ));
         }
@@ -1500,7 +1500,7 @@ fn generate_metadata_with_line(recipe: &Recipe, recipe_names: &BTreeSet<String>)
     // COOK-64 §8.3/§22.5.9: expose a `for_each` recipe's data source on the
     // surface meta so the register pre-pass can resolve a feeding probe before
     // running the body (which itself reads the resolved value via
-    // `cook.cache.get`). Recipe-level, so reachability is known pre-fan-out.
+    // `cook.probes.get`). Recipe-level, so reachability is known pre-fan-out.
     if let Some(meta) = for_each_meta_field(recipe) {
         fields.push(meta);
     }

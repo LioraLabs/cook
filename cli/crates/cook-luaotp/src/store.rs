@@ -1,7 +1,7 @@
 //! Per-run probe-value store (§22.5.8). The canonical value of a probe is
 //! the file `.cook/probes/<key>.json` (CS-0102); this store is a
 //! read-through byte cache of that file, shared by the engine scheduler
-//! and every worker's `cook.cache.get`. It is NOT a cross-VM shared-memory
+//! and every worker's `cook.probes.get`. It is NOT a cross-VM shared-memory
 //! channel: writers (engine scheduler, register pre-pass) write the file
 //! first and seed this cache with the same bytes.
 //!
