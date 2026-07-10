@@ -5,7 +5,7 @@ register
     })
     cook.probe("test:derived", {
         inputs = { requires = {"test:base"} },
-        produce = "return { v = cook.cache.get(\"test:base\").v + 1 }",
+        produce = "return { v = cook.probes.get(\"test:base\").v + 1 }",
     })
 
 recipe build

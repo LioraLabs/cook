@@ -10,5 +10,5 @@ Cookfile
       steps:
         Test body=LuaBlock("cook.sh(\"echo built\")")
   chores:
-  register_blocks: [RegisterBlock body="    cook.probe(\"test:base\", {\n        inputs = {},\n        produce = \"return { v = 1 }\",\n    })\n    cook.probe(\"test:derived\", {\n        inputs = { requires = {\"test:base\"} },\n        produce = \"return { v = cook.cache.get(\\\"test:base\\\").v + 1 }\",\n    })" line=1]
+  register_blocks: [RegisterBlock body="    cook.probe(\"test:base\", {\n        inputs = {},\n        produce = \"return { v = 1 }\",\n    })\n    cook.probe(\"test:derived\", {\n        inputs = { requires = {\"test:base\"} },\n        produce = \"return { v = cook.probes.get(\\\"test:base\\\").v + 1 }\",\n    })" line=1]
   top_level_module_calls: []

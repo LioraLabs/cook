@@ -5,7 +5,7 @@ probe services_raw
 probe services: services_raw
     >{
         local out = {}
-        for _, svc in ipairs(cook.cache.get("services_raw")) do
+        for _, svc in ipairs(cook.probes.get("services_raw")) do
             table.insert(out, { name = svc.name })
         end
         return out

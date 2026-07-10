@@ -15,7 +15,7 @@ probe target_list
     lines { cat data/targets.txt }      # a list, one member per line
 
 probe target_count: target_list         # probe depending on a probe
-    >{ return tostring(#cook.cache.get("target_list")) }
+    >{ return tostring(#cook.probes.get("target_list")) }
 ```
 
 (there is also `json { ... }` for structured data — example 05 fans out

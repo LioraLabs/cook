@@ -19,7 +19,7 @@ register
     cook.probe("demo:cc-version", {
         inputs = { requires = {"demo:cc-path"} },
         produce = [[
-            local cc = cook.cache.get("demo:cc-path").path
+            local cc = cook.probes.get("demo:cc-path").path
             local ver = cook.sh(cc .. " -dumpversion 2>&1"):gsub("%s+$", "")
             return { version = ver }
         ]],
