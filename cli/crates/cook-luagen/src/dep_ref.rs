@@ -74,7 +74,6 @@ pub fn extract_dep_refs_from_steps(
                 }
                 t
             }
-            Step::Plate { step: plate_step, .. } => extract_body_tokens(&plate_step.body),
             Step::Test { step: test_step, .. } => extract_body_tokens(&test_step.body),
             Step::Shell { command, .. } => extract_sigil_tokens(command),
             Step::Lua { .. } | Step::LuaBlock { .. } | Step::InlineLua { .. } => vec![],
