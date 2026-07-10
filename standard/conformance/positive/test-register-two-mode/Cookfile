@@ -1,0 +1,7 @@
+recipe suite
+    ingredients "t/*.sh"
+    cook "build/$<in.stem>" { cp $<in> $<out> }
+    test { ./$<in> }
+
+recipe naked
+    test { echo ok }

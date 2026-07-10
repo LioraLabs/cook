@@ -28,8 +28,9 @@ pub struct WorkItem {
     pub env_vars: HashMap<String, String>,
     /// Project root for the CS-0045 sandbox. The worker installs the
     /// per-item sandbox policy by combining this root with the
-    /// payload's `step_kind` (Cook/Test/Chore → Confined; Plate →
-    /// Off). One worker VM may serve items from multiple projects in
+    /// payload's `step_kind` (Cook/Test/Chore → Confined; there is no
+    /// unsandboxed step kind — CS-0135 retired `plate`, the prior
+    /// exception). One worker VM may serve items from multiple projects in
     /// the cross-Cookfile-import case (CS-0017), so the root must
     /// travel with the item rather than being captured at pool spawn.
     pub project_root: PathBuf,
@@ -222,11 +223,12 @@ fn worker_loop(
     let current_env_vars: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
 
     // CS-0045 sandbox slot. Updated per work item before the body
-    // runs: Cook/Test/Chore → Confined { project_root }, Plate → Off.
-    // Default is `Off` — the slot is overwritten before the first
-    // body executes, but if a future code path somehow runs Lua
-    // before the first slot update, `Off` is the safe fallback (no
-    // false positives on legitimate I/O).
+    // runs: Cook/Test/Chore → Confined { project_root }. There is no
+    // unsandboxed step kind (CS-0135 retired `plate`, the prior
+    // exception). Default is `Off` — the slot is overwritten before
+    // the first body executes, but if a future code path somehow
+    // runs Lua before the first slot update, `Off` is the safe
+    // fallback (no false positives on legitimate I/O).
     let current_sandbox: Arc<Mutex<cook_lua_stdlib::SandboxPolicy>> =
         Arc::new(Mutex::new(cook_lua_stdlib::SandboxPolicy::Off));
 
@@ -293,21 +295,21 @@ fn worker_loop(
                     let mut env = current_env_vars.lock().expect("env_vars lock");
                     *env = work.env_vars.clone();
                 }
-                // CS-0045: pick the per-item sandbox policy. Plate
-                // bodies run unsandboxed; everything else (Cook, Test,
-                // Chore, and any non-LuaChunk payload) runs confined to
-                // `project_root`. For Shell/Test/Interactive payloads
-                // the policy is irrelevant — the worker doesn't run
-                // user Lua for those — but setting it consistently
-                // means a stray `lua.load()` in a future code path
-                // can't accidentally land Off.
+                // CS-0045: pick the per-item sandbox policy. Cook, Test,
+                // Chore, and any non-LuaChunk payload all run confined to
+                // `project_root` — there is no unsandboxed step kind
+                // (CS-0135 retired `plate`, the prior exception). For
+                // Shell/Test/Interactive payloads the policy is
+                // irrelevant — the worker doesn't run user Lua for
+                // those — but setting it consistently means a stray
+                // `lua.load()` in a future code path can't accidentally
+                // land Off.
                 {
                     let kind = match &work.payload {
                         WorkPayload::LuaChunk { step_kind, .. } => *step_kind,
                         _ => StepKind::Cook,
                     };
                     let policy = match kind {
-                        StepKind::Plate => cook_lua_stdlib::SandboxPolicy::Off,
                         StepKind::Cook | StepKind::Test | StepKind::Chore => {
                             cook_lua_stdlib::SandboxPolicy::Confined {
                                 project_root: work.project_root.clone(),

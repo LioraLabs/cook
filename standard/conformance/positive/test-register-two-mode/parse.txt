@@ -1,0 +1,21 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="suite" line=1
+      deps: []
+      ingredients: ["t/*.sh"]
+      excludes: []
+      steps:
+        Cook outputs=["build/$<in.stem>"] body=ShellBlock(["cp $<in> $<out>"])
+        Test body=ShellBlock(["./$<in>"])
+    Recipe name="naked" line=6
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Test body=ShellBlock(["echo ok"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

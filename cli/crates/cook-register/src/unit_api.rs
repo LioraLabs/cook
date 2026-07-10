@@ -340,11 +340,10 @@ pub fn register_unit_api(
         };
         // CS-0045 / CS-0127: the originating step kind drives the
         // execute-phase sandbox policy on the resulting LuaChunk. Codegen
-        // passes `step_kind = "plate"` for plate-step bodies (which are
-        // unsandboxed by design) and omits the field for cook/test/
-        // chore bodies. The captured-unit default is `cook` because
-        // that is the strictest policy: a misclassified plate body
-        // becomes a Lua runtime error rather than a silent escape. An
+        // omits the field for cook/test/chore bodies, all of which run
+        // sandboxed to the project root — there is no unsandboxed step
+        // kind (CS-0135 retired the `plate` step). The captured-unit
+        // default is `cook` because that is the strictest policy. An
         // unrecognised string, or any non-string value, is a hard error
         // rather than a silent fall-through to the default.
         let step_kind: cook_contracts::StepKind = match tbl.get::<LuaValue>("step_kind") {
@@ -352,14 +351,13 @@ pub fn register_unit_api(
             Ok(LuaValue::String(s)) => {
                 let sv = s.to_string_lossy().to_string();
                 match sv.as_str() {
-                    "plate" => cook_contracts::StepKind::Plate,
                     "test" => cook_contracts::StepKind::Test,
                     "chore" => cook_contracts::StepKind::Chore,
                     "cook" => cook_contracts::StepKind::Cook,
                     _ => {
                         return Err(type_err(
                             "step_kind",
-                            "one of \"cook\", \"plate\", \"test\", \"chore\"",
+                            "one of \"cook\", \"test\", \"chore\"",
                             &format!("{sv:?}"),
                         ))
                     }
@@ -871,12 +869,13 @@ pub fn register_unit_api(
             // CS-0127: the rewritten LuaChunk carries the ALREADY-PARSED
             // `step_kind` local (see above) rather than a hardcoded
             // `StepKind::Cook`. `command` fields containing probe sigils are
-            // not exclusive to native `cook` bodies — a `plate` body inside
-            // a `for_each` recipe (unsandboxed by design, Standard §8.6)
-            // lowers its command the same literal-sigil way (COOK-187 /
-            // CS-0122) and passes `step_kind = "plate"`. Hardcoding `Cook`
-            // here would silently flip a plate command's sandbox policy the
-            // moment it referenced a probe value.
+            // not exclusive to native `cook` bodies — a `test` body inside
+            // a `for_each` recipe lowers its command the same literal-sigil
+            // way (COOK-187 / CS-0122) and passes `step_kind = "test"`.
+            // Hardcoding `Cook` here would misreport a non-cook command's
+            // originating step kind (CS-0135: every step kind is sandboxed
+            // identically today, but the field remains load-bearing for
+            // diagnostics and any future step kind).
             match try_expand_probe_templates(&command) {
                 Ok(Some((lua_code, detected_keys))) => {
                     for k in detected_keys {
@@ -1007,13 +1006,13 @@ pub fn register_unit_api(
     // cook.passthrough(list) — declare the current step's "outputs" as a
     // copy of the given input list, without recording an emitting unit.
     // This is the register-side hook that implements Standard §5.4.1's
-    // passthrough rule for `plate`, `test`, and bare shell steps: those
-    // step kinds don't write files, but a downstream `$<recipe>` reference
-    // (or another plate/test step that falls back to the recipe's
-    // last-step outputs) needs the input list to be visible as the
-    // recipe's terminal outputs.
+    // passthrough rule for `test` and bare shell steps: those step kinds
+    // don't write files, but a downstream `$<recipe>` reference (or
+    // another test step that falls back to the recipe's last-step
+    // outputs) needs the input list to be visible as the recipe's
+    // terminal outputs.
     //
-    // Codegen calls this once per plate/test/shell step, inside the
+    // Codegen calls this once per test/shell step, inside the
     // enclosing `cook.step_group`, with the same source expression the
     // step iterates over (`ingredients`, `_cook_outputs_N`, or a literal
     // list). The `step_group` close-out then drains the pushed values
@@ -1342,7 +1341,7 @@ mod tests {
     }
 
     #[test]
-    fn test_plate_step_group_does_not_overwrite_terminal() {
+    fn test_no_output_step_group_does_not_overwrite_terminal() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
         lua.set_app_data(fake_cache_ctx());
         lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
@@ -1351,7 +1350,7 @@ mod tests {
             cook.step_group(function()
                 cook.add_unit({ command = "gcc -o app main.c", inputs = {"main.c"}, output = "app" })
             end)
-            -- Plate-like step (no output field) -- should NOT overwrite terminal
+            -- No-output step group -- should NOT overwrite terminal
             cook.step_group(function()
                 cook.add_unit({ command = "./app", cache = false })
             end)
