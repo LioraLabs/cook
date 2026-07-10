@@ -26,9 +26,13 @@ fn cook_binary() -> std::path::PathBuf {
 #[test]
 fn passing_test_caches_and_replays() {
     let tmp = tempdir().unwrap();
+    // CS-0135 §17.4: a test caches only when it declares a file source
+    // (here `ingredients`), which gives it a cache key. A source-less test
+    // is covered by `source_less_test_always_runs` below.
+    fs::write(tmp.path().join("data.txt"), "seed\n").unwrap();
     fs::write(
         tmp.path().join("Cookfile"),
-        "recipe r\n    test { true }\n",
+        "recipe r\n    ingredients \"data.txt\"\n    test { true }\n",
     )
     .unwrap();
 
@@ -59,6 +63,49 @@ fn passing_test_caches_and_replays() {
         out2.status.code().unwrap_or(-1),
         0,
         "cached passing test run should still exit 0; stdout:\n{stdout2}"
+    );
+}
+
+#[test]
+fn source_less_test_always_runs() {
+    // CS-0135 §8.6.1/§5: a source-less test — no `ingredients`, no upstream
+    // `cook` — has no cache key and MUST always run. A stable command-text-only
+    // key would be a false green (the true inputs of `cargo test` etc. are
+    // opaque to Cook), so such a test is never cached and never shows `(cached)`.
+    let tmp = tempdir().unwrap();
+    fs::write(
+        tmp.path().join("Cookfile"),
+        "recipe r\n    test { true }\n",
+    )
+    .unwrap();
+
+    // First run
+    let out1 = Command::new(cook_binary())
+        .arg("test")
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    let stdout1 = String::from_utf8_lossy(&out1.stdout);
+    assert!(
+        !stdout1.contains("cached"),
+        "first run should have no cache hits; stdout:\n{stdout1}"
+    );
+
+    // Second run — a source-less test must run AGAIN, never replay from cache
+    let out2 = Command::new(cook_binary())
+        .arg("test")
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    let stdout2 = String::from_utf8_lossy(&out2.stdout);
+    assert!(
+        !stdout2.contains("cached"),
+        "a source-less test must never cache; second-run stdout:\n{stdout2}"
+    );
+    assert_eq!(
+        out2.status.code().unwrap_or(-1),
+        0,
+        "source-less passing test should exit 0; stdout:\n{stdout2}"
     );
 }
 
