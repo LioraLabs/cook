@@ -10,25 +10,25 @@ use crate::template::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum CodegenError {
-    #[error("plate/test mode error at line {line}: {source}")]
+    #[error("test mode error at line {line}: {source}")]
     PlateTestMode {
         line: usize,
         source: crate::template::PlateTestModeError,
     },
-    #[error("plate/test placeholder error at line {line}: {source}")]
+    #[error("test placeholder error at line {line}: {source}")]
     Placeholder {
         line: usize,
         source: crate::template::PlateTestPlaceholderError,
     },
     #[error(
-        "plate/test step at line {line} requires a non-empty source (one-to-one or \
+        "test step at line {line} requires a non-empty source (one-to-one or \
          many-to-one mode) — add an `ingredients` declaration or a preceding `cook` \
          step (CS-0024 §3.5)"
     )]
     EmptySource { line: usize },
     #[error("probe-value reference(s) {keys:?} in a `test` shell command inside a `for_each` recipe at line {line} are not supported — read the probe value in a Lua test body (`test >{{ ... }}`) instead (CS-0127)")]
     ProbeRefInTestCommand { line: usize, keys: Vec<String> },
-    #[error("plate/test placeholder error at line {line}: {source}")]
+    #[error("test placeholder error at line {line}: {source}")]
     SigilResolve {
         line: usize,
         source: crate::resolver::ResolveError,
@@ -98,7 +98,7 @@ pub(crate) fn generate_test_step(
             }
             // `ManyToOne` is grouped in here for exhaustiveness only:
             // `detect_plate_test_mode` never returns it for `Body::ShellBlock`
-            // (CS-0130 removed `$<all>`, so batched plate/test is
+            // (CS-0130 removed `$<all>`, so a batched test is
             // Lua-block-only), and this arm is otherwise byte-for-byte what
             // the old OneShot arm did.
             PlateTestMode::OneShot | PlateTestMode::ManyToOne => {
