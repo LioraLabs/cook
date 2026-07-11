@@ -927,11 +927,30 @@ pub fn cmd_test(
         .map(|n| n.name.clone())
         .collect();
 
+    // A recipe is a test ROOT only if it declares at least one test step.
+    // Bare / namespace-scoped `cook test` previously rooted the run at EVERY
+    // non-chore recipe, silently executing (and cache-recording) the whole
+    // workspace graph under the test reporter — a later `cook <recipe>` then
+    // reported `cached` on work the user never saw run. Roots are now
+    // test-bearing recipes only; their dependency closures (the builds the
+    // tests actually need) are pulled in by dependency_edges_multi below.
+    let test_bearing: std::collections::BTreeSet<String> = registered
+        .units_by_recipe
+        .iter()
+        .filter(|(_, ru)| {
+            ru.units.iter().any(|u| {
+                matches!(u.payload, cook_engine::cook_contracts::WorkPayload::Test { .. })
+            })
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+
     // ── Determine candidate recipe names from scope ──────────────────────────
     let candidate_recipe_names: Vec<String> = match &scope {
         None => recipe_infos
             .keys()
             .filter(|n| !chore_names.contains(*n))
+            .filter(|n| test_bearing.contains(*n))
             .cloned()
             .collect(),
         Some(TestScope::Recipe(name)) => {
@@ -956,6 +975,7 @@ pub fn cmd_test(
                 .keys()
                 .filter(|n| !chore_names.contains(*n))
                 .filter(|n| n.starts_with(&prefix) || *n == ns)
+                .filter(|n| test_bearing.contains(*n))
                 .cloned()
                 .collect()
         }
