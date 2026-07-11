@@ -47,12 +47,12 @@ recipe render
     }
 
 # A second recipe iterating the SAME source can join the first one
-# per-member: `$<render[]>` is "render's output for THIS member".
+# per-member: `$<render[in]>` is "render's output for THIS member".
 recipe summary: render
     ingredients services
     cook "build/summary/$<in.name>.txt" {
         printf '== %s ==\n' "$<in.name>" > $<out>
-        cat $<render[]> >> $<out>
+        cat $<render[in]> >> $<out>
     }
 
 chore clean
