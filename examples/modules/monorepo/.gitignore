@@ -2,3 +2,6 @@ node_modules/
 dist/
 .cook/
 pnpm-lock.yaml
+# cook_pnpm is installed locally via `luarocks make --tree cook_modules`
+# (see README); the realised module tree is not committed.
+cook_modules/

@@ -1,13 +1,32 @@
-use pnpm
+use cook_pnpm
 
-recipe install
-    pnpm.install()
+# Bootstrap the workspace and register per-(package, task) recipes at
+# register phase. cook_pnpm.task is a target maker: it reads the parsed
+# workspace graph and emits one `<pkg>:<task>` recipe per package, in
+# topological order, each sealing the install probe (the pnpm-lock.yaml
+# content hash) so a lockfile change invalidates every downstream build.
+register
+    cook_pnpm.workspace({})
 
-recipe build: install
-    pnpm.run("build")
+    # `pnpm install --frozen-lockfile`, cached by the lockfile-hash probe.
+    cook_pnpm.install({ name = "install" })
 
-recipe check: build
-    pnpm.run("test")
+    # One `<pkg>:build` recipe per package. `^build` waits on each
+    # workspace dependency's build (topo order: shared-utils -> ui -> web).
+    cook_pnpm.task("build", {
+        depends_on = { "^build" },
+        inputs     = { "src/**" },
+        outputs    = { "dist/**" },
+    })
+
+    # One `<pkg>:test` recipe per package; each waits on its own build.
+    cook_pnpm.task("test", { depends_on = { "build" } })
+
+# Aggregators over the generated per-package recipes. The `<pkg>:<task>`
+# names carry a colon, so they are referenced in quoted-string form.
+recipe build: "shared-utils:build" "ui:build" "web:build"
+
+recipe check: "shared-utils:test" "ui:test" "web:test"
 
 chore clean
     rm -rf packages/*/dist packages/*/.cook .cook

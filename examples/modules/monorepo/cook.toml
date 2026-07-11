@@ -1,0 +1,5 @@
+[registry]
+indexes = ["https://rocks.usecook.com"]
+
+[modules]
+cook_pnpm = "0.2.0-1"
