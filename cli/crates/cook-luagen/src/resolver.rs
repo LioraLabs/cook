@@ -58,8 +58,9 @@ pub enum BuiltinKind {
 pub enum Resolved {
     Builtin(BuiltinKind),
     Recipe { name: String, accessor: Option<String> },
-    /// COOK-96: `$<recipe[]>` — the recipe's terminal output for the CURRENT
-    /// iteration member. Resolved per consumer member inside a fan-out body.
+    /// COOK-96 / COOK-221 / CS-0137: `$<recipe[in]>` — the recipe's terminal
+    /// output for the CURRENT iteration member. Resolved per consumer member
+    /// inside a fan-out body.
     RecipeMember { name: String },
     EnvRuntime(String),
     /// CS-0074: a probe-value reference — `$<key>`, `$<key.field>`, or `$<key.field[i]>`.
@@ -83,8 +84,14 @@ pub enum ResolveError {
     BuiltinWrongOutputCount { ident: String, builtin: String, required: String, actual: usize },
     #[error("placeholder $<{ident}>: malformed out_N (N must be ≥ 1)")]
     MalformedOutIndex { ident: String },
-    #[error("placeholder $<{ident}>: a recipe-member ref `$<recipe[]>` is only valid inside an `ingredients <probe>` fan-out body")]
+    #[error("placeholder $<{ident}>: a recipe-member ref `$<recipe[in]>` is only valid inside an `ingredients <probe>` fan-out body")]
     RecipeMemberOutsideFanout { ident: String },
+    #[error("placeholder $<{ident}>: `$<{name}[]>` was respelled `$<{name}[in]>` in v1.0")]
+    RecipeMemberEmptyIndex { ident: String, name: String },
+    #[error("placeholder $<{ident}>: invalid member index `[{index}]` — the only valid index is the literal `[in]`; member-field joins are not part of v1.0")]
+    RecipeMemberBadIndex { ident: String, index: String },
+    #[error("placeholder $<{ident}>: `[in]` names a per-member recipe output, but no recipe named '{name}' is in scope")]
+    RecipeMemberUnknownRecipe { ident: String, name: String },
     #[error("placeholder $<{ident}>: file reference paths must be relative and must not contain '..' segments")]
     FileRefBadPath { ident: String },
     #[error("placeholder $<{ident}>: $<file:PATH> is an input reference and is not valid in a cook output pattern")]
@@ -218,12 +225,33 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
         return Resolved::ProbeRef { key, access };
     }
 
-    // COOK-96: `$<recipe[]>` — per-member cross-recipe output. The bracket is
-    // empty (the current member is implicit). Only a recipe name in scope
-    // qualifies; anything else with a trailing `[]` falls through.
-    if let Some(base) = ident.strip_suffix("[]") {
-        if ctx.recipes_in_scope.contains(base) {
-            return Resolved::RecipeMember { name: base.to_string() };
+    // COOK-221 / CS-0137: `$<recipe[in]>` — per-member cross-recipe output.
+    // The literal index `in` names the current member binding. A trailing
+    // bracket group is member-ref territory — no env fallthrough: the empty
+    // index `[]` (the pre-v1.0 spelling) gets a did-you-mean, any other
+    // content is rejected (member-field joins are not part of v1.0), and
+    // `[in]` on an unknown name errors naming the unknown recipe.
+    if ident.ends_with(']') {
+        if let Some(open) = ident.find('[') {
+            let name = ident[..open].to_string();
+            let index = &ident[open + 1..ident.len() - 1];
+            return match index {
+                "in" if ctx.recipes_in_scope.contains(&name) => {
+                    Resolved::RecipeMember { name }
+                }
+                "in" => Resolved::Error(ResolveError::RecipeMemberUnknownRecipe {
+                    ident: ident.to_string(),
+                    name,
+                }),
+                "" => Resolved::Error(ResolveError::RecipeMemberEmptyIndex {
+                    ident: ident.to_string(),
+                    name,
+                }),
+                other => Resolved::Error(ResolveError::RecipeMemberBadIndex {
+                    ident: ident.to_string(),
+                    index: other.to_string(),
+                }),
+            };
         }
     }
 
@@ -641,23 +669,81 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn recipe_bracket_resolves_to_recipe_member() {
-        let mut recipes = BTreeSet::new();
-        recipes.insert("render".to_string());
-        let ctx = ResolveCtx {
+    fn ctx_member<'a>(recipes: &'a BTreeSet<String>) -> ResolveCtx<'a> {
+        ResolveCtx {
             mode: IterMode::OneShot,
             outputs: OutputShape::Single,
-            recipes_in_scope: &recipes,
-        };
+            recipes_in_scope: recipes,
+        }
+    }
+
+    #[test]
+    fn recipe_bracket_in_resolves_to_recipe_member() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
         assert_eq!(
-            resolve("render[]", &ctx),
+            resolve("render[in]", &ctx_member(&recipes)),
             Resolved::RecipeMember { name: "render".to_string() }
         );
-        // A non-recipe name with [] is NOT a recipe-member ref (falls through to env).
-        assert_eq!(
+    }
+
+    #[test]
+    fn empty_bracket_index_is_respelled_error_with_did_you_mean() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        let ctx = ctx_member(&recipes);
+        // The pre-v1.0 spelling errors whether or not the base names a recipe
+        // (no env fallthrough for a trailing bracket group).
+        let r = resolve("render[]", &ctx);
+        match &r {
+            Resolved::Error(e @ ResolveError::RecipeMemberEmptyIndex { .. }) => {
+                let msg = e.to_string();
+                assert!(msg.contains("`$<render[]>` was respelled `$<render[in]>` in v1.0"),
+                    "did-you-mean must show the concrete respelling; got: {msg}");
+            }
+            other => panic!("expected RecipeMemberEmptyIndex, got {other:?}"),
+        }
+        assert!(matches!(
             resolve("notarecipe[]", &ctx),
-            Resolved::EnvRuntime("notarecipe[]".to_string())
+            Resolved::Error(ResolveError::RecipeMemberEmptyIndex { .. })
+        ));
+    }
+
+    #[test]
+    fn non_in_bracket_content_is_rejected_not_v1() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        let ctx = ctx_member(&recipes);
+        for ident in ["render[x]", "render[key]", "render[in.id]", "render[0]"] {
+            match resolve(ident, &ctx) {
+                Resolved::Error(e @ ResolveError::RecipeMemberBadIndex { .. }) => {
+                    assert!(e.to_string().contains("member-field joins are not part of v1.0"),
+                        "diagnostic must note joins are not in v1.0; got: {e}");
+                }
+                other => panic!("{ident}: expected RecipeMemberBadIndex, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn bracket_in_on_unknown_recipe_is_error() {
+        let recipes = empty();
+        assert!(matches!(
+            resolve("notarecipe[in]", &ctx_member(&recipes)),
+            Resolved::Error(ResolveError::RecipeMemberUnknownRecipe { .. })
+        ));
+    }
+
+    #[test]
+    fn non_trailing_bracket_group_falls_through_unchanged() {
+        // Accessor chaining after the bracket group never existed for `$<R[]>`
+        // and is NOT introduced for `$<R[in]>`: an ident whose bracket group is
+        // not trailing keeps the pre-existing env-runtime fallthrough.
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        assert_eq!(
+            resolve("render[in].stem", &ctx_member(&recipes)),
+            Resolved::EnvRuntime("render[in].stem".to_string())
         );
     }
 }

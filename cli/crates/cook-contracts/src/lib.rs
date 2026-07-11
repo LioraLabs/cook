@@ -325,7 +325,8 @@ pub struct CapturedUnit {
     pub unit_env_vars: BTreeMap<String, String>,
     /// COOK-96: the canonical member string (`cook.member_to_string`) for a
     /// fan-out unit, or `None` for a non-fan-out unit. Lets the engine build
-    /// the per-member output map that `$<recipe[]>` joins on.
+    /// the per-member output map that `$<recipe[in]>` joins on
+    /// (COOK-221/CS-0137).
     pub member: Option<String>,
     /// COOK-96: this unit's declared output paths, retained so the engine can
     /// key them by `member` for the per-member map.

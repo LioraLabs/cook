@@ -19,5 +19,5 @@ recipe summary: render
     ingredients services
     cook "build/summary/$<in.name>.txt" {
         printf '== %s ==\n' "$<in.name>" > $<out>
-        cat $<render[]> >> $<out>
+        cat $<render[in]> >> $<out>
     }

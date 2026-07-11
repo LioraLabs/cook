@@ -155,9 +155,10 @@ fn parse_dep_token(token: &str, recipe_names: &BTreeSet<String>) -> Option<DepRe
         }
     }
 
-    // COOK-96: `$<recipe[]>` — per-member ref. Strip the empty bracket and
-    // treat as a recipe-level edge (the producer must build first).
-    if let Some(base) = token.strip_suffix("[]") {
+    // COOK-221 / CS-0137: `$<recipe[in]>` — per-member ref (formerly `$<recipe[]>`,
+    // COOK-96). Strip the `[in]` index and treat as a recipe-level edge (the
+    // producer must build first).
+    if let Some(base) = token.strip_suffix("[in]") {
         if recipe_names.contains(base) {
             return Some(DepRef { recipe_name: base.to_string(), accessor: None });
         }
@@ -400,11 +401,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_dep_token_strips_bracket_for_recipe_member() {
+    fn parse_dep_token_strips_bracket_index_for_recipe_member() {
         let mut names = BTreeSet::new();
         names.insert("render".to_string());
+        // COOK-221 / CS-0137: the per-member spelling is `[in]`.
         assert_eq!(
-            parse_dep_token("render[]", &names),
+            parse_dep_token("render[in]", &names),
             Some(DepRef { recipe_name: "render".to_string(), accessor: None })
         );
         // bare recipe still works
@@ -412,8 +414,11 @@ mod tests {
             parse_dep_token("render", &names),
             Some(DepRef { recipe_name: "render".to_string(), accessor: None })
         );
-        // a [] on a non-recipe is not a dep
-        assert_eq!(parse_dep_token("notarecipe[]", &names), None);
+        // the removed `[]` spelling contributes no edge (the resolver rejects
+        // the placeholder with a did-you-mean before any unit registers)
+        assert_eq!(parse_dep_token("render[]", &names), None);
+        // `[in]` on a non-recipe is not a dep
+        assert_eq!(parse_dep_token("notarecipe[in]", &names), None);
     }
 
     #[test]

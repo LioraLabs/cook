@@ -2264,7 +2264,7 @@ mod tests {
 
     /// COOK-96 Task 5: add_unit must record `member` and `output_paths` on the
     /// resulting `CapturedUnit` so the engine can build the per-member output map
-    /// needed by `$<recipe[]>`.
+    /// needed by `$<recipe[in]>` (COOK-221/CS-0137).
     #[test]
     fn add_unit_retains_member_and_outputs() {
         let (lua, capture_state) = make_lua_with_unit_api("encode");

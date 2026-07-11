@@ -320,8 +320,10 @@ MODULE_CALL_TEXT      ::= /* see § 4.11 */
 
 ```ebnf
 sigil_placeholder       ::= "$<" placeholder_ident ">"
-placeholder_ident       ::= bare_ident | out_indexed | out_indexed_acc | file_ref
+placeholder_ident       ::= bare_ident | recipe_member | out_indexed | out_indexed_acc | file_ref
 bare_ident              ::= ALPHA (ALPHA | DIGIT | "_" | ".")*
+recipe_member           ::= bare_ident "[" member_index "]"
+member_index            ::= "in"
 out_indexed             ::= "out_" DIGIT+
 out_indexed_acc         ::= "out_" DIGIT+ "." ACCESSOR
 file_ref                ::= "file:" file_path_char+
@@ -330,7 +332,7 @@ ALPHA                   ::= "a"…"z" | "A"…"Z" | "_"
 DIGIT                   ::= "0"…"9"
 ```
 
-The `ACCESSOR` production is defined above. The `file_ref` alternative (CS-0101) is the file-reference form `$<file:PATH>` of §{phl.cook-step}: after the literal prefix `file:`, the `file_path_char` set extends the `bare_ident` character set with the path separator (`/`) and the glob star (`*`). The `sigil_placeholder` production can appear inside `output_pattern`, `SHELL_BLOCK_CONTENT`, `SHELL_LINE_CONTENT`, and a `test_step`'s `shell_block` body text (the `file_ref` alternative is rejected in `output_pattern` positions per §{phl.cook-step}, CS-0101). Resolution is defined by §{xref.resolution} and §{phl.cook-step}; an implementation MAY record byte ranges of placeholder positions in its parse tree to support migration tooling such as `cook --migrate-sigil`.
+The `ACCESSOR` production is defined above. The `file_ref` alternative (CS-0101) is the file-reference form `$<file:PATH>` of §{phl.cook-step}: after the literal prefix `file:`, the `file_path_char` set extends the `bare_ident` character set with the path separator (`/`) and the glob star (`*`). The `recipe_member` alternative (CS-0098, respelled `[in]` by CS-0137) is resolved per §{steps.cross-recipe-member}; only the literal index `in` is valid in v1.0 — the bracketed-index position is reserved for 1.x keyed joins. The `sigil_placeholder` production can appear inside `output_pattern`, `SHELL_BLOCK_CONTENT`, `SHELL_LINE_CONTENT`, and a `test_step`'s `shell_block` body text (the `file_ref` alternative is rejected in `output_pattern` positions per §{phl.cook-step}, CS-0101). Resolution is defined by §{xref.resolution} and §{phl.cook-step}; an implementation MAY record byte ranges of placeholder positions in its parse tree to support migration tooling such as `cook --migrate-sigil`.
 
 **`BARE_IDENTIFIER` vs `name`.** Recipe and dependency names can be either a `BARE_IDENTIFIER` (allowing dots and hyphens as internal characters) or a double-quoted `STRING`. The `import` declaration's local alias is always a `BARE_IDENTIFIER` (no quoting).
 
