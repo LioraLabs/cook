@@ -1688,8 +1688,9 @@ fn register_surface(
 ) -> Result<RegisteredCookfile, RegisterError> {
     let parsed = cook_lang::parse(cookfile).expect("fixture must parse");
     // Mirror the real engine parse stage (cook-engine pipeline/parse.rs): build
-    // the recipe-name set so cross-recipe refs like `$<render[]>` (COOK-96) and
-    // `{NAME.ACCESSOR}` resolve as recipe refs rather than env vars.
+    // the recipe-name set so cross-recipe refs like `$<render[in]>` (COOK-96,
+    // respelled COOK-221/CS-0137) and `{NAME.ACCESSOR}` resolve as recipe refs
+    // rather than env vars.
     let recipe_names = cook_luagen::dep_ref::extract_recipe_names(&parsed);
     let lua_src = cook_luagen::generate_with_names_checked(&parsed, &recipe_names)
         .expect("fixture must lower");
@@ -1981,14 +1982,15 @@ recipe b
 }
 
 // -----------------------------------------------------------------------
-// COOK-96 Task 8 — `$<recipe[]>` per-member recipe-output accessor:
-// end-to-end join + per-member fingerprint isolation.
+// COOK-96 Task 8 — `$<recipe[in]>` per-member recipe-output accessor
+// (respelled by COOK-221/CS-0137): end-to-end join + per-member
+// fingerprint isolation.
 // -----------------------------------------------------------------------
 
 /// Build the `mux` fixture: three fan-out recipes over the same `sceneprobe`
 /// (two records, ids `s1`/`s2`). `render` and `tts` each produce one artifact
 /// per member; `mux` joins both producers FOR THE CURRENT MEMBER via
-/// `$<render[]>` / `$<tts[]>`. Driving the full surface pipeline (parse →
+/// `$<render[in]>` / `$<tts[in]>`. Driving the full surface pipeline (parse →
 /// codegen → register) exercises the real `cook.dep_output_member` lowering
 /// and the topo-ordered producer→consumer member-output handoff.
 const MUX_FIXTURE: &str = r#"
@@ -2015,7 +2017,7 @@ recipe tts
 recipe mux
     ingredients sceneprobe
     cook "build/$<in.id>.mp4" {
-        bin/mux --video $<render[]> --audio $<tts[]> --out $<out>
+        bin/mux --video $<render[in]> --audio $<tts[in]> --out $<out>
     }
 "#;
 

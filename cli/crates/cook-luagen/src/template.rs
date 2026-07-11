@@ -133,9 +133,10 @@ pub(crate) fn expand_for_each_template(
             if let Resolved::ProbeRef { key, .. } = &resolved {
                 probe_keys.insert(key.clone());
             }
-            // COOK-96: $<recipe[]> inside a fan-out body lowers to a per-member
-            // output lookup. `item` is the loop-local Lua variable bound by the
-            // fan-out harness (BuiltinKind::Item → cook.member_to_string(item)).
+            // COOK-96 / COOK-221 / CS-0137: $<recipe[in]> inside a fan-out body
+            // lowers to a per-member output lookup. `item` is the loop-local Lua
+            // variable bound by the fan-out harness (BuiltinKind::Item →
+            // cook.member_to_string(item)).
             if let Resolved::ProbeRef { .. } = &resolved {
                 if probe_lowering == ProbeLowering::LiteralSigil {
                     // COOK-187 / CS-0122: literal sigil text for register-time
@@ -422,10 +423,10 @@ fn resolved_to_lua(
         // holding the space-joined match list (see [`FileRefs`]).
         Resolved::FileRef { pattern } => Ok(file_refs.local_for(&pattern)),
         Resolved::Error(e) => Err(e),
-        // COOK-96: $<recipe[]> is only valid inside a fan-out body (expand_for_each_template).
+        // COOK-96: $<recipe[in]> is only valid inside a fan-out body (expand_for_each_template).
         // Reaching this arm means it appeared in a plain command body where `item` is not in scope.
         Resolved::RecipeMember { name } => Err(ResolveError::RecipeMemberOutsideFanout {
-            ident: format!("{}[]", name),
+            ident: format!("{}[in]", name),
         }),
     }
 }
@@ -656,13 +657,23 @@ fn output_pattern_ident_to_lua(
         Resolved::Error(e @ ResolveError::FileRefBadPath { .. }) => {
             format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
         }
+        // COOK-221 / CS-0137: bracket-index diagnostics are hard errors, not
+        // env-var fallbacks — keep the typed diagnostic visible (mirrors
+        // FileRefBadPath above).
+        Resolved::Error(
+            e @ (ResolveError::RecipeMemberEmptyIndex { .. }
+            | ResolveError::RecipeMemberBadIndex { .. }
+            | ResolveError::RecipeMemberUnknownRecipe { .. }),
+        ) => {
+            format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
+        }
         Resolved::Error(_) => {
             // In output patterns, errors fall through to env lookup for backward compat
             // with patterns that use $<TOKEN> where TOKEN is an env var name.
             out.record(ident);
             format!("cook.require_env(\"{}\")", escape_lua_string(ident))
         }
-        // COOK-96: $<recipe[]> is invalid in an output pattern — output patterns have no
+        // COOK-96: $<recipe[in]> is invalid in an output pattern — output patterns have no
         // fan-out body context and `item` is not in scope. Emit a sentinel string that
         // surfaces as a Lua load-time string so the error is visible without a runtime panic.
         Resolved::RecipeMember { name } => {
@@ -670,7 +681,7 @@ fn output_pattern_ident_to_lua(
             // SIGIL_ERROR site (recipe.rs, cook_step.rs, …) and keeping the prose
             // identical to the typed error `resolved_to_lua` returns for the same case.
             let e = ResolveError::RecipeMemberOutsideFanout {
-                ident: format!("{}[]", name),
+                ident: format!("{}[in]", name),
             };
             format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
         }
@@ -1290,7 +1301,7 @@ mod tests {
         );
     }
 
-    // COOK-96: $<recipe[]> inside a fan-out body lowers to cook.dep_output_member.
+    // COOK-96: $<recipe[in]> inside a fan-out body lowers to cook.dep_output_member.
     #[test]
     fn recipe_member_lowers_to_dep_output_member() {
         let mut recipes = BTreeSet::new();
@@ -1298,7 +1309,7 @@ mod tests {
         let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
         let mut env = ConsultedEnv::new();
         let (lua, _) = expand_for_each_template(
-            "bin/mux --video $<render[]>",
+            "bin/mux --video $<render[in]>",
             &ctx,
             &mut env,
             &mut FileRefs::new("t"),
@@ -1311,18 +1322,84 @@ mod tests {
         );
     }
 
-    // COOK-96: $<recipe[]> in a plain (non-fan-out) command body must error.
+    // COOK-96: $<recipe[in]> in a plain (non-fan-out) command body must error.
     #[test]
     fn recipe_member_in_plain_command_is_error() {
         let mut recipes = BTreeSet::new();
         recipes.insert("render".to_string());
         let ctx = cook_step_ctx(IterMode::OneToOne, OutputShape::Single, &recipes);
         let mut env = ConsultedEnv::new();
-        let res = expand_command_template("bin/x $<render[]>", &ctx, &mut env, &mut FileRefs::new("t"));
+        let res = expand_command_template("bin/x $<render[in]>", &ctx, &mut env, &mut FileRefs::new("t"));
         assert!(
             matches!(res, Err(ResolveError::RecipeMemberOutsideFanout { .. })),
             "expected RecipeMemberOutsideFanout, got: {res:?}"
         );
+    }
+
+    // COOK-221 / CS-0137: the pre-v1.0 spelling `$<render[]>` must error with
+    // a did-you-mean even inside a fan-out body.
+    #[test]
+    fn recipe_member_empty_index_errors_in_fanout_body() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
+        let mut env = ConsultedEnv::new();
+        let res = expand_for_each_template(
+            "bin/mux --video $<render[]>",
+            &ctx,
+            &mut env,
+            &mut FileRefs::new("t"),
+            ProbeLowering::CacheGet,
+        );
+        assert!(
+            matches!(res, Err(ResolveError::RecipeMemberEmptyIndex { .. })),
+            "expected RecipeMemberEmptyIndex, got: {res:?}"
+        );
+    }
+
+    // COOK-221 / CS-0137: any bracket content other than the literal `in`
+    // is rejected (member-field joins are not part of v1.0).
+    #[test]
+    fn recipe_member_bad_index_errors_in_fanout_body() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
+        let mut env = ConsultedEnv::new();
+        let res = expand_for_each_template(
+            "bin/mux --video $<render[key]>",
+            &ctx,
+            &mut env,
+            &mut FileRefs::new("t"),
+            ProbeLowering::CacheGet,
+        );
+        assert!(
+            matches!(res, Err(ResolveError::RecipeMemberBadIndex { .. })),
+            "expected RecipeMemberBadIndex, got: {res:?}"
+        );
+    }
+
+    // COOK-221 / CS-0137: in an OUTPUT PATTERN the bracket-index diagnostics
+    // must surface as a SIGIL_ERROR sentinel (hard error via the checked-path
+    // sentinel scan), never fall back to cook.require_env.
+    #[test]
+    fn recipe_member_bracket_errors_are_sentinels_in_output_patterns() {
+        let mut env = ConsultedEnv::new();
+        let lua = expand_output_pattern("build/$<render[]>.o", &mut env);
+        assert!(
+            lua.contains("[[SIGIL_ERROR:") && lua.contains("was respelled"),
+            "expected SIGIL_ERROR sentinel with did-you-mean, got: {lua}"
+        );
+        assert!(
+            !lua.contains("cook.require_env"),
+            "bracket error must not fall through to env lookup, got: {lua}"
+        );
+
+        let lua = expand_output_pattern("build/$<render[key]>.o", &mut env);
+        assert!(
+            lua.contains("[[SIGIL_ERROR:") && lua.contains("member-field joins are not part of v1.0"),
+            "expected SIGIL_ERROR sentinel for reserved index, got: {lua}"
+        );
+        assert!(env.keys.is_empty(), "no env keys must be recorded for bracket errors");
     }
 }
 

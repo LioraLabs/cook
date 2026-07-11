@@ -1,0 +1,5 @@
+CS-0137 reserves the bracketed-index position on the per-member cross-recipe accessor `$<recipe[...]>`: the only valid index in v1.0 is the literal `in` (i.e. `$<recipe[in]>`). Any other bracket content — a 1.x keyed-join shape such as `[key]` or `[in.FIELD]` — is rejected, with a diagnostic noting that member-field joins are not part of v1.0.
+
+This fixture's `mux` recipe reads `$<render[key]>`, a non-`in` bracket index, distinguishing this rejection path from `negative/recipe-member-empty-index-respelled` (which pins the empty-bracket did-you-mean case specifically).
+
+This is a codegen-phase rejection, not a parser-phase one: the Cookfile is syntactically well-formed and parses cleanly into an AST (the accessor placeholder is preserved verbatim, same as `positive/recipe-member-accessor`). The rejection is enforced by `cook-luagen::generate_with_names_checked`. Negative fixtures carrying a `codegen_error.txt` (rather than `error.txt`) are consumed by the companion conformance harness in `cli/crates/cook-luagen/tests/conformance.rs`, mirroring `negative/006-accessor-in-cook-body`; the cook-lang parser-only harness skips them.

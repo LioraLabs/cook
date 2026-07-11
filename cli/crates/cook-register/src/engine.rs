@@ -730,9 +730,10 @@ pub fn register_cookfile(
             .expect("terminal_outputs mutex poisoned")
             .insert(qualified_name.clone(), terminal_outputs_list.clone());
 
-        // COOK-96: build the per-member output map for $<recipe[]> joins. Mirror
-        // terminal-output keying (qualified_name); last-wins per member across step
-        // groups matches last_cook_step_outputs' last-wins.
+        // COOK-96: build the per-member output map for $<recipe[in]> joins
+        // (COOK-221/CS-0137). Mirror terminal-output keying (qualified_name);
+        // last-wins per member across step groups matches
+        // last_cook_step_outputs' last-wins.
         {
             let mut mo = builder
                 .member_outputs

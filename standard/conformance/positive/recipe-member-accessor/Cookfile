@@ -11,4 +11,4 @@ recipe tts
 
 recipe mux
     ingredients scenes
-    cook "build/$<in.id>.mp4" { ffmpeg -i $<render[]> -i $<tts[]> $<out> }
+    cook "build/$<in.id>.mp4" { ffmpeg -i $<render[in]> -i $<tts[in]> $<out> }

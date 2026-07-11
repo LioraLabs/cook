@@ -23,7 +23,7 @@ Cookfile
       excludes: []
       steps:
         ForEach source=ProbeKey("scenes")
-        Cook outputs=["build/$<in.id>.mp4"] body=ShellBlock(["ffmpeg -i $<render[]> -i $<tts[]> $<out>"])
+        Cook outputs=["build/$<in.id>.mp4"] body=ShellBlock(["ffmpeg -i $<render[in]> -i $<tts[in]> $<out>"])
   chores:
   register_blocks: []
   top_level_module_calls: []
