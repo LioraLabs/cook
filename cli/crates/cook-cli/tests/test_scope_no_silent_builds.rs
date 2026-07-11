@@ -240,3 +240,54 @@ recipe sidework
         side_output.display()
     );
 }
+
+/// Contract-pinning test: unlike the bare/namespace scopes above, an
+/// explicit `cook test <recipe>` MUST still build the named recipe's full
+/// dependency closure even when neither the named recipe nor its
+/// dependencies declare any `test` steps. `TestScope::Recipe` deliberately
+/// does not filter to test-bearing recipes — the user named this recipe
+/// specifically, so `cook test <recipe>` behaves like `cook <recipe>` plus
+/// "and also run any tests found along the way." If a future change makes
+/// the Recipe arm filter its closure the same way the bare/namespace arms
+/// do, this test must fail loudly rather than let the asymmetry silently
+/// disappear.
+#[test]
+fn explicit_recipe_scope_still_builds_named_recipe_closure() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+
+    fs::write(root.join(".cookroot"), "").unwrap();
+    isolate_cache(root, root);
+
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/in.txt"), "content-v1").unwrap();
+
+    fs::write(
+        root.join("Cookfile"),
+        r#"recipe build
+    ingredients "src/in.txt"
+    cook "dist/out.txt" { mkdir -p dist && cp src/in.txt $<out> }
+
+recipe typecheck: build
+    cook "build2/tc.stamp" { cat $<build> > /dev/null && mkdir -p build2 && echo ok > $<out> }
+"#,
+    )
+    .unwrap();
+
+    let out = run(root, root, &["test", "typecheck"]);
+    assert_eq!(
+        out.status.code().unwrap_or(-1),
+        0,
+        "cook test typecheck should exit 0; {}",
+        combined(&out)
+    );
+
+    let stamp = root.join("build2/tc.stamp");
+    assert!(
+        stamp.exists(),
+        "explicit `cook test typecheck` must build the named recipe's dependency \
+         closure even though neither `typecheck` nor `build` declares any test steps \
+         (found no output at {})",
+        stamp.display()
+    );
+}
