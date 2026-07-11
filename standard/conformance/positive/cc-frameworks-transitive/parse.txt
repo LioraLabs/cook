@@ -8,14 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Lua code="cook_cc.lib(\"gfx\", {"
-        Lua code="    sources    = { \"src/lib.c\" },"
-        Lua code="    frameworks = { \"OpenGL\" },"
-        Lua code="})"
-        Lua code="cook_cc.bin(\"app\", {"
-        Lua code="    sources = { \"src/main.c\" },"
-        Lua code="    links   = { \"gfx\" },"
-        Lua code="})"
+        Test body=LuaBlock("        cook_cc.lib(\"gfx\", {\n            sources    = { \"src/lib.c\" },\n            frameworks = { \"OpenGL\" },\n        })\n        cook_cc.bin(\"app\", {\n            sources = { \"src/main.c\" },\n            links   = { \"gfx\" },\n        })")
   chores:
   register_blocks: []
   top_level_module_calls: []

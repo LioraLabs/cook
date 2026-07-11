@@ -8,10 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Lua code="cook_cc.bin(\"app\", {"
-        Lua code="    sources    = { \"src/main.c\" },"
-        Lua code="    frameworks = { \"OpenGL\", \"Cocoa\" },"
-        Lua code="})"
+        Test body=LuaBlock("        cook_cc.bin(\"app\", {\n            sources    = { \"src/main.c\" },\n            frameworks = { \"OpenGL\", \"Cocoa\" },\n        })")
   chores:
   register_blocks: []
   top_level_module_calls: []

@@ -69,7 +69,7 @@ The **local cache and the shared (cross-machine) store are addressed by this sam
 
 ### 17.1.3. Sharing and disposition effect [#exec.cache.sharing]
 
-Caching over the local index is always on. **Sharing** — publishing a unit's output artifacts to, and fetching them from, the shared content-addressed store — is also on by default for every cacheable unit, keyed by the same single key (§{exec.cache.single-key}). The local index and the shared store are addressed by that one key; a consumer reuses a shared artifact for a key K if and only if it recomputes K. A unit with no declared output (e.g. a `plate`, §{exec.cache.reconcile}) and any side-effecting step is never cached or shared.
+Caching over the local index is always on. **Sharing** — publishing a unit's output artifacts to, and fetching them from, the shared content-addressed store — is also on by default for every cacheable unit, keyed by the same single key (§{exec.cache.single-key}). The local index and the shared store are addressed by that one key; a consumer reuses a shared artifact for a key K if and only if it recomputes K. A `test_step` unit declares no build output and so publishes no artifacts to the shared store; its pass/fail **result** is nonetheless cacheable per §{exec.cache.test-unit} when the recipe supplies a file source (a source-less test always runs, §{steps.test}). A `chore`, being non-cacheable and side-effecting (§{chores.no-caching}), is never cached or shared.
 
 The unit's *disposition* (§{steps.cook-disposition}) selects its sharing policy. The disposition does not change the key (§{exec.cache.single-key}); it changes only whether the shared store participates and how a miss is resolved. A conforming implementation MUST observe:
 
@@ -145,7 +145,7 @@ An implementation's artifact-store write path MUST treat a `put` of bytes that c
 ```cook
 recipe build
     ingredients "src/main.c"
-    cook "build/main.o" { gcc -c $<all> -o $<out> }
+    cook "build/main.o" { gcc -c $<in> -o $<out> }
 ```
 
 On the first run, `build/main.o`'s unit executes and its completion MAY be recorded. On a subsequent run with an unchanged `src/main.c` and unchanged command text, an implementation MAY skip the unit. If the command text changes or `src/main.c` changes, the unit MUST re-run.
@@ -175,16 +175,10 @@ A conforming implementation MAY cache the result of a `test_step` unit (§{steps
    - The content fingerprints of every recipe output the test references via `cook.dep_output(NAME)` or `$<NAME>` cross-recipe substitution (§{xref.string-substitution}).
    - The deterministic env-key set as filtered through the implementation's `EnvDenylist` (the existing fingerprint mechanism for cook units per §{exec.cache.abstract}).
    - The values of every probe in the unit's effective seal set, on the same footing as the single cache key's probe-value fold (§{exec.cache.single-key}).
-   - The `timeout` modifier value.
-   - The `should_fail` modifier value.
 
-   The cache key MUST NOT include the test's display name (§{steps.test}), the `suite` field (§{lua.cook-add-test}), the recipe name, or the step's source position. Renaming a test, moving it within a recipe, or moving a recipe between Cookfiles MUST NOT bust its cache.
+   The cache key MUST NOT include the `suite` field (§{lua.cook-add-test}), the recipe name, or the step's source position. Moving a test within a recipe, or moving a recipe between Cookfiles, MUST NOT bust its cache.
 
-2. **Recordable outcomes.** A conforming implementation MAY record a test result for replay only when the unit's outcome is **passed**. A test is **passed** when:
-   - The body's exit status is success and `should_fail` is false; or
-   - The body's exit status is failure and `should_fail` is true.
-
-   A test that is **failed** (the dual of passed), **timed out**, or **blocked** (its build dependency failed) MUST NOT be cached. The implementation MAY discard a previously-cached entry whose corresponding test is observed to fail in a subsequent run.
+2. **Recordable outcomes.** A conforming implementation MAY record a test result for replay only when the unit's outcome is **passed** — that is, the body completed with a success exit status (a shell body exiting zero, or a Lua body raising no error). A test that is **failed** or **blocked** (its build dependency failed) MUST NOT be cached. The implementation MAY discard a previously-cached entry whose corresponding test is observed to fail in a subsequent run.
 
 3. **Replayed payload.** A cache hit MUST produce, for reporting purposes, the originally-recorded `(stdout, stderr, duration_secs, success)` quadruple. The duration value of a cache replay is the recorded original duration, not the wall-clock cost of the cache lookup.
 
@@ -258,7 +252,7 @@ A conforming implementation:
 - on a first run, or against a cache with no recorded outputs, MUST compute an empty prior set and therefore delete nothing;
 - reconciles **files only** in this edition — directories are left in place.
 
-`plate` and `test` steps declare no outputs and are no-ops for reconciliation.
+`test` steps declare no outputs and are no-ops for reconciliation.
 
 ### Opt-out
 

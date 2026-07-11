@@ -61,14 +61,12 @@ fn run_cook(dir: &Path, args: &[&str]) -> std::process::Output {
 /// Standard single-recipe fixture: `recipe build` declaring `src/main.c` as input.
 const SINGLE_RECIPE_COOKFILE: &str = r#"
 recipe build
-    >>{
         cook.add_unit({
             name    = "build-step",
             inputs  = {"src/main.c"},
             outputs = {"out.bin"},
             command = "cp src/main.c out.bin",
         })
-    }
 "#;
 
 #[test]
@@ -113,24 +111,20 @@ fn drive_scheduler_runs_only_affected_recipe() {
     // --affected and assert `a` ran but `b` didn't (by checking output files).
     let cookfile = r#"
 recipe a
-    >>{
         cook.add_unit({
             name    = "a-step",
             inputs  = {"src/a.txt"},
             outputs = {"a.stamp"},
             command = "touch a.stamp",
         })
-    }
 
 recipe b
-    >>{
         cook.add_unit({
             name    = "b-step",
             inputs  = {"src/b.txt"},
             outputs = {"b.stamp"},
             command = "touch b.stamp",
         })
-    }
 
 recipe c : a b
 "#;

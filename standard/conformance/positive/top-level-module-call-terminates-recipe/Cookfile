@@ -1,6 +1,6 @@
 use cook_cc
 
 recipe build
-    @ ./build
+    cook "build.out" { ./build > $<out> }
 
 cook_cc.bin("a", { sources = { "a.c" } })

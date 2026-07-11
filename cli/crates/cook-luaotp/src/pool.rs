@@ -28,8 +28,9 @@ pub struct WorkItem {
     pub env_vars: HashMap<String, String>,
     /// Project root for the CS-0045 sandbox. The worker installs the
     /// per-item sandbox policy by combining this root with the
-    /// payload's `step_kind` (Cook/Test/Chore → Confined; Plate →
-    /// Off). One worker VM may serve items from multiple projects in
+    /// payload's `step_kind` (Cook/Test/Chore → Confined; there is no
+    /// unsandboxed step kind — CS-0135 retired `plate`, the prior
+    /// exception). One worker VM may serve items from multiple projects in
     /// the cross-Cookfile-import case (CS-0017), so the root must
     /// travel with the item rather than being captured at pool spawn.
     pub project_root: PathBuf,
@@ -124,7 +125,7 @@ impl WorkerPool {
         });
 
         // Per-run probe-value store: shared across all workers so that
-        // `cook.cache.get` on any worker VM sees the same store (§22.5.7).
+        // `cook.probes.get` on any worker VM sees the same store (§22.5.7).
         let probe_store = ProbeValueStore::new();
 
         let (tx, rx) = mpsc::channel();
@@ -222,11 +223,12 @@ fn worker_loop(
     let current_env_vars: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
 
     // CS-0045 sandbox slot. Updated per work item before the body
-    // runs: Cook/Test/Chore → Confined { project_root }, Plate → Off.
-    // Default is `Off` — the slot is overwritten before the first
-    // body executes, but if a future code path somehow runs Lua
-    // before the first slot update, `Off` is the safe fallback (no
-    // false positives on legitimate I/O).
+    // runs: Cook/Test/Chore → Confined { project_root }. There is no
+    // unsandboxed step kind (CS-0135 retired `plate`, the prior
+    // exception). Default is `Off` — the slot is overwritten before
+    // the first body executes, but if a future code path somehow
+    // runs Lua before the first slot update, `Off` is the safe
+    // fallback (no false positives on legitimate I/O).
     let current_sandbox: Arc<Mutex<cook_lua_stdlib::SandboxPolicy>> =
         Arc::new(Mutex::new(cook_lua_stdlib::SandboxPolicy::Off));
 
@@ -293,21 +295,21 @@ fn worker_loop(
                     let mut env = current_env_vars.lock().expect("env_vars lock");
                     *env = work.env_vars.clone();
                 }
-                // CS-0045: pick the per-item sandbox policy. Plate
-                // bodies run unsandboxed; everything else (Cook, Test,
-                // Chore, and any non-LuaChunk payload) runs confined to
-                // `project_root`. For Shell/Test/Interactive payloads
-                // the policy is irrelevant — the worker doesn't run
-                // user Lua for those — but setting it consistently
-                // means a stray `lua.load()` in a future code path
-                // can't accidentally land Off.
+                // CS-0045: pick the per-item sandbox policy. Cook, Test,
+                // Chore, and any non-LuaChunk payload all run confined to
+                // `project_root` — there is no unsandboxed step kind
+                // (CS-0135 retired `plate`, the prior exception). For
+                // Shell/Test/Interactive payloads the policy is
+                // irrelevant — the worker doesn't run user Lua for
+                // those — but setting it consistently means a stray
+                // `lua.load()` in a future code path can't accidentally
+                // land Off.
                 {
                     let kind = match &work.payload {
                         WorkPayload::LuaChunk { step_kind, .. } => *step_kind,
                         _ => StepKind::Cook,
                     };
                     let policy = match kind {
-                        StepKind::Plate => cook_lua_stdlib::SandboxPolicy::Off,
                         StepKind::Cook | StepKind::Test | StepKind::Chore => {
                             cook_lua_stdlib::SandboxPolicy::Confined {
                                 project_root: work.project_root.clone(),
@@ -549,16 +551,16 @@ fn register_worker_cook_table(
     })?;
     cook.set("load_module", load_module_fn)?;
 
-    // CS-0070 / CS-0074: cook.cache on the execute-phase VM (Standard §6.3.4).
+    // CS-0070 / CS-0074: cook.probes on the execute-phase VM (Standard §6.3.4).
     //
-    // `cook.cache.get(key)` reads from the per-run SharedProbeValueStore so
+    // `cook.probes.get(key)` reads from the per-run SharedProbeValueStore so
     // that consumer units see probe values produced by upstream probe units
-    // (§22.5.7). `cook.cache.set` is deprecated and raises an error on the
+    // (§22.5.7). `cook.probes.set` is deprecated and raises an error on the
     // execute-phase VM (CS-0074).
     //
-    // `cook.cache.scope(label)` is still supported for backwards compat with
+    // `cook.probes.scope(label)` is still supported for backwards compat with
     // modules that use the scoped sub-table pattern.
-    install_execute_phase_cook_cache(lua, &cook, probe_store)?;
+    install_execute_phase_cook_probes(lua, &cook, probe_store)?;
 
     // COOK-64 §8.3: cook.member_to_string(value) renders a for_each data
     // member to its canonical string form (key-sorted JSON for a table, the
@@ -676,33 +678,33 @@ fn register_worker_cook_table(
     Ok(())
 }
 
-/// Install `cook.cache.{get,set,scope}` on the execute-phase VM
+/// Install `cook.probes.{get,set,scope}` on the execute-phase VM
 /// (Standard §6.3.4, CS-0070, CS-0074).
 ///
-/// `cook.cache.get(key)` reads from the `SharedProbeValueStore` — the same
+/// `cook.probes.get(key)` reads from the `SharedProbeValueStore` — the same
 /// store the engine writes into when a probe unit completes (§22.5.7).
 /// Returns `nil` when the key has not been populated.
 ///
-/// `cook.cache.set` is deprecated on the execute-phase VM (CS-0074): calling
+/// `cook.probes.set` is deprecated on the execute-phase VM (CS-0074): calling
 /// it raises a runtime error directing the author to use `cook.probe` instead.
 ///
-/// `cook.cache.scope(label)` returns a sub-table whose `get` prefixes keys
+/// `cook.probes.scope(label)` returns a sub-table whose `get` prefixes keys
 /// with `"<label>:"` for backwards compat with modules that use scoped cache.
-fn install_execute_phase_cook_cache(
+fn install_execute_phase_cook_probes(
     lua: &mlua::Lua,
     cook: &mlua::Table,
     probe_store: &ProbeValueStore,
 ) -> mlua::Result<()> {
     let cache_tbl = lua.create_table()?;
 
-    // cook.cache.get(key) → value | nil
+    // cook.probes.get(key) → value | nil
     let store_for_get = probe_store.clone();
     let get_fn = lua.create_function(move |lua, key: String| {
         match store_for_get.get(&key) {
             Some(bytes) => {
                 let jv = cook_contracts::probe_value::decode_json(&bytes)
                     .map_err(|e| mlua::Error::runtime(format!(
-                        "cook.cache.get('{}'): decode failed: {}", key, e
+                        "cook.probes.get('{}'): decode failed: {}", key, e
                     )))?;
                 crate::probe_value::json_to_lua(lua, &jv)
             }
@@ -711,16 +713,16 @@ fn install_execute_phase_cook_cache(
     })?;
     cache_tbl.set("get", get_fn)?;
 
-    // cook.cache.set — deprecated and disabled on the execute-phase VM (CS-0074).
+    // cook.probes.set — deprecated and disabled on the execute-phase VM (CS-0074).
     let set_fn = lua.create_function(|_, (_key, _val): (String, mlua::Value)| -> mlua::Result<()> {
         Err(mlua::Error::runtime(
-            "cook.cache.set: deprecated and not available on execute-phase VM (CS-0074). \
+            "cook.probes.set: deprecated and not available on execute-phase VM (CS-0074). \
              Use cook.probe to declare memoised probe values."
         ))
     })?;
     cache_tbl.set("set", set_fn)?;
 
-    // cook.cache.scope(label) → { get } — scoped get still works for
+    // cook.probes.scope(label) → { get } — scoped get still works for
     // backwards compat; scoped set is also disabled.
     let store_for_scope = probe_store.clone();
     let scope_fn = lua.create_function(move |lua, label: String| {
@@ -735,7 +737,7 @@ fn install_execute_phase_cook_cache(
                 Some(bytes) => {
                     let jv = cook_contracts::probe_value::decode_json(&bytes)
                         .map_err(|e| mlua::Error::runtime(format!(
-                            "cook.cache.get('{}'): decode failed: {}", full, e
+                            "cook.probes.get('{}'): decode failed: {}", full, e
                         )))?;
                     crate::probe_value::json_to_lua(lua, &jv)
                 }
@@ -746,7 +748,7 @@ fn install_execute_phase_cook_cache(
 
         let scoped_set = lua.create_function(|_, (_k, _v): (String, mlua::Value)| -> mlua::Result<()> {
             Err(mlua::Error::runtime(
-                "cook.cache.set: deprecated and not available on execute-phase VM (CS-0074). \
+                "cook.probes.set: deprecated and not available on execute-phase VM (CS-0074). \
                  Use cook.probe to declare memoised probe values."
             ))
         })?;
@@ -756,7 +758,19 @@ fn install_execute_phase_cook_cache(
     })?;
     cache_tbl.set("scope", scope_fn)?;
 
-    cook.set("cache", cache_tbl)?;
+    cook.set("probes", cache_tbl)?;
+
+    // `cook.cache.*` renamed to `cook.probes.*` in v1.0 (CS-0136).
+    let stub = lua.create_table()?;
+    let mt = lua.create_table()?;
+    let index_fn = lua.create_function(|_, (_t, key): (mlua::Table, String)| -> mlua::Result<mlua::Value> {
+        Err(mlua::Error::runtime(format!(
+            "'cook.cache' was renamed to 'cook.probes' in v1.0 (use cook.probes.{key})"
+        )))
+    })?;
+    mt.set("__index", index_fn)?;
+    stub.set_metatable(Some(mt));
+    cook.set("cache", stub)?;
     Ok(())
 }
 
@@ -2471,33 +2485,33 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // CS-0070 / CS-0074 regressions: execute-phase VM cook.cache surface.
+    // CS-0070 / CS-0074 regressions: execute-phase VM cook.probes surface.
     //
-    // CS-0074 changes: cook.cache.get reads from the SharedProbeValueStore
-    // (populated by upstream probe units); cook.cache.set is deprecated
+    // CS-0074 changes: cook.probes.get reads from the SharedProbeValueStore
+    // (populated by upstream probe units); cook.probes.set is deprecated
     // and raises on the execute-phase VM.
     // -----------------------------------------------------------------
 
-    /// CS-0070 / CS-0074: `cook.cache.get(key)` on a key not in the
+    /// CS-0070 / CS-0074: `cook.probes.get(key)` on a key not in the
     /// probe-value store MUST return nil (§22.5.7).
     #[test]
-    fn cook_cache_get_returns_nil_for_missing_key() {
+    fn cook_probes_get_returns_nil_for_missing_key() {
         let code = r#"
-            local v = cook.cache.get("never_set")
+            local v = cook.probes.get("never_set")
             assert(v == nil, "expected nil, got "..tostring(v))
         "#;
         let result = run_lua_chunk_in_worker(code);
         assert!(
             result.success,
-            "cook.cache.get for missing key must return nil; got error: {:?}",
+            "cook.probes.get for missing key must return nil; got error: {:?}",
             result.error
         );
     }
 
-    /// CS-0074/CS-0102: `cook.cache.get(key)` MUST return the JSON-decoded value
+    /// CS-0074/CS-0102: `cook.probes.get(key)` MUST return the JSON-decoded value
     /// that was written into the probe-value store by the scheduler (§22.5.7).
     #[test]
-    fn cook_cache_get_reads_from_probe_value_store() {
+    fn cook_probes_get_reads_from_probe_value_store() {
         let dir = TempDir::new().unwrap();
         let (pool, rx) = WorkerPool::spawn(1);
 
@@ -2510,7 +2524,7 @@ mod tests {
         }
 
         let code = r#"
-            local r = cook.cache.get("cc:zlib")
+            local r = cook.probes.get("cc:zlib")
             assert(r ~= nil, "expected non-nil result from probe store")
             assert(r.found == true, "expected found=true, got "..tostring(r.found))
             assert(r.version == "1.2.3", "expected version=1.2.3, got "..tostring(r.version))
@@ -2537,21 +2551,21 @@ mod tests {
         pool.shutdown();
         assert!(
             result.success,
-            "cook.cache.get must read from probe-value store; got error: {:?}",
+            "cook.probes.get must read from probe-value store; got error: {:?}",
             result.error
         );
     }
 
-    /// CS-0074: `cook.cache.set` is deprecated on the execute-phase VM and
+    /// CS-0074: `cook.probes.set` is deprecated on the execute-phase VM and
     /// MUST raise a runtime error directing the author to use `cook.probe`.
     #[test]
-    fn cook_cache_set_on_execute_vm_raises_deprecation_error() {
-        let result = run_lua_chunk_in_worker(r#"cook.cache.set("x", 1)"#);
-        assert!(!result.success, "expected cook.cache.set to fail on execute VM");
+    fn cook_probes_set_on_execute_vm_raises_deprecation_error() {
+        let result = run_lua_chunk_in_worker(r#"cook.probes.set("x", 1)"#);
+        assert!(!result.success, "expected cook.probes.set to fail on execute VM");
         let err = result.error.as_deref().unwrap_or("");
         assert!(
-            err.contains("cook.cache.set"),
-            "error must name cook.cache.set; got: {err}"
+            err.contains("cook.probes.set"),
+            "error must name cook.probes.set; got: {err}"
         );
         assert!(
             err.contains("deprecated"),
@@ -2559,14 +2573,28 @@ mod tests {
         );
     }
 
-    /// CS-0074/CS-0102: `cook.cache.scope(label).get(key)` MUST read from the
+    /// COOK-208 / CS-0136: `cook.cache.*` is a hard error on the execute-phase
+    /// VM with a did-you-mean pointing at `cook.probes`.
+    #[test]
+    fn cook_cache_is_hard_error_with_did_you_mean() {
+        let result = run_lua_chunk_in_worker(r#"return cook.cache.get("x")"#);
+        assert!(!result.success, "expected cook.cache.get to be a hard error");
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("cook.cache' was renamed to 'cook.probes'")
+                && err.contains("cook.probes.get"),
+            "rename diagnostic must name the new spelling; got: {err}"
+        );
+    }
+
+    /// CS-0074/CS-0102: `cook.probes.scope(label).get(key)` MUST read from the
     /// probe-value store using the scoped key `"<label>:<key>"`.
     #[test]
-    fn cook_cache_scope_get_reads_from_probe_value_store() {
+    fn cook_probes_scope_get_reads_from_probe_value_store() {
         let dir = TempDir::new().unwrap();
         let (pool, rx) = WorkerPool::spawn(1);
 
-        // Pre-populate with scoped key format.
+        // Pre-populate with scoped key format `"<label>:<key>"`.
         {
             let bytes = cook_contracts::probe_value::encode_canonical_json(
                 &serde_json::json!("gcc-14"),
@@ -2575,7 +2603,8 @@ mod tests {
         }
 
         let code = r#"
-            local v = cook.cache.get("cc:compiler")
+            local scoped = cook.probes.scope("cc")
+            local v = scoped.get("compiler")
             assert(v == "gcc-14", "expected gcc-14, got "..tostring(v))
         "#;
 
@@ -2600,19 +2629,19 @@ mod tests {
         pool.shutdown();
         assert!(
             result.success,
-            "scoped cook.cache.get must read from probe-value store; got error: {:?}",
+            "scoped cook.probes.get must read from probe-value store; got error: {:?}",
             result.error
         );
     }
 
-    /// CS-0074: `cook.cache.scope(label).set` MUST raise on execute-phase VM.
+    /// CS-0074: `cook.probes.scope(label).set` MUST raise on execute-phase VM.
     #[test]
-    fn cook_cache_scope_set_on_execute_vm_raises_deprecation_error() {
+    fn cook_probes_scope_set_on_execute_vm_raises_deprecation_error() {
         let result = run_lua_chunk_in_worker(r#"
-            local s = cook.cache.scope("foo")
+            local s = cook.probes.scope("foo")
             s.set("x", 1)
         "#);
-        assert!(!result.success, "expected scoped cook.cache.set to fail on execute VM");
+        assert!(!result.success, "expected scoped cook.probes.set to fail on execute VM");
         let err = result.error.as_deref().unwrap_or("");
         assert!(
             err.contains("deprecated"),

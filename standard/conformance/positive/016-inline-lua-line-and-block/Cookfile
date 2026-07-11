@@ -1,6 +1,0 @@
-recipe "inline_step"
-    >> print("register-phase line")
-    >>{
-        local x = 1
-        print(x + 1)
-    }

@@ -100,9 +100,8 @@ pub(crate) fn try_inline_lua_block(after_open: &str) -> Option<String> {
 ///
 /// `after_kw` is the line text starting at the body opener (`{` or `>{`),
 /// i.e. the remainder after the step's output pattern(s) for cook (CS-0099
-/// removed the `using` introducer) or after the keyword for plate/test.
-/// `kw_for_diag` is the step name used in error messages (`cook`, `plate`,
-/// `test`).
+/// removed the `using` introducer) or after the keyword for test.
+/// `kw_for_diag` is the step name used in error messages (`cook`, `test`).
 ///
 /// Returns the parsed `Body` plus the new token-stream position.
 pub(crate) fn parse_body_payload(
@@ -560,33 +559,30 @@ pub(crate) fn parse_cook_line(
         });
     }
 
-    // A non-empty tail that does NOT open a body (`{` / `>{` / `>>{`) is a
-    // declaration-only cook step carrying trailing `cook_mods` (COOK-171), e.g.
-    // `cook "x" local` or `cook "x" seal rev`.
+    // Does the tail open a body (`{` / `>{` / `>>{`)? A cook step MUST have one
+    // (CS-0133); a non-body tail is rejected below.
     let opens_body = after_pattern.starts_with('{')
         || after_pattern.starts_with(">{")
         || after_pattern.starts_with(">>{");
 
     if after_pattern.is_empty() || !opens_body {
-        // Declaration-only cook step. Advance past every token on the line
-        // where collection stopped (the line containing the last quoted
-        // pattern, plus any trailing modifiers). Explicit walk instead of
-        // `pos + 1` so this stays correct if the lexer ever emits more than
-        // one token per source line.
-        let stop_line = tokens
-            .get(pos_after_patterns)
-            .map(|t| t.line)
-            .unwrap_or(line);
-        let mut pos = pos_after_patterns;
-        while pos < tokens.len() && tokens[pos].line <= stop_line {
-            pos += 1;
-        }
-        let (disposition, unseal) = cook_disposition_from_tail(after_pattern, line)?;
-        return Ok((
-            CookStep { outputs, body: None, disposition },
-            unseal,
-            pos,
-        ));
+        // CS-0133: declaration-only cook steps were removed. A body-less cook
+        // registered 0 nodes and enabled a OneShot runtime trap; its one
+        // documented purpose (decl + following shell_command) was vaporware.
+        //
+        // First run the tail through the modifier parser so genuine garbage
+        // before/instead of a body still gets the sharp `unexpected modifier`
+        // diagnostic (e.g. `cook "a" "b" junk {` names `junk`). Only a tail
+        // that parses as a clean `cook_mods` (empty, or `local`/`seal R`/…)
+        // reaches the body-required error below.
+        cook_disposition_from_tail(after_pattern, line)?;
+        return Err(ParseError::Parse {
+            line,
+            message: "cook: a cook step requires a body; declaration-only cook \
+                      steps were removed (CS-0133) — write `cook \"out\" { … }` \
+                      or `cook \"out\" >{ … }`"
+                .to_string(),
+        });
     }
 
     // parse_body_payload needs the line that the body opener sits on.

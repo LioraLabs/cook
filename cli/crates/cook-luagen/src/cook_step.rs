@@ -393,7 +393,7 @@ pub(crate) fn generate_cook_step(
         }
         CookMode::ManyToOne => {
             out.push_str(&format!(
-                "    local _cook_all = table.concat({}, \" \")\n",
+                "    local _cook_in = table.concat({}, \" \")\n",
                 input_source
             ));
 
@@ -534,7 +534,7 @@ pub(crate) fn generate_cook_step(
             out.push_str(&format!("    local _cook_outs = {};\n", outs_lua));
             out.push_str(&format!("    local _cook_ins = {};\n", input_source));
             out.push_str(&format!(
-                "    local _cook_all = table.concat({}, \" \");\n",
+                "    local _cook_in = table.concat({}, \" \");\n",
                 input_source
             ));
 
@@ -598,7 +598,7 @@ pub(crate) fn generate_cook_step(
 /// the caller's `cook.step_group` and preceded by `local _cook_outputs_N = {}`.
 /// `$<in>` / `$<in.FIELD>` resolve against the loop's `item` member; `$<out>`
 /// resolves to the member's declared output. The filesystem path-input
-/// builtins (`$<all>`, and `$<in>`'s glob-path sense) are not applicable in a
+/// builtin (`$<in>`'s glob-path sense) is not applicable in a
 /// `for_each` body — it has no path-input source. The probe-deferral and Lua
 /// long-string conventions mirror the ingredient-driven `LuaExprOneToOne` arm.
 pub(crate) fn generate_for_each_cook_step(
@@ -611,7 +611,7 @@ pub(crate) fn generate_for_each_cook_step(
     // CS-0101: per-step accumulator; hoists are emitted once, OUTSIDE the
     // member loop, so a file ref resolves once per step (not per member).
     let mut file_refs = crate::template::FileRefs::new(format!("s{}", step_pos));
-    // OneShot rejects `$<in>`/`$<all>`; Single permits the lone `$<out>`.
+    // OneShot rejects `$<in>`; Single permits the lone `$<out>`.
     let ctx = crate::template::cook_step_ctx(IterMode::OneShot, OutputShape::Single, recipe_names);
     let sigil_err = |e: crate::resolver::ResolveError| {
         (

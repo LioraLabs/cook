@@ -124,7 +124,7 @@ fn lua_escape(s: &str) -> String {
 }
 
 /// CS-0074: If `command` contains `$<key:...>` probe-value sigils, rewrite it
-/// into a Lua chunk string that performs the substitution using `cook.cache.get`
+/// into a Lua chunk string that performs the substitution using `cook.probes.get`
 /// at execute time and invokes `cook.sh` with the fully-resolved command.
 ///
 /// Detection uses the same `cook_luagen::sigil::scan` scanner that codegen uses,
@@ -177,7 +177,7 @@ fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<Strin
     }
 
     // Build the Lua access expression for a probe sigil ident.
-    // Returns the `cook.cache.get("key").field[N]...` expression.
+    // Returns the `cook.probes.get("key").field[N]...` expression.
     let build_access = |ident: &str| -> String {
         let colon = ident.find(':').unwrap();
         let after_colon = &ident[colon + 1..];
@@ -187,7 +187,7 @@ fn try_expand_probe_templates(command: &str) -> Result<Option<(String, Vec<Strin
         let key = &ident[..path_start];
         let path_str = &ident[path_start..];
 
-        let mut access = format!("cook.cache.get(\"{}\")", lua_escape(key));
+        let mut access = format!("cook.probes.get(\"{}\")", lua_escape(key));
         let mut chars = path_str.chars().peekable();
         while let Some(&c) = chars.peek() {
             match c {
@@ -340,11 +340,10 @@ pub fn register_unit_api(
         };
         // CS-0045 / CS-0127: the originating step kind drives the
         // execute-phase sandbox policy on the resulting LuaChunk. Codegen
-        // passes `step_kind = "plate"` for plate-step bodies (which are
-        // unsandboxed by design) and omits the field for cook/test/
-        // chore bodies. The captured-unit default is `cook` because
-        // that is the strictest policy: a misclassified plate body
-        // becomes a Lua runtime error rather than a silent escape. An
+        // omits the field for cook/test/chore bodies, all of which run
+        // sandboxed to the project root — there is no unsandboxed step
+        // kind (CS-0135 retired the `plate` step). The captured-unit
+        // default is `cook` because that is the strictest policy. An
         // unrecognised string, or any non-string value, is a hard error
         // rather than a silent fall-through to the default.
         let step_kind: cook_contracts::StepKind = match tbl.get::<LuaValue>("step_kind") {
@@ -352,14 +351,13 @@ pub fn register_unit_api(
             Ok(LuaValue::String(s)) => {
                 let sv = s.to_string_lossy().to_string();
                 match sv.as_str() {
-                    "plate" => cook_contracts::StepKind::Plate,
                     "test" => cook_contracts::StepKind::Test,
                     "chore" => cook_contracts::StepKind::Chore,
                     "cook" => cook_contracts::StepKind::Cook,
                     _ => {
                         return Err(type_err(
                             "step_kind",
-                            "one of \"cook\", \"plate\", \"test\", \"chore\"",
+                            "one of \"cook\", \"test\", \"chore\"",
                             &format!("{sv:?}"),
                         ))
                     }
@@ -865,18 +863,19 @@ pub fn register_unit_api(
         } else {
             // CS-0074: scan command for `$<key:field>` probe-value sigils.
             // If found, rewrite as a LuaChunk that resolves the values at
-            // execute time via cook.cache.get and calls cook.sh. Also
+            // execute time via cook.probes.get and calls cook.sh. Also
             // auto-add the detected probe keys to probes.
             //
             // CS-0127: the rewritten LuaChunk carries the ALREADY-PARSED
             // `step_kind` local (see above) rather than a hardcoded
             // `StepKind::Cook`. `command` fields containing probe sigils are
-            // not exclusive to native `cook` bodies — a `plate` body inside
-            // a `for_each` recipe (unsandboxed by design, Standard §8.6)
-            // lowers its command the same literal-sigil way (COOK-187 /
-            // CS-0122) and passes `step_kind = "plate"`. Hardcoding `Cook`
-            // here would silently flip a plate command's sandbox policy the
-            // moment it referenced a probe value.
+            // not exclusive to native `cook` bodies — a `test` body inside
+            // a `for_each` recipe lowers its command the same literal-sigil
+            // way (COOK-187 / CS-0122) and passes `step_kind = "test"`.
+            // Hardcoding `Cook` here would misreport a non-cook command's
+            // originating step kind (CS-0135: every step kind is sandboxed
+            // identically today, but the field remains load-bearing for
+            // diagnostics and any future step kind).
             match try_expand_probe_templates(&command) {
                 Ok(Some((lua_code, detected_keys))) => {
                     for k in detected_keys {
@@ -1007,13 +1006,13 @@ pub fn register_unit_api(
     // cook.passthrough(list) — declare the current step's "outputs" as a
     // copy of the given input list, without recording an emitting unit.
     // This is the register-side hook that implements Standard §5.4.1's
-    // passthrough rule for `plate`, `test`, and bare shell steps: those
-    // step kinds don't write files, but a downstream `$<recipe>` reference
-    // (or another plate/test step that falls back to the recipe's
-    // last-step outputs) needs the input list to be visible as the
-    // recipe's terminal outputs.
+    // passthrough rule for `test` and bare shell steps: those step kinds
+    // don't write files, but a downstream `$<recipe>` reference (or
+    // another test step that falls back to the recipe's last-step
+    // outputs) needs the input list to be visible as the recipe's
+    // terminal outputs.
     //
-    // Codegen calls this once per plate/test/shell step, inside the
+    // Codegen calls this once per test/shell step, inside the
     // enclosing `cook.step_group`, with the same source expression the
     // step iterates over (`ingredients`, `_cook_outputs_N`, or a literal
     // list). The `step_group` close-out then drains the pushed values
@@ -1342,7 +1341,7 @@ mod tests {
     }
 
     #[test]
-    fn test_plate_step_group_does_not_overwrite_terminal() {
+    fn test_no_output_step_group_does_not_overwrite_terminal() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
         lua.set_app_data(fake_cache_ctx());
         lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
@@ -1351,7 +1350,7 @@ mod tests {
             cook.step_group(function()
                 cook.add_unit({ command = "gcc -o app main.c", inputs = {"main.c"}, output = "app" })
             end)
-            -- Plate-like step (no output field) -- should NOT overwrite terminal
+            -- No-output step group -- should NOT overwrite terminal
             cook.step_group(function()
                 cook.add_unit({ command = "./app", cache = false })
             end)
@@ -2194,7 +2193,7 @@ mod tests {
 
     /// CS-0074: cook.add_unit with a command containing `$<key:field>` probe-value
     /// sigils MUST be rewritten into a LuaChunk that resolves the probe value at
-    /// execute time via cook.cache.get.
+    /// execute time via cook.probes.get.
     #[test]
     fn add_unit_command_with_probe_template_is_rewritten() {
         let (lua, capture_state) = make_lua_with_unit_api("recipe");
@@ -2216,8 +2215,8 @@ mod tests {
         let unit = state.units.first().expect("one unit");
 
         let has_cache_get = match &unit.payload {
-            WorkPayload::LuaChunk { code, .. } => code.contains("cook.cache.get"),
-            WorkPayload::Shell { cmd, .. } => cmd.contains("cook.cache.get"),
+            WorkPayload::LuaChunk { code, .. } => code.contains("cook.probes.get"),
+            WorkPayload::Shell { cmd, .. } => cmd.contains("cook.probes.get"),
             _ => false,
         };
         assert!(
@@ -2265,7 +2264,7 @@ mod tests {
 
     /// COOK-96 Task 5: add_unit must record `member` and `output_paths` on the
     /// resulting `CapturedUnit` so the engine can build the per-member output map
-    /// needed by `$<recipe[]>`.
+    /// needed by `$<recipe[in]>` (COOK-221/CS-0137).
     #[test]
     fn add_unit_retains_member_and_outputs() {
         let (lua, capture_state) = make_lua_with_unit_api("encode");

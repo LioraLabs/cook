@@ -72,7 +72,7 @@ fn run_cook(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
 ///
 /// SHI-222 Phase 7 Task 7 carry-forward: the legacy `register` block
 /// that called `cook.add_unit` directly is reshaped so the `cook.add_unit`
-/// call lives inside the recipe body (`>>{ ... }`), matching the
+/// call lives inside the recipe body (as a bare module call, CS-0134), matching the
 /// CS-0077 contract that top-level register-block execution has no
 /// active recipe `body_slot`. Top-level `cook.probe` is still
 /// session-scoped per spec §6 step 4 and §7.
@@ -88,7 +88,6 @@ fn probe_consumer_end_to_end_first_run_then_cache_hit() {
     // orthogonal limitation not exercised by this test.
     let cookfile = r#"
 recipe build
-    >>{
         cook.probe("test:greet", {
             inputs = {},
             produce = "return { word = \"hello-from-probe\" }",
@@ -100,7 +99,6 @@ recipe build
             probes = {"test:greet"},
             command = "echo $<test:greet.word> > done.marker",
         })
-    }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
 
@@ -177,7 +175,6 @@ fn probe_produce_does_not_re_execute_on_cache_hit() {
     let cookfile = format!(
         r#"
 recipe build
-    >>{{
         cook.probe("{probe_key}", {{
             inputs = {{}},
             produce = [[
@@ -195,7 +192,6 @@ recipe build
             probes = {{"{probe_key}"}},
             command = "echo $<{probe_key}.v> > done.marker",
         }})
-    }}
 "#
     );
     fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();
@@ -319,7 +315,7 @@ register
     cook.probe("dup", { inputs = {}, produce = "return 2" })
 
 recipe build
-    > echo hi
+    test { true }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
     let err = run_cook(tmp.path(), &["build"]).expect_err("expected duplicate-key rejection");
@@ -354,7 +350,7 @@ register
     })
 
 recipe build
-    > cook.sh("echo hello")
+    test { echo hello }
 "#;
     fs::write(tmp.path().join("Cookfile"), cookfile).unwrap();
 
@@ -420,7 +416,6 @@ fn probe_value_file_is_canonical_json_and_survives_warm_rerun() {
     let cookfile = format!(
         r#"
 recipe build
-    >>{{
         cook.probe("{probe_key}", {{
             inputs = {{}},
             produce = [[
@@ -435,7 +430,6 @@ recipe build
             probes = {{"{probe_key}"}},
             command = "echo $<{probe_key}.zeta> > done.marker",
         }})
-    }}
 "#
     );
     fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();
@@ -504,7 +498,6 @@ fn probe_json_decode_produce_demand_driven_consumer() {
     let cookfile = format!(
         r#"
 recipe build
-    >>{{
         cook.probe("{probe_key}", {{
             inputs = {{}},
             produce = "return cook.json_decode('{{\"word\":\"hello-json\"}}')",
@@ -516,7 +509,6 @@ recipe build
             probes = {{"{probe_key}"}},
             command = "echo $<{probe_key}.word> > done.marker",
         }})
-    }}
 "#
     );
     fs::write(tmp.path().join("Cookfile"), &cookfile).unwrap();

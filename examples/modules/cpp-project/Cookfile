@@ -30,7 +30,7 @@ register
 
 recipe run-tests: test_vec test_util
     ingredients "build/bin/test_*"
-    test { ./$<in> } timeout 30
+    test { ./$<in> }
 
 recipe build: mathlib app test_vec test_util
 

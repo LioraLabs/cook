@@ -8,13 +8,13 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Shell interactive=false command="cook_cc.lib(\"foo\", { sources = { \"src/foo.c\" } })"
+        InlineLua code="cook_cc.lib(\"foo\", { sources = { \"src/foo.c\" } })"
     Recipe name="compile-commands" line=6
       deps: ["libfoo"]
       ingredients: []
       excludes: []
       steps:
-        Shell interactive=false command="cook_cc.compile_commands()"
+        InlineLua code="cook_cc.compile_commands()"
   chores:
   register_blocks: []
   top_level_module_calls: []

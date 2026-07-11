@@ -49,16 +49,6 @@ impl ModuleCache {
         self.dirty = true;
     }
 
-    pub fn invalidate(&mut self, key: &str) {
-        self.data.remove(key);
-        self.dirty = true;
-    }
-
-    pub fn clear(&mut self) {
-        self.data.clear();
-        self.dirty = true;
-    }
-
     pub fn flush(&self) -> std::io::Result<()> {
         if !self.dirty { return Ok(()); }
         std::fs::create_dir_all(&self.cache_dir)?;
@@ -112,26 +102,6 @@ mod tests {
         // Reload with different hash — cache should be invalidated
         let cache2 = ModuleCache::load(dir.path(), "mymod", hash_v2);
         assert!(cache2.get("key").is_none());
-    }
-
-    #[test]
-    fn test_invalidate_key() {
-        let dir = TempDir::new().unwrap();
-        let mut cache = ModuleCache::load(dir.path(), "mymod", 0);
-        cache.set("key", serde_json::json!(42));
-        cache.invalidate("key");
-        assert!(cache.get("key").is_none());
-    }
-
-    #[test]
-    fn test_clear() {
-        let dir = TempDir::new().unwrap();
-        let mut cache = ModuleCache::load(dir.path(), "mymod", 0);
-        cache.set("a", serde_json::json!(1));
-        cache.set("b", serde_json::json!(2));
-        cache.clear();
-        assert!(cache.get("a").is_none());
-        assert!(cache.get("b").is_none());
     }
 
     #[test]

@@ -11,7 +11,7 @@ A chore is introduced by a **chore header** of the form `chore name (":" depende
 
 The keyword `chore` MUST be followed by a separator — whitespace, a tab, or a `"` character — before the name. The keyword is recognised only at column 0 (§{lexical.keywords}); an indented `chore foo` line inside a recipe body or chore body is a `Content` token dispatched as a `shell_command`.
 
-The reserved-segment rule of §{grammar-appendix.declarations} applies: a conforming implementation MUST reject a chore whose name's final dot-separated segment is one of `stem`, `name`, `ext`, `dir`, `in`, `out`, `all`.
+The reserved-segment rule of §{grammar-appendix.declarations} does NOT constrain a chore declaration name (CS-0132): `chore name`, `chore out`, and `chore env` are all well-formed, because a chore name is undotted (a dotted chore name is rejected outright as a dotted declaration name, §{grammar-appendix.declarations}). The reservation binds only dotted *reference* forms and the `env`-first prefix.
 
 The **duplicate-name rule** of §{grammar-appendix.declarations} also applies: chores share the callable namespace with recipes, so a chore whose name matches that of an earlier `chore` or `recipe` declaration in the same Cookfile MUST be rejected at parse time. The diagnostic identifies both the offending declaration and the source line of the prior declaration.
 
@@ -41,7 +41,7 @@ A `param` is one of:
 
 **Ordering rule (normative).** Within a `param_list`, every required parameter MUST precede every defaulted parameter (string-literal or Lua-expression form). A conforming implementation MUST reject a chore header that violates this order.
 
-**Reserved-name rule (normative).** Parameter names MUST NOT equal one of the reserved identifiers from §A.2 (`stem`, `name`, `ext`, `dir`, `in`, `out`, `all`, `env`). Parameter names MUST NOT contain `.`. Duplicate parameter names within one header MUST be rejected at parse time.
+**Parameter-name rule (normative).** Parameter names MUST NOT contain `.`. Duplicate parameter names within one header MUST be rejected at parse time. The reserved-segment rule of §A.2 does NOT constrain parameter names (CS-0132): a parameter named `name`, `in`, `out`, or any other former reserved identifier is well-formed.
 
 ### Example 7.1.1.1
 
@@ -56,9 +56,9 @@ chore deploy target host="prod.example.com"
 
 ## 7.1.2. Parameter binding inside the body [#chores.param-binding]
 
-When a chore body is executed, every declared parameter binds as a **Lua local** in the body's scope, visible to inline-Lua (`>>`, `>>{}`), execute-Lua (`>`, `>{}`), and lua_block forms. The local's value is a Lua string for required and defaulted parameters; for variadics (§7.1.3) it is a Lua sequence (list-style table) of strings.
+When a chore body is executed, every declared parameter binds as a **Lua local** in the body's scope, visible to execute-Lua (`>`, `>{}`) and `lua_block` forms. The local's value is a Lua string for required and defaulted parameters; for variadics (§7.1.3) it is a Lua sequence (list-style table) of strings.
 
-A conforming implementation MUST make these bindings available before any step of the chore body (including the first `>>` inline-Lua line) is executed.
+A conforming implementation MUST make these bindings available before any step of the chore body (including the first shell or `>` line) is executed.
 
 Placeholder substitution (`$<NAME>`) is specified in §7.1.2.2. Environment-variable export to shell children is specified in §7.1.2.1 below.
 
@@ -127,12 +127,9 @@ A chore body MAY contain any of the following step kinds:
 
 | § | Step kind | Phase |
 |---|---|---|
-| §{steps.shell}     | `shell_command`       | execute (default-interactive) |
-| §{steps.shell}     | `interactive_command` | execute |
+| §{steps.shell}     | `shell_command`       | execute (default-interactive, single-drain) |
 | §{steps.lua}       | `lua_line`            | execute |
 | §{steps.lua}       | `lua_block`           | execute |
-| §{steps.lua}       | `inline_lua_line`     | register |
-| §{steps.lua}       | `inline_lua_block`    | register |
 
 A chore body MUST NOT contain any of the following step kinds:
 
@@ -140,22 +137,21 @@ A chore body MUST NOT contain any of the following step kinds:
 |---|---|---|
 | §{steps.ingredients} | `ingredients_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
 | §{steps.cook-single} | `cook_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
-| §{steps.plate} | `plate_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
 | §{steps.test} | `test_step` | The diagnostic identifies the keyword and directs the author to `recipe`. |
 
-A conforming implementation MUST reject a chore body that contains any of the four banned step kinds. The diagnostic MUST identify the offending step's line and the offending keyword by name; the recommended message form names the keyword and suggests the `recipe` form.
+A conforming implementation MUST reject a chore body that contains any of the three banned step kinds. The diagnostic MUST identify the offending step's line and the offending keyword by name; the recommended message form names the keyword and suggests the `recipe` form.
 
-The recipe-body region rule (§{recipes.region-rule}) applies to chore bodies as well, restricted to the allowed step kinds: `inline_lua_line` and `inline_lua_block` are declarative-region; `shell_command`, `interactive_command`, `lua_line`, `lua_block` are imperative-region. A conforming implementation MUST reject a chore body in which a declarative-region step appears after the first imperative-region step.
+**No register-phase steps (CS-0134).** CS-0134 removes the register-phase `inline_lua_line` (`>>`) and `inline_lua_block` (`>>{`) steps from the language entirely (§{lexical.line-prefixes}, Note 3.7.1). A chore body therefore admits **only** the four execute-phase step kinds above. Because there is no declarative-region step kind left in a chore body, the pre-CS-0134 region-ordering rule (§{recipes.region-rule}) is satisfied **vacuously** for chore bodies — there is no declarative region to place before the imperative steps. A conforming implementation MUST reject a `>>` or `>>{` line wherever it appears, including inside a chore body, with the migration diagnostic of §{lexical.line-classification}.
 
-**Migration note (CS-0072 / v0.9).** Prior to CS-0072 a chore body admitted a `module_call` step (register-phase, desugaring to `inline_lua_line` / `inline_lua_block`). CS-0072 removes `module_call` from `chore_declarative_item`; authors who want to invoke a module function from a chore body MUST use the explicit `>>` (`inline_lua_line`) or `>>{` (`inline_lua_block`) form, or move the call to a top-level `register_block` (§{decl.register}) or a top-level `module_call` (§{toplevel.module-call}).
+**Migration note (CS-0134).** Prior to CS-0072 a chore body admitted a `module_call` step (register-phase). CS-0072 removed it, and pre-CS-0134 authors reached for the `>>` / `>>{` inline-Lua prefixes to invoke a module function from a chore body. Both prefixes are now gone. An author who needs **register-phase** module-call orchestration MUST move it to a top-level `register_block` (§{decl.register}) or a top-level `module_call` (§{toplevel.module-call}); an author who wants to call a module function at **execute** time from a chore body writes it as an execute-Lua step — `> ns.fn(...)` or inside a `>{ … }` block — which runs on the chore's drain thread (§{chores.default-interactive}).
 
 ## 7.3. Default-interactive shell semantics [#chores.default-interactive]
 
-Every `shell_command` step inside a chore body MUST be treated as if it were `@`-prefixed (§{steps.shell}, "interactive_command"). The `@` marker remains valid (no-op) for symmetry with recipe bodies, but is unnecessary. A chore therefore inherits the TTY-allocation, stdio-inheritance semantics of an interactive recipe step.
+Every `shell_command` step inside a chore body is **interactive**: it runs with the controlling terminal inherited, so the spawned child sees a real TTY (§{steps.shell}). This is the chore default; there is no marker to write. CS-0134 removed the `@` interactive prefix from the language entirely (§{lexical.line-prefixes}) — it was a redundant no-op, since every chore shell command is already interactive by this rule. A chore therefore inherits the TTY-allocation and stdio-inheritance semantics that the drain rule (§{exec.interactive-drain}) specifies for an interactive unit.
 
-The Lua-step phases (`>`/`>{`/`>>`/`>>{`) are unchanged by this rule. An execute-phase Lua step inside a chore body runs on the chore's drain thread (the controlling terminal), not on a worker VM — chore bodies share a single drain across all imperative-region steps including Lua bodies (CS-0051). The body-bundling rule (§{exec.body-bundling}) does NOT apply to chore bodies.
+The execute-Lua step phases (`>` / `>{`) are unchanged by this rule. An execute-phase Lua step inside a chore body runs on the chore's drain thread (the controlling terminal), not on a worker VM — chore bodies share a single drain across all imperative-region steps including Lua bodies (CS-0051). The body-bundling rule (§{exec.body-bundling}) does NOT apply to chore bodies — as of CS-0134 it is vacuous even for recipes (§{exec.body-bundling}); chore-body execution is governed entirely by the single-drain rule of this section.
 
-A chore body MUST execute as a **single drain** (CS-0051): once the first imperative-region step of the body begins, no work unit of any other recipe MAY run until the body completes — successfully or with a failure. The body's shell steps and execute-phase Lua steps run in source order on the controlling terminal under one shared drain window. The interactive-drain rule of §{exec.interactive-drain} continues to govern individual interactive units in non-chore contexts (recipe-internal `@` steps); only the chore-body case shares a single drain across multiple imperative-region steps.
+A chore body MUST execute as a **single drain** (CS-0051): once the first imperative-region step of the body begins, no work unit of any other recipe MAY run until the body completes — successfully or with a failure. The body's shell steps and execute-phase Lua steps run in source order on the controlling terminal under one shared drain window. The interactive-drain rule of §{exec.interactive-drain} governs each individual interactive unit; the chore-body case additionally shares a single drain across all of a chore's imperative steps (its shell and execute-Lua steps), rather than draining them one at a time.
 
 ### Example 7.3.1
 
@@ -170,7 +166,7 @@ The two shell steps are interactive: `cd build` and `rsync ...` run with the use
 
 ## 7.4. No caching [#chores.no-caching]
 
-A chore body MUST NOT register a cached work unit. This is satisfied trivially by the parse-time ban on `cook` and `plate` steps (§{chores.body}); a chore has no declarative cook step that would produce a cacheable output. The Cook Lua API helpers `cook.add_unit` (§{lua.add-unit}) and the unit-recording helpers, if called from an `inline_lua_line` or `inline_lua_block` inside a chore body, MUST register their units with `cache = false`. A conforming implementation MUST raise a Lua runtime error from `inline_lua` inside a chore body if the call would record a unit with `cache = true` (or any equivalent caching opt-in).
+A chore body MUST NOT register a cached work unit. This is satisfied trivially by the parse-time ban on `cook` and `test` steps (§{chores.body}); a chore has no declarative cook step that would produce a cacheable output. As of CS-0134 a chore body admits no register-phase step at all (§{chores.body}), so it cannot record a work unit from its own body: the register-only helper `cook.add_unit` (§{lua.add-unit}) is unreachable from a chore body, and calling it from an execute-Lua step (`>` / `>{`) raises the execute-phase diagnostic of §{rationale.execute-phase-api} regardless of the `cache` flag.
 
 This rule preserves the chore-vs-recipe semantic distinction: chores always run when invoked; they never short-circuit on a cache hit.
 
@@ -188,13 +184,13 @@ A chore MAY depend on a recipe (run a build, then post-process) and a recipe MAY
 recipe build
     ingredients "src/*.c"
     cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
-    cook "build/app" { cc $<all> -o $<out> }
+    cook "build/app" { cc $<in> -o $<out> }
 
 chore play: build
     ./build/app
 
 recipe install: play
-    cp build/app /usr/local/bin/
+    cook "/usr/local/bin/app" { cp build/app $<out> }
 ```
 
 `play` depends on the recipe `build`; the recipe `install` depends on the chore `play`. The graph: `build` (recipe, cached) → `play` (chore, never cached) → `install` (recipe, cached). Each edge is a normal name reference; no special wording for cross-form.

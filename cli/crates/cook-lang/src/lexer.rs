@@ -42,8 +42,6 @@ pub enum LexError {
     DottedDeclaredChoreName { name: String, line: usize },
     #[error("line {line}: chore '{chore}': duplicate parameter '{name}'")]
     DuplicateChoreParam { line: usize, chore: String, name: String },
-    #[error("line {line}: chore '{chore}': parameter '{name}' uses reserved identifier")]
-    ReservedChoreParam { line: usize, chore: String, name: String },
     #[error("line {line}: chore '{chore}': required parameter '{required}' must precede defaulted parameter '{defaulted}'")]
     RequiredAfterDefaulted { line: usize, chore: String, required: String, defaulted: String },
     #[error("line {line}: chore '{chore}': default for parameter '{name}' must be a quoted string")]
@@ -68,7 +66,7 @@ pub enum LexError {
     DottedChoreParam { line: usize, chore: String, name: String },
 }
 
-const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "all", "env"];
+const RESERVED_RECIPE_SEGMENTS: &[&str] = &["stem", "name", "ext", "dir", "in", "out", "env"];
 
 fn check_reserved_recipe_name(name: &str, line: usize) -> Result<(), LexError> {
     let first_segment = name.split('.').next().unwrap_or(name);
@@ -200,8 +198,8 @@ fn scan_balanced_paren<'a>(
 /// Parse the chore parameter list from `text`.
 ///
 /// Reads bare-identifier params with optional `="STRING"` or `=( EXPR )`
-/// defaults, enforces required-before-defaulted ordering, duplicate-name
-/// rejection, and reserved-name rejection. Stops at `:` or end-of-input.
+/// defaults, enforces required-before-defaulted ordering and duplicate-name
+/// rejection. Stops at `:` or end-of-input.
 ///
 /// Returns `(params, remaining_text)`.
 fn parse_chore_params<'a>(
@@ -277,14 +275,9 @@ fn parse_chore_params<'a>(
         }
         remaining = remaining.trim_start();
 
-        // Reserved-name check.
-        if RESERVED_RECIPE_SEGMENTS.contains(&param_name.as_str()) {
-            return Err(LexError::ReservedChoreParam {
-                line,
-                chore: chore_name.to_string(),
-                name: param_name,
-            });
-        }
+        // CS-0132: the reserved-segment ban (§A.2) is gated to dotted
+        // reference surfaces and the env-first prefix; it does NOT constrain
+        // chore parameter names. `name`, `in`, `out`, etc. are all legal.
 
         // Duplicate-name check.
         if !seen_names.insert(param_name.clone()) {
@@ -451,13 +444,14 @@ fn parse_names(text: &str, line: usize) -> Result<Vec<String>, LexError> {
 }
 
 /// Scan one `probe_ref ::= IDENT (":" IDENT)?` from the front of `s`.
-/// IDENT chars are `[A-Za-z0-9_]`. A `:` is consumed into the name ONLY when
+/// Each segment uses the recipe-name char set `is_ident_char`
+/// (`[A-Za-z0-9_.-]`, CS-0131). A `:` is consumed into the name ONLY when
 /// immediately followed by an ident-start char (no whitespace) — this is the
 /// module-prefix colon. A second contiguous `:` is the malformed triple-colon
 /// case. Returns `(name, rest_after_name)`.
 fn scan_probe_ref(s: &str, line: usize) -> Result<(String, &str), LexError> {
     fn seg_len(s: &str) -> usize {
-        s.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(s.len())
+        s.find(|c: char| !is_ident_char(c)).unwrap_or(s.len())
     }
     let s = s.trim_start();
     let n1 = seg_len(s);
@@ -488,7 +482,14 @@ fn parse_probe_dep_list(text: &str, line: usize) -> Result<Vec<String>, LexError
     let mut deps = Vec::new();
     let mut rest = text.trim();
     while !rest.is_empty() {
-        let (name, after) = scan_probe_ref(rest, line)?;
+        // probe_ref ::= BARE_PROBE_KEY | STRING (App. A.3.2). Quoted arm mirrors
+        // the probe-NAME dispatch; the STRING form is the escape hatch for keys
+        // outside is_ident_char. CS-0131 / COOK-71.
+        let (name, after) = if rest.starts_with('"') {
+            parse_name(rest, line)?
+        } else {
+            scan_probe_ref(rest, line)?
+        };
         deps.push(name);
         rest = after.trim_start();
     }
@@ -532,12 +533,13 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
         {
             let rest = trimmed["recipe".len()..].trim();
             let (name, after_name) = parse_name(rest, line_num)?;
-            // Reserved-segment check first so the existing, more-specific
-            // diagnostics (e.g. "'env' is a reserved word") still fire for
-            // names like `env.foo` instead of being shadowed by the generic
-            // dotted-name rejection below.
-            check_reserved_recipe_name(&name, line_num)?;
             if name.contains('.') {
+                // CS-0132: the reserved-segment ban no longer constrains
+                // undotted declaration names. A dotted declaration name is
+                // rejected outright; run the reserved check first so a dotted
+                // reserved reference (env.foo, foo.out) keeps its specific
+                // "reserved word" diagnostic rather than the generic dotted one.
+                check_reserved_recipe_name(&name, line_num)?;
                 return Err(LexError::DottedDeclaredRecipeName { name, line: line_num });
             }
 
@@ -564,8 +566,10 @@ pub fn tokenize(source: &str) -> Result<Vec<Located<Token>>, LexError> {
         {
             let rest = trimmed["chore".len()..].trim();
             let (name, after_name) = parse_name(rest, line_num)?;
-            check_reserved_recipe_name(&name, line_num)?;
             if name.contains('.') {
+                // CS-0132: see the recipe reduction above — reserved check is
+                // gated to the dotted path so undotted `chore name` is legal.
+                check_reserved_recipe_name(&name, line_num)?;
                 return Err(LexError::DottedDeclaredChoreName { name, line: line_num });
             }
 
@@ -1199,25 +1203,50 @@ recipe "build"
     }
 
     #[test]
-    fn test_chore_reserved_name_rejected() {
-        for reserved in &["stem", "name", "ext", "dir", "in", "out", "all"] {
-            let input = format!("chore {}\n", reserved);
-            let result = tokenize(&input);
-            assert!(result.is_err(), "expected error for chore name '{}'", reserved);
+    fn former_reserved_words_allowed_as_chore_params() {
+        // CS-0132: the reserved-segment ban no longer applies to chore param names.
+        for word in &["stem", "name", "ext", "dir", "in", "out", "env"] {
+            let input = format!("chore deploy {}\n    > do_thing()\n", word);
+            assert!(
+                crate::parse(&input).is_ok(),
+                "chore param named '{}' must parse (CS-0132), got err",
+                word
+            );
         }
     }
 
     #[test]
-    fn test_reserved_recipe_name_rejected() {
-        for reserved in &["stem", "name", "ext", "dir", "in", "out", "all"] {
-            let input = format!("recipe {}\n    echo hi\n", reserved);
-            let result = crate::parse(&input);
-            assert!(
-                result.is_err(),
-                "expected error for reserved recipe name '{}', got ok",
-                reserved
-            );
+    fn former_reserved_words_allowed_as_undotted_decl_names() {
+        // CS-0132: the reserved-segment ban no longer applies to undotted
+        // recipe/chore DECLARATION names.
+        for word in &["stem", "name", "ext", "dir", "in", "out", "env"] {
+            let recipe = format!("recipe {}\n    ingredients \"src/*.c\"\n    cook \"o/$<in.stem>.o\" {{ cc -c $<in> -o $<out> }}\n", word);
+            assert!(crate::parse(&recipe).is_ok(), "recipe named '{}' must parse (CS-0132)", word);
+            let chore = format!("chore {}\n    > do_thing()\n", word);
+            assert!(crate::parse(&chore).is_ok(), "chore named '{}' must parse (CS-0132)", word);
         }
+    }
+
+    #[test]
+    fn dotted_env_decl_name_still_reserved_diagnostic() {
+        // CS-0132 keeps the reserved check on the dotted path: env.foo at a
+        // declaration site keeps the specific "reserved word" diagnostic rather
+        // than falling through to the generic dotted-name rejection.
+        let input = "recipe \"env.foo\"\n    echo hi\n";
+        match crate::parse(input) {
+            Err(e) => assert!(
+                e.to_string().contains("reserved word"),
+                "expected reserved-word diagnostic for 'env.foo', got: {e}"
+            ),
+            Ok(_) => panic!("recipe env.foo must be rejected"),
+        }
+    }
+
+    #[test]
+    fn recipe_named_all_is_allowed() {
+        // all is no longer a reserved recipe segment.
+        let src = "recipe all\n    ingredients \"src/*.c\"\n    cook \"out/$<in.stem>.o\" { cc -c $<in> -o $<out> }\n";
+        assert!(crate::parse(src).is_ok(), "recipe all must parse");
     }
 
     #[test]
@@ -1337,6 +1366,52 @@ recipe "build"
         let t = tokenize("probe cc:zlib: cc:compiler").unwrap();
         assert_eq!(t[0].value, Token::ProbeHeader {
             name: "cc:zlib".into(), deps: vec!["cc:compiler".into()],
+        });
+    }
+
+    #[test]
+    fn probe_header_hyphenated_bare_name() {
+        // COOK-71 sub-gap 1: a hyphen in a bare probe key must tokenise as one name.
+        let t = tokenize("probe demo:cc-version").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "demo:cc-version".into(), deps: vec![],
+        });
+    }
+
+    #[test]
+    fn probe_header_hyphenated_bare_dep() {
+        // COOK-71 sub-gap 2 (bare arm): a hyphenated upstream key in the dep list.
+        let t = tokenize("probe x: demo:cc-path").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "x".into(), deps: vec!["demo:cc-path".into()],
+        });
+    }
+
+    #[test]
+    fn probe_header_dotted_bare_name() {
+        // CS-0131: the widened segment matches BARE_IDENTIFIER (is_ident_char), which also admits '.'.
+        let t = tokenize("probe cc:zlib.dev").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "cc:zlib.dev".into(), deps: vec![],
+        });
+    }
+
+    #[test]
+    fn probe_header_quoted_hyphenated_dep() {
+        // COOK-71 sub-gap 2 (quoted arm): the dep list gains the STRING escape hatch
+        // already blessed by App. A.3.2 L168 (probe_ref ::= BARE_PROBE_KEY | STRING).
+        let t = tokenize("probe x: \"demo:cc-path\"").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "x".into(), deps: vec!["demo:cc-path".into()],
+        });
+    }
+
+    #[test]
+    fn probe_header_mixed_bare_and_quoted_deps() {
+        let t = tokenize("probe x: alpha \"cc:beta-1\" gamma").unwrap();
+        assert_eq!(t[0].value, Token::ProbeHeader {
+            name: "x".into(),
+            deps: vec!["alpha".into(), "cc:beta-1".into(), "gamma".into()],
         });
     }
 

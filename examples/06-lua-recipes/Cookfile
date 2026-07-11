@@ -1,11 +1,13 @@
 # 06 — Lua where shell runs out.
 #
-# Cookfiles lower to Lua, and you can drop into it at two distinct times:
+# Cookfiles lower to Lua, and a step's action can be Lua instead of shell:
 #
 #   >{ ... }   EXECUTE-time: the step's action is Lua instead of shell.
 #              Runs sandboxed per unit, cached like any other step.
-#   >>{ ... }  REGISTER-time: runs once while the DAG is being built —
-#              the escape hatch to cook's low-level API (cook.add_unit).
+#
+# A recipe body can also call cook's low-level API directly (`cook.add_unit`)
+# to register a unit by hand — the escape hatch for shapes the surface can't
+# express.
 #
 # And output paths themselves can be computed: `cook (LUA_EXPR)` evaluates
 # a Lua expression per input to name the output — handy when the mapping
@@ -37,14 +39,12 @@ recipe rot13
 # syntax fills in for you. Use this when the surface can't express a shape;
 # prefer the surface everywhere else.
 recipe stamp
-    >>{
-        cook.add_unit({
-            name    = "stamp",
-            inputs  = {},
-            outputs = {"out/stamp.txt"},
-            command = "printf 'made by the low-level API\\n' > out/stamp.txt",
-        })
-    }
+    cook.add_unit({
+        name    = "stamp",
+        inputs  = {},
+        outputs = {"out/stamp.txt"},
+        command = "printf 'made by the low-level API\\n' > out/stamp.txt",
+    })
 
 chore clean
     rm -rf out

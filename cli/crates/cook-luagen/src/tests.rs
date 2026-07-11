@@ -97,15 +97,18 @@ fn test_expand_template_in_stem_in_path() {
 }
 
 #[test]
-fn test_expand_template_all() {
+fn test_expand_template_in_many_to_one() {
+    // CS-0130: `$<all>` is gone; `$<in>` is unit-centric — in ManyToOne it
+    // lowers to the same `_cook_in` local, now holding the joined
+    // (table.concat) set rather than a per-item loop member.
     use std::collections::BTreeSet;
     use crate::resolver::{IterMode, OutputShape, ResolveCtx};
     use crate::template::{ConsultedEnv, expand_sigil_template};
     let r = BTreeSet::new();
     let ctx = ResolveCtx { mode: IterMode::ManyToOne, outputs: OutputShape::Single, recipes_in_scope: &r };
     let mut env = ConsultedEnv::new();
-    let result = expand_sigil_template("ar rcs $<out> $<all>", &ctx, &mut env, &mut crate::template::FileRefs::new("t")).unwrap();
-    assert_eq!(result, "\"ar rcs \" .. _cook_out .. \" \" .. _cook_all");
+    let result = expand_sigil_template("ar rcs $<out> $<in>", &ctx, &mut env, &mut crate::template::FileRefs::new("t")).unwrap();
+    assert_eq!(result, "\"ar rcs \" .. _cook_out .. \" \" .. _cook_in");
 }
 
 #[test]
@@ -241,7 +244,7 @@ fn test_cook_step_many_to_one() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib.a".to_string())],
                     body: Some(Body::ShellBlock(
-                        vec!["ar rcs $<out> $<all>".to_string()],
+                        vec!["ar rcs $<out> $<in>".to_string()],
                     )),
                     disposition: Default::default(),
                 },
@@ -251,7 +254,7 @@ fn test_cook_step_many_to_one() {
     )]);
     let output = generate(&cookfile);
     assert!(output.contains("local _cook_outputs_2 = {}"));
-    assert!(output.contains("local _cook_all = table.concat(_cook_outputs_1, \" \")"));
+    assert!(output.contains("local _cook_in = table.concat(_cook_outputs_1, \" \")"));
     assert!(output.contains("local _cook_out = \"build/lib.a\""));
     assert!(
         output.contains("cook.add_unit({inputs = _cook_outputs_1, output = _cook_out, command = "),
@@ -316,47 +319,6 @@ fn test_cook_step_lua_block() {
     assert!(!output.contains("lua = function()"), "should not emit lua = function(), got:\n{output}");
     // Should NOT have old API
     assert!(!output.contains("cook.layer"), "should not use cook.layer");
-}
-
-#[test]
-fn test_plate_step() {
-    // CS-0024: plate body uses $<in> (OneToOne mode) — iterates over prior cook outputs.
-    let cookfile = make_cookfile(vec![make_recipe(
-        "run",
-        vec![],
-        vec![],
-        vec![
-            Step::Cook {
-                step: CookStep {
-                    outputs: vec![OutputPattern::Quoted("bin/$<in.stem>".to_string())],
-                    body: None,
-                    disposition: Default::default(),
-                },
-                line: 2,
-            },
-            Step::Plate {
-                step: PlateStep {
-                    body: Body::ShellBlock(vec!["./$<in>".to_string()]),
-                },
-                line: 3,
-            },
-        ],
-    )]);
-    let output = generate(&cookfile);
-    assert!(output.contains("cook.step_group(function()"), "missing cook.step_group for plate");
-    assert!(output.contains("for _, _plate_in in ipairs(_cook_outputs_1) do"),
-        "expected _plate_in iteration, got:\n{output}");
-    assert!(
-        output.contains("cook.add_unit({command = "),
-        "missing cook.add_unit for plate, got:\n{output}"
-    );
-    assert!(
-        output.contains("cache = false"),
-        "plate step should have cache = false, got:\n{output}"
-    );
-    // Should NOT have old API
-    assert!(!output.contains("cook.layer"), "should not use cook.layer");
-    assert!(!output.contains("cook.exec"), "should not use cook.exec");
 }
 
 #[test]
@@ -522,40 +484,6 @@ fn test_cook_step_emits_step_group() {
     let group_pos = output.find("cook.step_group(function()").unwrap();
     let loop_pos = output.find("for _, _cook_in").unwrap();
     assert!(group_pos < loop_pos, "step_group should come before the loop");
-}
-
-#[test]
-fn test_plate_step_emits_step_group() {
-    // CS-0024: plate body is OneShot (no source placeholders) — still wrapped in step_group.
-    let cookfile = make_cookfile(vec![make_recipe(
-        "run",
-        vec![],
-        vec![],
-        vec![
-            Step::Cook {
-                step: CookStep {
-                    outputs: vec![OutputPattern::Quoted("bin/app".to_string())],
-                    body: None,
-                    disposition: Default::default(),
-                },
-                line: 2,
-            },
-            Step::Plate {
-                step: PlateStep {
-                    body: Body::ShellBlock(vec!["echo done".to_string()]),
-                },
-                line: 3,
-            },
-        ],
-    )]);
-    let output = generate(&cookfile);
-    // Should have step_group around both cook (declaration) and plate steps
-    let markers: Vec<_> = output.match_indices("cook.step_group(function()").collect();
-    // Cook (declaration) has step_group, Plate has step_group = 2
-    assert_eq!(markers.len(), 2, "expected 2 step_group calls, got:\n{output}");
-    // Should NOT have old markers
-    assert!(!output.contains("cook.begin_step()"), "should not use old cook.begin_step()");
-    assert!(!output.contains("cook.end_step()"), "should not use old cook.end_step()");
 }
 
 #[test]
@@ -741,9 +669,6 @@ fn test_test_step_codegen() {
             Step::Test {
                 step: TestStep {
                     body: Body::ShellBlock(vec!["./$<in>".to_string()]),
-                    as_name: None,
-                    timeout: None,
-                    should_fail: false,
                 },
                 line: 4,
             },
@@ -758,44 +683,19 @@ fn test_test_step_codegen() {
         output.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
         "expected _test_in iteration in:\n{output}"
     );
+    // CS-0135: `timeout`/`should_fail`/`name` are no longer modifiers on
+    // `test` — the engine applies its documented defaults when they're
+    // absent from the emitted table.
     assert!(
-        output.contains("timeout = 300"),
-        "expected default timeout 300 in:\n{output}"
+        !output.contains("timeout ="),
+        "should not emit a timeout field, got:\n{output}"
     );
     assert!(
-        output.contains("should_fail = false"),
-        "expected should_fail = false in:\n{output}"
+        !output.contains("should_fail ="),
+        "should not emit a should_fail field, got:\n{output}"
     );
     // Should NOT have old API
     assert!(!output.contains("cook.test_layer"), "should not use old cook.test_layer");
-}
-
-#[test]
-fn test_test_step_codegen_with_options() {
-    // CS-0024: test body is OneShot (no source placeholders) — timeout and should_fail pass through.
-    let cookfile = make_cookfile(vec![make_recipe(
-        "run-tests",
-        vec![],
-        vec![],
-        vec![Step::Test {
-            step: TestStep {
-                body: Body::ShellBlock(vec!["echo run-tests".to_string()]),
-                as_name: None,
-                timeout: Some(30),
-                should_fail: true,
-            },
-            line: 2,
-        }],
-    )]);
-    let output = generate(&cookfile);
-    assert!(
-        output.contains("timeout = 30"),
-        "expected timeout = 30 in:\n{output}"
-    );
-    assert!(
-        output.contains("should_fail = true"),
-        "expected should_fail = true in:\n{output}"
-    );
 }
 
 #[test]
@@ -837,8 +737,8 @@ fn test_no_hash_in_output() {
                 },
                 line: 3,
             },
-            Step::Plate {
-                step: PlateStep {
+            Step::Test {
+                step: TestStep {
                     body: Body::ShellBlock(vec!["./$<in>".to_string()]),
                 },
                 line: 4,
@@ -885,9 +785,6 @@ fn test_test_step_wrapped_in_step_group() {
         vec![Step::Test {
             step: TestStep {
                 body: Body::ShellBlock(vec!["echo run".to_string()]),
-                as_name: None,
-                timeout: None,
-                should_fail: false,
             },
             line: 2,
         }],
@@ -1010,10 +907,11 @@ fn test_dep_ref_in_command_emits_dep_output() {
             },
             Step::Cook {
                 step: CookStep {
-                    // CS-0022: literal output → many-to-one; body uses $<all> not $<in>
+                    // CS-0022/CS-0130: literal output → many-to-one; body uses
+                    // $<in> (unit-centric — the joined set) alongside dep refs.
                     outputs: vec![OutputPattern::Quoted("build/bin/app".to_string())],
                     body: Some(Body::ShellBlock(vec![
-                        "gcc -o $<out> $<all> $<libmath> $<libstr>".into(),
+                        "gcc -o $<out> $<in> $<libmath> $<libstr>".into(),
                     ])),
                     disposition: Default::default(),
                 },
@@ -1192,8 +1090,8 @@ fn test_bare_shell_no_sigil_keeps_long_string_shape() {
 }
 
 #[test]
-fn test_dep_ref_in_plate_command() {
-    // CS-0024: plate bodies may not reference {out}; use {app} dep-ref instead.
+fn test_dep_ref_in_test_command() {
+    // CS-0024: test bodies may not reference {out}; use {app} dep-ref instead.
     let names: std::collections::BTreeSet<String> =
         ["app"].iter().map(|s| s.to_string()).collect();
     let cookfile = make_cookfile(vec![make_recipe(
@@ -1209,8 +1107,8 @@ fn test_dep_ref_in_plate_command() {
                 },
                 line: 2,
             },
-            Step::Plate {
-                step: PlateStep {
+            Step::Test {
+                step: TestStep {
                     body: Body::ShellBlock(vec!["./$<app>".to_string()]),
                 },
                 line: 3,
@@ -1220,7 +1118,7 @@ fn test_dep_ref_in_plate_command() {
     let output = crate::generate_with_names(&cookfile, &names).expect("codegen");
     assert!(
         output.contains(r#"cook.dep_output("app")"#),
-        "expected cook.dep_output for app in plate step, got:\n{output}"
+        "expected cook.dep_output for app in test step, got:\n{output}"
     );
 }
 
@@ -1278,7 +1176,7 @@ fn test_dep_driven_followed_by_many_to_one() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libprotos.a".to_string())],
-                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<in>".into()])),
                     disposition: Default::default(),
                 },
                 line: 3,
@@ -1418,7 +1316,7 @@ fn test_codegen_emits_unnamed_and_named_in_order() {
 
 #[test]
 fn test_config_body_line_alignment_unnamed_no_uses() {
-    let source = "config\n    env.X = bad()\n\nrecipe r\n    echo hi\n";
+    let source = "config\n    env.X = bad()\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
     let out = crate::generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
@@ -1434,7 +1332,7 @@ fn test_config_body_line_alignment_unnamed_no_uses() {
 
 #[test]
 fn test_config_body_line_alignment_with_leading_use() {
-    let source = "use foo\nconfig\n    env.Y = \"1\"\n\nrecipe r\n    echo hi\n";
+    let source = "use foo\nconfig\n    env.Y = \"1\"\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
     let out = crate::generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
@@ -1451,7 +1349,7 @@ fn test_config_body_line_alignment_with_leading_use() {
 #[test]
 fn test_config_body_line_alignment_named_block() {
     let source =
-        "config\n    env.A = \"1\"\nconfig release\n    env.B = \"2\"\n\nrecipe r\n    echo hi\n";
+        "config\n    env.A = \"1\"\nconfig release\n    env.B = \"2\"\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
     let out = crate::generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
@@ -1473,7 +1371,7 @@ fn test_config_body_line_alignment_named_block() {
 
 #[test]
 fn test_config_body_comment_line_becomes_blank_preserving_alignment() {
-    let source = "config\n    # note\n    env.Z = \"1\"\n\nrecipe r\n    echo hi\n";
+    let source = "config\n    # note\n    env.Z = \"1\"\n\nrecipe r\n    cook \"x\" { echo hi }\n";
     let cookfile = cook_lang::parse(source).expect("parse");
     let out = crate::generate(&cookfile);
     let lines: Vec<&str> = out.split('\n').collect();
@@ -1515,7 +1413,7 @@ fn test_cross_recipe_deps_codegen_integration() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libmath.a".into())],
-                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<in>".into()])),
                     disposition: Default::default(),
                 },
                 line: 4,
@@ -1533,7 +1431,7 @@ fn test_cross_recipe_deps_codegen_integration() {
             Step::Cook {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/lib/libstr.a".into())],
-                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<all>".into()])),
+                    body: Some(Body::ShellBlock(vec!["ar rcs $<out> $<in>".into()])),
                     disposition: Default::default(),
                 },
                 line: 9,
@@ -1542,9 +1440,10 @@ fn test_cross_recipe_deps_codegen_integration() {
         make_recipe("app", vec![], vec!["src/main.c"], vec![
             Step::Cook {
                 step: CookStep {
-                    // CS-0022: literal output → many-to-one; body uses $<all>
+                    // CS-0022/CS-0130: literal output → many-to-one; body
+                    // uses $<in> (unit-centric — the joined set).
                     outputs: vec![OutputPattern::Quoted("build/obj/main.o".into())],
-                    body: Some(Body::ShellBlock(vec!["gcc -c $<all> -o $<out>".into()])),
+                    body: Some(Body::ShellBlock(vec!["gcc -c $<in> -o $<out>".into()])),
                     disposition: Default::default(),
                 },
                 line: 13,
@@ -1553,7 +1452,7 @@ fn test_cross_recipe_deps_codegen_integration() {
                 step: CookStep {
                     outputs: vec![OutputPattern::Quoted("build/bin/app".into())],
                     body: Some(Body::ShellBlock(vec![
-                        "gcc -o $<out> $<all> $<libmath> $<libstr>".into(),
+                        "gcc -o $<out> $<in> $<libmath> $<libstr>".into(),
                     ])),
                     disposition: Default::default(),
                 },
@@ -1601,7 +1500,6 @@ fn blockstep_shell_multi_output() {
         cp x a.js
         cp y b.wasm
     }
-end
 "#;
     let cookfile = cook_lang::parse(source).expect("parse");
     let lua = crate::generate(&cookfile);
@@ -1625,7 +1523,6 @@ fn blockstep_lua_multi_output() {
     cook "a.js" "b.wasm" >{
         sh("wasm-pack build")
     }
-end
 "#;
     let cookfile = cook_lang::parse(source).expect("parse");
     let lua = crate::generate(&cookfile);
@@ -1661,7 +1558,6 @@ fn onetoone_lua_emits_lua_code_not_function() {
     cook "build/obj/$<in.stem>.o" >{
         sh("gcc -c " .. input .. " -o " .. output)
     }
-end
 "#;
     let cookfile = cook_lang::parse(source).expect("parse");
     let lua = crate::generate(&cookfile);
@@ -1768,41 +1664,6 @@ fn test_accessor_placeholder_in_using_string_without_driver_is_rejected() {
 }
 
 #[test]
-fn test_accessor_placeholder_in_plate_command_rejected() {
-    let names: std::collections::BTreeSet<String> =
-        ["protos"].iter().map(|s| s.to_string()).collect();
-    let cookfile = make_cookfile(vec![
-        make_recipe("protos", vec![], vec![], vec![]),
-        make_recipe(
-            "bad",
-            vec![],
-            vec![],
-            vec![
-                Step::Cook {
-                    step: CookStep {
-                        outputs: vec![OutputPattern::Quoted("bin/app".to_string())],
-                        body: None,
-                        disposition: Default::default(),
-                    },
-                    line: 2,
-                },
-                Step::Plate {
-                    step: PlateStep {
-                        body: Body::ShellBlock(vec!["./$<out> $<protos.stem>".to_string()]),
-                    },
-                    line: 3,
-                },
-            ],
-        ),
-    ]);
-    let result = crate::generate_with_names_checked(&cookfile, &names);
-    assert!(
-        result.is_err(),
-        "accessor placeholder in plate command must error"
-    );
-}
-
-#[test]
 fn test_accessor_placeholder_in_test_command_rejected() {
     let names: std::collections::BTreeSet<String> =
         ["protos"].iter().map(|s| s.to_string()).collect();
@@ -1815,9 +1676,6 @@ fn test_accessor_placeholder_in_test_command_rejected() {
             vec![Step::Test {
                 step: TestStep {
                     body: Body::ShellBlock(vec!["echo $<protos.stem>".to_string()]),
-                    as_name: None,
-                    timeout: None,
-                    should_fail: false,
                 },
                 line: 2,
             }],
@@ -2028,10 +1886,11 @@ fn test_compile_chore_with_lua_step_cache_false() {
 fn chore_lua_block_unit_emits_interactive_true() {
     // CS-0051: Lua steps in a chore body run on the drain thread (controlling
     // terminal), so the emitted body unit must carry `interactive = true`.
-    // Uses `>` prefix for a Lua line.
+    // Uses `>` prefix for a Lua line. CS-0134: `@` is removed language-wide;
+    // chore shell steps are already always interactive.
     let cookfile_src = r#"
 chore mychore
-    @echo first
+    echo first
     > print("from lua")
 "#;
     let lua = generate_lua_for_test(cookfile_src);
@@ -2149,7 +2008,6 @@ fn cs_0022_validate_placeholders_returns_error_not_panic() {
     cook "build/$<in.stem>.o" {
         gcc -c $<in> -o $<out_1>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2167,24 +2025,51 @@ end
 }
 
 #[test]
-fn cs_0022_validate_bare_in_in_many_to_one_returns_error() {
-    // $<in> in a many-to-one (literal output) step must error.
+fn cs_0130_bare_in_in_many_to_one_is_valid() {
+    // CS-0130: `$<in>` is unit-centric — in a many-to-one (literal output)
+    // step it resolves to the joined (table.concat) input set, so it is no
+    // longer an error.
     let src = r#"recipe "build"
     ingredients "src/*.c"
     cook "build/app" {
         gcc $<in> -o $<out>
     }
-end
+"#;
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let names = crate::dep_ref::extract_recipe_names(&cookfile);
+    let result = crate::generate_with_names_checked(&cookfile, &names);
+    assert!(
+        result.is_ok(),
+        "$<in> in many-to-one step must be accepted, got: {:?}",
+        result.err()
+    );
+    let output = result.unwrap();
+    assert!(
+        output.contains("_cook_in"),
+        "expected the joined $<in> local, got:\n{output}"
+    );
+}
+
+#[test]
+fn cs_0130_in_accessor_in_many_to_one_returns_error() {
+    // $<in.ACCESSOR> requires the input set be singular — still rejected in
+    // many-to-one (the set is collected; a path accessor on the joined form
+    // is meaningless).
+    let src = r#"recipe "build"
+    ingredients "src/*.c"
+    cook "build/app" {
+        gcc $<in.stem> -o $<out>
+    }
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let result = crate::generate_with_names_checked(&cookfile, &names);
     assert!(
         result.is_err(),
-        "$<in> in many-to-one step must error"
+        "$<in.stem> in many-to-one step must error"
     );
     let err_str = result.unwrap_err().to_string();
-    assert!(err_str.contains("$<in>") || err_str.contains("in"), "error must name $<in>, got: {err_str}");
+    assert!(err_str.contains("in.stem") || err_str.contains("in"), "error must name $<in.stem>, got: {err_str}");
 }
 
 #[test]
@@ -2195,7 +2080,6 @@ fn cs_0022_bare_stem_in_output_pattern_returns_error() {
     cook "build/$<stem>.o" {
         gcc -c $<in> -o $<out>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2223,7 +2107,6 @@ recipe "build"
     cook "build/$<in.stem>.o" {
         gcc -c $<in> -o $<out> -L $<libmath.dir>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2246,7 +2129,6 @@ fn cs_0022_out_bare_in_multi_output_returns_error() {
     cook "a.js" "a.wasm" {
         gen --js $<out>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2267,7 +2149,6 @@ recipe "build"
     cook "$<in.stem>.o" "$<libmath.stem>.bin" {
         do-stuff
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -2281,109 +2162,11 @@ end
     );
 }
 
-// ── CS-0024: plate step six (mode × form) coverage ───────────────
+// ── CS-0024/CS-0135: test step mode (× form) coverage ────────────
 
 #[test]
-fn test_plate_step_shell_one_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate {\n        ./$<in>\n    }\n";
-    let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
-    assert!(
-        lua.contains("for _, _plate_in in ipairs(_cook_outputs_1)"),
-        "expected one-to-one plate loop, got:\n{lua}"
-    );
-    assert!(lua.contains("cook.add_unit("), "expected cook.add_unit, got:\n{lua}");
-    assert!(lua.contains("cache = false"), "expected cache=false, got:\n{lua}");
-}
-
-#[test]
-fn test_plate_step_shell_many_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate { tar -czf bundle.tgz $<all> }\n";
-    let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
-    assert!(
-        !lua.contains("for _, _plate_in"),
-        "many-to-one should not emit a loop, got:\n{lua}"
-    );
-    assert!(
-        lua.contains("table.concat(_cook_outputs_1, \" \")"),
-        "expected table.concat for $<all>, got:\n{lua}"
-    );
-    assert!(lua.contains("cook.add_unit("), "expected cook.add_unit, got:\n{lua}");
-    assert!(lua.contains("cache = false"), "expected cache=false, got:\n{lua}");
-}
-
-#[test]
-fn test_plate_step_shell_one_shot() {
-    let src = "recipe r\n    plate { echo build complete }\n";
-    let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
-    assert!(
-        !lua.contains("for _, _plate_in"),
-        "one-shot should not emit a loop, got:\n{lua}"
-    );
-    assert!(lua.contains("cook.add_unit("), "expected cook.add_unit, got:\n{lua}");
-    assert!(lua.contains("cache = false"), "expected cache=false, got:\n{lua}");
-}
-
-#[test]
-fn test_plate_step_lua_one_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate >{\n        cook.sh(\"strip \" .. input)\n    }\n";
-    let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
-    assert!(
-        lua.contains("for _, _plate_in in ipairs(_cook_outputs_1)"),
-        "expected one-to-one plate loop, got:\n{lua}"
-    );
-    // Lua binding: `local input = ...` prepended at register time via string.format.
-    assert!(
-        lua.contains("local input = "),
-        "expected 'local input = ' binding, got:\n{lua}"
-    );
-    assert!(lua.contains("lua_code ="), "expected lua_code field, got:\n{lua}");
-    assert!(lua.contains("cache = false"), "expected cache=false, got:\n{lua}");
-}
-
-#[test]
-fn test_plate_step_lua_many_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate >{\n        for _, b in ipairs(inputs) do cook.sh(\"strip \" .. b) end\n    }\n";
-    let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
-    assert!(
-        !lua.contains("for _, _plate_in in ipairs"),
-        "many-to-one should not emit a _plate_in loop, got:\n{lua}"
-    );
-    // Lua binding: `local inputs = {...}` serialised at register time.
-    assert!(
-        lua.contains("local inputs = {"),
-        "expected 'local inputs = {{...}}' binding, got:\n{lua}"
-    );
-    assert!(lua.contains("lua_code ="), "expected lua_code field, got:\n{lua}");
-    assert!(lua.contains("cache = false"), "expected cache=false, got:\n{lua}");
-}
-
-#[test]
-fn test_plate_step_lua_one_shot() {
-    let src = "recipe r\n    plate >{\n        os.execute(\"echo done\")\n    }\n";
-    let cookfile = cook_lang::parse(src).expect("parse");
-    let lua = crate::generate(&cookfile);
-    assert!(
-        !lua.contains("for _, _plate_in"),
-        "one-shot should not emit a loop, got:\n{lua}"
-    );
-    assert!(
-        !lua.contains("local input = "),
-        "one-shot should not emit input binding, got:\n{lua}"
-    );
-    assert!(lua.contains("lua_code ="), "expected lua_code field, got:\n{lua}");
-    assert!(lua.contains("cache = false"), "expected cache=false, got:\n{lua}");
-}
-
-// ── CS-0024: test step six (mode × form) coverage ────────────────
-
-#[test]
-fn test_test_step_shell_one_to_one_with_modifiers() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { ./$<in> } timeout 60 should_fail\n";
+fn test_test_step_shell_one_to_one() {
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { ./$<in> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2391,30 +2174,46 @@ fn test_test_step_shell_one_to_one_with_modifiers() {
         "expected one-to-one test loop, got:\n{lua}"
     );
     assert!(lua.contains("cook.add_test("), "expected cook.add_test, got:\n{lua}");
-    assert!(lua.contains("timeout = 60"), "expected timeout = 60, got:\n{lua}");
-    assert!(lua.contains("should_fail = true"), "expected should_fail = true, got:\n{lua}");
+    // CS-0135: no timeout/should_fail/name modifiers are emitted.
+    assert!(!lua.contains("timeout ="), "should not emit timeout, got:\n{lua}");
+    assert!(!lua.contains("should_fail ="), "should not emit should_fail, got:\n{lua}");
 }
 
 #[test]
-fn test_test_step_shell_many_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { run-suite $<all> }\n";
+fn test_test_step_shell_batched_form_is_gone() {
+    // CS-0130: a shell test body is per-item ($<in>) or one-shot only.
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { run-suite $<in> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
-        !lua.contains("for _, _test_in"),
-        "many-to-one should not emit a loop, got:\n{lua}"
-    );
-    assert!(
-        lua.contains("table.concat(_cook_outputs_1, \" \")"),
-        "expected table.concat for $<all>, got:\n{lua}"
+        lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
+        "expected one-to-one test loop, got:\n{lua}"
     );
     assert!(lua.contains("cook.add_test("), "expected cook.add_test, got:\n{lua}");
-    assert!(lua.contains("timeout = 300"), "expected default timeout 300, got:\n{lua}");
+}
+
+#[test]
+fn test_test_step_batched_via_lua_inputs() {
+    // CS-0130: batched (many-to-one) test is expressed via the Lua block
+    // form (`inputs`) — the shell form cannot express it since `$<all>`
+    // was removed.
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test >{ os.execute(\"run-suite \" .. table.concat(inputs, \" \")) }\n";
+    let cookfile = cook_lang::parse(src).expect("parse");
+    let lua = crate::generate(&cookfile);
+    assert!(
+        !lua.contains("for _, _test_in in ipairs"),
+        "many-to-one should not emit a _test_in loop, got:\n{lua}"
+    );
+    assert!(
+        lua.contains("local inputs = {"),
+        "expected 'local inputs = {{...}}' binding, got:\n{lua}"
+    );
+    assert!(lua.contains("cook.add_test("), "expected cook.add_test, got:\n{lua}");
 }
 
 #[test]
 fn test_test_step_shell_one_shot() {
-    let src = "recipe r\n    test { echo smoke-test } timeout 10\n";
+    let src = "recipe r\n    test { echo smoke-test }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2422,8 +2221,6 @@ fn test_test_step_shell_one_shot() {
         "one-shot should not emit a loop, got:\n{lua}"
     );
     assert!(lua.contains("cook.add_test("), "expected cook.add_test, got:\n{lua}");
-    assert!(lua.contains("timeout = 10"), "expected timeout = 10, got:\n{lua}");
-    assert!(lua.contains("should_fail = false"), "expected should_fail = false, got:\n{lua}");
 }
 
 #[test]
@@ -2440,12 +2237,11 @@ fn test_test_step_lua_one_to_one() {
         "expected 'local input = ' binding, got:\n{lua}"
     );
     assert!(lua.contains("lua_code ="), "expected lua_code field, got:\n{lua}");
-    assert!(lua.contains("timeout = 300"), "expected default timeout 300, got:\n{lua}");
 }
 
 #[test]
 fn test_test_step_lua_many_to_one() {
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test >{\n        for _, b in ipairs(inputs) do cook.sh(\"./ \" .. b) end\n    } timeout 120\n";
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test >{\n        for _, b in ipairs(inputs) do cook.sh(\"./ \" .. b) end\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2457,12 +2253,11 @@ fn test_test_step_lua_many_to_one() {
         "expected 'local inputs = {{...}}' binding, got:\n{lua}"
     );
     assert!(lua.contains("lua_code ="), "expected lua_code field, got:\n{lua}");
-    assert!(lua.contains("timeout = 120"), "expected timeout = 120, got:\n{lua}");
 }
 
 #[test]
 fn test_test_step_lua_one_shot() {
-    let src = "recipe r\n    test >{\n        os.execute(\"echo smoke\")\n    } should_fail\n";
+    let src = "recipe r\n    test >{\n        os.execute(\"echo smoke\")\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = crate::generate(&cookfile);
     assert!(
@@ -2474,15 +2269,14 @@ fn test_test_step_lua_one_shot() {
         "one-shot should not emit input binding, got:\n{lua}"
     );
     assert!(lua.contains("lua_code ="), "expected lua_code field, got:\n{lua}");
-    assert!(lua.contains("should_fail = true"), "expected should_fail = true, got:\n{lua}");
 }
 
-// ── CS-0024: plate/test placeholder rejection tests ───────────────
+// ── CS-0024/CS-0135: test placeholder rejection tests ─────────────
 
 #[test]
-fn test_plate_out_rejected() {
-    // $<out> is explicitly forbidden in plate bodies (CS-0024 firewall).
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate { ./$<out> }\n";
+fn test_test_out_rejected() {
+    // $<out> is explicitly forbidden in test bodies (CS-0024 firewall).
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { ./$<out> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
@@ -2494,23 +2288,29 @@ fn test_plate_out_rejected() {
 }
 
 #[test]
-fn test_plate_mixed_in_and_all_rejected() {
-    // Using both $<in> and $<all> in the same plate body is a mixed-mode error.
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate { echo $<in> $<all> }\n";
+fn test_test_shell_in_and_all_named_env_coexist() {
+    // CS-0130: `$<all>` is no longer a reserved builtin, so a shell test
+    // body may combine `$<in>` (per-item, OneToOne) with a literal `$<all>`
+    // token, which now falls through to `cook.require_env("all")` like any
+    // other unrecognized name — no mixed-mode rejection.
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { echo $<in> $<all> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
-    let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
-    let msg = format!("{}", err);
+    let lua = crate::generate_with_names(&cookfile, &names).expect("codegen");
     assert!(
-        msg.contains("$<in>") && msg.contains("$<all>"),
-        "expected mixed-mode rejection naming both $<in> and $<all>, got: {msg}"
+        lua.contains("for _, _test_in in ipairs(_cook_outputs_1)"),
+        "expected one-to-one test loop, got:\n{lua}"
+    );
+    assert!(
+        lua.contains(r#"cook.require_env("all")"#),
+        "expected $<all> to fall through to require_env, got:\n{lua}"
     );
 }
 
 #[test]
-fn test_plate_lua_mixed_input_and_inputs_rejected() {
-    // Using both `input` and `inputs` in the same Lua plate body is rejected.
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate >{\n        print(input)\n        print(inputs[1])\n    }\n";
+fn test_test_lua_mixed_input_and_inputs_rejected() {
+    // Using both `input` and `inputs` in the same Lua test body is rejected.
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test >{\n        print(input)\n        print(inputs[1])\n    }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
@@ -2522,9 +2322,9 @@ fn test_plate_lua_mixed_input_and_inputs_rejected() {
 }
 
 #[test]
-fn test_plate_bare_stem_rejected() {
-    // Bare $<stem> in a plate body is rejected; use $<in.stem> instead.
-    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    plate { ./$<stem>.out }\n";
+fn test_test_bare_stem_rejected() {
+    // Bare $<stem> in a test body is rejected; use $<in.stem> instead.
+    let src = "recipe r\n    ingredients \"src/*.c\"\n    cook \"build/$<in.stem>\" { cc $<in> -o $<out> }\n    test { ./$<stem>.out }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
@@ -2536,9 +2336,9 @@ fn test_plate_bare_stem_rejected() {
 }
 
 #[test]
-fn test_plate_lib_accessor_rejected() {
-    // $<lib.stem> in a plate body hits the §5.4 firewall — plate has no output pattern.
-    let src = "recipe lib\n    ingredients \"x/*.c\"\n    cook \"build/$<in.stem>.o\" { cc -c $<in> -o $<out> }\nrecipe r: lib\n    cook \"build/app\" { cc $<lib> -o $<out> }\n    plate { echo $<lib.stem> }\n";
+fn test_test_lib_accessor_rejected() {
+    // $<lib.stem> in a test body hits the §5.4 firewall — test has no output pattern.
+    let src = "recipe lib\n    ingredients \"x/*.c\"\n    cook \"build/$<in.stem>.o\" { cc -c $<in> -o $<out> }\nrecipe r: lib\n    cook \"build/app\" { cc $<lib> -o $<out> }\n    test { echo $<lib.stem> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let err = crate::generate_with_names(&cookfile, &names).unwrap_err();
@@ -2564,7 +2364,6 @@ fn cook_step_with_env_tokens_emits_consulted_env_keys() {
 recipe build
     ingredients "src/*.c"
     cook "build/$<in.stem>.o" { gcc $<CFLAGS> -c $<in> -o $<out> }
-end
 "#;
     let lua = generate_lua_for_test(cookfile_text);
     assert!(
@@ -2587,7 +2386,6 @@ recipe build
     cook "build/{in.stem}.o" >{
         os.execute("gcc -c " .. input .. " -o " .. output)
     }
-end
 "#;
     let lua = generate_lua_for_test(cookfile_text);
     assert!(
@@ -2614,7 +2412,6 @@ recipe touch
         f:write("BAR=" .. tostring(cook.env.BAR))
         f:close()
     }
-end
 "#;
     let lua = generate_lua_for_test(cookfile_text);
     assert!(
@@ -2670,55 +2467,6 @@ fn chore_body_passes_literal_braces_through() {
     );
 }
 
-// ─── Task 2.5: as_name codegen tests ────────────────────────────────────────
-
-#[test]
-fn test_step_codegen_with_as_emits_name_field() {
-    let cook_src = r#"
-recipe r
-    test { true } as 'my-test' timeout 5
-"#;
-    let lua = generate_lua_for_test(cook_src);
-    assert!(
-        lua.contains("name = \"my-test\""),
-        "expected emitted Lua to set name; got:\n{lua}"
-    );
-}
-
-#[test]
-fn test_step_codegen_without_as_omits_name_field_or_uses_auto() {
-    let cook_src = r#"
-recipe r
-    test { true } timeout 5
-"#;
-    let lua = generate_lua_for_test(cook_src);
-    // Auto-name path: codegen MAY emit `name = "test#1"` or omit the field
-    // entirely; both are valid per §3.2 (the runner generates the auto-name
-    // if the field is absent or empty). We only assert no `as_name` was
-    // forced through.
-    assert!(!lua.contains("name = \"my-test\""));
-}
-
-#[test]
-fn test_step_codegen_substitutes_as_name() {
-    // The `as '$<in.stem>-rt'` modifier substitutes per CS-0033 at codegen.
-    let cook_src = r#"
-recipe r
-    ingredients "src/*.txt"
-    cook "build/$<in.stem>.out" { echo > $<out> }
-    test { test -s $<in> } as '$<in.stem>-rt'
-"#;
-    let lua = generate_lua_for_test(cook_src);
-    // The emitted Lua should contain a name expression that substitutes
-    // through the existing iteration binding (`_test_in` or equivalent).
-    // The exact name varies per emitter; assert the bare token doesn't
-    // leak through unsubstituted.
-    assert!(
-        !lua.contains("name = \"$<in.stem>-rt\""),
-        "as_name should be substituted, not literal:\n{lua}"
-    );
-}
-
 // ── Standard §4.3: ingredients is union(includes) \ union(excludes) ──
 
 #[test]
@@ -2762,7 +2510,7 @@ fn cook_step_iterates_union_of_all_include_globs() {
 
 #[test]
 fn cook_step_many_to_one_iterates_union_too() {
-    // Many-to-one steps (literal output, $<all> body) used the same
+    // Many-to-one steps (literal output, $<in> body) used the same
     // hardcoded `recipe.ingredients[1]` as the iteration source. The
     // fix applies uniformly across iteration modes.
     let cookfile = make_cookfile(vec![make_recipe(
@@ -2773,7 +2521,7 @@ fn cook_step_many_to_one_iterates_union_too() {
             step: CookStep {
                 outputs: vec![OutputPattern::Quoted("build/app".to_string())],
                 body: Some(Body::ShellBlock(
-                    vec!["echo $<all>".to_string()],
+                    vec!["echo $<in>".to_string()],
                 )),
                 disposition: Default::default(),
             },
@@ -2783,7 +2531,7 @@ fn cook_step_many_to_one_iterates_union_too() {
     let output = generate(&cookfile);
     assert!(
         output.contains("table.concat(ingredients, \" \")"),
-        "many-to-one $<all> must concat the merged `ingredients` local, got:\n{output}"
+        "many-to-one $<in> must concat the merged `ingredients` local, got:\n{output}"
     );
     assert!(
         !output.contains("table.concat(recipe.ingredients[1]"),
@@ -2792,16 +2540,16 @@ fn cook_step_many_to_one_iterates_union_too() {
 }
 
 #[test]
-fn plate_step_iterates_union_of_all_include_globs() {
-    // Plate steps fall back to the recipe's resolved ingredient set
+fn test_step_iterates_union_of_all_include_globs_fallback() {
+    // Test steps fall back to the recipe's resolved ingredient set
     // (Standard §4.7.1) when no preceding cook step exists. The fallback
     // must read the merged `ingredients` local, not `recipe.ingredients[1]`.
     let cookfile = make_cookfile(vec![make_recipe(
         "show",
         vec![],
         vec!["src/*.c", "include/*.h"],
-        vec![Step::Plate {
-            step: PlateStep {
+        vec![Step::Test {
+            step: TestStep {
                 body: Body::ShellBlock(vec!["echo $<in>".to_string()]),
             },
             line: 3,
@@ -2809,28 +2557,28 @@ fn plate_step_iterates_union_of_all_include_globs() {
     )]);
     let output = generate(&cookfile);
     assert!(
-        output.contains("for _, _plate_in in ipairs(ingredients) do"),
-        "plate must iterate the merged `ingredients` local, got:\n{output}"
+        output.contains("for _, _test_in in ipairs(ingredients) do"),
+        "test must iterate the merged `ingredients` local, got:\n{output}"
     );
     assert!(
         !output.contains("ipairs(recipe.ingredients[1])"),
-        "plate must NOT iterate recipe.ingredients[1] only, got:\n{output}"
+        "test must NOT iterate recipe.ingredients[1] only, got:\n{output}"
     );
 }
 
 #[test]
-fn plate_step_emits_passthrough_after_iteration() {
-    // Standard §5.4.1: a `plate` step's output is its input list,
+fn test_step_emits_passthrough_after_iteration() {
+    // Standard §5.4.1: a `test` step's output is its input list,
     // forwarded as the recipe's terminal outputs so `$<recipe>` refs
-    // expand to the plate's ingredients (or the preceding cook step's
+    // expand to the test's ingredients (or the preceding cook step's
     // outputs). The codegen calls `cook.passthrough(<source>)` after
     // the iteration loop, inside the enclosing step_group.
     let cookfile = make_cookfile(vec![make_recipe(
         "greet",
         vec![],
         vec!["Cookfile"],
-        vec![Step::Plate {
-            step: PlateStep {
+        vec![Step::Test {
+            step: TestStep {
                 body: Body::ShellBlock(vec!["echo \"$<in>\"".to_string()]),
             },
             line: 3,
@@ -2839,24 +2587,24 @@ fn plate_step_emits_passthrough_after_iteration() {
     let output = generate(&cookfile);
     assert!(
         output.contains("cook.passthrough(ingredients)"),
-        "plate must emit cook.passthrough(ingredients) so its input list \
+        "test must emit cook.passthrough(ingredients) so its input list \
          flows out as the recipe's terminal outputs, got:\n{output}"
     );
 }
 
 #[test]
-fn plate_step_oneshot_with_ingredients_still_passthroughs() {
-    // The Standard rule applies even when the plate body doesn't use
-    // $<in>/$<all> (OneShot mode) — the input list is still the plate's
-    // output. A bare `plate { echo "hi" }` after `ingredients "Cookfile"`
+fn test_step_oneshot_with_ingredients_still_passthroughs() {
+    // The Standard rule applies even when the test body doesn't use
+    // $<in> at all (OneShot mode) — the input list is still the test's
+    // output. A bare `test { echo "hi" }` after `ingredients "Cookfile"`
     // therefore emits a passthrough, and downstream `$<greet>` sees
     // `Cookfile` (not the empty string).
     let cookfile = make_cookfile(vec![make_recipe(
         "greet",
         vec![],
         vec!["Cookfile"],
-        vec![Step::Plate {
-            step: PlateStep {
+        vec![Step::Test {
+            step: TestStep {
                 body: Body::ShellBlock(vec!["echo hello".to_string()]),
             },
             line: 3,
@@ -2865,12 +2613,12 @@ fn plate_step_oneshot_with_ingredients_still_passthroughs() {
     let output = generate(&cookfile);
     assert!(
         output.contains("cook.passthrough(ingredients)"),
-        "OneShot plate with ingredients must still passthrough, got:\n{output}"
+        "OneShot test with ingredients must still passthrough, got:\n{output}"
     );
 }
 
 #[test]
-fn plate_step_with_no_source_omits_passthrough() {
+fn test_step_with_no_source_omits_passthrough() {
     // A recipe with no ingredients and no preceding cook step has no
     // input list to pass through; emitting `cook.passthrough(...)` would
     // reference an undefined Lua local. Codegen skips the call in this
@@ -2879,8 +2627,8 @@ fn plate_step_with_no_source_omits_passthrough() {
         "greet",
         vec![],
         vec![],
-        vec![Step::Plate {
-            step: PlateStep {
+        vec![Step::Test {
+            step: TestStep {
                 body: Body::ShellBlock(vec!["echo hello".to_string()]),
             },
             line: 3,
@@ -2889,13 +2637,13 @@ fn plate_step_with_no_source_omits_passthrough() {
     let output = generate(&cookfile);
     assert!(
         !output.contains("cook.passthrough"),
-        "a plate with no source must not emit cook.passthrough, got:\n{output}"
+        "a test with no source must not emit cook.passthrough, got:\n{output}"
     );
 }
 
 #[test]
-fn plate_step_after_cook_passthroughs_cook_outputs() {
-    // When a plate follows a cook step, the source is the cook step's
+fn test_step_after_cook_passthroughs_cook_outputs() {
+    // When a test follows a cook step, the source is the cook step's
     // outputs (`_cook_outputs_N`), not the recipe's ingredients.
     let cookfile = make_cookfile(vec![make_recipe(
         "build",
@@ -2910,8 +2658,8 @@ fn plate_step_after_cook_passthroughs_cook_outputs() {
                 },
                 line: 3,
             },
-            Step::Plate {
-                step: PlateStep {
+            Step::Test {
+                step: TestStep {
                     body: Body::ShellBlock(vec!["echo $<in>".to_string()]),
                 },
                 line: 4,
@@ -2921,13 +2669,13 @@ fn plate_step_after_cook_passthroughs_cook_outputs() {
     let output = generate(&cookfile);
     assert!(
         output.contains("cook.passthrough(_cook_outputs_1)"),
-        "plate after cook step 1 must passthrough _cook_outputs_1, got:\n{output}"
+        "test after cook step 1 must passthrough _cook_outputs_1, got:\n{output}"
     );
 }
 
 #[test]
 fn test_step_emits_passthrough() {
-    // Standard §5.4.1 lists `test` alongside `plate` as passthrough.
+    // Standard §5.4.1 lists `test` as passthrough.
     let cookfile = make_cookfile(vec![make_recipe(
         "check",
         vec![],
@@ -2935,9 +2683,6 @@ fn test_step_emits_passthrough() {
         vec![Step::Test {
             step: TestStep {
                 body: Body::ShellBlock(vec!["bash $<in>".to_string()]),
-                timeout: Some(5),
-                should_fail: false,
-                as_name: None,
             },
             line: 3,
         }],
@@ -2951,7 +2696,7 @@ fn test_step_emits_passthrough() {
 
 #[test]
 fn test_step_iterates_union_of_all_include_globs() {
-    // Test steps share plate's iteration-source fallback (Standard §4.8.1).
+    // Test steps share the same iteration-source fallback (Standard §4.8.1).
     let cookfile = make_cookfile(vec![make_recipe(
         "check",
         vec![],
@@ -2959,9 +2704,6 @@ fn test_step_iterates_union_of_all_include_globs() {
         vec![Step::Test {
             step: TestStep {
                 body: Body::ShellBlock(vec!["bash $<in>".to_string()]),
-                timeout: Some(5),
-                should_fail: false,
-                as_name: None,
             },
             line: 3,
         }],
@@ -3419,7 +3161,7 @@ fn for_each_probe_cook_fans_out_per_member() {
     let cookfile = cook_lang::parse(src).expect("parse");
     let lua = generate(&cookfile);
     // Member set sourced from the probe value (the COOK-64 pre-pass populates it).
-    assert!(lua.contains("local _items = cook.cache.get(\"cards\")"),
+    assert!(lua.contains("local _items = cook.probes.get(\"cards\")"),
         "missing probe member source, got:\n{lua}");
     // One cook.add_unit per member, member bound as `item`.
     assert!(lua.contains("for _, item in ipairs(_items) do"),
@@ -3441,7 +3183,7 @@ fn for_each_probe_ref_passes_through_verbatim() {
     // under the verbatim ref.
     let src = "recipe a\n    ingredients cards:items\n    cook \"o/$<in.id>\" { build $<out> }\n";
     let lua = generate(&cook_lang::parse(src).unwrap());
-    assert!(lua.contains("local _items = cook.cache.get(\"cards:items\")"),
+    assert!(lua.contains("local _items = cook.probes.get(\"cards:items\")"),
         "ref must pass through unsplit, got:\n{lua}");
 }
 
@@ -3482,38 +3224,8 @@ fn for_each_unit_folds_member_into_fingerprint() {
 }
 
 #[test]
-fn for_each_plate_probe_ref_lowers_as_literal_sigil() {
-    // COOK-187 / CS-0122 / CS-0127: a `plate` shell body inside a `for_each`
-    // recipe that references a probe value must lower the same way every
-    // other shell-command body does — literal `$<key:...>` sigil text inside
-    // a plain `command = "..."` string, never a deferred
-    // `function() return ... end` closure (which cook.add_unit hard-rejects
-    // as a non-string command). The unit must also carry
-    // `step_kind = "plate"` so register-time capture preserves the plate's
-    // unsandboxed policy instead of defaulting to the `cook` sandbox.
-    let src = "recipe art\n    ingredients cards\n    plate {\n        $<tools:fmt.bin> --check\n    }\n";
-    let lua = generate(&cook_lang::parse(src).expect("parse"));
-    assert!(
-        lua.contains("$<tools:fmt.bin>"),
-        "expected literal probe sigil text in the plate command, got:\n{lua}"
-    );
-    assert!(
-        !lua.contains("command = function()"),
-        "a plate command must never be a deferred function, got:\n{lua}"
-    );
-    assert!(
-        lua.contains(r#"step_kind = "plate""#),
-        "expected step_kind = \"plate\" on the for_each plate unit, got:\n{lua}"
-    );
-    assert!(
-        lua.contains("cook.add_unit({command = "),
-        "expected a plain command = string field on the for_each plate unit, got:\n{lua}"
-    );
-}
-
-#[test]
 fn for_each_test_probe_ref_in_shell_command_is_codegen_error() {
-    // CS-0127: unlike `plate`/`cook` command bodies, `WorkPayload::Test` runs
+    // CS-0127: unlike `cook` command bodies, `WorkPayload::Test` runs
     // `cmd` verbatim via `/bin/sh` with no probe-substitution machinery. The
     // old codegen wrapped a probe-bearing test command in a deferred
     // `function() return ... end` closure, but `cook.add_test`'s strict
@@ -3531,7 +3243,12 @@ fn for_each_test_probe_ref_in_shell_command_is_codegen_error() {
 
 #[test]
 fn malformed_shell_sigil_is_codegen_error_not_emitted_sentinel() {
-    let src = "recipe bad\n    echo $<out_0>\n";
+    // CS-0134: a malformed shell sigil at the recipe-step level can no
+    // longer be reproduced directly (loose shell is banned in recipe
+    // bodies) — a chore shell step goes through the same non-cacheable
+    // `expand_..._shell_command` -> hard-`?`-propagate path (recipe.rs
+    // compile_chore_checked), so it still exercises "no sentinel swallowing".
+    let src = "chore bad\n    echo $<out_0>\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let err = crate::generate_with_names_checked(&cookfile, &names)
@@ -3552,20 +3269,22 @@ fn malformed_shell_sigil_is_codegen_error_not_emitted_sentinel() {
 
 #[test]
 fn checked_codegen_covers_every_current_step_kind() {
+    // CS-0134/CS-0135: a recipe body is purely declarative — ForEach (via a
+    // bare `ingredients <probe>` member source), InlineLua (auto-classified
+    // bare module calls), Cook, and Test steps live here. Shell/Lua/
+    // LuaBlock steps no longer occur at recipe-step level at all — they only
+    // occur in a chore body now, so exercise them there.
     let src = r#"recipe everything
     ingredients cards
-    >> local register_line = true
-    >>{
-        local register_block = true
-    }
+    foo.register_line()
+    foo.register_block({ x = 1 })
     cook "out/$<in.id>.txt" { printf '%s\n' "$<in.id>" > $<out> }
-    plate {
-        cat $<in>
-    }
     test >{
         assert(item.id ~= nil)
     }
-    @ echo interactive
+
+chore setup
+    echo interactive
     > local execute_line = true
     >{
         local execute_block = true
@@ -3693,7 +3412,7 @@ fn probe_no_ingredients_no_deps_omits_those_fields() {
 
 #[test]
 fn test_step_with_ingredients_emits_inputs_field() {
-    let src = "recipe unit\n    ingredients \"src/*.rs\"\n    test {\n        cargo test\n    } timeout 60\n";
+    let src = "recipe unit\n    ingredients \"src/*.rs\"\n    test {\n        cargo test\n    }\n";
     let lua = generate_lua_for_test(src);
     assert!(lua.contains("inputs = ingredients,"),
         "add_test must carry the resolved ingredient list:\n{lua}");
@@ -3701,7 +3420,7 @@ fn test_step_with_ingredients_emits_inputs_field() {
 
 #[test]
 fn test_step_without_ingredients_emits_no_inputs_field() {
-    let src = "recipe build\n    cook \"build/out.txt\" {\n        echo hi > build/out.txt\n    }\n    test {\n        test -s $<in>\n    } timeout 5\n";
+    let src = "recipe build\n    cook \"build/out.txt\" {\n        echo hi > build/out.txt\n    }\n    test {\n        test -s $<in>\n    }\n";
     let lua = generate_lua_for_test(src);
     assert!(!lua.contains("inputs = ingredients"),
         "cook-step-sourced tests must not reference the absent ingredients local:\n{lua}");
@@ -3723,7 +3442,6 @@ fn file_ref_lowering_hoists_local_and_passes_file_refs() {
     cook "build/$<in.stem>.html" {
         render --tokens $<file:tokens.css> $<in> -o $<out>
     }
-end
 "#;
     let lua = checked_lua(src);
     assert!(
@@ -3747,7 +3465,6 @@ fn file_ref_dedupes_repeated_pattern() {
     cook "build/page.html" {
         render $<file:t.css> $<file:t.css> -o $<out>
     }
-end
 "#;
     let lua = checked_lua(src);
     let count = lua.matches("cook.file_ref(\"t.css\")").count();
@@ -3770,7 +3487,6 @@ fn file_ref_with_probe_ref_hoists_before_add_unit() {
     cook "build/$<in.stem>.o" {
         cc $<cc:zlib.cflags> --tokens $<file:t.css> -c $<in> -o $<out>
     }
-end
 "#;
     let lua = checked_lua(src);
     let hoist_pos = lua
@@ -3806,7 +3522,6 @@ fn file_ref_in_output_pattern_is_codegen_error() {
     cook "build/$<file:tokens.css>.html" {
         render -o $<out>
     }
-end
 "#;
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
@@ -3986,20 +3701,20 @@ fn test_scan_for_sigil_errors_ok_when_no_sentinel_present() {
 }
 
 #[test]
-fn test_bad_file_ref_path_in_plate_body_is_checked_codegen_error() {
+fn test_bad_file_ref_path_in_test_body_is_checked_codegen_error() {
     // CS-0101: `validate_sigil_token` in template.rs accepts any `$<file:...>`
-    // ident in a plate/test body without validating the path itself (the
+    // ident in a test body without validating the path itself (the
     // path-validity check lives in `match_file_ref`, consulted only when the
     // body is actually expanded). A `..`-escaping path therefore reaches
     // `expand_plate_test_body` and lowers to a literal SIGIL_ERROR sentinel
     // with nothing upstream rejecting it first — this is the reachable
     // integration case the checked-codegen scan exists to catch.
-    let src = "recipe r\n    plate { echo $<file:../evil> }\n";
+    let src = "recipe r\n    test { echo $<file:../evil> }\n";
     let cookfile = cook_lang::parse(src).expect("parse");
     let names = crate::dep_ref::extract_recipe_names(&cookfile);
     let result = crate::generate_with_names_checked(&cookfile, &names);
     let err = result.expect_err(
-        "a $<file:../evil> path escape in a plate body must be a checked-codegen error, not a silently-emitted sentinel",
+        "a $<file:../evil> path escape in a test body must be a checked-codegen error, not a silently-emitted sentinel",
     );
     let msg = err.to_string();
     assert!(

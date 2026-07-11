@@ -79,12 +79,18 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   'lua.builtin-modules':             'mods.builtin',
   'lua.local-modules':               'mods.local',
 
+  // v1.0 language cut (CS-0136): cook.cache renamed to cook.probes.
+  'lua.cook-cache':        'lua.cook-probes',
+  'lua.cook-cache-get':    'lua.cook-probes-get',
+  'lua.cook-cache-set':    'lua.cook-probes-set',
+  'lua.cook-cache-scope':  'lua.cook-probes-scope',
+
   // Chapter 4 (legacy "Recipes and step kinds") split into Ch. 6 (recipe header)
   // and Ch. 8 (step kinds) in the v0.10 reorg. Slugs that lived on step bodies
   // moved with them.
   'recipes.cook-single-output':      'steps.cook-single',
   'recipes.cook-multi-output':       'steps.cook-multi',
-  'recipes.plate-step':              'steps.plate',
+  'recipes.plate-step':              null,
   'recipes.test-step':               'steps.test',
   'recipes.lua-steps':               'steps.lua',
   'recipes.shell-steps':             'steps.shell',
@@ -93,7 +99,11 @@ export const SLUG_RENAMES: Record<string, string | null> = {
   'recipes.step-kinds':              'steps.overview',
   'recipes.iteration-mode-plate-test':'steps.iteration-mode-plate-test',
   'recipes.iteration-mode':          'steps.iteration-mode',
-  'recipes.plate-step-not-sandboxed':'steps.plate',
+  'recipes.plate-step-not-sandboxed':null,
+
+  // v1.0 language cut (CS-0135): the `plate` step kind is removed outright.
+  'steps.plate':                     null,
+  'steps.plate-not-sandboxed':       null,
 
   'intro.conformance':               'conf.criteria',
 };

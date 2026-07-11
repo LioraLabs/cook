@@ -1,1 +1,0 @@
-bare-string form `"cmd"` is not supported

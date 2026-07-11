@@ -16,17 +16,22 @@ An implementation MAY permit narrowly-scoped capture-mode side effects that part
 ### Example 14.1.1
 
 ```cook
-recipe build
-    >> local flag = cook.env.OPTIMISE or "-O0"
-    ingredients "src/*.c"
-    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
+register
+    local flag = cook.env.OPTIMISE or "-O0"
+    cook.recipe("build", {}, function()
+        cook.add_unit({
+            inputs  = { "src/app.c" },
+            output  = "build/app.o",
+            command = "gcc " .. flag .. " -c src/app.c -o build/app.o",
+        })
+    end)
 ```
 
-The `>>` line runs during the register phase (`>>` is the inline-Lua prefix; see §{steps.lua}). It reads `cook.env` — a value established before the register phase began — and assigns a local visible to subsequent declarative-region steps. The `cook` step then records its work units. No subprocess is spawned during registration.
+The `register` block body runs during the register phase (§{decl.register}). It reads `cook.env.OPTIMISE` — a value established before the register phase began — and binds `flag`, a `local` visible to the register-phase Lua that follows in the same block. The `cook.add_unit` call then records the recipe's work unit, folding `flag` into the command text at registration time. No subprocess is spawned during registration.
 
-Substituting `>` for `>>` would change the semantics: `>` is execute-phase, so the `flag` local would be set on a worker VM during execute, after the cook step's units have already been recorded — too late to influence registration.
+The env read is register-phase precisely because it sits in a `register` block (equivalently, it could be a recipe-body `module_call`, §{steps.dispatch}); its result influences which units are recorded and how. Execute-phase Lua — the `>` / `>{` body of a `cook` / `test` step (§{steps.lua}) — runs on a worker VM during execute, after every unit has already been registered, and so could not influence registration. As of CS-0134 the register-phase doubled-`>` prefixes (`>>` / `>>{`) no longer exist (§{lexical.line-prefixes}), and a recipe body cannot host a loose register-phase `local` assignment; an env read that must shape registration therefore belongs in a `register` block, as shown.
 
-The register-phase VM evaluates `register_block` bodies (§{decl.register}) and top-level `module_call` source (§{toplevel.module-call}) in the source order of their containing top-level items, interleaved with recipe registrations. The VM persists across all `toplevel_item`s of a single Cookfile; `local` variables declared at the chunk-top-level of an earlier `register_block` body remain in scope for subsequent `register_block` bodies, top-level module_calls, and `inline_lua_line` / `inline_lua_block` payloads in later recipes. The implementation MUST splice each `register_block` body AND each top-level `module_call` into the compiled register-phase Lua program at its source position; no per-block VM is permitted.
+The register-phase VM evaluates `register_block` bodies (§{decl.register}) and top-level `module_call` source (§{toplevel.module-call}) in the source order of their containing top-level items, interleaved with recipe registrations. The VM persists across all `toplevel_item`s of a single Cookfile; `local` variables declared at the chunk-top-level of an earlier `register_block` body remain in scope for subsequent `register_block` bodies, top-level module_calls, and recipe-body `module_call` lines in later recipes. The implementation MUST splice each `register_block` body AND each top-level `module_call` into the compiled register-phase Lua program at its source position; no per-block VM is permitted.
 
 The reference codegen in `cli/crates/cook-luagen/src/recipe.rs` implements this rule by merging recipes, chores, register blocks, and top-level module_calls into a source-line-ordered iteration before emission (informative).
 

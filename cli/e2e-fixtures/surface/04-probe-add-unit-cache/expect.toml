@@ -10,4 +10,6 @@ unchanged = ["build/probed.txt"]
 # unchanged alone proves the probe-value cache (a re-produced probe would
 # re-key the unit and change the nonce); the cached marker pins the unit
 # cache actually re-serving rather than re-executing identical bytes.
-output_contains = ["(2/3 cached)"]
+# Three nodes — probe + record unit + the `test` observation — all re-served
+# from cache on the second run.
+output_contains = ["(3/3 cached)"]

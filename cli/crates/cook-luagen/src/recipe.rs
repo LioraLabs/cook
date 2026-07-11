@@ -6,7 +6,6 @@ use cook_lang::ast::*;
 use crate::cook_step::{generate_cook_step, generate_for_each_cook_step};
 use crate::dep_ref::{extract_dep_refs, extract_sigil_tokens};
 use crate::lua_string::{escape_lua_string, wrap_lua_string};
-use crate::plate_step::{generate_for_each_plate_step, generate_plate_step};
 use crate::resolver::{IterMode, OutputShape, ResolveCtx};
 use crate::sigil;
 use crate::template::ConsultedEnv;
@@ -47,7 +46,7 @@ pub enum CodegenError {
     },
     /// CS-0024 plate/test mode or placeholder validation failure.
     #[error("{0}")]
-    PlateTest(#[from] crate::plate_step::CodegenError),
+    PlateTest(#[from] crate::test_step::CodegenError),
     /// CS-0033/CS-0127: a `$<...>` sigil in a shell command resolved to an
     /// error (e.g. malformed `out_N`, a builtin used in the wrong mode)
     /// instead of a valid substitution. Previously `expand_shell_command_sigil`
@@ -119,7 +118,7 @@ pub fn generate_with_names_checked(
 /// checked output means a placeholder failed to lower — surface it as a
 /// codegen error instead of letting the marker flow into a command at
 /// runtime. Every `"[[SIGIL_ERROR: <message>]]"` emission site (template.rs,
-/// cook_step.rs, recipe.rs, plate_step.rs, test_step.rs) funnels through
+/// cook_step.rs, recipe.rs, test_step.rs) funnels through
 /// `generate_with_names`, so scanning the fully-generated string here catches
 /// any of them in one place, regardless of which validator (if any) upstream
 /// missed the shape. There is no recipe/line context left at this point —
@@ -354,23 +353,9 @@ fn validate_accessor_placement(
                         }
                     }
                 }
-                Step::InlineLua { .. } | Step::InlineLuaBlock { .. } => {
+                Step::InlineLua { .. } => {
                     // Inline Lua bodies are opaque to the accessor-placement
                     // check; the templater does not run on Lua source.
-                }
-                Step::Plate { step: plate_step, line } => {
-                    if let Body::ShellBlock(lines) = &plate_step.body {
-                        for shell_line in lines {
-                            check_command(
-                                shell_line,
-                                &BTreeSet::new(),
-                                recipe_names,
-                                &recipe.name,
-                                "plate command",
-                                *line,
-                            )?;
-                        }
-                    }
                 }
                 Step::Test { step: test_step, line } => {
                     if let Body::ShellBlock(lines) = &test_step.body {
@@ -426,20 +411,18 @@ fn is_bundleable(step: &Step) -> bool {
 /// with no known line falls back to `0` (unknown — pool.rs applies no
 /// padding for that case).
 ///
-/// `LuaBlock`/`InlineLuaBlock`'s `line` field is the line of the opening
-/// `>{` token itself — `cook_lang::lua_block::collect_lua_block` starts
-/// reading the block's code on the *next* physical line — so +1 here to
-/// point at the code's real first line, matching `Lua`'s `line` (which
-/// already is the code's own line, since a `>` line has no separate
-/// opener).
+/// `LuaBlock`'s `line` field is the line of the opening `>{` token
+/// itself — `cook_lang::lua_block::collect_lua_block` starts reading the
+/// block's code on the *next* physical line — so +1 here to point at
+/// the code's real first line, matching `Lua`'s `line` (which already is
+/// the code's own line, since a `>` line has no separate opener).
 fn step_line(step: &Step) -> usize {
     match step {
-        Step::LuaBlock { line, .. } | Step::InlineLuaBlock { line, .. } => *line + 1,
+        Step::LuaBlock { line, .. } => *line + 1,
         Step::Shell { line, .. }
         | Step::Lua { line, .. }
         | Step::InlineLua { line, .. }
         | Step::Cook { line, .. }
-        | Step::Plate { line, .. }
         | Step::Test { line, .. }
         | Step::ForEach { line, .. } => *line,
         _ => 0,
@@ -969,13 +952,6 @@ pub fn generate_with_names(
                             out.push_str(&format!("    {}\n", code));
                             i += 1;
                         }
-                        Step::InlineLuaBlock { code, .. } => {
-                            // §{recipes.lua-steps}: register-phase, inlined.
-                            for code_line in code.lines() {
-                                out.push_str(&format!("    {}\n", code_line));
-                            }
-                            i += 1;
-                        }
                         Step::Cook {
                             step: cook_step,
                             line,
@@ -1005,26 +981,6 @@ pub fn generate_with_names(
                             }
                             out.push_str("    end)\n");
                             prev_cook_index = Some(cook_index);
-                            i += 1;
-                        }
-                        Step::Plate {
-                            step: plate_step,
-                            line,
-                        } => {
-                            out.push_str("    cook.step_group(function()\n");
-                            if is_for_each {
-                                generate_for_each_plate_step(&mut out, plate_step, *line, recipe_names)?;
-                            } else {
-                                generate_plate_step(
-                                    &mut out,
-                                    plate_step,
-                                    *line,
-                                    prev_cook_index,
-                                    !recipe.ingredients.is_empty(),
-                                    recipe_names,
-                                )?;
-                            }
-                            out.push_str("    end)\n");
                             i += 1;
                         }
                         Step::Test {
@@ -1153,7 +1109,7 @@ fn emit_for_each_items(out: &mut String, fe: &ForEachStep) {
     match &fe.source {
         ForEachSource::ProbeKey(k) => {
             out.push_str(&format!(
-                "    local _items = cook.cache.get(\"{}\")\n",
+                "    local _items = cook.probes.get(\"{}\")\n",
                 escape_lua_string(k)
             ));
         }
@@ -1446,12 +1402,6 @@ fn compile_chore_checked(
                 out.push_str(&format!("    {}\n", code));
                 i += 1;
             }
-            Step::InlineLuaBlock { code, .. } => {
-                for code_line in code.lines() {
-                    out.push_str(&format!("    {}\n", code_line));
-                }
-                i += 1;
-            }
             // Cook / Plate / Test steps are banned in chores by the parser.
             _ => {
                 i += 1;
@@ -1550,7 +1500,7 @@ fn generate_metadata_with_line(recipe: &Recipe, recipe_names: &BTreeSet<String>)
     // COOK-64 §8.3/§22.5.9: expose a `for_each` recipe's data source on the
     // surface meta so the register pre-pass can resolve a feeding probe before
     // running the body (which itself reads the resolved value via
-    // `cook.cache.get`). Recipe-level, so reachability is known pre-fan-out.
+    // `cook.probes.get`). Recipe-level, so reachability is known pre-fan-out.
     if let Some(meta) = for_each_meta_field(recipe) {
         fields.push(meta);
     }

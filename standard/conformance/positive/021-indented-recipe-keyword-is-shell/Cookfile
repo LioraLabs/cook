@@ -1,4 +1,4 @@
-recipe outer
+chore outer
     echo before
     recipe inner
     echo after

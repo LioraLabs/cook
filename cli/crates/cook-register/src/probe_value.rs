@@ -28,7 +28,7 @@ pub fn lua_to_json(v: &LuaValue) -> Result<JsonValue, String> {
 ///
 /// The inverse of [`lua_to_json`], used by the COOK-64 register pre-pass:
 /// a `for_each`-feeding probe's value is decoded once and handed back to the
-/// recipe body through `cook.cache.get`. Mirrors the worker-VM converter in
+/// recipe body through `cook.probes.get`. Mirrors the worker-VM converter in
 /// `cook-luaotp` (§22.5.7) — arrays become 1-based sequences, objects become
 /// string-keyed tables, integers stay integers (falling back to float when
 /// they overflow `i64`).

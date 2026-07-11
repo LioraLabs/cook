@@ -43,7 +43,7 @@ A conforming implementation resolves a dotted `$<TOKEN>` by first attempting the
 Because no dotted name can resolve to a recipe defined in the current Cookfile, there is no whole-token-vs-split ambiguity to adjudicate.
 
 ### 10.2.2. Reserved final segment [#xref.reserved-segment]
-A recipe's final dot-separated segment MUST NOT equal a path accessor (§{xref.path-accessors}) or any of `in`, `out`, `all`. A conforming implementation MUST reject a Cookfile that declares such a name, at parse time. The rule is enforced by the `check_reserved_recipe_name` production in App. A.
+A recipe's final dot-separated segment MUST NOT equal a path accessor (§{xref.path-accessors}) or `in` or `out`. A conforming implementation MUST reject a Cookfile that declares such a name, at parse time. The rule is enforced by the `check_reserved_recipe_name` production in App. A. `all` is NOT among the reserved segments (CS-0130).
 
 ### 10.2.3. Environment-variable shadowing [#xref.env-shadowing]
 When step (2) or (3) succeeds, step (4) is NOT consulted. If `cook.env[TOKEN]` is also defined for the same `TOKEN`, the recipe name wins. A conforming implementation MUST emit a warning naming both.
@@ -66,7 +66,7 @@ Rule. When a `cook` step's output pattern list contains a `$<NAME.ACCESSOR>` acc
 - **Iteration shape.** The step is a **one-to-one step (§{steps.cook-single})**. For each item `x` in `lib`'s output list (§{xref.dep-recipe-output}), one work unit is registered. Within that unit, the iteration item is `x`, and the dotted-accessor placeholders `$<in.ACCESSOR>` refer to `x`. A placeholder `$<lib.ACCESSOR>` in the same step refers to the same accessor of `x`.
 - **One driver per step.** A step's output pattern list MAY contain accessor placeholders referring to AT MOST ONE distinct recipe. Multiple occurrences referring to the same `lib` (possibly with different accessors) are permitted and refer to the same driver. Accessor placeholders naming two or more distinct recipes in the same step MUST be rejected with a diagnostic.
 - **Bare `$<lib>` in an output pattern.** A conforming implementation MUST reject a `cook` step whose output pattern list contains a bare `$<lib>` (no accessor) naming a recipe. `$<lib>` has no iteration semantics.
-- **Accessor placeholder in a cook-step body or plate/test body.** A `$<lib.ACCESSOR>` appearing in a `cook` `shell_block` body, a `plate` body (shell or Lua), a `test` body (shell or Lua), or a bare `shell_command` MUST be rejected with a diagnostic. Plate and test steps have no output pattern and therefore can never declare a `lib`-driven driver; the rejection is universal in those bodies.
+- **Accessor placeholder in a cook-step body or test body.** A `$<lib.ACCESSOR>` appearing in a `cook` `shell_block` body, a `test` body (shell or Lua), or a bare `shell_command` MUST be rejected with a diagnostic. Test steps have no output pattern and therefore can never declare a `lib`-driven driver; the rejection is universal in those bodies.
 - **String-substitution references coexist.** A step MAY contain any number of `{libX}` bare references (§{xref.string-substitution}) to other recipes, orthogonally to whichever recipe (if any) drives iteration. Those references do not participate in the "one driver" rule.
 
 ### 10.4.1. A recipe's output [#xref.dep-recipe-output]
@@ -77,7 +77,6 @@ A recipe's **output** is the output list of its last step, under the following r
 | `ingredients` | Passthrough: the resolved ingredient paths (§{steps.ingredients}) |
 | `cook` (one-to-one) | The per-input outputs recorded at register time |
 | `cook` (many-to-one) | The single output path |
-| `plate` | Passthrough: the step's input list |
 | `test` | Passthrough: the step's input list |
 | Bare shell (`@` or `@!`) | Passthrough: the step's input list |
 
@@ -92,13 +91,13 @@ recipe protos
 
 recipe compile_protos
     cook "build/obj/$<protos.stem>.pb.cc" { protoc --cpp_out=build/obj $<in> }
-    cook "build/lib/libprotos.a" { ar rcs $<out> $<all> }
+    cook "build/lib/libprotos.a" { ar rcs $<out> $<in> }
 ```
 
 The `compile_protos` recipe's first step is dep-driven by `protos`; for each `x` in `protos`'s output list (the resolved globs), one work unit is registered with `$<in>` = `x` and `$<out>` = `build/obj/STEM(x).pb.cc`. The second step chains on the first (§{steps.cook-single}), not on `protos`.
 
 ## 10.5. String-substitution references [#xref.string-substitution]
-Rule. A `$<NAME>` bare reference in a `cook` shell block, **`plate` shell block, `test` shell block,** or bare `shell_command` MUST be substituted by the space-joined concatenation of the named recipe's output list (§{xref.dep-recipe-output}). A `$<NAME>` reference inside an `exec_lua_block` is parsed as Lua syntax (a single-element table containing the local variable `NAME`); cross-recipe references in Lua bodies use `cook.dep_output(NAME)` and `cook.dep_output_list(NAME)` per §{comp}.
+Rule. A `$<NAME>` bare reference in a `cook` shell block, **`test` shell block,** or bare `shell_command` MUST be substituted by the space-joined concatenation of the named recipe's output list (§{xref.dep-recipe-output}). A `$<NAME>` reference inside an `exec_lua_block` is parsed as Lua syntax (a single-element table containing the local variable `NAME`); cross-recipe references in Lua bodies use `cook.dep_output(NAME)` and `cook.dep_output_list(NAME)` per §{comp}.
 
 - **Empty output.** If the named recipe's output list is empty, the substitution is the empty string. A conforming implementation MUST emit a warning at register time, naming the referring recipe and the referent. The reference itself is not an error.
 - **Lua lowering.** A conforming implementation MAY lower a `$<NAME>` reference to `cook.dep_output("NAME")` and a `$<NAME.ACCESSOR>` iteration to a `cook.dep_output_list("NAME")`-driven form. The Standard specifies the observable behaviour; the Lua forms are one conforming lowering.
@@ -108,7 +107,7 @@ Rule. A `$<NAME>` bare reference in a `cook` shell block, **`plate` shell block,
 recipe libmath
     ingredients "src/math/*.c"
     cook "build/obj/math/$<in.stem>.o" { gcc -c $<in> -o $<out> }
-    cook "build/lib/libmath.a" { ar rcs $<out> $<all> }
+    cook "build/lib/libmath.a" { ar rcs $<out> $<in> }
 
 recipe app
     cook "build/bin/app" { gcc -o $<out> main.c $<libmath> }

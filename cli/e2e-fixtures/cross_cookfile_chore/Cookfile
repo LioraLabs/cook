@@ -1,0 +1,8 @@
+import lib ./lib
+
+# The body-refing step is a `chore` instead of a `test`. Chores lower to
+# cook.add_unit (same as a `cook "out" { }` step) whereas test lowers to
+# cook.add_test. add_unit reads step_group_dep_refs; add_test drops them.
+# So this chore should NOT race lib.gen.
+chore consume_gen
+    grep -q '\[gen\]' $<lib.gen>

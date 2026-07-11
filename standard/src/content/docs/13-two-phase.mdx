@@ -43,21 +43,18 @@ Every Lua expression in a Cookfile is evaluated in exactly one of three timings.
 | Chore parameter default (Lua expression)     | §{chores.params} | **load** (Cookfile-scope VM, evaluated lazily when argv is absent; read-only `cook.*` — register-only API calls from inside the expression raise an error) | no |
 | `register_block` body                        | §{decl.register} | **register** | no — spliced verbatim into the compiled register-phase Lua program |
 | top-level `module_call` (`alias.fn(…)`)      | §{toplevel.module-call} | **register** | no — spliced verbatim at source position |
-| `inline_lua_line` (`>>` *body*)              | §{steps.lua} | **register** | no — inlined into the recipe-body Lua function |
-| `inline_lua_block` (`>>{ … }`)               | §{steps.lua} | **register** | no — inlined |
-| `lua_line` (`>` *body*)                      | §{steps.lua} | **execute** | yes — contributes to the body unit per §{exec.body-bundling} |
-| `lua_block` (`>{ … }`)                       | §{steps.lua} | **execute** | yes — contributes to the body unit |
+| recipe-body `module_call` (`ns.fn(…)`)       | §{steps.dispatch} | **register** | no — bare module call in a recipe body; CS-0134 reinstates this dispatch (§{toplevel.module-call}), reversing CS-0072, and it replaces the removed `>>` / `>>{` prefixes |
+| `lua_line` (`>` *body*)                      | §{steps.lua} | **execute** | yes — admitted only in body position (a `cook`/`test`/`probe` step's body opener) or as a standalone step inside a `chore` body; never a standalone recipe-body item (CS-0134). Recipe body-bundling (§{exec.body-bundling}) is vacuous. |
+| `lua_block` (`>{ … }`)                       | §{steps.lua} | **execute** | yes — same admitted positions as `lua_line` (CS-0134) |
 | `cook STR >{ … }` (cook-body Lua)   | §{steps.cook-single}, §{steps.cook-multi} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals} bindings |
 | `cook.add_unit({lua_code = "…"})` payload    | §{lua.add-unit} | **execute** | yes — runs on the worker VM that picks up the unit |
-| `plate { … }` (shell block)                  | §{steps.plate} | **execute** | yes — recorded with shell payload, with §{phl.plate-test} substitutions |
-| `plate >{ … }` (Lua block)                   | §{steps.plate} | **execute** | yes — recorded with `lua_code` payload, with §{lua.using-block-globals-plate-test} bindings |
 | `test { … }` (shell block)                   | §{steps.test}  | **execute** | yes — recorded with shell payload via `cook.add_test`, with §{phl.plate-test} substitutions |
 | `test >{ … }` (Lua block)                    | §{steps.test}  | **execute** | yes — recorded with `lua_code` payload via `cook.add_test`, with §{lua.using-block-globals-plate-test} bindings |
 
 Three corollaries:
 
-1. **The single-`>` family is execute-phase, the doubled-`>` family is register-phase.** This is the surface-level rule a Cookfile author needs to remember; everything else in the table follows from it plus the splicing rules in §{decl.register} and §{toplevel.module-call}.
-2. **`register_block` bodies and top-level module_calls are register-phase.** Both splice verbatim into the compiled register-phase Lua program at their source positions (§{decl.register-splicing}); the module's recorded `cook.add_unit` calls fire during registration and the work units run at execute. Note: recipe-body `module_call` dispatch was removed in CS-0072 — see §{toplevel.module-call} for the surviving top-level form.
+1. **The single-`>` family is execute-phase; register-phase Lua inside a recipe body is a bare `module_call`.** As of CS-0134 the doubled-`>` family (`>>` / `>>{`) is removed from the language (§{lexical.line-prefixes}); the surface-level rule a Cookfile author needs to remember is that `>` / `>{` are execute-phase and appear only in body position (or inside a chore body), while register-phase Lua in a recipe body is written as `ns.fn(…)`. Everything else in the table follows from that plus the splicing rules in §{decl.register} and §{toplevel.module-call}.
+2. **`register_block` bodies, top-level module_calls, and recipe-body module_calls are register-phase.** They splice verbatim into the compiled register-phase Lua program at their source positions (§{decl.register-splicing}); the module's recorded `cook.add_unit` calls fire during registration and the work units run at execute. Note: CS-0134 reinstates recipe-body `module_call` dispatch (§{steps.dispatch}), reversing the CS-0072 removal; see §{toplevel.module-call} for the shared module-call form.
 3. **Inside an execute-phase Lua chunk, register-only Cook Lua API helpers are unavailable.** `cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, and `cook.recipe` MUST raise a Lua runtime error when invoked from execute-phase Lua. `cook.sh` is available in both phases (§{lua.cook-sh}). See §{rationale.execute-phase-api}.
 
 ## 13.3. Unified work-unit DAG [#exec.dag-unification]

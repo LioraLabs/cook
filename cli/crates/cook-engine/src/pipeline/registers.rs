@@ -517,7 +517,7 @@ mod tests {
             root: LoadedCookfile {
                 // Intentionally inert placeholder AST: registration consumes
                 // only `lua_source`; the parsed Cookfile is never re-lowered.
-                cookfile: cook_lang::parse("recipe placeholder\n    echo hi\n")
+                cookfile: cook_lang::parse("recipe placeholder\n")
                     .expect("placeholder Cookfile parses"),
                 lua_source: lua_source.to_string(),
                 dir: dir.to_path_buf(),
@@ -657,7 +657,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("Cookfile"),
-            "import rust apps/rust\n\nrecipe check\n    echo hi\n",
+            "import rust apps/rust\n\nrecipe check\n",
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("apps/rust")).unwrap();
@@ -665,13 +665,11 @@ mod tests {
             dir.path().join("apps/rust/Cookfile"),
             concat!(
                 "recipe build\n",
-                "    >>{\n",
                 "        cook.add_unit({\n",
                 "            inputs  = { },\n",
                 "            outputs = { \"build/out.txt\" },\n",
                 "            command = \"mkdir -p build && echo hi > build/out.txt\",\n",
                 "        })\n",
-                "    }\n",
             ),
         )
         .unwrap();

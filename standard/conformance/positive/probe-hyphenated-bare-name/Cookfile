@@ -1,0 +1,2 @@
+probe demo:cc-version
+    >{ return 1 }

@@ -8,9 +8,10 @@
 //! escape hatches (`os.execute`, `io.popen`) that bypass `cook.sh`'s
 //! working-directory rooting.
 //!
-//! `plate` step bodies are explicitly the user's "ship outside the
-//! project" escape hatch (deploys, uploads, etc.) and run with
-//! [`SandboxPolicy::Off`]. The execute-phase worker selects the policy
+//! As of CS-0135 no step kind selects [`SandboxPolicy::Off`]: every
+//! `cook`/`test`/`chore` Lua body is confined. The permissive "ship
+//! outside the project" path is now a `chore`'s raw shell steps (§25.9).
+//! [`SandboxPolicy::Off`] remains the worker's initial/unset state. The execute-phase worker selects the policy
 //! per work item; the register-phase VM is always [`Confined`].
 //!
 //! # Path resolution
@@ -39,9 +40,9 @@ use std::sync::{Arc, Mutex};
 /// confine paths to the project root.
 #[derive(Clone, Debug)]
 pub enum SandboxPolicy {
-    /// No confinement. Used by `plate` step Lua bodies, which are
-    /// explicitly allowed to ship outputs outside the project root
-    /// (deploys, uploads, etc.) per §{recipes.plate-step}.
+    /// No confinement. As of CS-0135 no step kind selects this (plate was
+    /// removed); it is the worker's initial/unset policy before a
+    /// `Confined` policy is applied for a `cook`/`test`/`chore` body.
     Off,
     /// Confine path arguments to `project_root`. Used by `cook`-,
     /// `test`-, and `chore`-step Lua bodies and by all register-phase
@@ -110,7 +111,8 @@ impl std::fmt::Display for SandboxError {
                 f,
                 "{api}: path {path:?} escapes project root {}. \
                  cook/test/chore step Lua bodies are confined to the \
-                 project root; use a `plate` step to ship outside)",
+                 project root; use a `chore`, whose raw shell steps run \
+                 unsandboxed, to ship outside",
                 project_root.display()
             ),
             SandboxError::ShellDisabled { api } => write!(
@@ -118,7 +120,7 @@ impl std::fmt::Display for SandboxError {
                 "{api}: Lua-side shell escape hatch is disabled in \
                  cook/test/chore step bodies; use cook.sh \
                  (which runs with the recipe's working_dir) or move \
-                 the call to a `plate` step"
+                 the call to a `chore` (whose raw shell steps run unsandboxed)"
             ),
         }
     }

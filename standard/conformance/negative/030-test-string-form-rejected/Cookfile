@@ -1,2 +1,2 @@
 recipe r
-    test "./{in}" timeout 60
+    test "./{in}"

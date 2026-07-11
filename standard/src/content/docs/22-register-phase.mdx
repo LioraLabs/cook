@@ -68,7 +68,7 @@ cook.add_unit({
 
 Records one Lua-code unit with multiple outputs. At execute time, the `lua_code` runs with `inputs`, `outputs`, `input`, `output`, and `input_1` bound as described in §{lua.exe}.
 
-**Chore-body restriction (§{chores.no-caching}).** When `cook.add_unit` is called from within the register-phase body of a chore, a conforming implementation MUST raise a Lua runtime error if `cache = true` is passed (or if `cache` is absent, since the default is `true`). The codegen layer enforces this at the source level by always emitting `cache = false` for every unit in a chore body; the runtime check is a defence-in-depth guard against inline-Lua (`>>` / `>>{`) that bypasses the codegen path.
+**Chore-body restriction (§{chores.no-caching}).** When `cook.add_unit` is called from within the register-phase body of a chore, a conforming implementation MUST raise a Lua runtime error if `cache = true` is passed (or if `cache` is absent, since the default is `true`). The codegen layer enforces this at the source level by always emitting `cache = false` for every unit in a chore body; the runtime check is a defence-in-depth guard against register-phase Lua reached from a chore context — for example a bare `module_call` (§{steps.dispatch}) or a `register` block (§{decl.register}) whose body calls `cook.add_unit` — that bypasses the codegen path.
 
 A conforming implementation MAY use implementation-defined internal markers to track whether a chore body is executing. In the reference implementation, the generated Lua calls `cook._enter_chore()` before the body and `cook._exit_chore()` after; `cook.add_unit` checks an internal flag. These helpers are an implementation detail and MUST NOT be relied upon by Cookfile authors.
 
@@ -137,11 +137,11 @@ Records one shell unit whose declared output set is resolved by globbing `apps/w
 
 **Phase.** Register-phase only.
 
-These helpers are the Lua-side counterparts of the surface `shell_command` (§{steps.shell}) and `interactive_command` (§{steps.shell}) step forms. Each call records one unit (non-interactive or interactive, respectively) with caching disabled. The return value is the empty string; it is returned only so that callers composing results do not fail on `nil` concatenation.
+These helpers record shell units from register-phase Lua: `cook.exec` a non-interactive unit and `cook.interactive` an interactive one (the interactivity a chore-body `shell_command` carries by default, §{chores.default-interactive}). Each call records one unit with caching disabled. The return value is the empty string; it is returned only so that callers composing results do not fail on `nil` concatenation.
 
 A conforming implementation MUST raise a Lua runtime error when `cook.exec` or `cook.interactive` is called from execute-phase Lua (a `lua_line`, a `lua_block`, or a `>{ … }` payload). The diagnostic MUST identify the function name and the calling step kind. The same rule applies to other register-only Cook Lua API helpers: `cook.add_unit`, `cook.step_group`, `cook.recipe`. See §{rationale.execute-phase-api}.
 
-An implementation SHOULD include a brief migration hint in the diagnostic — for example, suggesting `>>` (`inline_lua_line`) instead of `>` to record the call at register phase, or a top-level `register` block as an alternative register-phase context (informative).
+An implementation SHOULD include a brief migration hint in the diagnostic — for example, suggesting a bare `module.call()` line in the recipe body (§{steps.dispatch}) instead of `>` to record the call at register phase, or a top-level `register` block (§{decl.register}) as an alternative register-phase context (informative).
 
 ## 22.3. `cook.recipe` [#lua.cook-recipe]
 **Signature.** `cook.recipe(name: string, metadata: table, body: function) -> nil`
@@ -162,11 +162,8 @@ A conforming implementation MUST diagnose a duplicate name with a single error t
 | Field | Type | Required | Default | Constraint |
 |---|---|---|---|---|
 | `command` | string | exactly one of `command` / `lua_code` | — | MUST be non-empty when provided. The test body is executed as a shell command via `/bin/sh`. |
-| `lua_code` | string | exactly one of `command` / `lua_code` | — | MUST be non-empty when provided. The test body is Lua source, executed on an execute-phase worker VM under the same sandbox policy as a `cook`-step body (§8, §{steps.plate-not-sandboxed} contrasts the unsandboxed `plate` policy). The test passes if the chunk completes without raising a Lua error, and fails if it raises one. |
+| `lua_code` | string | exactly one of `command` / `lua_code` | — | MUST be non-empty when provided. The test body is Lua source, executed on an execute-phase worker VM under the same sandbox policy as a `cook`-step body. The test passes if the chunk completes without raising a Lua error, and fails if it raises one. |
 | `suite` | string | no | enclosing recipe's qualified name | If absent or empty, a conforming implementation MUST substitute the fully-qualified name of the recipe currently executing in the register phase (e.g. `"lib.tests"` for a recipe `tests` imported under prefix `lib`). |
-| `name` | string | no | `""` | The display name for this test in runner reports. Set by an `as STRING` modifier (§{steps.test}, CS-0061). |
-| `timeout` | integer | no | `300` | Timeout in seconds. MUST be a positive integer (strictly greater than zero); a value of `0` or less MUST raise a register-phase Lua error. |
-| `should_fail` | boolean | no | `false` | When `true`, the outcome is inverted: for `command`, a zero exit code is treated as a failure and a non-zero exit code as a pass; for `lua_code`, a chunk that raises an error is treated as a pass and one that completes without error is treated as a failure. |
 | `line` | integer | no | `0` | Source line number of the originating `test_step` in the Cookfile, used in diagnostic output and test labels (e.g. `recipe@2`). The code generator MUST populate this field; a conforming implementation MUST NOT require it to be non-zero. |
 | `iteration_item` | string or nil | no | `nil` | For OneToOne test steps, the current iteration input path (e.g. `_test_in`). When non-nil and non-empty, a conforming implementation MUST include it as a discriminator in the test identity (e.g. `recipe:name[item]`) and in the displayed label (e.g. `recipe@line [item]`). For ManyToOne and OneShot test steps, the code generator MUST pass `nil`. |
 

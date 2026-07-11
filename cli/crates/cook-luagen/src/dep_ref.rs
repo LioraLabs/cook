@@ -7,7 +7,7 @@ use crate::sigil;
 
 /// Built-in placeholders that are never recipe references.
 /// Note: "out_N" forms are handled structurally in parse_dep_token.
-const BUILTINS: &[&str] = &["in", "out", "all"];
+const BUILTINS: &[&str] = &["in", "out"];
 
 /// A reference to another recipe found in a step template.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -74,13 +74,9 @@ pub fn extract_dep_refs_from_steps(
                 }
                 t
             }
-            Step::Plate { step: plate_step, .. } => extract_body_tokens(&plate_step.body),
             Step::Test { step: test_step, .. } => extract_body_tokens(&test_step.body),
             Step::Shell { command, .. } => extract_sigil_tokens(command),
-            Step::Lua { .. }
-            | Step::LuaBlock { .. }
-            | Step::InlineLua { .. }
-            | Step::InlineLuaBlock { .. } => vec![],
+            Step::Lua { .. } | Step::LuaBlock { .. } | Step::InlineLua { .. } => vec![],
             // `Step` is `#[non_exhaustive]`; unknown future variants contribute
             // no dep-refs in this analyzer until codegen learns about them.
             _ => vec![],
@@ -127,7 +123,7 @@ fn extract_body_tokens(body: &cook_lang::ast::Body) -> Vec<String> {
 /// Parse a single $<FOO> token into a DepRef if it matches a recipe name.
 ///
 /// Rules (CS-0033 updated):
-/// 1. Skip builtins: `in`, `out`, `all`
+/// 1. Skip builtins: `in`, `out`
 /// 2. Skip CS-0022 dotted own-input/output forms: `in.X`, `out.X`, `out_N.X`
 /// 3. If whole token is a recipe name → DepRef { recipe_name, accessor: None }
 /// 4. If token has a dot, split on LAST dot: if suffix is a known accessor AND prefix
@@ -159,9 +155,10 @@ fn parse_dep_token(token: &str, recipe_names: &BTreeSet<String>) -> Option<DepRe
         }
     }
 
-    // COOK-96: `$<recipe[]>` — per-member ref. Strip the empty bracket and
-    // treat as a recipe-level edge (the producer must build first).
-    if let Some(base) = token.strip_suffix("[]") {
+    // COOK-221 / CS-0137: `$<recipe[in]>` — per-member ref (formerly `$<recipe[]>`,
+    // COOK-96). Strip the `[in]` index and treat as a recipe-level edge (the
+    // producer must build first).
+    if let Some(base) = token.strip_suffix("[in]") {
         if recipe_names.contains(base) {
             return Some(DepRef { recipe_name: base.to_string(), accessor: None });
         }
@@ -295,6 +292,9 @@ mod tests {
         assert_eq!(parse_dep_token("in", &names), None);
         assert_eq!(parse_dep_token("out", &names), None);
         assert_eq!(parse_dep_token("stem", &names), None);
+        // "all" is no longer a builtin (COOK-195); this stays None here only
+        // because `names` has no recipe called "all" registered — not because
+        // "all" is skipped as a builtin.
         assert_eq!(parse_dep_token("all", &names), None);
     }
 
@@ -401,11 +401,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_dep_token_strips_bracket_for_recipe_member() {
+    fn parse_dep_token_strips_bracket_index_for_recipe_member() {
         let mut names = BTreeSet::new();
         names.insert("render".to_string());
+        // COOK-221 / CS-0137: the per-member spelling is `[in]`.
         assert_eq!(
-            parse_dep_token("render[]", &names),
+            parse_dep_token("render[in]", &names),
             Some(DepRef { recipe_name: "render".to_string(), accessor: None })
         );
         // bare recipe still works
@@ -413,8 +414,11 @@ mod tests {
             parse_dep_token("render", &names),
             Some(DepRef { recipe_name: "render".to_string(), accessor: None })
         );
-        // a [] on a non-recipe is not a dep
-        assert_eq!(parse_dep_token("notarecipe[]", &names), None);
+        // the removed `[]` spelling contributes no edge (the resolver rejects
+        // the placeholder with a did-you-mean before any unit registers)
+        assert_eq!(parse_dep_token("render[]", &names), None);
+        // `[in]` on a non-recipe is not a dep
+        assert_eq!(parse_dep_token("notarecipe[in]", &names), None);
     }
 
     #[test]

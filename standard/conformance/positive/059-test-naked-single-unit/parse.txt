@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="check" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        Test body=ShellBlock(["cargo test"])
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

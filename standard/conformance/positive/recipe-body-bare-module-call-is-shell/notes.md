@@ -1,1 +1,0 @@
-Pins CS-0072 §3.9 amendment: a bare `<id>.<id>(...)` line inside a recipe body classifies as `Shell` step (not the v0.3 `InlineLua`). This replaces the deleted 010-use-and-module-call fixture, which pinned the pre-CS-0072 behavior. Authors who want register-phase Lua inside a recipe body MUST use `>>` (inline_lua_line).

@@ -2,12 +2,14 @@
 #
 # A `test` step declares a check. Tests run with the build, get cached
 # like build steps (an unchanged, passing test does not re-run), and have
-# their own runner UX under `cook test`.
+# their own runner UX under `cook test`. Tests auto-name (from the recipe
+# and source line) and always run to completion — there are no modifiers.
 #
-# Modifiers (canonical order: as -> timeout -> should_fail):
-#   as 'name'      display name
-#   timeout N      seconds before the test is killed
-#   should_fail    the check is EXPECTED to fail (pins error behavior)
+# `check` shows both test shapes:
+#   - one-to-one: `ingredients "tests/*.sh"` + `test { ./$<in> }` runs
+#     every script under tests/ as its own test, one unit per script.
+#   - naked one-shot: a single `test { ... }` with no iteration source.
+#     `!` inverts a check that expects failure (no more `should_fail`).
 #
 # Try:
 #   cook check               # build the artifact, run its checks
@@ -18,12 +20,12 @@
 
 recipe app
     ingredients "src/greeting.txt"
-    cook "out/app.txt" { tr 'a-z' 'A-Z' < $<all> > $<out> }
+    cook "out/app.txt" { tr 'a-z' 'A-Z' < $<in> > $<out> }
 
 recipe check: app
-    test { grep -q HELLO $<app> } as 'greeting is shouted'
-    test { test -s $<app> } as 'artifact not empty' timeout 5
-    test { grep -q lowercase $<app> } as 'no lowercase leaked' should_fail
+    ingredients "tests/*.sh"
+    test { ./$<in> }
+    test { ! grep -q lowercase $<app> }
 
 chore clean
     rm -rf out

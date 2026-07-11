@@ -22,9 +22,9 @@ If you see `$<X` *without* a closing `>`, or with a non-identifier character bef
 
 ## 7.2. The four kinds of placeholder
 
-Inside an output pattern, a `{ ... }` body, a `plate`/`test` body, or a bare shell command, a `$<TOKEN>` placeholder resolves in priority order:
+Inside an output pattern, a `{ ... }` body, a `test` body, or a chore's shell line, a `$<TOKEN>` placeholder resolves in priority order:
 
-1. **Builtin placeholders** — the per-step accessors like `$<in>`, `$<out>`, `$<all>`, `$<out_1>`.
+1. **Builtin placeholders** — the per-step accessors like `$<in>`, `$<out>`, `$<out_1>`.
 2. **Recipe references** — `$<lib>` expands to the recipe `lib`'s outputs; `$<lib.stem>` is the same with a path accessor applied.
 3. **Declared environment variables** — `$<HOST>` resolves to `cook.env["HOST"]` *if and only if* `HOST` was declared in a `config` block.
 4. **Hard error** — anything else fails at load time with a diagnostic.
@@ -35,15 +35,14 @@ There is no silent fallthrough. If you typo a placeholder, you get a clear error
 
 | Placeholder       | Meaning                                              | Where it works                |
 |-------------------|------------------------------------------------------|-------------------------------|
-| `$<in>`           | The current input (in iterating steps)               | `cook` body, `plate`, `test` |
+| `$<in>`           | The current input — unit-centric: the one item being processed in a one-to-one (fan-out) step, or every input on one line, space-separated, in a many-to-one step | `cook` body, `test` |
 | `$<out>`          | The current output                                   | `cook` body                   |
-| `$<all>`          | Every input on one line, space-separated              | `cook` body                   |
 | `$<out_1>`, `$<out_2>`, ... | Nth declared output                       | `cook` body, multi-output `cook` |
 | `$<in.stem>`      | Stem of the current input (any path accessor)        | output pattern, `cook` body   |
 
-Bare shell commands in a recipe body run in *one-shot* mode — no iteration source, no declared output — so the iteration/output builtins above don't apply there. Bare shell *can* still substitute recipe references (`$<compile>`) and declared env vars (`$<TARGET>`), which is what §7.10's "Try it" does.
+A chore's shell lines run in *one-shot* mode — no iteration source, no declared output — so the iteration/output builtins above don't apply there. A chore shell line *can* still substitute recipe references (`$<compile>`) and declared env vars (`$<TARGET>`), which is what §7.10's "Try it" does.
 
-`$<in>`, `$<out>`, `$<all>` are the ones you'll write 90% of the time.
+`$<in>` and `$<out>` are the ones you'll write 90% of the time.
 
 ## 7.4. Path accessors as placeholders
 
@@ -77,7 +76,7 @@ recipe link
     cook "build/app" { gcc $<compile> -o $<out> }
 ```
 
-`$<compile>` in the link body expands to every output of the `compile` recipe, space-separated, exactly as if you'd written `$<all>` referring to compile's outputs. The placeholder also records `link`'s dep on `compile` for you, so no explicit `: compile` is needed (see the tip below). *(Standard §5.5.)*
+`$<compile>` in the link body expands to every output of the `compile` recipe, space-separated — the same "collected set" shape that `$<in>` gets in a many-to-one step. The placeholder also records `link`'s dep on `compile` for you, so no explicit `: compile` is needed (see the tip below). *(Standard §5.5.)*
 
 You can have any number of bare recipe references in a single step. They don't drive iteration — they're just text substitution. The dependency graph picks up the edge automatically (referencing `$<compile>` inside `link` makes `link` depend on `compile`).
 
@@ -107,7 +106,7 @@ When an *output pattern* contains `$<lib.ACCESSOR>`, that recipe drives iteratio
 The rules:
 - Only one driver per step.
 - Bare `$<lib>` (no accessor) in an output pattern is a hard error.
-- `$<lib.ACCESSOR>` is forbidden in `cook` bodies, `plate` bodies, `test` bodies, and bare shell commands — those have no output pattern and so can't have a driver.
+- `$<lib.ACCESSOR>` is forbidden in `cook` bodies, `test` bodies, and chore shell lines — those have no output pattern and so can't have a driver.
 - Placeholder identifiers don't allow hyphens. A recipe named `build-tests` is legal, but `$<build-tests.stem>` won't parse — the lexer stops at the hyphen (Standard §2.11). For drivers, keep the recipe name hyphen-free: `buildtests`, or `build_tests`. (Dotted names like `build.tests` are not allowed at the *declaration* site — dots inside a placeholder always denote either a path accessor or an `import` alias, never a locally-declared recipe segment.)
 
 *(Standard §5.4.)*
@@ -181,9 +180,9 @@ config
 
 recipe greet
     ingredients "Cookfile"
-    plate { echo "$<GREETING>, world" }
+    test { echo "$<GREETING>, world" }
 
-recipe shout
+chore shout: greet
     echo "shout sees: $<greet>"
 ```
 
@@ -198,4 +197,4 @@ cook shout
 Observe:
 - The first run uses the default `"hello"`.
 - The second uses `"hi"` from `--set` and busts the cache (CLI overrides win over config-block defaults — see §7.7).
-- `shout` references `$<greet>`, which expands to `greet`'s output list. Because `plate` is a passthrough step (Standard §5.4.1), `greet`'s "output" is its ingredient list — the single file `Cookfile`.
+- `shout` references `$<greet>`, which expands to `greet`'s output list. Because `greet` has no `cook` step, its "output" is its ingredient list — the single file `Cookfile`.

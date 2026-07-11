@@ -14,18 +14,18 @@
 # walkthrough itself.
 
 recipe build
-    echo "ok"
+    cook "out/build.txt" { echo ok > $<out> }
 
 recipe boom
-    false
+    cook "out/boom.txt" { false }
 
 recipe failing_test
     cook "out/c.txt" { echo hi > $<out> }
-    test { false } as 'always fails'
+    test { false }
 
 recipe passing_test
     cook "out/p.txt" { echo hi > $<out> }
-    test { true } as 'always passes'
+    test { true }
 
 recipe upstream_boom
     cook "a.txt" { false }

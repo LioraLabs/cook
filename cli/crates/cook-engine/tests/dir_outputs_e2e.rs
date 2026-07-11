@@ -53,13 +53,11 @@ fn write_cookfile(wd: &std::path::Path) {
     fs::write(
         wd.join("Cookfile"),
         r#"recipe gen
-    >>{
         cook.add_unit({
             inputs  = { "gen.sh" },
             outputs = { "out/" },
             command = "sh gen.sh",
         })
-    }
 "#,
     )
     .unwrap();

@@ -1,2 +1,2 @@
 recipe check
-    test { false } as 'always fails'
+    test { false }

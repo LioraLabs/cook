@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Lua code="cook.sh(\"echo hello\")"
+        Test body=LuaBlock("cook.sh(\"echo hello\")")
   chores:
   register_blocks: [RegisterBlock body="    cook.probe(\"test:simple\", {\n        inputs = { env = {\"PATH\"} },\n        produce = \"return { found = true }\",\n    })" line=1]
   top_level_module_calls: []

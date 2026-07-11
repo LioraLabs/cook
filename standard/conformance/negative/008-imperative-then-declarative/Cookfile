@@ -1,8 +1,0 @@
-recipe "bad"
-    cook "a" {
-        echo a
-    }
-    > print("midway")
-    cook "b" {
-        echo b
-    }

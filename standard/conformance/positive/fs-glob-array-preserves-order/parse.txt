@@ -8,14 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Lua code="-- CS-0079: results are concatenated in call order; within each pattern,"
-        Lua code="-- glob's internal order is preserved. This fixture locks the Cookfile"
-        Lua code="-- surface; the runtime ordering rule is verified by unit tests in"
-        Lua code="-- cook-lua-stdlib::fs_api::static_glob_array_order_follows_pattern_order."
-        Lua code="local sys = fs.glob({\"neo/sys/*.cpp\", \"neo/sys/posix/*.cpp\"})"
-        Lua code="local platform = fs.glob({\"neo/sys/linux/*.cpp\"})"
-        Lua code="for _, f in ipairs(sys) do print(f) end"
-        Lua code="for _, f in ipairs(platform) do print(f) end"
+        Test body=LuaBlock("        -- CS-0079: results are concatenated in call order; within each pattern,\n        -- glob's internal order is preserved. This fixture locks the Cookfile\n        -- surface; the runtime ordering rule is verified by unit tests in\n        -- cook-lua-stdlib::fs_api::static_glob_array_order_follows_pattern_order.\n        local sys = fs.glob({\"neo/sys/*.cpp\", \"neo/sys/posix/*.cpp\"})\n        local platform = fs.glob({\"neo/sys/linux/*.cpp\"})\n        for _, f in ipairs(sys) do print(f) end\n        for _, f in ipairs(platform) do print(f) end")
   chores:
   register_blocks: []
   top_level_module_calls: []

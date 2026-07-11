@@ -1,2 +1,0 @@
-recipe r
-    plate { link $<all> -o app }

@@ -2,14 +2,17 @@
 #
 # Three cook steps, three iteration modes:
 #   fan-out      one word-count per chapter      ($<in.stem> in the pattern)
-#   many-to-one  all counts -> one total         ($<all> collects the
-#                                                 previous step's outputs)
+#   many-to-one  all counts -> one total         ($<in> is the collected
+#                                                 set of the previous step's
+#                                                 outputs)
 #   multi-output one step, two declared outputs  ($<out_1>, $<out_2>)
 #
 # Note how each step consumes the previous one THROUGH the declared
-# placeholders ($<in>, $<all>, $<out>) — that is what lets cook track the
-# chain and rebuild exactly what a change invalidates. If a body reads a
-# file cook doesn't know about, cook can't see it change.
+# placeholders ($<in>, $<out>) — that is what lets cook track the chain
+# and rebuild exactly what a change invalidates. $<in> is unit-centric: in
+# a fan-out it's the one member being processed; in a many-to-one step
+# (like the total below) it's the whole collected set, space-joined. If a
+# body reads a file cook doesn't know about, cook can't see it change.
 #
 # Try:
 #   cook report                # full pipeline
@@ -22,10 +25,10 @@
 recipe report
     ingredients "chapters/*.txt"
     cook "build/counts/$<in.stem>.count" { wc -w < $<in> | tr -d ' ' > $<out> }
-    cook "build/total.txt" { cat $<all> | paste -sd+ - | bc > $<out> }
+    cook "build/total.txt" { cat $<in> | paste -sd+ - | bc > $<out> }
     cook "build/report.txt" "build/report.csv" {
-        printf 'total words: %s\n' "$(cat $<all>)" > $<out_1>
-        printf 'metric,value\ntotal,%s\n' "$(cat $<all>)" > $<out_2>
+        printf 'total words: %s\n' "$(cat $<in>)" > $<out_1>
+        printf 'metric,value\ntotal,%s\n' "$(cat $<in>)" > $<out_2>
     }
 
 chore clean

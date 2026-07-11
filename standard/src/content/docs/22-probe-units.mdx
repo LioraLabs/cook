@@ -61,7 +61,7 @@ the offending line:
   implementation MUST reject with a diagnostic indicating that `ingredients`
   must precede the producer.
 - A body step that is neither `ingredients` nor a producer (e.g. a `cook`,
-  `plate`, `test`, or other non-producer step) — a conforming implementation MUST
+  `test`, or other non-producer step) — a conforming implementation MUST
   reject with a diagnostic indicating that only `ingredients` and a producer are
   permitted in a probe body.
 - A probe name containing three or more colon-separated segments (e.g.
@@ -75,6 +75,8 @@ the offending line:
   given a `>{ … }` Lua block in place of a name list — a conforming
   implementation MUST reject with a diagnostic identifying the probe and the
   offending construct.
+
+Each segment of a bare probe key admits the recipe-name character set (internal `-` and `.`; §A.3.2 `PROBE_SEG`, CS-0131), so `demo:cc-version` is a single two-segment key. The two-`:`-segment maximum is unchanged: a bare key is at most `PROBE_SEG:PROBE_SEG`. The quoted `STRING` form denotes the same key and is the escape hatch for spellings outside `PROBE_SEG`.
 
 A shell-block producer (`{ … }`, `json { … }`, `lines { … }`) and the Lua-block
 producer (`>{ … }`) reuse the `body ::= exec_lua_block | shell_block` grammar of
@@ -244,13 +246,13 @@ The relative order of `cook.probe` and `cook.add_unit` calls within one register
 
 ## 22.5.7. Command-template desugaring [#cat.probes.templates]
 
-Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` placeholders that reference probe outputs declared in `probes`. The implementation MUST detect these placeholders during codegen (or register-time capture for direct `cook.add_unit` calls) and rewrite the command into a Lua step that calls `cook.cache.get(key)` (§{lua.both}) and interpolates the resolved value before invoking the shell.
+Consumer commands MAY include `$<key>`, `$<key.field>`, and `$<key.field[i]>` placeholders that reference probe outputs declared in `probes`. The implementation MUST detect these placeholders during codegen (or register-time capture for direct `cook.add_unit` calls) and rewrite the command into a Lua step that calls `cook.probes.get(key)` (§{lua.both}) and interpolates the resolved value before invoking the shell.
 
 The placeholder syntax reuses Cook's existing `$<IDENT>` sigil grammar (§{phl.token}). A sigil whose IDENT contains a colon (`:`) **and does not begin with the reserved `file:` prefix (§{xref.file-namespace}, CS-0101)** is unambiguously a probe-value reference; the implementation MUST dispatch it to the cache-read path described here. A sigil whose IDENT contains no colon retains its existing register-time semantics (built-ins, recipe names, env vars).
 
-These rules apply uniformly to probe-value references written in native `cook`-step bodies (§{steps.cook-single} / §{steps.cook-multi}, including `for_each` bodies) and to raw `cook.add_unit` command strings. In both cases the reference MUST reach register-time unit capture as literal `$<...>` text inside the unit's `command` **string**; the capture layer performs the rewrite described above. An implementation MUST NOT lower a probe-value reference to a non-string `command` value (e.g. a deferred Lua function): `cook.add_unit` MUST reject a `command` that is not a string with a register-phase diagnostic naming the received type. (CS-0122; defect COOK-187 — the reference implementation previously emitted a function-valued `command` for probe-referencing native bodies, which was coerced to the empty string and silently succeeded.)
+These rules apply uniformly to probe-value references written in native `cook`-step bodies (§{steps.cook-single} / §{steps.cook-multi}, including bodies of `ingredients <probe>` fan-out recipes) and to raw `cook.add_unit` command strings. In both cases the reference MUST reach register-time unit capture as literal `$<...>` text inside the unit's `command` **string**; the capture layer performs the rewrite described above. An implementation MUST NOT lower a probe-value reference to a non-string `command` value (e.g. a deferred Lua function): `cook.add_unit` MUST reject a `command` that is not a string with a register-phase diagnostic naming the received type. (CS-0122; defect COOK-187 — the reference implementation previously emitted a function-valued `command` for probe-referencing native bodies, which was coerced to the empty string and silently succeeded.)
 
-The literal-text rule applies regardless of which step kind's body originated the command — including `plate` bodies in `for_each` recipes (§8.3, §8.6), which are unsandboxed by design and remain so even after a probe-value reference triggers this desugaring. The register-time rewrite described above turns the command into a Lua chunk; that chunk MUST run under the originating step kind's sandbox policy, not a default one. Concretely, a `plate` command rewritten this way MUST stay a plate-policy chunk (unsandboxed), never silently promoted to the `cook`-step (sandboxed) policy merely because it happened to reference a probe value. (CS-0127.)
+The literal-text rule applies regardless of which step kind's body originated the command, including `cook` and `test` bodies in `ingredients <probe>` fan-out recipes (§{steps.ingredients}). The register-time rewrite described above turns the command into a Lua chunk; that chunk MUST run under the originating step kind's sandbox policy (§{lua.fs-sandbox}), not a default one. (CS-0127.)
 
 Substitution rules:
 
@@ -272,7 +274,7 @@ cook.add_unit({
 })
 ```
 
-The implementation rewrites this command at codegen time into a Lua step that reads `cook.cache.get("cc:compiler")` and `cook.cache.get("cc:zlib")` and interpolates the results before executing the shell command.
+The implementation rewrites this command at codegen time into a Lua step that reads `cook.probes.get("cc:compiler")` and `cook.probes.get("cc:zlib")` and interpolates the results before executing the shell command.
 
 ## 22.5.8. Execution semantics [#cat.probes.exec]
 
@@ -284,7 +286,7 @@ A probe unit MUST run at most once per build invocation.
 
 The per-run probe-value store is keyed by probe key. Consumer units are dispatched after their `requires`-edge predecessors complete; at dispatch time, the store is fully populated for all required probes.
 
-`cook.cache.get(key)` (§{lua.both}) invoked from execute-phase Lua MUST read from the per-run probe-value store. A `cook.cache.get` call for a key that has not completed as a probe MUST return `nil`.
+`cook.probes.get(key)` (§{lua.both}) invoked from execute-phase Lua MUST read from the per-run probe-value store. A `cook.probes.get` call for a key that has not completed as a probe MUST return `nil`.
 
 The wrapped `produce` function MAY raise a Lua error. A conforming implementation MUST treat a raised error as a unit failure and MUST propagate failure to every downstream consumer via the DAG edge, consistent with the general unit-failure semantics of §{exec.two-phase}.
 
@@ -300,18 +302,18 @@ register
     })
 
 recipe foo
-    >>{
-        cook.add_unit({
-            name = "u1", inputs = {}, outputs = {"build/foo.txt"},
-            probes = {"env:slow"},
-            command = "echo $<env:slow.ts> > build/foo.txt",
-        })
-    }
-    > cook.sh("cat build/foo.txt")
+    cook.add_unit({
+        name = "u1", inputs = {}, outputs = {"build/foo.txt"},
+        probes = {"env:slow"},
+        command = "echo $<env:slow.ts> > build/foo.txt",
+    })
+    test { cat build/foo.txt }
 
 recipe bar
-    > cook.sh("echo bar")
+    test { echo bar }
 ```
+
+The bare `cook.add_unit(…)` line is a register-phase `module_call` step (§{steps.dispatch}, rule 7) — the CS-0134 form of what a pre-CS-0134 Cookfile wrote as `>>{ cook.add_unit(…) }`. Each `test { … }` block body is an execute-phase verification unit.
 
 `cook foo` MUST execute the `env:slow` probe and `u1` exactly once.
 `cook bar` MUST execute no probes; `env:slow` is unreached and its
@@ -336,6 +338,8 @@ The diagnostic MUST render the full cycle path. The order in which nodes are lis
 An **array-shaped** probe value (§{cat.probes.values}) MAY be consumed as the source of an `ingredients <probe>` declaration (§{steps.ingredients}): `ingredients <key>` registers one work unit per array element, and `ingredients <key>:<field>` iterates the array at the named field. This is a second probe consumption mode alongside the `$<key:field>` injection of §{cat.probes.templates}; the same `cook.probe` definition serves both.
 
 **Source-ref resolution.** A probe key is itself at most two `:`-separated segments (§{cat.probes.decl}; `ns:name` is the canonical naming), so a multi-segment source ref is lexically ambiguous between a probe key and a `<key>:<field>` selector. A conforming implementation MUST resolve the ref against the set of declared probes once registration-time declarations are known: a declared probe whose key equals the entire ref wins; otherwise the segment after the final `:` is a field selector and the remaining prefix MUST name a declared probe. A ref that names no declared probe under either interpretation MUST be rejected with a register-phase diagnostic naming the full ref. A source ref of four or more segments is malformed and MUST be rejected at parse time.
+
+**Two-category discriminator (normative; CS-0131).** In `ingredients` position the bare-vs-quoted distinction is load-bearing and MUST NOT be flattened: a bare `ingredients cards` names a probe key (a namespace identifier — the fan-out member source of this section), whereas a double-quoted `ingredients "cards"` is a literal filesystem glob (§8). The two forms are NOT interchangeable. This is the general law: a double-quoted operand is a literal filesystem string (paths, globs, output patterns); a bare operand is a namespace identifier (module name, probe key, recipe dependency). It differs from the `probe_name` / `probe_ref` positions, where bare and `STRING` denote the *same* probe key and are interchangeable — there the quotes are only an escape hatch for un-spellable characters, not a category switch.
 
 An `ingredients <probe>` source is the canonical case where a recipe's declared output set *shrinks* between runs: removing a data member drops the unit (and the output) it drove, so the dropped member's artifact is swept by stale-output reconciliation (§{exec.cache.reconcile}) on the next run.
 
@@ -367,7 +371,7 @@ F1–F3 implemented: rmpv dependency, Lua→msgpack walker (`probe_value.rs`), m
 
 G1 implemented: `WorkPayload::Probe` dispatched on worker VM; `produce` source wrapped in `function() ... end`, return value converted to msgpack bytes, stored in `ProbeOutput`.
 
-G2 implemented: `cook.cache.get(key)` on execute-phase VM reads from `SharedProbeValueStore`; `cook.cache.set` deprecated and raises a runtime error (CS-0074).
+G2 implemented: `cook.probes.get(key)` on execute-phase VM reads from `SharedProbeValueStore`; `cook.probes.set` deprecated and raises a runtime error (CS-0074).
 
 G3 implemented: scheduler populates `SharedProbeValueStore` when a `WorkPayload::Probe` `WorkResult` with `probe_output: Some(...)` arrives, before scheduling downstream consumers.
 
@@ -379,9 +383,9 @@ H1 implemented (superseded by H3): the original `find_probe_refs` `{{...}}` scan
 
 H2 implemented (superseded by H3): the `{{...}}`-aware `expand_command_template` path is replaced by H3's unified expansion.
 
-H3 implemented: `sigil.rs` IDENT-continue extended to admit `:`, `-`, `[`, `]` so probe-key sigils (`$<cc:zlib.cflags>`, `$<demo:cc-version.ver>`) tokenise as single spans. `resolver.rs` added `Resolved::ProbeRef { key, access }` — when IDENT contains `:`, `parse_probe_ref` emits a `cook.cache.get` Lua expression. `template.rs` `expand_command_template` uses the sigil pipeline exclusively; when ProbeRef spans are present the expression is wrapped in `function() return ... end` for execute-time evaluation, and the set of probe keys is returned for auto-population of `requires`. The separate `{{...}}` scanner and `find_probe_refs`/`parse_field_path`/`probe_ref_to_lua_access` helpers are deleted. `cook_luagen::sigil` is now `pub` so downstream crates can reuse the scanner.
+H3 implemented: `sigil.rs` IDENT-continue extended to admit `:`, `-`, `[`, `]` so probe-key sigils (`$<cc:zlib.cflags>`, `$<demo:cc-version.ver>`) tokenise as single spans. `resolver.rs` added `Resolved::ProbeRef { key, access }` — when IDENT contains `:`, `parse_probe_ref` emits a `cook.probes.get` Lua expression. `template.rs` `expand_command_template` uses the sigil pipeline exclusively; when ProbeRef spans are present the expression is wrapped in `function() return ... end` for execute-time evaluation, and the set of probe keys is returned for auto-population of `requires`. The separate `{{...}}` scanner and `find_probe_refs`/`parse_field_path`/`probe_ref_to_lua_access` helpers are deleted. `cook_luagen::sigil` is now `pub` so downstream crates can reuse the scanner.
 
-H4 implemented: `cook-register/src/unit_api.rs` `try_expand_probe_templates` now uses `cook_luagen::sigil::scan` (one source of truth) instead of a duplicate inline `{{...}}` scanner. Probe-shaped sigils (ident contains `:`) are expanded to `cook.cache.get` reads via `cook.sh(...)` LuaChunk; non-probe sigils are preserved as literal text. `cook-luagen` added as a non-dev dependency of `cook-register` (was dev-only).
+H4 implemented: `cook-register/src/unit_api.rs` `try_expand_probe_templates` now uses `cook_luagen::sigil::scan` (one source of truth) instead of a duplicate inline `{{...}}` scanner. Probe-shaped sigils (ident contains `:`) are expanded to `cook.probes.get` reads via `cook.sh(...)` LuaChunk; non-probe sigils are preserved as literal text. `cook-luagen` added as a non-dev dependency of `cook-register` (was dev-only).
 
 J1 integration test: `probe_consumer_end_to_end_first_run_then_cache_hit` passes end-to-end (engine wiring for DAG edges and probe dispatch is complete). `#[ignore]` attribute removed.
 

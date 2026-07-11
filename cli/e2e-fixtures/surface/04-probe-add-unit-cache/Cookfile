@@ -5,13 +5,11 @@ probe demo:nonce
     }
 
 recipe build
-    >>{
-        cook.add_unit({
-            name    = "record",
-            inputs  = {},
-            outputs = {"build/probed.txt"},
-            probes  = {"demo:nonce"},
-            command = "mkdir -p build && echo $<demo:nonce.stamp> > build/probed.txt",
-        })
-    }
-    > cook.sh("cat build/probed.txt")
+    cook.add_unit({
+        name    = "record",
+        inputs  = {},
+        outputs = {"build/probed.txt"},
+        probes  = {"demo:nonce"},
+        command = "mkdir -p build && echo $<demo:nonce.stamp> > build/probed.txt",
+    })
+    test { cat build/probed.txt }

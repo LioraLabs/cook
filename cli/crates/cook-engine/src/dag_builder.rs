@@ -188,7 +188,7 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
         // `cook_cc.checks.has_header`). Their metadata lives in `ru.probes`
         // (drained from `RegisteredCookfile.probes`) but they were silently
         // dropped from the DAG before this fix, so the consumer's
-        // `cook.cache.get(probe_key)` returned nil at execute time.
+        // `cook.probes.get(probe_key)` returned nil at execute time.
         //
         // We honour the same demand-driven pruning rule as body-scope probes
         // (§22.5.7): only keys present in `consumed` (the transitive closure
@@ -1497,7 +1497,7 @@ mod tests {
     /// `WorkPayload::Probe` entries in `RecipeUnits.units`) must materialise
     /// as DAG nodes when a consumer's `probes` field references them.
     /// Pre-fix, these probes were silently dropped; the consumer's
-    /// `cook.cache.get` returned nil at execute time.
+    /// `cook.probes.get` returned nil at execute time.
     #[test]
     fn top_level_probe_materialises_when_consumer_references_it() {
         use cook_contracts::{CapturedUnit, DepKind, ProbeInputs, ProbeUnit, WorkPayload};

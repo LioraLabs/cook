@@ -1,5 +1,5 @@
 recipe build
-    cook "out/app"
+    cook "out/app" { touch out/app }
 
 chore play: build
     ./out/app

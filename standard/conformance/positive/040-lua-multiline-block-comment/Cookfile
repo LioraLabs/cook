@@ -1,5 +1,5 @@
 recipe build
-    >{
+    test >{
         --[[
             here is a } in a block comment
             and another } here

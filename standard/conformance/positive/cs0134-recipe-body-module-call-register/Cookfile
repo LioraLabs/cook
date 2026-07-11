@@ -1,0 +1,8 @@
+recipe build
+    pnpm.run("build")
+    cook.add_unit({
+        name = "u",
+        inputs = {},
+        outputs = {"out"},
+        command = "true",
+    })

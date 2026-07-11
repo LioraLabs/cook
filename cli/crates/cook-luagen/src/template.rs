@@ -24,7 +24,7 @@ use crate::sigil;
 /// `command`; a probe-value reference is left as literal `$<key:...>` sigil
 /// text inside that string. §22.5.7's register-time capture
 /// (`try_expand_probe_templates` in cook-register) detects the sigil text and
-/// rewrites the unit's command into an execute-time `cook.cache.get` chunk.
+/// rewrites the unit's command into an execute-time `cook.probes.get` chunk.
 /// Emitting a function-valued command here would silently no-op the unit
 /// once `cook.add_unit` coerces the non-string value to `""` — this is the
 /// COOK-187 defect; the fix is to never produce that shape.
@@ -48,7 +48,7 @@ pub(crate) fn expand_command_template(
             // COOK-187 / CS-0122: probe-value refs stay LITERAL `$<key:...>`
             // text in the register-time command string. cook.add_unit's
             // CS-0074 capture (§22.5.7) rewrites the string into an
-            // execute-time cook.cache.get chunk. Emitting a deferred
+            // execute-time cook.probes.get chunk. Emitting a deferred
             // `function() ... end` here is forbidden — cook.add_unit
             // rejects non-string commands.
             probe_keys.insert(key.clone());
@@ -81,7 +81,7 @@ pub(crate) enum ProbeLowering {
     /// `cook.add_unit`'s register-time capture rewrites it (COOK-187/CS-0122).
     /// Required for anything that feeds `command =`.
     LiteralSigil,
-    /// Lower to `tostring(cook.cache.get(...))` evaluated where the
+    /// Lower to `tostring(cook.probes.get(...))` evaluated where the
     /// expression is evaluated (register time). Pre-existing behavior for
     /// non-command positions (for_each output patterns, test as-names).
     CacheGet,
@@ -92,8 +92,8 @@ pub(crate) enum ProbeLowering {
 /// `$<in.FIELD>` bind the current data member (`item`); every other sigil
 /// resolves through the normal closed-set [`resolve`] against `ctx` — so
 /// `$<out>`, recipe refs, env vars, and probe refs behave exactly as in an
-/// ingredient-driven body. `$<in>` / `$<all>` are rejected when `ctx.mode` is
-/// `OneShot` (a `for_each` body has no path-input or batched-input source).
+/// ingredient-driven body. `$<in>` is rejected when `ctx.mode` is `OneShot`
+/// (a `for_each` body has no path-input source).
 ///
 /// `probe_lowering` selects how a probe-value reference lowers: `LiteralSigil`
 /// for anything that feeds a `command =` field (COOK-187/CS-0122 — the string
@@ -133,9 +133,10 @@ pub(crate) fn expand_for_each_template(
             if let Resolved::ProbeRef { key, .. } = &resolved {
                 probe_keys.insert(key.clone());
             }
-            // COOK-96: $<recipe[]> inside a fan-out body lowers to a per-member
-            // output lookup. `item` is the loop-local Lua variable bound by the
-            // fan-out harness (BuiltinKind::Item → cook.member_to_string(item)).
+            // COOK-96 / COOK-221 / CS-0137: $<recipe[in]> inside a fan-out body
+            // lowers to a per-member output lookup. `item` is the loop-local Lua
+            // variable bound by the fan-out harness (BuiltinKind::Item →
+            // cook.member_to_string(item)).
             if let Resolved::ProbeRef { .. } = &resolved {
                 if probe_lowering == ProbeLowering::LiteralSigil {
                     // COOK-187 / CS-0122: literal sigil text for register-time
@@ -422,10 +423,10 @@ fn resolved_to_lua(
         // holding the space-joined match list (see [`FileRefs`]).
         Resolved::FileRef { pattern } => Ok(file_refs.local_for(&pattern)),
         Resolved::Error(e) => Err(e),
-        // COOK-96: $<recipe[]> is only valid inside a fan-out body (expand_for_each_template).
+        // COOK-96: $<recipe[in]> is only valid inside a fan-out body (expand_for_each_template).
         // Reaching this arm means it appeared in a plain command body where `item` is not in scope.
         Resolved::RecipeMember { name } => Err(ResolveError::RecipeMemberOutsideFanout {
-            ident: format!("{}[]", name),
+            ident: format!("{}[in]", name),
         }),
     }
 }
@@ -439,7 +440,6 @@ fn builtin_to_lua(b: BuiltinKind) -> String {
         BuiltinKind::OutAccessor(acc) => format!("path.{}(_cook_out)", acc),
         BuiltinKind::OutIndexed(n) => format!("_cook_outs[{}]", n),
         BuiltinKind::OutIndexedAccessor(n, acc) => format!("path.{}(_cook_outs[{}])", acc, n),
-        BuiltinKind::All => "_cook_all".to_string(),
         // COOK-63 §8.3: data-member bindings. `$<in>` renders the whole
         // member — canonical key-sorted JSON for a record, the scalar's string
         // form otherwise — via the `cook.member_to_string` runtime helper
@@ -657,13 +657,23 @@ fn output_pattern_ident_to_lua(
         Resolved::Error(e @ ResolveError::FileRefBadPath { .. }) => {
             format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
         }
+        // COOK-221 / CS-0137: bracket-index diagnostics are hard errors, not
+        // env-var fallbacks — keep the typed diagnostic visible (mirrors
+        // FileRefBadPath above).
+        Resolved::Error(
+            e @ (ResolveError::RecipeMemberEmptyIndex { .. }
+            | ResolveError::RecipeMemberBadIndex { .. }
+            | ResolveError::RecipeMemberUnknownRecipe { .. }),
+        ) => {
+            format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
+        }
         Resolved::Error(_) => {
             // In output patterns, errors fall through to env lookup for backward compat
             // with patterns that use $<TOKEN> where TOKEN is an env var name.
             out.record(ident);
             format!("cook.require_env(\"{}\")", escape_lua_string(ident))
         }
-        // COOK-96: $<recipe[]> is invalid in an output pattern — output patterns have no
+        // COOK-96: $<recipe[in]> is invalid in an output pattern — output patterns have no
         // fan-out body context and `item` is not in scope. Emit a sentinel string that
         // surfaces as a Lua load-time string so the error is visible without a runtime panic.
         Resolved::RecipeMember { name } => {
@@ -671,7 +681,7 @@ fn output_pattern_ident_to_lua(
             // SIGIL_ERROR site (recipe.rs, cook_step.rs, …) and keeping the prose
             // identical to the typed error `resolved_to_lua` returns for the same case.
             let e = ResolveError::RecipeMemberOutsideFanout {
-                ident: format!("{}[]", name),
+                ident: format!("{}[in]", name),
             };
             format!("\"[[SIGIL_ERROR: {}]]\"", escape_lua_string(&e.to_string()))
         }
@@ -686,8 +696,9 @@ pub(crate) enum PlateTestMode {
     /// Body references $<in>/$<in.X> (shell) or `input` (Lua), and not the
     /// batched form. One unit per source item.
     OneToOne,
-    /// Body references $<all> (shell) or `inputs` (Lua), and not the
-    /// per-item form. Exactly one unit, full source visible.
+    /// Body references `inputs` (Lua block form only — shell bodies cannot
+    /// express batched plate/test since CS-0130 removed `$<all>`), and not
+    /// the per-item form. Exactly one unit, full source visible.
     ManyToOne,
     /// Body references neither. Exactly one unit, source not consulted.
     OneShot,
@@ -703,13 +714,12 @@ pub(crate) fn detect_plate_test_mode(body: &Body) -> Result<PlateTestMode, Plate
     match body {
         Body::ShellBlock(lines) => {
             let joined: String = lines.join("\n");
-            let has_in = body_text_has_in_placeholder_sigil(&joined);
-            let has_all = body_text_has_sigil_token(&joined, "all");
-            match (has_in, has_all) {
-                (true, true) => Err(PlateTestModeError::Mixed("$<in>", "$<all>")),
-                (true, false) => Ok(PlateTestMode::OneToOne),
-                (false, true) => Ok(PlateTestMode::ManyToOne),
-                (false, false) => Ok(PlateTestMode::OneShot),
+            // A shell plate/test body is per-item ($<in>) or one-shot. Batched
+            // (many-to-one) plate/test is the Lua block form (`inputs`).
+            if body_text_has_in_placeholder_sigil(&joined) {
+                Ok(PlateTestMode::OneToOne)
+            } else {
+                Ok(PlateTestMode::OneShot)
             }
         }
         Body::LuaBlock(code) => {
@@ -730,16 +740,6 @@ fn body_text_has_in_placeholder_sigil(text: &str) -> bool {
     for span in sigil::scan(text) {
         let ident = &span.ident;
         if ident == "in" || ident.starts_with("in.") {
-            return true;
-        }
-    }
-    false
-}
-
-/// Scan a shell-body text for `$<TOKEN>` with a specific ident.
-fn body_text_has_sigil_token(text: &str, token: &str) -> bool {
-    for span in sigil::scan(text) {
-        if span.ident == token {
             return true;
         }
     }
@@ -921,18 +921,6 @@ fn validate_sigil_token(
         return Ok(());
     }
 
-    // $<all>: must be in ManyToOne.
-    if ident == "all" {
-        if mode != PlateTestMode::ManyToOne {
-            return Err(PlateTestPlaceholderError::BadPlaceholder {
-                token: "$<all>".to_string(),
-                mode_name: format!("{:?}", mode),
-                line: line.to_string(),
-            });
-        }
-        return Ok(());
-    }
-
     // Bare path-accessor: rejected.
     if matches!(ident, "stem" | "name" | "ext" | "dir") {
         return Err(PlateTestPlaceholderError::BareAccessor {
@@ -955,15 +943,15 @@ fn validate_sigil_token(
 
 // ─── CS-0024: parametric plate/test body expander ───────────────────────────
 
-/// Plate/test variant: substitute `$<in>` to `iter_var`, `$<all>` to `all_var`,
-/// and reject `$<out>` / `$<out_N>` (use `validate_plate_test_placeholders`
-/// before calling). `$<NAME>` resolves to `cook.dep_output(NAME)` if `NAME`
+/// Plate/test variant: substitute `$<in>` to `iter_var` (a shell body is
+/// per-item or one-shot only — see [`PlateTestMode`]), and reject `$<out>` /
+/// `$<out_N>` (use `validate_plate_test_placeholders` before calling).
+/// `$<NAME>` resolves to `cook.dep_output(NAME)` if `NAME`
 /// is a recipe; otherwise to `cook.require_env(NAME)`.
 pub(crate) fn expand_plate_test_body(
     template: &str,
     recipe_names: &BTreeSet<String>,
     iter_var: &str,
-    all_var: &str,
     out: &mut ConsultedEnv,
     file_refs: &mut FileRefs,
 ) -> String {
@@ -998,8 +986,6 @@ pub(crate) fn expand_plate_test_body(
             iter_var.to_string()
         } else if let Some(acc) = ident.strip_prefix("in.") {
             format!("path.{}({})", acc, iter_var)
-        } else if ident == "all" {
-            format!("table.concat({}, \" \")", all_var)
         } else if recipe_names.contains(ident.as_str()) {
             format!("cook.dep_output(\"{}\")", escape_lua_string(ident))
         } else {
@@ -1254,15 +1240,33 @@ mod tests {
 
     #[test]
     fn builtin_in_wrong_mode_returns_err() {
+        // CS-0130: `$<in>` is unit-centric — it is legal in OneToOne (loop
+        // member) and ManyToOne (joined set); only OneShot (no iteration
+        // source) rejects the bare form.
         let r = empty_recipes();
-        let ctx = ResolveCtx {
+        let os_ctx = ResolveCtx {
+            mode: IterMode::OneShot,
+            outputs: OutputShape::Single,
+            recipes_in_scope: &r,
+        };
+        let mut env = ConsultedEnv::new();
+        let result = expand_sigil_template("$<in>", &os_ctx, &mut env, &mut FileRefs::new("t"));
+        assert!(result.is_err(), "expected error for $<in> in one-shot mode");
+
+        // $<in.ACCESSOR> requires the input set be singular — still rejected
+        // outside OneToOne (both ManyToOne and OneShot).
+        let m2o_ctx = ResolveCtx {
             mode: IterMode::ManyToOne,
             outputs: OutputShape::Single,
             recipes_in_scope: &r,
         };
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("$<in>", &ctx, &mut env, &mut FileRefs::new("t"));
-        assert!(result.is_err(), "expected error for $<in> in many-to-one mode");
+        let result = expand_sigil_template("$<in.stem>", &m2o_ctx, &mut env, &mut FileRefs::new("t"));
+        assert!(result.is_err(), "expected error for $<in.stem> in many-to-one mode");
+
+        let mut env = ConsultedEnv::new();
+        let result = expand_sigil_template("$<in.stem>", &os_ctx, &mut env, &mut FileRefs::new("t"));
+        assert!(result.is_err(), "expected error for $<in.stem> in one-shot mode");
     }
 
     #[test]
@@ -1297,7 +1301,7 @@ mod tests {
         );
     }
 
-    // COOK-96: $<recipe[]> inside a fan-out body lowers to cook.dep_output_member.
+    // COOK-96: $<recipe[in]> inside a fan-out body lowers to cook.dep_output_member.
     #[test]
     fn recipe_member_lowers_to_dep_output_member() {
         let mut recipes = BTreeSet::new();
@@ -1305,7 +1309,7 @@ mod tests {
         let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
         let mut env = ConsultedEnv::new();
         let (lua, _) = expand_for_each_template(
-            "bin/mux --video $<render[]>",
+            "bin/mux --video $<render[in]>",
             &ctx,
             &mut env,
             &mut FileRefs::new("t"),
@@ -1318,18 +1322,84 @@ mod tests {
         );
     }
 
-    // COOK-96: $<recipe[]> in a plain (non-fan-out) command body must error.
+    // COOK-96: $<recipe[in]> in a plain (non-fan-out) command body must error.
     #[test]
     fn recipe_member_in_plain_command_is_error() {
         let mut recipes = BTreeSet::new();
         recipes.insert("render".to_string());
         let ctx = cook_step_ctx(IterMode::OneToOne, OutputShape::Single, &recipes);
         let mut env = ConsultedEnv::new();
-        let res = expand_command_template("bin/x $<render[]>", &ctx, &mut env, &mut FileRefs::new("t"));
+        let res = expand_command_template("bin/x $<render[in]>", &ctx, &mut env, &mut FileRefs::new("t"));
         assert!(
             matches!(res, Err(ResolveError::RecipeMemberOutsideFanout { .. })),
             "expected RecipeMemberOutsideFanout, got: {res:?}"
         );
+    }
+
+    // COOK-221 / CS-0137: the pre-v1.0 spelling `$<render[]>` must error with
+    // a did-you-mean even inside a fan-out body.
+    #[test]
+    fn recipe_member_empty_index_errors_in_fanout_body() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
+        let mut env = ConsultedEnv::new();
+        let res = expand_for_each_template(
+            "bin/mux --video $<render[]>",
+            &ctx,
+            &mut env,
+            &mut FileRefs::new("t"),
+            ProbeLowering::CacheGet,
+        );
+        assert!(
+            matches!(res, Err(ResolveError::RecipeMemberEmptyIndex { .. })),
+            "expected RecipeMemberEmptyIndex, got: {res:?}"
+        );
+    }
+
+    // COOK-221 / CS-0137: any bracket content other than the literal `in`
+    // is rejected (member-field joins are not part of v1.0).
+    #[test]
+    fn recipe_member_bad_index_errors_in_fanout_body() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        let ctx = cook_step_ctx(IterMode::OneShot, OutputShape::Single, &recipes);
+        let mut env = ConsultedEnv::new();
+        let res = expand_for_each_template(
+            "bin/mux --video $<render[key]>",
+            &ctx,
+            &mut env,
+            &mut FileRefs::new("t"),
+            ProbeLowering::CacheGet,
+        );
+        assert!(
+            matches!(res, Err(ResolveError::RecipeMemberBadIndex { .. })),
+            "expected RecipeMemberBadIndex, got: {res:?}"
+        );
+    }
+
+    // COOK-221 / CS-0137: in an OUTPUT PATTERN the bracket-index diagnostics
+    // must surface as a SIGIL_ERROR sentinel (hard error via the checked-path
+    // sentinel scan), never fall back to cook.require_env.
+    #[test]
+    fn recipe_member_bracket_errors_are_sentinels_in_output_patterns() {
+        let mut env = ConsultedEnv::new();
+        let lua = expand_output_pattern("build/$<render[]>.o", &mut env);
+        assert!(
+            lua.contains("[[SIGIL_ERROR:") && lua.contains("was respelled"),
+            "expected SIGIL_ERROR sentinel with did-you-mean, got: {lua}"
+        );
+        assert!(
+            !lua.contains("cook.require_env"),
+            "bracket error must not fall through to env lookup, got: {lua}"
+        );
+
+        let lua = expand_output_pattern("build/$<render[key]>.o", &mut env);
+        assert!(
+            lua.contains("[[SIGIL_ERROR:") && lua.contains("member-field joins are not part of v1.0"),
+            "expected SIGIL_ERROR sentinel for reserved index, got: {lua}"
+        );
+        assert!(env.keys.is_empty(), "no env keys must be recorded for bracket errors");
     }
 }
 
@@ -1354,7 +1424,10 @@ mod sigil_template_tests {
     }
 
     #[test]
-    fn all_in_many_to_one() {
+    fn in_in_many_to_one() {
+        // CS-0130: `$<all>` is gone; `$<in>` is unit-centric and in ManyToOne
+        // lowers to the same `_cook_in` local, now holding the joined set
+        // (table.concat), rather than a per-item loop member.
         let r = empty_recipes();
         let ctx = ResolveCtx {
             mode: IterMode::ManyToOne,
@@ -1362,8 +1435,8 @@ mod sigil_template_tests {
             recipes_in_scope: &r,
         };
         let mut env = ConsultedEnv::new();
-        let result = expand_sigil_template("ar rcs $<out> $<all>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
-        assert_eq!(result, "\"ar rcs \" .. _cook_out .. \" \" .. _cook_all");
+        let result = expand_sigil_template("ar rcs $<out> $<in>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
+        assert_eq!(result, "\"ar rcs \" .. _cook_out .. \" \" .. _cook_in");
     }
 
     #[test]
@@ -1429,7 +1502,7 @@ mod probe_template_tests {
         // `$<key:...>` sigil text stays in the command string for
         // cook.add_unit's register-time capture to rewrite.
         assert!(!lua.contains("function()"), "got: {}", lua);
-        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(!lua.contains("cook.probes.get"), "got: {}", lua);
         assert!(lua.contains("$<cc:zlib.cflags>"), "got: {}", lua);
         // Sigil $<in> should still resolve normally.
         assert!(lua.contains("_cook_in"), "got: {}", lua);
@@ -1449,7 +1522,7 @@ mod probe_template_tests {
         let (lua, keys) =
             expand_command_template("$<cc:compiler> -c foo.c", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert!(!lua.contains("function()"), "got: {}", lua);
-        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(!lua.contains("cook.probes.get"), "got: {}", lua);
         assert!(lua.contains("$<cc:compiler>"), "got: {}", lua);
         assert!(keys.contains("cc:compiler"), "expected cc:compiler in keys; got: {:?}", keys);
     }
@@ -1467,7 +1540,7 @@ mod probe_template_tests {
         let (lua, keys) =
             expand_command_template("$<cc:zlib.libs[2]>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert!(!lua.contains("function()"), "got: {}", lua);
-        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(!lua.contains("cook.probes.get"), "got: {}", lua);
         assert!(lua.contains("$<cc:zlib.libs[2]>"), "got: {}", lua);
         assert!(keys.contains("cc:zlib"));
     }
@@ -1484,7 +1557,7 @@ mod probe_template_tests {
         let (lua, keys) =
             expand_command_template("$<cc:compiler.path> -c foo.c $<cc:zlib.cflags>", &ctx, &mut env, &mut FileRefs::new("t")).unwrap();
         assert!(!lua.contains("function()"), "got: {}", lua);
-        assert!(!lua.contains("cook.cache.get"), "got: {}", lua);
+        assert!(!lua.contains("cook.probes.get"), "got: {}", lua);
         assert!(lua.contains("$<cc:compiler.path>"), "got: {}", lua);
         assert!(lua.contains("$<cc:zlib.cflags>"), "got: {}", lua);
         assert!(keys.contains("cc:compiler"), "keys: {:?}", keys);

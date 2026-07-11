@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Test body=ShellBlock(["make integration"]) timeout=Some(30) should_fail=false
+        Test body=ShellBlock(["make integration"])
   chores:
   register_blocks: []
   top_level_module_calls: []

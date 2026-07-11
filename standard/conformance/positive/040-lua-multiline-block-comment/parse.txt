@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        LuaBlock code="        --[[\n            here is a } in a block comment\n            and another } here\n        ]]\n        local x = 1"
+        Test body=LuaBlock("        --[[\n            here is a } in a block comment\n            and another } here\n        ]]\n        local x = 1")
   chores:
   register_blocks: []
   top_level_module_calls: []

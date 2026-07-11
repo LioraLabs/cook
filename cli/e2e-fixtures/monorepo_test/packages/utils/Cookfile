@@ -7,4 +7,4 @@ recipe build
     }
 
 recipe unit: build
-    test { test -s $<build> } timeout 5
+    test { test -s $<build> }

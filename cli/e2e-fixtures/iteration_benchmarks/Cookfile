@@ -39,13 +39,13 @@ recipe one_to_many_shell
 
 # Mode 4: Many-to-one, shell block.
 # All inputs => 1 unit, 1 literal output.
-# $<all> expands to the space-joined full input list.
+# $<in> expands to the space-joined full input list.
 recipe many_to_one_shell
     ingredients "src/inputs/*.txt"
     cook "build/many_to_one_shell/all.out" {
         mkdir -p build/many_to_one_shell
         sleep $<SLEEP>
-        echo "many_to_one_shell: $<all>" > $<out>
+        echo "many_to_one_shell: $<in>" > $<out>
     }
 
 # Mode 5: Many-to-one, Lua block — THE CS-0022 WART-FIX.
@@ -73,8 +73,8 @@ recipe many_to_one_multi_shell
     cook "build/many_to_one_multi_shell/all.a.out" "build/many_to_one_multi_shell/all.b.out" {
         mkdir -p build/many_to_one_multi_shell
         sleep $<SLEEP>
-        echo "many_to_one_multi_shell: side-a from $<all>" > $<out_1>
-        echo "many_to_one_multi_shell: side-b from $<all>" > $<out_2>
+        echo "many_to_one_multi_shell: side-a from $<in>" > $<out_1>
+        echo "many_to_one_multi_shell: side-b from $<in>" > $<out_2>
     }
 
 # Mode 7: Many-to-one, multi-output, Lua block.
@@ -119,7 +119,7 @@ recipe libfoo
     cook "build/lib/libfoo.a" {
         mkdir -p build/lib
         sleep $<SLEEP>
-        echo "libfoo: $<all>" > $<out>
+        echo "libfoo: $<in>" > $<out>
     }
 
 # app_with_lib — cross-recipe reference inside a shell block (§5.5 / CS-0022 §3.6).
@@ -132,8 +132,9 @@ recipe app_with_lib
         echo "app_with_lib: linked against $<libfoo>" > $<out>
     }
 
-# Plate mode 1: One-to-one, shell.
-# Body uses $<in> => iterates over the preceding cook's outputs.
+# Second-stage mode 1: One-to-one, shell (was a `plate` step; CS-0135
+# removed plate — the un-sandboxed per-item pass is now a second, cached
+# `cook` step driven by the same declared ingredients).
 recipe plate_one_to_one_shell
     ingredients "src/inputs/*.txt"
     cook "build/plate_one_to_one_shell/$<in.stem>.out" {
@@ -141,13 +142,16 @@ recipe plate_one_to_one_shell
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
     }
-    plate {
+    cook "build/plate_one_to_one_shell/$<in.stem>.plated" {
         sleep $<SLEEP>
-        echo "plate one-to-one: $<in>" >> $<in>
+        echo "plate one-to-one: $<in>" > $<out>
     }
 
-# Plate mode 2: Many-to-one, shell.
-# Body uses $<all> => one unit, full source visible.
+# Second-stage mode 2: Many-to-one, shell cook step + Lua second stage
+# (was a batched `plate` step). A batched body can't be shell (CS-0130
+# removed the old all-inputs placeholder; per-item/one-shot only), so
+# it's a Lua block with a literal output, where `inputs` is the full
+# collected source list — same shape as many_to_one_lua above.
 recipe plate_many_to_one_shell
     ingredients "src/inputs/*.txt"
     cook "build/plate_many_to_one_shell/$<in.stem>.out" {
@@ -155,13 +159,16 @@ recipe plate_many_to_one_shell
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
     }
-    plate {
-        sleep $<SLEEP>
-        echo "plate many-to-one inputs: $<all>" > build/plate_many_to_one_shell/all.report
+    cook "build/plate_many_to_one_shell/all.report" >{
+        os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
+        local f = io.open(output, "w")
+        f:write("plate many-to-one inputs: " .. table.concat(inputs, " ") .. "\n")
+        f:close()
     }
 
-# Plate mode 3: One-shot, shell.
-# Body references neither $<in> nor $<all> => runs once.
+# Second-stage mode 3: One-shot, shell (was a one-shot `plate` step).
+# Literal output, no $<in.stem> in the pattern => runs once regardless of
+# the declared ingredients (same rule as test_one_shot_shell below).
 recipe plate_one_shot_shell
     ingredients "src/inputs/*.txt"
     cook "build/plate_one_shot_shell/$<in.stem>.out" {
@@ -169,13 +176,13 @@ recipe plate_one_shot_shell
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
     }
-    plate {
+    cook "build/plate_one_shot_shell/.flag" {
         sleep $<SLEEP>
-        echo "plate one-shot ran" > build/plate_one_shot_shell/.flag
+        echo "plate one-shot ran" > $<out>
     }
 
-# Plate mode 4: One-to-one, Lua.
-# Body references `input` => iterates.
+# Second-stage mode 4: One-to-one, Lua (was a `plate >{ }` step referencing
+# `input`).
 recipe plate_one_to_one_lua
     ingredients "src/inputs/*.txt"
     cook "build/plate_one_to_one_lua/$<in.stem>.out" {
@@ -183,15 +190,15 @@ recipe plate_one_to_one_lua
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
     }
-    plate >{
+    cook "build/plate_one_to_one_lua/$<in.stem>.plated" >{
         os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
-        local f = io.open(input, "a")
+        local f = io.open(output, "w")
         f:write("plate one-to-one lua: " .. input .. "\n")
         f:close()
     }
 
-# Plate mode 5: Many-to-one, Lua.
-# Body references `inputs` => one unit.
+# Second-stage mode 5: Many-to-one, Lua (was a `plate >{ }` step
+# referencing `inputs`).
 recipe plate_many_to_one_lua
     ingredients "src/inputs/*.txt"
     cook "build/plate_many_to_one_lua/$<in.stem>.out" {
@@ -199,14 +206,14 @@ recipe plate_many_to_one_lua
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
     }
-    plate >{
+    cook "build/plate_many_to_one_lua/all.report" >{
         os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
-        local f = io.open("build/plate_many_to_one_lua/all.report", "w")
+        local f = io.open(output, "w")
         f:write("plate many-to-one lua: " .. #inputs .. " inputs\n")
         f:close()
     }
 
-# Plate mode 6: One-shot, Lua.
+# Second-stage mode 6: One-shot, Lua (was a one-shot `plate >{ }` step).
 recipe plate_one_shot_lua
     ingredients "src/inputs/*.txt"
     cook "build/plate_one_shot_lua/$<in.stem>.out" {
@@ -214,9 +221,9 @@ recipe plate_one_shot_lua
         sleep $<SLEEP>
         echo "plated: $<in>" > $<out>
     }
-    plate >{
+    cook "build/plate_one_shot_lua/.flag" >{
         os.execute("sleep " .. (os.getenv("SLEEP") or "0.5"))
-        os.execute("touch build/plate_one_shot_lua/.flag")
+        os.execute("touch " .. output)
     }
 
 # Test mode 1: One-to-one, shell.
@@ -228,21 +235,27 @@ recipe test_one_to_one_shell
         sleep $<SLEEP>
         echo "test input: $<in>" > $<out>
     }
-    test { test -f $<in> } timeout 5
+    test { test -f $<in> }
 
-# Test mode 2: Many-to-one, shell.
-# $<all> gives the full source list; counts to verify it's non-empty.
+# Test mode 2: Many-to-one, cook step shell + Lua test.
+# A batched (many-to-one) test body can no longer be shell (CS-0130
+# removed the old all-inputs placeholder, and plate/test shell bodies are
+# per-item or one-shot only) — it moves to the Lua block form, where
+# `inputs` is the full collected source list.
 recipe test_many_to_one_shell
     ingredients "src/inputs/*.txt"
     cook "build/test_many_to_one_shell/all.out" {
         mkdir -p build/test_many_to_one_shell
         sleep $<SLEEP>
-        echo "many-to-one: $<all>" > $<out>
+        echo "many-to-one: $<in>" > $<out>
     }
-    test { count=$(echo $<all> | wc -w); [ "$count" -gt 0 ] } timeout 5
+    test >{
+        assert(#inputs > 0, "expected at least one input")
+    }
 
 # Test mode 3: One-shot, shell.
-# Body references neither $<in> nor $<all>; runs once unconditionally.
+# Body references neither $<in> nor the collected inputs; runs once
+# unconditionally.
 recipe test_one_shot_shell
     ingredients "src/inputs/*.txt"
     cook "build/test_one_shot_shell/all.out" {
@@ -250,7 +263,7 @@ recipe test_one_shot_shell
         sleep $<SLEEP>
         echo "one-shot done" > $<out>
     }
-    test { true } timeout 5
+    test { true }
 
 # Test mode 4: One-to-one, Lua.
 # `input` iterates over cook outputs; asserts each file is readable.
@@ -265,7 +278,7 @@ recipe test_one_to_one_lua
         local f = io.open(input, "r")
         assert(f, "file not readable: " .. input)
         f:close()
-    } timeout 5
+    }
 
 # Test mode 5: Many-to-one, Lua.
 # `inputs` gives the full list; asserts count is greater than zero.
@@ -278,7 +291,7 @@ recipe test_many_to_one_lua
     }
     test >{
         assert(#inputs > 0, "expected at least one input")
-    } timeout 5
+    }
 
 # Test mode 6: One-shot, Lua.
 # No source binding; runs once unconditionally.
@@ -291,7 +304,7 @@ recipe test_one_shot_lua
     }
     test >{
         assert(true)
-    } timeout 5
+    }
 
 # benchmarks — orchestrator.
 # Lists every mode recipe as a dependency.

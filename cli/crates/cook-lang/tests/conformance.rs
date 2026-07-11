@@ -204,7 +204,6 @@ fn format_step(step: &Step) -> String {
         Step::Lua { code, .. } => format!("Lua code={}", repr(code)),
         Step::LuaBlock { code, .. } => format!("LuaBlock code={}", repr(code)),
         Step::InlineLua { code, .. } => format!("InlineLua code={}", repr(code)),
-        Step::InlineLuaBlock { code, .. } => format!("InlineLuaBlock code={}", repr(code)),
         Step::Cook { step, .. } => {
             let mut s = format!(
                 "Cook outputs={} body={}",
@@ -235,19 +234,7 @@ fn format_step(step: &Step) -> String {
                 ForEachSource::ProbeKey(k) => format!("ProbeKey({})", repr(k)),
             },
         ),
-        Step::Plate { step, .. } => format!("Plate body={}", repr_body(&step.body)),
-        Step::Test { step, .. } => {
-            let timeout = match step.timeout {
-                None    => "None".to_string(),
-                Some(n) => format!("Some({})", n),
-            };
-            format!(
-                "Test body={} timeout={} should_fail={}",
-                repr_body(&step.body),
-                timeout,
-                step.should_fail,
-            )
-        }
+        Step::Test { step, .. } => format!("Test body={}", repr_body(&step.body)),
         // `Step` is `#[non_exhaustive]`; render unknown future variants with a
         // generic placeholder so the conformance harness keeps building when
         // the AST grows.
@@ -413,6 +400,14 @@ fn positive_conformance_corpus() {
             Ok(ast) => {
                 let actual = format_cookfile(&ast);
                 if normalize(&actual) != normalize(&expected) {
+                    // Snapshot-bless ergonomic: `COOK_BLESS=1 cargo test ...`
+                    // writes the actual output back to `parse.txt` and treats
+                    // the case as passing, instead of failing the corpus.
+                    if std::env::var("COOK_BLESS").is_ok() {
+                        fs::write(&expected_path, &actual)
+                            .unwrap_or_else(|e| panic!("write {}: {}", expected_path.display(), e));
+                        continue;
+                    }
                     failures.push(format!(
                         "case {}: AST shape mismatch.\n--- expected (parse.txt) ---\n{}\n--- actual ---\n{}\n",
                         name,

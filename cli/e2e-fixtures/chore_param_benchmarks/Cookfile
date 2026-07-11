@@ -41,7 +41,6 @@ chore greet who
 
 # ─── Required + defaulted-string ────────────────────────────────────────────
 chore deploy target host="prod.example.com"
-    >> log_msg = "deploy target=" .. target .. " host=" .. host
     echo deploy target=$<target> host=$<host>
     > print("post-deploy: " .. target .. "@" .. host)
 
@@ -66,7 +65,7 @@ chore fmt *files
 
 # ─── Comprehensive: required + defaulted-string + Lua-default + variadic ───
 chore demo target host="prod" version=("v0") *extras
-    >> print("register: target=" .. target .. " host=" .. host .. " version=" .. version)
+    > print("register: target=" .. target .. " host=" .. host .. " version=" .. version)
     echo shell-sub: $<target> $<host> $<version> $<extras>
     sh -c 'echo "env-vars: target=$target host=$host version=$version extras=\"$extras\" mode=${MODE-default}"'
     > print("exec-lua: " .. target .. " " .. host .. " " .. version .. " #extras=" .. #extras)

@@ -1,0 +1,3 @@
+recipe all
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }

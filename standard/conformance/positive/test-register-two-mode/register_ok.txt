@@ -1,0 +1,1 @@
+two-mode test register: one-to-one fan-out + naked single-unit

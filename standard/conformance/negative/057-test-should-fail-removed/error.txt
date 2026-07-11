@@ -1,0 +1,1 @@
+should_fail was removed in v1.0

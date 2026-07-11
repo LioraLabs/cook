@@ -1,5 +1,5 @@
 recipe build
-    >{
+    test >{
         local s = [==[
             this is opaque text
             with } and ]] inside

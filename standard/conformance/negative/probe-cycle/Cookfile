@@ -3,4 +3,4 @@ register
     cook.probe("b", { inputs = { requires = {"a"} }, produce = "return 2" })
 
 recipe noop
-    > cook.sh("true")
+    test >{ cook.sh("true") }

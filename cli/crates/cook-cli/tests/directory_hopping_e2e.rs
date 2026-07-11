@@ -68,16 +68,15 @@ fn why_unit(dir: &Path, target: &str) -> (String, String, String) {
 }
 
 const MEMBER_COOKFILE: &str = r#"recipe build
-    >>{
         cook.add_unit({
             inputs  = { "src/main.txt" },
             outputs = { "build/out.txt" },
             command = "mkdir -p build && cp src/main.txt build/out.txt",
         })
-    }
 "#;
 
-const ROOT_COOKFILE: &str = "import rust apps/rust\n\nrecipe check\n    echo root-check\n";
+const ROOT_COOKFILE: &str =
+    "import rust apps/rust\n\nrecipe check\n    cook \"check.txt\" { echo root-check > $<out> }\n";
 
 fn workspace_fixture() -> (TempDir, TempDir) {
     let tmp = TempDir::new().expect("tempdir");
@@ -157,7 +156,7 @@ fn double_slash_target_rejected() {
 fn walk_up_does_not_escape_cookroot_boundary() {
     let tmp = TempDir::new().expect("tempdir");
     let outer = tmp.path();
-    write(outer, "Cookfile", "recipe build\n    echo DECOY\n");
+    write(outer, "Cookfile", "recipe build\n    cook \"d.txt\" { echo DECOY > $<out> }\n");
     std::fs::create_dir_all(outer.join("proj/sub")).unwrap();
     write(outer, "proj/.cookroot", "");
 

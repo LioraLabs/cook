@@ -47,7 +47,6 @@ pub enum BuiltinKind {
     OutAccessor(String),   // {out.stem} etc
     OutIndexed(usize),     // {out_1}
     OutIndexedAccessor(usize, String), // {out_1.stem}
-    All,                   // {all}
     /// COOK-63 §8.3: `$<in>` — the whole current `for_each` data member.
     Item,
     /// COOK-63 §8.3: `$<in.FIELD>` — record field `FIELD` of the member.
@@ -59,13 +58,14 @@ pub enum BuiltinKind {
 pub enum Resolved {
     Builtin(BuiltinKind),
     Recipe { name: String, accessor: Option<String> },
-    /// COOK-96: `$<recipe[]>` — the recipe's terminal output for the CURRENT
-    /// iteration member. Resolved per consumer member inside a fan-out body.
+    /// COOK-96 / COOK-221 / CS-0137: `$<recipe[in]>` — the recipe's terminal
+    /// output for the CURRENT iteration member. Resolved per consumer member
+    /// inside a fan-out body.
     RecipeMember { name: String },
     EnvRuntime(String),
     /// CS-0074: a probe-value reference — `$<key>`, `$<key.field>`, or `$<key.field[i]>`.
     /// `key` is the probe key (everything before the first `.` or `[`).
-    /// `access` is the ready-to-emit Lua expression (e.g. `cook.cache.get("cc:zlib").cflags`).
+    /// `access` is the ready-to-emit Lua expression (e.g. `cook.probes.get("cc:zlib").cflags`).
     ProbeRef { key: String, access: String },
     /// CS-0101: `$<file:PATH>` — a file reference. Interpolates the resolved
     /// match list and (for cacheable units) folds each file's content into
@@ -84,8 +84,14 @@ pub enum ResolveError {
     BuiltinWrongOutputCount { ident: String, builtin: String, required: String, actual: usize },
     #[error("placeholder $<{ident}>: malformed out_N (N must be ≥ 1)")]
     MalformedOutIndex { ident: String },
-    #[error("placeholder $<{ident}>: a recipe-member ref `$<recipe[]>` is only valid inside an `ingredients <probe>` fan-out body")]
+    #[error("placeholder $<{ident}>: a recipe-member ref `$<recipe[in]>` is only valid inside an `ingredients <probe>` fan-out body")]
     RecipeMemberOutsideFanout { ident: String },
+    #[error("placeholder $<{ident}>: `$<{name}[]>` was respelled `$<{name}[in]>` in v1.0")]
+    RecipeMemberEmptyIndex { ident: String, name: String },
+    #[error("placeholder $<{ident}>: invalid member index `[{index}]` — the only valid index is the literal `[in]`; member-field joins are not part of v1.0")]
+    RecipeMemberBadIndex { ident: String, index: String },
+    #[error("placeholder $<{ident}>: `[in]` names a per-member recipe output, but no recipe named '{name}' is in scope")]
+    RecipeMemberUnknownRecipe { ident: String, name: String },
     #[error("placeholder $<{ident}>: file reference paths must be relative and must not contain '..' segments")]
     FileRefBadPath { ident: String },
     #[error("placeholder $<{ident}>: $<file:PATH> is an input reference and is not valid in a cook output pattern")]
@@ -107,7 +113,7 @@ enum BuiltinMatch {
 ///
 /// `ident` must contain `:`. Everything before the first `.` or `[` that
 /// follows the `:` is the key; the rest is the path. Returns the Lua expression
-/// that reads `cook.cache.get(key)` with the path appended.
+/// that reads `cook.probes.get(key)` with the path appended.
 fn parse_probe_ref(ident: &str, escape: impl Fn(&str) -> String) -> (String, String) {
     // Find the boundary between key and path. The key ends at the first `.` or `[`
     // that appears after the `:` discriminator.
@@ -121,7 +127,7 @@ fn parse_probe_ref(ident: &str, escape: impl Fn(&str) -> String) -> (String, Str
     let key = &ident[..path_start];
     let path_str = &ident[path_start..];
 
-    let mut access = format!("cook.cache.get(\"{}\")", escape(key));
+    let mut access = format!("cook.probes.get(\"{}\")", escape(key));
 
     // Walk the path string, building `.field` or `[N]` accesses.
     let mut chars = path_str.chars().peekable();
@@ -219,12 +225,33 @@ pub fn resolve(ident: &str, ctx: &ResolveCtx<'_>) -> Resolved {
         return Resolved::ProbeRef { key, access };
     }
 
-    // COOK-96: `$<recipe[]>` — per-member cross-recipe output. The bracket is
-    // empty (the current member is implicit). Only a recipe name in scope
-    // qualifies; anything else with a trailing `[]` falls through.
-    if let Some(base) = ident.strip_suffix("[]") {
-        if ctx.recipes_in_scope.contains(base) {
-            return Resolved::RecipeMember { name: base.to_string() };
+    // COOK-221 / CS-0137: `$<recipe[in]>` — per-member cross-recipe output.
+    // The literal index `in` names the current member binding. A trailing
+    // bracket group is member-ref territory — no env fallthrough: the empty
+    // index `[]` (the pre-v1.0 spelling) gets a did-you-mean, any other
+    // content is rejected (member-field joins are not part of v1.0), and
+    // `[in]` on an unknown name errors naming the unknown recipe.
+    if ident.ends_with(']') {
+        if let Some(open) = ident.find('[') {
+            let name = ident[..open].to_string();
+            let index = &ident[open + 1..ident.len() - 1];
+            return match index {
+                "in" if ctx.recipes_in_scope.contains(&name) => {
+                    Resolved::RecipeMember { name }
+                }
+                "in" => Resolved::Error(ResolveError::RecipeMemberUnknownRecipe {
+                    ident: ident.to_string(),
+                    name,
+                }),
+                "" => Resolved::Error(ResolveError::RecipeMemberEmptyIndex {
+                    ident: ident.to_string(),
+                    name,
+                }),
+                other => Resolved::Error(ResolveError::RecipeMemberBadIndex {
+                    ident: ident.to_string(),
+                    index: other.to_string(),
+                }),
+            };
         }
     }
 
@@ -257,7 +284,6 @@ fn match_builtin(ident: &str) -> BuiltinMatch {
     match ident {
         "in" => BuiltinMatch::Yes(BuiltinKind::In),
         "out" => BuiltinMatch::Yes(BuiltinKind::Out),
-        "all" => BuiltinMatch::Yes(BuiltinKind::All),
         _ => {
             if let Some(rest) = ident.strip_prefix("in.") {
                 if ACCESSORS.contains(&rest) {
@@ -306,8 +332,11 @@ fn validate_builtin(ident: &str, b: BuiltinKind, ctx: &ResolveCtx<'_>) -> Resolv
     use OutputShape::*;
 
     match &b {
-        In | InAccessor(_) => {
-            if ctx.mode != OneToOne {
+        In => {
+            // $<in> is the unit's input set — the loop member in one-to-one, the
+            // space-joined collected set in many-to-one. Only one-shot (no
+            // iteration source) rejects it.
+            if ctx.mode == OneShot {
                 return Resolved::Error(ResolveError::BuiltinWrongMode {
                     ident: ident.to_string(),
                     builtin: format!("{:?}", b),
@@ -315,8 +344,11 @@ fn validate_builtin(ident: &str, b: BuiltinKind, ctx: &ResolveCtx<'_>) -> Resolv
                 });
             }
         }
-        All => {
-            if ctx.mode != ManyToOne {
+        InAccessor(_) => {
+            // An accessor requires the input set be singular — legal only in
+            // one-to-one (fan-out) mode; in many-to-one the set is collected and a
+            // path accessor on the joined form is meaningless.
+            if ctx.mode != OneToOne {
                 return Resolved::Error(ResolveError::BuiltinWrongMode {
                     ident: ident.to_string(),
                     builtin: format!("{:?}", b),
@@ -456,7 +488,7 @@ mod tests {
         match resolve("cc:zlib", &ctx) {
             Resolved::ProbeRef { key, access } => {
                 assert_eq!(key, "cc:zlib");
-                assert_eq!(access, r#"cook.cache.get("cc:zlib")"#);
+                assert_eq!(access, r#"cook.probes.get("cc:zlib")"#);
             }
             other => panic!("expected ProbeRef, got {other:?}"),
         }
@@ -469,7 +501,7 @@ mod tests {
         match resolve("cc:zlib.cflags", &ctx) {
             Resolved::ProbeRef { key, access } => {
                 assert_eq!(key, "cc:zlib");
-                assert_eq!(access, r#"cook.cache.get("cc:zlib").cflags"#);
+                assert_eq!(access, r#"cook.probes.get("cc:zlib").cflags"#);
             }
             other => panic!("expected ProbeRef, got {other:?}"),
         }
@@ -482,7 +514,7 @@ mod tests {
         match resolve("cc:zlib.libs[2]", &ctx) {
             Resolved::ProbeRef { key, access } => {
                 assert_eq!(key, "cc:zlib");
-                assert_eq!(access, r#"cook.cache.get("cc:zlib").libs[2]"#);
+                assert_eq!(access, r#"cook.probes.get("cc:zlib").libs[2]"#);
             }
             other => panic!("expected ProbeRef, got {other:?}"),
         }
@@ -565,14 +597,21 @@ mod tests {
     }
 
     #[test]
-    fn in_in_many_to_one_is_error() {
+    fn in_in_many_to_one_is_ok_accessor_is_error() {
+        // CS-0130: `$<in>` is unit-centric — in ManyToOne it resolves to the
+        // joined collected set (the `In` builtin), no longer an error.
         let r = empty();
         let ctx = ResolveCtx {
             mode: IterMode::ManyToOne,
             outputs: OutputShape::Single,
             recipes_in_scope: &r,
         };
-        assert!(matches!(resolve("in", &ctx), Resolved::Error(ResolveError::BuiltinWrongMode { .. })));
+        assert_eq!(resolve("in", &ctx), Resolved::Builtin(BuiltinKind::In));
+        // A path accessor on the joined form is still meaningless — rejected.
+        assert!(matches!(
+            resolve("in.stem", &ctx),
+            Resolved::Error(ResolveError::BuiltinWrongMode { .. })
+        ));
     }
 
     #[test]
@@ -630,23 +669,81 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn recipe_bracket_resolves_to_recipe_member() {
-        let mut recipes = BTreeSet::new();
-        recipes.insert("render".to_string());
-        let ctx = ResolveCtx {
+    fn ctx_member<'a>(recipes: &'a BTreeSet<String>) -> ResolveCtx<'a> {
+        ResolveCtx {
             mode: IterMode::OneShot,
             outputs: OutputShape::Single,
-            recipes_in_scope: &recipes,
-        };
+            recipes_in_scope: recipes,
+        }
+    }
+
+    #[test]
+    fn recipe_bracket_in_resolves_to_recipe_member() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
         assert_eq!(
-            resolve("render[]", &ctx),
+            resolve("render[in]", &ctx_member(&recipes)),
             Resolved::RecipeMember { name: "render".to_string() }
         );
-        // A non-recipe name with [] is NOT a recipe-member ref (falls through to env).
-        assert_eq!(
+    }
+
+    #[test]
+    fn empty_bracket_index_is_respelled_error_with_did_you_mean() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        let ctx = ctx_member(&recipes);
+        // The pre-v1.0 spelling errors whether or not the base names a recipe
+        // (no env fallthrough for a trailing bracket group).
+        let r = resolve("render[]", &ctx);
+        match &r {
+            Resolved::Error(e @ ResolveError::RecipeMemberEmptyIndex { .. }) => {
+                let msg = e.to_string();
+                assert!(msg.contains("`$<render[]>` was respelled `$<render[in]>` in v1.0"),
+                    "did-you-mean must show the concrete respelling; got: {msg}");
+            }
+            other => panic!("expected RecipeMemberEmptyIndex, got {other:?}"),
+        }
+        assert!(matches!(
             resolve("notarecipe[]", &ctx),
-            Resolved::EnvRuntime("notarecipe[]".to_string())
+            Resolved::Error(ResolveError::RecipeMemberEmptyIndex { .. })
+        ));
+    }
+
+    #[test]
+    fn non_in_bracket_content_is_rejected_not_v1() {
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        let ctx = ctx_member(&recipes);
+        for ident in ["render[x]", "render[key]", "render[in.id]", "render[0]"] {
+            match resolve(ident, &ctx) {
+                Resolved::Error(e @ ResolveError::RecipeMemberBadIndex { .. }) => {
+                    assert!(e.to_string().contains("member-field joins are not part of v1.0"),
+                        "diagnostic must note joins are not in v1.0; got: {e}");
+                }
+                other => panic!("{ident}: expected RecipeMemberBadIndex, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn bracket_in_on_unknown_recipe_is_error() {
+        let recipes = empty();
+        assert!(matches!(
+            resolve("notarecipe[in]", &ctx_member(&recipes)),
+            Resolved::Error(ResolveError::RecipeMemberUnknownRecipe { .. })
+        ));
+    }
+
+    #[test]
+    fn non_trailing_bracket_group_falls_through_unchanged() {
+        // Accessor chaining after the bracket group never existed for `$<R[]>`
+        // and is NOT introduced for `$<R[in]>`: an ident whose bracket group is
+        // not trailing keeps the pre-existing env-runtime fallthrough.
+        let mut recipes = BTreeSet::new();
+        recipes.insert("render".to_string());
+        assert_eq!(
+            resolve("render[in].stem", &ctx_member(&recipes)),
+            Resolved::EnvRuntime("render[in].stem".to_string())
         );
     }
 }

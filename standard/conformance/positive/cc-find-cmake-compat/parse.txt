@@ -8,11 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        Lua code="local r = cook_cc.find(\"SDL3\")"
-        Lua code="if not r.found then return end"
-        Lua code="for _, a in ipairs(r.tried) do"
-        Lua code="    if a.strategy == \"cmake-compat\" then break end"
-        Lua code="end"
+        Test body=LuaBlock("        local r = cook_cc.find(\"SDL3\")\n        if not r.found then return end\n        for _, a in ipairs(r.tried) do\n            if a.strategy == \"cmake-compat\" then break end\n        end")
   chores:
   register_blocks: []
   top_level_module_calls: []

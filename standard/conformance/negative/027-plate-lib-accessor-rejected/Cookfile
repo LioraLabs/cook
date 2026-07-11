@@ -1,6 +1,0 @@
-recipe lib
-    ingredients "src/*.c"
-    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
-
-recipe r
-    plate { echo $<lib.stem> }

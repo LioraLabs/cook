@@ -53,7 +53,7 @@ fn execute_phase_lua_error_is_source_mapped_and_clean() {
     let tmp = TempDir::new().expect("tempdir");
     std::fs::write(
         tmp.path().join("Cookfile"),
-        "recipe boom\n    > error(\"kaboom from lua\")\n",
+        "recipe boom\n    cook \"out.txt\" >{ error(\"kaboom from lua\") }\n",
     )
     .expect("write Cookfile");
     let out = Command::new(cook_bin())
@@ -77,7 +77,7 @@ fn cook_backtrace_optin_restores_traceback() {
     let tmp = TempDir::new().expect("tempdir");
     std::fs::write(
         tmp.path().join("Cookfile"),
-        "recipe boom\n    > error(\"kaboom from lua\")\n",
+        "recipe boom\n    cook \"out.txt\" >{ error(\"kaboom from lua\") }\n",
     )
     .expect("write Cookfile");
     let out = Command::new(cook_bin())

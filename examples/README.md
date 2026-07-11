@@ -9,14 +9,14 @@ environment, and never does the same work twice.
 | # | example | you learn |
 |---|---------|-----------|
 | 01 | [hello-cook](01-hello-cook/) | a recipe, ingredients, one fan-out `cook` step; the second run is free |
-| 02 | [pipeline](02-pipeline/) | multi-stage: fan-out → many-to-one (`$<all>`) → multi-output; edits rebuild exactly what they invalidate |
+| 02 | [pipeline](02-pipeline/) | multi-stage: fan-out → many-to-one (`$<in>` collects) → multi-output; edits rebuild exactly what they invalidate |
 | 03 | [chores-and-config](03-chores-and-config/) | uncached parameterized chores; config blocks, `@preset` overlays, `--set`; env vars as cache keys |
 | 04 | [probes](04-probes/) | computed values the cache can see: shell/lines/json/Lua producers, probe chains, fan-out over members |
 | 05 | [data-fanout](05-data-fanout/) | the build's shape from a JSON manifest; grow the data, build only the new member; per-member joins |
 | 06 | [lua-recipes](06-lua-recipes/) | execute-time Lua bodies, computed output paths, the register-time low-level API |
-| 07 | [testing](07-testing/) | tests as cached steps; `as`/`timeout`/`should_fail`; the `cook test` runner |
+| 07 | [testing](07-testing/) | tests as cached steps; one-to-one vs naked, `!` inversion; the `cook test` runner |
 | 08 | [workspace](08-workspace/) | many Cookfiles, one workspace: imports, `//` targets, run cook from any subdirectory |
-| 09 | [deploy](09-deploy/) | `plate` — the unsandboxed ship-it step; artifacts cache, side effects don't pretend to |
+| 09 | [deploy](09-deploy/) | `chore` — the uncached ship-it step; artifacts cache, side effects don't pretend to |
 | 10 | [cache-trust](10-cache-trust/) | who may write your cache: `seal`, `local`, `pinned`, `nondet`; `cook why`; cross-machine sharing |
 
 Examples that require installed modules (C/C++ via `cook_cc`, pnpm

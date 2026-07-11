@@ -27,7 +27,7 @@ export default defineConfig({
           label: 'Building things',
           items: [
             { label: '4. Ingredients & cook',     link: '/04-ingredients-and-cook/' },
-            { label: '5. plate & test',           link: '/05-plate-and-test/' },
+            { label: '5. test',                   link: '/05-test/' },
             { label: '6. Chores',                 link: '/06-chores/' },
             { label: '7. Substitutions & paths',  link: '/07-substitutions/' },
           ],

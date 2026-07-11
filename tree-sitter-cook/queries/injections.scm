@@ -41,7 +41,7 @@
 ; matches the full sequence so every chunk is captured in one match,
 ; while `injection.combined` joins the chunks into a single bash
 ; injection (placeholder bytes are excluded). Without this, a
-; shell-quoted string broken by a placeholder — `echo "libfoo: $<all>"`
+; shell-quoted string broken by a placeholder — `echo "libfoo: $<in>"`
 ; → ["echo \"libfoo: ", "\""] — would reach bash as two unterminated
 ; fragments and lose its @string highlight; combined, bash sees
 ; `echo "libfoo: " ` and the string is recognized as a whole.

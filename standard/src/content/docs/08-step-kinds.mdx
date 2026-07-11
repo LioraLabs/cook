@@ -4,57 +4,64 @@ sidebar:
   order: 8
 ---
 # 8. Step kinds [#steps]
-> **Normative.** This chapter defines every step kind that appears in a recipe body or a chore body, the dispatch cascade that classifies each `Content` token, and the iteration-mode rules for `cook`, `plate`, and `test` steps. The execute-phase behaviour of a body's compiled units — including body bundling — is specified in §{exec.groups}.
+> **Normative.** This chapter defines every step kind that appears in a recipe body or a chore body, the dispatch cascade that classifies each `Content` token, and the iteration-mode rules for `cook` and `test` steps. The execute-phase behaviour of a body's compiled units is specified in §{exec.groups}. As of CS-0134 a recipe body is purely declarative: it carries no imperative region, so body bundling (§{exec.body-bundling}) — which coalesced a recipe's imperative-region steps into a body unit — has nothing left to bundle and is vacuous. A recipe's execute-phase work comes exclusively from the block body of a `cook` or `test` step (§{steps.cook-single}, §{steps.test}, §{steps.lua}), each of which is its own work unit. Chore bodies keep their imperative steps; their execution model is defined in §{chores} and is unaffected by §{exec.body-bundling}.
 
 ## 8.1. Step-dispatch cascade [#steps.dispatch]
-Inside a `recipe_body`, each source line is first classified by the lexer (§{lexical.line-classification}) into one of `Comment`, `Blank`, `LuaLine`, `LuaBlockOpen`, `InlineLuaLine`, `InlineLuaBlockOpen`, or `Content`. Comments and blank lines are skipped; `LuaLine` becomes a `lua_line` step; `LuaBlockOpen` begins a `lua_block` step collected by the brace-balance algorithm (§{lexical.brace-blocks}); `InlineLuaLine` becomes an `inline_lua_line` step; `InlineLuaBlockOpen` begins an `inline_lua_block` step (also brace-balanced).
+Inside a `recipe_body`, each source line is first classified by the lexer (§{lexical.line-classification}) into one of `Comment`, `Blank`, `LuaBlockOpen`, `LuaLine`, or `Content`. Comments and blank lines are skipped. (The doubled-`>` prefixes that a pre-CS-0134 lexer would have surfaced as `InlineLuaLine` / `InlineLuaBlockOpen` are no longer usable tokens anywhere in the language: §{lexical.line-prefixes} rejects `>>` and `>>{` unconditionally at the lexical layer, CS-0134, Note 3.7.1.)
 
-Prior to CS-0072 (Cook Standard v0.9), this cascade included a fifth rule classifying `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` as `module_call` (register-phase Lua). CS-0072 removes that rule from the recipe-body cascade and adds an equivalent top-level dispatch in §{toplevel.module-call}. Authors who want register-phase Lua inside a recipe body MUST use the `>>` (`inline_lua_line`) or `>>{` (`inline_lua_block`) prefix.
+CS-0134 makes the recipe body **purely declarative**. A `LuaBlockOpen` (`>{`) or `LuaLine` (`>`) token MUST NOT appear as a standalone top-level line of a `recipe_body`; a conforming implementation MUST reject such a line (see the rejection rule below). These two tokens remain admitted only in **body position** — as the opener of a `cook`, `test`, or `probe` step's body, or inside a `chore` body, per §{lexical.line-prefixes} and §{steps.lua}.
 
-A `Content` token inside a `recipe_body` is dispatched to exactly one `declarative_item` or `imperative_item` (App. A.3) by the priority cascade below (App. A.4, "Step-dispatch priority"). The first match wins; a conforming implementation MUST test the alternatives in this order:
+A `Content` token inside a `recipe_body` is dispatched to exactly one `declarative_item` (App. A.3) by the priority cascade below (App. A.4, "Step-dispatch priority"). The first match wins; a conforming implementation MUST test the alternatives in this order:
 
 1. Prefix `ingredients` + separator (space, tab, or end of token) → `ingredients_step`.
-2. Prefix `cook` + separator → `cook_step`.
-3. Prefix `plate` + separator → `plate_step`.
-4. Prefix `test` + separator → `test_step`.
-5. First character is `@` and the remainder of the line is non-empty → `interactive_command`.
-6. Otherwise → `shell_command`.
+2. Prefix `seal` + separator → recipe-level `seal_step` (its `probe_ref`s contribute to the recipe seal baseline; §{steps.cook-disposition}).
+3. Prefix `unseal` + separator → rejected as a recipe-level step (`unseal` is a trailing `cook_mods` modifier only; §{steps.cook-disposition}).
+4. Prefix `cook` + separator → `cook_step`.
+5. Prefix `test` + separator → `test_step`.
+6. `BARE_IDENTIFIER "." BARE_IDENTIFIER` immediately followed by `(` — a **module call** — → `module_call`, register-phase Lua (§{toplevel.module-call}).
+7. Otherwise → REJECTED.
 
-In step 6, an `@` with no following content MUST be rejected rather than silently dispatched as any of the preceding alternatives. The diagnostic MUST identify the offending line.
+Prior to CS-0072 (Cook Standard v0.9), this cascade already included the rule-6 module-call classification. CS-0072 removed it from the recipe-body cascade, forcing authors to reach for the `>>` (`inline_lua_line`) or `>>{` (`inline_lua_block`) prefix to get register-phase Lua inside a recipe body. **CS-0134 REINSTATES rule 6 above, reversing the CS-0072 recipe-body removal**, while simultaneously retiring `>>` / `>>{` from the language entirely (§{lexical.line-prefixes}). The equivalent top-level dispatch of §{toplevel.module-call} is unaffected by this reinstatement.
 
-A `Content` token inside a `recipe_body` whose trimmed text begins with the keyword `register` followed by a separator (space, tab, or end-of-line) MUST be rejected with the diagnostic "`register` blocks are top-level only; move this outside the recipe body". The rejection applies regardless of indentation depth: an indented `register` cannot be a `RegisterHeader` (which is column-0 only by §{lexical.line-classification}) and is also not a permitted shell command in this position. A `Content` token whose first token is the bare identifier `register` *without* a separator (e.g. `register_foo`) remains a `shell_command` per the (post-CS-0072) rule 7. The reference parser fires this rejection in `parse_recipe` and `parse_chore`'s step-dispatch loops (informative).
+A `Content` token that matches none of rules 1–6 MUST be rejected. In particular, a conforming implementation MUST reject each of the following recipe-body constructs, with a diagnostic that identifies the offending line and directs the author to the migration path — a `cook "out" >{ ... }` / `cook "out" { ... }` (or `test`) BLOCK body, where `>{` / `>` survive as body openers (§{steps.lua}), or a `chore`, whose body retains the loose-shell and execute-Lua imperative surface (§{chores}):
+
+- A loose/anonymous shell command (any `Content` line matching none of rules 1–6).
+- A line whose first non-whitespace character is `@` (empty or not). The `@` interactive prefix and its `interactive_command` step kind are removed from the language entirely by CS-0134 (§{lexical.line-prefixes}); an `@` line no longer parses as any step kind anywhere.
+- A standalone `>` or `>{` line outside body position.
+- A standalone `>>` or `>>{` line — already rejected at the lexical layer (§{lexical.line-prefixes}) because CS-0134 removes both prefixes from the language outright; a recipe body is not a special case of that removal, it is simply one more place the prefixes no longer parse.
+
+A `Content` token inside a `recipe_body` whose trimmed text begins with the keyword `register` followed by a separator (space, tab, or end-of-line) MUST be rejected with the diagnostic "`register` blocks are top-level only; move this outside the recipe body". The rejection applies regardless of indentation depth: an indented `register` cannot be a `RegisterHeader` (which is column-0 only by §{lexical.line-classification}) and is also not a permitted step in this position. A `Content` token whose first token is the bare identifier `register` *without* a separator and without the module-call shape of rule 6 (e.g. bare `register_foo`) falls through to rule 7 and is rejected under the general rule above. The reference parser fires the keyword-specific rejection in `parse_recipe`'s step-dispatch loop (informative).
 
 A `recipe_body` MUST contain at most one `ingredients_step`. A conforming implementation MUST reject a recipe with two or more `ingredients_step` items (App. A.3).
 
-A `recipe_body` MUST satisfy the **region ordering rule** (App. A.3, "Region ordering rule"; §{recipes.region-rule}): every `declarative_item` (other than `comment` or `NEWLINE`) MUST appear before the first `imperative_item` of the recipe body. A conforming implementation MUST reject a recipe in which a declarative-region step (cook, plate, test, ingredients, `>>`, or `>>{`) appears after the first imperative-region step (`>`, `>{`, shell, or `@`). The diagnostic MUST identify the offending step's line and the line on which the imperative region began.
+Every remaining `recipe_body` item — `ingredients_step`, `cook_step`, `test_step`, `module_call`, `comment`, `Blank` — is register-phase (App. A.3); CS-0134 leaves no `imperative_item` in a recipe body's top-level line sequence. The pre-CS-0134 **region ordering rule** (App. A.3, "Region ordering rule"; §{recipes.region-rule}) required every `declarative_item` to precede the first `imperative_item` of the recipe body; under CS-0134 that constraint is satisfied vacuously for recipe bodies (there being no `imperative_item` left to order against) and imposes no further requirement here. It is likewise vacuous for `chore` bodies: CS-0134 removes the register-phase `inline_lua_line` / `inline_lua_block` (`>>` / `>>{`) steps from the language, leaving a chore body with only execute-phase (imperative) step kinds — `shell_command`, `lua_line`, `lua_block` — and therefore no declarative region to order against (§{chores.body}).
 
 ### Example 8.1.1
 
 ```cook
 recipe build
     ingredients "src/*.c"
+    cc.configure()
     cook "bin/$<in.stem>" { cc $<in> -o $<out> }
     test { ./bin/app }
-    @vim notes.txt
-    echo done
 ```
 
-The five body lines dispatch, in order, to: `ingredients_step`, `cook_step`, `test_step`, `interactive_command` (rule 6), and `shell_command` (rule 7). A bare `cpp.link()` line in a recipe body — which before CS-0072 dispatched to `module_call` — now falls through to rule 7 and becomes a `shell_command`.
+The four body lines dispatch, in order, to: `ingredients_step`, `module_call` (rule 6 — register-phase; before CS-0134 this line would have needed to be written `>> cc.configure()`), `cook_step`, and `test_step`.
 
 ### Example 8.1.2
 
 ```cook
 recipe build
-    CC "gcc"
+    vim notes.txt
 ```
 
-The body line `CC "gcc"` is a `Content` token; the step-dispatch cascade matches no preceding alternative and dispatches it as a `shell_command` whose text is the trimmed source line. The emitted command preserves the original surface form — the identifier and its quoted argument.
+The body line is a loose shell command (a `Content` token matching none of rules 1–6) and MUST be rejected; the diagnostic directs the author to a `chore`, which retains the loose-shell imperative surface a recipe body no longer admits.
 
 ### Note 8.1.1
 
-The `cook-lang` parser test `test_indented_quoted_pair_is_shell_command` pins the recipe-body treatment of `NAME "value"`. The test `test_empty_interactive_step_errors` pins rejection of a bare `@`.
+The `cook-lang` parser test `test_empty_interactive_step_errors` pinned rejection of a bare `@` prior to CS-0134. CS-0134 removes the `@` marker and the `interactive_command` step kind from the language entirely (§{lexical.line-prefixes}): every `@` line — bare or carrying a command — is now invalid syntax wherever it appears, and inside a recipe body it is rejected as a `Content` line matching none of rules 1–6.
 
-The reference parser at `cli/crates/cook-lang` enforces the CS-0072 amendment by removing the `is_module_call` branch from the recipe-body step-dispatch in `parse_recipe` / `parse_chore` (informative).
+The reference parser at `cli/crates/cook-lang` enforces the CS-0134 cascade in `parse_recipe`'s step-dispatch loop (informative); `parse_chore`'s step-dispatch loop keeps the `>`/`>{` steps and loose (implicitly-interactive) shell commands a chore body admits, but — like every other context — no longer accepts an `@` line (CS-0134).
 
 ## 8.2. Ingredients [#steps.ingredients]
 A recipe body MAY contain at most one `ingredients_step` (§{grammar-appendix.recipes}, "At-most-one-ingredients rule"). A second `ingredients` line within the same recipe body MUST be rejected.
@@ -75,7 +82,7 @@ The glob language itself — which characters are wildcards, whether `**` matche
 ```cook
 recipe lib
     ingredients "src/*.c" "include/*.h" !"src/lua.c" !"src/luac.c"
-    cook "build/libmath.a" { ar rcs $<out> $<all> }
+    cook "build/libmath.a" { ar rcs $<out> $<in> }
 ```
 
 The ingredient set is every `.c` file in `src/` and every `.h` file in `include/`, minus `src/lua.c` and `src/luac.c`.
@@ -87,51 +94,47 @@ An `ingredients` argument is any iterable source. A quoted token (`"glob"` / `!"
 The `!` exclusion marker (glob form only) MUST immediately precede the opening `"` with no intervening whitespace: `! "foo"` is rejected; `!"foo"` is accepted. See parser tests `test_ingredients_with_excludes` and `test_ingredients_excludes_only`.
 
 ## 8.3. Step kinds — overview [#steps.overview]
-A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the `ingredients_step` covered in §{steps.ingredients} and the structural `comment` / `NEWLINE` items, a conforming implementation MUST recognise exactly the following nine step kinds:
+A `recipe_body` is a sequence of `recipe_item`s (§{grammar-appendix.recipes}). Excluding the structural `comment` / `Blank` items, CS-0134 requires a conforming implementation to recognise exactly the following five step kinds — all of them register-phase:
 
 | § | Step kind | Introduced by | Phase |
 |---|---|---|---|
+| §{steps.ingredients} | `ingredients_step` | keyword `ingredients` | register |
+| §{steps.cook-disposition.seal} | `seal_step` | keyword `seal` | register |
 | §{steps.cook-single}, §{steps.cook-multi} | `cook_step`           | keyword `cook` | register |
-| §{steps.plate}      | `plate_step`          | keyword `plate` | register |
 | §{steps.test}      | `test_step`           | keyword `test` | register |
-| §{steps.lua}      | `inline_lua_line`     | `>>` line prefix (§{lexical.line-prefixes}) | register |
-| §{steps.lua}      | `inline_lua_block`    | `>>{` line prefix (§{lexical.line-prefixes}) | register |
-| §{steps.lua}      | `lua_line`            | `>` line prefix (§{lexical.line-prefixes}) | execute |
-| §{steps.lua}      | `lua_block`           | `>{` line prefix (§{lexical.line-prefixes}) | execute |
-| §{steps.shell}     | `shell_command`       | default Content line | execute |
-| §{steps.shell}     | `interactive_command` | `@` as the first non-whitespace character of a Content line | execute |
+| §{steps.dispatch}   | `module_call`         | `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` shape (§{toplevel.module-call}) | register |
 
-The phase column classifies each step kind by **when its body is evaluated**: register-phase steps run during recipe registration (§{exec.two-phase}), execute-phase steps run when scheduled work units fire. A normative cross-section table appears in §{exec.phases.classification}.
+The phase column classifies each step kind by **when its body is evaluated**: every recipe-body step kind runs during recipe registration (§{exec.two-phase}). This is a consequence of CS-0134's purely declarative recipe body — the execute-phase `lua_line` / `lua_block` kinds of §{steps.lua} exist only in **body position** (inside a `cook` / `test` / `probe` step's body, or inside a `chore` body), never as a standalone recipe-body item. A normative cross-section table appears in §{exec.phases.classification}.
 
-A `Content` token inside a recipe body is classified into exactly one of the keyword-introduced kinds using the step-dispatch priority of §{grammar-appendix.steps} ("Step-dispatch priority"), reproduced here for convenience:
+A `Content` token inside a recipe body is classified into exactly one of the kinds above using the step-dispatch priority of §{grammar-appendix.steps} ("Step-dispatch priority"), reproduced here for convenience:
 
 1. `ingredients` + separator → `ingredients_step` (§{steps.ingredients}).
-2. `cook` + separator → `cook_step` (§{steps.cook-single}, §{steps.cook-multi}).
-3. `plate` + separator → `plate_step` (§{steps.plate}).
-4. `test` + separator → `test_step` (§{steps.test}).
-5. First character is `@` and the remainder is non-empty → `interactive_command` (§{steps.shell}).
-6. Otherwise → `shell_command` (§{steps.shell}).
+2. `seal` + separator → recipe-level `seal_step` (§{steps.cook-disposition}).
+3. `unseal` + separator → rejected as a recipe-level step (`unseal` is trailing-only; §{steps.cook-disposition}).
+4. `cook` + separator → `cook_step` (§{steps.cook-single}, §{steps.cook-multi}).
+5. `test` + separator → `test_step` (§{steps.test}).
+6. `BARE_IDENTIFIER "." BARE_IDENTIFIER(…)` → `module_call`, register-phase (§{steps.dispatch}, §{toplevel.module-call}).
+7. Otherwise → REJECTED (§{steps.dispatch}).
 
-The four Lua-prefix forms (`>>`, `>>{`, `>`, `>{`) are not subject to this cascade: they are selected at the lexical layer (§{lexical.line-prefixes}) and always produce `inline_lua_line`, `inline_lua_block`, `lua_line`, or `lua_block` steps respectively, regardless of what follows the prefix.
+The `>{` / `>` prefix forms are not subject to this cascade at all: outside body position they are simply not admitted as a recipe-body line — a standalone `>{`/`>` line is rejected under rule 7 above (§{steps.dispatch}). Inside body position they are selected at the lexical layer (§{lexical.line-prefixes}) per §{steps.lua}, regardless of what follows the prefix. The doubled-`>` forms `>>` and `>>{` no longer exist in the language (CS-0134): they are rejected unconditionally at the lexical layer (§{lexical.line-prefixes}), not by this cascade.
 
 ### Note 8.3.1
 
-The "separator" after a step keyword is space, tab, or end of token. A Content line whose first token is `cooking` is a `shell_command`, not a malformed `cook_step`. See parser test `test_strip_keyword`.
+The "separator" after a step keyword is space, tab, or end of token. A Content line whose first token is `cooking` matches none of rules 1–6 above — it is not `cook` followed by a separator, and it has no `IDENT.IDENT(` module-call shape — so it is REJECTED under rule 7, not silently accepted as a malformed `cook_step`. See parser test `test_strip_keyword`.
 
 ## 8.4. `cook` — single-output form [#steps.cook-single]
-A `cook_step` (§{grammar-appendix.steps}, `cook_step`) declares a build output. The single-output form has exactly one `STRING` output pattern before the optional body (CS-0099 removed the `using` introducer; the body opener follows the pattern directly):
+A `cook_step` (§{grammar-appendix.steps}, `cook_step`) declares a build output. The single-output form has exactly one `STRING` output pattern before the body (CS-0099 removed the `using` introducer; the body opener follows the pattern directly). The body is mandatory (CS-0133):
 
 ```ebnf
-cook "out" body?
+cook "out" body
 ```
 
 The output is a `STRING` whose interior MAY contain substitution placeholders (e.g. `$<in.stem>`, `$<in>`, `$<out>`). The placeholder language is defined by §{phl} for substitution shapes and by §{xref} for cross-recipe references; §{recipes} treats placeholder text as opaque.
 
-A conforming implementation MUST accept all three of the following forms:
+A conforming implementation MUST accept both of the following forms:
 
 | Form | `body` | Semantic |
 |---|---|---|
-| `cook "out"`                    | absent                  | declaration-only: announces the output without a build command (§{grammar-appendix.steps}, "Declaration-only cook step"). The build command is expected to be registered by preceding Lua code or supplied by a later amendment. |
 | `cook "out" >{ ... }`           | `exec_lua_block`        | execute-phase Lua block; produces the build effect, with `inputs` / `outputs` / `input` / `output` bindings per §{lua.using-block-globals}. |
 | `cook "out" { ... }`            | `shell_block`           | sequence of shell commands, one per non-blank line of the block (§{lexical.brace-blocks}, "Shell block line normalisation"). The block's textual placeholders (§{phl.cook-step}) are substituted at register time. |
 
@@ -143,21 +146,10 @@ After the output pattern(s), the body-dispatch order of §{grammar-appendix.step
 recipe lib
     ingredients "lib/*.c"
     cook "build/obj/$<in.stem>.o" { gcc -c $<in> -o $<out> }
-    cook "build/libmath.a" { ar rcs $<out> $<all> }
+    cook "build/libmath.a" { ar rcs $<out> $<in> }
 ```
 
-The first `cook` is a one-to-one mapping from each ingredient to one object file. The second is a many-to-one mapping producing a single archive from the collected set. Both use the inline (one-line) `shell_block` body form.
-
-### Example 8.4.2
-
-```cook
-recipe build
-    ingredients "src/*.c"
-    cook "bin/app"
-    gcc src/main.c -o bin/app
-```
-
-The `cook "bin/app"` step is declaration-only. The following `shell_command` supplies the actual build command; the execution model (§{exec.phases}) is responsible for associating it with the declared output.
+The first `cook` is a one-to-one mapping from each ingredient to one object file, where `$<in>` is the loop member. The second is a many-to-one mapping producing a single archive from the collected set, where `$<in>` is the unit's full input set, space-joined. Both use the inline (one-line) `shell_block` body form.
 
 ### Note 8.4.1
 
@@ -184,30 +176,30 @@ When the recipe carries an `ingredients <probe>` source (§{steps.ingredients}),
 ```cook
 recipe build
     ingredients "src/*.c"
-    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }    # one-to-one over own inputs
-    cook "build/app" { gcc $<all> -o $<out> }              # many-to-one (literal output)
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }    # one-to-one: $<in> is the loop member
+    cook "build/app" { gcc $<in> -o $<out> }               # many-to-one: $<in> is the collected input set
 ```
 
 ### Note 8.4.1.1
 
-The CS-0022 unification removes `$<in>` from the body's contents as a separate iteration trigger. Iteration mode is decided exclusively by the output pattern list. A body that contains `$<in>` while the output pattern list is fully literal is rejected at load time — see §{phl.cook-step} for the diagnostic shape.
+The CS-0022 unification removes `$<in>` from the body's contents as a separate iteration trigger. Iteration mode is decided exclusively by the output pattern list, not by which placeholders appear in the body. `$<in>` itself is admitted in both one-to-one and many-to-one bodies (CS-0130, §{phl.cook-step}): only its *value* differs by mode — the loop member in one-to-one, the space-joined collected set in many-to-one.
 
 ### 8.4.2. Lua-expression output [#steps.cook-lua-expr-output]
 
 A `cook_step` MAY substitute a parenthesised Lua expression for the quoted output-path `STRING`:
 
 ```ebnf
-cook_step ::= "cook" ( STRING+ | "(" LUA_EXPR ")" ) body? NEWLINE
+cook_step ::= "cook" ( STRING+ | "(" LUA_EXPR ")" ) body NEWLINE
 ```
 
 A conforming implementation MUST accept the Lua-expression form under the following rules.
 
 1. **Evaluation.** The expression is evaluated **once per ingredient**, at register time, against the Cookfile-scope Lua VM (the same VM used for chore-parameter Lua-expression defaults, §{chores.params}).
-2. **Bindings.** The expression sees the name `input` in scope: the current ingredient's path, a Lua `string`. When the recipe is driven by an `ingredients <probe>` source (§{steps.ingredients}), the expression instead sees `item` bound to the current data member (a table for record members, a string/number/boolean for scalar members) rather than `input`. The expression MAY also reference declarative-region locals (top-level Lua bindings, `config` block writes, register-phase `inline_lua_line` / `inline_lua_block` locals visible to the recipe per §{steps.lua-execution-phase}). The standard library is available subject to the §{lua} sandbox in effect at register time.
+2. **Bindings.** The expression sees the name `input` in scope: the current ingredient's path, a Lua `string`. When the recipe is driven by an `ingredients <probe>` source (§{steps.ingredients}), the expression instead sees `item` bound to the current data member (a table for record members, a string/number/boolean for scalar members) rather than `input`. The expression MAY also reference register-phase locals visible to the recipe — top-level Lua bindings, `config` block writes, and locals established by a `register` block (§{decl.register}) or a recipe-body `module_call` (§{steps.dispatch}, rule 6). The standard library is available subject to the §{lua} sandbox in effect at register time.
 3. **Return value.** The expression's return value MUST coerce to a non-empty string under the same coercion rules the Standard applies to chore Lua-expression defaults (§{chores.params}): `string` verbatim, `number` via Lua `tostring`, `boolean` to `"true"` or `"false"`; any other type — including `nil`, `table`, `function`, `thread`, `userdata` — is a register-phase diagnostic. The empty string is likewise a register-phase diagnostic.
 4. **One-to-one only.** The Lua-expression form is admitted exclusively when the resulting `cook_step` is in **one-to-one over own inputs** mode or **one-to-one over data members** mode (§{steps.iteration-mode}); in the data-member case the expression sees `item` rather than `input` (rule 2). The expression is evaluated per iteration element, so dep-driven and many-to-one modes — neither of which iterates element-by-element — have no well-defined evaluation contract. A conforming implementation MUST reject a Lua-expression-output `cook_step` whose recipe has no `ingredients_step`, or whose iteration source resolves to the empty set, with a register-phase diagnostic.
 5. **Mutual exclusion with quoted-string outputs.** Within a single `cook_step`, the output declaration is either (a) one or more `STRING` patterns with the `$<...>` sigil vocabulary of §{phl.cook-step}, or (b) exactly one parenthesised Lua expression. A conforming implementation MUST reject a `cook_step` that mixes the two forms (e.g. `cook "a.out" (input:gsub(...)) { ... }`) with a register-phase diagnostic naming the offending tokens.
-6. **Body.** The body of a Lua-expression-output `cook_step` follows the same grammar as the quoted-string form (§{steps.cook-single}): the declaration-only form (no body), `exec_lua_block` (`>{ ... }`), and `shell_block` (`{ ... }`) are all admitted. The placeholder vocabulary inside the body (§{phl.cook-step}) is the one-to-one vocabulary: `$<in>`, `$<in.ACCESSOR>`, `$<out>`. Note that `$<out>` resolves to the Lua-expression's evaluated string for the current iteration; placeholders that index the output position list (`$<out_1>`, `$<out_2>`, …) have no use in this form because the form declares exactly one output per iteration.
+6. **Body.** The body of a Lua-expression-output `cook_step` follows the same grammar as the quoted-string form (§{steps.cook-single}): `exec_lua_block` (`>{ ... }`) and `shell_block` (`{ ... }`) are both admitted; the body is mandatory (CS-0133). The placeholder vocabulary inside the body (§{phl.cook-step}) is the one-to-one vocabulary: `$<in>`, `$<in.ACCESSOR>`, `$<out>`. Note that `$<out>` resolves to the Lua-expression's evaluated string for the current iteration; placeholders that index the output position list (`$<out_1>`, `$<out_2>`, …) have no use in this form because the form declares exactly one output per iteration.
 
 ### Example 8.4.2.1
 
@@ -261,7 +253,7 @@ A unit's cache participation is declared by two surfaces — *inputs* and *outpu
 
 **One rule:** a body line names a recipe-wide input; a tail tunes one `cook` unit. The cache-key *effect* of each is normative in §{exec.cache} (Cache-trust v3); this section defines the surface and its parse-time rules.
 
-A `probe_ref` (used by `seal`/`unseal` everywhere) is a bare `BARE_PROBE_KEY` — `IDENT (":" IDENT)?`, module-prefixable (e.g. `cc:toolchain`). The quoted `STRING` form of §{grammar-appendix.probe} is NOT admitted, and a third contiguous `:IDENT` segment (`a:b:c`) MUST be rejected, exactly as for `probe_ref` in §{grammar-appendix.probe}. A `seal`/`unseal` ref is an *invalidate-only* determinant — it is never interpolated; there is no `$<seal:…>`. To *consume* a probe's members as data, use `ingredients <probe>` / `for_each` (§{steps.ingredients}), not `seal`.
+A `probe_ref` (used by `seal`/`unseal` everywhere) is a bare `BARE_PROBE_KEY` — `IDENT (":" IDENT)?`, module-prefixable (e.g. `cc:toolchain`). The quoted `STRING` form of §{grammar-appendix.probe} is NOT admitted, and a third contiguous `:IDENT` segment (`a:b:c`) MUST be rejected, exactly as for `probe_ref` in §{grammar-appendix.probe}. A `seal`/`unseal` ref is an *invalidate-only* determinant — it is never interpolated; there is no `$<seal:…>`. To *consume* a probe's members as data, use `ingredients <probe>` (§{steps.ingredients}), not `seal`.
 
 **A seal/unseal ref is ALWAYS a probe name.** There is no `env.X` / `tool.X` ambient-determinant ref form — neither a way to seal an environment variable inline nor a way to seal a tool by file path. `probe_ref` is therefore complete as written above; it needs no extension. The referenced probe MAY be any probe — a shell or Lua probe, a `tools` probe, or an `envs` probe (§{cat.probes.decl}) — but the surface is uniform: every seal ref is just a probe name. The two ambient-determinant paths fold through that one surface:
 
@@ -278,7 +270,7 @@ A `probe_ref` (used by `seal`/`unseal` everywhere) is a bare `BARE_PROBE_KEY` �
 
 **Recipe boundaries break seals implicitly.** The recipe is the outermost seal scope; nothing propagates across recipe dependency edges. A downstream recipe folds an upstream's determinants in transitively via the upstream's OUTPUT CONTENT hashes (consumed as `ingredients`), so re-sealing downstream would double-count. There are exactly two seal tiers — recipe baseline and per-unit tail — and no config-default inheritance tier.
 
-> **Note 8.4.3.1 — boundary of a future blanket seal (informative).** The seal surface is *named-only*: every determinant a unit keys on is an explicitly named probe ref. No absolute / blanket form (a hypothetical "seal everything visible") exists, and a bare `seal` is rejected (rule 1). This note fixes the boundary such a form would have to draw, so that introducing one later cannot silently change today's keys. A blanket seal would have to enumerate a *universe* comprising (a) the unit's *visible-but-unconsumed* probes — probes declared in the Cookfile that the unit neither consumes as `ingredients`/`for_each` data nor names in its effective seal set — plus (b) ambient determinants not modelled as probes at all (consulted environment beyond §{exec.cache.lua-env-reads}, host/machine identity, tool identity). The current surface declares no such universe: a unit keys on exactly the probes named in its effective seal set and nothing more (§{exec.cache.single-key}). Any future blanket form is a NEW determinant set, not a re-reading of the named-only one, and MUST be introduced under its own change ID with its own key-version bump.
+> **Note 8.4.3.1 — boundary of a future blanket seal (informative).** The seal surface is *named-only*: every determinant a unit keys on is an explicitly named probe ref. No absolute / blanket form (a hypothetical "seal everything visible") exists, and a bare `seal` is rejected (rule 1). This note fixes the boundary such a form would have to draw, so that introducing one later cannot silently change today's keys. A blanket seal would have to enumerate a *universe* comprising (a) the unit's *visible-but-unconsumed* probes — probes declared in the Cookfile that the unit neither consumes as `ingredients <probe>` data nor names in its effective seal set — plus (b) ambient determinants not modelled as probes at all (consulted environment beyond §{exec.cache.lua-env-reads}, host/machine identity, tool identity). The current surface declares no such universe: a unit keys on exactly the probes named in its effective seal set and nothing more (§{exec.cache.single-key}). Any future blanket form is a NEW determinant set, not a re-reading of the named-only one, and MUST be introduced under its own change ID with its own key-version bump.
 
 #### Trailing modifiers (`cook_mods`) [#steps.cook-disposition.tail]
 
@@ -287,7 +279,7 @@ cook_mods ::= ("seal" probe_ref+ | "unseal" probe_ref+)* share_mod?
 share_mod ::= "local" | "pinned" | "nondet"
 ```
 
-The tail of a `cook` step tunes that one unit. The `cook_mods` are line-final: they follow the body's closing `}` on the same physical line, or — for a declaration-only cook (no body) — the output pattern(s) on the `cook` line. Tokens on a subsequent line are not part of the `cook_mods` (a `}` on its own line followed by a `seal …` line dispatches the latter as a recipe-level `seal` step). A conforming implementation MUST enforce:
+The tail of a `cook` step tunes that one unit. The `cook_mods` are line-final: they follow the body's closing `}` on the same physical line (a cook step always has a body, CS-0133). Tokens on a subsequent line are not part of the `cook_mods` (a `}` on its own line followed by a `seal …` line dispatches the latter as a recipe-level `seal` step). A conforming implementation MUST enforce:
 
 4. **Per-unit seal/unseal adjust the baseline.** A unit's *effective seal set* is `(baseline ∪ trailing seals) − trailing unseals`, sorted and de-duplicated. Bare trailing `seal`/`unseal` (no refs) MUST be rejected.
 5. **`unseal` is trailing-only.** `unseal <probes>` removes refs from this unit's effective set; it is valid only here (not as a recipe-level step, rule 3).
@@ -334,9 +326,9 @@ A `cook_step` MAY declare two or more outputs by listing additional `STRING` pat
 cook "a" "b" ... body
 ```
 
-When two or more outputs are present and a body is given, the body is one of the two block forms (§{steps.cook-single}): `exec_lua_block` (`>{ ... }`) or `shell_block` (`{ ... }`). The bare-string form was removed in CS-0022, and `cook "a" "b" "cmd"` parses as a three-output declaration-only step rather than a body-bearing one (§{grammar-appendix.steps}).
+When two or more outputs are present and a body is given, the body is one of the two block forms (§{steps.cook-single}): `exec_lua_block` (`>{ ... }`) or `shell_block` (`{ ... }`). The bare-string form was removed in CS-0022, and `cook "a" "b" "cmd"` parses as a three-output cook with no body — a trailing `STRING` joins the output-pattern list rather than being read as a body — which is then rejected because a body is mandatory (CS-0133).
 
-The declaration-only form of §{steps.cook-single} also applies to the multi-output case: a `cook_step` listing two or more outputs with no body is accepted and announces the outputs without providing an inline build command. Its build is assumed to be provided by preceding Lua registrations or a later amendment (App. A.4, "Declaration-only cook step").
+Like the single-output form, a multi-output `cook_step` MUST have a body (CS-0133); `cook "a" "b"` with no body is a parse error.
 
 ### Example 8.5.1
 
@@ -376,118 +368,71 @@ The same two outputs are produced by a Lua block. The `inputs` and `outputs` nam
 
 The shape `cook "a" "b" using "cmd"` was rejected pre-CS-0022 with a "block body" diagnostic, and under CS-0022 with a bare-string-removal diagnostic. Since CS-0099 the `using` token itself is rejected at this position with the migration diagnostic of §{grammar-appendix.steps} ("`using` is rejected"); conformance fixture `cs0099-using-keyword-rejected` pins it.
 
-## 8.6. `plate` step [#steps.plate]
-A `plate_step` (§{grammar-appendix.steps}, `plate_step`) is **a `cook` step with no declared outputs**. It has a body — either a `shell_block` (§{grammar-appendix.steps}) or an `exec_lua_block` (§{grammar-appendix.steps}) — and no output pattern. It registers work units that perform side-effecting actions whose results do not contribute to the recipe's output list (which remains passthrough per §{xref.dep-recipe-output}).
+## 8.6. `test` step [#steps.test]
+A `test_step` (§{grammar-appendix.steps}, `test_step`) registers a work unit that reports pass/fail rather than producing artifacts. It has a body — either a `shell_block` or an `exec_lua_block` (§{grammar-appendix.steps}) — and admits no leading `STRING` and no trailing modifiers. The body follows the keyword directly.
 
 ```ebnf
-plate_step ::= "plate" body NEWLINE
-body       ::= shell_block | exec_lua_block
+test_step ::= "test" body NEWLINE
+body      ::= shell_block | exec_lua_block
 ```
 
-The body grammar is identical to a `cook_step`'s body grammar (§{steps.cook-single}). The placeholder vocabulary inside a `plate_step` body is specified in §{phl.plate-test} (shell-block bodies) and §{lua.using-block-globals} (Lua-block bodies), with the per-step-kind admission rules of §{steps.iteration-mode-plate-test}.
+A conforming implementation MUST accept both `test { ... }` (a `shell_block` body) and `test >{ ... }` (an `exec_lua_block` body), and MUST reject any leading `STRING` or trailing token after the body.
 
-A `plate_step` admits no leading `STRING` and no trailing modifiers. The body follows the keyword directly.
+Iteration is decided by a single signal — whether the body references the iteration item (§{steps.iteration-mode-plate-test}). A shell body containing `$<in>` / `$<in.ACCESSOR>`, or a Lua body binding `input`, puts the step in **one-to-one** mode: a fan-out over the iteration source with one cached pass/fail unit per item. A body that references no iteration item is a **single unit** — one node — whose caching is derived from the recipe's declared file source: when the recipe supplies a source (`ingredients`, or an upstream `cook`'s outputs) the unit is keyed on the whole source set (the engine's `ManyToOne`); when the recipe supplies no source at all the unit runs uncached on every invocation (the engine's `OneShot`). Caching is **derived**, not declared — it follows from whatever file source the recipe provides, exactly as for a `cook_step`; there is no test-specific cache surface to configure.
 
-### Example 8.6.1
+This is the deliberate parallel with `cook` (§{steps.iteration-mode}): the iteration accessor lives wherever the step's defining payload is — the output pattern for `cook`, the body for `test`. CS-0022's hazard (a body `$<in>` conflicting with a literal output pattern) cannot arise for `test`, which has no output pattern for the body signal to conflict with.
 
-```cook
-recipe install
-    ingredients "src/*.c"
-    cook "build/bin/$<in.stem>" { cc $<in> -o $<out> }
-    plate {
-        install -d $PREFIX/bin
-        install -m755 $<in> $PREFIX/bin/$<in.name>
-    }
-```
+**Trailing content after the body is rejected.** The body follows the `test` keyword directly and takes no trailing modifiers; a conforming implementation MUST reject any token after the body's closing `}`. When the rejected trailing token is `should_fail`, `timeout`, or `as`, a conforming implementation SHOULD emit a did-you-mean diagnostic naming the removed modifier and the v1.0 migration path:
 
-The `plate` step iterates over the preceding `cook` step's output list (one unit per binary), installing each binary into `$PREFIX/bin`.
+- `should_fail`: "`should_fail` was removed in v1.0; invert the check in the body, e.g. `test { ! grep -q foo $<in> }`".
+- `timeout`: "`timeout` was removed in v1.0".
+- `as`: "`as` was removed in v1.0; tests auto-name".
 
-### Example 8.6.2
+None of `should_fail`, `timeout`, or `as` were ever reserved words (§{lexical.keywords}); they simply stop being recognised in this trailing position.
 
-```cook
-recipe bundle
-    ingredients "src/*.c"
-    cook "build/bin/$<in.stem>" { cc $<in> -o $<out> }
-    plate {
-        tar -czf build/bundle.tgz $<all>
-    }
-```
+### 8.6.1. Test iteration mode [#steps.iteration-mode-plate-test]
 
-The body uses `$<all>` and no `$<in>`; the step is many-to-one and registers exactly one unit, with `$<all>` substituted as the space-joined preceding-cook output list.
+A `test_step` has two author-facing modes, selected by whether its body references the iteration item. The single-unit mode maps onto one of the engine's two batch dispositions according to whether the recipe supplies a source:
 
-### Note 8.6.1
-
-A `plate_step`'s body grammar matches a `cook_step`'s body. Since CS-0099 the two forms are fully parallel: in both, the body opener follows the step's header material directly. See rationale §{rationale.plate-test-no-output-decl}.
-
-### Note 8.6.2 — Plate step bodies are NOT sandboxed [#steps.plate-not-sandboxed]
-
-A `plate_step` body is the explicit "ship outside the project" surface and runs without the project-root sandbox imposed on `cook` / `test` / `chore` step bodies (§{lua.fs-sandbox}). A `plate` body MAY pass an absolute path outside the project root to `fs.*`, MAY call `os.execute` and `io.popen`, and MAY traverse upward via `..`. This is by construction: deploys, uploads, and other release-time side effects often touch paths the project does not own (e.g. `$HOME/.config/...`, `/var/...`, an S3 bucket).
-
-A conforming implementation MUST run a `plate_step`'s body without applying the §{lua.fs-sandbox} confinement. Authors who want the confinement on a non-cacheable side-effect step SHOULD use a `chore` instead, which IS sandboxed (chores are non-cacheable but hermetic-by-intent — the sandbox catches accidental escapes without blocking the deliberate ones plate covers).
-
-### 8.6.1. Plate/test iteration mode [#steps.iteration-mode-plate-test]
-
-A `plate_step` (and a `test_step`, §{steps.test}) is in one of three iteration modes, determined entirely by its body's content:
-
-| Shell-block body contains | Lua-block body references | Mode |
+| Body references the iteration item? | Recipe source | Mode |
 |---|---|---|
-| `$<in>` or `$<in.ACCESSOR>` (no `$<all>`) | `input` (no `inputs`) | **one-to-one** over source |
-| `$<all>` (no `$<in>` / `$<in.ACCESSOR>`) | `inputs` (no `input`) | **many-to-one** |
-| neither | neither | **one-shot** |
-| both | both | **error** (mixed iteration signal) |
+| `$<in>` / `$<in.ACCESSOR>` (shell) or `input` (Lua) present | non-empty (required) | **one-to-one** — one cached pass/fail unit per item |
+| absent | a source is declared (non-empty) | **single unit**, keyed on the whole source set (engine `ManyToOne`) |
+| absent | no source declared | **single unit**, uncached, runs every invocation (engine `OneShot`) |
 
-The **iteration source** for a `plate_step` (and `test_step`) is the preceding `cook_step`'s output list (flattened across all units it produces), falling back to the recipe's resolved ingredients (§{steps.ingredients}) if no `cook_step` precedes it. When the recipe is driven by an `ingredients <probe>` source (§{steps.ingredients}), the iteration source is instead the resolved data-member list, and the per-member placeholders remain `$<in>` / `$<in.ACCESSOR>` (Lua: `item`), where `ACCESSOR` selects a record field rather than a path component; such a step is in **one-to-one over data members** mode. A step in **one-to-one** or **many-to-one** mode MUST have a non-empty source; a step in **one-shot** mode does not consult the source.
+A shell body has no batched-set placeholder (App. E CS-0130 removed the former all-inputs shell placeholder), so a shell single-unit body runs its command once over the unit. A Lua single-unit body MAY bind `inputs` to observe the collected source set. A Lua body MUST NOT reference both `input` and `inputs`.
+
+The **iteration source** for a `test_step` is the preceding `cook_step`'s output list (flattened across all units it produces), falling back to the recipe's resolved ingredients (§{steps.ingredients}) if no `cook_step` precedes it. When the recipe is driven by an `ingredients <probe>` source (§{steps.ingredients}), the iteration source is instead the resolved data-member list, and the per-member placeholders remain `$<in>` / `$<in.ACCESSOR>` (Lua: `item`), where `ACCESSOR` selects a record field rather than a path component; such a step is in **one-to-one over data members** mode.
 
 A conforming implementation MUST reject:
-- A body that contains both an iteration-item placeholder/binding (`$<in>` / `$<in.ACCESSOR>` / `input`) and a batched-source placeholder/binding (`$<all>` / `inputs`).
-- A `plate_step` or `test_step` in one-to-one or many-to-one mode whose source is empty.
+- A Lua-block body that references both an iteration-item binding (`input`) and a batched-source binding (`inputs`).
+- A one-to-one `test_step` (its body references the iteration item) whose iteration source resolves empty — a fan-out over nothing is an author error.
+
+A `test_step` with no declared source at all — no preceding `cook`, no `ingredients` — is admitted and runs uncached, always (the engine's one-shot disposition); it simply does not consult the source. A single-unit `test_step` whose declared source resolves empty is likewise not rejected: with no resolved inputs it has no cache key and degrades to the same always-run behavior.
 
 The Lua identifier scan operates on the same lexical text the brace-balance lexer (§{lexical.brace-blocks}) operates on — strings, comments, and long strings are excluded; only free-identifier-position references count.
 
-## 8.7. `test` step [#steps.test]
-A `test_step` (§{grammar-appendix.steps}, `test_step`) has the same body grammar as a `plate_step` (§{steps.plate}) and additionally admits three trailing modifiers:
-
-```ebnf
-test_step      ::= "test" body test_modifiers NEWLINE
-test_modifiers ::= ("as" STRING)? ("timeout" NUMBER)? "should_fail"?
-```
-
-The body and iteration-mode rules of §{steps.plate} apply verbatim. A `test_step` registers work units that report pass/fail rather than producing artifacts; iteration source, mode determination, placeholder vocabulary, and §{xref.string-substitution} cross-recipe substitution are identical to `plate_step`.
-
-The optional modifiers MUST appear in the fixed canonical order shown above: `as` → `timeout` → `should_fail`. A conforming implementation MUST reject any out-of-order modifier sequence with a diagnostic that names the offending modifier and its canonical position.
-
-| Form | Behaviour |
-|---|---|
-| `test BODY` | Run the body unit; expect success (no Lua error, no non-zero `cook.sh`/`cook.exec`); no time bound. |
-| `test BODY as 'NAME'` | Same, with display name `NAME` in test reports. |
-| `test BODY timeout N` | Run the body unit; expect success within `N` seconds. |
-| `test BODY as 'NAME' timeout N` | Same, with display name and time bound. |
-| `test BODY should_fail` | Run the body unit; expect failure (a Lua error or a non-zero `cook.sh`/`cook.exec` return); no time bound. |
-| `test BODY timeout N should_fail` | Run the body unit; expect failure within `N` seconds. |
-| `test BODY as 'NAME' timeout N should_fail` | Same, with display name. |
-
-`NUMBER` is the `NUMBER` token class of §{lexical.numbers}. The upper bound on representable timeouts is implementation-defined.
-
-The `as STRING` modifier sets the test's **display name** for reporting. Without it, the implementation assigns an auto-generated identity (typically `test#N` with an iteration discriminator suffix in non-one-shot modes). With it, the auto-generated identity is replaced by the supplied string; the iteration-discriminator suffix is still appended in iteration modes unless the substituted name already varies per iteration.
-
-The `STRING` argument admits the same placeholder substitution (`$<IDENT>`) as the body (CS-0033). Substitution occurs at register-time codegen. The display name is metadata — it is **not** part of the test's cache fingerprint; renaming a test does not bust its cache.
-
-**Codegen mapping.** When `as STRING` is present, the conforming code generator MUST emit a `name = <substituted-expr>` field in the `cook.add_test` call that registers the unit. The `<substituted-expr>` is the result of applying placeholder substitution to `STRING` under the same binding context as the step body (§{phl.plate-test}): `_test_in` for one-to-one mode, the collected-inputs table for many-to-one mode, and the empty string for one-shot mode. When `as STRING` is absent, the code generator MUST NOT emit a `name` field; the runner assigns an auto-generated identity.
-
-The `as` modifier is **only valid on `test_step`**. A conforming implementation MUST reject `as` on `cook_step` or `plate_step` with a diagnostic identifying the modifier and the step kind.
-
-### Example 8.7.1
+### Example 8.6.1
 
 ```cook
 recipe smoke
     ingredients "tests/*.c"
     cook "build/$<in.stem>" { cc $<in> -o $<out> }
-    test { ./$<in> } timeout 60
+    test { ./$<in> }
 ```
 
-Each test binary is run with a 60-second time bound, and the step expects each to exit zero (no `should_fail`).
+Each test binary from the `cook` step's output is run in turn; the step is one-to-one and expects each invocation to exit zero.
 
-### Example 8.7.2
+### Example 8.6.2
+
+```cook
+recipe check
+    test { cargo test }
+```
+
+No preceding `cook` and no `ingredients`: the step has no source at all, so it is one-shot and runs uncached on every invocation of `check`.
+
+### Example 8.6.3
 
 ```cook
 recipe coverage
@@ -497,83 +442,70 @@ recipe coverage
         for _, bin in ipairs(inputs) do
             cook.sh("./" .. bin .. " --check")
         end
-    } timeout 300
+    }
 ```
 
-The Lua body references `inputs` (no `input`); the step is many-to-one and runs once with all test binaries visible as `inputs`.
+The Lua body references `inputs` (no `input`); the recipe supplies a source (the `cook` step's outputs), so the step is a single unit keyed on the whole source set (engine `ManyToOne`), run once with all test binaries visible as `inputs`.
 
-### Example 8.7.3
+### Note 8.6.1
 
-```cook
-recipe roundtrip
-    ingredients "src/*.txt"
-    cook "build/$<in.stem>.out" { echo > $<out> }
-    test { diff $<in> $<out> } as '$<in.stem>-roundtrip' timeout 10
-```
+A `test_step` running a Lua body where `cook.sh`/`cook.exec` returns non-zero fails the test by the same rule as an uncaught Lua error.
 
-The `as` modifier includes a placeholder; each iteration gets a unique display name (e.g., `foo-roundtrip`, `bar-roundtrip`).
+## 8.7. Lua steps — line and block forms [#steps.lua]
 
-### Note 8.7.1
+The Cookfile language has one family of Lua step, the execute-phase `>` / `>{` forms, distinguished from each other only by whether they open a nested block. As of CS-0134, both forms are admitted **only in body position** — as the opener of a `cook`, `test`, or `probe` step's body, or as a standalone step inside a `chore` body — and MUST NOT appear as a standalone top-level line of a `recipe_body` (§{steps.dispatch}).
 
-`should_fail` is a bare word, not a quoted string. It is recognised only as the trailing modifier on a `test` line; elsewhere it has no syntactic meaning and is not a reserved word (§{lexical.keywords}). The same posture applies to `timeout` and `as`.
-
-A `test_step` in one-to-one mode that runs a Lua body where `cook.sh`/`cook.exec` returns non-zero fails by the same rule as a Lua error; `should_fail` inverts the pass/fail decision.
-
-## 8.8. Lua steps — line and block forms [#steps.lua]
-
-The Cookfile language has two families of Lua step. They are distinguished by line prefix and by **execution phase** (§{exec.two-phase}):
-
-| Surface form | Token (§{lexical.line-classification}) | Phase    | Region (§{recipes.region-rule}) |
+| Surface form | Token (§{lexical.line-classification}) | Phase    | Admitted positions |
 |---|---|---|---|
-| `>` *body* `\n`           | `LuaLine`              | execute  | imperative |
-| `>{` *body* `}` `\n`      | `LuaBlockOpen`         | execute  | imperative |
-| `>>` *body* `\n`          | `InlineLuaLine`        | register | declarative |
-| `>>{` *body* `}` `\n`     | `InlineLuaBlockOpen`   | register | declarative |
+| `>` *body* `\n`           | `LuaLine`              | execute  | `cook`/`test`/`probe` body opener; standalone inside a chore body |
+| `>{` *body* `}` `\n`      | `LuaBlockOpen`         | execute  | `cook`/`test`/`probe` body opener; standalone inside a chore body |
 
-### 8.8.1. Delimitation [#steps.lua-delimitation]
+### Note 8.7.0 — Removal of the doubled-`>` forms (CS-0134)
 
-A `lua_line` step's body is the remainder of the line after `>` and an optional single space; the body MAY be empty (App. A.5, "`lua_line` MAY be empty"). An `inline_lua_line` step's body is the remainder of the line after `>>` and an optional single space; it too MAY be empty.
+Prior to CS-0134, a second family existed: the register-phase doubled-`>` prefixes `>>` (`InlineLuaLine`) and `>>{` (`InlineLuaBlockOpen`), admitted as standalone declarative-region steps inside a recipe body. CS-0134 REMOVED both prefixes from the language entirely — they are rejected unconditionally at the lexical layer (§{lexical.line-prefixes}, Note 3.7.1), not merely repositioned. A Cookfile that needs register-phase Lua inside a recipe body now writes a bare module call instead (§{steps.dispatch}, rule 6): `ns.fn(...)` where a pre-CS-0134 Cookfile would have written `>> ns.fn(...)`.
 
-A `lua_block` step's body is the source text between the opening `>{` and the matching `}`, collected by the brace-balance algorithm of §{lexical.brace-blocks}. An `inline_lua_block` step's body is the source text between the opening `>>{` and the matching `}`, by the same algorithm. The closing `}` line is consumed but is not part of either block's body.
+### 8.7.1. Delimitation [#steps.lua-delimitation]
 
-A conforming implementation MUST NOT reinterpret the Lua body text. Comments, strings, and other Lua constructs inside the body are the Lua runtime's concern, with the single exception that the brace-balance algorithm (§{lexical.brace-blocks}) MUST ignore braces appearing inside Lua line comments, double-quoted strings, single-quoted strings, and long strings (`[[...]]`) when locating the closing `}` of a Lua block (either form).
+A `lua_line` step's body is the remainder of the line after `>` and an optional single space; the body MAY be empty (App. A.5, "`lua_line` MAY be empty").
 
-### 8.8.2. Execution phase [#steps.lua-execution-phase]
+A `lua_block` step's body is the source text between the opening `>{` and the matching `}`, collected by the brace-balance algorithm of §{lexical.brace-blocks}. The closing `}` line is consumed but is not part of the block's body.
 
-`inline_lua_line` and `inline_lua_block` are **register-phase** steps. Their body is evaluated during recipe registration in the recipe-body Lua function. Multiple inline-Lua steps in one recipe share register-phase scope: a `local` declared in one is visible to the next, including across the surface forms of `cook` / `plate` / `test` / `ingredients` (which compile to register-phase Lua API calls). This is the surface form a Cookfile uses to call Cook Lua API functions that record work — `cook.add_unit`, `cook.export`, `cook.step_group`, and so on — and to declare register-phase locals consumed by subsequent declarative steps.
+A conforming implementation MUST NOT reinterpret the Lua body text. Comments, strings, and other Lua constructs inside the body are the Lua runtime's concern, with the single exception that the brace-balance algorithm (§{lexical.brace-blocks}) MUST ignore braces appearing inside Lua line comments, double-quoted strings, single-quoted strings, and long strings (`[[...]]`) when locating the closing `}` of a Lua block.
 
-`lua_line` and `lua_block` are **execute-phase** steps. Their bodies are not evaluated during registration. They are recorded as part of a **body unit** (§{exec.body-bundling}) whose `lua_code` payload runs on a worker VM during the execute phase, after the recipe's declarative work units have completed.
+### 8.7.2. Execution phase [#steps.lua-execution-phase]
 
-Prior to CS-0072, `module_call` was also register-phase: it desugared to `inline_lua_line` (single-line) or `inline_lua_block` (multi-line). As of CS-0072 the module_call dispatch is removed from the recipe-body cascade; module calls that previously appeared in recipe bodies MUST be moved to a top-level `register` block (§{decl.register}) or written as a top-level module_call (§{toplevel.module-call}).
+`lua_line` and `lua_block` are **execute-phase** steps in both of their admitted positions. Their bodies are never evaluated during registration.
 
-### 8.8.3. Examples [#steps.lua-examples]
+When a `lua_line` or `lua_block` opens a `cook` / `test` / `probe` step's body, its body IS that step's registered work unit (§{steps.cook-single}, §{steps.test}), evaluated execute-phase with the `inputs` / `outputs` / `input` / `output` bindings of §{lua.using-block-globals}.
+
+When a `lua_line` or `lua_block` occurs as a standalone step inside a `chore` body, its `lua_code` payload runs during the execute phase on the chore's single drain thread; the execution model for chore-body imperative steps — which is the single-drain rule of §{chores.default-interactive}, NOT the (CS-0134-vacuous) recipe body-bundling of §{exec.body-bundling} — is specified in §{chores}.
+
+Register-phase Lua inside a recipe body — the role the removed `>>` / `>>{` prefixes used to fill — is now written as a bare **module call** (§{steps.dispatch}, rule 6): `ns.fn(...)`, dispatched and evaluated in the recipe-registration Lua scope alongside `ingredients` / `cook` / `test` (§{steps.dispatch}, §{toplevel.module-call}).
+
+### 8.7.3. Examples [#steps.lua-examples]
 
 ```cook
 recipe build
-    >> local std = cook.env.CXX_STD or "c++20"
-    >>{
-        cook.env.CXXFLAGS = "-std=" .. std
-    }
+    cc.configure()
     cook "build/app" >{
         cook.sh(string.format("%s %s -o %s",
             cook.env.CXX or "g++", table.concat(inputs, " "), output))
     }
-    > print("build complete")
 ```
 
-The `>>` line and `>>{ }` block run at register, sharing scope with the `cook` step's `>{ }` template-string formation. The `> print(...)` line runs at execute, after the cook step's unit completes. (The `>{ }` body is execute-phase Lua-with-bindings; see §{lua.using-block-globals}.)
+The bare `cc.configure()` line is a `module_call` (§{steps.dispatch}, rule 6), register-phase — the role a pre-CS-0134 Cookfile would have filled with `>> cc.configure()`. The `cook` step's `>{ }` body is a `lua_block` in body position: execute-phase Lua-with-bindings, run after the recipe's other register-phase steps have been recorded; see §{lua.using-block-globals}.
 
 ```cook
-recipe smoke
+chore smoke
     cd build
     ./app --selftest
     > if not fs.exists("build/.smoke.ok") then error("smoke failed") end
 ```
 
-The recipe has only an imperative region: two shell lines and one `>` line. The two shell lines coalesce into one `cook.sh("set -e\ncd build\n./app --selftest")` call, so `cd build` persists into `./app --selftest`. The `>` line then runs in the same Lua VM as the coalesced shell call. (Body bundling is specified in §{exec.body-bundling}.)
+Standalone `lua_line` / `lua_block` steps survive inside a `chore` body, which is unaffected by CS-0134's recipe-body restriction (§{chores}). The `>` line runs after the two preceding shell steps, in the chore's execute-phase model.
 
 ```cook
-recipe legacy
+chore legacy
     > print("start")
     >{
         if true then
@@ -584,63 +516,57 @@ recipe legacy
     >
 ```
 
-The first step is a single-line execute-phase Lua statement. The second is an execute-phase Lua block whose body contains a literal `{` that does not prematurely close the block. The third is an empty `lua_line`. All three coalesce into one body unit (no `@` interruption); the empty third line contributes nothing to the chunk.
+The first step is a single-line execute-phase Lua statement. The second is an execute-phase Lua block whose body contains a literal `{` that does not prematurely close the block. The third is an empty `lua_line`. All three are standalone steps of the chore body (§{chores}); the empty third line contributes nothing.
 
-### Note 8.8.1
+### Note 8.7.1
 
 A Lua block (either form) opened on an indented line closes on the line where the running brace-depth first returns to zero, not on the first bare `}`. A line like `    local s = "}"` does not close the enclosing block because the `}` sits inside a double-quoted string (§{lexical.brace-blocks}). See parser tests `test_lua_block_brace_in_string` and `test_lua_block_brace_in_comment`.
 
-### Note 8.8.2
+### Note 8.7.2
 
 The execute-phase API surface available inside a `lua_line` or `lua_block` is a strict subset of the register-phase API: register-only helpers (`cook.add_unit`, `cook.exec`, `cook.interactive`, `cook.step_group`, `cook.recipe`) MUST raise a Lua runtime error when called from execute-phase Lua. `cook.sh` is available in both phases (§{lua.cook-sh}). See §{rationale.execute-phase-api} for the rationale.
 
-## 8.9. Shell steps — plain and interactive [#steps.shell]
-A `shell_command` is any `Content` line inside a recipe body that is not classified as one of the step kinds earlier in the §{steps.overview} dispatch cascade. Its body is the trimmed source line; a conforming implementation MUST preserve the body text verbatim, including any internal quoting, variable references, and shell metacharacters.
+## 8.8. Shell steps [#steps.shell]
+A `shell_command` is a **chore-body** step kind (§{chores.body}). CS-0134 removed it from the recipe-body dispatch cascade: a recipe body is purely declarative (§{steps.dispatch}), and a recipe-body `Content` line that matches none of the declarative step kinds is REJECTED (§{steps.dispatch}, rule 7; Note 8.1.1), not classified as a shell step. A `shell_command` is defined here and is admitted only inside a `chore` body (§{chores}).
 
-An `interactive_command` is a `Content` line whose first non-whitespace character is `@` and whose remainder, after removing that `@`, is non-empty (§{grammar-appendix.steps}, `interactive_command`). A conforming implementation MUST:
+A `shell_command` is any `Content` line inside a chore body that is not classified as one of the step kinds earlier in the §{chores.body} dispatch cascade. Its body is the trimmed source line; a conforming implementation MUST preserve the body text verbatim, including any internal quoting, variable references, and shell metacharacters.
 
-1. Strip the leading `@` when recording the command body.
-2. Mark the step as requiring interactive stdio (the precise semantics — TTY allocation, stdio inheritance — are defined by §{exec.interactive-drain}).
-3. Reject an `@`-only line with no following command text.
+Every chore-body `shell_command` is **implicitly interactive**: it runs on the chore's single drain thread with the controlling terminal inherited (§{chores.default-interactive}), so a child such as `fzf` sees a real TTY. There is no separate marker or step kind for interactivity. CS-0134 removed the `@` interactive prefix — and the `interactive_command` step kind it once introduced — from the language entirely (§{lexical.line-prefixes}): a line beginning with `@` is now invalid syntax everywhere. The interactivity a pre-CS-0134 author spelled with `@` is simply the chore-body default.
 
-The `@` marker is not a lexical prefix (see §{lexical.line-prefixes} and §{rationale.at-not-lexical}); it is interpreted only at step-dispatch time, and only inside a recipe body. A bare `@` outside a recipe body is a top-level parse error under §{toplevel.ordering}.
-
-### Example 8.9.1
+### Example 8.8.1
 
 ```cook
-recipe play
-    @mkdir -p .cook/scratch
-    @printf 'a\nb\nc\n' | fzf > .cook/scratch/pick
+chore play
+    mkdir -p .cook/scratch
+    printf 'a\nb\nc\n' | fzf > .cook/scratch/pick
     echo "picked: $(cat .cook/scratch/pick)"
 ```
 
-The first two steps are interactive commands: the runtime inherits the user's terminal so that `fzf` can draw a full-screen prompt. The third is a plain `shell_command` whose output is captured as the execution model dictates.
+All three lines are `shell_command` steps of the chore body. Because they sit in a chore body they each run under the chore's default-interactive single drain (§{chores.default-interactive}), so `fzf` inherits the user's terminal and can draw a full-screen prompt. No marker is needed; the chore form supplies the interactivity.
 
-### Note 8.9.1
+### Note 8.8.1
 
-`@` embedded inside a `cook` step's `{ ... }` shell-block body, or elsewhere inside a quoted string, is a literal `@` and does not trigger interactive-step dispatch. The `@` test runs only on the first non-whitespace character of a raw `Content` line. See parser test `test_at_in_cook_body_is_not_interactive`.
+A `@` embedded inside a `cook` step's `{ ... }` shell-block body, or elsewhere inside a quoted string, is a literal `@` — ordinary shell text, not a language marker, since CS-0134 removed `@` from the Cookfile grammar entirely (§{lexical.line-prefixes}). See parser test `test_at_in_cook_body_is_not_interactive`.
 
-### Note 8.9.2
+## 8.9. Cross-recipe per-member output accessor [#steps.cross-recipe-member]
 
-An empty interactive command — a line consisting only of `@` — is rejected with a diagnostic stating that `@` requires a command. See parser test `test_empty_interactive_step_errors`.
+Inside an `ingredients <probe>` fan-out body (§{steps.ingredients}), a placeholder of the form `$<NAME[in]>` — where `NAME` is a recipe declared in the same Cookfile — resolves to that recipe's terminal output **for the current fan-out member**. It is the per-member counterpart of bare `$<NAME>` (which substitutes all terminal outputs of `NAME`, space-joined, and is unchanged by this feature).
 
-## 8.10. Cross-recipe per-member output accessor [#steps.cross-recipe-member]
-
-Inside an `ingredients <probe>` fan-out body (§{steps.ingredients}), a placeholder of the form `$<NAME[]>` — where `NAME` is a recipe declared in the same Cookfile — resolves to that recipe's terminal output **for the current fan-out member**. It is the per-member counterpart of bare `$<NAME>` (which substitutes all terminal outputs of `NAME`, space-joined, and is unchanged by this feature).
-
-`$<NAME[]>` performs three jobs simultaneously:
+`$<NAME[in]>` performs three jobs simultaneously:
 
 1. **Path substitution.** At register time the placeholder is replaced by the member-specific output path: `cook.dep_output_member("NAME", cook.member_to_string(item))`, where `item` is the fan-out loop variable.
-2. **Recipe-level DAG ordering edge.** The compiler extracts `$<NAME[]>` as an ordering constraint identical to the edge produced by a bare `$<NAME>` reference: `NAME` must build before the referencing recipe.
+2. **Recipe-level DAG ordering edge.** The compiler extracts `$<NAME[in]>` as an ordering constraint identical to the edge produced by a bare `$<NAME>` reference: `NAME` must build before the referencing recipe.
 3. **Per-member fingerprint fold.** The referenced output is folded into the current member's cache fingerprint, not the recipe's aggregate fingerprint. Editing a single upstream member (e.g. one `.blend` file changing `render`'s output for `"outro"`) rebuilds only the `mux` member that depends on it.
 
-**Same-probe precondition (v1).** Consumer and producer must iterate the same probe. The `[]` accessor indexes into the producer's member map using the consumer's current `item` key; if the two recipes are driven by different probes, the key may not exist. Cross-probe joins via declared alignment keys are deferred to COOK-99 and MUST NOT be attempted in this version. A conforming implementation that detects a same-probe violation at register time SHOULD emit a diagnostic; otherwise the missing-key lookup produces a register-phase error at `cook.dep_output_member`.
+**Same-probe precondition (v1).** Consumer and producer must iterate the same probe. The `[in]` index indexes into the producer's member map using the consumer's current `item` key; if the two recipes are driven by different probes, the key may not exist. Cross-probe joins via declared alignment keys are deferred to COOK-99 and MUST NOT be attempted in this version. A conforming implementation that detects a same-probe violation at register time SHOULD emit a diagnostic; otherwise the missing-key lookup produces a register-phase error at `cook.dep_output_member`.
 
-**Fan-out body only.** `$<NAME[]>` MUST NOT appear outside an `ingredients <probe>` fan-out body. A conforming implementation MUST reject it with a load-time error if no `ingredients <probe>` driver is present in the recipe.
+**Fan-out body only.** `$<NAME[in]>` MUST NOT appear outside an `ingredients <probe>` fan-out body. A conforming implementation MUST reject it with a load-time error if no `ingredients <probe>` driver is present in the recipe.
 
-**Relation to `$<NAME>`.** Both forms record a recipe-level dependency on `NAME`. `$<NAME>` substitutes the full output list (useful in a many-to-one step that needs all of `NAME`'s artifacts); `$<NAME[]>` substitutes only the current-member output (useful in a fan-out step that must stay per-member). The two forms MAY coexist in the same Cookfile but MUST NOT coexist in the same step unless `NAME` differs between the two placeholders.
+**Bracket index (CS-0137).** The only valid bracket content in v1.0 is the literal `in` — the current member binding, the same binding `$<in>` reads (§{steps.ingredients}). A conforming implementation MUST reject the pre-v1.0 empty-bracket spelling `$<NAME[]>` with a did-you-mean diagnostic containing "`$<NAME[]>` was respelled `$<NAME[in]>` in v1.0", and MUST reject any other bracket content (`$<NAME[key]>`, `$<NAME[in.FIELD]>`, …) with a diagnostic noting that member-field joins are not part of v1.0. The bracketed-index position is reserved so 1.x keyed joins (COOK-99) can be admitted additively. `$<NAME[in]>` where `NAME` is not a recipe in scope is a load-time error naming the unknown recipe — a trailing bracket group never falls through to env-var lookup.
 
-### Example 8.10.1
+**Relation to `$<NAME>`.** Both forms record a recipe-level dependency on `NAME`. `$<NAME>` substitutes the full output list (useful in a many-to-one step that needs all of `NAME`'s artifacts); `$<NAME[in]>` substitutes only the current-member output (useful in a fan-out step that must stay per-member). The two forms MAY coexist in the same Cookfile but MUST NOT coexist in the same step unless `NAME` differs between the two placeholders. Bare `$<NAME>` keeps its single uniform meaning in **every** position — all of `NAME`'s terminal outputs, space-joined — including inside a fan-out body whose recipe iterates the same probe as `NAME`. There is no context-dependent narrowing of the bare form to a per-member value and no rejection of the bare form inside fan-out bodies; per-member access is always spelled explicitly with `[in]`. See §{rationale.member-index-in}.
+
+### Example 8.9.1
 
 ```cook
 probe scenes
@@ -656,11 +582,11 @@ recipe tts
 
 recipe mux
     ingredients scenes
-    cook "build/$<in.id>.mp4" { ffmpeg -i $<render[]> -i $<tts[]> $<out> }
+    cook "build/$<in.id>.mp4" { ffmpeg -i $<render[in]> -i $<tts[in]> $<out> }
 ```
 
 For member `{"id":"intro"}`, `mux` builds `build/intro.mp4` by combining `build/intro.silent.mp4` (from `render`) and `build/intro.wav` (from `tts`). For member `{"id":"outro"}` the same pattern repeats independently. Only the `outro` member's units are dirty when `outro.blend` changes — `intro.mp4` is unaffected.
 
-### Note 8.10.1 — Conformance fixture
+### Note 8.9.1 — Conformance fixture
 
-`standard/conformance/positive/recipe-member-accessor` pins this surface. The `parse.txt` golden confirms that `$<render[]>` and `$<tts[]>` are preserved verbatim in the `ShellBlock` strings at the parser layer; the codegen layer (CS-0098) lowers them to `cook.dep_output_member` calls.
+`standard/conformance/positive/recipe-member-accessor` pins this surface. The `parse.txt` golden confirms that `$<render[in]>` and `$<tts[in]>` are preserved verbatim in the `ShellBlock` strings at the parser layer; the codegen layer (CS-0098, respelled by CS-0137) lowers them to `cook.dep_output_member` calls. Two negative fixtures pin the CS-0137 rejections, both codegen-phase: `standard/conformance/negative/cs0137-recipe-member-empty-index-respelled` (the pre-v1.0 empty-bracket spelling MUST be rejected with a did-you-mean naming the `[in]` respelling) and `standard/conformance/negative/cs0137-recipe-member-nonliteral-index` (any bracket content other than the literal `in` MUST be rejected with a diagnostic noting member-field joins are not part of v1.0).

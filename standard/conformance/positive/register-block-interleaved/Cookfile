@@ -2,7 +2,7 @@ register
     a()
 
 recipe build
-    @ ./build
+    cook "build.out" { ./build > $<out> }
 
 register
     b()

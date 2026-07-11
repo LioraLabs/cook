@@ -13,6 +13,6 @@ recipe assemble: cli.build server.build
 
 # Chore with cross-Cookfile explicit deps.
 chore deploy: cli.build server.build
-    @echo "deploying..."
-    @echo "cli artifact: $<cli.build>"
-    @echo "server artifact: $<server.build>"
+    echo "deploying..."
+    echo "cli artifact: $<cli.build>"
+    echo "server artifact: $<server.build>"

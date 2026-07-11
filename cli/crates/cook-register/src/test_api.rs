@@ -16,8 +16,9 @@ fn type_err(field: &str, expected: &str, got: &str) -> LuaError {
 
 /// Register `cook.add_test(table)` on the cook table.
 ///
-/// cook.add_test captures a test work unit with timeout/should_fail metadata.
-/// Uses DepKind::TestSibling so test failures don't cancel siblings.
+/// cook.add_test captures a test work unit (Standard §22.4: `command`/
+/// `lua_code`, `suite`, `line`, `iteration_item`, and `inputs`). Uses
+/// DepKind::TestSibling so test failures don't cancel siblings.
 pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> {
     let cook: LuaTable = lua.globals().get("cook")?;
 
@@ -59,17 +60,14 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             }
         };
 
-        // CS-0127 §22.4: `timeout` must be a positive integer; default 300.
-        let timeout: u64 = match tbl.get::<LuaValue>("timeout") {
-            Ok(LuaValue::Nil) | Err(_) => 300,
-            Ok(LuaValue::Integer(n)) if n > 0 => n as u64,
-            Ok(LuaValue::Integer(n)) => {
-                return Err(mlua::Error::runtime(format!(
-                    "cook.add_test: timeout must be a positive number, got {n}"
-                )))
-            }
-            Ok(other) => return Err(type_err("timeout", "a positive integer", other.type_name())),
-        };
+        // CS-0135 §22.4 / §7: `cook.add_test` no longer accepts a `timeout`
+        // field (the `test` step's `timeout` modifier was removed), and there
+        // is no per-test time bound in v1.0 — a hung test hangs the run, the
+        // same as `make` (App. E CS-0135). We therefore pass an effectively
+        // unbounded timeout so the executor's kill loop never fires. The
+        // `WorkPayload::Test::timeout` field stays populated for the engine
+        // (and for the planned 1.x per-test-timeout re-add).
+        let timeout: u64 = u64::MAX;
 
         // CS-0127 §22.4: `suite` defaults to the enclosing recipe's name.
         let suite_name: String = match tbl.get::<LuaValue>("suite") {
@@ -95,18 +93,20 @@ pub fn register_test_api(lua: &Lua, body_slot: SharedBodySlot) -> LuaResult<()> 
             Ok(other) => return Err(type_err("suite", "a string", other.type_name())),
         };
 
-        // CS-0127 §22.4: `name` must be a string — never coerced.
-        let test_name: String = match tbl.get::<LuaValue>("name") {
-            Ok(LuaValue::Nil) | Err(_) => String::new(),
-            Ok(LuaValue::String(s)) => s.to_string_lossy().to_string(),
-            Ok(other) => return Err(type_err("name", "a string", other.type_name())),
-        };
-        // CS-0127 §22.4: `should_fail` must be a boolean — never coerced.
-        let should_fail: bool = match tbl.get::<LuaValue>("should_fail") {
-            Ok(LuaValue::Nil) | Err(_) => false,
-            Ok(LuaValue::Boolean(b)) => b,
-            Ok(other) => return Err(type_err("should_fail", "a boolean", other.type_name())),
-        };
+        // CS-0135 §22.4: `cook.add_test` no longer accepts a `name` field
+        // (the `test` step's `as` modifier substitutes at codegen time,
+        // not through this table field). `WorkPayload::Test::test_name`
+        // stays populated for the engine executor (label/verdict
+        // derivation), defaulting to the same empty string the field
+        // used to fall back to when absent.
+        let test_name: String = String::new();
+        // CS-0135 §22.4: `cook.add_test` no longer accepts a
+        // `should_fail` field (the `test` step's `should_fail` modifier
+        // was removed). `WorkPayload::Test::should_fail` stays
+        // populated for the engine executor's pass/fail inversion,
+        // defaulting to the same value the field used to fall back to
+        // when absent.
+        let should_fail: bool = false;
         // CS-0127 §22.4: `line` must be a non-negative integer — never
         // coerced.
         let line: usize = match tbl.get::<LuaValue>("line") {
@@ -237,9 +237,6 @@ mod tests {
             cook.add_test({
                 command = "./run_tests",
                 suite = "unit",
-                name = "test_foo",
-                timeout = 30,
-                should_fail = false,
             })
         "#).exec().unwrap();
 
@@ -248,10 +245,13 @@ mod tests {
         match &state.units[0].payload {
             WorkPayload::Test { cmd, timeout, should_fail, suite_name, test_name, .. } => {
                 assert_eq!(cmd, "./run_tests");
-                assert_eq!(*timeout, 30);
+                // CS-0135: cook.add_test no longer accepts timeout/should_fail/
+                // name; WorkPayload::Test still carries these fields for the
+                // engine executor, populated with their prior absent-defaults.
+                assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
                 assert!(!should_fail);
                 assert_eq!(suite_name, "unit");
-                assert_eq!(test_name, "test_foo");
+                assert_eq!(test_name, "");
             }
             _ => panic!("expected Test payload"),
         }
@@ -280,7 +280,6 @@ mod tests {
             cook.add_test({
                 command = "./check",
                 suite = "s",
-                name = "t",
             })
         "#).exec().unwrap();
 
@@ -297,15 +296,15 @@ mod tests {
             cook.add_test({
                 command = "./test",
                 suite = "s",
-                name = "t",
             })
         "#).exec().unwrap();
 
         let state = body_ref(&capture_state);
         match &state.units[0].payload {
-            WorkPayload::Test { timeout, should_fail, .. } => {
-                assert_eq!(*timeout, 300);
+            WorkPayload::Test { timeout, should_fail, test_name, .. } => {
+                assert_eq!(*timeout, u64::MAX); // CS-0135: no per-test time bound
                 assert!(!should_fail);
+                assert_eq!(test_name, "");
             }
             _ => panic!("expected Test payload"),
         }
@@ -370,22 +369,11 @@ mod tests {
         assert!(res.is_err(), "missing command must be rejected");
     }
 
-    #[test]
-    fn add_test_rejects_non_positive_timeout() {
-        let (lua, capture_state) = make_lua_with_test_api();
-        capture_state
-            .borrow_mut()
-            .as_mut()
-            .expect("body slot populated for test")
-            .current_recipe = Some("r".to_string());
-
-        let res = lua.load(r#"
-            cook.add_test({ command = "true", timeout = 0 })
-        "#).exec();
-
-        assert!(res.is_err());
-        assert!(format!("{:?}", res).contains("timeout"));
-    }
+    // CS-0135 §22.4: `cook.add_test` no longer accepts a `timeout` field,
+    // so the prior `add_test_rejects_non_positive_timeout` /
+    // `add_test_rejects_non_integer_timeout` field-typing regression
+    // tests no longer have a live contract to cover (the field is
+    // silently ignored, not validated).
 
     // -----------------------------------------------------------------
     // COOK-84: input_paths capture (ingredients ∪ step-group dep paths)
@@ -539,17 +527,6 @@ mod tests {
 
         assert!(res.is_err(), "non-string lua_code must be rejected");
         assert!(format!("{:?}", res).contains("lua_code"), "got: {:?}", res);
-    }
-
-    #[test]
-    fn add_test_rejects_non_integer_timeout() {
-        let (lua, _capture_state) = make_lua_with_test_api();
-        let res = lua.load(r#"
-            cook.add_test({ command = "true", timeout = "5" })
-        "#).exec();
-
-        assert!(res.is_err(), "non-integer timeout must be rejected");
-        assert!(format!("{:?}", res).contains("timeout"), "got: {:?}", res);
     }
 
     #[test]

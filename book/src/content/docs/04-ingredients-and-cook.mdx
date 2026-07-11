@@ -27,7 +27,7 @@ A recipe MAY have at most one `ingredients` line. The set is the union of all in
 ```cook
 recipe lib
     ingredients "src/*.c" !"src/lua.c" !"src/luac.c"
-    cook "build/libmath.a" { ar rcs $<out> $<all> }
+    cook "build/libmath.a" { ar rcs $<out> $<in> }
 ```
 
 Excludes are `!` followed *immediately* by a quoted pattern — `!"foo"`, not `! "foo"`. The order of items on the line doesn't matter; the result is `(union of includes) \ (union of excludes)`. *(Standard §4.3.)*
@@ -45,7 +45,7 @@ That `cook` line is the workhorse. Read it as: *for each ingredient, produce an 
 Three things to notice:
 
 - The output pattern (`"build/$<in.stem>.o"`) has placeholders. `$<in>` is the current ingredient's full path; `$<in.stem>` is its filename without the extension. So `src/foo.c` becomes `build/foo.o`.
-- The `{ ... }` block is the **shell template** that builds each output. It also uses placeholders — `$<in>` (input), `$<out>` (the output), `$<all>` (every input on one line, space-separated).
+- The `{ ... }` block is the **shell template** that builds each output. It also uses placeholders — `$<in>` (the input) and `$<out>` (the output). `$<in>` is unit-centric: in a one-to-one step like this one it's the current ingredient; in a many-to-one step (§4.3) it's every ingredient, space-separated on one line.
 - Cook iterates this step over the ingredient set. Five `.c` files → five units, one per file, runnable in parallel.
 
 This shape is called a **one-to-one** `cook` step. *(Standard §4.5.)*
@@ -57,10 +57,10 @@ When you want one output from many inputs — a static library, a tarball, a bun
 ```cook
 recipe lib
     ingredients "build/*.o"
-    cook "build/libmath.a" { ar rcs $<out> $<all> }
+    cook "build/libmath.a" { ar rcs $<out> $<in> }
 ```
 
-There's no per-input iteration here: one output pattern, no input accessor → one unit, with `$<all>` expanding to every ingredient. *(Standard §4.6.)*
+There's no per-input iteration here: one output pattern, no input accessor → one unit, with `$<in>` expanding to every ingredient. *(Standard §4.6.)*
 
 ## 4.4. Path accessors
 

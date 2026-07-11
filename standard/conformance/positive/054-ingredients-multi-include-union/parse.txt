@@ -14,13 +14,13 @@ Cookfile
       ingredients: ["src/*.c", "include/*.h"]
       excludes: []
       steps:
-        Plate body=ShellBlock(["echo \"$<in>\""])
+        Cook outputs=["build/$<in.stem>.log"] body=ShellBlock(["echo \"$<in>\""])
     Recipe name="check" line=16
       deps: []
       ingredients: ["tests/*.sh", "extra/*.sh"]
       excludes: []
       steps:
-        Test body=ShellBlock(["bash \"$<in>\""]) timeout=Some(5) should_fail=false
+        Test body=ShellBlock(["bash \"$<in>\""])
   chores:
   register_blocks: []
   top_level_module_calls: []

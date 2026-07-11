@@ -2,7 +2,7 @@
 # Uses the native `probe` DSL (COOK-69).
 #
 # Exercises `ingredients <probe>` data-member fan-out across every per-member
-# consumer (`cook`, `plate`, `test`). `ingredients <probe>` is the data-driven
+# consumer (`cook`, `test`). `ingredients <probe>` is the data-driven
 # counterpart to `ingredients "glob"`: it drives one work unit per data member
 # rather than per filesystem path, with the current member bound as `item` /
 # `$<in>` / `$<in.FIELD>`.

@@ -2,9 +2,9 @@
 # walkthrough.sh — pin v1.0 cook test against the test_benchmarks fixture.
 #
 # Replaces the Phase 8 stub. Covers every runner contract the fixture exercises:
-# green path, iteration aggregation, should_fail, failure capture, mixed
-# pass/fail, blocked (engine-level), timeout, `as` modifier, cache replay, and
-# --rerun-failed.
+# green path, iteration aggregation, body-inverted failure, failure capture,
+# mixed pass/fail, blocked (engine-level), a slow-but-passing test, unnamed
+# auto-labeling, cache replay, and --rerun-failed.
 #
 # Adaptation notes (vs. the Phase 9 plan):
 #   - blocked_by_build: the cook step's `false` causes an engine-level error
@@ -14,8 +14,15 @@
 #   - --rerun-failed with recipe scope: works. The second run re-executes the
 #     2 failed tests (input_01, input_02) while the 10 passers stay cached.
 #     Assertion checks for "2 failed" in the second-run output.
-#   - named_test: the `as 'non-empty'` name only appears in --verbose output
-#     (not in the plain summary line). Assertion uses --verbose.
+#   - named_test: CS-0135 removed the `as` modifier, so unnamed tests now
+#     always display as `recipe@line`; the auto-label only appears in
+#     --verbose output (not in the plain summary line). Assertion uses
+#     --verbose and checks for that label instead of a custom name.
+#   - CS-0135 also removed the `timeout` and `should_fail` modifiers:
+#     pass_should_fail now inverts its failing body with `!` instead, and
+#     slow_timeout (renamed slow_pass) now just proves a slow test still
+#     passes under the engine's fixed internal ceiling, since Cookfiles can
+#     no longer configure or trigger a timeout on demand.
 
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -76,7 +83,8 @@ clean
 assert_grep "pass_iterated reports 12 passed" "12 passed" "$COOK" test pass_iterated
 
 # ---------------------------------------------------------------------------
-# 3. should_fail — body exits non-zero but runner records a pass → exit 0
+# 3. Body inversion — `! (exit 1)` flips the failing command to a pass →
+#    exit 0
 # ---------------------------------------------------------------------------
 clean
 assert_exit "pass_should_fail exits 0" 0 "$COOK" test pass_should_fail
@@ -105,17 +113,19 @@ assert_exit "blocked_by_build exits 1" 1 "$COOK" test blocked_by_build
 assert_grep "blocked_by_build reports blocked" "blocked" "$COOK" test blocked_by_build
 
 # ---------------------------------------------------------------------------
-# 7. Timeout — slow_timeout runs `sleep 10` with a 1-second limit →
-#    summary says "1 timed out"
+# 7. slow_pass — `sleep 2` finishes well inside the engine's fixed internal
+#    ceiling, so the test still passes (CS-0135 removed the `timeout`
+#    modifier, so Cookfiles can no longer trigger a timeout on demand).
 # ---------------------------------------------------------------------------
 clean
-assert_grep "slow_timeout reports timed out" "timed out" "$COOK" test slow_timeout
+assert_exit "slow_pass exits 0" 0 "$COOK" test slow_pass
 
 # ---------------------------------------------------------------------------
-# 8. `as` modifier — test name "non-empty" appears in --verbose output
+# 8. Unnamed-test auto-labeling — CS-0135 removed the `as` modifier, so the
+#    test's label in --verbose output is the auto-generated "recipe@line".
 # ---------------------------------------------------------------------------
 clean
-assert_grep "named_test name 'non-empty' in verbose output" "non-empty" \
+assert_grep "named_test auto-labels as named_test@73 in verbose output" "named_test@73" \
     "$COOK" test named_test --verbose
 
 # ---------------------------------------------------------------------------

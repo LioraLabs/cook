@@ -21,18 +21,18 @@ recipe generate
 
 Exercises: §{recipes.header-forms} (explicit header), §{steps.ingredients} (ingredients), §{steps.cook-multi} (multi-output cook with `{ ... }` shell block), App. A.3, App. A.4.
 
-## B.2. Recipe with cross-recipe dependency (from `cli/e2e-fixtures/cross-recipe-deps/Cookfile`) [#examples.cross-recipe-dep]
+## B.2. Chore with cross-recipe dependency (from `cli/e2e-fixtures/cross-recipe-deps/Cookfile`) [#examples.cross-recipe-dep]
 ```cook
 recipe tools: colorize wordcount reverse
 
-recipe play: tools
-    @mkdir -p .cook/scratch
-    @printf 'colorize\nwordcount\nreverse\n' | fzf --prompt='tool> ' > .cook/scratch/tool
-    @find data -type f | fzf --prompt='file> ' --preview='cat {}' > .cook/scratch/file
-    @./build/bin/$(cat .cook/scratch/tool) < "$(cat .cook/scratch/file)"
+chore play: tools
+    mkdir -p .cook/scratch
+    printf 'colorize\nwordcount\nreverse\n' | fzf --prompt='tool> ' > .cook/scratch/tool
+    find data -type f | fzf --prompt='file> ' --preview='cat {}' > .cook/scratch/file
+    ./build/bin/$(cat .cook/scratch/tool) < "$(cat .cook/scratch/file)"
 ```
 
-Exercises: §{recipes.header-forms} (explicit header with deps), §{recipes.dep-list} (dependency list), §{steps.shell} (interactive `@` shell commands), App. A.3, App. A.4.
+The interactive task work lives in a `chore` (§{chores}): every shell line is interactive by default (§{chores.default-interactive}), so `fzf` inherits the terminal without any per-line marker. `recipe tools` is a pure aggregator (deps only). Exercises: §{recipes.header-forms} (explicit headers with deps), §{recipes.dep-list} (dependency list), §{chores} (chore body), §{steps.shell} (interactive-by-default chore shell commands), App. A.3, App. A.4.
 
 ## B.3. Module use and call (from `examples/modules/fzf-picker/Cookfile`) [#examples.module-use-call]
 ```cook
@@ -75,7 +75,7 @@ This example exercises the four surfaces of cross-recipe references defined in �
 recipe libmath
     ingredients "src/math/*.c"
     cook "build/obj/math/$<in.stem>.o" { gcc -c $<in> -o $<out> }
-    cook "build/lib/libmath.a" { ar rcs $<out> $<all> }
+    cook "build/lib/libmath.a" { ar rcs $<out> $<in> }
 
 recipe app
     cook "build/bin/app" { gcc -o $<out> main.c $<libmath> }

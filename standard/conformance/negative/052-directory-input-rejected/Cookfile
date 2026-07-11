@@ -1,8 +1,6 @@
 recipe vendor
-    >>{
-        cook.add_unit({
-            command = "cp -a upstream/lib build/lib",
-            inputs = { "upstream/lib" },
-            output = "build/lib.stamp",
-        })
-    }
+    cook.add_unit({
+        command = "cp -a upstream/lib build/lib",
+        inputs = { "upstream/lib" },
+        output = "build/lib.stamp",
+    })

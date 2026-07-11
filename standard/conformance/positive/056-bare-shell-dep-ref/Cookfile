@@ -13,7 +13,7 @@
 
 recipe greet
     ingredients "Cookfile"
-    plate { echo "hello" }
+    cook "build/greeting.txt" { echo "hello" }
 
-recipe shout: greet
+chore shout: greet
     echo "shout sees: $<greet>"

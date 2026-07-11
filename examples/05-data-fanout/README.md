@@ -10,7 +10,7 @@ probe services_raw
     json { cat data/services.json }
 
 probe services: services_raw             # enrich records in Lua
-    >{ ... cook.cache.get("services_raw") ... }
+    >{ ... cook.probes.get("services_raw") ... }
 
 recipe render
     ingredients services                 # fan out: one unit per record
@@ -35,12 +35,12 @@ any "N inputs, same treatment" where N lives in data.
 ## Per-member joins
 
 A second recipe iterating the same source references the first one
-per-member with `$<render[]>` — "render's output for *this* member":
+per-member with `$<render[in]>` — "render's output for *this* member":
 
 ```
 recipe summary: render
     ingredients services
-    cook "build/summary/$<in.name>.txt" { cat $<render[]> >> $<out> }
+    cook "build/summary/$<in.name>.txt" { cat $<render[in]> >> $<out> }
 ```
 
 `cook why render` shows each member's key with its determinants —

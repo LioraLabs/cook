@@ -14,8 +14,10 @@ A **placeholder** is the byte sequence `$<IDENT>` appearing in shell text (defin
 
 ```
 placeholder       = "$<" placeholder_ident ">"
-placeholder_ident = bare_ident | out_indexed | out_indexed_acc | file_ref
+placeholder_ident = bare_ident | recipe_member | out_indexed | out_indexed_acc | file_ref
 bare_ident        = ALPHA (ALPHA | DIGIT | "_" | ".")*
+recipe_member     = bare_ident "[" member_index "]"
+member_index      = "in"
 out_indexed       = "out_" DIGIT+
 out_indexed_acc   = "out_" DIGIT+ "." accessor
 file_ref          = "file:" file_path_char+
@@ -31,9 +33,13 @@ The strict-bail rule eliminates ambiguity between Cook placeholders and shell id
 
 The `file_ref` alternative (CS-0101) admits an extended character set after the literal prefix `file:` — path separators (`/`) and the glob star (`*`) — and requires at least one `file_path_char`. The strict-bail rule applies unchanged: `$<file:>` (empty path), a path containing a space, or any byte outside `file_path_char` makes the whole sequence literal shell text.
 
+The `recipe_member` alternative (CS-0098, respelled by CS-0137) is the per-member cross-recipe accessor of §{steps.cross-recipe-member}. The scanner's IDENT-continue set admits `[` and `]`, so a sigil with a trailing bracket group lexes as a single span; resolution then admits only the literal index `in` — the empty index (the pre-v1.0 `$<NAME[]>` spelling) MUST be rejected with a did-you-mean naming the `[in]` respelling, and any other index content MUST be rejected with a diagnostic noting member-field joins are not part of v1.0 (§{phl.cook-step}). The strict-bail rule is unchanged: bracket content outside the IDENT-continue character set (e.g. a space) makes the whole sequence literal shell text.
+
+**Probe-value reference sigils (informative; CS-0131).** A sigil whose `IDENT` contains a colon and does not begin with the reserved `file:` prefix (§{xref.file-namespace}) is a probe-value reference, dispatched to the cache-read path of §{cat.probes.templates} rather than resolved by the table in this chapter. Its `IDENT` is NOT a `bare_ident`: it admits the probe-key character set (`:` as the module-prefix separator and the widened `PROBE_SEG` class, internal `-` and `.`) followed by an optional `.FIELD` accessor, so `$<demo:cc-version.ver>` tokenises as a single probe-ref span. The strict-bail rule of §{phl.token} is unaffected for colon-free sigils. This chapter's `bare_ident` production governs only the non-probe forms (built-ins, recipe names, env vars).
+
 Resolution of a successfully-lexed placeholder is governed by §{xref.resolution}. The closed set of valid `IDENT` resolutions and per-iteration-mode validity rules are stated normatively in §{phl.cook-step}.
 
-> **Implementation note (informative).** Implementations of the sigil placeholder substitution typically share a single helper for the four shell-text contexts (cook output patterns, `{ ... }` bodies, plate/test bodies, bare shell commands), with per-context configuration of iteration mode and declared output count. The accessor set (`stem`, `name`, `ext`, `dir`) is constant across every position that admits a placeholder; sharing a single definition across the resolver and the migration tooling is a sound implementation practice.
+> **Implementation note (informative).** Implementations of the sigil placeholder substitution typically share a single helper for the four shell-text contexts (cook output patterns, `{ ... }` bodies, test bodies, bare shell commands), with per-context configuration of iteration mode and declared output count. The accessor set (`stem`, `name`, `ext`, `dir`) is constant across every position that admits a placeholder; sharing a single definition across the resolver and the migration tooling is a sound implementation practice.
 
 ## 9.2. Resolution [#phl.resolution]
 
@@ -42,20 +48,19 @@ Placeholder resolution is the closed function defined in §{xref.resolution}. Ev
 ## 9.3. Cook-step placeholders [#phl.cook-step]
 **Phase.** Substitution is performed by the code generator at register time; the resulting Lua expression is evaluated at register time when the unit is recorded.
 
-A `cook` step's `{ ... }` shell-block body, a `plate` shell-block body (§{steps.plate}), a `test` shell-block body (§{steps.test}), and every bare `shell_command` is a **shell text** for the purposes of this section. Shell text MAY contain **sigil placeholders** of the form `$<IDENT>` where `IDENT` is a dot-free or single-dotted identifier (e.g. `$<in>`, `$<in.stem>`, `$<out_2.dir>`). Before a conforming implementation records the resulting unit, it MUST substitute every `$<IDENT>` according to the closed resolution table in this section. A `$<IDENT>` whose shape does not match any row of the placeholder table resolves as an environment variable through §{xref.resolution}.
+A `cook` step's `{ ... }` shell-block body, a `test` shell-block body (§{steps.test}), and every bare `shell_command` is a **shell text** for the purposes of this section. Shell text MAY contain **sigil placeholders** of the form `$<IDENT>` where `IDENT` is a dot-free or single-dotted identifier (e.g. `$<in>`, `$<in.stem>`, `$<out_2.dir>`). Before a conforming implementation records the resulting unit, it MUST substitute every `$<IDENT>` according to the closed resolution table in this section. A `$<IDENT>` whose shape does not match any row of the placeholder table resolves as an environment variable through §{xref.resolution}.
 
 The sigil syntax `$<IDENT>` is the sole placeholder surface for shell text as of v0.7. Shell brace constructs (`${HOME:-x}`, `${}`, `{a,b,c}`) are not sigil placeholders and MUST be passed through verbatim.
 
 | Placeholder | Valid in iteration mode | Meaning |
 |---|---|---|
-| `$<in>` | one-to-one (own, dep-driven, or data-member) | The current iteration item: a path for `ingredients`-driven recipes (glob form), or the whole data member rendered as canonical key-sorted JSON (record) / string form (scalar) for `ingredients <probe>`-driven recipes (§{steps.ingredients}) |
-| `$<in.ACCESSOR>` | one-to-one | For path members (`ingredients` glob): `path.ACCESSOR(in)` per §{lua.path-helpers}; for record members (`ingredients <probe>`): the value of record field `ACCESSOR` |
+| `$<in>` | one-to-one (own, dep-driven, or data-member) or many-to-one | In one-to-one mode: the current iteration item — a path for `ingredients`-driven recipes (glob form), or the whole data member rendered as canonical key-sorted JSON (record) / string form (scalar) for `ingredients <probe>`-driven recipes (§{steps.ingredients}). In many-to-one mode: the unit's full input list, joined by single space characters — byte-identical to the join the removed batched-input placeholder (App. E CS-0130) used to produce. |
+| `$<in.ACCESSOR>` | one-to-one only | For path members (`ingredients` glob): `path.ACCESSOR(in)` per §{lua.path-helpers}; for record members (`ingredients <probe>`): the value of record field `ACCESSOR`. An accessor requires the input be a single item, so this form is rejected in many-to-one mode (CS-0130) — see the invalid shapes below. |
 | `$<out>` | any mode, single declared output | The unit's single output path |
 | `$<out.ACCESSOR>` | any mode, single declared output | `path.ACCESSOR(out)` |
 | `$<out_N>` (`N` ∈ 1..) | any mode, multi-output | The unit's `N`-th declared output, in declaration order |
 | `$<out_N.ACCESSOR>` | any mode, multi-output | `path.ACCESSOR(out_N)` |
-| `$<all>` | many-to-one only | The unit's input list, joined by single space characters |
-| `$<NAME[]>` (NAME is a recipe in scope; CS-0098) | one-to-one inside `ingredients <probe>` fan-out body only | The named recipe's terminal output for the **current iteration member** (§{steps.cross-recipe-member}). `NAME` must be a recipe declared in scope; an unknown name with `[]` falls through to env-var lookup. `$<NAME>` (no brackets) continues to mean all terminal outputs, space-joined, and is unchanged. A conforming implementation MUST reject `$<NAME[]>` appearing outside an `ingredients <probe>` fan-out body with a load-time diagnostic. In the Lua lowering, `$<NAME[]>` emits `cook.dep_output_member("NAME", cook.member_to_string(item))` where `item` is the loop-local fan-out variable. The compiler extracts `$<NAME[]>` as a recipe-level DAG ordering edge (NAME must build before the referencing recipe, identical to the edge produced by bare `$<NAME>`) and folds the referenced output into the current member's cache fingerprint (per-member isolation — §{steps.cross-recipe-member}). Consumer and producer must iterate the same probe (same-probe precondition, v1); cross-probe joins are COOK-99. |
+| `$<NAME[in]>` (NAME is a recipe in scope; CS-0098, respelled by CS-0137) | one-to-one inside `ingredients <probe>` fan-out body only | The named recipe's terminal output for the **current iteration member** (§{steps.cross-recipe-member}). In the Lua lowering, `$<NAME[in]>` emits `cook.dep_output_member("NAME", cook.member_to_string(item))` where `item` is the loop-local fan-out variable. The compiler extracts `$<NAME[in]>` as a recipe-level DAG ordering edge (NAME must build before the referencing recipe, identical to the edge produced by bare `$<NAME>`) and folds the referenced output into the current member's cache fingerprint (per-member isolation — §{steps.cross-recipe-member}). Consumer and producer must iterate the same probe (same-probe precondition, v1); cross-probe joins are COOK-99. The bracket index MUST be the literal `in`; `$<NAME[in]>` with an unknown `NAME` is a load-time error naming the unknown recipe (no env fallthrough). The pre-v1.0 `$<NAME[]>` spelling MUST be rejected with a did-you-mean ("`$<NAME[]>` was respelled `$<NAME[in]>` in v1.0"); any other bracket content MUST be rejected with a diagnostic noting member-field joins are not part of v1.0. `$<NAME>` (no brackets) continues to mean all terminal outputs, space-joined, in **every** position — including inside fan-out bodies (§{rationale.member-index-in}). |
 | `$<NAME>` (NAME is a declared chore parameter, §7.1.1) | chore bodies only | The bound parameter value, POSIX single-quote-escaped to produce a single shell word; for variadic parameters, the space-separated, individually shell-quoted joined form. Scope-limited to chore bodies that declare the parameter. Resolved at register phase, before the shell step is dispatched. |
 | `$<file:PATH>` (CS-0101) | any mode | A **file reference**: expands to `PATH`'s resolved match list — the literal path, or for a glob the sorted matches — space-joined. `PATH` is resolved against the same base as `ingredients` patterns (the declaring Cookfile's directory). For a cacheable unit, the content of each resolved file is folded into the unit's observable input set (§{exec.cache.abstract} observable 6). Resolution is dispatched on the `file:` prefix before any other rule — `file:` is a reserved namespace analogous to `env.` (§{xref.env-namespace}, §{xref.file-namespace}). |
 
@@ -63,16 +68,16 @@ The sigil syntax `$<IDENT>` is the sole placeholder surface for shell text as of
 
 **Chore-body resolution order.** Within a chore body, `$<NAME>` resolution proceeds in this order:
 
-1. Declared chore parameter names (§7.1.1). Collisions between parameter names and other placeholder forms are statically prevented by the reserved-name ban (§7.1.1, §A.2).
+1. Declared chore parameter names (§7.1.1). A parameter name is an undotted `BARE_IDENTIFIER` and is resolved ahead of every other form; the remaining chore-body forms are either unavailable in chore bodies (the cross-recipe / ingredient `$<in>` and `$<out>` families, item 3) or take a dotted or prefixed shape an undotted parameter name cannot (`$<env.KEY>`, `$<file:PATH>`). A parameter name therefore collides with none of them, without needing a reserved-name ban (CS-0132; the ban that formerly forbade parameter names such as `name`/`in`/`out` was removed).
 2. `$<env.KEY>` form (§{xref.env-namespace}).
-3. Cross-recipe outputs and ingredients — not available in chore bodies in any case, since chore bodies cannot contain `cook` / `plate` / `test` steps (§7.2).
+3. Cross-recipe outputs and ingredients — not available in chore bodies in any case, since chore bodies cannot contain `cook` / `test` steps (§7.2).
 
 An unknown name within a chore body raises a runtime error when the shell step is dispatched.
 
 A conforming implementation MUST reject the following shapes with a load-time diagnostic:
 
-- `$<in>` or `$<in.ACCESSOR>` in a many-to-one step (no current iteration item exists).
-- `$<all>` in a one-to-one step.
+- `$<in.ACCESSOR>` in a many-to-one step — an accessor requires the input set be singular; the collected set has no single member.
+- `$<in>` or `$<in.ACCESSOR>` in a one-shot step (no input set — the step has no ingredient source).
 - `$<out>` in a multi-output step (ambiguous — use `$<out_N>`).
 - `$<out_N>` in a single-output step (use plain `$<out>`).
 - `$<out_N>` for `N` greater than the step's declared output count.
@@ -109,24 +114,22 @@ The block forms (`{ ... }` and `>{ ... }`) and the placeholder layer compose dif
 
 Cross-recipe references inside a shell block follow §{xref.string-substitution}: a bare `$<NAME>` substitutes to the named recipe's full output list, joined by space. The `$<lib.ACCESSOR>` form is rejected inside any cook-step body, including a shell block, because it would smuggle a second iteration source past the output pattern's declaration. Authors who want a recipe's per-element accessors inside a step driven by something else use Lua (`path.stem(cook.dep_output_list("lib")[1])`).
 
-## 9.4. Plate and test placeholders [#phl.plate-test]
+## 9.4. Test placeholders [#phl.plate-test]
 
-A `plate_step` or `test_step` body that is a `shell_block` admits the following placeholders:
+A `test_step` body that is a `shell_block` cannot textually reference a collected input set — a shell body has no all-inputs placeholder (CS-0130). It therefore either references the per-item accessor `$<in>` / `$<in.ACCESSOR>` (one-to-one) or references no iteration item (a single unit, whose caching follows the recipe's source per §{steps.iteration-mode-plate-test}). A Lua-block test body MAY expose the collected set as the Lua `inputs` table (§{lua.using-block-globals}). A shell-block test body admits the following placeholders:
 
 | Placeholder | Valid in mode | Meaning |
 |---|---|---|
 | `$<in>` | one-to-one (own, dep-driven, or data-member) | The current iteration item: a path for `ingredients`-driven recipes (glob form), or the whole data member (record as canonical key-sorted JSON, scalar as string) for `ingredients <probe>`-driven recipes (§{steps.ingredients}) |
 | `$<in.ACCESSOR>` | one-to-one | For path members (`ingredients` glob): `path.ACCESSOR(in)` per §{lua.path-helpers}; for record members (`ingredients <probe>`): the value of record field `ACCESSOR` |
-| `$<all>` | many-to-one | The source list, space-joined |
 | `$<NAME>` (NAME is a recipe in scope) | any mode | `cook.dep_output(NAME)` per §{xref.string-substitution} |
-| `$<file:PATH>` (CS-0101) | any mode | File reference per §{phl.cook-step}: expands to the resolved match list, space-joined, with the same load-time missing/empty diagnostics. Plate and test units are registered non-cacheable, so the §{exec.cache.abstract} fingerprint observable does not apply to them; the reference is pure substitution in these positions. |
+| `$<file:PATH>` (CS-0101) | any mode | File reference per §{phl.cook-step}: expands to the resolved match list, space-joined, with the same load-time missing/empty diagnostics. The reference is substituted here; whether and how the test's result caches is governed by §{exec.cache.test-unit}. |
 | `$<TOKEN>` (none of the above) | any mode | `cook.require_env(TOKEN)` per §{xref.resolution} |
 
 A conforming implementation MUST reject:
-- `$<in>` or `$<in.ACCESSOR>` in a many-to-one or one-shot body (no current iteration);
-- `$<all>` in a one-to-one or one-shot body (no batched input list);
-- Any `$<out>` / `$<out.ACCESSOR>` / `$<out_N>` / `$<out_N.ACCESSOR>` token in a plate or test body — the step declares no outputs. The diagnostic MUST state that plate/test produce no declared outputs; for a body in one-to-one mode the diagnostic SHOULD additionally direct the author to `$<in>` as the iteration item.
+- `$<in>` or `$<in.ACCESSOR>` in a one-shot body (no current iteration);
+- Any `$<out>` / `$<out.ACCESSOR>` / `$<out_N>` / `$<out_N.ACCESSOR>` token in a test body — the step declares no outputs. The diagnostic MUST state that test produces no declared outputs; for a body in one-to-one mode the diagnostic SHOULD additionally direct the author to `$<in>` as the iteration item.
 - `$<NAME.ACCESSOR>` for any recipe `NAME` in scope (preserves the §{xref.dep-driven} firewall).
 - `$<in>` used outside any iteration driver — when no `ingredients_step` (glob or probe form) is present, no iteration item exists.
 
-Bare path-accessors (`$<stem>`, `$<name>`, `$<ext>`, `$<dir>`) in a plate or test body resolve through §{xref.resolution} step 4. A conforming implementation MUST emit a specific diagnostic for these four names that points to `$<in.ACCESSOR>` (same diagnostic CS-0022 introduced for cook bodies).
+Bare path-accessors (`$<stem>`, `$<name>`, `$<ext>`, `$<dir>`) in a test body resolve through §{xref.resolution} step 4. A conforming implementation MUST emit a specific diagnostic for these four names that points to `$<in.ACCESSOR>` (same diagnostic CS-0022 introduced for cook bodies).

@@ -14,5 +14,5 @@ recipe build
     ingredients "src/in.txt"
     cook "build/out.txt" {
         mkdir -p build
-        ./build_tool.sh $<all> $<out>
+        ./build_tool.sh $<in> $<out>
     }

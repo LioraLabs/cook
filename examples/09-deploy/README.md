@@ -1,28 +1,27 @@
-# 09 — deploy with `plate`
+# 09 — deploys are chores
 
 `cook` steps *produce* artifacts: sandboxed, cached, reproducible.
-`plate` steps *ship* them: side effects, deliberately **not** sandboxed —
-they may touch `$HOME`, a server, a phone, a bucket.
+`chore` steps *ship* them: plain shell lines, deliberately **not**
+cached — they may touch `$HOME`, a server, a phone, a bucket.
 
 ```
-recipe release: site
-    plate {
-        mkdir -p ./device
-        cp $<site> ./device/
-        echo "released ..."
-    }
+chore release: site
+    mkdir -p ./device
+    cp $<site> ./device/
+    echo "released ..."
 ```
 
 `$<site>` expands to the dep's declared outputs (all of them, space-
 separated), so the push consumes the build through the DAG — no globbing
 at artifacts and hoping they're fresh.
 
-The local `./device` directory stands in for wherever you actually ship:
+The local `./device` directory stands in for wherever you actually ship —
+the chore body is the same shape with a real transport, e.g. one of:
 
 ```
-plate { scp $<site> deploy@host:/var/www/ }
-plate { adb push $<apk> /data/local/tmp/ }
-plate { aws s3 sync build/site "s3://my-bucket" }
+scp $<site> deploy@host:/var/www/
+adb push $<apk> /data/local/tmp/
+aws s3 sync build/site "s3://my-bucket"
 ```
 
 ## Cache behavior worth noticing

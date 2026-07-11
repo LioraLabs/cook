@@ -28,7 +28,7 @@ probe services_raw
 probe services: services_raw
     >{
         local out = {}
-        for _, svc in ipairs(cook.cache.get("services_raw")) do
+        for _, svc in ipairs(cook.probes.get("services_raw")) do
             table.insert(out, {
                 name     = svc.name,
                 url      = "http://localhost:" .. svc.port,
@@ -47,12 +47,12 @@ recipe render
     }
 
 # A second recipe iterating the SAME source can join the first one
-# per-member: `$<render[]>` is "render's output for THIS member".
+# per-member: `$<render[in]>` is "render's output for THIS member".
 recipe summary: render
     ingredients services
     cook "build/summary/$<in.name>.txt" {
         printf '== %s ==\n' "$<in.name>" > $<out>
-        cat $<render[]> >> $<out>
+        cat $<render[in]> >> $<out>
     }
 
 chore clean

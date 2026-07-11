@@ -1,3 +1,3 @@
 import core //core/lib
-recipe "x"
+chore x
     echo ok

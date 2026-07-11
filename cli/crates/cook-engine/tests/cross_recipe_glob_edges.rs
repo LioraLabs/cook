@@ -26,22 +26,18 @@ fn write_cookfile_glob_then_file_input(wd: &std::path::Path) {
     fs::write(
         wd.join("Cookfile"),
         r#"recipe a
-    >>{
         cook.add_unit({
             inputs  = { "src.c" },
             outputs = { "build/**" },
             command = "mkdir -p build && cp src.c build/foo.o",
         })
-    }
 
 recipe b
-    >>{
         cook.add_unit({
             inputs  = { "build/foo.o" },
             outputs = { "downstream.bin" },
             command = "cat build/foo.o > downstream.bin",
         })
-    }
 "#,
     )
     .unwrap();
@@ -54,22 +50,18 @@ fn write_cookfile_dir_then_file_input(wd: &std::path::Path) {
     fs::write(
         wd.join("Cookfile"),
         r#"recipe a
-    >>{
         cook.add_unit({
             inputs  = { "src.c" },
             outputs = { "pkg/" },
             command = "mkdir -p pkg && cp src.c pkg/ppu_core.js",
         })
-    }
 
 recipe b
-    >>{
         cook.add_unit({
             inputs  = { "pkg/ppu_core.js" },
             outputs = { "downstream.bin" },
             command = "cat pkg/ppu_core.js > downstream.bin",
         })
-    }
 "#,
     )
     .unwrap();
@@ -84,22 +76,18 @@ fn write_cookfile_glob_then_requires_only(wd: &std::path::Path) {
     fs::write(
         wd.join("Cookfile"),
         r#"recipe a
-    >>{
         cook.add_unit({
             inputs  = { "src.c" },
             outputs = { "build/**" },
             command = "mkdir -p build && cp src.c build/foo.o",
         })
-    }
 
 recipe b: a
-    >>{
         cook.add_unit({
             inputs  = { "src.c" },
             outputs = { "downstream.bin" },
             command = "echo ok > downstream.bin",
         })
-    }
 "#,
     )
     .unwrap();

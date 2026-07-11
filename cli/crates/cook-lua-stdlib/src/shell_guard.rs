@@ -46,7 +46,7 @@ pub fn install_shell_escape_guards(lua: &Lua, sandbox: SandboxSource) -> LuaResu
                      disabled in cook/test/chore step bodies; \
                      use cook.sh (which runs with the recipe's \
                      working_dir and is recorded in the unit's \
-                     command_hash) or move the call to a `plate` step",
+                     command_hash) or move the call to a `chore`",
                 ));
             }
             // Off: delegate to the original implementation if we have
@@ -79,8 +79,8 @@ pub fn install_shell_escape_guards(lua: &Lua, sandbox: SandboxSource) -> LuaResu
                     "io.popen: Lua-side shell escape hatch is disabled \
                      in cook/test/chore step bodies; use \
                      cook.sh (which runs with the recipe's working_dir \
-                     and is recorded in the unit's command_hash) or \
-                     move the call to a `plate` step",
+                     and is recorded in the unit's command_hash) or move
+                     the call to a `chore` (whose raw shell steps run unsandboxed)",
                 ));
             }
             if let Some(orig) = &original_popen {

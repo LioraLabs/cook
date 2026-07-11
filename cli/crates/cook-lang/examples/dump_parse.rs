@@ -67,7 +67,6 @@ fn format_step(step: &Step) -> String {
         Step::Lua { code, .. } => format!("Lua code={}", repr(code)),
         Step::LuaBlock { code, .. } => format!("LuaBlock code={}", repr(code)),
         Step::InlineLua { code, .. } => format!("InlineLua code={}", repr(code)),
-        Step::InlineLuaBlock { code, .. } => format!("InlineLuaBlock code={}", repr(code)),
         Step::Cook { step, .. } => {
             format!(
                 "Cook outputs={} using={}",
@@ -75,19 +74,7 @@ fn format_step(step: &Step) -> String {
                 format_using(&step.body),
             )
         }
-        Step::Plate { step, .. } => format!("Plate body={}", repr_body(&step.body)),
-        Step::Test { step, .. } => {
-            let timeout = match step.timeout {
-                None => "None".to_string(),
-                Some(n) => format!("Some({})", n),
-            };
-            format!(
-                "Test body={} timeout={} should_fail={}",
-                repr_body(&step.body),
-                timeout,
-                step.should_fail,
-            )
-        }
+        Step::Test { step, .. } => format!("Test body={}", repr_body(&step.body)),
         _ => "<unknown Step variant>".to_string(),
     }
 }

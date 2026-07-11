@@ -8,13 +8,12 @@ Cookfile
       ingredients: ["Cookfile"]
       excludes: []
       steps:
-        Plate body=ShellBlock(["echo \"hello\""])
-    Recipe name="shout" line=18
-      deps: ["greet"]
-      ingredients: []
-      excludes: []
-      steps:
-        Shell interactive=false command="echo \"shout sees: $<greet>\""
+        Cook outputs=["build/greeting.txt"] body=ShellBlock(["echo \"hello\""])
   chores:
+    Chore name="shout" line=18
+      params: []
+      deps: ["greet"]
+      steps:
+        Shell interactive=true command="echo \"shout sees: $<greet>\""
   register_blocks: []
   top_level_module_calls: []

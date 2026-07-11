@@ -23,7 +23,7 @@ The current member is available as:
   scalar's string form otherwise);
 - `$<in.FIELD>` — the value of record field `FIELD`.
 
-`cook`, `plate`, and `test` steps each produce **one unit per member**.
+`cook` and `test` steps each produce **one unit per member**.
 
 ## The recipes
 
@@ -50,7 +50,7 @@ cook emit-lua     # print the generated register-phase fan-out Lua
 ```
 
 `verify.sh` confirms each recipe lowers to the expected `for _, item in
-ipairs(_items)` fan-out: the right member source (`cook.cache.get` / `:field`
+ipairs(_items)` fan-out: the right member source (`cook.probes.get` / `:field`
 index), `$<in.FIELD>` → `tostring(item["FIELD"])`, bare `$<in>` →
 `cook.member_to_string(item)`, and one `cook.add_unit` / `cook.add_test` per
 member.

@@ -33,10 +33,10 @@ probe target_list
     lines { cat data/targets.txt }
 
 # A probe depending on a probe: Lua body reads the upstream value with
-# cook.cache.get and derives a new value. Chains re-resolve in order.
+# cook.probes.get and derives a new value. Chains re-resolve in order.
 probe target_count: target_list
     >{
-        return tostring(#cook.cache.get("target_list"))
+        return tostring(#cook.probes.get("target_list"))
     }
 
 # Consume a probe as an iteration source: one unit per member.

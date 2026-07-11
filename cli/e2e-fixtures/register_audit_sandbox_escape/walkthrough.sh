@@ -7,9 +7,16 @@
 # out via `../../etc`, or shell out via `os.execute("rm -rf /")` and the
 # implementation would happily comply. CS-0045 closes that gap by
 # confining `fs.*` and the Lua-side shell escape hatches (`os.execute`,
-# `io.popen`) to the project root in cook/test/chore step contexts. Plate
-# steps remain unconstrained because shipping outside the project root is
-# their explicit purpose.
+# `io.popen`) to the project root in cook/test/chore step contexts.
+#
+# (CS-0045 originally carved out an exception for `plate` step Lua
+# bodies, which were explicitly allowed to ship outside the project
+# root. CS-0135 retired `plate` entirely, and with it that exception —
+# there is no unsandboxed Lua-body step kind left, so the positive-
+# coverage scenario that used to live here (Cookfile.plate_ok) was
+# removed. Chore *shell* steps are still unconstrained, but that was
+# never a Lua-sandbox exemption: chore shell commands run as plain
+# subprocesses and never touch the `fs.*` Lua API.)
 #
 # Each scenario asserts on the diagnostic. The script exits 0 only when
 # every scenario passes.
@@ -65,38 +72,6 @@ run_assert_diag() {
     fi
 }
 
-run_assert_success() {
-    # Args: name, expected_stdout_substring, cookfile, recipe
-    local name="$1"
-    local expected="$2"
-    local cookfile="$3"
-    local recipe="$4"
-    scenario=$((scenario + 1))
-    printf "  [%d] %-60s " "$scenario" "$name"
-
-    local out rc
-    out="$(timeout 10s "$COOK" -f "$cookfile" "$recipe" 2>&1)"
-    rc=$?
-
-    if [ "$rc" -ne 0 ]; then
-        echo "FAIL (cook exited $rc; expected 0)"
-        echo "       output:"
-        echo "$out" | sed 's/^/         /'
-        fail=$((fail + 1))
-        return
-    fi
-    if echo "$out" | grep -qF "$expected"; then
-        echo "PASS"
-        pass=$((pass + 1))
-    else
-        echo "FAIL (output missing expected substring)"
-        echo "       expected substring: $expected"
-        echo "       got:"
-        echo "$out" | sed 's/^/         /'
-        fail=$((fail + 1))
-    fi
-}
-
 clean_state() {
     rm -rf .cook 2>/dev/null || true
 }
@@ -123,13 +98,6 @@ clean_state
 run_assert_diag "os.execute(\"...\") in cook step MUST raise CS-0045" \
     "CS-0045" \
     "Cookfile.os_execute" "os_execute_probe"
-
-echo
-echo "--- Scenario 4: plate step body is NOT sandboxed (deliberate) ---"
-clean_state
-run_assert_success "plate body fs.read /etc/hostname + os.execute MUST succeed" \
-    "plate-ok" \
-    "Cookfile.plate_ok" "ship"
 
 echo
 echo "=== Summary: $pass passed, $fail failed ==="

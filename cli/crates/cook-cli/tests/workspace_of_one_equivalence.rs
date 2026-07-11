@@ -89,7 +89,7 @@ fn module_recipe_dep_ref_equivalent_when_mounted_via_import() {
     write(
         tmp.path(),
         "Cookfile",
-        "import sub ./sub\nrecipe top: sub.consume\n    echo done\n",
+        "import sub ./sub\nrecipe top: sub.consume\n",
     );
 
     let (ok, diag) = run_cook(tmp.path(), "sub.consume");

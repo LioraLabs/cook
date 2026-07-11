@@ -8,7 +8,7 @@ Cookfile
       ingredients: []
       excludes: []
       steps:
-        LuaBlock code="        local s = [==[\n            this is opaque text\n            with } and ]] inside\n        ]==]\n        print(s)"
+        Test body=LuaBlock("        local s = [==[\n            this is opaque text\n            with } and ]] inside\n        ]==]\n        print(s)")
   chores:
   register_blocks: []
   top_level_module_calls: []

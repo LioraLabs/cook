@@ -4,7 +4,7 @@ sidebar:
   order: 23
 ---
 # 23. Execute-phase API [#lua.exe]
-> **Normative.** This chapter defines the Cook Lua API surfaces that are only bound during the execute phase: the cook-body globals on Lua-code work units, and the plate/test Lua-block bindings.
+> **Normative.** This chapter defines the Cook Lua API surfaces that are only bound during the execute phase: the cook-body globals on Lua-code work units, and the test Lua-block bindings.
 
 ## 23.1. Cook-body Lua globals [#lua.using-block-globals]
 **Phase.** Execute-phase only.
@@ -46,9 +46,9 @@ the execute-phase worker binds `inputs` to the resolved ingredient paths, `outpu
 
 These globals are bindings on the worker VM, not on the register-phase VM. A register-phase Lua step (`> expr` or `>{ ... }` outside a cook-step body) MUST NOT observe them.
 
-## 23.2. Plate and test Lua-block bindings [#lua.using-block-globals-plate-test]
+## 23.2. Test Lua-block bindings [#lua.using-block-globals-plate-test]
 
-A Lua block in a `plate_step` or `test_step` body (§{steps.plate}, §{steps.test}) is bound according to the step's mode (§{steps.iteration-mode}):
+A Lua block in a `test_step` body (§{steps.test}) is bound according to the step's mode (§{steps.iteration-mode}):
 
 | Binding | Mode | Type | Meaning |
 |---|---|---|---|
@@ -57,6 +57,6 @@ A Lua block in a `plate_step` or `test_step` body (§{steps.plate}, §{steps.tes
 
 A conforming implementation MUST bind exactly one of `input` / `inputs` per unit when the step is in one-to-one or many-to-one mode, per the mode the body's content selected. The other is unbound (Lua `nil` on reference). In **one-shot** mode (§{steps.iteration-mode}), neither `input` nor `inputs` is bound — both are `nil` on reference.
 
-A conforming implementation MUST NOT bind `output` / `outputs` for plate or test units; these have no meaning in a step that declares no outputs. A conforming implementation MUST NOT bind `input_N` (indexed input access) for plate or test units; the source list is exposed wholesale via `inputs` in many-to-one mode.
+A conforming implementation MUST NOT bind `output` / `outputs` for test units; these have no meaning in a step that declares no outputs. A conforming implementation MUST NOT bind `input_N` (indexed input access) for test units; the source list is exposed wholesale via `inputs` in many-to-one mode.
 
-Cross-recipe references inside a plate or test Lua body use `cook.dep_output()` / `cook.dep_output_list()`, identical to a `>{ … }` Lua body (§{lua.using-block-globals}).
+Cross-recipe references inside a test Lua body use `cook.dep_output()` / `cook.dep_output_list()`, identical to a `>{ … }` Lua body (§{lua.using-block-globals}).

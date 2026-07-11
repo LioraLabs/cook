@@ -3,4 +3,3 @@ recipe "bad"
     cook "build/$<file:tokens.css>.html" {
         render -o $<out>
     }
-end

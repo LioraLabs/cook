@@ -1,7 +1,0 @@
-# CS-0061 §3.3 — identical bodies in different recipes share fingerprint.
-# Display name and recipe name are NOT in the fingerprint.
-recipe alpha
-    test { test 1 -eq 1 } as 'first' timeout 5
-
-recipe beta
-    test { test 1 -eq 1 } as 'second' timeout 5
