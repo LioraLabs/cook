@@ -112,3 +112,57 @@ A conforming implementation MAY ship a curated set of **blessed modules** distri
 | `cc` | §{cat.cc} |
 
 Future blessed modules are added additively to the catalogue without disturbing the resolution rules in this chapter.
+
+## 12.7. Module-authoring contract [#mods.authoring]
+
+> **Normative.** This section assembles, for the author of a Cook module (Part IV), the obligations that the phase-classified API chapters (§{lua.reg}, §{lua.exe}, §{lua.both}) and the probe and catalogue chapters (§{cat.probes}, §{cat}) define individually. It introduces no new API surface; it constrains how a module composes the existing surfaces so that a module written against it caches soundly and shares across machines. A module MUST satisfy every MUST in this section in addition to the per-API rules it cross-references.
+
+### 12.7.1. Phase obligations [#mods.authoring.phases]
+
+A module's top-level chunk and its `init()` function (§{mods.lifecycle}) run on the **register-phase** Lua VM. During top-level chunk execution a module MUST NOT register work units (§{mods.lifecycle.load-order}); a module instead exposes functions — target makers — that recipe bodies call to register work.
+
+A target maker invoked from a recipe body runs at register phase and MAY call the register-phase API (§{lua.reg}), including `cook.add_unit` (§{lua.add-unit}), `cook.step_group`, `cook.recipe`, and `cook.probe` (§{cat.probes.api}).
+
+Code a module records for later execution — a `>{ … }` body carried on a unit — runs at **execute phase**. Such code MAY call only the execute-phase API (§{lua.exe}) and the both-phase API (§{lua.both}); calling a register-only function from execute-phase Lua MUST raise a runtime error (§{rationale.execute-phase-api}). The both-phase API (§{lua.both}) is the only surface a module may call in either phase.
+
+### 12.7.2. Registering work units [#mods.authoring.units]
+
+A module registers a work unit by calling `cook.add_unit` (§{lua.add-unit}); that section is the authoritative field reference and a module MUST conform to its field-typing discipline (CS-0127). A module:
+
+- MUST declare a unit's real file inputs in `inputs` and its real outputs in `output`/`outputs`, so the cache keys on content rather than on an under-declared surface;
+- MUST carry a determinant a probe produces into the key via `seal` or `probes` (§{cat.probes.consumer}), never by interpolating a probe value into the command at register time in a form the cache cannot observe;
+- SHOULD leave the sharing and reproducibility disposition (`sharing`, `record`) to the recipe author's surface (§{steps.cook-disposition}) rather than hard-coding it, unless the module owns a unit that is intrinsically local or non-reproducible.
+
+### 12.7.3. Registering probes [#mods.authoring.probes]
+
+The sanctioned surface for a module to register a memoised, cache-folded computation — compiler detection, a package-config query, a resolved toolchain identity — is a **probe**. A module registers one by calling `cook.probe(key, opts)` (§{cat.probes.api}) with `opts.inputs` declaring its determinants (`env`, `tools`, `files`, `requires`; §{cat.probes.inputs}) and `opts.produce` a **Lua source string** — the body of a producing function that the implementation wraps and runs on a worker VM on a cache miss (§{cat.probes.exec}), returning a serialisable value (§{cat.probes.values}).
+
+A determinant a module detects MUST be modelled as a probe input so its fingerprint folds into the probe's value and thence into any consuming unit's key: an environment variable via `inputs.env` (or an `envs` native producer, §{cat.probes.decl}); a tool via `inputs.tools` (or a `tools` native producer), whose resolved-binary content hash is both the value and its re-run trigger; a file via `inputs.files`; an upstream probe via `inputs.requires`. A module SHOULD name its probe keys `"<module-prefix>:<name>"` (e.g. `"cc:zlib"`) to avoid collisions (§{cat.probes.api}).
+
+### 12.7.4. Reading probe values and dependency outputs [#mods.authoring.reads]
+
+The sanctioned read of a probe value is `cook.probes.get(key)` (§{lua.cook-probes-get}); on the execute-phase VM it reads the per-run probe-value store. A `$<key>` or `$<key.field>` placeholder in a command desugars to exactly this read (§{cat.probes.templates}), so a module MAY consume a probe either textually in a command or programmatically in a `>{ … }` body.
+
+A module publishes a target's transitive-link information with `cook.export` and reads a dependency's with `cook.import` (§{lua.cook-export-import}); it reads a dependency recipe's outputs with `cook.dep_output` / `cook.dep_output_list` (§{lua.cook-dep-output}) or the equivalent `$<NAME>` surface. All are both-phase (§{lua.both}). The register-phase key/value methods `cook.probes.set` and `cook.probes.scope` are deprecated (§{lua.cook-probes-set}); a new module SHOULD use `cook.probe` for memoised values rather than a hand-managed store.
+
+### 12.7.5. Seal policy [#mods.authoring.seal]
+
+> **Normative.** A module MUST seal a unit only on a **deterministic determinant** — one whose value is a pure function of declared inputs, such as a lockfile's content hash or a resolved toolchain's identity/content hash. A module MUST NOT seal on a value a toolchain can produce nondeterministically — a build timestamp, an embedded absolute temporary path, a randomised build id — because sealing folds that value into the shared cache key (§{exec.cache.single-key}) and a nondeterministic value makes the key unreproducible across machines, defeating the cross-machine reuse that §{exec.cache} exists to provide.
+
+Every determinant a module seals MUST be expressed as a **named probe**: the seal surface admits no raw environment or tool reference (§{steps.cook-disposition}). An unconsumed environment variable is folded by declaring an `envs` probe over it and sealing that probe by name; a toolchain is folded by sealing a `tools` probe by name (§{steps.cook-disposition}, §{cat.probes.decl}). A module MUST NOT attempt to fold a machine-inferred determinant — target triple, libc version, locale — that the author did not declare; the engine infers none of its own (§{exec.cache.single-key}), and a module that reaches around the declared-determinant model reintroduces exactly the unsound-cache failure mode the single-key design removed.
+
+This subsection constrains a module's *choice* of what to seal; the seal surface, its grammar, and its cache-key effect are defined normatively at §{steps.cook-disposition} and §{exec.cache.single-key} and are not restated here.
+
+### 12.7.6. Probe-key naming [#mods.authoring.probe-keys]
+
+A probe-value placeholder splits on `.` to separate the probe key from a field selector (`$<key.field>`, §{cat.probes.templates}). A module that derives a probe key from arbitrary text — a package name, a target label — MUST sanitise that text to the `PROBE_SEG` character set (§{cat.probes.decl}) so a stray `.` cannot be misread as a field selector; this is the sanctioned pattern behind the `cc` module's key derivation. A bare probe key is at most two colon-separated segments (`PROBE_SEG:PROBE_SEG`); the quoted-string key form (§{cat.probes.decl}) is the escape hatch for a spelling outside `PROBE_SEG`.
+
+### 12.7.7. Publishing a blessed module [#mods.authoring.publishing]
+
+A module distributed through the official registry (§{mods.catalogue-index}, §{cat.bootstrap}) is published as a LuaRocks rockspec served from `rocks.usecook.com`. A blessed module:
+
+- MUST version its rockspec revisions monotonically in the LuaRocks `X.Y.Z-R` scheme, bumping the revision `R` for a repackage and the version `X.Y.Z` for a surface change;
+- MUST reflect any change to its public surface in the module's Part IV catalogue section (§{cat}) under a Standard change entry (App. E) before or alongside the implementation, per the spec-first rule of §{intro.architecture-relationship};
+- SHOULD pin its source with a `git+https` URL and omit `source.dir` so the rendered index resolves the module verbatim.
+
+The distribution mechanics — the `cook_modules/` search paths a published module lands in — are §{mods.use-scope}; this subsection governs the publishing contract, not the Lua API.
