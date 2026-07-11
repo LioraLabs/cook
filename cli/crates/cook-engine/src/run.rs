@@ -112,148 +112,121 @@ fn memo_hash(memo: &mut BTreeMap<PathBuf, String>, abs: &Path) -> String {
     h
 }
 
-/// Collect the file-system contributions to a test node's upfront
-/// fingerprint (COOK-84, §17.5.3).
+/// Compute a test node's cache fingerprint at **ready time** — the point in
+/// execution where all of the test's DAG predecessors have completed and
+/// their declared outputs are materialised on disk (§18). Returns `None`
+/// for a source-less test (no ingredients, no consumed predecessor output),
+/// which per §8.6.1/§17.4 has no cache key and MUST always run.
 ///
-/// Returns `(cook_outputs, dep_outputs)` for [`FingerprintInputs`]:
+/// COOK-211 / §17.4 rule 1: the key folds the OUTPUT CONTENT of the units
+/// the test consumes — not their execution identity. Concretely it hashes:
 ///
-/// * **`.0` — OWN inputs**: the Test payload's `input_paths` resolved
-///   against the test node's working dir, EXCLUDING any path declared as
-///   an output by a node in the test's predecessor closure. Those
-///   artifacts are stale at upfront-fingerprint time; their *sources* are
-///   hashed via the closure contribution instead. The exclusion prevents
-///   once-per-edit fingerprint oscillation as artifacts catch up.
-/// * **`.1` — CLOSURE contribution**: for every predecessor node with
-///   `cache_meta`, (a) each declared `input_paths` file resolved against
-///   THAT node's working dir and content-hashed — also EXCLUDING any path
-///   declared as an output by a node in the closure (i.e. intermediate
-///   artifacts, e.g. `build/lib.txt` appearing as an input to an `app`
-///   node in a lib → app → test chain). This exclusion is required for the
-///   same reason as the own-input exclusion: in a ≥2-level chain those
-///   intermediate artifacts are stale at upfront time and would introduce
-///   once-per-edit fingerprint oscillation. Their *sources* are already
-///   captured by the producing unit's own closure contribution. (b) one
-///   identity pair `("unit:{cookfile_path}:{recipe_name}:{cache_key}",
-///   "{command_hash:x}:{env_contribution:x}")` so editing a dep's command
-///   busts downstream tests.
+/// * **Predecessor outputs** — the declared outputs of the test's IMMEDIATE
+///   predecessors (`dag.deps`), content-hashed. These are exactly the
+///   `$<NAME>` cross-recipe outputs the test references and the preceding
+///   `cook` step's outputs that form its iteration source (§8.6.1). Hashing
+///   only the immediate predecessors — not the transitive closure — is what
+///   delivers early cutoff: a *transitive* dependency whose output stays
+///   byte-identical does not re-invalidate the test, because its effect is
+///   already captured in the immediate predecessor's (unchanged) output.
+/// * **Own inputs** — the Test payload's `input_paths` that are NOT a
+///   predecessor output (the test's own `ingredients`), content-hashed.
+///
+/// Because every folded path is content-hashed *after* its producer ran, a
+/// dependency that re-executes but yields byte-identical output leaves the
+/// test's fingerprint unchanged — the same early-cutoff a consuming `cook`
+/// step gets (contrast the pre-COOK-211 fold, which mixed in the dep's
+/// command hash and source inputs and so over-invalidated).
 ///
 /// Pair keys are project-root-relative and forward-slashed (§17.4.4);
-/// missing files hash to `"missing"`; file hashes are memoized in
-/// `hash_memo` across all test nodes per run.
-fn collect_test_file_inputs(
+/// missing files hash to `"missing"`.
+pub(crate) fn compute_ready_test_fingerprint(
     dag: &cook_dag::Dag<WorkNode>,
     test_idx: usize,
-    project_root: &Path,
-    hash_memo: &mut BTreeMap<PathBuf, String>,
-) -> (Vec<(String, String)>, Vec<(String, String)>) {
-    use std::collections::VecDeque;
+    cache_ctx: &CacheContext,
+) -> Option<String> {
+    let project_root = cache_ctx.project_root.as_path();
+    let test_node = dag.node(test_idx).payload();
+    let WorkPayload::Test { input_paths, .. } = test_node.payload.as_ref()? else {
+        return None;
+    };
 
-    // (1) BFS predecessor closure (excludes the test node itself).
-    let mut closure: BTreeSet<usize> = BTreeSet::new();
-    let mut queue: VecDeque<usize> = dag.deps(test_idx).iter().copied().collect();
-    while let Some(idx) = queue.pop_front() {
-        if closure.insert(idx) {
-            queue.extend(dag.deps(idx).iter().copied());
-        }
-    }
+    let mut memo: BTreeMap<PathBuf, String> = BTreeMap::new();
+    let mut pairs: BTreeMap<String, String> = BTreeMap::new();
 
-    // (2) Outputs declared by the closure: literal paths as a normalized
-    //     set, glob patterns as (working_dir, matcher) pairs.
-    let mut literal_outputs: BTreeSet<PathBuf> = BTreeSet::new();
-    let mut glob_outputs: Vec<(PathBuf, globset::GlobMatcher)> = Vec::new();
-    for &idx in &closure {
-        let node = dag.node(idx).payload();
+    // (1) Immediate-predecessor outputs, content-hashed. Terminal (glob /
+    //     directory) outputs are resolved against the now-materialised tree;
+    //     literal outputs map directly. The normalized absolute set doubles
+    //     as the "produced upstream" filter for step (2).
+    let mut predecessor_outputs: BTreeSet<PathBuf> = BTreeSet::new();
+    for &pred in dag.deps(test_idx) {
+        let node = dag.node(pred).payload();
         let Some(meta) = &node.cache_meta else {
             continue;
         };
         for out in &meta.output_paths {
             if cook_fingerprint::is_terminal_output(out) {
                 let pat = if out.ends_with('/') { format!("{out}**") } else { out.clone() };
-                if let Ok(g) = globset::Glob::new(&pat) {
-                    glob_outputs.push((node.working_dir.clone(), g.compile_matcher()));
+                for rel in cook_fingerprint::resolve_glob(&node.working_dir, &pat) {
+                    predecessor_outputs.insert(lexical_normalize(&node.working_dir.join(rel)));
                 }
             } else {
-                literal_outputs.insert(lexical_normalize(&node.working_dir.join(out)));
+                predecessor_outputs.insert(lexical_normalize(&node.working_dir.join(out)));
             }
         }
     }
-    let produced_upstream = |abs: &Path| -> bool {
-        if literal_outputs.contains(abs) {
-            return true;
-        }
-        glob_outputs.iter().any(|(wd, matcher)| {
-            abs.strip_prefix(wd)
-                .map(|rel| matcher.is_match(rel))
-                .unwrap_or(false)
-        })
-    };
-
-    // (3) OWN inputs: the Test payload's input_paths, resolved against the
-    //     test node's working dir, minus predecessor-produced artifacts.
-    let test_node = dag.node(test_idx).payload();
-    let mut own: BTreeMap<String, String> = BTreeMap::new();
-    if let Some(WorkPayload::Test { input_paths, .. }) = &test_node.payload {
-        for input in input_paths {
-            let resolved: Vec<PathBuf> = if cook_fingerprint::has_glob_meta(input) {
-                cook_fingerprint::resolve_glob(&test_node.working_dir, input)
-                    .into_iter()
-                    .map(|rel| test_node.working_dir.join(rel))
-                    .collect()
-            } else {
-                vec![test_node.working_dir.join(input)]
-            };
-            for abs in resolved {
-                let abs = lexical_normalize(&abs);
-                if produced_upstream(&abs) {
-                    continue;
-                }
-                let hash = memo_hash(hash_memo, &abs);
-                own.insert(root_rel_key(project_root, &abs), hash);
-            }
-        }
+    for abs in &predecessor_outputs {
+        let hash = memo_hash(&mut memo, abs);
+        pairs.insert(root_rel_key(project_root, abs), hash);
     }
 
-    // (4) CLOSURE contribution: dep identity pairs + dep source hashes.
-    let mut dep: BTreeMap<String, String> = BTreeMap::new();
-    for &idx in &closure {
-        let node = dag.node(idx).payload();
-        let Some(meta) = &node.cache_meta else {
-            continue;
+    // (2) The test's own inputs (its `ingredients`) — every `input_paths`
+    //     entry that is not itself a predecessor output.
+    for input in input_paths {
+        let resolved: Vec<PathBuf> = if cook_fingerprint::has_glob_meta(input) {
+            cook_fingerprint::resolve_glob(&test_node.working_dir, input)
+                .into_iter()
+                .map(|rel| test_node.working_dir.join(rel))
+                .collect()
+        } else {
+            vec![test_node.working_dir.join(input)]
         };
-        dep.insert(
-            format!(
-                "unit:{}:{}:{}",
-                meta.cookfile_path, meta.recipe_name, meta.cache_key
-            ),
-            format!("{:x}:{:x}", meta.command_hash, meta.env_contribution),
-        );
-        for input in &meta.input_paths {
-            let resolved: Vec<PathBuf> = if cook_fingerprint::has_glob_meta(input) {
-                cook_fingerprint::resolve_glob(&node.working_dir, input)
-                    .into_iter()
-                    .map(|rel| node.working_dir.join(rel))
-                    .collect()
-            } else {
-                vec![node.working_dir.join(input)]
-            };
-            for abs in resolved {
-                let abs = lexical_normalize(&abs);
-                // Skip intermediate artifacts produced by another node in the
-                // closure — they are stale at upfront-fingerprint time and
-                // would cause once-per-edit fingerprint oscillation in ≥2-level
-                // chains (e.g. lib → app → test where app's input_paths
-                // includes build/lib.txt). Their sources are already captured
-                // by the producing unit's own closure contribution entry.
-                if produced_upstream(&abs) {
-                    continue;
-                }
-                let hash = memo_hash(hash_memo, &abs);
-                dep.insert(root_rel_key(project_root, &abs), hash);
+        for abs in resolved {
+            let abs = lexical_normalize(&abs);
+            if predecessor_outputs.contains(&abs) {
+                continue;
             }
+            let hash = memo_hash(&mut memo, &abs);
+            pairs.insert(root_rel_key(project_root, &abs), hash);
         }
     }
 
-    (own.into_iter().collect(), dep.into_iter().collect())
+    // §8.6.1/§17.4: a source-less test — no ingredients, no consumed
+    // predecessor output — has no cache key and MUST always run. Skipping
+    // the fingerprint makes the executor bypass both the test-cache lookup
+    // and the post-run write, so the test reports every invocation with no
+    // `(cached)`. A stable command-text-only key would be a false green:
+    // the true inputs of a `test { cargo test }` are opaque to Cook.
+    if pairs.is_empty() {
+        return None;
+    }
+
+    let env_keys: Vec<(String, String)> = test_node
+        .env_vars
+        .iter()
+        .filter(|(k, _)| !cache_ctx.denylist.is_ignored(k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let inputs = FingerprintInputs {
+        cook_outputs: pairs.into_iter().collect(),
+        dep_outputs: vec![],
+        env_keys,
+    };
+    Some(cook_fingerprint::compute_test_fingerprint(
+        test_node.payload.as_ref().expect("checked above"),
+        &inputs,
+    ))
 }
 
 /// Unified engine entry point.
@@ -514,65 +487,17 @@ where
     // managers, so the in-memory caches it updates are visible here afterwards.
     let recon_managers = cache_managers.clone();
 
-    // 6. Build per-node test fingerprints (Phase 5 fingerprint v1) and the
-    //    probe_units_by_node lookup. Both are derived from the unified DAG.
+    // 6. Build the probe_units_by_node lookup from the unified DAG. Test
+    //    fingerprints are no longer precomputed here: COOK-211 moved them to
+    //    ready time (`compute_ready_test_fingerprint`), where a consumed
+    //    dependency's output is materialised on disk and can be content-hashed
+    //    for early cutoff — impossible upfront, before any dep has run.
     let test_cache = TestCache::new(cache_ctx.project_root.join(".cook"));
     let probe_units_by_key: BTreeMap<String, cook_contracts::ProbeUnit> = registered_workspace
         .probes
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-
-    let fingerprint_by_node: BTreeMap<usize, String> = {
-        let mut fp_map = BTreeMap::new();
-        let mut hash_memo: BTreeMap<PathBuf, String> = BTreeMap::new();
-        for node_idx in 0..dag.len() {
-            let work_node = dag.node(node_idx).payload();
-            if let Some(WorkPayload::Test { .. }) = &work_node.payload {
-                let env_keys: Vec<(String, String)> = work_node
-                    .env_vars
-                    .iter()
-                    .filter(|(k, _)| !cache_ctx.denylist.is_ignored(k))
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
-                // COOK-84: hash the test's transitive source closure —
-                // own inputs (minus predecessor-produced artifacts, which
-                // are stale at upfront time) plus every closure dep's
-                // declared source inputs and unit identity. Editing a dep's
-                // source or command busts the test's fingerprint without
-                // waiting for artifacts to be rebuilt.
-                let (cook_outputs, dep_outputs) = collect_test_file_inputs(
-                    &dag,
-                    node_idx,
-                    &cache_ctx.project_root,
-                    &mut hash_memo,
-                );
-                // CS-0135 §8.6.1/§17.4: a source-less test — no `ingredients`,
-                // no upstream `cook`, so no resolved file inputs — has no cache
-                // key and MUST always run. Skipping fingerprint insertion here
-                // makes the executor bypass both the test-cache lookup and the
-                // post-run write (both gated on `fingerprint_by_node`), so the
-                // test reports every invocation with no `(cached)`. A stable
-                // command-text-only key would be a false green: the true inputs
-                // of a `test { cargo test }` (Cargo.toml/lock, build.rs) are
-                // opaque to Cook, so caching on the command alone is unsound.
-                if cook_outputs.is_empty() && dep_outputs.is_empty() {
-                    continue;
-                }
-                let inputs = FingerprintInputs {
-                    cook_outputs,
-                    dep_outputs,
-                    env_keys,
-                };
-                let fp = cook_fingerprint::compute_test_fingerprint(
-                    work_node.payload.as_ref().expect("checked above"),
-                    &inputs,
-                );
-                fp_map.insert(node_idx, fp);
-            }
-        }
-        fp_map
-    };
 
     let probe_units_by_node: BTreeMap<usize, cook_contracts::ProbeUnit> = (0..dag.len())
         .filter_map(|node_idx| {
@@ -614,7 +539,6 @@ where
             Some(event_tx),
             cache_ctx.clone(),
             Some(&test_cache),
-            &fingerprint_by_node,
             rerun_patterns,
             &probe_units_by_node,
             dep_outputs,
@@ -1158,8 +1082,21 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // collect_test_file_inputs — COOK-84 transitive-closure fingerprinting
+    // compute_ready_test_fingerprint — COOK-211 ready-time content fold (§17.4)
     // -----------------------------------------------------------------------
+
+    fn make_cache_ctx(wd: &std::path::Path) -> CacheContext {
+        use cook_cache::{backend::LocalBackend, cloud_config::CloudConfig};
+        use cook_fingerprint::EnvDenylist;
+        CacheContext {
+            denylist: std::sync::Arc::new(EnvDenylist::baseline()),
+            backend: std::sync::Arc::new(LocalBackend::new(wd.join("cloud"))),
+            cloud_config: std::sync::Arc::new(CloudConfig::default()),
+            project_root: wd.to_path_buf(),
+            project_id: "test".to_string(),
+            publish_enabled: true,
+        }
+    }
 
     fn cook_work_node(
         wd: &std::path::Path,
@@ -1186,7 +1123,7 @@ mod tests {
                 consulted_env: Default::default(),
                 discovered_inputs: None,
                 seal_keys: Default::default(),
-            sharing: Default::default(),
+                sharing: Default::default(),
                 record: false,
             }),
             working_dir: wd.to_path_buf(),
@@ -1216,18 +1153,26 @@ mod tests {
         }
     }
 
-    /// One cook node (`lib`) producing `build/lib.txt` from `src/lib.txt`,
-    /// plus one test node depending on it that consumes its own source
-    /// (`src/own.txt`) and the dep's declared artifact (`build/lib.txt`).
-    fn closure_fixture(wd: &std::path::Path) -> (cook_dag::Dag<crate::WorkNode>, usize) {
+    /// One cook node (`lib`) producing `build/lib.txt` (command hash
+    /// `lib_cmd`), plus a test node consuming its own source (`src/own.txt`)
+    /// and the dep artifact (`build/lib.txt`). The dep output is materialised
+    /// on disk with `lib_output`, as it would be at the test's ready time.
+    fn materialised_fixture(
+        wd: &std::path::Path,
+        lib_cmd: u64,
+        lib_output: &str,
+        own: &str,
+    ) -> (cook_dag::Dag<crate::WorkNode>, usize) {
         std::fs::create_dir_all(wd.join("src")).unwrap();
-        std::fs::write(wd.join("src/lib.txt"), "ok").unwrap();
-        std::fs::write(wd.join("src/own.txt"), "own").unwrap();
+        std::fs::create_dir_all(wd.join("build")).unwrap();
+        std::fs::write(wd.join("src/lib.txt"), "lib-src").unwrap();
+        std::fs::write(wd.join("src/own.txt"), own).unwrap();
+        std::fs::write(wd.join("build/lib.txt"), lib_output).unwrap();
 
         let mut dag = cook_dag::Dag::new();
         let lib = dag
             .add_node(
-                cook_work_node(wd, "lib", &["src/lib.txt"], &["build/lib.txt"], 11),
+                cook_work_node(wd, "lib", &["src/lib.txt"], &["build/lib.txt"], lib_cmd),
                 &[],
             )
             .unwrap();
@@ -1240,188 +1185,137 @@ mod tests {
         (dag, test)
     }
 
+    /// COOK-211 / §17.4: a dependency that re-executes (different command
+    /// hash) but produces byte-identical output leaves the consuming test's
+    /// fingerprint UNCHANGED — the fold is over the dep's output content, not
+    /// its execution identity. This is the early cutoff the fix delivers.
     #[test]
-    fn test_fp_inputs_change_when_dep_source_changes() {
+    fn test_fp_stable_when_dep_output_byte_identical() {
         let dir = tempfile::tempdir().unwrap();
         let wd = dir.path();
-        let (dag, test_idx) = closure_fixture(wd);
+        let ctx = make_cache_ctx(wd);
 
-        let mut memo = BTreeMap::new();
-        let before = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
+        let (dag_a, test_a) = materialised_fixture(wd, 11, "ok", "own");
+        let before = compute_ready_test_fingerprint(&dag_a, test_a, &ctx);
 
-        std::fs::write(wd.join("src/lib.txt"), "broken").unwrap();
+        // lib's command changes (rebuild) but its output stays "ok".
+        let (dag_b, test_b) = materialised_fixture(wd, 12, "ok", "own");
+        let after = compute_ready_test_fingerprint(&dag_b, test_b, &ctx);
 
-        let mut memo = BTreeMap::new();
-        let after = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
-
-        assert_ne!(
-            before.1, after.1,
-            "editing a dep's source file must change the closure contribution"
-        );
-    }
-
-    #[test]
-    fn test_fp_inputs_change_when_own_input_changes() {
-        let dir = tempfile::tempdir().unwrap();
-        let wd = dir.path();
-        let (dag, test_idx) = closure_fixture(wd);
-
-        let mut memo = BTreeMap::new();
-        let before = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
-
-        std::fs::write(wd.join("src/own.txt"), "changed").unwrap();
-
-        let mut memo = BTreeMap::new();
-        let after = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
-
-        assert_ne!(
-            before.0, after.0,
-            "editing the test's own input must change the own-input contribution"
-        );
-    }
-
-    #[test]
-    fn test_fp_excludes_predecessor_produced_artifacts() {
-        // The dep's declared output (build/lib.txt) is stale at upfront
-        // fingerprint time. It must be EXCLUDED from the test's own inputs
-        // (sources are hashed instead) so the fingerprint does not oscillate
-        // once-per-edit as the artifact catches up.
-        let dir = tempfile::tempdir().unwrap();
-        let wd = dir.path();
-        let (dag, test_idx) = closure_fixture(wd);
-
-        let mut memo = BTreeMap::new();
-        let before = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
-
-        std::fs::create_dir_all(wd.join("build")).unwrap();
-        std::fs::write(wd.join("build/lib.txt"), "artifact").unwrap();
-
-        let mut memo = BTreeMap::new();
-        let after = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
-
+        assert!(before.is_some());
         assert_eq!(
             before, after,
-            "predecessor-produced artifacts must not contribute to the fingerprint"
+            "a byte-identical dep OUTPUT must leave the test fingerprint stable \
+             even when the dep's command hash changes (early cutoff)"
         );
     }
 
+    /// The consuming test IS re-keyed when the dep's OUTPUT CONTENT changes.
     #[test]
-    fn test_fp_inputs_change_when_dep_command_changes() {
+    fn test_fp_changes_when_dep_output_content_changes() {
         let dir = tempfile::tempdir().unwrap();
         let wd = dir.path();
-        std::fs::create_dir_all(wd.join("src")).unwrap();
-        std::fs::write(wd.join("src/lib.txt"), "ok").unwrap();
-        std::fs::write(wd.join("src/own.txt"), "own").unwrap();
+        let ctx = make_cache_ctx(wd);
 
-        let build_dag = |command_hash: u64| {
-            let mut dag = cook_dag::Dag::new();
-            let lib = dag
-                .add_node(
-                    cook_work_node(
-                        wd,
-                        "lib",
-                        &["src/lib.txt"],
-                        &["build/lib.txt"],
-                        command_hash,
-                    ),
-                    &[],
-                )
-                .unwrap();
-            let test = dag
-                .add_node(
-                    test_work_node(wd, &["src/own.txt", "build/lib.txt"]),
-                    &[lib],
-                )
-                .unwrap();
-            (dag, test)
-        };
+        let (dag_a, test_a) = materialised_fixture(wd, 11, "ok", "own");
+        let before = compute_ready_test_fingerprint(&dag_a, test_a, &ctx);
 
-        let (dag_a, test_a) = build_dag(11);
-        let (dag_b, test_b) = build_dag(12);
-
-        let mut memo = BTreeMap::new();
-        let a = collect_test_file_inputs(&dag_a, test_a, wd, &mut memo);
-        let mut memo = BTreeMap::new();
-        let b = collect_test_file_inputs(&dag_b, test_b, wd, &mut memo);
+        let (dag_b, test_b) = materialised_fixture(wd, 11, "broken", "own");
+        let after = compute_ready_test_fingerprint(&dag_b, test_b, &ctx);
 
         assert_ne!(
-            a.1, b.1,
-            "editing a dep's command must change the closure contribution"
+            before, after,
+            "changing the dep's output content must re-key the test"
         );
     }
 
-    /// Three-node DAG: lib (src/lib.txt → build/lib.txt) ← app
-    /// (build/lib.txt → build/app.txt) ← test (build/app.txt).
-    ///
-    /// Materialising or overwriting the intermediate artifact build/lib.txt
-    /// and the final artifact build/app.txt must NOT move the test's
-    /// fingerprint, because those paths are declared outputs of nodes in the
-    /// closure and must be excluded from hashing (produced_upstream exclusion
-    /// now applied to both own inputs AND closure inputs).
-    ///
-    /// As a sanity-check the test also verifies that editing the original
-    /// *source* (src/lib.txt) DOES change the fingerprint.
+    /// Editing the test's own ingredient re-keys it.
     #[test]
-    fn test_fp_stable_across_two_level_chain_artifact_materialisation() {
+    fn test_fp_changes_when_own_input_changes() {
         let dir = tempfile::tempdir().unwrap();
         let wd = dir.path();
-        std::fs::create_dir_all(wd.join("src")).unwrap();
-        std::fs::write(wd.join("src/lib.txt"), "lib-source").unwrap();
-        // Artifacts do NOT exist yet at upfront fingerprint time (stale build).
+        let ctx = make_cache_ctx(wd);
 
-        let build_dag = || {
+        let (dag_a, test_a) = materialised_fixture(wd, 11, "ok", "own");
+        let before = compute_ready_test_fingerprint(&dag_a, test_a, &ctx);
+
+        let (dag_b, test_b) = materialised_fixture(wd, 11, "ok", "changed");
+        let after = compute_ready_test_fingerprint(&dag_b, test_b, &ctx);
+
+        assert_ne!(
+            before, after,
+            "editing the test's own ingredient must re-key the test"
+        );
+    }
+
+    /// A source-less test — no ingredients, no consumed predecessor output —
+    /// has no cache key and always runs (§8.6.1/§17.4).
+    #[test]
+    fn test_fp_none_for_sourceless_test() {
+        let dir = tempfile::tempdir().unwrap();
+        let wd = dir.path();
+        let ctx = make_cache_ctx(wd);
+
+        let mut dag = cook_dag::Dag::new();
+        let test = dag.add_node(test_work_node(wd, &[]), &[]).unwrap();
+
+        assert_eq!(
+            compute_ready_test_fingerprint(&dag, test, &ctx),
+            None,
+            "a source-less test must have no fingerprint (always runs)"
+        );
+    }
+
+    /// Three-node chain lib → app → test (test consumes only `build/app.txt`).
+    /// A change to the TRANSITIVE dep's output (`build/lib.txt`) that leaves
+    /// the DIRECT dep's output (`build/app.txt`) byte-identical must NOT
+    /// re-key the test — only the immediate predecessor's output is folded,
+    /// so early cutoff chains correctly. Changing `build/app.txt` DOES re-key.
+    #[test]
+    fn test_fp_two_level_chain_early_cutoff() {
+        let dir = tempfile::tempdir().unwrap();
+        let wd = dir.path();
+        let ctx = make_cache_ctx(wd);
+
+        let build = |lib_out: &str, app_out: &str| {
+            std::fs::create_dir_all(wd.join("build")).unwrap();
+            std::fs::write(wd.join("build/lib.txt"), lib_out).unwrap();
+            std::fs::write(wd.join("build/app.txt"), app_out).unwrap();
             let mut dag = cook_dag::Dag::new();
-            // lib: src/lib.txt → build/lib.txt
             let lib = dag
-                .add_node(
-                    cook_work_node(wd, "lib", &["src/lib.txt"], &["build/lib.txt"], 11),
-                    &[],
-                )
+                .add_node(cook_work_node(wd, "lib", &[], &["build/lib.txt"], 11), &[])
                 .unwrap();
-            // app: build/lib.txt → build/app.txt (depends on lib)
             let app = dag
                 .add_node(
                     cook_work_node(wd, "app", &["build/lib.txt"], &["build/app.txt"], 22),
                     &[lib],
                 )
                 .unwrap();
-            // test: input_paths = ["build/app.txt"] (depends on app)
             let test = dag
                 .add_node(test_work_node(wd, &["build/app.txt"]), &[app])
                 .unwrap();
             (dag, test)
         };
 
-        // Before: no artifacts on disk.
-        let (dag, test_idx) = build_dag();
-        let mut memo = BTreeMap::new();
-        let before = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
+        let (dag_a, test_a) = build("lib-v1", "app-out");
+        let base = compute_ready_test_fingerprint(&dag_a, test_a, &ctx);
+        assert!(base.is_some());
 
-        // Materialise both intermediate artifacts with arbitrary content.
-        std::fs::create_dir_all(wd.join("build")).unwrap();
-        std::fs::write(wd.join("build/lib.txt"), "stale-lib-artifact").unwrap();
-        std::fs::write(wd.join("build/app.txt"), "stale-app-artifact").unwrap();
-
-        // After: artifacts exist on disk.
-        let (dag, test_idx) = build_dag();
-        let mut memo = BTreeMap::new();
-        let after = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
-
+        // Transitive dep output changes; direct dep output unchanged → stable.
+        let (dag_b, test_b) = build("lib-v2", "app-out");
         assert_eq!(
-            before, after,
-            "materialising intermediate or final artifacts must not change the fingerprint \
-             (produced_upstream exclusion must apply to closure inputs in ≥2-level chains)"
+            base,
+            compute_ready_test_fingerprint(&dag_b, test_b, &ctx),
+            "a transitive dep's output change must not re-key the test when the \
+             immediate predecessor's output is byte-identical"
         );
 
-        // Sanity: editing the *source* must change the closure contribution.
-        std::fs::write(wd.join("src/lib.txt"), "lib-source-EDITED").unwrap();
-        let (dag, test_idx) = build_dag();
-        let mut memo = BTreeMap::new();
-        let after_src_edit = collect_test_file_inputs(&dag, test_idx, wd, &mut memo);
-
+        // Direct dep output changes → re-key.
+        let (dag_c, test_c) = build("lib-v2", "app-out-CHANGED");
         assert_ne!(
-            before, after_src_edit,
-            "editing the upstream source must change the fingerprint"
+            base,
+            compute_ready_test_fingerprint(&dag_c, test_c, &ctx),
+            "the immediate predecessor's output change must re-key the test"
         );
     }
 }
