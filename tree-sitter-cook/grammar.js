@@ -1,40 +1,7 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-// tree-sitter-cook claims conformance with Cook Standard v0.14
-// (`cs-standard/v0.14`). The CS-0092 audit (v0.14 — native `probe`
-// declarations, COOK-67/68/69) brings the grammar up to:
-//   • CS-0092 / §22 / App. A.3.2: the native `probe NAME (: deps)?`
-//     top-level declaration with its `ingredients_step? produce_step`
-//     body. `produce` takes an optional `as json|lines` typing modifier,
-//     valid ONLY on the shell-block form (`>{ … }` Lua blocks already
-//     return a structured value — enforced syntactically). The
-//     `BARE_PROBE_KEY ::= IDENT (":" IDENT)?` module-prefix colon is
-//     disambiguated from the dep-list colon positionally; the
-//     triple-colon `a:b:c` case is rejected syntactically (see the
-//     `_probe_dep_colon` note). A column-0 `probe` joins the body-
-//     termination keyword set in the scanner. Cycle / duplicate-key /
-//     unresolved-require detection is register-time semantic (the Rust
-//     parser's territory; SEMANTIC_ONLY).
-// The CS-0086 audit (v0.12) and CS-0087 audit
-// (v0.13 — chore parameters) bring the grammar up to:
-//   • CS-0072: top-level `register` block + top-level `module_call`
-//     (single + multi-line, brace-balanced); recipe-body bare
-//     module-calls are now `shell_command`.
-//   • CS-0078: multi-line `cook` outputs + `ingredients` continuation
-//     via an external `STEP_CONTINUATION_NEWLINE` token.
-//   • CS-0035: leveled Lua long-string and block-comment opaque-span
-//     tracking; POSIX heredoc opaque-span tracking in shell blocks;
-//     `use_name` LUA_IDENT constraint; declaration-site no-dots for
-//     `recipe_header` / `chore_header` names.
-//   • CS-0061: STRING admits both double- and single-quoted forms.
-//   • COOK-36 / §7.1.1: chore parameters — required, defaulted-string,
-//     defaulted-Lua `=(EXPR)`, and variadic `+NAME`/`*NAME`. Dot-ban on
-//     param names is enforced syntactically by the param-name regex;
-//     ordering, duplicates, reserved names, and at-most-one-variadic
-//     are semantic checks handled by the Rust parser (SEMANTIC_ONLY).
-// The `$<IDENT>` placeholder shape from §2.11 is recognised in string
-// literals and shell text (CS-0033). See standard/src/content/docs/
+// Conforms to Cook Standard v0.14. See standard/src/content/docs/
 // appendix/A-grammar.mdx for the normative grammar.
 
 module.exports = grammar({
@@ -213,11 +180,8 @@ module.exports = grammar({
 
     _chore_item: ($) =>
       choice(
-        $.inline_lua_line,
-        $.inline_lua_block,
         $.lua_line,
         $.lua_block,
-        $.interactive_command,
         $.shell_command,
         $.comment,
         $._newline,
@@ -227,9 +191,10 @@ module.exports = grammar({
     //
     //   probe_decl   ::= "probe" probe_name (":" probe_dep_list)? NEWLINE
     //                    INDENT probe_body DEDENT
-    //   probe_body   ::= ingredients_step? produce_step
-    //   produce_step ::= "produce" ("as" produce_type)? body NEWLINE
-    //   produce_type ::= "json" | "lines"
+    //   probe_body ::= ingredients_step? producer NEWLINE
+    //   producer   ::= ("json" | "lines")? shell_block
+    //                | ("tools" | "envs") name_list
+    //                | exec_lua_block
     //
     // The body region (App. A.3.2 "Column-zero constraint" + the
     // implicit-termination rule) is handled the same way as recipes:
@@ -237,7 +202,7 @@ module.exports = grammar({
     // a column-0 `probe NAME` line (`is_step_keyword`-sibling check in
     // scan_shell_content, plus `is_toplevel_keyword`), and the probe body
     // itself contains no `shell_command`, so it terminates naturally at
-    // the next column-0 top-level item once `produce_step` closes.
+    // the next column-0 top-level item once `producer` closes.
     probe: ($) =>
       seq(
         $.probe_header,
@@ -247,7 +212,7 @@ module.exports = grammar({
           $.ingredients_step,
           repeat(choice($._newline, $.comment)),
         )),
-        $.produce_step,
+        $.producer,
       ),
 
     probe_header: ($) =>
@@ -258,7 +223,7 @@ module.exports = grammar({
       ),
 
     // probe_name / probe_ref ::= BARE_PROBE_KEY | STRING, where
-    // BARE_PROBE_KEY ::= IDENT (":" IDENT)? — at most one module-prefix
+    // BARE_PROBE_KEY ::= PROBE_SEG (":" PROBE_SEG)? — at most one module-prefix
     // colon. The single-token regex enforces the at-most-one-colon shape
     // by maximal munch: `cc:zlib` lexes as one name, while the third
     // contiguous `:IDENT` of `a:b:c` is left dangling and — since the
@@ -272,7 +237,7 @@ module.exports = grammar({
       choice(alias($._bare_probe_key, $.identifier), $.string),
 
     _bare_probe_key: ($) =>
-      token(/[A-Za-z_][A-Za-z0-9_]*(:[A-Za-z_][A-Za-z0-9_]*)?/),
+      token(prec(-1, /[A-Za-z_][A-Za-z0-9_.-]*(:[A-Za-z_][A-Za-z0-9_.-]*)?/)),
 
     // Module-prefix-colon disambiguation (App. A.3.2, normative). The
     // dep-list-introducing `:` is distinguished from the module-prefix
@@ -288,50 +253,55 @@ module.exports = grammar({
 
     probe_dep_list: ($) => repeat1($._probe_ref),
 
-    // produce_step. The `as produce_type` modifier is valid ONLY on the
-    // shell-block form (App. A.3.2 / §22.5): a `>{ … }` Lua block already
-    // returns a structured value, so `produce as json >{ … }` MUST be
-    // rejected. This is enforced syntactically — the `as` arm requires a
-    // `shell_block`, so an exec_lua_block after `as` ERRORs.
-    produce_step: ($) =>
+    // Producer keywords are contextual because these literals occur only
+    // after a probe header. JSON/lines decorate shell output; tools/envs
+    // accept a non-empty, one-line list of narrow IDENT names.
+    producer: ($) =>
       seq(
-        "produce",
         choice(
-          seq("as", $.produce_type, field("body", $.shell_block)),
-          field("body", choice($.shell_block, $.exec_lua_block)),
+          seq(optional(choice("json", "lines")), field("body", $.shell_block)),
+          seq(choice("tools", "envs"), $.name_list),
+          field("body", $.exec_lua_block),
         ),
         $._newline,
       ),
 
-    produce_type: ($) => choice("json", "lines"),
+    name_list: ($) =>
+      seq(
+        "{",
+        alias($._lua_ident, $.identifier),
+        repeat(seq(optional(","), alias($._lua_ident, $.identifier))),
+        "}",
+      ),
 
     // ── Recipe body ────────────────────────────────────────────
 
     _recipe_item: ($) =>
       choice(
-        $.ingredients_step,
-        $.cook_step,
-        $.plate_step,
-        $.test_step,
-        $.inline_lua_line,
-        $.inline_lua_block,
-        $.lua_line,
-        $.lua_block,
-        $.interactive_command,
-        $.shell_command,
+        seq(
+          $._recipe_indent,
+          choice(
+            $.ingredients_step,
+            $.seal_step,
+            $.cook_step,
+            $.test_step,
+            $.module_call,
+          ),
+        ),
         $.comment,
         $._newline,
       ),
 
     // App. A.4 + CS-0078 multi-line patterns:
-    //   ingredients_step ::= "ingredients" ingredient (CONT? ingredient)* NEWLINE
+    //   ingredients_step ::= "ingredients" (ingredient+ | probe_ref) NEWLINE
     //   ingredient       ::= STRING | "!" STRING
     // CONT is an external token (_step_continuation_newline) emitted only
     // when the next line begins with `"` or `!"`; otherwise the declaration
     // terminates and the next line dispatches per App. A.4's priority order.
-    // CS-0095: `ingredients <probe>` — a bare probe key as the member
-    // source (mutually exclusive with glob items; the lexical
-    // discriminator is quote vs bare ident, mirroring the Rust parser).
+    // The quote-vs-bare discriminator makes filesystem items mutually
+    // exclusive with a probe source. A source may add one narrow field
+    // selector after the probe key; thus `ns:cards:items` is a two-segment
+    // key plus selector without widening probe keys elsewhere.
     ingredients_step: ($) =>
       choice(
         seq(
@@ -346,11 +316,21 @@ module.exports = grammar({
         seq(
           "ingredients",
           field("probe", alias($._bare_probe_key, $.identifier)),
+          optional(seq(":", field("field", alias($._lua_ident, $.identifier)))),
           $._newline,
         ),
       ),
 
     ingredient_exclude: ($) => seq("!", $.string),
+
+    // Appendix A recipe-level determinant baseline. `unseal` is trailing-only
+    // and is therefore admitted below only as a cook modifier.
+    seal_step: ($) =>
+      seq(
+        "seal",
+        repeat1($._disposition_ref),
+        $._newline,
+      ),
 
     // App. A.4 multi-output rule: when two or more outputs are given,
     // the body MUST be a block (`>{...}` or `{...}`); a bare string
@@ -360,24 +340,45 @@ module.exports = grammar({
     // beginning with `"`; the `_step_continuation_newline` external token
     // absorbs the intervening newline + whitespace.
     cook_step: ($) =>
+      seq(
+        "cook",
+        choice(
+          field("outputs", $.lua_expr_output),
+          seq(
+            field("outputs", $.string),
+            repeat(seq(
+              optional($._step_continuation_newline),
+              field("outputs", $.string),
+            )),
+          ),
+        ),
+        field("body", choice($.shell_block, $.exec_lua_block)),
+        optional($.cook_mods),
+        $._newline,
+      ),
+
+    cook_mods: ($) =>
       choice(
         seq(
-          "cook",
-          field("outputs", choice($.string, $.lua_expr_output)),
-          optional(field("body", choice($.shell_block, $.exec_lua_block))),
-          $._newline,
+          repeat1(choice($.seal_group, $.unseal_group)),
+          optional($.share_mod),
         ),
-        seq(
-          "cook",
-          field("outputs", $.string),
-          repeat1(seq(
-            optional($._step_continuation_newline),
-            field("outputs", $.string),
-          )),
-          field("body", choice($.shell_block, $.exec_lua_block)),
-          $._newline,
-        ),
+        $.share_mod,
       ),
+
+    seal_group: ($) =>
+      seq("seal", repeat1($._disposition_ref)),
+
+    unseal_group: ($) =>
+      seq("unseal", repeat1($._disposition_ref)),
+
+    _disposition_ref: ($) =>
+      choice(
+        alias(token(prec(1, /[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z_][A-Za-z0-9_.-]*/)), $.identifier),
+        alias($._bare_probe_key, $.identifier),
+      ),
+
+    share_mod: ($) => choice("local", "pinned", "nondet"),
 
     // §8.4.2 (CS-0089): `cook (LUA_EXPR)` — a parenthesised Lua expression
     // in the output slot, evaluated once per ingredient at register time.
@@ -389,8 +390,7 @@ module.exports = grammar({
     lua_expr_output: ($) => seq("(", repeat($._lua_expr_chunk), ")"),
 
     // App. A.4 `exec_lua_block`: the `>{ … }` execute-phase Lua block in a
-    // cook/plate/test body, with §6.4 input/output bindings. Distinct in name
-    // from the recipe-body step kind `inline_lua_block` (`>>{ … }`, register-phase).
+    // cook/test body, with §6.4 input/output bindings.
     exec_lua_block: ($) =>
       seq(">{", alias($._lua_block_content, $.lua_code), "}"),
 
@@ -409,20 +409,10 @@ module.exports = grammar({
         "}",
       ),
 
-    plate_step: ($) =>
-      seq(
-        "plate",
-        field("body", choice($.shell_block, $.exec_lua_block)),
-        $._newline,
-      ),
-
     test_step: ($) =>
       seq(
         "test",
         field("body", choice($.shell_block, $.exec_lua_block)),
-        field("as_name", optional(seq("as", $.string))),
-        optional(seq("timeout", field("timeout", $.number))),
-        optional(field("should_fail", "should_fail")),
         $._newline,
       ),
 
@@ -436,46 +426,22 @@ module.exports = grammar({
     lua_block: ($) =>
       seq(">{", alias($._lua_block_content, $.lua_code), "}", $._newline),
 
-    // §{recipes.lua-steps} register-phase forms: `>>` line and `>>{ ... }`
-    // block. Both desugar at the lexer / scanner level — `>>` and `>>{`
-    // tokens, then the same brace-balanced LUA_BLOCK_CONTENT collection
-    // for the block form.
-    inline_lua_line: ($) =>
-      seq(
-        ">>",
-        alias(token.immediate(/[^{\n][^\n]*/), $.lua_code),
-        $._newline,
-      ),
-
-    inline_lua_block: ($) =>
-      seq(">>{", alias($._lua_block_content, $.lua_code), "}", $._newline),
-
     // App. A.1 + A.4 top-level `module_call` (CS-0072). A column-0
     // `LUA_IDENT . IDENT_START …` statement, brace-balanced across
     // newlines per §{lexical.brace-blocks.lua-spans}. The full text
     // is collected by the external scanner so multi-line table-arg
     // forms (`cook_cc.bin("game", {\n  …\n})`) parse as a single
     // statement. Resolution of Lua-expression-hood is the runtime's
-    // concern, not the grammar's. Per CS-0072, recipe-body bare
-    // `LUA_IDENT.IDENT_START…` is shell, not module_call — the
-    // recipe-body cascade in `_recipe_item` no longer carries a
-    // module_call arm.
-    top_level_module_call: ($) =>
+    // concern, not the grammar's. Recipe bodies reuse this exact token.
+    module_call: ($) =>
       seq(
         alias($._top_level_module_call_text, $.module_call_text),
         $._newline,
       ),
 
-    interactive_command: ($) =>
+    top_level_module_call: ($) =>
       seq(
-        "@",
-        repeat1(
-          choice(
-            alias(token.immediate(/[^\n$]+/), $.shell_content),
-            alias(token.immediate("$"), $.shell_content),
-            $.placeholder,
-          ),
-        ),
+        alias($._top_level_module_call_text, $.module_call_text),
         $._newline,
       ),
 
@@ -495,6 +461,11 @@ module.exports = grammar({
     _name: ($) => choice(alias($._bare_identifier, $.identifier), $.string),
 
     _bare_identifier: ($) => /[a-zA-Z_][a-zA-Z0-9_.\-]*/,
+
+    // Recipe-body module calls are indented; retaining the indentation as a
+    // hidden immediate token keeps a following column-zero module call in
+    // the top-level dispatch without introducing another external token.
+    _recipe_indent: ($) => token.immediate(/[ \t]+/),
 
     // CS-0035 declaration-site no-dots. `recipe_header` and `chore_header`
     // use this stricter name shape: dots are rejected. Hyphens remain
@@ -528,14 +499,14 @@ module.exports = grammar({
     //   • `_string_placeholder` — used inside string literals where every
     //     token MUST be immediate to keep extras out of the string body.
     //
-    // CS-0101: the `file:` namespace admits a path charset (`/`, `*`;
-    // drops `:`, `[`, `]`) — the `file:` alternative is listed FIRST so
-    // the longer path match wins over the generic IDENT form.
+    // Current closed placeholder shapes: file references, recipe-member
+    // `[in]`, probe-value refs (colon namespace with optional field/index),
+    // and dot-separated builtin/accessor/env/recipe identifiers.
     placeholder: ($) =>
       seq(
         "$<",
         alias(
-          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
+          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\[in\]|[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z_][A-Za-z0-9_.-]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?(?:\[[0-9]+\])?|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),
@@ -545,7 +516,7 @@ module.exports = grammar({
       seq(
         token.immediate("$<"),
         alias(
-          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
+          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\[in\]|[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z_][A-Za-z0-9_.-]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?(?:\[[0-9]+\])?|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),
@@ -599,9 +570,7 @@ module.exports = grammar({
       seq(
         token.immediate("$<"),
         alias(
-          // CS-0101: `file:` path-charset alternative first (see
-          // `placeholder` above).
-          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_.:\[\]-]*/),
+          token.immediate(/file:[A-Za-z0-9_.*\/-]+|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\[in\]|[A-Za-z_][A-Za-z0-9_.-]*:[A-Za-z_][A-Za-z0-9_.-]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?(?:\[[0-9]+\])?|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/),
           $.placeholder_ident,
         ),
         token.immediate(">"),
@@ -609,6 +578,5 @@ module.exports = grammar({
 
     path: ($) => /[^\s\n]+/,
 
-    number: ($) => /[0-9]+/,
   },
 });

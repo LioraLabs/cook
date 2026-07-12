@@ -1,9 +1,9 @@
 ================
-Probe with Lua-block produce
+Bare shell producer
 ================
 
 probe p
-    produce >{ return {} }
+    { echo hi }
 
 ---
 
@@ -11,16 +11,96 @@ probe p
   (probe
     (probe_header
       name: (identifier))
-    (produce_step
+    (producer
+      body: (shell_block
+        (shell_content)))))
+
+================
+JSON and lines shell producers
+================
+
+probe json-cards
+    json { cat cards.json }
+
+probe tag.list
+    lines { git tag }
+
+---
+
+(source_file
+  (probe
+    (probe_header
+      name: (identifier))
+    (producer
+      body: (shell_block
+        (shell_content))))
+  (probe
+    (probe_header
+      name: (identifier))
+    (producer
+      body: (shell_block
+        (shell_content)))))
+
+================
+Tools and envs name-list producers
+================
+
+probe toolchain
+    tools { cc, ld }
+
+probe build-env
+    envs { CC CFLAGS }
+
+---
+
+(source_file
+  (probe
+    (probe_header
+      name: (identifier))
+    (producer
+      (name_list
+        (identifier)
+        (identifier))))
+  (probe
+    (probe_header
+      name: (identifier))
+    (producer
+      (name_list
+        (identifier)
+        (identifier)))))
+
+================
+Lua producer
+================
+
+probe p
+    >{ return {} }
+
+---
+
+(source_file
+  (probe
+    (probe_header
+      name: (identifier))
+    (producer
       body: (exec_lua_block
         (lua_code)))))
 
 ================
-Probe with shell-string produce
+Probe keys and dependency references
 ================
 
-probe p
-    produce { echo hi }
+probe cc-version
+    { cc --version }
+
+probe tool.chain: demo:cc-path dotted.dep "quoted:key"
+    >{ return 1 }
+
+probe demo:cc-version
+    { cc --version }
+
+probe "quoted:key"
+    { echo quoted }
 
 ---
 
@@ -28,75 +108,44 @@ probe p
   (probe
     (probe_header
       name: (identifier))
-    (produce_step
+    (producer
       body: (shell_block
-        (shell_content)))))
-
-================
-Probe with ingredients and `as json` shell produce
-================
-
-probe cards
-    ingredients "data/cards.json"
-    produce as json { cat data/cards.json }
-
----
-
-(source_file
-  (probe
-    (probe_header
-      name: (identifier))
-    (ingredients_step
-      (string))
-    (produce_step
-      (produce_type)
-      body: (shell_block
-        (shell_content)))))
-
-================
-Probe with `as lines` shell produce
-================
-
-probe p
-    produce as lines { git tag }
-
----
-
-(source_file
-  (probe
-    (probe_header
-      name: (identifier))
-    (produce_step
-      (produce_type)
-      body: (shell_block
-        (shell_content)))))
-
-================
-Probe header with dependency list
-================
-
-probe p: a b
-    produce >{ return 1 }
-
----
-
-(source_file
+        (shell_content))))
   (probe
     (probe_header
       name: (identifier)
       (probe_dep_list
         (identifier)
-        (identifier)))
-    (produce_step
+        (identifier)
+        (string)))
+    (producer
       body: (exec_lua_block
-        (lua_code)))))
+        (lua_code))))
+  (probe
+    (probe_header
+      name: (identifier))
+    (producer
+      body: (shell_block
+        (shell_content))))
+  (probe
+    (probe_header
+      name: (string))
+    (producer
+      body: (shell_block
+        (shell_content)))))
 
 ================
-Probe with module-prefixed name
+Invalid producer name lists
 ================
 
-probe cc:zlib
-    produce >{ return 1 }
+probe empty
+    tools {}
+
+probe comma
+    envs { CC, }
+
+probe malformed
+    tools { cc-version }
 
 ---
 
@@ -104,42 +153,203 @@ probe cc:zlib
   (probe
     (probe_header
       name: (identifier))
-    (produce_step
-      body: (exec_lua_block
-        (lua_code)))))
+    (producer
+      (name_list
+        (identifier
+          (MISSING "_chore_param_name_token1")))))
+  (probe
+    (probe_header
+      name: (identifier))
+    (producer
+      (name_list
+        (identifier)
+        (ERROR))))
+  (ERROR
+    (probe_header
+      name: (identifier))
+    (identifier)
+    (lua_code)))
 
 ================
-Probe with quoted module-prefixed name
+Probe declaration rejects a third segment
 ================
 
-probe "cc:zlib"
-    produce >{ return 1 }
+probe one:two:three
+    { echo bad }
+
+---
+
+(source_file
+  (ERROR
+    (probe_header
+      (identifier))
+    (lua_code)))
+
+================
+Probe with ingredients and producer
+================
+
+probe cards
+    ingredients "data/*.json" !"data/old.json"
+    json { cat data/*.json }
 
 ---
 
 (source_file
   (probe
-    (probe_header
-      name: (string))
-    (produce_step
-      body: (exec_lua_block
-        (lua_code)))))
+    (probe_header (identifier))
+    (ingredients_step (string) (ingredient_exclude (string)))
+    (producer (shell_block (shell_content)))))
 
 ================
-Probe with module-prefixed dependency reference
+Removed produce introducer is rejected
 ================
 
-probe cc:zlib: cc:compiler
-    produce >{ return 1 }
+probe old
+    produce { echo old }
+
+---
+
+(source_file
+  (ERROR (probe_header (identifier)) (import_name) (lua_code)))
+
+================
+Removed produce as json is rejected
+================
+
+probe old-json
+    produce as json { echo old }
+
+---
+
+(source_file
+  (ERROR (probe_header (identifier)) (import_name) (lua_code)))
+
+================
+Removed produce as lines is rejected
+================
+
+probe old-lines
+    produce as lines { echo old }
+
+---
+
+(source_file
+  (ERROR (probe_header (identifier)) (import_name) (lua_code)))
+
+================
+Probe missing producer is rejected
+================
+
+probe empty
+
+---
+
+(source_file
+  (ERROR (probe_header (identifier))))
+
+================
+Probe duplicate producers are rejected
+================
+
+probe duplicate
+    { echo one }
+    lines { echo two }
 
 ---
 
 (source_file
   (probe
-    (probe_header
-      name: (identifier)
-      (probe_dep_list
-        (identifier)))
-    (produce_step
-      body: (exec_lua_block
-        (lua_code)))))
+    (probe_header (identifier))
+    (producer (shell_block (shell_content))))
+  (ERROR (import_name) (lua_code)))
+
+================
+Probe duplicate ingredients are rejected
+================
+
+probe duplicate-inputs
+    ingredients "one"
+    ingredients "two"
+    { echo done }
+
+---
+
+(source_file
+  (ERROR
+    (probe_header (identifier))
+    (ingredients_step (string))
+    (import_name)
+    (lua_code)))
+
+================
+Probe ingredients after producer are rejected
+================
+
+probe late-inputs
+    { echo done }
+    ingredients "late"
+
+---
+
+(source_file
+  (probe
+    (probe_header (identifier))
+    (producer (shell_block (shell_content))))
+  (ERROR (import_name) (lua_code)))
+
+================
+Probe body rejects non-producer item
+================
+
+probe bad-body
+    cook "out" { echo no }
+
+---
+
+(source_file
+  (ERROR (probe_header (identifier)) (import_name) (lua_code)))
+
+================
+JSON wrong-body rejection
+================
+
+probe bad-json
+    json >{ return {} }
+
+---
+
+(source_file
+  (ERROR (probe_header (identifier)) (lua_code)))
+
+================
+Tools wrong-body rejection
+================
+
+probe bad-tools
+    tools >{ return {} }
+
+---
+
+(source_file
+  (ERROR (probe_header (identifier)) (lua_code)))
+
+================
+Producer keywords are contextual outside probes
+================
+
+chore keyword-lines
+    json { echo json }
+    lines { echo lines }
+    tools { echo tools }
+    envs { echo envs }
+
+---
+
+(source_file
+  (chore
+    (chore_header (identifier))
+    (shell_command (shell_content))
+    (shell_command (shell_content))
+    (shell_command (shell_content))
+    (shell_command (shell_content))))

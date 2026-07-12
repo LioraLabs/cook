@@ -1,11 +1,11 @@
 ================
-Recipe body terminated by next recipe (bare shell tail)
+Recipe body terminated by next recipe
 ================
 
 recipe a
-    echo hi
+    tools.prepare()
 recipe b
-    echo bye
+    tools.finish()
 
 ---
 
@@ -13,21 +13,21 @@ recipe b
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (shell_command
-      (shell_content)))
+    (module_call
+      (module_call_text)))
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (shell_command
-      (shell_content))))
+    (module_call
+      (module_call_text))))
 
 ================
-Recipe body terminated by chore (bare shell tail)
+Recipe body terminated by chore
 ================
 
 recipe a
-    echo hi
-chore b
+    tools.prepare()
+chore clean
     rm -rf out
 
 ---
@@ -36,8 +36,8 @@ chore b
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (shell_command
-      (shell_content)))
+    (module_call
+      (module_call_text)))
   (chore
     (chore_header
       name: (identifier))
@@ -45,13 +45,12 @@ chore b
       (shell_content))))
 
 ================
-Recipe body terminated by probe (bare shell tail)
+Column-zero module call terminates recipe body
 ================
 
 recipe a
-    echo hi
-probe p
-    produce { echo x }
+    tools.prepare()
+cook_cc.bin("x")
 
 ---
 
@@ -59,64 +58,19 @@ probe p
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (shell_command
-      (shell_content)))
-  (probe
-    (probe_header
-      name: (identifier))
-    (produce_step
-      body: (shell_block
-        (shell_content)))))
-
-================
-Two recipes, second has quoted name (bare shell tail)
-================
-
-recipe "libmath"
-    ar rcs out.a
-recipe "app"
-    gcc -o app main.c
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (string))
-    (shell_command
-      (shell_content)))
-  (recipe
-    (explicit_recipe_header
-      name: (string))
-    (shell_command
-      (shell_content))))
-
-================
-Column-0 module call terminates recipe body (bare shell tail)
-================
-
-recipe a
-    echo hi
-cook_cc.bin("x", { sources = { "x.c" } })
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier))
-    (shell_command
-      (shell_content)))
+    (module_call
+      (module_call_text)))
   (top_level_module_call
     (module_call_text)))
 
 ================
-Column-0 bare shell line stays in recipe body
+Recipe body terminated by register
 ================
 
 recipe a
-    echo hi
-make all
+    tools.prepare()
+register
+local x = true
 
 ---
 
@@ -124,7 +78,67 @@ make all
   (recipe
     (explicit_recipe_header
       name: (identifier))
+    (module_call
+      (module_call_text)))
+  (register_block
+    (lua_code)))
+
+================
+Chore body terminated by config
+================
+
+chore a
+    echo ready
+config build
+value = true
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier))
     (shell_command
-      (shell_content))
+      (shell_content)))
+  (config_block
+    name: (identifier)
+    (lua_code)))
+
+================
+Chore body terminated by use
+================
+
+chore a
+    echo ready
+use tools
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier))
     (shell_command
-      (shell_content))))
+      (shell_content)))
+  (use_declaration
+    module: (identifier)))
+
+================
+Chore body terminated by import
+================
+
+chore a
+    echo ready
+import tools ./tools.lua
+
+---
+
+(source_file
+  (chore
+    (chore_header
+      name: (identifier))
+    (shell_command
+      (shell_content)))
+  (import_declaration
+    name: (import_name)
+    path: (path)))

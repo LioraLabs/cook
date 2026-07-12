@@ -3,7 +3,7 @@ Placeholder in cook output string
 ================
 
 recipe build
-    cook "build/$<in.stem>.o"
+    cook "build/$<in.stem>.o" { build }
 
 ---
 
@@ -14,7 +14,9 @@ recipe build
     (cook_step
       outputs: (string
         (placeholder
-          (placeholder_ident))))))
+          (placeholder_ident)))
+      body: (shell_block
+        (shell_content)))))
 
 ================
 Placeholder in shell block (using clause)
@@ -43,6 +45,64 @@ recipe lib
         (shell_content)))))
 
 ================
+Recipe member and probe-value placeholders
+================
+
+recipe mux
+    ingredients scenes
+    cook "build/$<in.id>.mp4" {
+        mux $<render[in]> $<toolchain:cc.path> $<probe:key.field[2]> $<out>
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (ingredients_step
+      probe: (identifier))
+    (cook_step
+      outputs: (string
+        (placeholder
+          (placeholder_ident)))
+      body: (shell_block
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)
+        (placeholder
+          (placeholder_ident))
+        (shell_content)))))
+
+================
+Malformed recipe-member indices reject syntactically
+================
+
+recipe mux
+    cook "out" {
+        mux $<render[]> $<render[0]> $<render[item]>
+    }
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)))
+  (ERROR
+    (string)
+    (shell_content)
+    (placeholder_ident)
+    (lua_code)))
+
+================
 Placeholder in plate body inside shell-quoted string
 ================
 
@@ -56,13 +116,10 @@ recipe r
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier))
-    (plate_step
-      body: (shell_block
-        (shell_content)
-        (placeholder
-          (placeholder_ident))
-        (shell_content)))))
+      name: (identifier)))
+  (ERROR
+    (import_name)
+    (lua_code)))
 
 ================
 Placeholder in bare shell command
@@ -76,11 +133,10 @@ recipe r
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier))
-    (shell_command
-      (shell_content)
-      (placeholder
-        (placeholder_ident)))))
+      name: (identifier)))
+  (ERROR
+    (import_name)
+    (lua_code)))
 
 ================
 Placeholder at start of shell command
@@ -94,11 +150,9 @@ recipe r
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier))
-    (shell_command
-      (placeholder
-        (placeholder_ident))
-      (shell_content))))
+      name: (identifier)))
+  (ERROR
+    (lua_code)))
 
 ================
 Out-indexed and accessor placeholders
@@ -132,7 +186,7 @@ Multiple placeholders in one string
 ================
 
 recipe r
-    cook "$<a>/$<b.stem>.x"
+    cook "$<a>/$<b.stem>.x" { build }
 
 ---
 
@@ -145,7 +199,9 @@ recipe r
         (placeholder
           (placeholder_ident))
         (placeholder
-          (placeholder_ident))))))
+          (placeholder_ident)))
+      body: (shell_block
+        (shell_content)))))
 
 ================
 Placeholder in interactive command
@@ -159,12 +215,9 @@ recipe r
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier))
-    (interactive_command
-      (shell_content)
-      (placeholder
-        (placeholder_ident))
-      (shell_content))))
+      name: (identifier)))
+  (ERROR
+    (lua_code)))
 
 ================
 File-reference placeholder in shell block (CS-0101)

@@ -1,20 +1,4 @@
 ================
-Simple recipe
-================
-
-recipe setup
-    mkdir -p build
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier))
-    (shell_command
-      (shell_content))))
-
-================
 Recipe with dependencies
 ================
 
@@ -103,41 +87,12 @@ recipe lib: setup
         (shell_content)))))
 
 ================
-Recipe with plate step
-================
-
-recipe test: lib
-    ingredients "tests/*.c"
-    cook "build/{in.stem}" {
-        cc {in} -o {out}
-    }
-    plate { ./{in} }
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (ingredients_step
-      (string))
-    (cook_step
-      outputs: (string)
-      body: (shell_block
-        (shell_content)))
-    (plate_step
-      body: (shell_block
-        (shell_content)))))
-
-================
 Recipe with test step
 ================
 
 recipe run-tests: build
     ingredients "build/bin/test_*"
-    test { ./{in} } timeout 30
+    test { ./{in} }
 
 ---
 
@@ -151,80 +106,7 @@ recipe run-tests: build
       (string))
     (test_step
       body: (shell_block
-        (shell_content))
-      timeout: (number))))
-
-================
-Recipe with test should_fail
-================
-
-recipe check: build
-    test { ./fail_test } should_fail
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (test_step
-      body: (shell_block
         (shell_content)))))
-
-================
-Interactive command
-================
-
-recipe run: build
-    @./bin/app
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (interactive_command
-      (shell_content))))
-
-================
-Lua line
-================
-
-recipe build
-    > print("hello")
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier))
-    (lua_line
-      (lua_code))))
-
-================
-Lua block
-================
-
-recipe lib
-    >{
-        local x = 1
-        print(x)
-    }
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier))
-    (lua_block
-      (lua_code))))
 
 ================
 Cook with inline lua block
@@ -317,7 +199,7 @@ recipe pack
         (string)))))
 
 ================
-Recipe-body bare module-call is shell (CS-0072)
+Recipe-body module call (CS-0072)
 ================
 
 use cpp
@@ -333,8 +215,84 @@ recipe colorize
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (shell_command
-      (shell_content))))
+    (module_call
+      (module_call_text))))
+
+================
+Ingredients from probe refs and selectors
+================
+
+recipe cards
+    ingredients card-set
+
+recipe namespaced
+    ingredients ns:cards
+
+recipe selected
+    ingredients ns:cards:items
+
+---
+
+(source_file
+  (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier)))
+  (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier)))
+  (recipe (explicit_recipe_header name: (identifier)) (ingredients_step probe: (identifier) field: (identifier))))
+
+================
+Ingredients quoted continuation
+================
+
+recipe pack
+    ingredients "src/*.c"
+        !"src/legacy.c"
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header name: (identifier))
+    (ingredients_step (string) (ingredient_exclude (string)))))
+
+================
+Malformed ingredient selectors
+================
+
+recipe missing-field
+    ingredients ns:cards:
+
+recipe extra-field
+    ingredients ns:cards:items:extra
+
+recipe quoted-selector
+    ingredients "ns:cards":items
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header name: (identifier))
+    (ingredients_step probe: (identifier) (ERROR)))
+  (recipe
+    (explicit_recipe_header name: (identifier))
+    (ingredients_step
+      probe: (identifier)
+      (ERROR (identifier))
+      field: (identifier)))
+  (recipe (explicit_recipe_header name: (identifier)))
+  (ERROR (string) (lua_code)))
+
+================
+Seal rejects a third probe-key segment
+================
+
+recipe bad-seal
+    seal ns:key:field
+
+---
+
+(source_file
+  (recipe (explicit_recipe_header name: (identifier)))
+  (ERROR (identifier) (lua_code)))
 
 ================
 Cook step (multi-line outputs, CS-0078)
@@ -401,27 +359,6 @@ recipe build
         (shell_content)))))
 
 ================
-Inline lua line and block (register-phase >>)
-================
-
-recipe init
-    >> local std = "c++20"
-    >>{
-        cook.env.CXXFLAGS = "-std=" .. std
-    }
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier))
-    (inline_lua_line
-      (lua_code))
-    (inline_lua_block
-      (lua_code))))
-
-================
 Cook plain-shell block with nested braces in content
 ================
 
@@ -443,11 +380,11 @@ recipe x
         (shell_content)))))
 
 ================
-Lua block with multi-line long-string opaque-span (CS-0035)
+Cook Lua block with multi-line long-string opaque-span (CS-0035)
 ================
 
 recipe build
-    >{
+    cook "out" >{
         local s = [[
             this string contains a } brace
             and another } here
@@ -461,15 +398,17 @@ recipe build
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (lua_block
-      (lua_code))))
+    (cook_step
+      outputs: (string)
+      body: (exec_lua_block
+        (lua_code)))))
 
 ================
-Lua block with multi-line block-comment opaque-span (CS-0035)
+Cook Lua block with multi-line block-comment opaque-span (CS-0035)
 ================
 
 recipe build
-    >{
+    cook "out" >{
         --[[
             here is a } in a block comment
             and another } here
@@ -483,15 +422,17 @@ recipe build
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (lua_block
-      (lua_code))))
+    (cook_step
+      outputs: (string)
+      body: (exec_lua_block
+        (lua_code)))))
 
 ================
-Lua block with leveled long-string opaque-span (CS-0035)
+Cook Lua block with leveled long-string opaque-span (CS-0035)
 ================
 
 recipe build
-    >{
+    cook "out" >{
         local s = [==[
             this is opaque text
             with } and ]] inside
@@ -505,8 +446,10 @@ recipe build
   (recipe
     (explicit_recipe_header
       name: (identifier))
-    (lua_block
-      (lua_code))))
+    (cook_step
+      outputs: (string)
+      body: (exec_lua_block
+        (lua_code)))))
 
 ================
 Shell block with POSIX heredoc opaque-span (CS-0035)
@@ -617,7 +560,7 @@ Per-member cross-recipe accessor (CS-0098)
 
 recipe mux
     ingredients scenes
-    cook "build/$<in.id>.mp4" { ffmpeg -i $<render[]> -i $<tts[]> $<out> }
+    cook "build/$<in.id>.mp4" { ffmpeg -i $<render[in]> -i $<tts[in]> $<out> }
 
 ---
 
@@ -642,3 +585,144 @@ recipe mux
         (placeholder
           (placeholder_ident))
         (shell_content)))))
+================
+Recipe-body module call
+================
+
+recipe app
+    cook_cc.bin("app")
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (module_call
+      (module_call_text))))
+
+================
+Recipe seals stack with bare one- and two-segment refs
+================
+
+recipe package
+    seal cards ns:tools
+    seal assets
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header name: (identifier))
+    (seal_step (identifier) (identifier))
+    (seal_step (identifier))))
+
+================
+Cook disposition groups and final share modifier
+================
+
+recipe package
+    cook "pkg" { bundle } seal cards ns:tools unseal volatile pinned
+    cook "scratch" { generate } local
+    cook "random" { sample } nondet
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header name: (identifier))
+    (cook_step
+      outputs: (string)
+      body: (shell_block (shell_content))
+      (cook_mods
+        (seal_group (identifier) (identifier))
+        (unseal_group (identifier))
+        (share_mod)))
+    (cook_step outputs: (string) body: (shell_block (shell_content)) (cook_mods (share_mod)))
+    (cook_step outputs: (string) body: (shell_block (shell_content)) (cook_mods (share_mod)))))
+
+================
+Disposition refs reject quoted forms
+================
+
+recipe bad
+    seal "cards"
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header name: (identifier)))
+  (ERROR
+    (lua_code)))
+
+================
+Disposition refs reject a third segment
+================
+
+recipe bad
+    cook "a" { x } seal ns:key:field
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header name: (identifier)))
+  (ERROR
+    (string)
+    (shell_block (shell_content))
+    (seal_group (identifier))
+    (lua_code)))
+
+================
+Share modifier is unique and final
+================
+
+recipe bad
+    cook "a" { x } pinned local
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header name: (identifier))
+    (cook_step
+      outputs: (string)
+      body: (shell_block (shell_content))
+      (cook_mods (share_mod))
+      (ERROR (import_name)))))
+
+================
+Recipe seal steps
+================
+
+recipe package
+    seal cards ns:tools
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (seal_step
+      (identifier)
+      (identifier))))
+
+================
+Recipe-body multi-line module call
+================
+
+recipe app
+    cook_cc.bin("app", {
+      sources = { "main.c" },
+    })
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier))
+    (module_call
+      (module_call_text))))

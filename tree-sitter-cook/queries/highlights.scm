@@ -10,15 +10,15 @@
   "import"
   "ingredients"
   "cook"
-  "plate"
   "test"
-  "produce"
-  "timeout"
-  "should_fail"
-  "as"
+  "seal"
+  "unseal"
 ] @keyword
 
-(produce_type) @keyword
+(producer
+  ["json" "lines" "tools" "envs"] @keyword)
+
+(share_mod) @keyword.modifier
 
 ; ── Recipe headers ──────────────────────────────────────────────
 
@@ -49,6 +49,9 @@
 
 (probe_dep_list
   (string) @function)
+
+(name_list
+  (identifier) @variable)
 
 ; ── Chore parameters (COOK-36 / §7.1.1) ─────────────────────────
 
@@ -102,14 +105,14 @@
 (cook_step
   outputs: (string) @string.special)
 
-(test_step
-  timeout: (number) @number)
-
-(test_step
-  as_name: (string) @string.special)
-
 (ingredients_step
   (string) @string)
+
+(ingredients_step
+  probe: (identifier) @variable)
+
+(ingredients_step
+  field: (identifier) @property)
 
 (ingredient_exclude
   "!" @operator)
@@ -117,9 +120,21 @@
 (ingredient_exclude
   (string) @string)
 
+(seal_step
+  (identifier) @function)
+
+(seal_group
+  (identifier) @function)
+
+(unseal_group
+  (identifier) @function)
+
 ; ── Top-level module call (CS-0072) ─────────────────────────────
 
 (top_level_module_call
+  (module_call_text) @function.call)
+
+(module_call
   (module_call_text) @function.call)
 
 ; ── Lua ─────────────────────────────────────────────────────────
@@ -133,19 +148,11 @@
 (exec_lua_block
   (lua_code) @none)
 
-(inline_lua_block
-  (lua_code) @none)
-
 ">" @keyword.directive
 ">{" @keyword.directive
 "}" @keyword.directive
 
 ; ── Shell ───────────────────────────────────────────────────────
-
-(interactive_command
-  (shell_content) @none)
-
-"@" @keyword.directive
 
 (shell_command
   (shell_content) @none)
@@ -160,8 +167,6 @@
 ; ── Strings and literals ────────────────────────────────────────
 
 (string) @string
-
-(number) @number
 
 ; ── Placeholders (§2.11) ────────────────────────────────────────
 ; A `$<IDENT>` placeholder appears inside string literals and shell

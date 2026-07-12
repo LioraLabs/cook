@@ -1,26 +1,22 @@
 ==================
-test_step with as modifier
+Plain test step
 ==================
 
-recipe r: build
-    test { true } as "foo" timeout 30 should_fail
+recipe r
+    test { true }
 
 ---
 
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
+      name: (identifier))
     (test_step
       body: (shell_block
-        (shell_content))
-      as_name: (string)
-      timeout: (number))))
+        (shell_content)))))
 
 ==================
-test_step with as modifier only
+Removed test as modifier is rejected
 ==================
 
 recipe r
@@ -31,18 +27,38 @@ recipe r
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier))
-    (test_step
-      body: (shell_block
-        (shell_content))
-      as_name: (string))))
+      name: (identifier)))
+  (ERROR
+    (shell_block
+      (shell_content))
+    (import_name)
+    (lua_code)))
 
 ==================
-test_step with as modifier and timeout
+Removed test timeout modifier is rejected
 ==================
 
 recipe r
-    test { true } as "my-test" timeout 60
+    test { true } timeout 30
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)))
+  (ERROR
+    (shell_block
+      (shell_content))
+    (import_name)
+    (lua_code)))
+
+==================
+Removed test should_fail modifier is rejected
+==================
+
+recipe r
+    test { true } should_fail
 
 ---
 
@@ -53,5 +69,5 @@ recipe r
     (test_step
       body: (shell_block
         (shell_content))
-      as_name: (string)
-      timeout: (number))))
+      (ERROR
+        (import_name)))))

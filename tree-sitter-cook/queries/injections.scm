@@ -11,14 +11,6 @@
   (lua_code) @injection.content
   (#set! injection.language "lua"))
 
-(inline_lua_line
-  (lua_code) @injection.content
-  (#set! injection.language "lua"))
-
-(inline_lua_block
-  (lua_code) @injection.content
-  (#set! injection.language "lua"))
-
 ; Inject Lua into config block bodies
 (config_block
   (lua_code) @injection.content
@@ -36,6 +28,11 @@
   (module_call_text) @injection.content
   (#set! injection.language "lua"))
 
+; Recipe-body module calls use the same Lua statement shape.
+(module_call
+  (module_call_text) @injection.content
+  (#set! injection.language "lua"))
+
 ; Inject bash into shell commands. `$<IDENT>` placeholders interleave
 ; with shell_content chunks; the `[shell_content placeholder]+` choice
 ; matches the full sequence so every chunk is captured in one match,
@@ -47,11 +44,6 @@
 ; `echo "libfoo: " ` and the string is recognized as a whole.
 
 (shell_command
-  [(shell_content) @injection.content (placeholder)]+
-  (#set! injection.language "bash")
-  (#set! injection.combined))
-
-(interactive_command
   [(shell_content) @injection.content (placeholder)]+
   (#set! injection.language "bash")
   (#set! injection.combined))

@@ -7,24 +7,16 @@
 // and every syntactic negative Cookfile produces at least one
 // ERROR/MISSING node.
 //
-// Cases listed in `SEMANTIC_ONLY_NEGATIVES` express constraints that
-// the Standard places on a parser but that tree-sitter cannot enforce
-// from the grammar alone (top-level ordering, duplicate-step
-// detection, accessor-string templating). The harness records them as
-// "accepted" without failing — they are the Rust parser's territory.
-//
-// Cases listed in `KNOWN_STALE_POSITIVES` express grammar features
-// that the Cook Standard adopted post-CS-0022 (multi-line Lua opaque
-// spans, shell heredocs, single-quoted STRING) but that tree-sitter-
-// cook has not yet been updated for. The Rust parser is the v0.x
-// reference implementation per pre-v1 checklist E.4; bringing tree-
-// sitter into conformance is tracked under CS-0002. The harness
-// records these as STALE without failing.
+// Cases listed in `SEMANTIC_ONLY_NEGATIVES` require information that a
+// context-free syntax tree does not contain: declaration ordering or
+// uniqueness, graph/runtime state, source resolution, or templating and
+// iteration-mode analysis. Each entry names its enforcement phase.
 //
 // Override the corpus path with COOK_CONFORMANCE_CORPUS=/path/to/dir.
 // Default is `../standard/conformance/` relative to this script.
 
 import { execFile } from 'node:child_process';
+import assert from 'node:assert/strict';
 import { promisify } from 'node:util';
 import { readdir, stat } from 'node:fs/promises';
 import { dirname, join, basename } from 'node:path';
@@ -40,7 +32,7 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
   ['004-duplicate-ingredients',
    'at-most-one-ingredients rule (App. A.3) — semantic, not syntactic'],
   ['006-accessor-in-cook-body',
-   'accessor placeholders inside cook-step bodies — templater rule, not syntactic'],
+   'App. A.4 iteration coherence — codegen templating check across recipe sources'],
   // CS-0095: `ingredients <probe>` parses cleanly; these rejections are
   // register-phase (probe declared? array-valued? non-artifact dep?).
   ['ingredients-probe-undeclared',
@@ -55,10 +47,6 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0101: file-ref placeholder in an output pattern — codegen-phase rejection, not syntactic'],
   ['cs0101-file-ref-missing-file',
    'CS-0101: file-ref to a missing file — register-phase rejection, not syntactic'],
-  ['008-imperative-then-declarative',
-   'recipe-body region rule (Note 4.4.2) — semantic, not syntactic'],
-  ['010-triple-arrow-prefix',
-   '>>> reservation (§{lexical.line-prefixes}) — tree-sitter accepts as `>>` + content `>...`'],
   // CS-0022 Phase G: codegen-only rejections — Cookfile parses cleanly,
   // rejection is enforced by cook-luagen::generate_with_names_checked.
   ['017-bare-stem-rejected',
@@ -73,41 +61,16 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'CS-0022: {lib.ACCESSOR} inside a cook-step body — codegen rejection, not syntactic'],
   ['023-multi-output-one-to-one-mixed-rejected',
    'CS-0022: mixed one-to-one + literal output patterns — codegen rejection, not syntactic'],
-  // CS-0024: plate/test mode-deduction and placeholder rejections.
-  // Cookfile parses cleanly; rejection is enforced by cook-luagen's
-  // validate_plate_test_placeholders and detect_plate_test_mode.
-  ['024-plate-out-rejected',
-   'CS-0024: {out} in plate body — codegen rejection, not syntactic'],
-  ['025-plate-mixed-in-and-all',
-   'CS-0024: mixed {in} and {all} in plate body — codegen rejection, not syntactic'],
-  ['026-plate-mixed-input-and-inputs',
-   'CS-0024: mixed input and inputs in Lua plate body — codegen rejection, not syntactic'],
-  ['027-plate-lib-accessor-rejected',
-   'CS-0024: {lib.ACCESSOR} in plate body — codegen rejection, not syntactic'],
-  ['028-plate-bare-stem-rejected',
-   'CS-0024: bare {stem} in plate body — codegen rejection, not syntactic'],
-  ['031-one-to-one-empty-source-rejected',
-   'CS-0024: plate one-to-one mode with no source — codegen rejection, not syntactic'],
+  ['025-in-accessor-rejected-in-many-to-one',
+   'App. A.4 iteration coherence — codegen determines many-to-one mode from outputs'],
   ['032-test-empty-source-rejected',
-   'CS-0024: test one-to-one mode with no source — codegen rejection, not syntactic'],
-  ['033-many-to-one-empty-source-rejected',
-   'CS-0024: plate many-to-one mode with no source — codegen rejection, not syntactic'],
-  // CS-0026: parse-time import-path enforcement. Cookfile parses cleanly;
-  // rejection is enforced by the Rust parser's import_declaration validator.
-  ['034-import-dotdot-rejected',
-   'CS-0026: import path with `..` segments — parse-time semantic rejection, not syntactic'],
-  ['035-import-absolute-rejected',
-   'CS-0026: absolute import path — parse-time semantic rejection, not syntactic'],
-  ['036-import-sigil-dotdot-rejected',
-   'CS-0026: sigil import path with `..` segments — parse-time semantic rejection, not syntactic'],
+   'App. A.4 test mode coherence — codegen requires a resolved iteration source'],
   // CS-0035: env reserved-word check — closed: `env.*` recipe names are
   // rejected by the grammar's `_decl_name` (no-dots rule, COOK-55) which
   // means `env.foo` produces ERROR before any reserved-name check fires.
   // CS-0033: sigil-placeholder semantic rules.
   ['038-out-zero-rejected-sigil',
    'CS-0033: `$<out_0>` (zero index) — codegen rejection, not syntactic'],
-  ['039-in-in-many-to-one-sigil',
-   'CS-0033: `$<in>` in many-to-one body — codegen rejection, not syntactic'],
   // CS-0035 use_name LUA_IDENT constraint — closed by COOK-55: 040/041/042
   // are now grammar-rejected by `_lua_ident_name`.
   //
@@ -153,24 +116,8 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    '§7.1.1 duplicate-parameter detection — parse-time semantic'],
   ['chore-param-multiple-variadics',
    '§7.1.1 at-most-one-variadic rule — parse-time semantic'],
-  ['chore-param-reserved-name',
-   '§7.1.1 reserved-name ban (§A.2) — parse-time semantic, applied to a tokenisation tree-sitter accepts'],
   ['chore-param-variadic-not-last',
    '§7.1.1 variadic-tail rule — parse-time semantic'],
-]);
-
-// Positive fixtures the Rust parser accepts but tree-sitter-cook cannot
-// yet parse cleanly because the grammar lags the Cook Standard. Per
-// pre-v1 checklist E.4, the Rust parser is the v0.x reference; closing
-// these is part of the CS-0002 follow-up to bring tree-sitter into
-// conformance.
-const KNOWN_STALE_POSITIVES = new Map([
-  // CS-0035 multi-line Lua opaque-span tracking — closed by COOK-53.
-  // CS-0035 POSIX heredoc opaque-span tracking — closed by COOK-54.
-  // CS-0061 single-quoted STRING — closed by COOK-55.
-  // (List is empty; the conformance audit is complete for v0.12.
-  // Re-add entries here for fixtures that exercise a newly-spec'd
-  // grammar feature pending implementation.)
 ]);
 
 function corpusRoot() {
@@ -190,15 +137,36 @@ async function listCases(sub) {
 }
 
 async function parseCase(file) {
+  const hasRecoveryNode = (output) =>
+    /\((?:ERROR|MISSING)\b/.test(output) ||
+    // tree-sitter renders an inserted token through an alias as a zero-width
+    // named node rather than spelling `MISSING` (for example the required
+    // identifier in `tools {}`). It is still parser recovery, not acceptance.
+    /\([^\n]* \[(\d+), (\d+)\] - \[\1, \2\]\)/.test(output);
+  const classify = (stdout, stderr, code = 0, message = '') => {
+    const output = stdout + stderr;
+    const parsed = /^\(source_file\b/m.test(stdout);
+    if (!parsed) {
+      return {
+        parsed: false,
+        ok: false,
+        code,
+        output: output || message || 'tree-sitter parse produced no parse tree',
+      };
+    }
+    return { parsed: true, ok: !hasRecoveryNode(stdout), code, output };
+  };
+
   try {
-    await exec('tree-sitter', ['parse', '-q', file], { cwd: REPO });
-    return { ok: true, output: '' };
+    const { stdout, stderr } = await exec('tree-sitter', ['parse', file], { cwd: REPO });
+    return classify(stdout, stderr);
   } catch (err) {
-    return {
-      ok: false,
-      code: err.code ?? null,
-      output: (err.stdout || '') + (err.stderr || ''),
-    };
+    return classify(
+      err.stdout || '',
+      err.stderr || '',
+      err.code ?? null,
+      err.message || '',
+    );
   }
 }
 
@@ -217,25 +185,13 @@ async function runPositives() {
   for (const name of cases) {
     const file = join(corpusRoot(), 'positive', name, 'Cookfile');
     const result = await parseCase(file);
-    const stale = KNOWN_STALE_POSITIVES.get(name);
-    if (result.ok) {
-      if (stale) {
-        // Tree-sitter accepted something we listed as known-stale.
-        // Post-CS-0086 (v0.12 audit), KNOWN_STALE_POSITIVES is
-        // expected to be empty; any entry here that now passes is
-        // a regression in the skip list and is fatal.
-        console.log(`NOTE   positive/${name} now parses cleanly — remove from KNOWN_STALE_POSITIVES`);
-        notes.push({ name, output: 'KNOWN_STALE_POSITIVES entry now parses cleanly' });
-      } else {
-        console.log(`OK     positive/${name}`);
-      }
+    if (!result.parsed) {
+      failures.push({ name, output: `infrastructure failure: ${result.output}` });
+      console.log(`ERROR  positive/${name} (tree-sitter invocation failed)`);
       continue;
     }
-    if (stale) {
-      console.log(`STALE  positive/${name} (${stale})`);
-      // Treat STALE as a soft failure too — the v0.12 audit closed
-      // every entry; a new STALE entry signals a re-divergence.
-      notes.push({ name, output: `STALE: ${stale}` });
+    if (result.ok) {
+      console.log(`OK     positive/${name}`);
       continue;
     }
     failures.push({ name, output: result.output });
@@ -252,6 +208,11 @@ async function runNegatives() {
     const file = join(corpusRoot(), 'negative', name, 'Cookfile');
     const result = await parseCase(file);
     const skip = SEMANTIC_ONLY_NEGATIVES.get(name);
+    if (!result.parsed) {
+      failures.push({ name, output: `infrastructure failure: ${result.output}` });
+      console.log(`ERROR  negative/${name} (tree-sitter invocation failed)`);
+      continue;
+    }
     if (skip) {
       // Semantic-only: tree-sitter is expected to accept.
       if (result.ok) {
@@ -323,4 +284,25 @@ async function main() {
   process.exit(1);
 }
 
-await main();
+async function selfTest() {
+  const clean = await parseCase(join(corpusRoot(), 'positive', '001-empty-recipe', 'Cookfile'));
+  assert.equal(clean.parsed, true);
+  assert.equal(clean.ok, true);
+
+  const syntaxError = await parseCase(join(corpusRoot(), 'negative', '001-unterminated-string', 'Cookfile'));
+  assert.equal(syntaxError.parsed, true);
+  assert.equal(syntaxError.ok, false);
+
+  const infrastructureError = await parseCase(join(REPO, 'does-not-exist', 'Cookfile'));
+  assert.equal(infrastructureError.parsed, false);
+  assert.equal(infrastructureError.ok, false);
+  assert.match(infrastructureError.output, /does-not-exist|No such file|not found|No files were found/i);
+
+  console.log('Conformance harness self-test passed.');
+}
+
+if (process.argv.includes('--self-test')) {
+  await selfTest();
+} else {
+  await main();
+}

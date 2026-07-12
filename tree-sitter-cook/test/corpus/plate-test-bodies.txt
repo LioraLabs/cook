@@ -1,106 +1,59 @@
 ================
-Plate one-to-one shell single-line
+Removed plate step is rejected
 ================
 
-recipe run: build
-    ingredients "tests/*.c"
-    cook "build/{in.stem}" {
-        cc {in} -o {out}
-    }
-    plate { ./{in} }
+recipe run
+    plate { ./run }
 
 ---
 
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (ingredients_step
-      (string))
-    (cook_step
-      outputs: (string)
-      body: (shell_block
-        (shell_content)))
-    (plate_step
-      body: (shell_block
-        (shell_content)))))
+      name: (identifier)))
+  (ERROR
+    (import_name)
+    (lua_code)))
 
 ================
-Plate one-to-one shell multi-line
+Removed recipe loose shell is rejected
 ================
 
-recipe run: build
-    ingredients "tests/*.c"
-    plate {
-        ./{in}
-        echo done
-    }
+recipe run
+    ./run
 
 ---
 
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (ingredients_step
-      (string))
-    (plate_step
-      body: (shell_block
-        (shell_content)))))
+      name: (identifier)))
+  (ERROR
+    (lua_code)))
 
 ================
-Plate many-to-one shell with all
+Removed recipe Lua line is rejected
 ================
 
-recipe run-all: build
-    ingredients "build/bin/test_*"
-    plate { ./{all} }
+recipe run
+    > print("run")
 
 ---
 
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (ingredients_step
-      (string))
-    (plate_step
-      body: (shell_block
-        (shell_content)))))
+      name: (identifier)))
+  (ERROR
+    (lua_code)))
 
 ================
-Plate one-shot shell
+Removed recipe Lua block is rejected
 ================
 
-recipe run: build
-    plate { ./run-all }
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (plate_step
-      body: (shell_block
-        (shell_content)))))
-
-================
-Plate one-to-one Lua
-================
-
-recipe run: build
-    ingredients "tests/*.c"
-    plate >{
-        cook.sh("./" .. input)
+recipe run
+    >{
+      print("run")
     }
 
 ---
@@ -108,25 +61,49 @@ recipe run: build
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (ingredients_step
-      (string))
-    (plate_step
-      body: (exec_lua_block
-        (lua_code)))))
+      name: (identifier)))
+  (ERROR
+    (lua_code)))
 
 ================
-Plate many-to-one Lua
+Removed interactive command is rejected
 ================
 
-recipe run-all: build
-    ingredients "tests/*.c"
-    plate >{
-        for _, f in ipairs(inputs) do
-            cook.sh("./" .. f)
-        end
+recipe run
+    @./run
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)))
+  (ERROR
+    (lua_code)))
+
+================
+Removed inline Lua line is rejected
+================
+
+recipe run
+    >> print("run")
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header
+      name: (identifier)))
+  (ERROR
+    (lua_code)))
+
+================
+Removed inline Lua block is rejected
+================
+
+recipe run
+    >>{
+      print("run")
     }
 
 ---
@@ -134,100 +111,6 @@ recipe run-all: build
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (ingredients_step
-      (string))
-    (plate_step
-      body: (exec_lua_block
-        (lua_code)))))
-
-================
-Plate one-shot Lua
-================
-
-recipe run: build
-    plate >{
-        cook.sh("./run-all")
-    }
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (plate_step
-      body: (exec_lua_block
-        (lua_code)))))
-
-================
-Test with timeout
-================
-
-recipe verify: build
-    ingredients "build/bin/test_*"
-    test { ./{in} } timeout 60
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (ingredients_step
-      (string))
-    (test_step
-      body: (shell_block
-        (shell_content))
-      timeout: (number))))
-
-================
-Test with should_fail and timeout
-================
-
-recipe check-negative: build
-    test { ./expect-fail } timeout 10 should_fail
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (test_step
-      body: (shell_block
-        (shell_content))
-      timeout: (number))))
-
-================
-Test Lua body with timeout
-================
-
-recipe verify-lua: build
-    ingredients "build/bin/test_*"
-    test >{
-        cook.sh("./" .. input)
-    } timeout 30
-
----
-
-(source_file
-  (recipe
-    (explicit_recipe_header
-      name: (identifier)
-      (dependency_list
-        (identifier)))
-    (ingredients_step
-      (string))
-    (test_step
-      body: (exec_lua_block
-        (lua_code))
-      timeout: (number))))
+      name: (identifier)))
+  (ERROR
+    (lua_code)))

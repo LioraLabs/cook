@@ -493,32 +493,27 @@ static bool scan_shell_block_content(TSLexer *lexer, ShellBlockState *state) {
 }
 
 // ── Shell content scanner ──────────────────────────────────────
-// Matches a full line of shell content inside a recipe body.
-// Returns false for lines starting with keywords or special
-// prefixes, letting the internal lexer handle those.
+// Matches a full line of shell content inside a chore body. Recipe bodies
+// no longer admit loose shell, so recipe step keywords need no suppression
+// here and remain ordinary command text in chores.
 
-static bool is_step_keyword(const char *word, int len) {
-  return (len == 4 && strncmp(word, "cook", 4) == 0) ||
-         (len == 4 && strncmp(word, "test", 4) == 0) ||
-         (len == 5 && strncmp(word, "plate", 5) == 0) ||
-         (len == 11 && strncmp(word, "ingredients", 11) == 0);
-}
-
-// A recipe/chore-body line whose first word is one of these keywords
+// A chore-body line whose first word is one of these keywords
 // (followed by an appropriate delimiter) ends the body per App. A.3
 // "Body termination" — the grammar's top-level alternation then
-// dispatches the next declaration. `recipe`/`chore`/`probe` require a
-// space/tab/quote delimiter; `register` additionally accepts newline/EOF
-// for its empty-body form. (`use`/`import`/`config` are also termination
-// keywords per spec but must precede the first recipe, so a post-recipe
-// occurrence is already a semantic error; they're left out to match the
-// pre-existing terminator set.)
+// dispatches the next declaration. Declarations with required header data
+// require a space/tab/quote delimiter; `config` and `register` additionally
+// accept newline/EOF for their empty-header forms.
 static bool is_body_terminator_keyword(const char *word, int len,
                                        int32_t next) {
   bool sep = (next == ' ' || next == '\t' || next == '"');
   if (len == 6 && strcmp(word, "recipe") == 0) return sep;
   if (len == 5 && strcmp(word, "chore") == 0) return sep;
-  if (len == 5 && strcmp(word, "probe") == 0) return sep;
+  if (len == 5 && strcmp(word, "probe") == 0)
+    return sep || next == '\'';
+  if (len == 3 && strcmp(word, "use") == 0) return sep;
+  if (len == 6 && strcmp(word, "import") == 0) return sep;
+  if (len == 6 && strcmp(word, "config") == 0)
+    return sep || next == '\'' || next == '\n' || next == 0;
   if (len == 8 && strcmp(word, "register") == 0)
     return sep || next == '\n' || next == 0;
   return false;
@@ -529,7 +524,7 @@ static bool is_body_terminator_keyword(const char *word, int len,
 // cursor sits at the `.`. Defined alongside scan_top_level_module_call_text.
 static bool scan_module_call_tail(TSLexer *lexer);
 
-// Matches a recipe/chore-body line. When `module_call_valid` is set the
+// Matches a chore-body line. When `module_call_valid` is set the
 // parser also accepts a top-level `module_call` here (a reduce-lookahead
 // at the body's end); a column-0 `LUA_IDENT . IDENT_START …` line is then
 // recognised as a module_call that terminates the body. CRUCIAL: that
@@ -544,7 +539,7 @@ static bool scan_shell_content(TSLexer *lexer, bool module_call_valid) {
   // Skip leading whitespace — tree-sitter does NOT consume extras
   // before calling external scanners. Track whether any was skipped: a
   // top-level module_call only terminates a body at column 0 (no leading
-  // whitespace); an indented `foo.bar()` is recipe-body shell (CS-0072).
+  // whitespace); an indented `foo.bar()` remains a chore shell command.
   bool at_col0 = true;
   while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
     lexer->advance(lexer, true);
@@ -553,10 +548,10 @@ static bool scan_shell_content(TSLexer *lexer, bool module_call_valid) {
 
   int32_t c = lexer->lookahead;
 
-  // Not shell: empty line, comment, lua prefix, interactive prefix
+  // Not shell: empty line, comment, or Lua prefix.
   if (c == '\n' || c == 0)
     return false;
-  if (c == '#' || c == '>' || c == '@')
+  if (c == '#' || c == '>')
     return false;
   // Note: a leading `"` is allowed — shell lines may begin with a
   // quoted string (e.g. an executable path with spaces). The earlier
@@ -568,8 +563,8 @@ static bool scan_shell_content(TSLexer *lexer, bool module_call_valid) {
 
   bool has_content = false;
 
-  // If starts with an identifier, check for step keywords, body-
-  // termination keywords, and the column-0 module-call dispatch pattern.
+  // If starts with an identifier, check body-termination keywords and the
+  // column-zero module-call dispatch pattern.
   if (iswalpha(c) || c == '_') {
     char word[16];
     int len = 0;
@@ -587,28 +582,56 @@ static bool scan_shell_content(TSLexer *lexer, bool module_call_valid) {
 
     int32_t next = lexer->lookahead;
 
-    // Step keywords — when followed by whitespace or quote, yield to the
-    // grammar's dedicated step rules.
-    if (!word_truncated && is_step_keyword(word, len)) {
-      if (next == ' ' || next == '\t' || next == '"')
-        return false;
-    }
-
-    // Body-termination keywords (recipe/chore/probe/register, App. A.3 /
+    // Body-termination keywords (all top-level declarations, App. A.3 /
     // A.3.2). Returning false yields the WHOLE scan, so tree-sitter resets
     // the lexer to the line start and re-lexes the keyword internally; the
-    // recipe/chore body then reduces and the top-level alternation
+    // chore body then reduces and the top-level alternation
     // dispatches the next declaration.
-    if (!word_truncated && is_body_terminator_keyword(word, len, next)) {
+    if (at_col0 && !word_truncated &&
+        is_body_terminator_keyword(word, len, next)) {
       return false;
+    }
+
+    // Appendix A.3.1 bans recipe step forms in chore bodies. Chore shell
+    // commands may still begin with these ordinary words (`cook dinner`),
+    // so reject only step-shaped openers. Returning false leaves the keyword
+    // for error recovery instead of silently classifying the line as shell.
+    if (!word_truncated &&
+        ((len == 11 && strcmp(word, "ingredients") == 0) ||
+         (len == 4 && strcmp(word, "cook") == 0) ||
+         (len == 4 && strcmp(word, "test") == 0))) {
+      while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
+        lexer->advance(lexer, false);
+      }
+      bool quoted_step = lexer->lookahead == '"' || lexer->lookahead == '\'';
+      bool test_body = len == 4 && strcmp(word, "test") == 0 &&
+                       (lexer->lookahead == '{' || lexer->lookahead == '>');
+      bool cook_lua_output = len == 4 && strcmp(word, "cook") == 0 &&
+                             lexer->lookahead == '(';
+      bool bare_ingredients = false;
+      if (len == 11 && strcmp(word, "ingredients") == 0 &&
+          (iswalpha(lexer->lookahead) || lexer->lookahead == '_')) {
+        while (iswalnum(lexer->lookahead) || lexer->lookahead == '_' ||
+               lexer->lookahead == '.' || lexer->lookahead == '-' ||
+               lexer->lookahead == ':') {
+          lexer->advance(lexer, false);
+        }
+        while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
+          lexer->advance(lexer, false);
+        }
+        bare_ingredients = lexer->lookahead == '\n' || lexer->lookahead == 0;
+      }
+      if (quoted_step || test_body || cook_lua_output || bare_ingredients) {
+        return false;
+      }
     }
 
     // Column-0 top-level module_call (`LUA_IDENT . IDENT_START …`,
     // App. A.4). Detected here, reading the leading IDENT once. A match
     // terminates the body and emits TOP_LEVEL_MODULE_CALL_TEXT; a near-
     // miss (`foo.123`) falls through and the bytes already consumed remain
-    // part of the shell-content token. Indented `foo.bar()` is shell
-    // (CS-0072), hence the `at_col0` gate.
+    // part of the shell-content token. Indented `foo.bar()` is chore shell,
+    // hence the `at_col0` gate.
     if (module_call_valid && at_col0 && !word_truncated && next == '.') {
       if (scan_module_call_tail(lexer)) {
         return true;
@@ -830,7 +853,7 @@ static bool peek_top_level_module_call_shape(TSLexer *lexer) {
 }
 
 // ── Top-level module_call scanner ──────────────────────────────
-// Consumes a column-0 `LUA_IDENT . IDENT_START …` statement, ending
+// Consumes a column-zero `LUA_IDENT . IDENT_START …` statement, ending
 // at a newline encountered with brace_depth == 0. Multi-line forms
 // (App. A.4 + § 2.9) brace-balance using the same opaque-span rules
 // as `scan_lua_block_content`: strings, single-line comments, and
@@ -840,14 +863,11 @@ static bool peek_top_level_module_call_shape(TSLexer *lexer) {
 //
 // Activation conditions:
 //   • valid_symbols[TOP_LEVEL_MODULE_CALL_TEXT] is set, AND
-//   • the cursor is at column 0 (the grammar reaches this only at
-//     toplevel position, so this is guaranteed by structure), AND
+//   • recipe-body indentation has already been consumed by the grammar (or
+//     the call begins at column zero), AND
 //   • the bytes match `LUA_IDENT . IDENT_START` (see peek above).
 static bool scan_top_level_module_call_text(TSLexer *lexer) {
-  // Verify the shape opens here. Note: the lexer's column at entry
-  // is wherever the grammar called us from — `_toplevel_item` is only
-  // reached at column 0 in this grammar, so we don't need an explicit
-  // column check.
+  // Verify the shape opens here.
   if (!iswalpha(lexer->lookahead) && lexer->lookahead != '_') return false;
   // Consume LUA_IDENT.
   while (iswalnum(lexer->lookahead) || lexer->lookahead == '_') {
@@ -1045,12 +1065,9 @@ bool tree_sitter_cook_external_scanner_scan(void *payload, TSLexer *lexer,
                                             const bool *valid_symbols) {
   ShellBlockState *state = (ShellBlockState *)payload;
 
-  // Pure top-level module_call (between declarations, where SHELL_CONTENT
-  // is NOT valid). Inside a recipe/chore body BOTH this and SHELL_CONTENT
-  // are valid reduce-lookaheads; there, module-call detection is folded
-  // into scan_shell_content so the leading identifier is read only once
-  // (a separate pre-pass here would advance the cursor and corrupt the
-  // shell-content scan — the body-termination bug).
+  // A module_call is scanned directly only where shell content is not also
+  // valid. Keeping the guard preserves the single-pass fallback used by
+  // chore shell commands and the established body-termination behavior.
   if (valid_symbols[TOP_LEVEL_MODULE_CALL_TEXT] && !valid_symbols[SHELL_CONTENT]) {
     if (scan_top_level_module_call_text(lexer)) {
       return true;

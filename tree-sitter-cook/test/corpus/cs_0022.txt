@@ -16,6 +16,21 @@ recipe build
       body: (shell_block
         (shell_content)))))
 
+==================
+Declaration-only cook is rejected (CS-0133)
+==================
+
+recipe bad
+    cook "out"
+
+---
+
+(source_file
+  (recipe
+    (explicit_recipe_header (identifier))
+    (ERROR
+      (string))))
+
 ====================
 shell block multi-output indexed
 ====================

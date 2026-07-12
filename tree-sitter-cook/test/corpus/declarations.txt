@@ -160,9 +160,9 @@ register
     (lua_code))
   (recipe
     (explicit_recipe_header
-      name: (identifier))
-    (interactive_command
-      (shell_content)))
+      name: (identifier)))
+  (ERROR
+    (lua_code))
   (register_block
     (lua_code)))
 
@@ -218,11 +218,11 @@ cook_cc.bin("a", { sources = { "a.c" } })
     module: (identifier))
   (recipe
     (explicit_recipe_header
-      name: (identifier))
-    (interactive_command
-      (shell_content)))
-  (top_level_module_call
-    (module_call_text)))
+      name: (identifier)))
+  (ERROR
+    (lua_code)
+    (import_name)
+    (lua_code)))
 
 ================
 Use declaration (CS-0035 LUA_IDENT — accepts bare ident)
@@ -248,8 +248,9 @@ recipe r
 (source_file
   (recipe
     (explicit_recipe_header
-      name: (identifier))
-    (test_step
-      body: (shell_block
-        (shell_content))
-      as_name: (string))))
+      name: (identifier)))
+  (ERROR
+    (shell_block
+      (shell_content))
+    (import_name)
+    (lua_code)))
