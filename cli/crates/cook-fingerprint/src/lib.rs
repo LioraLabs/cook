@@ -158,6 +158,191 @@ pub fn is_terminal_output(s: &str) -> bool {
     has_glob_meta(s) || is_dir_output(s)
 }
 
+pub fn normalize_glob_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {
+    if pattern == "**" {
+        std::borrow::Cow::Borrowed("**/*")
+    } else if pattern.ends_with("/**") {
+        std::borrow::Cow::Owned(format!("{pattern}/*"))
+    } else if pattern.ends_with('/') {
+        std::borrow::Cow::Owned(format!("{pattern}**/*"))
+    } else {
+        std::borrow::Cow::Borrowed(pattern)
+    }
+}
+
+pub fn resolve_ingredient_glob(
+    member_root: &Path,
+    workspace_root: &Path,
+    raw: &str,
+) -> Result<BTreeSet<String>, String> {
+    let anchored = raw.strip_prefix("//");
+    let anchored_escapes = anchored.is_some_and(|pattern| {
+        Path::new(pattern).components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    });
+    if (raw.starts_with('/') && anchored.is_none()) || raw.starts_with("///")
+        || matches!(anchored, Some("") | Some(".."))
+        || anchored_escapes
+    {
+        return Err(format!("malformed workspace anchor in ingredient pattern {raw:?}: use //"));
+    }
+    if anchored.is_none() && lexically_escapes_base(Path::new(raw)) {
+        return Err(format!(
+            "ingredient pattern {raw:?} escapes member root"
+        ));
+    }
+    let (root, pattern) = anchored.map_or((member_root, raw), |p| (workspace_root, p));
+    let full_pattern = root.join(normalize_glob_pattern(pattern).as_ref());
+    let paths = glob::glob(&full_pattern.to_string_lossy())
+        .map_err(|e| format!("invalid ingredient glob {raw:?}: {e}"))?;
+    let resolved = paths
+        .map(|entry| entry.map_err(|e| format!("failed to resolve ingredient glob {raw:?}: {e}")))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|p| !matches!(std::fs::metadata(p), Ok(m) if m.is_dir()))
+        .map(|p| relative_path(member_root, &lexically_normalize(&p)))
+        .collect();
+    Ok(resolved)
+}
+
+fn lexically_escapes_base(path: &Path) -> bool {
+    let mut depth = 0usize;
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(_) => depth += 1,
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir if depth > 0 => depth -= 1,
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => return true,
+        }
+    }
+    false
+}
+
+fn lexically_normalize(path: &Path) -> std::path::PathBuf {
+    let mut normalized = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn relative_path(from: &Path, to: &Path) -> String {
+    let from: Vec<_> = from.components().collect();
+    let to: Vec<_> = to.components().collect();
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let mut relative = std::path::PathBuf::new();
+    for _ in common..from.len() {
+        relative.push("..");
+    }
+    for component in &to[common..] {
+        relative.push(component.as_os_str());
+    }
+    relative.to_string_lossy().replace('\\', "/")
+}
+
+#[cfg(test)]
+mod ingredient_glob_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_glob_directory_forms() {
+        assert_eq!(normalize_glob_pattern("dir/**").as_ref(), "dir/**/*");
+        assert_eq!(normalize_glob_pattern("dir/").as_ref(), "dir/**/*");
+    }
+    #[test]
+    fn resolves_nested_and_workspace_anchored_files() {
+        let t = tempfile::tempdir().unwrap();
+        let m = t.path().join("member");
+        std::fs::create_dir_all(m.join("dir/nested")).unwrap();
+        std::fs::write(m.join("dir/nested/file"), "").unwrap();
+        std::fs::write(t.path().join("root.txt"), "").unwrap();
+        assert_eq!(
+            resolve_ingredient_glob(&m, t.path(), "dir/**").unwrap(),
+            BTreeSet::from(["dir/nested/file".into()])
+        );
+        let rooted = resolve_ingredient_glob(&m, t.path(), "//root.txt").unwrap();
+        assert_eq!(rooted, BTreeSet::from(["../root.txt".into()]));
+        assert!(m.join(rooted.first().unwrap()).is_file());
+    }
+    #[test]
+    fn malformed_anchor_errors() {
+        let t = tempfile::tempdir().unwrap();
+        for pattern in [
+            "/x",
+            "//",
+            "//..",
+            "//../x",
+            "///x",
+            "//dir/../../outside",
+            "//./../outside",
+        ] {
+            let error = resolve_ingredient_glob(t.path(), t.path(), pattern).unwrap_err();
+            assert!(
+                error.contains("malformed workspace anchor"),
+                "{pattern}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn anchored_curdir_component_stays_within_workspace() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join("dir")).unwrap();
+        std::fs::write(t.path().join("dir/file"), "").unwrap();
+        assert_eq!(
+            resolve_ingredient_glob(t.path(), t.path(), "//dir/./file").unwrap(),
+            BTreeSet::from(["dir/file".into()])
+        );
+    }
+
+    #[test]
+    fn member_relative_patterns_cannot_escape_member_root() {
+        let t = tempfile::tempdir().unwrap();
+        for pattern in ["../outside", "dir/../../outside"] {
+            let error = resolve_ingredient_glob(t.path(), t.path(), pattern).unwrap_err();
+            assert!(
+                error.contains("escapes member root"),
+                "{pattern}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn contained_member_parent_component_is_allowed() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join("dir")).unwrap();
+        std::fs::write(t.path().join("file"), "").unwrap();
+        assert_eq!(
+            resolve_ingredient_glob(t.path(), t.path(), "dir/../file").unwrap(),
+            BTreeSet::from(["file".into()])
+        );
+    }
+
+    #[test]
+    fn lexical_aliases_resolve_to_one_path_identity() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join("dir")).unwrap();
+        std::fs::write(t.path().join("file"), "").unwrap();
+        let mut resolved = resolve_ingredient_glob(t.path(), t.path(), "file").unwrap();
+        resolved.extend(resolve_ingredient_glob(t.path(), t.path(), "dir/../file").unwrap());
+        assert_eq!(resolved, BTreeSet::from(["file".into()]));
+    }
+}
+
 /// Reconcile a build-owned directory output (CS-0119) so the subtree rooted at
 /// `working_dir/root` contains exactly `kept` (paths relative to `working_dir`,
 /// in the same form `resolve_glob` returns). Deletes every regular file under the

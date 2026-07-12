@@ -48,6 +48,7 @@ fn workspace_with_shell(recipe: &str, inputs: &[&str]) -> RegisteredWorkspace {
         },
     );
     RegisteredWorkspace {
+        warnings: Vec::new(),
         names: vec![],
         units_by_recipe,
         probes: BTreeMap::new(),
@@ -96,6 +97,7 @@ fn workspace_with(recipes: &[(&str, &[&str])]) -> RegisteredWorkspace {
         );
     }
     RegisteredWorkspace {
+        warnings: Vec::new(),
         names: vec![],
         units_by_recipe,
         probes: BTreeMap::new(),

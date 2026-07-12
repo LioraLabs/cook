@@ -528,7 +528,7 @@ fn test_resolve_ingredients_api() {
     let cook = lua.create_table().unwrap();
     lua.globals().set("cook", cook).unwrap();
 
-    crate::context::register_resolve_ingredients(&lua, dir.path()).unwrap();
+    crate::context::register_resolve_ingredients(&lua, dir.path(), dir.path()).unwrap();
 
     let result: Vec<String> = lua
         .load(r#"return cook.resolve_ingredients({"*.c"}, {"skip.c"})"#)
@@ -1695,6 +1695,35 @@ fn register_surface(
     let lua_src = cook_luagen::generate_with_names_checked(&parsed, &recipe_names)
         .expect("fixture must lower");
     register_cookfile(make_registry(dir), &lua_src, None)
+}
+
+#[test]
+fn registered_static_recipe_warns_once_per_declared_empty_ingredient() {
+    let dir = TempDir::new().unwrap();
+    let registered = register_surface(
+        dir.path(),
+        "recipe build\n    ingredients \"first.none\" \"second.none\"\n    cook \"out.txt\" { touch out.txt }\n",
+    )
+    .unwrap();
+    assert_eq!(registered.warnings, vec![
+        "ingredient \"first.none\" matched 0 files (recipe build)",
+        "ingredient \"second.none\" matched 0 files (recipe build)",
+    ]);
+}
+
+#[test]
+fn registered_dynamic_recipe_helper_repeats_do_not_duplicate_warning() {
+    let dir = TempDir::new().unwrap();
+    let lua = r#"
+cook.recipe("manual", {ingredients = {"missing.*"}, excludes = {}}, function()
+    cook.resolve_ingredients({"missing.*"}, {})
+    cook.resolve_ingredients({"missing.*"}, {})
+end)
+"#;
+    let registered = register_cookfile(make_registry(dir.path()), lua, None).unwrap();
+    assert_eq!(registered.warnings, vec![
+        "ingredient \"missing.*\" matched 0 files (recipe manual)",
+    ]);
 }
 
 #[test]

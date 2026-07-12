@@ -17,7 +17,8 @@ use cli::{Cli, Cmd};
 use error::CookError;
 use pipeline::{
     cmd_affected, cmd_cache_verify, cmd_dag, cmd_emit_lua, cmd_init, cmd_list, cmd_menu, cmd_run,
-    cmd_serve, cmd_test, cmd_why, resolve_project_root,
+    cmd_serve, cmd_test, cmd_why, resolve_project_root, set_invoked_builtin,
+    warn_if_builtin_shadows_recipe,
 };
 
 fn main() {
@@ -85,6 +86,15 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
     // validates in `dispatch_recipe` after stripping the `+` escape.
     if let Some(target) = cmd.as_ref().and_then(|c| c.reserved_target()) {
         reject_reserved_root_target(target)?;
+    }
+    if let Some(name) = cmd.as_ref().and_then(Cmd::built_in_name) {
+        set_invoked_builtin(name);
+    }
+    if matches!(
+        cmd.as_ref(),
+        Some(Cmd::Init | Cmd::Modules(_) | Cmd::Logs(_) | Cmd::EmitLua)
+    ) {
+        warn_if_builtin_shadows_recipe(&globals);
     }
     match cmd {
         None => cmd_run(&globals, "build", &[], None),

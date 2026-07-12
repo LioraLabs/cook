@@ -19,7 +19,7 @@ pub mod why;
 
 pub use registered_workspace::RegisteredWorkspace;
 pub use run::{
-    build_cache_ctx_for_cli, cache_managers_for_cli, run, RunResult, TestScope,
+    build_cache_ctx_for_cli, cache_managers_for_cli, run, OutputGlobWarning, RunResult, TestScope,
 };
 // `cook why` types are consumed through the `cook_engine::why::` module path
 // (CLI renderers, E2E); no flat re-export — one public name per type.

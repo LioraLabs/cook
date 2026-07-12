@@ -21,6 +21,8 @@ use crate::{
 
 pub struct RegisterSessionBuilder {
     working_dir: PathBuf,
+    workspace_root: PathBuf,
+    ingredient_warnings: Rc<RefCell<Vec<String>>>,
     env_vars: Rc<RefCell<HashMap<String, String>>>,
     /// Explicit CLI `--set KEY=VALUE` overrides, kept separate so they can be
     /// re-applied to `cook.env` after the config block runs (CLI wins over
@@ -69,8 +71,11 @@ pub struct RegisterSessionBuilder {
 
 impl RegisterSessionBuilder {
     pub fn new(working_dir: PathBuf, env_vars: HashMap<String, String>) -> Self {
+        let workspace_root = working_dir.clone();
         Self {
             working_dir,
+            workspace_root,
+            ingredient_warnings: Rc::new(RefCell::new(Vec::new())),
             env_vars: Rc::new(RefCell::new(env_vars)),
             cli_overrides: HashMap::new(),
             export_store: Rc::new(RefCell::new(BTreeMap::new())),
@@ -87,6 +92,7 @@ impl RegisterSessionBuilder {
             target_argv: Vec::new(),
         }
     }
+    pub fn with_workspace_root(mut self, root: PathBuf) -> Self { self.workspace_root = root; self }
 
     /// Record explicit `--set KEY=VALUE` overrides. They are re-applied to
     /// `cook.env` after the config-block dispatcher runs, so a config block's
@@ -430,7 +436,7 @@ pub fn register_cookfile(
                 );
 
             // Run recipe context setup (ingredient resolution).
-            setup_recipe_context(&lua, recipe, &builder.working_dir)?;
+            setup_recipe_context(&lua, recipe, &builder.working_dir, &builder.workspace_root, &builder.ingredient_warnings)?;
 
             // The `LuaRegistryKey` doesn't impl Clone, so we materialize the
             // function now and stash it for the call below; the registry
@@ -821,6 +827,7 @@ pub fn register_cookfile(
         units_by_recipe,
         probes,
         final_env,
+        warnings: builder.ingredient_warnings.borrow().clone(),
     })
 }
 
@@ -1760,7 +1767,7 @@ fn install_remaining_apis(
         builder.qualified_prefix.clone(),
         builder.alias_qualified_prefixes.clone(),
     )?;
-    crate::context::register_resolve_ingredients(lua, &builder.working_dir)?;
+    crate::context::register_resolve_ingredients(lua, &builder.working_dir, &builder.workspace_root)?;
     // CS-0101: cook.file_ref — register-phase resolution of `$<file:PATH>`
     // placeholders (hoisted locals emitted by cook-luagen).
     crate::file_ref::register_file_ref(lua, &builder.working_dir)?;

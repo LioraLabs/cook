@@ -55,6 +55,13 @@ pub struct RunResult {
     /// the CLI can report them after the progress renderer has finished.
     pub swept: Vec<std::path::PathBuf>,
     pub kept_modified: Vec<std::path::PathBuf>,
+    pub output_glob_warnings: Vec<OutputGlobWarning>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputGlobWarning {
+    pub pattern: String,
+    pub recipe: String,
 }
 
 /// Split a namespaced recipe name into (prefix, local_name).
@@ -445,6 +452,7 @@ where
             test_results: vec![],
             swept: vec![],
             kept_modified: vec![],
+            output_glob_warnings: vec![],
         });
     }
 
@@ -566,11 +574,50 @@ where
         )
     };
 
+    let output_glob_warnings = collect_output_glob_warnings(registered_workspace, reachable);
     Ok(RunResult {
         test_results,
         swept,
         kept_modified,
+        output_glob_warnings,
     })
+}
+
+fn collect_output_glob_warnings(
+    registered_workspace: &RegisteredWorkspace,
+    reachable: &BTreeSet<String>,
+) -> Vec<OutputGlobWarning> {
+    let mut warnings = Vec::new();
+    for recipe in reachable {
+        let Some(units) = registered_workspace.units_by_recipe.get(recipe) else {
+            continue;
+        };
+        for unit in &units.units {
+            for warning in collect_output_glob_warnings_for_recipe(
+                recipe,
+                &units.working_dir,
+                &unit.output_paths,
+            ) {
+                warnings.push(warning);
+            }
+        }
+    }
+    warnings
+}
+
+fn collect_output_glob_warnings_for_recipe(
+    recipe: &str,
+    working_dir: &Path,
+    output_paths: &[String],
+) -> Vec<OutputGlobWarning> {
+    crate::executor::resolve_output_paths_with_unmatched(output_paths, working_dir)
+        .unmatched_patterns
+        .into_iter()
+        .map(|pattern| OutputGlobWarning {
+            pattern,
+            recipe: recipe.to_string(),
+        })
+        .collect()
 }
 
 /// The on-disk index name a recipe's cache is stored under (`.cook/cache/<name>.toml`): the `recipe_name`
@@ -670,6 +717,22 @@ fn reconcile_outputs(
     all_swept.sort();
     all_kept_modified.sort();
     (all_swept, all_kept_modified)
+}
+
+#[cfg(test)]
+mod output_warning_tests {
+    #[test]
+    fn output_warning_keeps_recipe_attribution() {
+        let tmp = tempfile::tempdir().unwrap();
+        let warnings = super::collect_output_glob_warnings_for_recipe(
+            "assets",
+            tmp.path(),
+            &["dist/**".to_string(), "manifest.json".to_string()],
+        );
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].pattern, "dist/**");
+        assert_eq!(warnings[0].recipe, "assets");
+    }
 }
 
 /// Topologically sort `reachable` against the recipe-level `edges` map.
@@ -877,6 +940,7 @@ mod tests {
     /// pre-DAG-build entry paths (empty targets, finished-event emission).
     fn empty_registered_workspace() -> RegisteredWorkspace {
         RegisteredWorkspace {
+            warnings: Vec::new(),
             names: Vec::new(),
             units_by_recipe: BTreeMap::new(),
             probes: BTreeMap::new(),

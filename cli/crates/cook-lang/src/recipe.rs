@@ -343,6 +343,23 @@ fn apply_base_seal(
     }
 }
 
+fn finalize_base_seal(
+    name: &str,
+    recipe_line: usize,
+    steps: &mut [Step],
+    base: &BTreeSet<String>,
+    unseals: &[(usize, BTreeSet<String>)],
+) -> Result<(), ParseError> {
+    if !base.is_empty() && !steps.iter().any(|step| matches!(step, Step::Cook { .. })) {
+        return Err(ParseError::Parse {
+            line: recipe_line,
+            message: format!("seal on recipe {name}: no cook units to apply to"),
+        });
+    }
+    apply_base_seal(steps, base, unseals);
+    Ok(())
+}
+
 pub(crate) fn parse_recipe(
     name: String,
     deps: Vec<String>,
@@ -380,7 +397,13 @@ pub(crate) fn parse_recipe(
             | Token::ImportDecl { .. }
             | Token::RegisterHeader
             | Token::ProbeHeader { .. } => {
-                apply_base_seal(&mut steps, &base_seal, &cook_unseals);
+                finalize_base_seal(
+                    &name,
+                    recipe_line,
+                    &mut steps,
+                    &base_seal,
+                    &cook_unseals,
+                )?;
                 return Ok((
                     Recipe {
                         name,
@@ -408,7 +431,13 @@ pub(crate) fn parse_recipe(
                         .unwrap_or("");
                     if !raw.starts_with(|c: char| c.is_whitespace()) {
                         // column-0 module call terminates the recipe body.
-                        apply_base_seal(&mut steps, &base_seal, &cook_unseals);
+                        finalize_base_seal(
+                            &name,
+                            recipe_line,
+                            &mut steps,
+                            &base_seal,
+                            &cook_unseals,
+                        )?;
                         return Ok((
                             Recipe {
                                 name,
@@ -623,7 +652,13 @@ pub(crate) fn parse_recipe(
     }
 
     // COOK-171: fold the recipe-level seal baseline into each cook at finalize.
-    apply_base_seal(&mut steps, &base_seal, &cook_unseals);
+    finalize_base_seal(
+        &name,
+        recipe_line,
+        &mut steps,
+        &base_seal,
+        &cook_unseals,
+    )?;
 
     // CS-0019: EOF terminates a body. No "missing end" error in v0.4.
     Ok((

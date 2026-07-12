@@ -163,6 +163,24 @@ pub enum Cmd {
 }
 
 impl Cmd {
+    pub fn built_in_name(&self) -> Option<&'static str> {
+        match self {
+            Cmd::Init => Some("init"),
+            Cmd::Menu => Some("menu"),
+            Cmd::List(_) => Some("list"),
+            Cmd::Modules(_) => Some("modules"),
+            Cmd::Test(_) => Some("test"),
+            Cmd::Dag(_) => Some("dag"),
+            Cmd::Logs(_) => Some("logs"),
+            Cmd::Cache(_) => Some("cache"),
+            Cmd::Serve(_) => Some("serve"),
+            Cmd::EmitLua => Some("emit-lua"),
+            Cmd::Affected(_) => Some("affected"),
+            Cmd::Why(_) => Some("why"),
+            Cmd::Recipe(_) => None,
+        }
+    }
+
     /// The user-supplied CLI target (recipe name / test scope) for
     /// subcommands that accept one, or `None` where no target was given or
     /// the subcommand has no target-typed field.
@@ -359,6 +377,32 @@ mod tests {
             Some(Cmd::Recipe(parts)) => assert_eq!(parts, vec!["+test".to_string()]),
             other => panic!("expected Cmd::Recipe, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn built_in_name_matches_every_subcommand_spelling() {
+        let cases = [
+            (vec!["init"], "init"),
+            (vec!["menu"], "menu"),
+            (vec!["list"], "list"),
+            (vec!["modules", "list"], "modules"),
+            (vec!["test"], "test"),
+            (vec!["dag"], "dag"),
+            (vec!["logs"], "logs"),
+            (vec!["cache", "verify"], "cache"),
+            (vec!["serve"], "serve"),
+            (vec!["emit-lua"], "emit-lua"),
+            (vec!["affected", "--since=HEAD"], "affected"),
+            (vec!["why"], "why"),
+        ];
+
+        for (argv, expected) in cases {
+            let cmd = parse(&argv).cmd.expect("built-in command");
+            assert_eq!(cmd.built_in_name(), Some(expected), "argv={argv:?}");
+        }
+
+        let recipe = parse(&["deploy"]).cmd.expect("external recipe");
+        assert_eq!(recipe.built_in_name(), None);
     }
 
     #[test]

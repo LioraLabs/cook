@@ -200,19 +200,6 @@ fn ensure_output_parent_dirs(work_node: &WorkNode) -> Result<(), String> {
 // allocating for patterns like `*.c` or `src/**/*.c`.
 // ---------------------------------------------------------------------------
 
-fn normalize_glob_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {
-    if pattern == "**" {
-        std::borrow::Cow::Borrowed("**/*")
-    } else if let Some(prefix) = pattern.strip_suffix("/**") {
-        std::borrow::Cow::Owned(format!("{prefix}/**/*"))
-    } else if let Some(prefix) = pattern.strip_suffix('/') {
-        // CS-0119: a directory output `dir/` owns the whole subtree.
-        std::borrow::Cow::Owned(format!("{prefix}/**/*"))
-    } else {
-        std::borrow::Cow::Borrowed(pattern)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // resolve_output_paths — CS-0085 §17.6 glob expansion
 //
@@ -230,12 +217,29 @@ pub(crate) fn resolve_output_paths(
     declared: &[String],
     working_dir: &std::path::Path,
 ) -> Vec<String> {
+    resolve_output_paths_with_unmatched(declared, working_dir).paths
+}
+
+pub(crate) struct ResolvedOutputPaths {
+    pub(crate) paths: Vec<String>,
+    pub(crate) unmatched_patterns: Vec<String>,
+}
+
+pub(crate) fn resolve_output_paths_with_unmatched(
+    declared: &[String],
+    working_dir: &std::path::Path,
+) -> ResolvedOutputPaths {
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::with_capacity(declared.len());
+    let mut unmatched_patterns = Vec::new();
     for entry in declared {
         if cook_fingerprint::is_terminal_output(entry) {
-            let normalized = normalize_glob_pattern(entry);
-            for resolved in cook_fingerprint::resolve_glob(working_dir, normalized.as_ref()) {
+            let normalized = cook_fingerprint::normalize_glob_pattern(entry);
+            let resolved_paths = cook_fingerprint::resolve_glob(working_dir, normalized.as_ref());
+            if resolved_paths.is_empty() && cook_fingerprint::has_glob_meta(entry) {
+                unmatched_patterns.push(entry.clone());
+            }
+            for resolved in resolved_paths {
                 if seen.insert(resolved.clone()) {
                     out.push(resolved);
                 }
@@ -244,7 +248,10 @@ pub(crate) fn resolve_output_paths(
             out.push(entry.clone());
         }
     }
-    out
+    ResolvedOutputPaths {
+        paths: out,
+        unmatched_patterns,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4464,27 +4471,27 @@ mod tests {
 
     #[test]
     fn normalize_glob_pattern_appends_star_after_trailing_star_star() {
-        assert_eq!(super::normalize_glob_pattern("build/**").as_ref(), "build/**/*");
-        assert_eq!(super::normalize_glob_pattern(".next/**").as_ref(), ".next/**/*");
-        assert_eq!(super::normalize_glob_pattern("apps/web/.next/**").as_ref(), "apps/web/.next/**/*");
+        assert_eq!(cook_fingerprint::normalize_glob_pattern("build/**").as_ref(), "build/**/*");
+        assert_eq!(cook_fingerprint::normalize_glob_pattern(".next/**").as_ref(), ".next/**/*");
+        assert_eq!(cook_fingerprint::normalize_glob_pattern("apps/web/.next/**").as_ref(), "apps/web/.next/**/*");
     }
 
     #[test]
     fn normalize_glob_pattern_handles_bare_double_star() {
-        assert_eq!(super::normalize_glob_pattern("**").as_ref(), "**/*");
+        assert_eq!(cook_fingerprint::normalize_glob_pattern("**").as_ref(), "**/*");
     }
 
     #[test]
     fn normalize_glob_pattern_passes_through_non_trailing_double_star() {
-        assert_eq!(super::normalize_glob_pattern("**/lib/*.so").as_ref(), "**/lib/*.so");
-        assert_eq!(super::normalize_glob_pattern("src/**/*.c").as_ref(), "src/**/*.c");
+        assert_eq!(cook_fingerprint::normalize_glob_pattern("**/lib/*.so").as_ref(), "**/lib/*.so");
+        assert_eq!(cook_fingerprint::normalize_glob_pattern("src/**/*.c").as_ref(), "src/**/*.c");
     }
 
     #[test]
     fn normalize_glob_pattern_passes_through_non_glob_patterns() {
-        assert_eq!(super::normalize_glob_pattern("*.c").as_ref(), "*.c");
-        assert_eq!(super::normalize_glob_pattern("file?.txt").as_ref(), "file?.txt");
-        assert_eq!(super::normalize_glob_pattern("build/main.o").as_ref(), "build/main.o");
+        assert_eq!(cook_fingerprint::normalize_glob_pattern("*.c").as_ref(), "*.c");
+        assert_eq!(cook_fingerprint::normalize_glob_pattern("file?.txt").as_ref(), "file?.txt");
+        assert_eq!(cook_fingerprint::normalize_glob_pattern("build/main.o").as_ref(), "build/main.o");
     }
 
     #[test]
@@ -4503,6 +4510,27 @@ mod tests {
         paths.sort();
         assert_eq!(paths, vec!["build/a.o".to_string(), "build/sub/b.o".to_string()],
             "trailing-** normalization should match files at any depth");
+    }
+
+    #[test]
+    fn resolve_output_paths_reports_raw_empty_glob_after_shared_normalization() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let resolved =
+            super::resolve_output_paths_with_unmatched(&["build/**".to_string()], tmp.path());
+        assert!(resolved.paths.is_empty());
+        assert_eq!(resolved.unmatched_patterns, vec!["build/**"]);
+    }
+
+    #[test]
+    fn resolve_output_paths_does_not_report_literal_or_empty_directory_output() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(tmp.path().join("empty-dir")).unwrap();
+        let resolved = super::resolve_output_paths_with_unmatched(
+            &["literal.txt".to_string(), "empty-dir/".to_string()],
+            tmp.path(),
+        );
+        assert_eq!(resolved.paths, vec!["literal.txt"]);
+        assert!(resolved.unmatched_patterns.is_empty());
     }
 
     #[test]

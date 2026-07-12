@@ -83,6 +83,7 @@ mod tests {
 
     fn empty_ws() -> RegisteredWorkspace {
         RegisteredWorkspace {
+            warnings: Vec::new(),
             names: Vec::new(),
             units_by_recipe: BTreeMap::new(),
             probes: BTreeMap::new(),

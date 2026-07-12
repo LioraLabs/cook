@@ -19,6 +19,7 @@ use cook_register::RegisteredRecipePub;
 /// results into a single view. Names are qualified with their import
 /// prefix (root Cookfile uses the empty prefix `""`).
 pub struct RegisteredWorkspace {
+    pub warnings: Vec<String>,
     /// All recipes across all Cookfiles, names qualified with their import prefix.
     pub names: Vec<RegisteredRecipePub>,
     /// Per-recipe captured units, keyed by fully-qualified recipe name.

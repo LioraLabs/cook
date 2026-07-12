@@ -48,6 +48,14 @@ During the register phase, and only within the body of the Lua function register
 
 A conforming implementation MUST NOT expose the `recipe` global during the execute phase; it is a register-phase artefact.
 
+### 21.2.1. Ingredient pattern resolution and empty-expansion diagnostics [#lua.recipe-ingredient-resolution]
+
+Each quoted include pattern on an `ingredients` line is resolved independently. Before matching, a pattern whose final path segment is `**`, or whose spelling ends in `/`, MUST be normalized to the equivalent recursive-files pattern. Thus both forms select regular files recursively below the named directory; they do not contribute the directory itself. After matching, implementations MUST filter out directories, so every entry exposed through `recipe.ingredients` denotes a file.
+
+An ordinary pattern is resolved relative to the Cookfile member that declares the recipe. A pattern with a leading `//` anchor followed by a path is instead resolved relative to the workspace root (§{exec.ws}); the `//` prefix is an anchor and is not part of the matched path. The root-anchored spellings `//`, `//..`, `//../x`, and any spelling beginning with `///` are invalid and MUST be rejected rather than normalized or matched. Any other parent traversal that would escape the pattern's member-relative or workspace-root resolution base MUST likewise be rejected.
+
+For each include pattern, after normalization, matching, and directory filtering—but before applying excludes—a conforming implementation MUST emit exactly one warning attributed to the declaring recipe when that include's expansion contains no files. Exclude patterns never emit an empty-expansion warning. If one or more includes initially resolve to files but the excludes remove every resolved file, the implementation MUST NOT warn merely because the recipe's final ingredient set is empty.
+
 ## 21.3. The `env` alias inside `config_block` bodies [#lua.env-alias]
 
 Within the body of a `config_block` (§{decl.config}), the bare global `env` MUST be bound such that `env` and `cook.env` refer to the same table. Writes through either name MUST be observable through both. The `env` alias is in scope only within `config_block` bodies; it MUST NOT be bound in recipe-body Lua, in cook-step `>{ … }` bodies, in module bodies, or at any other Lua entry point.

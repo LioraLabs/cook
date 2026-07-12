@@ -2028,6 +2028,38 @@ fn disp_recipe_seal_applies_to_cook() {
 }
 
 #[test]
+fn disp_recipe_seal_rejects_test_only_recipe() {
+    let err = parse("recipe verify\n    seal host\n    test { true }\n")
+        .expect_err("a recipe-level seal requires a cook unit");
+    match err {
+        ParseError::Parse { line, message } => {
+            assert_eq!(line, 1);
+            assert!(
+                message.contains("seal on recipe verify: no cook units to apply to"),
+                "got: {message}"
+            );
+        }
+        e => panic!("expected ParseError::Parse, got {e:?}"),
+    }
+}
+
+#[test]
+fn disp_recipe_seal_rejects_otherwise_empty_recipe() {
+    let err = parse("recipe package\n    seal host\n")
+        .expect_err("a recipe-level seal requires a cook unit");
+    match err {
+        ParseError::Parse { line, message } => {
+            assert_eq!(line, 1);
+            assert!(
+                message.contains("seal on recipe package: no cook units to apply to"),
+                "got: {message}"
+            );
+        }
+        e => panic!("expected ParseError::Parse, got {e:?}"),
+    }
+}
+
+#[test]
 fn disp_recipe_seal_order_independent() {
     // a recipe-level `seal` AFTER the cook still applies (declarative scope)
     let cf = parse("recipe build\n    cook \"x.o\" { cc -c x.c }\n    seal host\n").unwrap();

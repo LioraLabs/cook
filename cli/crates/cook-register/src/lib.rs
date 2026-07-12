@@ -363,6 +363,7 @@ pub struct RegisteredCookfile {
     pub units_by_recipe: std::collections::BTreeMap<String, cook_contracts::RecipeUnits>,
     pub probes: std::collections::BTreeMap<String, cook_contracts::ProbeUnit>,
     pub final_env: std::collections::BTreeMap<String, String>,
+    pub warnings: Vec<String>,
 }
 
 /// Public summary of one registered recipe. Distinct from the internal

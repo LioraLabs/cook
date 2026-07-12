@@ -13,7 +13,7 @@
 //! directly anymore — that's the engine's concern.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::mpsc;
+use std::sync::{OnceLock, mpsc};
 
 use cook_engine::pipeline::{self, ParsedCookfile, PipelineError, RegisterMode, Workspace};
 use cook_engine::RegisteredWorkspace;
@@ -566,6 +566,7 @@ fn run_with_progress(
                 test_results: vec![],
                 swept: vec![],
                 kept_modified: vec![],
+                output_glob_warnings: vec![],
             });
         }
         edges.retain(|k, _| reachable.contains(k));
@@ -608,6 +609,12 @@ fn run_with_progress(
     // released the terminal, so the lines don't fight the progress display.
     if let Ok(r) = &result {
         report_reconciliation(globals, &r.swept, &r.kept_modified);
+        for warning in &r.output_glob_warnings {
+            eprintln!(
+                "cook: warning: output \"{}\" matched 0 files (recipe {})",
+                warning.pattern, warning.recipe
+            );
+        }
     }
 
     result.map_err(engine_error_to_cook_error)
@@ -680,6 +687,13 @@ fn build_registered_workspace(
         /*cache_ctx*/ None,
     )
     .map_err(pipeline_error_to_cook_error)?;
+    for warning in &registered.warnings { eprintln!("cook: warning: {warning}"); }
+    warn_if_invoked_builtin_is_registered(
+        registered
+            .names
+            .iter()
+            .map(|name| (name.name.as_str(), &name.kind)),
+    );
     Ok((workspace, registered))
 }
 
@@ -1225,6 +1239,43 @@ fn collect_workspace_recipe_names(
     )
 }
 
+static INVOKED_BUILTIN: OnceLock<&'static str> = OnceLock::new();
+
+pub fn set_invoked_builtin(name: &'static str) {
+    let _ = INVOKED_BUILTIN.set(name);
+}
+
+fn warn_if_invoked_builtin_is_registered<'a>(
+    names: impl IntoIterator<Item = (&'a str, &'a cook_engine::cook_register::RecipeKind)>,
+) {
+    let Some(name) = INVOKED_BUILTIN.get().copied() else {
+        return;
+    };
+    if names.into_iter().any(|(candidate, kind)| {
+        candidate == name && matches!(kind, cook_engine::cook_register::RecipeKind::Recipe)
+    }) {
+        eprintln!("cook: notice: a recipe named '{name}' exists; use cook +{name} to build it");
+    }
+}
+
+pub fn warn_if_builtin_shadows_recipe(globals: &Globals) {
+    let workspace_root = match pipeline::resolve_workspace_root(&globals.file, globals.root.clone())
+    {
+        Ok(root) => root,
+        Err(_) => return,
+    };
+    let workspace = match Workspace::load(&globals.file, &workspace_root, &globals.set) {
+        Ok(workspace) => workspace,
+        Err(_) => return,
+    };
+    let Ok(names) = pipeline::list_workspace_names(&workspace, None, &globals.set) else {
+        return;
+    };
+    warn_if_invoked_builtin_is_registered(
+        names.iter().map(|(name, kind, _)| (name.as_str(), kind)),
+    );
+}
+
 // ---------------------------------------------------------------------------
 // cmd_menu
 // ---------------------------------------------------------------------------
@@ -1241,6 +1292,9 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
     let workspace = load_workspace(globals)?;
     let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
+    warn_if_invoked_builtin_is_registered(
+        names.iter().map(|(name, kind, _)| (name.as_str(), kind)),
+    );
 
     for (name, kind, params) in &names {
         let suffix = if params.is_empty() {
@@ -1297,6 +1351,9 @@ pub fn cmd_list(globals: &Globals, args: &crate::cli::ListArgs) -> Result<(), Co
     let workspace = load_workspace(globals)?;
     let names = pipeline::list_workspace_names(&workspace, /*config*/ None, &globals.set)
         .map_err(pipeline_error_to_cook_error)?;
+    warn_if_invoked_builtin_is_registered(
+        names.iter().map(|(name, kind, _)| (name.as_str(), kind)),
+    );
 
     for (name, kind, _params) in names {
         let is_chore = matches!(kind, cook_engine::cook_register::RecipeKind::Chore);

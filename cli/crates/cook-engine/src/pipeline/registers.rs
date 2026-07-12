@@ -227,6 +227,7 @@ pub fn register_workspace(
         Arc::new(std::sync::Mutex::new(BTreeMap::new()));
 
     let mut ws = RegisteredWorkspace {
+        warnings: Vec::new(),
         names: Vec::new(),
         units_by_recipe: BTreeMap::new(),
         probes: BTreeMap::new(),
@@ -259,6 +260,7 @@ pub fn register_workspace(
         let mut builder =
             member_base_builder(member, &prefix, is_root, config, env_overrides)?
                 .with_shared_terminal_outputs(shared_outputs.clone())
+                .with_workspace_root(workspace.workspace_root.clone())
                 .with_shared_member_outputs(shared_member_outputs.clone())
                 .with_alias_dirs(alias_dirs.clone())
                 .with_alias_qualified_prefixes(alias_qp.clone())
@@ -389,6 +391,7 @@ fn merge_into(
     alias_qualified_prefixes: &BTreeMap<String, String>,
     rc: cook_register::RegisteredCookfile,
 ) {
+    ws.warnings.extend(rc.warnings.iter().cloned());
     let qualify = |name: &str| {
         if prefix.is_empty() {
             name.to_string()
@@ -527,6 +530,33 @@ mod tests {
             workspace_root: dir.to_path_buf(),
             warnings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn register_workspace_preserves_ingredient_warning_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = workspace_of_one(
+            dir.path(),
+            r#"
+                cook.recipe("first", {ingredients = {"a.none"}, excludes = {}}, function() end)
+                cook.recipe("second", {ingredients = {"b.none"}, excludes = {}}, function() end)
+            "#,
+        );
+        let registered = register_workspace(
+            &workspace,
+            None,
+            &[],
+            RegisterMode::Enumerate,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            registered.warnings,
+            vec![
+                "ingredient \"a.none\" matched 0 files (recipe first)",
+                "ingredient \"b.none\" matched 0 files (recipe second)",
+            ]
+        );
     }
 
     /// SHI-222 Phase 5 Task 5.6: `register_workspace` must surface
