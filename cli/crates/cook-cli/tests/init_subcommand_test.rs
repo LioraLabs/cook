@@ -1,10 +1,10 @@
 //! Integration tests for `cook init` (the starter-project scaffold).
 //!
-//! `cmd_init` (cli/crates/cook-cli/src/pipeline.rs) writes a starter
-//! Cookfile plus `notes/one.md` / `notes/two.md` sample ingredients, then
-//! merges a Cook-managed `.gitignore` section. It guards the notes seeding
-//! on `if !notes.exists()` — so a pre-existing `notes/` dir (even with just
-//! one file in it) short-circuits ALL seeding, not just the missing file.
+//! `cmd_init` (cli/crates/cook-cli/src/pipeline.rs) writes a deliberately
+//! minimal starter Cookfile — one `build` recipe that produces a single
+//! cached artifact (`build/hello.txt`) plus a `clean` chore — and merges a
+//! Cook-managed `.gitignore` section. It seeds no sample inputs, and it
+//! refuses to overwrite an existing Cookfile.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -36,7 +36,7 @@ fn run_cook(dir: &Path, args: &[&str]) -> std::process::Output {
 }
 
 #[test]
-fn init_seeds_starter_project_and_builds_clean() {
+fn init_scaffolds_builds_and_cleans() {
     let tmp = TempDir::new().expect("tempdir");
 
     let init_out = run_cook(tmp.path(), &["init"]);
@@ -48,14 +48,6 @@ fn init_seeds_starter_project_and_builds_clean() {
     );
 
     assert!(tmp.path().join("Cookfile").exists(), "Cookfile must be created");
-    assert!(
-        tmp.path().join("notes/one.md").exists(),
-        "notes/one.md must be seeded"
-    );
-    assert!(
-        tmp.path().join("notes/two.md").exists(),
-        "notes/two.md must be seeded"
-    );
 
     // Cache-isolate before running the default build so the test never
     // touches the shared artifact store.
@@ -70,45 +62,47 @@ fn init_seeds_starter_project_and_builds_clean() {
         String::from_utf8_lossy(&build_out.stderr),
     );
 
+    let artifact = tmp.path().join("build/hello.txt");
     assert!(
-        tmp.path().join("out/one.html").exists(),
-        "out/one.html must be produced by the starter build"
+        artifact.exists(),
+        "build/hello.txt must be produced by the starter build"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&artifact).unwrap().trim(),
+        "built with cook",
+        "the starter artifact should say 'built with cook'"
+    );
+
+    // The `clean` chore removes the build output.
+    let clean_out = run_cook(tmp.path(), &["clean"]);
+    assert!(
+        clean_out.status.success(),
+        "cook clean failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&clean_out.stdout),
+        String::from_utf8_lossy(&clean_out.stderr),
     );
     assert!(
-        tmp.path().join("out/two.html").exists(),
-        "out/two.html must be produced by the starter build"
+        !tmp.path().join("build").exists(),
+        "cook clean must remove build/"
     );
 }
 
-/// COOK-init no-clobber: if `notes/` already exists (even partially
-/// populated), `cook init` must not overwrite or touch it. `cmd_init`
-/// guards the entire seeding block on `!notes.exists()`, so a pre-existing
-/// notes/ dir means NO seeding happens at all (not even for missing files).
+/// `cook init` must never clobber an existing Cookfile: it errors out and
+/// leaves the file untouched.
 #[test]
-fn init_does_not_clobber_pre_existing_notes_dir() {
+fn init_refuses_to_overwrite_existing_cookfile() {
     let tmp = TempDir::new().expect("tempdir");
-    std::fs::create_dir_all(tmp.path().join("notes")).unwrap();
-    let sentinel = "# My Own Note\n- do not overwrite me\n";
-    std::fs::write(tmp.path().join("notes/one.md"), sentinel).unwrap();
+    let sentinel = "recipe mine\n    cook \"o.txt\" { echo hi > $<out> }\n";
+    std::fs::write(tmp.path().join("Cookfile"), sentinel).unwrap();
 
     let out = run_cook(tmp.path(), &["init"]);
     assert!(
-        out.status.success(),
-        "cook init failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
+        !out.status.success(),
+        "cook init must fail when a Cookfile already exists"
     );
-
-    let contents = std::fs::read_to_string(tmp.path().join("notes/one.md")).unwrap();
     assert_eq!(
-        contents, sentinel,
-        "cook init must not overwrite an existing notes/one.md"
-    );
-
-    // The guard is on the whole notes/ dir existing, not per-file: two.md
-    // must NOT have been seeded either, since notes/ already existed.
-    assert!(
-        !tmp.path().join("notes/two.md").exists(),
-        "cook init must not seed notes/two.md when notes/ already existed"
+        std::fs::read_to_string(tmp.path().join("Cookfile")).unwrap(),
+        sentinel,
+        "cook init must not overwrite an existing Cookfile"
     );
 }
