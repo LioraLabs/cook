@@ -384,6 +384,48 @@ cook init
 cook
 ```
 
+## Tab completion
+
+Completion is served by the `cook` binary itself, so it always matches the
+Cookfile in front of you: it completes your recipes and chores, not just the
+built-in subcommands. Add one line to your shell's startup file:
+
+```sh
+# ~/.config/fish/config.fish
+COMPLETE=fish cook | source
+
+# ~/.bashrc
+source <(COMPLETE=bash cook)
+
+# ~/.zshrc
+source <(COMPLETE=zsh cook)
+```
+
+`elvish` and `powershell` work the same way. Then:
+
+```console
+$ cook <TAB>
+build     recipe
+deploy    recipe
+clean     chore
+menu      List all recipes (and chores) in the workspace
+...
+
+$ cook build @<TAB>
+@release  preset
+```
+
+Completion knows the things that are easy to get wrong by hand. A recipe whose
+name collides with a built-in subcommand is offered `+`-escaped — `cook +test`
+builds your recipe, `cook test` runs the test runner — so the escape is
+discoverable instead of a surprise. `cook test <TAB>` offers recipes and
+namespaces but never chores, because a chore is not a valid test scope.
+
+Completing runs your Cookfile's register phase — the same work as `cook list`,
+a few milliseconds, no recipe bodies and no probe queries. In a directory with
+no Cookfile, or one that does not parse, completion falls back to the built-in
+subcommands rather than reporting an error.
+
 ## Keep exploring
 
 - [The Cook Manual](document.md) is the complete, read-top-to-bottom guide to the

@@ -1,6 +1,7 @@
 //! cook — the user-facing binary for the Cook build system.
 
 mod cli;
+mod completion;
 mod error;
 mod iso8601;
 mod pipeline;
@@ -22,6 +23,10 @@ use pipeline::{
 };
 
 fn main() {
+    // Must precede argument parsing: when the shell is asking for candidates
+    // the argv is a completion request, not a command, and this never returns.
+    completion::complete();
+
     let version_string: &'static str = Box::leak(Box::new(format!(
         "{} (Cook Standard v{})",
         env!("CARGO_PKG_VERSION"),
