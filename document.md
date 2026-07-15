@@ -1,0 +1,643 @@
+# The Cook Manual
+
+The complete guide to the Cookfile language and the `cook` CLI. This is the
+friendly, read-top-to-bottom reference; the [Cook Standard](standard/) is the
+authoritative formal specification, and where the two disagree, the Standard
+wins.
+
+Every Cookfile snippet below is real v1.0 syntax.
+
+## Contents
+
+1. [Installation](#installation)
+2. [Your first recipe](#your-first-recipe)
+3. [Recipes and dependencies](#recipes-and-dependencies)
+4. [Ingredients and the cook step](#ingredients-and-the-cook-step)
+5. [Tests](#tests)
+6. [Chores](#chores)
+7. [Configuration](#configuration)
+8. [Probes and data-driven fan-out](#probes-and-data-driven-fan-out)
+9. [Caching and cache trust](#caching-and-cache-trust)
+10. [Dropping into Lua](#dropping-into-lua)
+11. [Modules and composition](#modules-and-composition)
+12. [The cook CLI](#the-cook-cli)
+
+---
+
+## Installation
+
+`cook` is a single Rust binary with a bundled Lua runtime and a bundled LuaRocks.
+No package manager to fight, no system Lua to match, no separate server.
+
+Linux and macOS:
+
+```sh
+curl -fsSL https://getcook.sh | sh
+```
+
+This installs a self-contained tree under `~/.cook/` (the `cook` binary plus a
+bundled Lua 5.4 and LuaRocks) and puts `cook` on your `PATH` via `~/.cook/bin`.
+Point it elsewhere with `COOK_INSTALL_DIR=/opt/cook`. To update, re-run the same
+command — the script is idempotent and only replaces the tree if you're behind.
+
+From source:
+
+```sh
+cargo install --locked --path cli/crates/cook-cli
+```
+
+Verify:
+
+```sh
+cook --version
+```
+
+Per-project state lives in a `.cook/` directory (the content-addressed cache and
+build logs). It's safe to delete — the next build repopulates it — and `cook
+init` writes a `.gitignore` that keeps it out of version control. To remove cook
+entirely: `rm -rf ~/.cook`.
+
+## Your first recipe
+
+```sh
+mkdir hello-cook && cd hello-cook
+cook init
+```
+
+`cook init` drops a minimal starter `Cookfile` and a `.gitignore`. The Cookfile
+is deliberately tiny:
+
+```
+recipe build
+    cook "build/hello.txt" { echo "built with cook" > $<out> }
+
+chore clean
+    rm -rf build
+```
+
+Run it:
+
+```sh
+cook build      # or just `cook` — with no name, cook runs the recipe called `build`
+cook            # again — cached, zero work
+cook clean      # remove the build output
+```
+
+A **recipe** is a named bundle of work. It starts with the keyword `recipe`, a
+name, and (optionally) a colon-separated list of dependencies. The indented body
+below *declares* the work: here, a single `cook` step naming an output
+(`build/hello.txt`) and the command that produces it. Add an `ingredients` line
+to build from input files, as the next sections show.
+
+A recipe body is **declarative** — a list of inputs and outputs, not a script.
+The step kinds it may contain are `ingredients`, `cook`, `test`, `seal`, and
+module calls. A loose shell command (`echo hi` on its own line) is *not* one of
+them: imperative, run-every-time commands belong in a [chore](#chores). This is
+the one thing to unlearn if you're coming from `make` or `npm scripts`.
+
+### Two phases: register, then execute
+
+When you run `cook build`, cook does two distinct things. First it **registers**
+the recipe — it runs the body once, on a single Lua VM, in capture mode, to
+*record* the work to be done (it doesn't run the `echo` yet, it records a unit
+that says "later, run this command"). Then it builds a dependency graph and
+**executes** the units. When you read a Cookfile, you're reading a plan, not a
+script. This two-phase model is what makes the caching and the dependency graph
+possible.
+
+Handy from day one:
+
+```sh
+cook menu       # list every recipe and chore in the workspace
+```
+
+## Recipes and dependencies
+
+The colon in a recipe header declares dependencies:
+
+```
+recipe a
+    ingredients "a/*.txt"
+    cook "out/a.txt" { cat $<in> > $<out> }
+
+recipe b: a
+    ingredients "b/*.txt"
+    cook "out/b.txt" { cat $<in> > $<out> }
+
+recipe c: a b
+    cook "out/c.txt" { cat out/a.txt out/b.txt > $<out> }
+```
+
+`b` depends on `a`; `c` depends on both. Run `cook c` and cook walks the graph,
+runs each recipe at most once, and respects the order. A recipe with only
+dependencies and no body of its own is fine too (`recipe all: a b c`) — a common
+way to group targets.
+
+**Parallel where it can be.** Independent recipes run concurrently; the default
+parallelism is your CPU count, overridable with `-j`:
+
+```sh
+cook -j 1 c     # serial
+cook -j 8 c     # cap at 8
+```
+
+**Cycles are an error**, caught during graph construction before any work runs.
+
+**The default recipe** is `build` — bare `cook` runs it. If a recipe name
+collides with a subcommand (`init`, `menu`, `list`, `modules`, `test`, `dag`,
+`logs`, `cache`, `serve`, `emit-lua`, `affected`, `why`), the subcommand wins;
+prefix the recipe with `+` to force it: `cook +test` runs the recipe named
+`test`, `cook test` runs the test runner.
+
+**Namespacing across Cookfiles** is done with `import`, not dotted names. A recipe
+declared in one Cookfile always has a single, undotted name; dots appear only at
+*reference* sites and route through an import alias:
+
+```
+import backend  ./backend
+import frontend ./frontend
+
+recipe ship: backend.build frontend.build
+    cook "out/release.tar" { tar cf $<out> dist }
+```
+
+`recipe backend.build` at a declaration site is a parse error — put `recipe
+build` in `backend/Cookfile` and import it. (More on composition in
+[Modules and composition](#modules-and-composition).)
+
+## Ingredients and the cook step
+
+Real builds have a shape: take input files, transform each, produce outputs,
+don't redo the transform if nothing changed. `ingredients` and `cook` describe
+exactly that.
+
+**`ingredients`** declares the input file set. Patterns are quoted globs; a
+recipe may have at most one `ingredients` line. Combine includes and excludes
+(exclude is `!` immediately followed by a quoted pattern):
+
+```
+recipe lib
+    ingredients "src/*.c" !"src/scratch.c"
+    cook "build/libmath.a" { ar rcs $<out> $<in> }
+```
+
+**The `cook` step** produces declared outputs from a command. Its shape depends
+on the output pattern:
+
+- **One-to-one** — the output pattern contains an input accessor, so cook
+  iterates one unit per ingredient (runnable in parallel):
+
+  ```
+  recipe compile
+      ingredients "src/*.c"
+      cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
+  ```
+
+- **Many-to-one** — no input accessor in the output, so one unit consumes every
+  ingredient (`$<in>` expands to all of them, space-separated):
+
+  ```
+  recipe archive
+      ingredients "build/*.o"
+      cook "build/libmath.a" { ar rcs $<out> $<in> }
+  ```
+
+**Chaining steps into a pipeline.** A recipe can hold several `cook` steps, and
+each step's `$<in>` is the *previous* step's output. That's how you express a
+pipeline in one recipe, with every step cached independently:
+
+```
+recipe assets
+    ingredients "images/*.png"
+    cook "build/$<in.stem>.webp" { cwebp -q 80 $<in> -o $<out> }   # one WebP per image
+    cook "build/manifest.txt"    { printf '%s\n' $<in> > $<out> }  # $<in> = those WebPs
+```
+
+Edit one image and cook re-encodes exactly that WebP, then rebuilds the manifest
+that consumes it — nothing else runs.
+
+### Placeholders
+
+Inside output patterns and `{ ... }` bodies, `$<...>` placeholders expand. They
+were chosen so they never collide with shell syntax — `$VAR`, `${VAR}`, brace
+expansion, `awk '{print $1}'` all pass through untouched; only `$<...>` is
+substituted. A typo'd placeholder is a load-time error, never a silent empty
+string.
+
+| Placeholder | Meaning |
+|---|---|
+| `$<in>` | the current input (one item in a one-to-one step; all of them in many-to-one) |
+| `$<out>` | the current output |
+| `$<out_1>`, `$<out_2>` | the Nth declared output, for multi-output steps |
+| `$<in.stem>` | a path accessor on the input — `stem`, `name`, `ext`, or `dir` |
+| `$<other>` | another recipe's outputs, space-joined (also records the dependency edge) |
+
+The four **path accessors** on `src/sub/foo.tar.gz`: `stem` → `foo.tar`, `name` →
+`foo.tar.gz`, `ext` → `.gz`, `dir` → `src/sub`.
+
+**Multiple outputs** from one command are declared with multiple patterns and
+referenced by index:
+
+```
+recipe wasm
+    ingredients "src/lib.rs"
+    cook "out/app.js" "out/app.wasm" {
+        wasm-pack build
+        cp pkg/app.js $<out_1>
+        cp pkg/app.wasm $<out_2>
+    }
+```
+
+**Referencing another recipe's output** with a bare `$<name>` both substitutes
+its outputs and records the dependency — so you write the reference *or* an
+explicit `: dep`, not both (writing both warns):
+
+```
+recipe compile
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" { gcc -c $<in> -o $<out> }
+
+recipe link
+    cook "build/app" { gcc $<compile> -o $<out> }
+```
+
+Edit one `.c` file, run `cook link` again, and only the affected `.o` rebuilds,
+then the link.
+
+## Tests
+
+A `test` step checks the things a `cook` step produced. It declares no outputs;
+its exit code is the verdict. A `test` inherits the preceding `cook` step's
+outputs as its inputs (or the recipe's ingredients if no `cook` ran):
+
+```
+recipe check
+    ingredients "src/*.c"
+    cook "build/$<in.stem>" { gcc $<in> -o $<out> }
+    test { ./$<in> --selftest }
+```
+
+A failure in one test unit doesn't cancel the others — cook collects every
+failure and reports them together. There are no test modifiers; to write a check
+that's *expected* to fail, invert the command with `!`:
+
+```
+recipe lint
+    ingredients "src/*.c"
+    test { ! grep -q TODO $<in> }
+```
+
+`cook test` runs every test in the workspace and aggregates a pass/fail summary.
+Because test results are content-keyed to the outputs they consume, unchanged
+code doesn't re-run its tests.
+
+```sh
+cook test                    # everything
+cook test apps.web           # scope to a namespace
+cook test --fail-fast        # stop on first failure
+cook test --rerun-failed     # re-run only what failed last time
+cook test --report-junit results.xml
+```
+
+## Chores
+
+Recipes build files. **Chores** are for everything else — clean the tree, run the
+formatter, deploy, open a picker. They have no ingredients, no outputs, and no
+cache: a chore runs every time you invoke it, by design. Shell commands in a
+chore body are interactive by default (they get a real TTY), so `fzf` and friends
+just work.
+
+```
+chore clean
+    rm -rf build .cook
+
+chore fmt
+    cargo fmt
+```
+
+Chores take **parameters** — required, defaulted, or variadic — which bind as
+shell variables and `$<...>` placeholders in the body:
+
+```
+chore deploy target host="prod.example.com"
+    rsync -a out/ "$<host>:$<target>"
+```
+
+```sh
+cook deploy /var/www                 # host defaults to prod.example.com
+cook deploy /var/www host=staging    # override
+```
+
+Chores and recipes depend on each other with the same colon syntax. `cook play`
+below builds first, then drops you into the binary:
+
+```
+chore play: build
+    ./build/app
+```
+
+## Configuration
+
+A `config` block declares knobs. The base block is unnamed; **named overlays** are
+applied on top with `@name` at invocation. Only values under `env.*` are visible
+to `$<...>` placeholders, and every consulted one folds into the cache key.
+
+```
+config
+    env.MODE = os.getenv("MODE") or "debug"
+
+config release
+    env.MODE = "release"
+
+recipe build
+    ingredients "src/*.c"
+    cook "build/$<in.stem>.o" { gcc -c -DMODE=$<MODE> $<in> -o $<out> }
+```
+
+```sh
+cook build              # MODE=debug (the base)
+cook build @release     # apply the `release` overlay → MODE=release
+cook --set MODE=tiny build   # a one-shot override that wins over everything
+```
+
+Flipping a declared value cleanly busts only the units that consumed it. A
+`$<KEY>` for a variable you never declared is a hard error — no accidental shell
+leaks.
+
+## Probes and data-driven fan-out
+
+A **probe** is a named, cached value that the build graph can see: the output of a
+shell command, the contents of a JSON file, or a Lua computation. Probes let a
+build's *shape* be driven by data.
+
+```
+probe target_list
+    ingredients "data/targets.txt"
+    lines { cat data/targets.txt }        # array, one per line
+
+probe services
+    ingredients "data/services.json"
+    json { cat data/services.json }        # structured data
+```
+
+Producer forms: bare `{ shell }` (a string), `lines { shell }` (an array),
+`json { shell }` (structured), and `>{ lua }` (a Lua value that can read upstream
+probes via `cook.probes.get`). A `tools { cc }` probe records the resolved
+identity of an executable; an `envs { HOSTNAME }` probe records environment
+values. Probes can depend on other probes with the same colon syntax.
+
+The payoff is **fan-out**: point a recipe's `ingredients` at a probe (bare name,
+not a quoted glob) and the recipe runs once per member. Record fields are
+addressable as `$<in.FIELD>`:
+
+```
+recipe render
+    ingredients services
+    cook "build/$<in.name>.conf" {
+        printf 'url = %s\n' "$<in.url>" > $<out>
+    }
+```
+
+Add one entry to `services.json` and exactly one new unit builds; remove one and
+cook sweeps its orphaned output. A downstream recipe that iterates the *same*
+probe can join to a sibling's per-member output with `$<render[in]>`:
+
+```
+recipe summary: render
+    ingredients services
+    cook "build/$<in.name>.txt" { cat $<render[in]> > $<out> }
+```
+
+This is the shape behind eval suites, per-package monorepo tasks, and any
+"one unit per record" build.
+
+## Caching and cache trust
+
+The cache is cook's center of gravity. Every cacheable unit — a step with at
+least one declared output — has exactly **one** content-addressed key, computed
+from what you declared: the input contents, the command text or Lua chunk, the
+output paths, any consulted environment values, and any sealed probe values. The
+local cache and the shared, cross-machine store are addressed by that *same* key,
+so a teammate or a CI runner reuses your artifact if and only if it recomputes
+the same key.
+
+The engine folds in **only what the author declared**. It infers no machine
+identity, toolchain, or locale of its own — which keeps keys portable by default,
+and means correctness rests on you declaring your real inputs. Under-declaring is
+the failure mode, so cook gives you tools to see the key:
+
+- **`cook why [recipe]`** — read-only. Prints each unit's key and every
+  determinant behind it, with hit/miss status. On a shared miss it diffs against
+  what the cached artifact was built from, so a miss is always attributable.
+- **`cook cache verify`** — re-runs cached steps and reports any byte divergence
+  under a matching key. A diagnostic for catching undeclared determinants (run it
+  in CI on a different host), explicitly *not* a trust gate.
+
+Per-step **dispositions** control keying and sharing. Seal a determinant into the
+key with a `seal` line (or trailing `seal`); tune sharing with a trailing keyword:
+
+```
+probe compiler
+    tools { cc }
+
+recipe app
+    ingredients "src/*.c"
+    seal compiler                               # fold the compiler identity into the key
+    cook "build/$<in.stem>.o" { cc -c $<in> -o $<out> }
+
+recipe misc
+    cook "build/scratch.txt" { ./gen > $<out> } local    # cached locally, never shared
+    cook "build/pinned.txt"  { ./gen > $<out> } pinned   # fetch-only; a cold miss is an error
+    cook "build/blurb.txt"   { llm gen > $<out> } nondet # non-reproducible; reuse the recording
+```
+
+Unannotated steps publish after a run and fetch by key before running. Restored
+bytes are re-fingerprinted before use, so a corrupted or tampered store entry is
+treated as a miss and rebuilt. `--no-publish` (or `COOK_NO_PUBLISH=1`) makes a
+client read-only: it still fetches, never uploads.
+
+## Dropping into Lua
+
+Most Cookfiles are pure surface syntax. Underneath, every Cookfile compiles to
+Lua, and you can reach for that API when the surface can't express what you need.
+`cook emit-lua` prints exactly what a Cookfile lowers to.
+
+Cook runs in two phases, and Lua appears in both:
+
+- **Execute-phase Lua** is a `>{ ... }` body on a `cook`/`test`/`probe` step (or a
+  `>` step inside a chore). It runs when the unit runs, with `input`/`output` (or
+  `inputs`/`outputs`) bound to the unit's resolved I/O:
+
+  ```
+  recipe upper
+      ingredients "src/*.txt"
+      cook "build/$<in.stem>.txt" >{
+          local text = fs.read(input)
+          fs.write(output, text:upper())
+      }
+  ```
+
+- **Register-phase Lua** in a recipe body is a bare module call — `cook.add_unit
+  {...}`, `cook.step_group(...)`, or `mymod.fn(...)`. For loops or locals, put the
+  code in a top-level `register` block or a module function:
+
+  ```
+  register
+      for _, src in ipairs(fs.glob("src/*.c")) do
+          cook.add_unit({
+              inputs  = { src },
+              output  = "build/" .. path.stem(src) .. ".o",
+              command = "gcc -c " .. src .. " -o build/" .. path.stem(src) .. ".o",
+          })
+      end
+  ```
+
+`cook.add_unit` is the lowest level — the surface `cook` step desugars to it. Its
+fields include `inputs`, `output`/`outputs`, `command` (or `lua_code`),
+`discovered_inputs` (for compiler `.d` depfiles, folded into the key), and the
+cache-trust fields `probes`, `seal`, `sharing`, and `record`. Fields are strictly
+typed: a wrong-typed field is a hard error, never coerced. Use `cook.sh(cmd)` when
+you need a command's output *now* in your Lua (feature detection, a git tag);
+it runs immediately and returns stdout.
+
+The `>>` register prefix and the `@` interactive prefix that older docs mention
+were removed — register-phase Lua is a bare module call, and chore shell is
+interactive by default.
+
+## Modules and composition
+
+Two complementary tools:
+
+- **`use`** loads a Lua module that defines helper functions in scope.
+- **`import`** pulls another Cookfile in under an alias, so its recipes and chores
+  become `alias.name`.
+
+### Blessed modules
+
+cook resolves modules through LuaRocks against
+[`rocks.usecook.com`](https://rocks.usecook.com). Declare them in a `cook.toml`
+next to your Cookfile:
+
+```toml
+[modules]
+cook_cc = "*"
+```
+
+```sh
+cook modules install          # everything in cook.toml; pins cook.lock (commit it)
+cook modules install cook_cc  # add one
+cook modules update           # bump within constraints
+```
+
+Then `use` the module and call its target makers (a top-level `use` plus a
+column-0 module call is all it takes):
+
+```
+use cook_cc
+
+cook_cc.bin("game", {
+    sources = { "src/main.c" },
+    needs   = { "SDL3" },
+})
+```
+
+Today's roster:
+
+- **`cook_cc`** — the flagship. C and C++ native builds: `cc.bin` / `cc.lib` /
+  `cc.shared` target makers, pkg-config and curated discovery, transitive
+  link/include propagation, `compile_commands.json` generation, and
+  autoconf-style feature checks. This is the reference for what a real module
+  looks like.
+- **`cook_pnpm`** — pnpm-driven JS/TS monorepos: Turborepo-style task pipelines
+  running on cook's content-addressed graph, so a JS workspace gets the same
+  caching and unified graph as everything else.
+- **`cook_ai`** — a small LLM module (`cook_ai.provider{...}` +
+  `cook_ai.prompt(...)`), pairing with the `nondet` disposition for
+  non-reproducible completions.
+
+`cook_rust` currently reserves the name and is not yet a working build
+integration.
+
+### Workspaces and directory hopping
+
+For a monorepo, each subproject keeps its own Cookfile and a root Cookfile
+composes them with `import`. Drop an empty `.cookroot` file at the top to mark the
+workspace boundary. Then you can run `cook` from *any* subdirectory — cook walks
+up to the nearest Cookfile and behaves as if you'd run it there, while anchoring
+all cache state at the workspace root, so hopping around never splits your cache.
+
+```
+# /Cookfile
+import web    ./apps/web
+import api    ./services/api
+
+recipe ship: web.build api.build
+    cook "out/release.tar" { tar cf $<out> dist }
+```
+
+`cook affected --since=origin/main` lists the recipes whose inputs changed
+against a git ref — the basis for fast CI that only builds and tests the slice a
+PR actually touched.
+
+## The cook CLI
+
+`cook --help` is the source of truth; this is the friendly version.
+
+```
+cook [OPTIONS] [COMMAND]
+```
+
+With no command, cook runs the `build` recipe. A recipe name runs that recipe; a
+subcommand name runs the subcommand. Prefix a recipe with `+` when its name
+collides with a subcommand.
+
+**Everyday**
+
+| Command | Does |
+|---|---|
+| `cook` / `cook <recipe> [preset]` | run a recipe (default `build`), optionally with a config `@preset` |
+| `cook init` | scaffold a starter Cookfile and `.gitignore` |
+| `cook menu` | list recipes and chores (human-readable) |
+| `cook list` | list names one per line for pipelines (`--recipes-only`, `--chores-only`) |
+| `cook test [scope]` | run tests (`--filter`, `--fail-fast`, `--rerun-failed`, `--report-json`, `--report-junit`) |
+| `cook serve [recipe]` | watch ingredients and re-run on change |
+
+**Investigation**
+
+| Command | Does |
+|---|---|
+| `cook why [recipe]` | explain each unit's cache key and hit/miss (`--json`); read-only |
+| `cook cache verify [recipe]` | re-run cached steps, fail on byte-divergence (`--json`) |
+| `cook dag [recipe]` | open the build-DAG TUI viewer (`--theme mono`) |
+| `cook logs [id]` | browse the per-build log archive (`-n N` for the Nth most recent, `--last-failed`) |
+| `cook emit-lua` | print the Lua a Cookfile compiles to |
+| `cook affected --since=<ref>` | list recipes whose inputs changed since a git ref (`--recipe`, `--json`) |
+
+**Modules**
+
+`cook modules install [names…] | remove <names> | update [name] | list | search
+<query>` — with `--registry`, `--non-interactive`, and `--accept-trust` for CI.
+
+**Global flags worth knowing:** `-f/--file`, `--root`, `-j/--jobs`, `-q/--quiet`,
+`-v/--verbose`, `--color`, `--output auto|plain|json`, `--set KEY=VALUE`
+(repeatable), `--since <ref>` + `--affected`, `--no-prune`, `--no-publish`.
+
+For CI, the pattern is:
+
+```sh
+cook test --affected --since=origin/main    # only test the slice the PR touched
+```
+
+---
+
+## Where to go next
+
+- The [Cook Standard](standard/) is the authoritative language and execution
+  specification (RFC-2119, with a formal grammar appendix).
+- The runnable [examples](examples/) are arranged in learning order.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) covers building and testing cook itself.
+
+Some surface is reserved but not yet shipped — `//` root-anchored targets and
+cross-probe member joins among them — and cook rejects those with a clear error
+rather than guessing. When in doubt, `cook --help`, `cook why`, and `cook
+emit-lua` will tell you what cook actually thinks it's doing.

@@ -1374,40 +1374,29 @@ pub fn cmd_init() -> Result<(), CookError> {
     if cookfile_path.exists() {
         return Err(CookError::Other("Cookfile already exists".to_string()));
     }
-    // CS-0019 dropped `end`: recipe bodies are indented and terminated by the
-    // next column-0 keyword or EOF. Emitting `end` here was a v0.3-era
-    // template; under the current grammar that line parses as a literal
-    // shell command and the build fails with exit 127.
+    // A deliberately minimal starter: one `build` recipe that produces a
+    // single cached artifact, plus a `clean` chore. No sample inputs to seed
+    // — the build step generates its output from a constant command, so
+    // `cook` works in an empty directory and the second run is a pure cache
+    // hit. Keep it tiny; users grow it from here.
     std::fs::write(
         cookfile_path,
-        r#"# Your first Cook build. `cook` fingerprints every input, so the second
-# run does zero work until an input actually changes.
+        r#"# Your first Cook build. `cook` fingerprints every input and caches every
+# output, so the second run does zero work until something changes.
 #
-#   cook            # builds one node per note
-#   cook            # everything cached — 0 work
-#   echo "- hi" >> notes/two.md && cook   # ONLY two rebuilds
+#   cook            # builds build/hello.txt
+#   cook            # cached — 0 work
+#   cook clean      # remove build/
 
 recipe build
-    ingredients "notes/*.md"
-    cook "out/$<in.stem>.html" { sed 's|^# \(.*\)|<h1>\1</h1>|' $<in> > $<out> }
+    cook "build/hello.txt" { echo "built with cook" > $<out> }
+
+chore clean
+    rm -rf build
 "#,
     )
     .map_err(|e| CookError::Other(format!("failed to write Cookfile: {e}")))?;
     println!("Created Cookfile");
-
-    // cook init runs in an empty dir, but the starter Cookfile's ingredients
-    // glob needs something to fan out over — seed sample notes so the first
-    // `cook` run has real inputs to build. Never clobber a pre-existing
-    // notes/ dir (e.g. re-running init after adding files by hand).
-    let notes = std::path::Path::new("notes");
-    if !notes.exists() {
-        std::fs::create_dir_all(notes)
-            .map_err(|e| CookError::Other(format!("failed to create notes/: {e}")))?;
-        std::fs::write(notes.join("one.md"), "# One\n- alpha\n")
-            .map_err(|e| CookError::Other(format!("failed to write notes/one.md: {e}")))?;
-        std::fs::write(notes.join("two.md"), "# Two\n- beta\n")
-            .map_err(|e| CookError::Other(format!("failed to write notes/two.md: {e}")))?;
-    }
 
     let gitignore_path = std::path::Path::new(".gitignore");
     let existing = match std::fs::read_to_string(gitignore_path) {
