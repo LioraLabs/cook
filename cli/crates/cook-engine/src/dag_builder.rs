@@ -18,12 +18,18 @@
 //! Leaf pass-through (empty barrier):
 //! - A recipe's "leaves" (what downstream recipes depend on via `deps` /
 //!   `dep_edges`) are normally its final sequential barrier. But when a
-//!   recipe finishes its unit loop with an EMPTY barrier — because it has
-//!   zero units, or because its only units were all demand-pruned probes
-//!   (§22.5.7) — it forwards its own `deps`' leaves instead of registering
-//!   an empty set. The rule is "empty barrier ⇒ forward", not "zero units
-//!   ⇒ forward": keep both the code and this comment phrased that way so
-//!   they cannot drift apart. This makes a unit-less meta-target
+//!   recipe finishes its unit loop with an EMPTY barrier, it forwards its
+//!   own `deps`' leaves instead of registering an empty set. The rule is
+//!   "empty barrier ⇒ forward", not "zero units ⇒ forward": keep both the
+//!   code and this comment phrased that way so they cannot drift apart.
+//!   Non-exhaustive list of ways a barrier ends up empty despite non-empty
+//!   `units`: all units were demand-pruned probes (§22.5.7); or all units
+//!   were probes that survived pruning but were consumed by a consumer
+//!   elsewhere — probes never advance the barrier either way (see the
+//!   barrier-update match below), so a recipe whose only units are
+//!   probes forwards `cross_deps` but not its own probe node(s); this is
+//!   harmless in practice since probe→consumer edges are wired per-recipe,
+//!   not through the leaf set. This makes a unit-less meta-target
 //!   (`recipe middle : producer` with no body) transparent to ordering
 //!   instead of severing the chain — a chain of such recipes forwards the
 //!   original producer's leaves transitively, by induction over the
@@ -149,10 +155,11 @@ fn compute_consumed_probe_keys(
 /// final sequential barrier, but a recipe that ends its unit loop with an
 /// EMPTY barrier forwards its own `deps`' leaves instead of registering an
 /// empty set — see the "Leaf pass-through" section of the module doc comment
-/// at the top of this file. The trigger is "empty barrier", not "zero
-/// units": a recipe whose only units were all demand-pruned probes also
-/// forwards. This keeps a unit-less meta-target (`recipe middle : producer`)
-/// transparent to downstream ordering instead of silently severing it.
+/// at the top of this file (including the non-exhaustive list of ways a
+/// barrier ends up empty despite non-empty `units`). The trigger is "empty
+/// barrier", not "zero units". This keeps a unit-less meta-target
+/// (`recipe middle : producer`) transparent to downstream ordering instead
+/// of silently severing it.
 pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, EngineError> {
     // ── Plan-time output-collision check ─────────────────────────────────────
     // Accumulate every (canonical_output_path -> {recipe_name, ...}) pair from
@@ -602,17 +609,17 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
         // Record this recipe's leaves: normally its final sequential
         // barrier, but when that barrier is EMPTY, forward `cross_deps`
         // instead (the union of this recipe's own `deps`' leaves, computed
-        // above). The trigger is "empty barrier", not "zero units" — a
-        // recipe whose only units were all demand-pruned probes (§22.5.7)
-        // also ends the loop with an empty barrier and must forward too, so
-        // a downstream root unit still reaches the real upstream work
-        // instead of silently losing the edge. `cross_deps` is itself
-        // already a forwarded/transitive set by induction (every recipe
-        // earlier in this topo-ordered slice applied the same rule), so a
-        // chain of empty-barrier recipes forwards the original producer's
-        // leaves the whole way down. When `cross_deps` is also empty (no
-        // deps of its own), empty forwards empty — there is nothing to
-        // forward.
+        // above). The trigger is "empty barrier", not "zero units" — see
+        // the module doc comment's "Leaf pass-through" section for the
+        // (non-exhaustive) list of ways a non-empty `units` still ends the
+        // loop with an empty barrier, all of which must forward too, so a
+        // downstream root unit still reaches the real upstream work instead
+        // of silently losing the edge. `cross_deps` is itself already a
+        // forwarded/transitive set by induction (every recipe earlier in
+        // this topo-ordered slice applied the same rule), so a chain of
+        // empty-barrier recipes forwards the original producer's leaves the
+        // whole way down. When `cross_deps` is also empty (no deps of its
+        // own), empty forwards empty — there is nothing to forward.
         let leaves = if barrier.is_empty() { cross_deps } else { barrier };
         recipe_leaves.insert(ru.recipe_name.clone(), leaves);
     }
@@ -1843,6 +1850,94 @@ mod tests {
             dag.node(0).remaining_deps(),
             0,
             "empty leaf set forwards empty — nothing to depend on"
+        );
+    }
+
+    /// Discriminates the trigger from the rejected "zero units" rule: `middle`
+    /// has a NON-empty `units` list (one demand-pruned probe), yet still ends
+    /// its unit loop with an empty barrier — probes never advance the barrier
+    /// (see the skip in the unit loop above), and this probe's key is
+    /// referenced by nobody downstream, so it is pruned before any `add_node`
+    /// call and contributes zero DAG nodes. A naive `if ru.units.is_empty()`
+    /// implementation would see `middle.units.len() == 1` and record the
+    /// (empty) `barrier` as `middle`'s leaves instead of forwarding
+    /// `cross_deps`, severing `consumer` from `producer`. The real
+    /// `barrier.is_empty()` trigger fires regardless of `units.len()` and
+    /// forwards correctly.
+    #[test]
+    fn recipe_with_only_a_pruned_probe_unit_still_forwards_cross_deps() {
+        let producer = RecipeUnits {
+            recipe_name: "producer".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch build/gen.a"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let middle = RecipeUnits {
+            recipe_name: "middle".into(),
+            deps: vec!["producer".into()],
+            // NON-empty units: one probe, but its key is never referenced by
+            // any non-probe unit anywhere (in `middle` or `consumer`), so
+            // demand-driven pruning (§22.5.7) omits it from the DAG entirely.
+            // Even if it survived pruning, probes never advance the barrier
+            // (see the `is_probe` skip in the unit loop) — either way
+            // `middle`'s barrier ends empty despite `units.len() == 1`.
+            units: vec![CapturedUnit {
+                payload: probe("mid:unreferenced"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let consumer = RecipeUnits {
+            recipe_name: "consumer".into(),
+            deps: vec!["middle".into()],
+            units: vec![CapturedUnit {
+                payload: shell("cp build/gen.a ."),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+
+        let dag = build_dag(vec![producer, middle, consumer]).expect("no collision");
+        // Nodes: 0 = producer's unit, 1 = consumer's unit. `middle`
+        // contributes none — its sole unit is a pruned probe.
+        assert_eq!(dag.len(), 2);
+        assert_eq!(
+            dag.deps(1),
+            &[0],
+            "consumer must reach producer's node even though middle.units is non-empty"
         );
     }
 
