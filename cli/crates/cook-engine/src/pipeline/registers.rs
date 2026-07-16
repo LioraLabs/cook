@@ -304,40 +304,36 @@ pub fn register_workspace(
 }
 
 /// Run [`cook_register::list_names`] for every Cookfile in `workspace`
-/// (root + every import) and return the qualified name set with kinds.
+/// (root + every import) and return each discovered recipe with its
+/// registration metadata intact.
 ///
 /// Workspace-level counterpart to [`register_workspace`]: each import's
-/// names are prefixed with its qualified workspace prefix. This avoids
-/// invoking any recipe body and avoids firing probe queries — it's the
-/// cheap path used by `cook list` / `cook menu`.
+/// names are prefixed with its qualified workspace prefix (the `name`
+/// field is rewritten in place; every other field is passed through). This
+/// avoids invoking any recipe body and avoids firing probe queries — it's
+/// the cheap path used by `cook list` / `cook menu`.
+///
+/// Returns the full [`cook_register::RegisteredRecipePub`] rather than a
+/// name/kind projection: `cook list` renders the `origin` annotation a
+/// module attaches to a recipe it mints, so the listing path must not
+/// discard per-recipe metadata on the way out.
 pub fn list_workspace_names(
     workspace: &Workspace,
     config: Option<&str>,
     env_overrides: &[String],
-) -> Result<
-    Vec<(
-        String,
-        cook_register::RecipeKind,
-        Vec<cook_register::capture::ChoreParamMeta>,
-    )>,
-    PipelineError,
-> {
-    let mut out: Vec<(
-        String,
-        cook_register::RecipeKind,
-        Vec<cook_register::capture::ChoreParamMeta>,
-    )> = Vec::new();
+) -> Result<Vec<cook_register::RegisteredRecipePub>, PipelineError> {
+    let mut out: Vec<cook_register::RegisteredRecipePub> = Vec::new();
     for (member, _canon, prefix, is_root) in members_root_first(workspace) {
         let builder = member_base_builder(member, &prefix, is_root, config, env_overrides)?;
         let names = cook_register::list_names(builder, &member.lua_source)
             .map_err(map_register_error)?;
-        for n in names {
-            let qualified = if is_root {
+        for mut n in names {
+            n.name = if is_root {
                 n.name
             } else {
                 format!("{prefix}.{}", n.name)
             };
-            out.push((qualified, n.kind, n.params));
+            out.push(n);
         }
     }
     Ok(out)

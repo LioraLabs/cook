@@ -166,3 +166,19 @@ A module distributed through the official registry (§{mods.catalogue-index}, §
 - SHOULD pin its source with a `git+https` URL and omit `source.dir` so the rendered index resolves the module verbatim.
 
 The distribution mechanics — the `cook_modules/` search paths a published module lands in — are §{mods.use-scope}; this subsection governs the publishing contract, not the Lua API.
+
+### 12.7.8. Minting recipes [#mods.authoring.minting]
+
+A recipe's name, and the fact that it is invocable, belong to the author of the Cookfile. A module is ordinarily a **step contributor**: it exposes target makers that a user-written `recipe` body calls to register work units (§{mods.authoring.units}), and the recipe those units belong to is one the user declared. A module SHOULD NOT call `cook.recipe` (§{lua.cook-recipe}) to mint a recipe the user did not ask for.
+
+Two shapes legitimately require a module to mint recipes:
+
+- **Data-driven fan-out** — one call mints N recipes derived from data the module parses at register time, where neither N nor the names are knowable to the Cookfile author in advance (for example, one build recipe per member of a workspace manifest).
+- **Support recipes** — a top-level configuration call whose work has to live in some recipe, where no user-declared recipe is its natural home (for example, rendering a generated configuration header).
+
+A module that mints a recipe under either shape:
+
+- MUST pass an `origin` in the `cook.recipe` metadata table (§{lua.cook-recipe}), so that a listing surface can attribute the minted name to the module that produced it (§{lua.reg.discovery}). The conventional value is the module-qualified name of the minting function — for example, `"cook_pnpm.workspace"` for the fan-out shape, `"cook_cc.config_header"` for the support-recipe shape;
+- MUST document that the call mints recipes, and how the minted names are derived, in the module's Part IV catalogue section (§{cat}) — or, for a module outside the catalogue, in that module's own documentation.
+
+The annotation is attribution, not a restriction. A minted recipe is an ordinary member of the discovered set and remains dispatchable by name like any other (§{lua.reg.discovery}); a module author who regards a support recipe as an internal detail conveys that through the annotation and the documentation this subsection requires, not by expecting an implementation to refuse the invocation. See §{rationale.recipe-origin-annotation}.

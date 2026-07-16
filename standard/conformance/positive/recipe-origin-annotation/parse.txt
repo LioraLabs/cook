@@ -1,0 +1,8 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+  chores:
+  register_blocks: [RegisterBlock body="    local packages = {\"web\", \"api\"}\n    for _, name in ipairs(packages) do\n        cook.recipe(name .. \":build\", {requires = {}, origin = \"cook_pnpm.workspace\"}, function()\n            cook.exec(\"printf 'build \" .. name .. \"\\\\n'\", 0)\n        end)\n    end\n    cook.recipe(\"config_header\", {requires = {}, origin = \"cook_cc.config_header\"}, function()\n        cook.exec(\"printf 'render config header\\\\n'\", 0)\n    end)" line=1]
+  top_level_module_calls: []

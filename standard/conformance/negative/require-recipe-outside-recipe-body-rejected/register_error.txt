@@ -1,0 +1,1 @@
+cook.require_recipe: no enclosing recipe is active; call `cook.require_recipe(name)` only from inside a recipe body

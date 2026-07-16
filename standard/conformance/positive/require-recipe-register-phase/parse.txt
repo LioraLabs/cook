@@ -1,0 +1,14 @@
+Cookfile
+  uses: []
+  imports: []
+  config_blocks: []
+  recipes:
+    Recipe name="build" line=1
+      deps: []
+      ingredients: []
+      excludes: []
+      steps:
+        InlineLua code="cook.require_recipe(\"producer\")"
+  chores:
+  register_blocks: []
+  top_level_module_calls: []

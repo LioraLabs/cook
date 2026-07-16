@@ -1,0 +1,10 @@
+register
+    local packages = {"web", "api"}
+    for _, name in ipairs(packages) do
+        cook.recipe(name .. ":build", {requires = {}, origin = "cook_pnpm.workspace"}, function()
+            cook.exec("printf 'build " .. name .. "\\n'", 0)
+        end)
+    end
+    cook.recipe("config_header", {requires = {}, origin = "cook_cc.config_header"}, function()
+        cook.exec("printf 'render config header\\n'", 0)
+    end)

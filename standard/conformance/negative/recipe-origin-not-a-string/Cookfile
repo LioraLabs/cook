@@ -1,0 +1,7 @@
+register
+    cook.recipe("build", {requires = {}, origin = 42}, function()
+        cook.exec("echo hi", 0)
+    end)
+
+recipe noop
+    test >{ cook.sh("true") }

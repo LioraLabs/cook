@@ -368,6 +368,21 @@ where
         all_units.push(u);
     }
 
+    // 1b. §16.1.2 read-after-write rule: CLOSURE-scoped structural check.
+    //     A literal outputs[] entry of one recipe equal to a literal inputs[]
+    //     entry of another, with no ordering path from the reader to the
+    //     writer, is a silent stale read under --jobs > 1. Rejected here —
+    //     NOT repaired: §10.6 forbids inferring an edge from path equality.
+    //
+    //     Scope is `all_units` (the reachable closure), deliberately NOT the
+    //     workspace-wide `all_workspace_units` used by §22.1.2 above. A
+    //     literal output is not build-owned, so `cook producer && cook
+    //     consumer` is legitimate and MUST NOT be rejected; §22.1.2's
+    //     terminality, by contrast, is an ownership claim that holds
+    //     workspace-wide. See `tests/raw_path_cross_recipe_edge.rs`, which
+    //     pins the out-of-closure case a workspace-wide check would break.
+    dag_builder::check_literal_read_after_write(&all_units)?;
+
     // 2. Build the unified work-unit DAG.
     let dag = dag_builder::build_dag(all_units)?;
 

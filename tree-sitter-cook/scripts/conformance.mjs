@@ -88,6 +88,11 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    'App. A.2 recipe-vs-chore name collision — parse-time semantic, not syntactic'],
   ['recipe-name-collision-surface-vs-dynamic',
    'recipe name collision between surface and dynamic — register-time semantic'],
+  // CS-0143: `cook.recipe`'s `origin` metadata field is any Lua value
+  // syntactically; only the register-phase `parse_origin_meta` check knows
+  // it must be a (non-empty) string.
+  ['recipe-origin-not-a-string',
+   '§22.3 cook.recipe `origin` field type check — register-time semantic, not syntactic'],
   // §28 cc-module semantic rules (§28.3 — execute-phase / probe-time
   // rejections; the Cookfile parses cleanly):
   ['cc-check-bad-flag',
@@ -105,6 +110,14 @@ const SEMANTIC_ONLY_NEGATIVES = new Map([
    '§22.5 cook.probe — duplicate-key detection, register-time semantic'],
   ['probe-unresolved-require',
    '§22.5 cook.probe — unresolved require detection, register-time semantic'],
+  // §22.7 cook.recipe_name semantic rule (register-time validation):
+  ['recipe-name-outside-recipe-body-rejected',
+   '§22.7 cook.recipe_name — outside-a-recipe-body detection, register-time semantic'],
+  // CS-0144: a `cook.require_recipe(name)` call in a `register` block is an
+  // ordinary bare module call syntactically; only the register-phase
+  // body-slot check knows there is no enclosing recipe body.
+  ['require-recipe-outside-recipe-body-rejected',
+   '§22.8 cook.require_recipe — outside-a-recipe-body detection, register-time semantic'],
   // §7.1.1 chore-parameter semantic rules — Rust parser enforces;
   // tree-sitter accepts any ordering / count / reserved-name shape.
   // The dot-ban and the no-default-on-variadic rule ARE syntactic and
