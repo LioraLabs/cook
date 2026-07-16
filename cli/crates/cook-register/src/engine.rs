@@ -406,6 +406,7 @@ pub fn register_cookfile(
             params_meta,
             source_line,
             skip_for_each_body,
+            origin,
         ): (
             LuaRegistryKey,
             Vec<String>,
@@ -415,6 +416,7 @@ pub fn register_cookfile(
             Vec<crate::capture::ChoreParamMeta>,
             usize,
             bool,
+            Option<String>,
         );
         {
             let registry = recipes.borrow();
@@ -448,6 +450,7 @@ pub fn register_cookfile(
             source = recipe.source;
             kind = recipe.kind;
             params_meta = recipe.metadata.params.clone();
+            origin = recipe.metadata.origin.clone();
             source_line = match recipe.source {
                 crate::capture::RegistrationSource::Static { line } => line,
                 crate::capture::RegistrationSource::Dynamic { line } => line,
@@ -470,6 +473,7 @@ pub fn register_cookfile(
                 kind,
                 requires: requires.clone(),
                 params: params_meta.clone(),
+                origin,
             });
             units_by_recipe.insert(
                 name.clone(),
@@ -590,6 +594,7 @@ pub fn register_cookfile(
                         kind,
                         requires: requires.clone(),
                         params: params_meta.clone(),
+                        origin,
                     });
                     units_by_recipe.insert(
                         name.clone(),
@@ -630,6 +635,7 @@ pub fn register_cookfile(
                     kind,
                     requires: requires.clone(),
                     params: params_meta.clone(),
+                    origin,
                 });
                 units_by_recipe.insert(
                     name.clone(),
@@ -786,6 +792,7 @@ pub fn register_cookfile(
             kind,
             requires,
             params: params_meta.clone(),
+            origin,
         });
     }
 
@@ -1690,6 +1697,7 @@ pub fn list_names(
             kind: r.kind,
             requires: r.metadata.requires.clone(),
             params: r.metadata.params.clone(),
+            origin: r.metadata.origin.clone(),
         })
         .collect();
     Ok(out)

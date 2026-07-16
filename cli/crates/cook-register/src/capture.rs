@@ -151,6 +151,13 @@ pub struct RegisteredMetadata {
     /// Ordered list of declared chore parameters. Empty for normal
     /// recipes (which do not take parameters).
     pub params: Vec<ChoreParamMeta>,
+    /// The module-qualified function name that minted this recipe (e.g.
+    /// `"cook_pnpm.workspace"`), when the author opted in via the
+    /// `cook.recipe(name, {origin = "..."}, body)` field. `None` when no
+    /// `origin` was supplied, and ALWAYS `None` for surface registrations
+    /// (`cook.__register_surface` / `cook.__register_surface_chore`) — see
+    /// `parse_origin_meta`.
+    pub origin: Option<String>,
 }
 
 /// Parse the (ingredients, excludes, requires) string-list fields from a
@@ -187,6 +194,56 @@ fn parse_meta_lists(meta: &LuaTable) -> LuaResult<(Vec<String>, Vec<String>, Vec
         }
     }
     Ok((ingredients, excludes, requires))
+}
+
+/// Uniform register-phase type error for a `cook.recipe` field (CS-0127):
+/// a wrong-typed field is a hard error naming the field, the expected type,
+/// and the received Lua type — never silently coerced to its default.
+/// Mirrors the `cook.add_unit` precedent (`unit_api.rs::type_err`), but that
+/// helper hardcodes the `cook.add_unit:` prefix and lives in a different
+/// module, so this is a `cook.recipe`-scoped sibling rather than a reuse.
+fn recipe_type_err(field: &str, expected: &str, got: &str) -> mlua::Error {
+    mlua::Error::runtime(format!(
+        "cook.recipe: `{field}` must be {expected}, got {got} (CS-0127)"
+    ))
+}
+
+/// Parse the `origin` field off a `cook.recipe` metadata table.
+///
+/// `origin` is an optional, explicit opt-in annotation (convention: the
+/// module-qualified function name that minted the recipe, e.g.
+/// `"cook_pnpm.workspace"`) that lets `cook list` attribute a
+/// module-minted recipe back to the call that registered it.
+///
+/// - Absent, or explicitly `nil` → `Ok(None)`.
+/// - A non-empty Lua string → `Ok(Some(s))`.
+/// - An empty string → a CS-0127 error. An empty origin would render as
+///   `(from )`, which is worse than no annotation at all, so it is treated
+///   as a wrong-typed-adjacent authoring mistake rather than accepted.
+/// - Any other type (number, boolean, table, function) → a CS-0127 error
+///   naming the field and the offending Lua type.
+///
+/// Deliberately NOT folded into `parse_meta_lists`: that helper is shared
+/// with `cook.__register_surface` / `cook.__register_surface_chore`, and a
+/// surface `recipe NAME` / `chore NAME` block must never acquire an origin
+/// — only the public `cook.recipe` closure calls this function, so that
+/// guarantee is structural rather than a matter of not passing the field.
+fn parse_origin_meta(meta: &LuaTable) -> LuaResult<Option<String>> {
+    match meta.get::<LuaValue>("origin")? {
+        LuaValue::Nil => Ok(None),
+        LuaValue::String(s) => {
+            let s = s.to_string_lossy().to_string();
+            if s.is_empty() {
+                return Err(recipe_type_err(
+                    "origin",
+                    "a non-empty string",
+                    "an empty string",
+                ));
+            }
+            Ok(Some(s))
+        }
+        other => Err(recipe_type_err("origin", "a string", other.type_name())),
+    }
 }
 
 /// Next serial for named-registry keys used by `DefaultedLua` params.
@@ -289,6 +346,7 @@ pub fn install_cook_api(
         lua.create_function(move |lua, (name, meta, func): (String, LuaTable, LuaFunction)| {
             let key = lua.create_registry_value(func)?;
             let (ingredients, excludes, requires) = parse_meta_lists(&meta)?;
+            let origin = parse_origin_meta(&meta)?;
             let line = caller_line_in_cookfile(lua).unwrap_or(0);
 
             recipes_clone.borrow_mut().push(RegisteredRecipe {
@@ -299,6 +357,7 @@ pub fn install_cook_api(
                     excludes,
                     requires,
                     params: vec![],
+                    origin,
                 },
                 source: RegistrationSource::Dynamic { line },
                 kind: RecipeKind::Recipe,
@@ -341,6 +400,9 @@ pub fn install_cook_api(
                     excludes,
                     requires,
                     params: vec![],
+                    // Surface `recipe NAME` blocks never carry an origin —
+                    // only the public `cook.recipe` closure parses it.
+                    origin: None,
                 },
                 source: RegistrationSource::Static { line },
                 kind: RecipeKind::Recipe,
@@ -372,6 +434,9 @@ pub fn install_cook_api(
                     excludes,
                     requires,
                     params,
+                    // Surface `chore NAME` blocks never carry an origin —
+                    // only the public `cook.recipe` closure parses it.
+                    origin: None,
                 },
                 source: RegistrationSource::Static { line },
                 kind: RecipeKind::Chore,

@@ -78,6 +78,7 @@ mod tests {
             kind: RecipeKind::Recipe,
             requires: requires.iter().map(|s| s.to_string()).collect(),
             params: Vec::new(),
+            origin: None,
         }
     }
 
