@@ -14,6 +14,20 @@
 //! Cross-recipe wiring (fine-grained):
 //! - For each `(unit_idx, dep_recipe_name)` in `ru.dep_edges`, that specific
 //!   unit additionally depends on the terminal nodes of the named recipe.
+//!
+//! Leaf pass-through (empty barrier):
+//! - A recipe's "leaves" (what downstream recipes depend on via `deps` /
+//!   `dep_edges`) are normally its final sequential barrier. But when a
+//!   recipe finishes its unit loop with an EMPTY barrier — because it has
+//!   zero units, or because its only units were all demand-pruned probes
+//!   (§22.5.7) — it forwards its own `deps`' leaves instead of registering
+//!   an empty set. The rule is "empty barrier ⇒ forward", not "zero units
+//!   ⇒ forward": keep both the code and this comment phrased that way so
+//!   they cannot drift apart. This makes a unit-less meta-target
+//!   (`recipe middle : producer` with no body) transparent to ordering
+//!   instead of severing the chain — a chain of such recipes forwards the
+//!   original producer's leaves transitively, by induction over the
+//!   topo-ordered slice.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -130,6 +144,15 @@ fn compute_consumed_probe_keys(
 /// keys are not transitively referenced by any non-probe unit's `probes`
 /// field are silently omitted from the DAG. No fingerprint is computed, no
 /// diagnostic is emitted.
+///
+/// **Leaf pass-through.** A recipe's entry in `recipe_leaves` is normally its
+/// final sequential barrier, but a recipe that ends its unit loop with an
+/// EMPTY barrier forwards its own `deps`' leaves instead of registering an
+/// empty set — see the "Leaf pass-through" section of the module doc comment
+/// at the top of this file. The trigger is "empty barrier", not "zero
+/// units": a recipe whose only units were all demand-pruned probes also
+/// forwards. This keeps a unit-less meta-target (`recipe middle : producer`)
+/// transparent to downstream ordering instead of silently severing it.
 pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, EngineError> {
     // ── Plan-time output-collision check ─────────────────────────────────────
     // Accumulate every (canonical_output_path -> {recipe_name, ...}) pair from
@@ -173,7 +196,9 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
 
     let mut dag = Dag::new();
 
-    // Map from recipe name -> its final barrier (leaf node ids).
+    // Map from recipe name -> its leaf node ids: normally its final barrier,
+    // but forwarded from its own `deps`' leaves when that barrier is empty
+    // (see the "Leaf pass-through" section in the module doc comment above).
     let mut recipe_leaves: BTreeMap<String, Vec<usize>> = BTreeMap::new();
 
     for ru in &recipe_units {
@@ -574,8 +599,22 @@ pub fn build_dag(recipe_units: Vec<RecipeUnits>) -> Result<Dag<WorkNode>, Engine
             }
         }
 
-        // Record this recipe's final barrier as its leaves.
-        recipe_leaves.insert(ru.recipe_name.clone(), barrier);
+        // Record this recipe's leaves: normally its final sequential
+        // barrier, but when that barrier is EMPTY, forward `cross_deps`
+        // instead (the union of this recipe's own `deps`' leaves, computed
+        // above). The trigger is "empty barrier", not "zero units" — a
+        // recipe whose only units were all demand-pruned probes (§22.5.7)
+        // also ends the loop with an empty barrier and must forward too, so
+        // a downstream root unit still reaches the real upstream work
+        // instead of silently losing the edge. `cross_deps` is itself
+        // already a forwarded/transitive set by induction (every recipe
+        // earlier in this topo-ordered slice applied the same rule), so a
+        // chain of empty-barrier recipes forwards the original producer's
+        // leaves the whole way down. When `cross_deps` is also empty (no
+        // deps of its own), empty forwards empty — there is nothing to
+        // forward.
+        let leaves = if barrier.is_empty() { cross_deps } else { barrier };
+        recipe_leaves.insert(ru.recipe_name.clone(), leaves);
     }
 
     Ok(dag)
@@ -1530,6 +1569,280 @@ mod tests {
             dag.node(0).remaining_deps(),
             0,
             "no leaves to depend on since noop's leaf set is empty, not absent"
+        );
+    }
+
+    /// The core bug: a zero-unit recipe used as a meta-target must forward
+    /// its prerequisites' leaves as its own leaf set, not register an empty
+    /// one. `producer` (1 unit) -> `middle` (0 units, `deps: ["producer"]`)
+    /// -> `consumer` (1 unit, `deps: ["middle"]`). Without the fix,
+    /// `middle`'s leaf set is `Some(empty)` and `consumer` ends up with zero
+    /// deps, running concurrently with `producer` instead of after it.
+    #[test]
+    fn zero_unit_recipe_forwards_producer_leaf_to_downstream_consumer() {
+        let producer = RecipeUnits {
+            recipe_name: "producer".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch build/gen.a"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let middle = RecipeUnits {
+            recipe_name: "middle".into(),
+            deps: vec!["producer".into()],
+            units: vec![], // zero units — the meta-target shape
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let consumer = RecipeUnits {
+            recipe_name: "consumer".into(),
+            deps: vec!["middle".into()],
+            units: vec![CapturedUnit {
+                payload: shell("cp build/gen.a ."),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+
+        let dag = build_dag(vec![producer, middle, consumer]).expect("no collision");
+        // Nodes: 0 = producer's unit, 1 = consumer's unit (middle contributes none).
+        assert_eq!(dag.len(), 2);
+        assert_eq!(
+            dag.node(1).remaining_deps(),
+            1,
+            "consumer must depend on producer's leaf, forwarded through middle"
+        );
+        assert_eq!(
+            dag.deps(1),
+            &[0],
+            "consumer's actual edge must point at producer's node (id 0), not merely be nonzero"
+        );
+    }
+
+    /// Two-hop zero-unit chain: the forwarding must compose transitively,
+    /// not just one hop. `producer` -> `m1` (0 units) -> `m2` (0 units) ->
+    /// `consumer` (1 unit) must still reach `producer`'s node.
+    #[test]
+    fn two_hop_zero_unit_chain_forwards_leaf_transitively() {
+        let producer = RecipeUnits {
+            recipe_name: "producer".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch build/gen.a"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let m1 = RecipeUnits {
+            recipe_name: "m1".into(),
+            deps: vec!["producer".into()],
+            units: vec![],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let m2 = RecipeUnits {
+            recipe_name: "m2".into(),
+            deps: vec!["m1".into()],
+            units: vec![],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let consumer = RecipeUnits {
+            recipe_name: "consumer".into(),
+            deps: vec!["m2".into()],
+            units: vec![CapturedUnit {
+                payload: shell("cp build/gen.a ."),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+
+        let dag = build_dag(vec![producer, m1, m2, consumer]).expect("no collision");
+        // Nodes: 0 = producer's unit, 1 = consumer's unit (m1, m2 contribute none).
+        assert_eq!(dag.len(), 2);
+        assert_eq!(
+            dag.deps(1),
+            &[0],
+            "consumer must reach producer's node through a two-hop zero-unit chain"
+        );
+    }
+
+    /// Diamond through two zero-unit recipes: `producer` -> `b` (0 units) and
+    /// `producer` -> `c` (0 units), then `d : b c` (1 unit). Both `b` and `c`
+    /// forward the SAME producer leaf, so `d` must end up with exactly one
+    /// dep (the dedup in `Dag::add_node` collapses the duplicate) — not two,
+    /// which would indicate a phantom dep count.
+    #[test]
+    fn diamond_through_zero_unit_recipes_dedups_to_one_dep() {
+        let producer = RecipeUnits {
+            recipe_name: "producer".into(),
+            deps: vec![],
+            units: vec![CapturedUnit {
+                payload: shell("touch build/gen.a"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let b = RecipeUnits {
+            recipe_name: "b".into(),
+            deps: vec!["producer".into()],
+            units: vec![],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let c = RecipeUnits {
+            recipe_name: "c".into(),
+            deps: vec!["producer".into()],
+            units: vec![],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let d = RecipeUnits {
+            recipe_name: "d".into(),
+            deps: vec!["b".into(), "c".into()],
+            units: vec![CapturedUnit {
+                payload: shell("echo done"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+
+        let dag = build_dag(vec![producer, b, c, d]).expect("no collision");
+        // Nodes: 0 = producer's unit, 1 = d's unit (b, c contribute none).
+        assert_eq!(dag.len(), 2);
+        assert_eq!(
+            dag.node(1).remaining_deps(),
+            1,
+            "diamond through two zero-unit forwarders must dedup to a single dep"
+        );
+        assert_eq!(dag.deps(1), &[0], "d's sole dep must be producer's node");
+    }
+
+    /// A zero-unit recipe with no deps of its own has nothing to forward:
+    /// empty forwards empty. An independent downstream recipe naming it in
+    /// `deps` must end up with zero deps, not spuriously pick up unrelated
+    /// nodes.
+    #[test]
+    fn zero_unit_recipe_with_no_deps_forwards_empty_leaf_set() {
+        let noop = RecipeUnits {
+            recipe_name: "noop".into(),
+            deps: vec![], // no deps of its own — nothing to forward
+            units: vec![],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+        let downstream = RecipeUnits {
+            recipe_name: "downstream".into(),
+            deps: vec!["noop".into()],
+            units: vec![CapturedUnit {
+                payload: shell("echo hi"),
+                cache_meta: None,
+                dep_kind: DepKind::Sequential,
+                probes: vec![],
+                unit_env_vars: Default::default(),
+                member: None,
+                output_paths: Vec::new(),
+            }],
+            step_groups: vec![],
+            working_dir: default_wd(),
+            env_vars: default_env(),
+            terminal_outputs: vec![],
+            dep_edges: vec![],
+            probes: vec![],
+        };
+
+        let dag = build_dag(vec![noop, downstream]).expect("no collision");
+        assert_eq!(dag.len(), 1);
+        assert_eq!(
+            dag.node(0).remaining_deps(),
+            0,
+            "empty leaf set forwards empty — nothing to depend on"
         );
     }
 
