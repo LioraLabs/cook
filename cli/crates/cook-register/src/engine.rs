@@ -304,12 +304,20 @@ pub fn register_cookfile(
     // `cook.probes.get` binding (installed below) reads it first.
     let prepass_store: crate::module_loader::SharedPrepassStore =
         Rc::new(RefCell::new(BTreeMap::new()));
+    // The forcer cell `cook.require_recipe` reads at call time. Created here,
+    // filled at step 12 once the driver exists: the top-level chunk (step 6)
+    // runs long before that, and a Cookfile aliasing the function there
+    // (`local rr = cook.require_recipe`) keeps whatever closure it captured
+    // forever. One closure over a late-filled cell is what keeps the alias and
+    // a fresh `cook.` lookup indistinguishable (Standard §22.8, CS-0144).
+    let recipe_forcer: crate::context::SharedRecipeForcer = Rc::new(RefCell::new(None));
     let module_state = install_remaining_apis(
         &lua,
         &builder,
         body_slot.clone(),
         cache_ctx.as_ref(),
         prepass_store.clone(),
+        recipe_forcer.clone(),
     )?;
 
     // 6. Execute the top-level Lua. Name the chunk with an `@` prefix so
@@ -416,16 +424,17 @@ pub fn register_cookfile(
         path: RefCell::new(Vec::new()),
     });
 
-    // Rebind `cook.require_recipe` now that the driver exists, replacing the
-    // forcer-less binding `install_remaining_apis` installed. Bodies read the
-    // function off the `cook` table at call time, so the swap is invisible to
-    // them — and the pre-pass, which ran above, still saw the binding that
-    // can only report the outside-a-body error.
+    // Fill the forcer cell now that the driver exists. The `cook.require_recipe`
+    // closure installed at step 5b reads this cell at CALL time, so filling it
+    // reaches every caller at once — including one that aliased the function
+    // during the top-level chunk, which no amount of re-registering the `cook`
+    // table entry could reach. Nothing has called it yet: the pre-pass and the
+    // top-level chunk are both outside a recipe body, where the guard rail
+    // fires ahead of the forcer.
     {
         let forcer_driver = driver.clone();
-        let forcer: crate::context::RecipeForcer =
-            Box::new(move |lua, name| forcer_driver.force(lua, name));
-        crate::context::register_require_recipe_api(&lua, body_slot.clone(), Some(forcer))?;
+        *recipe_forcer.borrow_mut() =
+            Some(Rc::new(move |lua: &Lua, name: &str| forcer_driver.force(lua, name)));
     }
 
     for name in &topo {
@@ -434,6 +443,27 @@ pub fn register_cookfile(
 
     let units_by_recipe = std::mem::take(&mut *driver.units_by_recipe.borrow_mut());
     let names = std::mem::take(&mut *driver.names.borrow_mut());
+
+    // 12a. (Standard §22.8, CS-0144) Cycle detection over the MERGED
+    //      `requires` — static dep-lists plus every edge the bodies just
+    //      declared. Re-running the step-11 sort is what makes §22.8's "taken
+    //      together with all other cross-recipe edges" true: step 11 sorted
+    //      the STATIC graph before any body ran, and the driver's `Visiting`
+    //      check only sees a cycle it actually recurses into. Neither catches
+    //      a MIXED cycle — `A : B` static plus `B`'s body forcing `A` — because
+    //      at force time `A` is not on the invocation stack, so the force
+    //      returns cleanly and the pass completes. The cycle is real
+    //      nonetheless, and §22.8 makes rendering its PATH a MUST; the
+    //      engine's own analyzer is not a substitute, since it names a single
+    //      node, renders no path, and only looks inside the target's closure
+    //      (so `cook list` would see nothing at all).
+    {
+        let merged: BTreeMap<String, Vec<String>> = names
+            .iter()
+            .map(|r| (r.name.clone(), r.requires.clone()))
+            .collect();
+        local_topological_sort(&merged)?;
+    }
 
     // 12b. (COOK-64 §22.5.9) Static-input rule for `for_each` sources. Now
     //      that every body has run and `units_by_recipe` holds the full set of
@@ -478,8 +508,22 @@ pub fn register_cookfile(
     })
 }
 
+/// What one `invoke_body` call actually did — the distinction `ensure_invoked`
+/// turns into `VisitState::Visited` vs `VisitState::Skipped`.
+enum Outcome {
+    /// The body was evaluated to completion. The register-order guarantee is
+    /// satisfied for this recipe.
+    Ran,
+    /// A skip arm declined to evaluate the body and registered the recipe with
+    /// no units. The guarantee is NOT satisfied; a force must re-invoke.
+    Skipped,
+}
+
 /// Where a recipe's body sits in the current pass's demand-driven visit.
-#[derive(Clone, Copy, PartialEq)]
+///
+/// `Clone` only — the map is read by `match`, never compared, and
+/// `mlua::Error` is not `PartialEq`.
+#[derive(Clone)]
 enum VisitState {
     /// Its body is on the invocation stack right now. Re-entering it is a
     /// cycle — only reachable via `cook.require_recipe`, since the seed loop
@@ -488,6 +532,40 @@ enum VisitState {
     /// Its body ran to completion. The register-order guarantee is already
     /// satisfied; a repeat visit is a no-op.
     Visited,
+    /// Its body was deliberately NOT run: a skip arm in `invoke_body` decided
+    /// the recipe isn't being built and registered it with no units.
+    ///
+    /// Distinct from `Visited` because every skip arm is gated on the STATIC
+    /// reachability pre-pass, which by construction cannot see an edge a body
+    /// declares while running. Collapsing the two states loses exactly the
+    /// information a later force needs: the seed loop walks a LEXICOGRAPHIC
+    /// order, so a required recipe whose name sorts before its requirer's is
+    /// reached — and skipped — before the force that would have rescued it,
+    /// and a force that treats the skip as a completed visit returns `Ok(())`
+    /// having evaluated nothing. The recipe then registers zero units while
+    /// the edge still places it in the build closure: expressly non-conforming
+    /// per §22.8, and silent. A force on this state MUST re-invoke with
+    /// `forced = true` (which is what tells the skip arms to stand down) or
+    /// raise the arm's designed error.
+    Skipped,
+    /// Its body ran and RAISED. The stored error is the original diagnostic,
+    /// re-raised verbatim on any later visit.
+    ///
+    /// Needed because a body may swallow a force error with `pcall`: without
+    /// a terminal record the entry would either be left `Visiting` — which the
+    /// seed loop's later visit reads as a cycle, fabricating a diagnostic and
+    /// destroying the real one — or be cleared, re-running a body §22.8 says
+    /// is evaluated at most once per pass. Replaying satisfies both: the pass
+    /// still fails, with the failure the author needs to see.
+    ///
+    /// Holds the `mlua::Error` rather than a rendered string so the replay is
+    /// byte-identical to the original — re-wrapping a `RegisterError`'s
+    /// `to_string()` would stutter (`lua error: runtime error: lua error:
+    /// runtime error: …`). A body error is always `RegisterError::Lua`, so the
+    /// common path round-trips exactly; the rarer structured variants flatten
+    /// to one `runtime` error, which is precisely what `force` already does to
+    /// every `RegisterError` on its way back into Lua.
+    Failed(mlua::Error),
 }
 
 /// Step 12's body-invocation driver (Standard §22.8, CS-0144).
@@ -536,8 +614,16 @@ impl BodyDriver {
         // Unknown name. Every `cook.recipe` registration completes before any
         // body runs, so absence is definitive at call time — no need to defer
         // to the engine's cross-cookfile analyzer.
-        let registered: Vec<String> = self.recipes.borrow().iter().map(|r| r.name.clone()).collect();
-        if !registered.iter().any(|r| r == name) {
+        //
+        // Membership is tested against the borrow directly; the name list is
+        // materialised only to build the diagnostic. This is the API's hot
+        // path — every call reaches it — and cloning every registered name
+        // per call to answer a yes/no question is the kind of cost that
+        // scales with the wrong thing (Cookfile size, not call count).
+        let known = self.recipes.borrow().iter().any(|r| r.name == name);
+        if !known {
+            let registered: Vec<String> =
+                self.recipes.borrow().iter().map(|r| r.name.clone()).collect();
             let closest = crate::env_api::closest_declared(name, &registered, 3);
             return Err(mlua::Error::runtime(format!(
                 "cook.require_recipe: recipe \"{name}\" (required by \"{requiring}\") is not \
@@ -567,8 +653,21 @@ impl BodyDriver {
     /// `requires` edge this call records, still pulls it into the build
     /// closure. Register and engine would then disagree about what got built.
     fn ensure_invoked(&self, lua: &Lua, name: &str, forced: bool) -> Result<(), RegisterError> {
-        match self.visit.borrow().get(name) {
+        match self.visit.borrow().get(name).cloned() {
             Some(VisitState::Visited) => return Ok(()),
+            // A completed body is a no-op for a repeat visit; a SKIPPED one is
+            // not. Fall through to re-invoke — `forced` is now true, so the
+            // arm that skipped it either stands down (the parametric-chore
+            // arms) or raises its designed error (the `for_each` arm). Only
+            // the seed loop can reach a skipped name with `forced = false`,
+            // and it visits each name once, so the re-invoke is bounded.
+            Some(VisitState::Skipped) if !forced => return Ok(()),
+            Some(VisitState::Skipped) => {}
+            // Re-raise the original failure rather than the body. Order
+            // matters here: this arm sits ahead of the `Visiting` check
+            // because a failed body is popped off `path` but is not, and must
+            // not be read as, a cycle.
+            Some(VisitState::Failed(err)) => return Err(RegisterError::Lua(err)),
             Some(VisitState::Visiting) => {
                 // Only reachable from a dynamic call, so the diagnostic can
                 // name the API unconditionally. Mirrors
@@ -609,14 +708,37 @@ impl BodyDriver {
         lua.globals().set("recipe", saved_recipe_global)?;
         self.path.borrow_mut().pop();
 
-        result?;
-        self.visit.borrow_mut().insert(name.to_string(), VisitState::Visited);
+        // Every exit records a terminal state, symmetric with the `path.pop()`
+        // above. Leaving `Visiting` behind on the error path is what let a
+        // pcall-swallowed force fabricate a cycle out of the abandoned mark.
+        let outcome = match result {
+            Ok(Outcome::Ran) => VisitState::Visited,
+            Ok(Outcome::Skipped) => VisitState::Skipped,
+            Err(e) => {
+                // Preserve the `mlua::Error` as-is where there is one; flatten
+                // the structured variants the same way `force` does.
+                let stored = match &e {
+                    RegisterError::Lua(le) => le.clone(),
+                    other => mlua::Error::runtime(other.to_string()),
+                };
+                self.visit
+                    .borrow_mut()
+                    .insert(name.to_string(), VisitState::Failed(stored));
+                return Err(e);
+            }
+        };
+        self.visit.borrow_mut().insert(name.to_string(), outcome);
         Ok(())
     }
 
     /// Invoke one recipe body and drain its captures. Step 12's loop body,
     /// verbatim but for the `forced` handling and the drain-time merge.
-    fn invoke_body(&self, lua: &Lua, name: &str, forced: bool) -> Result<(), RegisterError> {
+    ///
+    /// The `Outcome` is load-bearing: an `Ok` from a skip arm and an `Ok` from
+    /// a body that actually ran mean opposite things to a later force, and
+    /// returning the bare `Ok(())` for both is what silently swallowed the
+    /// forcing (§22.8).
+    fn invoke_body(&self, lua: &Lua, name: &str, forced: bool) -> Result<Outcome, RegisterError> {
         let builder = &self.builder;
 
         // Open fresh body slot.
@@ -720,7 +842,7 @@ impl BodyDriver {
             lua.remove_registry_value(func_key_clone)?;
             let _ = self.body_slot.borrow_mut().take();
             self.register_skipped(name, source, kind, static_requires, params_meta, origin);
-            return Ok(());
+            return Ok(Outcome::Skipped);
         }
 
         // Stamp current_recipe on the body so cook.add_test defaults the
@@ -812,7 +934,7 @@ impl BodyDriver {
                 lua.remove_registry_value(func_key_clone)?;
                 let _ = self.body_slot.borrow_mut().take();
                 self.register_skipped(name, source, kind, static_requires, params_meta, origin);
-                return Ok(());
+                return Ok(Outcome::Skipped);
             }
         } else {
             // Normal recipe: validate that no argv was supplied (§7.1.2).
@@ -953,20 +1075,36 @@ impl BodyDriver {
         };
         self.units_by_recipe.borrow_mut().insert(name.to_string(), units);
 
-        self.names.borrow_mut().push(crate::RegisteredRecipePub {
+        // `units_by_recipe` is a map (last write wins), but `names` is a
+        // Vec: a recipe re-invoked after a skip would otherwise appear twice
+        // in the discovered set (§22.6). Replace the placeholder entry
+        // `register_skipped` left rather than appending — the real one carries
+        // the merged `requires` and belongs at the skipped entry's position,
+        // which is where the seed order put it.
+        let entry = crate::RegisteredRecipePub {
             name: name.to_string(),
             source,
             kind,
             requires,
             params: params_meta,
             origin,
-        });
-        Ok(())
+        };
+        {
+            let mut names = self.names.borrow_mut();
+            match names.iter().position(|r| r.name == name) {
+                Some(idx) => names[idx] = entry,
+                None => names.push(entry),
+            }
+        }
+        Ok(Outcome::Ran)
     }
 
     /// Record a recipe whose body was skipped: no units, `requires` static
     /// only (a body that never ran declared no dynamic edges). Shared by the
     /// two surviving skip arms.
+    ///
+    /// The entry is a PLACEHOLDER when the skip is later rescued by a force:
+    /// `invoke_body`'s drain overwrites it in place on the re-invocation.
     fn register_skipped(
         &self,
         name: &str,
@@ -976,14 +1114,21 @@ impl BodyDriver {
         params: Vec<crate::capture::ChoreParamMeta>,
         origin: Option<String>,
     ) {
-        self.names.borrow_mut().push(crate::RegisteredRecipePub {
+        let entry = crate::RegisteredRecipePub {
             name: name.to_string(),
             source,
             kind,
             requires: requires.clone(),
             params,
             origin,
-        });
+        };
+        {
+            let mut names = self.names.borrow_mut();
+            match names.iter().position(|r| r.name == name) {
+                Some(idx) => names[idx] = entry,
+                None => names.push(entry),
+            }
+        }
         self.units_by_recipe.borrow_mut().insert(
             name.to_string(),
             RecipeUnits {
@@ -1845,6 +1990,10 @@ pub fn list_names(
         body_slot.clone(),
         None,
         Rc::new(RefCell::new(BTreeMap::new())),
+        // Forcer cell left empty for good: `list_names` invokes no recipe
+        // body, so every `cook.require_recipe` call it can reach is outside
+        // one and stops at the guard rail before the cell is consulted.
+        Rc::new(RefCell::new(None)),
     )?;
 
     // Load top-level Lua. Recipe registration happens via `cook.recipe(...)`
@@ -1902,6 +2051,7 @@ fn install_remaining_apis(
     body_slot: SharedBodySlot,
     cache_ctx: Option<&Arc<cook_cache::cache_ctx::CacheContext>>,
     prepass: crate::module_loader::SharedPrepassStore,
+    recipe_forcer: crate::context::SharedRecipeForcer,
 ) -> Result<SharedModuleLoaderState, RegisterError> {
     // Sandbox + fs/path/platform API. Project root falls back to
     // working_dir when no CacheContext is present.
@@ -1939,13 +2089,14 @@ fn install_remaining_apis(
     crate::export_api::register_export_api(lua, builder.export_store.clone())?;
     crate::test_api::register_test_api(lua, body_slot.clone())?;
     crate::context::register_recipe_name_api(lua, body_slot.clone())?;
-    // Forcer-less: on `list_names` there is no body-invocation driver at
-    // all, and on `register_cookfile` the driver doesn't exist yet at
-    // API-install time. Every call reachable before `register_cookfile`
-    // rebinds this (top level, a `register` block, a `for_each`-feeding
-    // probe's `produce`) is outside a recipe body, so the guard rail fires
-    // first and the missing forcer is unobservable.
-    crate::context::register_require_recipe_api(lua, body_slot.clone(), None)?;
+    // Installed ONCE, here, over a forcer CELL the caller fills later —
+    // `register_cookfile` once its driver exists, never on `list_names`
+    // (which invokes no body, so every call it can reach is outside a recipe
+    // body and stops at the guard rail). Installing once is the point: this
+    // is the only closure any caller can ever capture, so an alias taken
+    // during the top-level chunk sees the driver appear exactly as a fresh
+    // `cook.require_recipe` lookup does (Standard §22.8, CS-0144).
+    crate::context::register_require_recipe_api(lua, body_slot.clone(), recipe_forcer)?;
     crate::dep_output_api::register_dep_output_api(
         lua,
         builder.terminal_outputs.clone(),

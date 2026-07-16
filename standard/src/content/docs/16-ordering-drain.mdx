@@ -7,7 +7,7 @@ sidebar:
 > **Normative.** This chapter defines how cross-recipe dependencies enforce execution ordering, the output-path-uniqueness rule that prevents silent races, and the interactive-step drain behaviour.
 
 ## 16.1. Cross-recipe ordering [#exec.cross-recipe-ordering]
-Cross-recipe ordering is established only by name references (§{xref} of this Standard). For each name reference from recipe `A` to recipe `B` — in a dep-list, bare placeholder, or accessor placeholder — a conforming implementation MUST treat `B` as a prerequisite of `A`:
+Cross-recipe ordering is established only by name references (§{xref} of this Standard). For each name reference from recipe `A` to recipe `B` — in a dep-list, bare placeholder, accessor placeholder, or a register-phase `cook.require_recipe` call (§{lua.cook-require-recipe}) — a conforming implementation MUST treat `B` as a prerequisite of `A`:
 
 - An implementation MUST validate that `B` is defined in scope before the execute phase begins, and MUST reject the Cookfile with a diagnostic naming `A` and `B` otherwise.
 - An implementation MUST reject the Cookfile with a cycle diagnostic if the transitive closure of all cross-recipe edges contains a cycle, before executing any work unit.

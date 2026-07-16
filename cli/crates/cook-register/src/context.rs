@@ -120,11 +120,30 @@ pub fn register_recipe_name_api(lua: &Lua, body_slot: SharedBodySlot) -> Result<
 /// reports the failure as a Lua error if it cannot be.
 ///
 /// Supplied by `engine.rs`'s body-invocation driver, which owns the
-/// re-entrant visit. `None` on register-phase VMs that have no driver at
-/// all (`list_names`), and on the `register_cookfile` VM until the driver
-/// exists — on both, every reachable call is already outside a recipe body,
-/// so the guard rail below fires first and the forcer is never consulted.
-pub type RecipeForcer = Box<dyn Fn(&Lua, &str) -> Result<(), mlua::Error>>;
+/// re-entrant visit. An `Rc` rather than a `Box` so `require_recipe_fn` can
+/// clone the forcer out of its cell and DROP the borrow before calling it:
+/// forcing re-enters that same closure via the callee's body, which borrows
+/// the cell again.
+pub type RecipeForcer = Rc<dyn Fn(&Lua, &str) -> Result<(), mlua::Error>>;
+
+/// The forcer cell `cook.require_recipe` reads at call time.
+///
+/// A CELL, not a value, because of an ordering fact that has already caused
+/// one silent-failure bug: the top-level Lua chunk runs BEFORE the
+/// body-invocation driver exists, so any forcer passed by value at
+/// API-install time is necessarily forcer-less. Re-registering the function
+/// once the driver exists does not fix that — `local rr = cook.require_recipe`
+/// at top level is ordinary Lua (`local sh = cook.sh` is idiomatic), and the
+/// alias keeps the closure it captured, forcer and all. ONE closure reading a
+/// cell filled in later is what makes an alias and a fresh `cook.` lookup
+/// behave identically.
+///
+/// Empty forever on VMs with no driver at all (`list_names`), and on the
+/// `register_cookfile` VM until `engine.rs` fills it. Every call reachable
+/// before then is outside a recipe body, so the guard rail fires first — but
+/// an empty cell reached from INSIDE a body is a hard error, never a silent
+/// no-op (§22.8: the forcing MUST NOT degrade to a silent skip).
+pub type SharedRecipeForcer = Rc<RefCell<Option<RecipeForcer>>>;
 
 /// Register `cook.require_recipe(name)` on the cook global table (Standard
 /// §22.8, CS-0144).
@@ -146,7 +165,7 @@ pub type RecipeForcer = Box<dyn Fn(&Lua, &str) -> Result<(), mlua::Error>>;
 pub fn register_require_recipe_api(
     lua: &Lua,
     body_slot: SharedBodySlot,
-    force: Option<RecipeForcer>,
+    force: SharedRecipeForcer,
 ) -> Result<(), RegisterError> {
     let cook: LuaTable = lua.globals().get("cook")?;
     let require_recipe_fn = lua.create_function(move |lua, name: LuaValue| {
@@ -203,8 +222,29 @@ pub fn register_require_recipe_api(
         // already in `dynamic_requires` — the driver's visit map is what
         // makes a repeat call a no-op, and routing every call through it
         // keeps "already evaluated" one decision in one place.
-        if let Some(force) = force.as_ref() {
-            force(lua, &name)?;
+        //
+        // Cloned out of the cell so the borrow is released before the call:
+        // `force` re-enters this closure via the callee's body, which reads
+        // the cell again.
+        let forcer = force.borrow().clone();
+        match forcer {
+            Some(force) => force(lua, &name)?,
+            // Unreachable via any path that exists today — the guard rail
+            // above already rejected every outside-a-body caller, and inside
+            // a body the driver has long since filled the cell. It is an
+            // error rather than a `()` because the silent alternative is the
+            // exact defect this API exists to eliminate: the edge below would
+            // still be recorded, so the recipe would join the build closure
+            // while its export stayed unobservable and `cook.import` returned
+            // nil. A future VM that installs the API without a driver must
+            // fail loudly here, not mislink.
+            None => {
+                return Err(mlua::Error::runtime(format!(
+                    "cook.require_recipe: cannot force recipe \"{name}\": no body-invocation \
+                     driver is available on this register-phase VM. This is an implementation \
+                     fault, not a Cookfile error; please report it (Standard \u{00a7}22.8, CS-0144)"
+                )))
+            }
         }
 
         // The slot the driver restored on the way out is the caller's
