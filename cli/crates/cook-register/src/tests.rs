@@ -3481,3 +3481,198 @@ cook.__register_surface_chore("agen",
          forced recipe is in the build closure just as surely as a directly forced one"
     );
 }
+
+/// The `Visited` short-circuit must still propagate `forced` INTO static deps.
+///
+/// Seed order is a test parameter, not a fixture detail — so the names here are
+/// chosen to make the bug fire, and the previous round's test is the reason the
+/// point needs restating. `require_recipe_force_propagates_through_static_dep_
+/// to_skipped_chore` named its forcer `app`: `app` sorts BEFORE `gen`, so `gen`
+/// was still unvisited when the force arrived, the force took the `None` arm,
+/// and the propagation ran. Rename the forcer `zzz` and the accident reverses.
+///
+/// `topo` is seeded from `BTreeMap::keys()` — LEXICOGRAPHIC — so
+/// {achore: [], bbb: [achore], zzz: []} seeds [achore, bbb, zzz]:
+///   1. `achore` — parametric chore, un-forced, unreachable → skip arm, `Skipped`.
+///   2. `bbb` — its static dep `achore` is visited un-forced (the skip stands,
+///      correctly: nothing has forced anything yet); `bbb`'s body runs →`Visited`.
+///   3. `zzz` — body forces `bbb`, which is already `Visited`, so the force
+///      returns `Ok(())` BEFORE `ensure_static_requires` — and `achore` is
+///      never rescued.
+///
+/// `achore` then registers zero units while `zzz -> bbb -> achore` sits in the
+/// build closure the engine builds from `requires`: the register/execute
+/// disagreement §22.8 calls expressly non-conforming, and silent.
+#[test]
+fn require_recipe_force_reaches_static_deps_of_already_visited_recipe() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("zzz".to_string(), vec![]);
+    let lua_src = r#"
+cook.recipe("zzz", {}, function()
+    cook.require_recipe("bbb")
+end)
+cook.recipe("bbb", {requires = {"achore"}}, function() end)
+cook.__register_surface_chore("achore",
+    {requires = {}, __line = 5,
+     __params = { { kind = "defaulted_string", name = "who", default = "world" } }},
+    function(__cook_params)
+        cook.exec("generate " .. __cook_params.who, 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "achore"),
+        "generate world",
+        "a force arriving at an ALREADY-VISITED recipe must still push `forced` down into \
+         that recipe's static deps: `bbb` ran un-forced at seed time, so `achore`'s skip \
+         has never been reconsidered, and only the force can stand it down"
+    );
+}
+
+/// The same hole on the no-target path — the one `cook list`, `cook dag`, and
+/// most tests take. Skip arm 2 is gated on `target_recipe.is_none()`, never on
+/// reachability, so a fix verified only against arm 1 leaves this open.
+///
+/// Names as above and for the same reason: `zzz` sorts after `bbb`, so `bbb` is
+/// already `Visited` when the force lands.
+#[test]
+fn require_recipe_force_reaches_static_deps_of_already_visited_recipe_no_target() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("zzz", {}, function()
+    cook.require_recipe("bbb")
+end)
+cook.recipe("bbb", {requires = {"achore"}}, function() end)
+cook.__register_surface_chore("achore",
+    {requires = {}, __line = 5,
+     __params = { { kind = "defaulted_string", name = "who", default = "world" } }},
+    function(__cook_params)
+        cook.exec("generate " .. __cook_params.who, 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "achore"),
+        "generate world",
+        "the already-visited force hole must be closed on the no-target path too"
+    );
+}
+
+/// Skip arm 3 reached THROUGH an already-`Visited` recipe. This is the
+/// silent-swallow case, and the sharpest evidence the hole is real: arm 3's
+/// error is DESIGNED — forcing an unreachable probe-sourced `for_each` cannot
+/// be rescued, so it must be a hard failure. The existing arm-3 tests both
+/// force `afan` directly. Route the force through `bbb` (which the seed loop
+/// has already evaluated un-forced, because `zzz` sorts after it) and the
+/// designed diagnostic simply never fires: the pass SUCCEEDS with `afan` at
+/// zero units while `zzz -> bbb -> afan` is in the build closure.
+///
+/// `afan` is named to sort first (it must be seeded and skipped before anything
+/// forces it); `zzz` is named to sort last (so `bbb` is `Visited`, not `None`,
+/// at force time). Rename `zzz` to `app` and the bug cannot fire.
+#[test]
+fn require_recipe_probe_for_each_reached_via_visited_recipe_still_errors() {
+    let dir = TempDir::new().unwrap();
+    let cookfile = r#"
+register
+    cook.probe("items", { inputs = {}, produce = [[ return {{id = "x"}} ]] })
+    cook.recipe("zzz", {}, function()
+        cook.require_recipe("bbb")
+    end)
+    cook.recipe("bbb", {requires = {"afan"}}, function() end)
+
+recipe afan
+    ingredients items
+    cook "build/$<in.id>.txt" {
+        mkdir -p build
+        printf '%s' "$<in.id>" > $<out>
+    }
+"#;
+    let err = register_surface_target(dir.path(), cookfile, "zzz")
+        .expect_err(
+            "arm 3's designed hard error must still fire when the force reaches `afan` \
+             through an already-visited `bbb`; swallowing it registers `afan` at zero \
+             units while the edge still builds it",
+        )
+        .to_string();
+    assert!(err.contains("cook.require_recipe"), "error must name the API; got: {err}");
+    assert!(err.contains("afan"), "error must name the recipe; got: {err}");
+    assert!(
+        err.contains("for_each") && err.contains("probe"),
+        "error must state the reason; got: {err}"
+    );
+    assert!(
+        err.contains(": afan"),
+        "fix hint must survive the transitive route; got: {err}"
+    );
+}
+
+/// The shape an author actually writes: `web` forces `assets` (a dynamic edge —
+/// `web` needs `assets`' export), and `assets : codegen`. No contrived naming:
+/// `web` genuinely sorts after `assets`, so `assets` is already `Visited` when
+/// the force lands and `codegen` — a parametric chore — is never stood down.
+/// `codegen` registers zero units and ships a `web` build with nothing
+/// generated.
+#[test]
+fn require_recipe_force_reaches_codegen_under_realistic_web_assets_names() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_target_argv("web".to_string(), vec![]);
+    let lua_src = r#"
+cook.recipe("web", {}, function()
+    cook.require_recipe("assets")
+end)
+cook.recipe("assets", {requires = {"codegen"}}, function() end)
+cook.__register_surface_chore("codegen",
+    {requires = {}, __line = 5,
+     __params = { { kind = "defaulted_string", name = "lang", default = "ts" } }},
+    function(__cook_params)
+        cook.exec("codegen " .. __cook_params.lang, 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "codegen"),
+        "codegen ts",
+        "`web` forces `assets`, `assets : codegen` — `codegen` is in the build closure, so \
+         it must register its units; `web` sorting after `assets` must not decide that"
+    );
+}
+
+/// The propagation must CHAIN through consecutive already-visited recipes, not
+/// stop at the first hop. Found by auditing the new arm rather than by a
+/// report: it recurses through `ensure_static_requires`, so depth ought to fall
+/// out for free — but "ought to" is what produced three rounds of this bug, and
+/// the arm is only correct if `Visited { forced: false }` reached FROM the
+/// propagation re-enters it rather than short-circuiting.
+///
+/// Names, again, chosen so the bug fires: {achore, bbb: [ccc], ccc: [achore],
+/// zzz} seeds [achore, ccc, bbb, zzz], so `ccc` AND `bbb` are both already
+/// `Visited { forced: false }` when `zzz`'s force lands, and the rescue of
+/// `achore` has to travel `zzz` -> `bbb` -> `ccc` -> `achore` through two
+/// consecutive hits of the new arm.
+#[test]
+fn require_recipe_force_propagates_through_a_chain_of_visited_recipes() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("zzz", {}, function()
+    cook.require_recipe("bbb")
+end)
+cook.recipe("bbb", {requires = {"ccc"}}, function() end)
+cook.recipe("ccc", {requires = {"achore"}}, function() end)
+cook.__register_surface_chore("achore",
+    {requires = {}, __line = 5,
+     __params = { { kind = "defaulted_string", name = "who", default = "world" } }},
+    function(__cook_params)
+        cook.exec("generate " .. __cook_params.who, 1)
+    end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None).unwrap();
+    assert_eq!(
+        only_shell_cmd(&registered, "achore"),
+        "generate world",
+        "forcing is transitive to the whole static closure, not one hop: the engine builds \
+         the closure from `requires`, so `zzz -> bbb -> ccc -> achore` puts `achore` in it"
+    );
+}

@@ -548,9 +548,29 @@ enum VisitState {
     /// cycle — only reachable via `cook.require_recipe`, since the seed loop
     /// visits at the top level where nothing is in flight.
     Visiting,
-    /// Its body ran to completion. The register-order guarantee is already
-    /// satisfied; a repeat visit is a no-op.
-    Visited,
+    /// Its body ran to completion.
+    ///
+    /// `forced` is NOT "was this body reached via `cook.require_recipe`" — it
+    /// is "has forcing been pushed DOWN into this recipe's static `requires`",
+    /// which is the only question a later visit needs answered. The two
+    /// coincide because `visit_requires_then_body` walks the deps under the
+    /// same `forced` it runs the body under.
+    ///
+    /// The flag lives ON the state rather than in a parallel `forced_visited`
+    /// set on purpose. This enum has now been the site of three bugs in one
+    /// family — a force bypassing an ordering the seed loop was silently
+    /// providing — and every one of them was a state that answered fewer
+    /// questions than the code asked of it. A side set would be a second
+    /// source of truth about the same node, kept in sync by hand, and nothing
+    /// would oblige a future arm to consult it; folding it in means the
+    /// compiler makes every reader of `Visited` say out loud what it does
+    /// about forcing.
+    ///
+    /// `Skipped` carries no such flag because it cannot need one: a skip arm
+    /// only declines when `!forced` (the parametric-chore arms stand down when
+    /// forced; the `for_each` arm raises), so `Skipped` always implies
+    /// un-forced, and a forced visit to it re-invokes unconditionally.
+    Visited { forced: bool },
     /// Its body was deliberately NOT run: a skip arm in `invoke_body` decided
     /// the recipe isn't being built and registered it with no units.
     ///
@@ -672,8 +692,55 @@ impl BodyDriver {
     /// `requires` edge this call records, still pulls it into the build
     /// closure. Register and engine would then disagree about what got built.
     fn ensure_invoked(&self, lua: &Lua, name: &str, forced: bool) -> Result<(), RegisterError> {
-        match self.visit.borrow().get(name).cloned() {
-            Some(VisitState::Visited) => return Ok(()),
+        // Cloned into a `let` BEFORE the `match`, not matched on
+        // `self.visit.borrow()…` directly: a temporary in a match scrutinee
+        // lives until the end of the whole `match`, so the forced-propagation
+        // arm below — which recurses — would re-enter `ensure_invoked` with
+        // this borrow still live and panic `RefCell already borrowed`.
+        let state = self.visit.borrow().get(name).cloned();
+        match state {
+            // Already fully propagated: the body ran AND its static deps were
+            // walked forced. Nothing left for any later visit to contribute.
+            Some(VisitState::Visited { forced: true }) => return Ok(()),
+            Some(VisitState::Visited { forced: false }) if !forced => return Ok(()),
+            // The body ran, but UN-forced — so its static deps were walked
+            // un-forced too, and any of them that hit a skip arm is still
+            // sitting at zero units. This force is new information: it puts
+            // `name` in the build closure, and the engine builds that closure
+            // from `requires`, so every recipe `name` requires is in it too.
+            //
+            // Reachable purely by NAME: `topo` seeds lexicographically, so a
+            // forcer sorting AFTER `name` (`zzz` -> `bbb` -> `achore`) finds
+            // `name` already `Visited`, while one sorting before it (`app`)
+            // finds it `None` and propagates via the normal body path. Without
+            // this arm the dep registers zero units while the edge still builds
+            // it — expressly non-conforming per §22.8 — and, worse, the
+            // `for_each` arm's DESIGNED hard error is silently swallowed.
+            //
+            // The body is NOT re-run: §22.8 says at most once per pass, and it
+            // already ran to completion. Only `forced` is pushed down.
+            Some(VisitState::Visited { forced: false }) => {
+                self.ensure_static_requires(lua, name, true)?;
+                // Recorded only on success, matching every other terminal-state
+                // write here: if the propagation raised (arm 3's designed error
+                // is the live case), leaving `name` at `forced: false` means a
+                // later force re-walks and re-raises rather than inheriting a
+                // silence. `name`'s own body genuinely ran and succeeded, so
+                // marking it `Failed` would be a lie that the seed loop would
+                // then replay as a body error that never happened.
+                //
+                // Terminates despite not marking `name` `Visiting` first: this
+                // walk follows STATIC edges, and step 11's
+                // `local_topological_sort` has already rejected a static cycle,
+                // so the only way back into `name` is a body forcing it — and
+                // that body can only be running beneath some static dep `D` of
+                // `name` that this very loop marked `Visiting`, which the
+                // re-walk then reports as the cycle it is.
+                self.visit
+                    .borrow_mut()
+                    .insert(name.to_string(), VisitState::Visited { forced: true });
+                return Ok(());
+            }
             // A completed body is a no-op for a repeat visit; a SKIPPED one is
             // not. Fall through to re-invoke — `forced` is now true, so the
             // arm that skipped it either stands down (the parametric-chore
@@ -720,7 +787,10 @@ impl BodyDriver {
         // above. Leaving `Visiting` behind on the error path is what let a
         // pcall-swallowed force fabricate a cycle out of the abandoned mark.
         let outcome = match result {
-            Ok(Outcome::Ran) => VisitState::Visited,
+            // `forced` verbatim: `visit_requires_then_body` walked this
+            // recipe's static deps under exactly this flag, so it is precisely
+            // the "has forcing been pushed down" the state records.
+            Ok(Outcome::Ran) => VisitState::Visited { forced },
             Ok(Outcome::Skipped) => VisitState::Skipped,
             Err(e) => {
                 // Preserve the `mlua::Error` as-is where there is one; flatten
