@@ -2350,3 +2350,134 @@ fn add_unit_file_refs_missing_file_is_register_error() {
     );
     assert!(err.contains("file not found"), "error must name the file-ref failure; got: {err}");
 }
+
+// -----------------------------------------------------------------------
+// cook.recipe_name() tests (Standard §22.7, CS-0141)
+// -----------------------------------------------------------------------
+
+/// A recipe body observes its own name via `cook.recipe_name()`. Captured
+/// observably through `cook.exec` so the assertion reads real register
+/// output (the shell command text) rather than a mock.
+#[test]
+fn recipe_name_returns_own_name() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.exec(cook.recipe_name(), 1)
+end)
+"#;
+    let result = register_one(rt, lua_src, "build");
+    assert_eq!(result.units.len(), 1);
+    match &result.units[0].payload {
+        WorkPayload::Shell { cmd, .. } => assert_eq!(cmd, "build"),
+        other => panic!("expected Shell payload, got: {:?}", other),
+    }
+}
+
+/// No-leakage regression guard: two recipes in one Cookfile each observe
+/// only their own name. A stale or un-re-stamped shared slot — or reading a
+/// session-global instead of the per-body slot — would let the second body
+/// see the first's name.
+#[test]
+fn recipe_name_does_not_leak_between_recipes() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe("first", {}, function()
+    cook.exec(cook.recipe_name(), 1)
+end)
+cook.recipe("second", {}, function()
+    cook.exec(cook.recipe_name(), 1)
+end)
+"#;
+    let registered = register_cookfile(rt, lua_src, None)
+        .unwrap_or_else(|e| panic!("register_cookfile failed: {e:?}"));
+    let first = registered.units_by_recipe.get("first").expect("first registered");
+    let second = registered.units_by_recipe.get("second").expect("second registered");
+    match &first.units[0].payload {
+        WorkPayload::Shell { cmd, .. } => assert_eq!(cmd, "first"),
+        other => panic!("expected Shell payload, got: {:?}", other),
+    }
+    match &second.units[0].payload {
+        WorkPayload::Shell { cmd, .. } => assert_eq!(
+            cmd, "second",
+            "second body must not observe the first body's recipe name"
+        ),
+        other => panic!("expected Shell payload, got: {:?}", other),
+    }
+}
+
+/// A non-empty `qualified_prefix` yields the qualified name ("lib.build"),
+/// not the bare one — the settled design decision (`cook.recipe_name()`
+/// mirrors `cook.add_test`'s already-normative qualified `suite` default,
+/// Standard §22.4).
+#[test]
+fn recipe_name_returns_qualified_name_with_prefix() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path()).with_qualified_prefix("lib".to_string());
+    let lua_src = r#"
+cook.recipe("build", {}, function()
+    cook.exec(cook.recipe_name(), 1)
+end)
+"#;
+    let result = register_one(rt, lua_src, "build");
+    match &result.units[0].payload {
+        WorkPayload::Shell { cmd, .. } => assert_eq!(cmd, "lib.build"),
+        other => panic!("expected Shell payload, got: {:?}", other),
+    }
+}
+
+/// A top-level call (outside any recipe body — the body slot is `None`
+/// during top-level load) is a hard error naming the API and citing the
+/// spec.
+#[test]
+fn recipe_name_errors_outside_recipe_body() {
+    let dir = TempDir::new().unwrap();
+    let rt = make_registry(dir.path());
+    let lua_src = r#"
+cook.recipe_name()
+"#;
+    let result = register_cookfile(rt, lua_src, None);
+    assert!(result.is_err(), "top-level call must error");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("cook.recipe_name"), "error must name the API; got: {err}");
+    assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.7") && err.contains("CS-0141"), "error must cite the spec; got: {err}");
+}
+
+/// A reachable, `for_each`-feeding probe's `produce` body runs on the
+/// register VM before the body loop opens the body slot (`run_for_each_prepass`
+/// runs before recipe bodies are invoked), so `cook.recipe_name()` inside it
+/// must also hard error. Must be `for_each`-feeding (an ordinary probe's
+/// `produce` never runs on the register VM at all — it runs in the execute
+/// VM worker pool, where `cook.recipe_name` isn't registered — so a plain
+/// probe would pass vacuously here) and reachable (no `target_recipe` is set,
+/// so every driver is in scope).
+#[test]
+fn recipe_name_errors_inside_for_each_feeding_probe_produce() {
+    let dir = TempDir::new().unwrap();
+    let cookfile = r#"
+register
+    cook.probe("cards", {
+        inputs = {},
+        produce = [[ return cook.recipe_name() ]],
+    })
+
+recipe deal
+    ingredients cards
+    cook "build/$<in.id>.txt" {
+        mkdir -p build
+        printf '%s\n' "$<in.name>" > $<out>
+    }
+"#;
+    let result = register_surface(dir.path(), cookfile);
+    assert!(
+        result.is_err(),
+        "cook.recipe_name() in a for_each-feeding probe's produce must error"
+    );
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains("cook.recipe_name"), "error must name the API; got: {err}");
+    assert!(err.contains("recipe body"), "error must state the inside-a-recipe-body requirement; got: {err}");
+    assert!(err.contains("Standard \u{00a7}22.7") && err.contains("CS-0141"), "error must cite the spec; got: {err}");
+}

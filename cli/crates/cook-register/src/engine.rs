@@ -1752,6 +1752,7 @@ fn install_remaining_apis(
     )?;
     crate::export_api::register_export_api(lua, builder.export_store.clone())?;
     crate::test_api::register_test_api(lua, body_slot.clone())?;
+    crate::context::register_recipe_name_api(lua, body_slot.clone())?;
     crate::dep_output_api::register_dep_output_api(
         lua,
         builder.terminal_outputs.clone(),

@@ -1,0 +1,5 @@
+register
+    cook.recipe_name()
+
+recipe noop
+    test >{ cook.sh("true") }

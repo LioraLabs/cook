@@ -4,7 +4,7 @@ use std::path::Path;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::capture::RegisteredRecipe;
-use crate::RegisterError;
+use crate::{RegisterError, SharedBodySlot};
 
 /// Set up the `recipe` global table with name and resolved ingredient files.
 /// No cache operations — cache evaluation is handled by cook-engine.
@@ -85,6 +85,34 @@ pub fn register_resolve_ingredients(lua: &Lua, working_dir: &Path, workspace_roo
         Ok(table)
     })?;
     cook.set("resolve_ingredients", resolve_fn)?;
+    Ok(())
+}
+
+/// Register `cook.recipe_name()` on the cook global table (Standard §22.7).
+///
+/// Returns the enclosing recipe's fully-qualified name — the same value
+/// `cook.add_test` already reads for its `suite` default (Standard §22.4).
+/// Unlike that default, which degrades a missing `current_recipe` to an
+/// empty string via `.unwrap_or_default()` (`test_api.rs`), this hard
+/// errors: an empty name would silently corrupt any caller folding it into
+/// a path or identifier (`lib.a`, `build/obj//`).
+pub fn register_recipe_name_api(lua: &Lua, body_slot: SharedBodySlot) -> Result<(), RegisterError> {
+    let cook: LuaTable = lua.globals().get("cook")?;
+    let recipe_name_fn = lua.create_function(move |_, ()| {
+        let slot = body_slot.borrow();
+        // Only the body loop opens the slot, so `None` covers every
+        // outside-a-body caller at once — top level, `config`/`register`
+        // blocks, and a `for_each`-feeding probe's `produce` (the prepass
+        // runs before the body loop). No probe-specific guard needed.
+        slot.as_ref()
+            .and_then(|body| body.current_recipe.clone())
+            .ok_or_else(|| {
+                mlua::Error::runtime(
+                    "cook.recipe_name: no enclosing recipe is active; call `cook.recipe_name()` only from inside a recipe body (Standard \u{00a7}22.7, CS-0141)",
+                )
+            })
+    })?;
+    cook.set("recipe_name", recipe_name_fn)?;
     Ok(())
 }
 
