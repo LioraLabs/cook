@@ -1,0 +1,5 @@
+recipe idLib
+    cook_cc.lib({ sources = srcs("neo/idlib"),
+                  includes = {"neo","neo/idlib"},
+                  test = {"neo/idlib/tests"},
+                  needs = {"sdl2"} })
